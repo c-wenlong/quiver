@@ -520,6 +520,24 @@ def adopt_instructions(home: Path, source: Path) -> None:
     target.write_bytes(source.read_bytes())
 
 
+def _register_hub_marketplaces(home: Path) -> None:
+    """After a --hub clone, hand the hub's marketplaces to each harness."""
+    from quiver.init.hub import register_marketplaces
+
+    results = register_marketplaces(home)
+    if not results:
+        return
+    print(f"  {c('bold', 'Plugin marketplaces')}")
+    for harness, marketplace, error in results:
+        if error is None:
+            print(f"    {c('green', '✓')} {marketplace} registered in {harness}")
+        else:
+            print(f"    {c('yellow', '!')} {marketplace} not registered in {harness}: {error}")
+    if any(error for *_, error in results):
+        print(c("dim", "    swe find plugins lists what is left; --fix=<id> retries one."))
+    print()
+
+
 def cmd_init(args) -> int:
     args = list(args or [])
     if args and args[0] in ("-h", "--help", "help"):
@@ -636,6 +654,8 @@ def cmd_init(args) -> int:
         print()
     if not full:
         print(f"  {c('dim', 'swe init --full lists every path.')}\n")
+    if hub_url is not None:
+        _register_hub_marketplaces(home)
     if blocked:
         print(f"  {c('yellow', 'Re-run with --force to back up and replace the blocked paths.')}\n")
         return 1

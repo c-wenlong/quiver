@@ -114,3 +114,27 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return root
+
+
+def register_marketplaces(home: Path, run=None) -> list[tuple[str, str, str | None]]:
+    """Register each hub ``plugins/<name>`` marketplace with every harness.
+
+    The work is ``swe find plugins``'s own ``unregistered`` fixes, so the
+    commands are the ones that module builds (``claude plugin marketplace
+    add <dir>``, ``codex plugin marketplace add <dir>``) and a harness that
+    is not installed is never asked. Returns ``(harness, marketplace,
+    error)`` per attempt; ``error`` is None when it worked.
+    """
+    from quiver.find.plugin_drift import FixError, apply_fix, plugin_drift
+
+    results = []
+    for finding in plugin_drift(home):
+        if finding.kind != "unregistered":
+            continue
+        try:
+            apply_fix(home, finding.id, run=run)
+        except FixError as exc:
+            results.append((finding.harness, finding.marketplace, str(exc)))
+        else:
+            results.append((finding.harness, finding.marketplace, None))
+    return results

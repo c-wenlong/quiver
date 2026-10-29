@@ -85,21 +85,389 @@ const SessionChat = (() => {
     return m ? new URLSearchParams(m[1]).get("chat") : null;
   }
 
-  /* Minimal markdown-ish rendering, as the PWA does: escape everything,
-   * then restore fenced code blocks, inline code and bold. */
+  /* ------------------------------------------------------------ markdown */
+  /* Rich Markdown for agent messages, a port of the phone's Markdown
+   * (app/ios/Sources/QuiverRemote/Hub/Markdown.swift): the subset the
+   * harnesses actually write — headings, lists, tables, quotes, rules,
+   * fenced code — as blocks, with inline spans inside each. Text is
+   * escaped; only web links open, so a link to the agent's own files
+   * shows as a file name (the phone's code-intent rule), and a lone
+   * `![alt](src)` or a harness's `<json-render>` folds into a note. */
+
+  function mdBlocks(text) {
+    const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+    const blocks = [];
+    let paragraph = [];
+    const flush = () => {
+      const joined = paragraph.join("\n").trim();
+      if (joined) blocks.push({ t: "p", text: joined });
+      paragraph = [];
+    };
+
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Fenced code: everything up to the closing fence, verbatim.
+      if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+        flush();
+        const fence = trimmed.slice(0, 3);
+        const lang = trimmed.slice(3).trim();
+        // A fence indented under a list item: its lines lose that indent.
+        const indent = (line.match(/^ */) || [""])[0].length;
+        const body = [];
+        i += 1;
+        while (i < lines.length && !lines[i].trim().startsWith(fence)) {
+          const raw = lines[i];
+          const lead = Math.min(indent, (raw.match(/^ */) || [""])[0].length);
+          body.push(raw.slice(lead));
+          i += 1;
+        }
+        i += 1; // the closing fence (or past the end)
+        blocks.push({ t: "code", lang: lang || "", code: body.join("\n") });
+        continue;
+      }
+
+      if (!trimmed) { flush(); i += 1; continue; }
+
+      // A view a harness drew (Droid's <json-render>) folds into a note;
+      // text after the closing tag on its line parses as usual.
+      if (trimmed.startsWith("<json-render>")) {
+        flush();
+        let body = trimmed;
+        while (!body.includes("</json-render>") && i + 1 < lines.length) {
+          i += 1;
+          body += "\n" + lines[i];
+        }
+        const close = body.indexOf("</json-render>");
+        if (close >= 0) {
+          const rest = body.slice(close + "</json-render>".length).trim();
+          body = body.slice(0, close + "</json-render>".length);
+          if (rest) {
+            lines[i] = rest;
+            blocks.push({ t: "rendered", body });
+            continue;
+          }
+        }
+        i += 1;
+        blocks.push({ t: "rendered", body });
+        continue;
+      }
+
+      const img = imageLine(trimmed);
+      if (img) {
+        flush();
+        blocks.push({ t: "img", alt: img[0], src: img[1] });
+        i += 1;
+        continue;
+      }
+
+      // A table: a row of cells, then a |---|:--:| separator row.
+      if (trimmed.includes("|") && i + 1 < lines.length) {
+        const align = separatorAlignments(lines[i + 1]);
+        if (align) {
+          flush();
+          const header = cells(trimmed);
+          const rows = [];
+          let extraRows = 0;
+          i += 2;
+          while (i < lines.length) {
+            const row = lines[i].trim();
+            if (!row || !row.includes("|")) break;
+            if (rows.length < TABLE_MAX_ROWS) rows.push(cells(row));
+            else extraRows += 1;
+            i += 1;
+          }
+          blocks.push({ t: "table", header, align, rows, extraRows });
+          continue;
+        }
+      }
+
+      const h = heading(trimmed);
+      if (h) {
+        flush();
+        blocks.push({ t: "h", level: h[0], text: h[1] });
+        i += 1;
+        continue;
+      }
+
+      if (isRule(trimmed)) {
+        flush();
+        blocks.push({ t: "hr" });
+        i += 1;
+        continue;
+      }
+
+      if (trimmed.startsWith(">")) {
+        flush();
+        const quoted = [];
+        while (i < lines.length) {
+          const q = lines[i].trim();
+          if (!q.startsWith(">")) break;
+          let rest = q.slice(1);
+          if (rest.startsWith(" ")) rest = rest.slice(1);
+          quoted.push(rest);
+          i += 1;
+        }
+        blocks.push({ t: "quote", text: quoted.join("\n") });
+        continue;
+      }
+
+      const item = listItem(line);
+      if (item) {
+        flush();
+        let text = item.text;
+        i += 1;
+        // Indented lines that aren't a new item continue this one, unless
+        // they open a block of their own (a fence, a table, a quote, a
+        // heading), which then parses on its own.
+        while (i < lines.length) {
+          const next = lines[i];
+          const nt = next.trim();
+          if (!nt || listItem(next) || !(next.startsWith("  ") || next.startsWith("\t"))) break;
+          if (startsBlock(lines, i)) break;
+          text += "\n" + nt;
+          i += 1;
+        }
+        blocks.push({ t: "li", indent: item.indent, marker: item.marker, text });
+        continue;
+      }
+
+      paragraph.push(line);
+      i += 1;
+    }
+    flush();
+    return blocks;
+  }
+
+  /* `![alt](source)` alone on a line. */
+  function imageLine(line) {
+    if (!line.startsWith("![") || !line.endsWith(")")) return null;
+    const close = line.indexOf("](");
+    if (close < 0 || line.indexOf("]") !== close) return null;
+    const alt = line.slice(2, close);
+    const source = line.slice(close + 2, -1);
+    // Exactly one image: `![a](x)![b](y)` stays for inline rendering.
+    if (source.includes(" ") || source.includes(")") || source.includes("![")) return null;
+    return [alt, source];
+  }
+
+  /* Whether `lines[i]` opens a block that isn't list-item text. */
+  function startsBlock(lines, i) {
+    const t = lines[i].trim();
+    if (t.startsWith("```") || t.startsWith("~~~") || t.startsWith(">") || heading(t)) return true;
+    if (t.startsWith("<json-render>") || imageLine(t)) return true;
+    return t.includes("|") && i + 1 < lines.length && !!separatorAlignments(lines[i + 1]);
+  }
+
+  function heading(line) {
+    const m = line.match(/^#{1,6}/);
+    if (!m || line[m[0].length] !== " ") return null;
+    let text = line.slice(m[0].length).trim();
+    // An optional closing run ("## Title ##") goes only when a space
+    // sets it apart, so "C#" and "#123" keep their hashes.
+    const run = text.match(/\s+#+$/);
+    if (run) text = text.slice(0, run.index);
+    else if (/^#+$/.test(text)) text = "";
+    return [m[0].length, text];
+  }
+
+  function isRule(line) {
+    const compact = line.replace(/ /g, "");
+    return /^([-*_])\1{2,}$/.test(compact);
+  }
+
+  /* `- `/`1. `/`2) ` list row → its item; two-space steps nest (a tab is
+   * four). A leading `[ ]`/`[x]` keeps its box in the text. */
+  function listItem(line) {
+    const leading = (line.match(/^[ \t]*/) || [""])[0];
+    const width = [...leading].reduce((w, c) => w + (c === "\t" ? 4 : 1), 0);
+    const rest = line.slice(leading.length);
+    if ("-*+".includes(rest[0] || "") && rest[1] === " ") {
+      return { indent: Math.floor(width / 2), marker: "•", text: rest.slice(2) };
+    }
+    const dm = rest.match(/^\d{1,3}/);
+    if (!dm) return null;
+    const after = rest.slice(dm[0].length);
+    if (!".)".includes(after[0] || "") || after[1] !== " ") return null;
+    return { indent: Math.floor(width / 2), marker: dm[0] + after[0], text: after.slice(2) };
+  }
+
+  /* Cells of a `| a | b |` row. Only `\|` is an escape here: it stays
+   * in its cell as `|`. Every other backslash (`C:\Users`, `\d+`) is
+   * left for the inline parser. */
+  function cells(row) {
+    let s = row.trim();
+    if (s.startsWith("|")) s = s.slice(1);
+    if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+    const out = [];
+    let cur = "";
+    for (let j = 0; j < s.length; j++) {
+      const ch = s[j];
+      if (ch === "\\" && s[j + 1] === "|") { cur += "|"; j += 1; }
+      else if (ch === "|") { out.push(cur.trim()); cur = ""; }
+      else cur += ch;
+    }
+    out.push(cur.trim());
+    return out;
+  }
+
+  /* The alignments a `|---|:--:|--:|` row sets, or null when the line
+   * isn't a separator row. */
+  function separatorAlignments(line) {
+    const trimmed = line.trim();
+    if (!trimmed.includes("-")) return null;
+    const parts = cells(trimmed);
+    if (!parts.length) return null;
+    const out = [];
+    for (const p of parts) {
+      const core = p.replace(/^:+|:+$/g, "");
+      if (!core || !/^-+$/.test(core)) return null;
+      const left = p.startsWith(":"), right = p.endsWith(":");
+      out.push(left && right ? "c" : right ? "r" : "l");
+    }
+    // A single dashed "cell" without pipes is a rule, not a table.
+    if (out.length === 1 && !trimmed.includes("|")) return null;
+    return out;
+  }
+
+  /* A task item's box, read off the start of a list item's text. */
+  function taskBox(text) {
+    const lower = text.slice(0, 4).toLowerCase();
+    if (lower === "[ ] ") return ["open", text.slice(4)];
+    if (lower === "[x] ") return ["done", text.slice(4)];
+    return null;
+  }
+
+  /* --------------------------------------------------- inline markdown */
+
+  /* An inline code span: a run of backticks, then the same run closing
+   * it, so ``a `tick` inside`` stays one span. */
+  const CODE_SPAN = /(`+)(?!`)([^\n]*?[^`\n])\1(?!`)/g;
+  /* A link target: no spaces, parentheses only in balanced pairs. */
+  const URL_PART = "((?:[^()\\s]|\\([^()\\s]*\\))+)";
+  const safeUrl = (url) => /^(https?:\/\/|mailto:|tel:)/i.test(url);
+
+  /* `![alt](src)` inside a sentence reads "*Image: alt*", as the phone
+   * shows it; code spans and an escaped `\![` keep what the agent wrote. */
+  function inlineImagesAsText(text) {
+    if (!text.includes("![")) return text;
+    return text.replace(/(`+)[\s\S]*?\1|(?<!\\)!\[([^\]]*)\]\([^)\s]+\)/g,
+      (m, _ticks, alt) => (alt === undefined ? m : `*Image: ${alt}*`));
+  }
+
+  /* `\<punctuation>` (CommonMark's escapable set) is literal text: `\_`
+   * shows as `_`, never italics. Escapes are set aside before the rest
+   * of the inline rules and put back at the end. */
+  const ESCAPED = /\\([!-/:-@[-`{-~])/g;
+
+  function emphasis(text) {
+    return text
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^\w])__([^_]+)__(?!\w)/g, "$1<strong>$2</strong>")
+      .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<em>$2</em>")
+      .replace(/(^|[^\w])_([^_\s][^_]*?)_(?!\w)/g, "$1<em>$2</em>")
+      .replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  }
+
+  function inline(s) {
+    const codes = [];
+    let t = inlineImagesAsText(s).replace(CODE_SPAN, (_m, _ticks, c) => {
+      // One space padding both ends is the delimiter's, not the code's.
+      codes.push(/^ .* $/.test(c) && c.trim() ? c.slice(1, -1) : c);
+      return `\u0001${codes.length - 1}\u0001`;
+    });
+    const escaped = [];
+    t = t.replace(ESCAPED, (_m, ch) => `\u0004${escaped.push(ch) - 1}\u0004`);
+    t = esc(t);
+    t = t.replace(new RegExp(`\\[([^\\]]*)\\]\\(${URL_PART}(?:\\s+&quot;.*?&quot;)?\\)`, "g"), (m, label, url) => {
+      // Code spans bind tighter than links (CommonMark): a target holding
+      // one is no link, just text with code in it.
+      if (url.includes("\u0001")) return m;
+      const text = label ? emphasis(label) : url;
+      if (safeUrl(url)) return `<a href="${url}" target="_blank" rel="noopener">${text}</a>`;
+      // A link to the agent's own files opens nothing: its label shows
+      // as a file name, like the phone's code intent.
+      return `<code>${text}</code>`;
+    });
+    // Emphasis and bare links only in text, never inside a tag.
+    t = t.split(/(<a [^>]*>[\s\S]*?<\/a>|<[^>]+>)/).map((part, i) => {
+      if (i % 2) return part;
+      // Bare URLs are set aside first, so emphasis never reaches inside one.
+      // esc() wrote `<`, `>`, `"` and `'` as entities: an `&` starting one
+      // of them ends a URL, while `&amp;` — a real `&` — stays inside it.
+      const urls = [];
+      return emphasis(part
+        .replace(/\bhttps?:\/\/(?:[^\s<>"&\u0001]|&(?!lt;|gt;|quot;|#39;))+[^\s<>"&\u0001.,;:!?)\]']/g,
+          (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; })
+        .replace(/\u0002(\d+)\u0002/g, (_m, n) => `<a href="${urls[+n]}" target="_blank" rel="noopener">${urls[+n]}</a>`));
+    }).join("");
+    t = t.replace(/\u0004(\d+)\u0004/g, (_m, i) => esc(escaped[+i]));
+    return t.replace(/\u0001(\d+)\u0001/g, (_m, i) => `<code>${esc(codes[+i])}</code>`);
+  }
+
+  /* The grid is built eagerly, so a malformed or huge table is cut to
+   * this many columns and rows, with a note saying what was left out. */
+  const TABLE_MAX_COLUMNS = 24, TABLE_MAX_ROWS = 200;
+
+  function noteChip(kind, title, detail) {
+    return `<div class="md-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${MD_ICONS[kind]}</svg><span class="md-note-main"><span>${esc(title)}</span><span class="md-note-sub">${esc(detail)}</span></span></div>`;
+  }
+  const MD_ICONS = {
+    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m5 18 5-5 3 3 4-4 2 2v4"/>',
+    render: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
+  };
+
+  function tableHtml(b) {
+    let width = b.header.length;
+    for (const r of b.rows) if (r.length > width) width = r.length;
+    const cols = Math.min(width, TABLE_MAX_COLUMNS);
+    const hiddenRows = b.extraRows || 0;
+    const hiddenCols = width - cols;
+    const alCls = (c) => (b.align[c] === "c" ? ' class="al-c"' : b.align[c] === "r" ? ' class="al-r"' : "");
+    let html = '<div class="md-table"><table><thead><tr>';
+    for (let c = 0; c < cols; c++) html += `<th${alCls(c)}>${inline(b.header[c] || "")}</th>`;
+    html += "</tr></thead><tbody>";
+    for (const row of b.rows) {
+      html += "<tr>";
+      for (let c = 0; c < cols; c++) html += `<td${alCls(c)}>${inline(row[c] || "")}</td>`;
+      html += "</tr>";
+    }
+    html += "</tbody></table></div>";
+    const more = [hiddenRows > 0 ? `${hiddenRows} more rows` : "",
+      hiddenCols > 0 ? `${hiddenCols} more columns` : ""].filter(Boolean).join(" and ");
+    if (more) html += `<div class="md-table-note">${more} not shown</div>`;
+    return html;
+  }
+
+  function renderMd(blocks) {
+    const perLine = (text) => text.split("\n").map(inline).join("<br>");
+    return blocks.map((b) => {
+      switch (b.t) {
+        case "h": return `<div class="md-h md-h${Math.min(Math.max(b.level, 1), 4)}">${inline(b.text)}</div>`;
+        case "p": return `<p>${perLine(b.text)}</p>`;
+        case "li": {
+          const box = taskBox(b.text);
+          const marker = box
+            ? `<input type="checkbox" disabled${box[0] === "done" ? " checked" : ""}>`
+            : esc(b.marker);
+          return `<div class="md-li" style="padding-left:${Math.min(b.indent, 4) * 18}px"><span class="md-marker">${marker}</span><span class="md-li-text">${perLine(box ? box[1] : b.text)}</span></div>`;
+        }
+        case "quote": return `<blockquote>${perLine(b.text)}</blockquote>`;
+        case "code": return `<pre class="code"><code>${esc(b.code)}</code></pre>`;
+        case "table": return tableHtml(b);
+        case "hr": return "<hr>";
+        case "img": return noteChip("image", b.alt || "Image", `${b.src.split("/").pop() || b.src} · on the machine`);
+        case "rendered": return noteChip("render", "Rendered view", "Open the session on the machine to see it");
+        default: return "";
+      }
+    }).join("");
+  }
+
   function md(text) {
-    // Code is set aside as it is found, so no later rule reaches into it:
-    // a "**" or a backtick inside a code block stays as written.
-    const code = [];
-    const keep = (html) => `\u0000${code.push(html) - 1}\u0000`;
-    let t = esc(String(text || "").replace(/\u0000/g, ""));
-    // A fence swallows the line breaks around it (the text is pre-wrap) and
-    // the language word after its opening backticks.
-    t = t.replace(/\n?```[\w+-]*\n?([\s\S]*?)```\n?/g,
-      (_m, body) => keep(`<pre class="code"><code>${body.replace(/^\n+|\n+$/g, "")}</code></pre>`));
-    t = t.replace(/`([^`\n]+)`/g, (_m, body) => keep(`<code>${body}</code>`));
-    t = t.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-    return t.replace(/\u0000(\d+)\u0000/g, (_m, i) => code[Number(i)]);
+    return renderMd(mdBlocks(text));
   }
 
   function newClientId() {
@@ -1829,7 +2197,9 @@ const SessionChat = (() => {
     open, close, keyFromHash,
     get key() { return chat.key; },
     // Pure helpers, for tests.
-    _test: { md, diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
+    _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
+      inlineImagesAsText, inline, taskBox, tableHtml,
+      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
       cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat },
   };

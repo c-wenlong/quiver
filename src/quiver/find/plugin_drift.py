@@ -115,6 +115,29 @@ class SourcePlugin(NamedTuple):
 # The source side: ~/.quiver/plugins
 
 
+def hub_marketplaces(home: Path) -> list[tuple[str, Path]]:
+    """``(name, dir)`` for each ~/.quiver/plugins marketplace with a manifest.
+
+    Independent of the plugins inside: a marketplace whose plugins all come
+    from GitHub or a URL has no local folder for ``quiver_plugins`` to find,
+    and it still needs registering.
+    """
+    root = plugins_dir_for(home)
+    try:
+        market_dirs = sorted(p for p in root.iterdir()
+                             if not p.name.startswith(".") and p.is_dir())
+    except OSError:
+        return []
+    found = []
+    for mdir in market_dirs:
+        data = _load_json(mdir / ".claude-plugin" / "marketplace.json")
+        if not isinstance(data, dict) or not isinstance(data.get("plugins"), list):
+            continue
+        mname = data.get("name")
+        found.append((mname if isinstance(mname, str) and mname else mdir.name, mdir))
+    return found
+
+
 def quiver_plugins(home: Path) -> list[SourcePlugin]:
     """Every locally sourced plugin in every marketplace under ~/.quiver/plugins."""
     root = plugins_dir_for(home)
@@ -526,7 +549,8 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
     codex has disabled is enabled in claude.
     """
     sources = quiver_plugins(home)
-    if not sources:
+    markets = hub_marketplaces(home)
+    if not sources and not markets:
         return []
     views = {}
     for name, reader in _READERS.items():
@@ -556,17 +580,18 @@ def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
         view = views.get(hname)
         if view is None:
             continue
-        flagged_markets: set = set()
+        # One finding per unregistered marketplace, its plugins aside: the
+        # plugins of one are not also reported as N uninstalled plugins.
+        for mname, mdir in markets:
+            if _real(mdir) not in view.registered:
+                findings.append(Finding(
+                    hname, mname, "", "unregistered",
+                    f"{mdir} is not a {hname} marketplace",
+                    *_fix_fields(view.fix_register(mdir)),
+                    marketplace_dir=str(mdir)))
         for sp in sources:
             ref, inst = state(view, sp)
             if ref is None:
-                if sp.marketplace_dir not in flagged_markets:
-                    flagged_markets.add(sp.marketplace_dir)
-                    findings.append(Finding(
-                        hname, sp.marketplace, "", "unregistered",
-                        f"{sp.marketplace_dir} is not a {hname} marketplace",
-                        *_fix_fields(view.fix_register(sp.marketplace_dir)),
-                        marketplace_dir=str(sp.marketplace_dir)))
                 continue
             mname = ref.rpartition("@")[2]
             if inst is None:

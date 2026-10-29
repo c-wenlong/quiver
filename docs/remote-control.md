@@ -149,6 +149,7 @@ remote/
   protocol.py    # wire schema: events, messages, commands (versioned)
   pairing.py     # QR payload, one-time token → device credential
   catalog.py     # session registry: local + satellite rows, machine-scoped
+  devices.py     # the paired-device list + revoke, shared by /v1/devices and web Settings
   dismissals.py  # per-device inbox dismissals (inbox_dismissals.json, 0600)
   sessionmeta.py # pins and display names, hub-wide (session_meta.json, 0600)
   tasks.py       # work-item store: sessions/launches linked to tasks (tasks.json, 0600)
@@ -344,6 +345,8 @@ GET  /app/                           the web app's pages, static
 GET  /harness-<id>.svg               a harness's bundled logo, static (aliases resolve, colour wins)
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
+GET  /v1/devices                     every paired device (device_view rows + paired_via + this_device) and the pending pair requests, for the pair-requests-and-devices screen
+POST /v1/devices/revoke              {device_id, confirm_this_device?} sign one device out → {revoked, this_device, devices}
 GET  /v1/devices/me                  this device's row: kind, model, client, os, node_name, display_name, timestamps
 POST /v1/devices/rename              {name} → this device's display_name; "" clears it
 GET  /v1/ssh                         SSH console setup: user, port, listening, host_keys, this device's key
@@ -389,9 +392,15 @@ derived `state` (`open` → `in_progress` → `pr_open` → `merged|closed`),
 `sessions`, `agent_running` (a linked session is active, or its launch
 is still pending), `last_active_at`, and `pr` — for an issue the PR its
 `quiver/issue-<n>` branch produced, so a merged PR reads `merged` even
-after it leaves the open list. `/v1/pulls` rows carry `agent_running`
-from the same store, and `GET /v1/launches/{id}` shows a launch's
-`origin` while pending and after it settles.
+after it leaves the open list. A stored task no source can read this
+round (the source is blocked or down, or the task is past the 24 most
+recently active and off the open list) keeps the state its source last
+reported, from `cache/task_states.json`, and says so with
+`state_source: cached`; that cache is written only when a fresh read
+changes a task's state, and `tasks.json` itself stays links only.
+`/v1/pulls` rows carry `agent_running` from the same store, and `GET
+/v1/launches/{id}` shows a launch's `origin` while pending and after it
+settles.
 
 The Linear source is opt-in through a `linear` section in
 `~/.quiver/config/config.json`:
@@ -896,6 +905,24 @@ remote), and the prompt references the path: `@`-ref syntax where the
 harness supports it, an inlined path otherwise. Caps: 20 MB per file,
 image/pdf/text only, swept after 7 days or at session end, whichever
 comes first.
+
+`GET /v1/devices` answers `{devices, requests}` for the phone's
+pair-requests-and-devices screen: every `devices.json` row as
+`pairing.device_view` serves it (everything but the credential, plus
+`id` and `revoked`), each with `paired_via` and `this_device` marking
+the caller — the owner's tailnet sign-in (`tailnet:<node>`) marks
+nothing, having no row — and `requests` is the same pending-request list
+`GET /v1/pair/requests` serves, codes and secrets never in it. `POST
+/v1/devices/revoke {device_id}` signs one paired device out
+(`swe remote devices --revoke`'s hub-side twin, shared with the web
+Settings page's `revoke` action in `devices.py`) and answers `{revoked,
+this_device, devices}` with the list refreshed. Refusals: `400
+bad_device`, `400 not_paired` for a `tailnet:` id — a sign-in, not a
+pairing — `404 unknown_device`, `409 already_revoked`, `409
+confirm_this_device` for the caller's own row without
+`confirm_this_device: true` (a stray tap can't lock the phone out), and
+`500 ssh_key_left` when the device is out but its `authorized_keys`
+line stayed.
 
 ## Keeping the hub up — `launchd.py`, `systemd.py`
 

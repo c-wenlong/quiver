@@ -120,8 +120,8 @@ are server changes in `src/quiver/remote/`.
 - [ ] Paired devices list: name, "This device", last seen, Remove
 - [x] Reached from the hub chip menu
 - [ ] Opened straight from a "new pair request" push
-- [ ] Hub: `GET /v1/devices` and a revoke route (today `swe remote devices` and `--revoke` are CLI only)
-- [ ] Show `last_seen_at`, which the hub already updates on each authenticated request; the devices route above only needs to return it
+- [x] Hub: `GET /v1/devices` and `POST /v1/devices/revoke` (the phone-facing twin of `swe remote devices` / `--revoke`)
+- [ ] Show `last_seen_at`, which the hub already updates on each authenticated request and `GET /v1/devices` returns
 
 ### P9. Machine
 - [ ] Per-machine strip: name, online state, satellite version

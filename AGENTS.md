@@ -25,6 +25,14 @@ Quiver has three clients on top of `swe`:
 
 The web app stays inside the Python package because pipx installs and the `swe` bundled in Quiver.app serve it from there.
 
+## Keeping the clients in step
+
+[FEATURES.md](FEATURES.md) is the cross-client matrix: one row per feature, one column per client, plus the table of ported logic that lives in Swift and Python at once.
+
+- A change that adds, ships or drops a user-facing feature updates its row in the same change. Differences between clients go in the row's Notes.
+- Before calling a fix done, check whether the same bug exists on the other clients. Anything in the ported-logic table has the same bug twice by default: fix both in one change, or write what is still owed in the row's Notes.
+- Per-client build order stays in `app/mac/ROADMAP.md`, `app/ios/ROADMAP.md` and `docs/web-app.md`. FEATURES.md records where each feature stands, not when it was built.
+
 ## The macOS app (`app/mac/`)
 
 `app/mac/` is a native SwiftUI app on top of `swe`; [app/mac/ROADMAP.md](app/mac/ROADMAP.md) has the plan and [app/mac/README.md](app/mac/README.md) the build steps. It replaces Switchboard, TokenTracker, AIUsage and OpenUsage, which get deleted once it covers them. So:

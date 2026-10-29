@@ -9,12 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The web app's chat shows the tmux pane and can detach.** A session
+  Quiver runs under tmux shows its `qv-…` name in the chat's top bar;
+  a click copies `tmux attach -t qv-…`. The bar's Detach button offers
+  the phone's three choices: detach when the turn finishes, keep it
+  running in tmux, or detach now. A kept session says it is still
+  running and offers Reattach, which takes the live pane back, mid-turn
+  included. `/v1/sessions` rows carry the supervised `mode`, the `tmux`
+  name and `kept`, and so do `session.ownership` events. The details
+  sheet adds the pane, its attach command and, on a macOS hub, Run in
+  terminal ([#850](https://github.com/c-wenlong/quiver/pull/850)).
+
 - **`swe init --hub=<git url>` brings your hub onto a new machine.** It
   checks the URL with `git ls-remote`, clones it as `~/.quiver` with your
   URL as `origin`, then links it into every harness as a plain `swe init`
   does. It only clones into a missing or empty `~/.quiver`; an existing
   one is left alone and plain `swe init` repairs it instead. A token in
-  the URL never reaches the terminal
+  the URL never reaches the terminal. Each marketplace under the hub's
+  `plugins/` is then registered with Claude Code and Codex through their
+  own `plugin marketplace add`, the same fix `swe find plugins` offers.
+  That fix now covers a hub marketplace whose plugins all come from
+  GitHub or a URL, which drift used to skip
   ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
 - **Hub route for previewing a page file.** `GET
@@ -124,6 +139,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   higher, and cards, blocks, fields, buttons and sheets have the Mac app's
   smaller corner radii.
 
+- **The web app's chat renders agent Markdown.** Messages used to pass
+  through a minimal renderer that only restored fenced code, inline code
+  and bold — tables showed as raw pipes and headings as raw hashes. The
+  chat now runs a port of the phone's block parser
+  (`app/ios/Sources/QuiverRemote/Hub/Markdown.swift`): headings, bullet
+  and numbered lists (nested, with task boxes), quotes, rules, fenced
+  code and tables become real markup. A table wider than the message
+  scrolls sideways inside its own box (bounded at 24 columns and 200
+  rows, with a note for the rest), a lone `![alt](src)` image or a
+  harness-drawn `<json-render>` view folds into a note chip, and a link
+  to the agent's own files — like the ones Codex ends a turn with —
+  shows as a file name instead of a dead link.
+
 - **The Plugins page opens on Explore.** In the Mac app and the web app,
   Explore is now the first tab and the view Plugins lands on: the
   catalog of every marketplace's plugins is what the page is for, and
@@ -192,7 +220,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `security find-generic-password -w -s "Cursor Safe Storage" >/dev/null`
   in Terminal and choose Always Allow. Other platforms keep reading
   plaintext tokens ([#796](https://github.com/c-wenlong/quiver/issues/796)).
-
+- **Stored tasks keep their last-known state when a source can't be
+  read.** A linked issue last seen closed or merged read `in_progress`
+  again on `GET /v1/tasks` while `gh` was signed out, Linear was down,
+  or the task had dropped past the 24 most recently active tasks, since
+  its state was guessed from its links alone. The hub now remembers
+  each stored task's last reported state and PR in
+  `~/.quiver/cache/task_states.json`, written only when a fresh read
+  changes it, and serves that when no fresh read is possible. Every
+  task row gains `state_source` (`live`, `cached` or `links`) so a
+  client can show a cached row as last known. `tasks.json` still holds
+  links only.
 - **`swe doctor` names registered marketplace folders missing on this
   machine.** A `~/.claude/settings.json` or `~/.codex/config.toml` synced
   from another machine can register `directory` marketplaces whose
