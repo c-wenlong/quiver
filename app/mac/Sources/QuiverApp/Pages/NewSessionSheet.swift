@@ -26,11 +26,10 @@ struct NewSessionSheet: View {
     /// The launch `model` pick: free text, blank for the harness's
     /// default.
     @State private var modelName = ""
-    /// The last prefill the sheet wrote into `modelName`. A harness or
-    /// machine change re-fills only while the field still holds that
-    /// suggestion, so a typed pick survives — the same rule
-    /// `filledPrompt` follows in the resolve sheet.
-    @State private var filledModel: String?
+    /// The field's own binding sets this on any keystroke, so even a
+    /// clear back to the prefill counts: a harness or machine change
+    /// must not overwrite what the user left.
+    @State private var modelEdited = false
     /// The folder browser's place; non-nil swaps the form for it.
     @State private var browse: FolderBrowse?
     @State private var flow = IssueLaunchFlow()
@@ -194,7 +193,8 @@ struct NewSessionSheet: View {
     @ViewBuilder private var modelSection: some View {
         if LaunchOptions.showsModel(on: machine) {
             group("Model (optional)") {
-                TextField("e.g. sonnet, blank for the default", text: $modelName)
+                TextField("e.g. sonnet, blank for the default",
+                          text: Binding(get: { modelName }, set: { modelName = $0; modelEdited = true }))
                     .quiverField(monospaced: true)
                     .disabled(!takesModel)
                 if !takesModel {
@@ -480,14 +480,12 @@ struct NewSessionSheet: View {
     }
 
     /// The Model field's prefill: the picked machine's last-used model
-    /// for the picked harness. A re-fill lands only while the field is
-    /// empty or still holds the sheet's own suggestion, so a typed pick
-    /// survives a harness or machine change.
+    /// for the picked harness. A re-fill lands only while the user
+    /// hasn't touched the field — a typed pick, even a clear, keeps
+    /// what they left.
     private func prefillModel() {
-        let last = LaunchOptions.lastModel(harness, on: machine)
-        guard modelName.isEmpty || modelName == filledModel else { return }
-        modelName = last
-        filledModel = last
+        guard let next = LaunchOptions.modelText(edited: modelEdited, harness, on: machine) else { return }
+        modelName = next
     }
 
     /// A folder change re-defaults the harness unless the user picked
