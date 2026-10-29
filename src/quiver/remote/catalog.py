@@ -371,6 +371,10 @@ def _safe_mid(machine_id: str) -> str:
     return safe
 
 
+# supervise.tmux_name: "qv-" and a hex slug of the session key.
+_PANE_NAME = re.compile(r"qv-[0-9a-f]{1,32}")
+
+
 def merge_remote_rows(
     home: Path | None, machine_id: str, rows: list[dict]
 ) -> list[dict]:
@@ -388,6 +392,11 @@ def merge_remote_rows(
         row["key"] = protocol.remote_key(machine_id, local)
         row["machine_id"] = machine_id
         row["remote"] = True
+        # The pane name reaches the web app's markup and the attach line
+        # people paste into a shell, so only a name supervise could have
+        # made gets through.
+        if "tmux" in row and not _PANE_NAME.fullmatch(str(row["tmux"] or "")):
+            del row["tmux"]
         out.append(row)
     path = _satellite_dir(home)
     try:

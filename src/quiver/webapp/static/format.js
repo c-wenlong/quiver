@@ -215,7 +215,12 @@ const Fmt = (() => {
     });
   }
 
+  /* One shell word as it can be pasted back: bare when it holds only
+   * safe characters, otherwise single-quoted. */
+  const shellWord = (s) => (/^[\w@%+=:,./-]+$/.test(String(s)) ? String(s)
+    : `'${String(s).replace(/'/g, "'\\''")}'`);
+
   return { tokens, dollars, ago, harnessName, harnessColor, logo, marbleScale,
     resetIn, windowLabel, planTitle, money, balance, onDemand,
-    copyIcon, copy, copyTick };
+    copyIcon, copy, copyTick, shellWord };
 })();

@@ -355,7 +355,7 @@ function trivialFooter(count) {
 /* The shell line that resumes a session where it ran. */
 function resumeLine(r) {
   if (!r.resume || !r.resume.argv) return "";
-  const quote = (s) => (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${String(s).replace(/'/g, "'\\''")}'`);
+  const quote = Fmt.shellWord;
   const cmd = r.resume.argv.map(quote).join(" ");
   const cwd = r.resume.cwd || r.cwd;
   return cwd ? `cd ${quote(cwd)} && ${cmd}` : cmd;
@@ -378,7 +378,7 @@ function openSheet(r) {
   // The supervised channel: the attach mode, and the qv-… pane name for
   // tmux runs (a kept one stays alive detached until adopted or reaped).
   const supervised = (r.ownership === "attached" || r.kept) && (r.mode || r.tmux);
-  const tmuxLine = r.tmux ? `tmux attach -t ${r.tmux}` : "";
+  const tmuxLine = r.tmux ? `tmux attach -t ${Fmt.shellWord(r.tmux)}` : "";
   const canOpenTerminal = !!(tmuxLine && !r.remote &&
     sessionsPage.data && sessionsPage.data.open_terminal);
   sheet.innerHTML = `<form method="dialog" class="sheet-body">
