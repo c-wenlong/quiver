@@ -104,6 +104,9 @@ private struct ChatBody: View {
             model.commands.dismiss()
         })
         .safeAreaInset(edge: .bottom) { bottomBar }
+        .sheet(item: $model.previewing) { target in
+            PagePreviewSheet(target: target) { try await model.loadPreview($0) }
+        }
     }
 
     /// New entries fade in, rising `rise` points unless Reduce Motion is on.
@@ -332,7 +335,7 @@ private struct ChatItemView: View {
         case .thinking(let text):
             ThinkingCard(text: text)
         case .tool(let call, let result):
-            ToolCard(call: call, result: result)
+            ToolCard(call: call, result: result, pages: model.pageTargets(for: call)) { model.previewing = $0 }
         case .approval(let rid, let prompt, let state):
             ApprovalCard(prompt: prompt, state: state) { decision in Task { await model.decide(rid, decision: decision) } }
         case .compaction:
@@ -644,30 +647,38 @@ private struct ThinkingCard: View {
 private struct ToolCard: View {
     let call: ToolCall
     let result: String?
+    /// Pages this call wrote that the hub can serve: each gets Preview.
+    var pages: [PagePreview.Target] = []
+    var preview: (PagePreview.Target) -> Void = { _ in }
     @State private var open = false
 
     var body: some View {
         let diff = ToolDiff.from(call)
         VStack(alignment: .leading, spacing: 0) {
-            Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: Self.icon(call.name)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 16)
-                    Text(ToolArgs.summary(call))
-                        .font(Theme.mono).foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1).truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let diff {
-                        Text("+\(diff.added)").font(Theme.mono).foregroundStyle(Theme.success)
-                        Text("−\(diff.removed)").font(Theme.mono).foregroundStyle(Theme.dangerText)
+            HStack(spacing: 0) {
+                Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: Self.icon(call.name)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                            .frame(width: 16)
+                        Text(ToolArgs.summary(call))
+                            .font(Theme.mono).foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1).truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if let diff {
+                            Text("+\(diff.added)").font(Theme.mono).foregroundStyle(Theme.success)
+                            Text("−\(diff.removed)").font(Theme.mono).foregroundStyle(Theme.dangerText)
+                        }
+                        Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.textMuted)
                     }
-                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.textMuted)
+                    .padding(.leading, 12).padding(.trailing, pages.isEmpty ? 12 : 8).frame(minHeight: 40)
+                    .contentShape(.rect)
                 }
-                .padding(.horizontal, 12).frame(minHeight: 40)
-                .contentShape(.rect)
+                .buttonStyle(.plain)
+                if !pages.isEmpty {
+                    previewButton.padding(.trailing, 6)
+                }
             }
-            .buttonStyle(.plain)
             if open {
                 Rectangle().fill(Theme.border).frame(height: 1)
                 VStack(alignment: .leading, spacing: 0) {
@@ -686,6 +697,32 @@ private struct ToolCard: View {
         .background(Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
         .clipShape(.rect(cornerRadius: Theme.blockRadius))
+    }
+
+    /// One page opens straight away; a patch that wrote several asks which.
+    @ViewBuilder private var previewButton: some View {
+        if pages.count == 1, let page = pages.first {
+            Button { preview(page) } label: { previewLabel }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Preview \(page.name)")
+        } else {
+            Menu {
+                ForEach(pages) { page in
+                    Button(page.path) { preview(page) }
+                }
+            } label: { previewLabel }
+        }
+    }
+
+    /// The compact secondary button's look, written out so a Menu label
+    /// matches a Button.
+    private var previewLabel: some View {
+        Label("Preview", systemImage: "eye").labelStyle(.titleAndIcon)
+            .font(Theme.control).foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 10).frame(height: Theme.controlHeight - 4)
+            .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.borderStrong, lineWidth: 1))
+            .contentShape(.rect)
     }
 
     private func codeBlock(_ s: String) -> some View {

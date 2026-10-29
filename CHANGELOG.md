@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: Preview on tool cards that write a page.** When
+  a tool call writes or edits an `.html`, `.htm` or `.svg` file inside
+  the session's folder (Write, Edit, MultiEdit, a Codex patch and the
+  like), its card gets a Preview button. Preview asks the hub for the
+  file as it is on disk now and draws it in a sheet with scripts,
+  network and navigation off; an SVG is drawn as an image. The card's
+  raw content is still one tap away, and a missing, too-big or
+  unsupported file says so in plain words
+  ([#634](https://github.com/c-wenlong/quiver/issues/634)).
+
 - **A "Fan off temperature" for the Compute fan rule.** The popover's
   first field is now "Fan on temperature", and a second field under it
   picks where the held fans drop back to macOS. Until a temperature is

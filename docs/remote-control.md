@@ -910,6 +910,17 @@ over 4096 characters), `415 unsupported_type`, `403 outside_folder`,
 too_large`, `403 not_readable`, the `@` search's `bad_cwd` and
 `cwd_missing`, and `422 preview_unavailable` for a satellite's session.
 
+The iPhone app (`PagePreview.swift`, `PagePreviewSheet.swift`) shows
+Preview on a tool card whose write or edit names a page file inside the
+session's `cwd`: it strips `cwd` from an absolute path (`/private/tmp`
+and `/tmp` count as one), and a path outside it, with a `..` part or
+starting with `~` gets no button. It fetches when the sheet opens and
+draws in a `WKWebView` with JavaScript off, a non-persistent data store,
+a content rule list that blocks every load but `about:` and `data:`,
+`loadHTMLString` with no base URL, and a navigation delegate that
+allows only that first load. An SVG goes in as a `data:` image, which
+WebKit draws without running its scripts.
+
 `GET /v1/search?q=&limit=` (`search.py`) puts each matching session in
 the first tier it qualifies for: its title holds the query (whole, or
 every word of it); then its details (title, harness, folder, id
