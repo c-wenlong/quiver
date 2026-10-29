@@ -1348,6 +1348,7 @@ def _load_libcrypto():
 def _configure_evp(lib) -> None:
     import ctypes
     lib.EVP_aes_256_gcm.restype = ctypes.c_void_p
+    lib.EVP_aes_128_cbc.restype = ctypes.c_void_p  # Cursor's safeStorage
     lib.EVP_CIPHER_CTX_new.restype = ctypes.c_void_p
     lib.EVP_CIPHER_CTX_free.argtypes = [ctypes.c_void_p]
     lib.EVP_CipherInit_ex.argtypes = [
@@ -2037,18 +2038,222 @@ def _read_cursor_cli_token(path: str | None = None) -> str | None:
     return token.strip() if isinstance(token, str) and token.strip() else None
 
 
+# The editor keeps its session tokens Electron-safeStorage-encrypted as
+# ``cursor-safe-storage:v1:<base64>``. On macOS the base64 is Chromium's
+# OSCrypt blob: ``v10`` then AES-128-CBC (PKCS#7, an IV of 16 spaces)
+# under PBKDF2-HMAC-SHA1(<"Cursor Safe Storage" keychain password>,
+# "saltysalt", 1003 rounds, 16 bytes). OSCrypt on macOS writes only
+# ``v10``; any other version is left undecrypted.
+_CURSOR_SAFE_STORAGE_PREFIX = "cursor-safe-storage:v1:"
+_CURSOR_SAFE_STORAGE_SERVICE = "Cursor Safe Storage"
+# Reading the password puts up an "allow access" dialog until the user
+# trusts ``security`` on the item, and ``security`` waits on it. Give up
+# quickly (the whole fetch has a 2 s deadline), and after a read that may
+# have shown that dialog, don't ask again for a while, so a background
+# refresh never puts it up every few minutes.
+_CURSOR_SAFE_STORAGE_TIMEOUT = 1.0
+_CURSOR_SAFE_STORAGE_BACKOFF = 6 * 3600
+# ``security`` exits with the low byte of the OSStatus:
+# errSecItemNotFound (-25300) is 44, and no dialog was shown.
+_SECURITY_ITEM_NOT_FOUND = 44
+# The derived key, once read in this process, so the fetch, the usage
+# events and the diagnosis share one keychain read.
+_cursor_safe_storage_key_cache: bytes | None = None
+
+
+def _is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def _cursor_safe_storage_backoff_file():
+    return RATE_LIMITS_CACHE_FILE.with_name("cursor_safe_storage_backoff")
+
+
+def _cursor_safe_storage_ciphertext(value) -> bytes | None:
+    """The AES-128-CBC ciphertext inside a ``cursor-safe-storage:`` value,
+    or None when it is not a ``v10`` blob this reader can decrypt."""
+    if not isinstance(value, str) or not value.startswith(
+            _CURSOR_SAFE_STORAGE_PREFIX):
+        return None
+    try:
+        raw = base64.b64decode(value[len(_CURSOR_SAFE_STORAGE_PREFIX):],
+                               validate=True)
+    except ValueError:
+        return None
+    body = raw[3:]
+    if raw[:3] != b"v10" or not body or len(body) % 16:
+        return None
+    return body
+
+
+def _cursor_safe_storage_key() -> bytes | None:
+    """The editor's safeStorage AES key, from the macOS keychain.
+
+    Absent off macOS, when the item is missing, when the read times out
+    or is refused, and for a while after any read that may have shown the
+    access dialog (see ``_CURSOR_SAFE_STORAGE_BACKOFF``). The app reads
+    several Cursor accounts at once, each in its own ``swe``, so the read
+    runs under a lock shared by every process: only one of them can put
+    the dialog up, and the others find its backoff once they get in.
+    """
+    global _cursor_safe_storage_key_cache
+    if _cursor_safe_storage_key_cache is not None:
+        return _cursor_safe_storage_key_cache
+    if not _is_macos() or not shutil.which("security"):
+        return None
+    backoff = _cursor_safe_storage_backoff_file()
+    import fcntl
+    try:
+        backoff.parent.mkdir(parents=True, exist_ok=True)
+        lock = open(backoff.with_name("cursor_safe_storage.lock"), "a")
+    except OSError:
+        return None
+    with lock:
+        deadline = time.monotonic() + _CURSOR_SAFE_STORAGE_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    return None  # another process is still asking
+                time.sleep(0.05)
+            except OSError:
+                return None
+        key = _read_cursor_safe_storage_key(backoff)
+    if key is not None:
+        _cursor_safe_storage_key_cache = key
+    return key
+
+
+def _read_cursor_safe_storage_key(backoff) -> bytes | None:
+    """``_cursor_safe_storage_key``'s keychain read, run under its lock."""
+    try:
+        if time.time() - os.path.getmtime(backoff) < _CURSOR_SAFE_STORAGE_BACKOFF:
+            return None
+    except OSError:
+        pass
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-w",
+             "-s", _CURSOR_SAFE_STORAGE_SERVICE],
+            capture_output=True,
+            text=True,
+            timeout=_CURSOR_SAFE_STORAGE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        result = None
+    except OSError:
+        return None
+    if result is None or result.returncode not in (0, _SECURITY_ITEM_NOT_FOUND):
+        # Timed out on the dialog, or the user refused it.
+        try:
+            backoff.touch()
+        except OSError:
+            pass
+        return None
+    password = (result.stdout or "").strip()
+    if result.returncode != 0 or not password:
+        return None
+    return hashlib.pbkdf2_hmac(
+        "sha1", password.encode("utf-8"), b"saltysalt", 1003, 16)
+
+
+def _aes_128_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes | None:
+    """PKCS#7-unpadded plaintext, or None (no libcrypto, bad padding)."""
+    lib = _load_libcrypto()
+    if lib is None or not hasattr(lib, "EVP_aes_128_cbc"):
+        return None
+    import ctypes
+    ctx = lib.EVP_CIPHER_CTX_new()
+    if not ctx:
+        return None
+    try:
+        if lib.EVP_CipherInit_ex(ctx, lib.EVP_aes_128_cbc(), None,
+                                 key, iv, 0) != 1:
+            return None
+        out = ctypes.create_string_buffer(len(data) + 16)
+        outl = ctypes.c_int(0)
+        if lib.EVP_CipherUpdate(ctx, out, ctypes.byref(outl),
+                                data, len(data)) != 1:
+            return None
+        fin = ctypes.create_string_buffer(32)
+        finl = ctypes.c_int(0)
+        if lib.EVP_CipherFinal_ex(ctx, fin, ctypes.byref(finl)) != 1:
+            return None  # bad padding: the wrong key or a corrupt blob
+        return out.raw[:outl.value] + fin.raw[:finl.value]
+    finally:
+        lib.EVP_CIPHER_CTX_free(ctx)
+
+
+def _decrypt_cursor_safe_storage(value, cached_key_only: bool = False) -> str | None:
+    """The session JWT inside a ``cursor-safe-storage:`` value, or None.
+
+    The keychain is asked only once a decryptable blob is in hand (never
+    with ``cached_key_only``), and only a result that decodes as a JWT is
+    returned, so a blob (or what a wrong key makes of it) is never sent
+    as a token.
+    """
+    global _cursor_safe_storage_key_cache
+    body = _cursor_safe_storage_ciphertext(value)
+    if body is None:
+        return None
+    key = (_cursor_safe_storage_key_cache if cached_key_only
+           else _cursor_safe_storage_key())
+    if key is None:
+        return None
+    plain = _aes_128_cbc_decrypt(key, b" " * 16, body)
+    if plain is None:
+        # A rotated key: read the keychain again next time.
+        _cursor_safe_storage_key_cache = None
+        return None
+    try:
+        token = plain.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+    return token if token and _cursor_token_claims(token) is not None else None
+
+
+def _read_cursor_state_session(
+    candidates: tuple[str, ...] | None = None,
+) -> str | None:
+    """The editor's session JWT from ``state.vscdb``, decrypted when the
+    editor stored it safeStorage-encrypted."""
+    value = _read_cursor_state_token(candidates)
+    if value and _cursor_token_claims(value) is not None:
+        return value
+    return _decrypt_cursor_safe_storage(value)
+
+
+def _cursor_token_expired(claims: dict) -> bool:
+    expires_at = claims.get("exp")
+    return (
+        isinstance(expires_at, (int, float))
+        and not isinstance(expires_at, bool)
+        and expires_at <= time.time()
+    )
+
+
 def _get_cursor_access_token() -> str | None:
     """First usable session token: editor store, then the CLI's auth file
-    (Linux), then its keychain entry (macOS). The editor may keep its copy
-    as an opaque ``cursor-safe-storage:`` blob (Electron safeStorage), so
-    a value that doesn't decode as a JWT is skipped and the next source
-    tried."""
+    (Linux), then its keychain entry (macOS), then the editor's
+    safeStorage-encrypted copy. Decrypting comes last because it reads a
+    keychain item the user may have to allow access to. A value that
+    doesn't decode as a JWT is skipped, and an expired token only wins
+    when no source has a live one, so a stale CLI login never hides the
+    editor's current session."""
+    expired = None
     for read in (_read_cursor_state_token, _read_cursor_cli_token,
-                 _read_cursor_keychain_token):
+                 _read_cursor_keychain_token,
+                 lambda: _decrypt_cursor_safe_storage(_read_cursor_state_token())):
         token = read()
-        if token and _cursor_token_claims(token) is not None:
+        claims = _cursor_token_claims(token) if token else None
+        if claims is None:
+            continue
+        if not _cursor_token_expired(claims):
             return token
-    return None
+        expired = expired or token
+    return expired
 
 
 def _diagnose_cursor_credentials(
@@ -2059,9 +2264,10 @@ def _diagnose_cursor_credentials(
     Runs the same fall-through ``_get_cursor_access_token`` does, but
     names why it came back empty: no store at all (signed-out), a store
     macOS will not let us read (permission-required), or a store holding
-    only an opaque, non-JWT blob — safeStorage-encrypted or worse
-    (auth-required: a stored login this build cannot use). ``ok`` means a
-    usable token was found and the fetch itself is what should be judged.
+    only an opaque, non-JWT blob: safeStorage-encrypted with a key we
+    could not read, or worse (auth-required: a stored login this build
+    cannot use). ``ok`` means a usable token was found and the fetch
+    itself is what should be judged.
 
     ``candidates`` pins the check to an extra account's ``state.vscdb``;
     the CLI auth file and the keychain are the default account's, so a
@@ -2069,6 +2275,7 @@ def _diagnose_cursor_credentials(
     """
     denied = False
     saw_opaque = False
+    blobs = []
     for candidate in (candidates if candidates is not None
                       else _CURSOR_STATE_DB_CANDIDATES):
         path = os.path.expanduser(candidate)
@@ -2082,7 +2289,7 @@ def _diagnose_cursor_credentials(
             continue
         if _cursor_token_claims(value) is not None:
             return remedies.OK
-        saw_opaque = True
+        blobs.append(value)
     if candidates is None:
         # ``_read_cursor_cli_token`` swallows PermissionError like the
         # other readers, so the denied file is probed before reading it —
@@ -2100,6 +2307,11 @@ def _diagnose_cursor_credentials(
         if token:
             # The CLI's stored token is unusable and nothing else decoded.
             saw_opaque = True
+    # Decrypting reads the keychain, so it is the last thing tried, as
+    # in ``_get_cursor_access_token``.
+    if any(_decrypt_cursor_safe_storage(blob) is not None for blob in blobs):
+        return remedies.OK
+    saw_opaque = saw_opaque or bool(blobs)
     if denied:
         # A file we cannot read may hold the real token: the permission
         # grant is the first fix, whatever the readable files hold.
@@ -2329,7 +2541,11 @@ def _cursor_email(state_db: str | None, token: str, claims: dict) -> str | None:
         if os.path.isfile(path):
             rows.append(_read_cursor_state_row(path, _CURSOR_IDENTITY_KEYS))
     for row in rows:
-        if row.get("cursorAuth/accessToken") == token:
+        stored = row.get("cursorAuth/accessToken")
+        # A decrypted token came from a key already read, so matching it
+        # against an encrypted row never asks the keychain.
+        if stored == token or _decrypt_cursor_safe_storage(
+                stored, cached_key_only=True) == token:
             return row.get("cursorAuth/cachedEmail")
     for row in rows:
         profile = row.get("cursorAuth/cachedScopedProfile")
@@ -2350,7 +2566,7 @@ def _fetch_cursor(state_db: str | None = None) -> RateLimitInfo | None:
     account reports nothing rather than the default account's usage.
     """
     token = (
-        _read_cursor_state_token((state_db,))
+        _read_cursor_state_session((state_db,))
         if state_db is not None
         else _get_cursor_access_token()
     )
@@ -2565,7 +2781,7 @@ def fetch_cursor_usage_events(
     account; it is None whenever there is no usable token.
     """
     token = (
-        _read_cursor_state_token((state_db,))
+        _read_cursor_state_session((state_db,))
         if state_db is not None
         else _get_cursor_access_token()
     )
@@ -2678,8 +2894,13 @@ def _register_cursor() -> None:
             token = read()
             if token and _cursor_token_claims(token) is not None:
                 return True
-        return _keychain_item_exists("-s", "cursor-access-token",
-                                     "-a", "cursor-user")
+        if _keychain_item_exists("-s", "cursor-access-token",
+                                 "-a", "cursor-user"):
+            return True
+        # An encrypted editor token counts once its key is there too.
+        return (_cursor_safe_storage_ciphertext(_read_cursor_state_token())
+                is not None
+                and _keychain_item_exists("-s", _CURSOR_SAFE_STORAGE_SERVICE))
 
     register("cursor", fetch, signed_in=signed_in,
              diagnose=_diagnose_cursor_credentials)

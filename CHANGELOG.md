@@ -205,6 +205,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cursor usage works for editor-only users on macOS.** The Cursor
+  editor now stores its session token encrypted
+  (`cursor-safe-storage:v1:` in `state.vscdb`), so usage showed only
+  while `cursor-agent` kept its own login fresh. `swe` now decrypts the
+  editor's copy with the "Cursor Safe Storage" keychain key (Chromium's
+  `v10` AES-128-CBC, through the system libcrypto, still with no runtime
+  dependencies), and extra Cursor accounts' tokens too. Decryption runs
+  only after every plaintext source came up empty or expired, and an
+  expired `cursor-agent` login no longer hides a live editor session.
+  macOS asks once whether `security` may read the key; the read gives
+  up after 1 second and, after a timeout or refusal, waits 6 hours
+  before asking again. To allow it for good, run
+  `security find-generic-password -w -s "Cursor Safe Storage" >/dev/null`
+  in Terminal and choose Always Allow. Other platforms keep reading
+  plaintext tokens ([#796](https://github.com/c-wenlong/quiver/issues/796)).
 - **Stored tasks keep their last-known state when a source can't be
   read.** A linked issue last seen closed or merged read `in_progress`
   again on `GET /v1/tasks` while `gh` was signed out, Linear was down,

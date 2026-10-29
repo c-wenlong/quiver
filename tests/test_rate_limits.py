@@ -7,6 +7,7 @@ import sys
 import os
 import tempfile
 import time
+import urllib.parse
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -21,6 +22,7 @@ from quiver.harness.rate_limits import (
     _FETCHERS,
     _fill_unavailable_windows,
 )
+from quiver.harness import remedies
 from quiver.harness.models import _window
 
 
@@ -5680,6 +5682,255 @@ class CursorCliTokenTest(unittest.TestCase):
                     keychain.assert_not_called()
                     os.remove(path)
                     self.assertEqual(rate_limits._get_cursor_access_token(), keychain_token)
+
+
+class CursorSafeStorageTest(unittest.TestCase):
+    """The editor's ``cursor-safe-storage:v1:`` tokens, decrypted with the
+    "Cursor Safe Storage" key. ``security`` is always mocked: these tests
+    never touch a real keychain."""
+
+    # Encrypted with PBKDF2-HMAC-SHA1("quiver-test-password", "saltysalt",
+    # 1003, 16) and an IV of 16 spaces, the way Chromium's OSCrypt does on
+    # macOS. The plaintext is ``_JWT``.
+    _PASSWORD = "quiver-test-password"
+    _JWT = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiAiZ29vZ2xlLW9hdXRoMnx1c2VyXzAxU0FGRSIsICJleHAiOiA5OTk5OTk5OTk5fQ"
+        ".signature"
+    )
+    _BLOB = (
+        "cursor-safe-storage:v1:djEwnWFM9Q5DAWFOpPbLpOiK+r3xzbfY4fiWFqEJRD6s"
+        "vXaoMd6snHopyEJoMgzSqTrfp53horLKRKDO4YZ2eUE+bmUzlzv4eHVgwmZ54TAZHNF4"
+        "oak3/a2jqcTCXy34+UshZ2yPNkxYB2YVX8kG98WesyXjyPKnmDvHzB00JNDsxhI="
+    )
+
+    def setUp(self):
+        from quiver.harness import rate_limits
+        self.rl = rate_limits
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+        self.backoff = Path(tmp.name) / "cache" / "cursor_safe_storage_backoff"
+        saved = rate_limits._cursor_safe_storage_key_cache
+        rate_limits._cursor_safe_storage_key_cache = None
+        self.addCleanup(setattr, rate_limits,
+                        "_cursor_safe_storage_key_cache", saved)
+        for target, value in (
+            ("_is_macos", lambda: True),
+            ("_cursor_safe_storage_backoff_file", lambda: self.backoff),
+        ):
+            patcher = patch.object(rate_limits, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch("quiver.harness.rate_limits.shutil.which",
+                        return_value="/usr/bin/security")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _needs_libcrypto(self):
+        if self.rl._load_libcrypto() is None:
+            self.skipTest("no libcrypto to decrypt with")
+
+    def _security(self, returncode=0, stdout=None, side_effect=None):
+        if side_effect is not None:
+            return patch("quiver.harness.rate_limits.subprocess.run",
+                         side_effect=side_effect)
+        return patch(
+            "quiver.harness.rate_limits.subprocess.run",
+            return_value=MagicMock(
+                returncode=returncode,
+                stdout=self._PASSWORD + "\n" if stdout is None else stdout),
+        )
+
+    def _blob(self, raw: bytes) -> str:
+        return "cursor-safe-storage:v1:" + base64.b64encode(raw).decode()
+
+    def test_v10_blob_round_trips_with_the_known_key(self):
+        self._needs_libcrypto()
+        with self._security() as run:
+            self.assertEqual(
+                self.rl._decrypt_cursor_safe_storage(self._BLOB), self._JWT)
+            # The key is read once per process.
+            self.assertEqual(
+                self.rl._decrypt_cursor_safe_storage(self._BLOB), self._JWT)
+        run.assert_called_once()
+        args = run.call_args[0][0]
+        self.assertEqual(args[:3], ["security", "find-generic-password", "-w"])
+        self.assertIn("Cursor Safe Storage", args)
+        self.assertLessEqual(run.call_args[1]["timeout"], 1.0)
+
+    def test_other_versions_and_bad_payloads_never_ask_the_keychain(self):
+        ciphertext = base64.b64decode(
+            self._BLOB[len("cursor-safe-storage:v1:"):])[3:]
+        for value in (
+            self._blob(b"v11" + ciphertext),  # not what OSCrypt writes on macOS
+            self._blob(b"v10" + ciphertext[:-1]),  # not whole AES blocks
+            self._blob(b"v10"),
+            "cursor-safe-storage:v1:not base64!",
+            "cursor-safe-storage:AAAA",
+            "cursor-safe-storage:v2:" + self._BLOB.split(":", 2)[2],
+            self._JWT, "", None,
+        ):
+            with self._security() as run:
+                self.assertIsNone(self.rl._decrypt_cursor_safe_storage(value))
+            run.assert_not_called()
+
+    def test_wrong_key_is_not_a_token(self):
+        self._needs_libcrypto()
+        with self._security(stdout="some-other-password\n"):
+            self.assertIsNone(self.rl._decrypt_cursor_safe_storage(self._BLOB))
+        # A key that failed is read again next time.
+        self.assertIsNone(self.rl._cursor_safe_storage_key_cache)
+
+    def test_missing_item_is_absent_without_backing_off(self):
+        with self._security(returncode=44, stdout="") as run:
+            self.assertIsNone(self.rl._decrypt_cursor_safe_storage(self._BLOB))
+            self.assertIsNone(self.rl._decrypt_cursor_safe_storage(self._BLOB))
+        self.assertEqual(run.call_count, 2)
+        self.assertFalse(self.backoff.exists())
+
+    def test_timeout_or_refusal_backs_off(self):
+        timeout = subprocess.TimeoutExpired(["security"], 1.0)
+        for security in (self._security(side_effect=timeout),
+                         self._security(returncode=128, stdout="")):
+            with self.subTest(security=security):
+                if self.backoff.exists():
+                    self.backoff.unlink()
+                with security as run:
+                    self.assertIsNone(
+                        self.rl._decrypt_cursor_safe_storage(self._BLOB))
+                self.assertTrue(self.backoff.exists())
+                # Within the backoff the dialog is never put up again.
+                with self._security() as run:
+                    self.assertIsNone(
+                        self.rl._decrypt_cursor_safe_storage(self._BLOB))
+                run.assert_not_called()
+
+    def test_one_process_at_a_time_may_put_the_dialog_up(self):
+        """While another ``swe`` holds the lock (the app reads several
+        Cursor accounts at once), this one gives up without asking."""
+        import fcntl
+        self.backoff.parent.mkdir(parents=True)
+        lock_path = self.backoff.with_name("cursor_safe_storage.lock")
+        with open(lock_path, "a") as holder, \
+             patch.object(self.rl, "_CURSOR_SAFE_STORAGE_TIMEOUT", 0.1), \
+             self._security() as run:
+            fcntl.flock(holder, fcntl.LOCK_EX)
+            self.assertIsNone(self.rl._decrypt_cursor_safe_storage(self._BLOB))
+            run.assert_not_called()
+            fcntl.flock(holder, fcntl.LOCK_UN)
+            if self.rl._load_libcrypto() is not None:
+                self.assertEqual(
+                    self.rl._decrypt_cursor_safe_storage(self._BLOB),
+                    self._JWT)
+                run.assert_called_once()
+
+    def test_backoff_expires(self):
+        self._needs_libcrypto()
+        self.backoff.parent.mkdir(parents=True)
+        self.backoff.touch()
+        old = time.time() - self.rl._CURSOR_SAFE_STORAGE_BACKOFF - 60
+        os.utime(self.backoff, (old, old))
+        with self._security():
+            self.assertEqual(
+                self.rl._decrypt_cursor_safe_storage(self._BLOB), self._JWT)
+
+    def test_off_macos_the_keychain_is_never_asked(self):
+        with patch.object(self.rl, "_is_macos", return_value=False), \
+             self._security() as run:
+            self.assertIsNone(self.rl._decrypt_cursor_safe_storage(self._BLOB))
+        run.assert_not_called()
+
+    def test_ladder_decrypts_the_editor_token_last(self):
+        self._needs_libcrypto()
+        rl = self.rl
+        cli_token = CursorFetcherTest._jwt({"sub": "cli", "exp": 9_999_999_999})
+        with patch.object(rl, "_read_cursor_state_token",
+                          return_value=self._BLOB), \
+             patch.object(rl, "_read_cursor_cli_token", return_value=None), \
+             patch.object(rl, "_read_cursor_keychain_token",
+                          return_value=cli_token), \
+             self._security() as run:
+            self.assertEqual(rl._get_cursor_access_token(), cli_token)
+        run.assert_not_called()
+        with patch.object(rl, "_read_cursor_state_token",
+                          return_value=self._BLOB), \
+             patch.object(rl, "_read_cursor_cli_token", return_value=None), \
+             patch.object(rl, "_read_cursor_keychain_token",
+                          return_value=None), \
+             self._security():
+            self.assertEqual(rl._get_cursor_access_token(), self._JWT)
+
+    def test_expired_cli_token_does_not_hide_the_editor_session(self):
+        self._needs_libcrypto()
+        rl = self.rl
+        stale = CursorFetcherTest._jwt({"sub": "cli", "exp": 1_000_000_000})
+        with patch.object(rl, "_read_cursor_state_token",
+                          return_value=self._BLOB), \
+             patch.object(rl, "_read_cursor_cli_token", return_value=None), \
+             patch.object(rl, "_read_cursor_keychain_token",
+                          return_value=stale), \
+             self._security():
+            self.assertEqual(rl._get_cursor_access_token(), self._JWT)
+        # With nothing live, the expired token still answers (re-login).
+        rl._cursor_safe_storage_key_cache = None
+        with patch.object(rl, "_read_cursor_state_token",
+                          return_value=self._BLOB), \
+             patch.object(rl, "_read_cursor_cli_token", return_value=None), \
+             patch.object(rl, "_read_cursor_keychain_token",
+                          return_value=stale), \
+             self._security(returncode=44, stdout=""):
+            self.assertEqual(rl._get_cursor_access_token(), stale)
+
+    def _state_db(self) -> str:
+        # No ``cachedScopedProfile``: the email can only come from
+        # matching the decrypted row to the token.
+        return CursorFetcherTest._state_db(
+            self, self.tmp, self._BLOB, email="safe@work.com")
+
+    def test_account_state_db_is_decrypted_and_diagnosed_ok(self):
+        self._needs_libcrypto()
+        rl = self.rl
+        db = self._state_db()
+        with self._security(), patch.object(
+            rl, "_fetch_json",
+            return_value=CursorFetcherTest._SAMPLE_RESPONSE,
+        ) as fetch, patch.object(rl, "_read_cursor_keychain_token") as cli:
+            self.assertEqual(rl._diagnose_cursor_credentials((db,)),
+                             remedies.OK)
+            info = rl._fetch_cursor(db)
+        self.assertIsNotNone(info)
+        self.assertEqual(info.email, "safe@work.com")
+        cookie = fetch.call_args_list[0][0][0].get_header("Cookie")
+        self.assertIn(urllib.parse.quote("google-oauth2|user_01SAFE", safe=""),
+                      cookie)
+        self.assertNotIn("cursor-safe-storage", cookie)
+        cli.assert_not_called()
+
+    def test_account_state_db_without_the_key_is_auth_required(self):
+        rl = self.rl
+        db = self._state_db()
+        with self._security(returncode=44, stdout=""), \
+             patch.object(rl, "_fetch_json") as fetch:
+            self.assertEqual(rl._diagnose_cursor_credentials((db,)),
+                             remedies.AUTH_REQUIRED)
+            self.assertIsNone(rl._fetch_cursor(db))
+        fetch.assert_not_called()
+
+    def test_signed_in_probe_counts_a_blob_with_its_key_without_reading_it(self):
+        rl = self.rl
+        probe = rl._SIGNED_IN["cursor"][1]
+        present = {("-s", "Cursor Safe Storage")}
+        with patch.object(rl, "_read_cursor_state_token",
+                          return_value=self._BLOB), \
+             patch.object(rl, "_read_cursor_cli_token", return_value=None), \
+             patch.object(rl, "_keychain_item_exists",
+                          side_effect=lambda *q: q in present), \
+             self._security() as run:
+            self.assertTrue(probe())
+            present.clear()
+            self.assertFalse(probe())
+        run.assert_not_called()
 
 
 class NoReadingReasonTest(unittest.TestCase):
