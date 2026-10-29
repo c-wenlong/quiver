@@ -578,10 +578,15 @@ private final class StopFlag: @unchecked Sendable {
 }
 
 /// The last moment the helper got through a beat (a pass, a startup
-/// step); the watchdog reads it off the loop's thread.
+/// step); the watchdog reads it off the loop's thread. Measured on the
+/// uptime clock, which cannot jump like Date() (a clock set forward
+/// must not kill a healthy helper) and pauses while the Mac sleeps,
+/// like the passes do.
 private final class Heartbeat: @unchecked Sendable {
     private let lock = NSLock()
-    private var last = Date()
-    func beat() { lock.withLock { last = Date() } }
-    var silentFor: TimeInterval { lock.withLock { Date().timeIntervalSince(last) } }
+    private var last = ProcessInfo.processInfo.systemUptime
+    func beat() { lock.withLock { last = ProcessInfo.processInfo.systemUptime } }
+    var silentFor: TimeInterval {
+        lock.withLock { ProcessInfo.processInfo.systemUptime - last }
+    }
 }
