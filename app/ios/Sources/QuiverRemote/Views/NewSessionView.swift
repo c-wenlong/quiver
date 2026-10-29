@@ -477,7 +477,7 @@ struct ModelField: View {
             Picker("Model", selection: Binding(
                 get: { selection.choice },
                 set: { selection.choose($0) })) {
-                ForEach(NewSessionOptions.modelChoices(harness, on: machine), id: \.self) { c in
+                ForEach(selection.choices(for: harness, on: machine), id: \.self) { c in
                     Text(c.label).tag(c)
                 }
             }

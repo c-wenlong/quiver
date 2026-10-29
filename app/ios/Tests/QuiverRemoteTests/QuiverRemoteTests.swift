@@ -1149,6 +1149,22 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertEqual(sel.choice, .recent("opus"))
     }
 
+    func testARefreshKeepsTheSelectedModelInTheMenu() {
+        var m = modelMachine()
+        var sel = ModelSelection()
+        sel.follow("claude", on: m)
+        sel.choose(.recent("haiku"))
+        // The 15 s machine poll drops haiku from the recent five.
+        m.recentModels?["claude"] = ["fresh", "opus", "sonnet"]
+        XCTAssertEqual(sel.choices(for: "claude", on: m),
+                       [.harnessDefault, .recent("fresh"), .recent("opus"), .recent("sonnet"), .recent("haiku"), .other])
+        // A listed or non-model choice adds nothing.
+        sel.choose(.recent("opus"))
+        XCTAssertEqual(sel.choices(for: "claude", on: m), NewSessionOptions.modelChoices("claude", on: m))
+        sel.choose(.other)
+        XCTAssertEqual(sel.choices(for: "claude", on: m), NewSessionOptions.modelChoices("claude", on: m))
+    }
+
     func testModelSelectionSendsNothingForAHarnessThatCantTakeOne() {
         var m = modelMachine()
         m.recentModels?["gemini"] = ["gemini-3-pro"]

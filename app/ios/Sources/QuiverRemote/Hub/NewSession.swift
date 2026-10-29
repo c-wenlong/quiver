@@ -160,6 +160,15 @@ struct ModelSelection: Equatable {
         touched = false
     }
 
+    /// The menu's entries for the sheet. A machine-row refresh can push
+    /// the selected recent model out of the five; it stays listed, just
+    /// before Other, so the menu still shows it checked.
+    func choices(for harness: String?, on machine: Machine) -> [ModelChoice] {
+        var all = NewSessionOptions.modelChoices(harness, on: machine)
+        if case .recent = choice, !all.contains(choice) { all.insert(choice, at: all.count - 1) }
+        return all
+    }
+
     /// What the launch posts as `model`: nil for Harness default, an
     /// empty Other field, or a harness that can't take a pick.
     func model(for harness: String?, on machine: Machine) -> String? {
