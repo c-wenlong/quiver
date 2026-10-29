@@ -480,45 +480,48 @@ class JsonlTailSource:
             ),
         }
 
-    def restore(self, state: dict) -> None:
-        if state.get("source") == "jsonl" and state.get("path") == str(self.path):
+    def restore(self, state: dict) -> bool:
+        """Resume from a saved cursor; False when it isn't this file's
+        (another path, or a head that no longer matches), leaving the
+        source unplaced for the caller to start fresh."""
+        if state.get("source") != "jsonl" or state.get("path") != str(self.path):
+            return False
+        try:
+            offset = int(state.get("offset") or 0)
+        except (TypeError, ValueError):
+            offset = 0
+        stored = state.get("head")
+        if isinstance(stored, str) and stored:
             try:
-                self.offset = int(state.get("offset") or 0)
-            except (TypeError, ValueError):
-                self.offset = 0
-            stored = state.get("head")
-            if isinstance(stored, str) and stored:
-                try:
-                    head = base64.b64decode(stored.encode("ascii"))
-                except ValueError:
-                    head = b""
-                if head:
-                    cur = self._file_head(len(head))
-                    if cur == head[: len(cur)]:
-                        # Verified — possibly a prefix shorter than the
-                        # sample, when the file was truncated while down.
-                        self._head = head
-                    else:
-                        # Not the file the cursor tracked: a rewrite
-                        # that happened while down reads as a new stream.
-                        self.offset = 0
-                        self._head = b""
-                    return
-            # A cursor written before the bytes were stored verifies
-            # only a file that still reaches the sampled length.
-            try:
-                head_len = int(state.get("head_len") or 0)
-            except (TypeError, ValueError):
-                head_len = 0
-            head_sha = str(state.get("head_sha") or "")
-            if not (head_len and head_sha):
-                return  # a cursor from before the check: nothing to verify
-            head = self._file_head(head_len)
-            if len(head) == head_len and hashlib.sha256(head).hexdigest() == head_sha:
-                self._head = head
-            else:
-                self.offset = 0
-                self._head = b""
+                head = base64.b64decode(stored.encode("ascii"))
+            except ValueError:
+                head = b""
+            if head:
+                cur = self._file_head(len(head))
+                if cur != head[: len(cur)]:
+                    # Not the file the cursor tracked: a rewrite that
+                    # happened while down.
+                    return False
+                # Verified — possibly a prefix shorter than the sample,
+                # when the file was truncated while down.
+                self.offset, self._head = offset, head
+                return True
+        # A cursor written before the bytes were stored verifies only a
+        # file that still reaches the sampled length.
+        try:
+            head_len = int(state.get("head_len") or 0)
+        except (TypeError, ValueError):
+            head_len = 0
+        head_sha = str(state.get("head_sha") or "")
+        if not (head_len and head_sha):
+            # A cursor from before the check: nothing to verify.
+            self.offset = offset
+            return True
+        head = self._file_head(head_len)
+        if len(head) != head_len or hashlib.sha256(head).hexdigest() != head_sha:
+            return False
+        self.offset, self._head = offset, head
+        return True
 
     def skip_to_end(self) -> None:
         try:
@@ -722,14 +725,19 @@ class OpencodeSource:
             "seq": self.seq,
         }
 
-    def restore(self, state: dict) -> None:
-        if state.get("source") == "opencode":
-            self.cursor = _part_cursor(state.get("cursor"))
-            try:
-                seq = state.get("seq")
-                self.seq = None if seq is None else int(seq)
-            except (TypeError, ValueError):
-                self.seq = None
+    def restore(self, state: dict) -> bool:
+        """Resume from a saved cursor; False when it is another
+        session's or another source's."""
+        if state.get("source") != "opencode" or \
+                state.get("session_id", self.session_id) != self.session_id:
+            return False
+        self.cursor = _part_cursor(state.get("cursor"))
+        try:
+            seq = state.get("seq")
+            self.seq = None if seq is None else int(seq)
+        except (TypeError, ValueError):
+            self.seq = None
+        return True
 
     def skip_to_end(self) -> None:
         conn = self._open()
@@ -977,11 +985,14 @@ class SnapshotSource:
     def state(self) -> dict:
         return {"source": "snapshot", "fps": self._fps}
 
-    def restore(self, state: dict) -> None:
-        if state.get("source") == "snapshot":
-            fps = state.get("fps")
-            if isinstance(fps, list):
-                self._fps = [str(f) for f in fps]
+    def restore(self, state: dict) -> bool:
+        """Resume from a saved cursor; False when it isn't a snapshot
+        cursor."""
+        fps = state.get("fps")
+        if state.get("source") != "snapshot" or not isinstance(fps, list):
+            return False
+        self._fps = [str(f) for f in fps]
+        return True
 
     def skip_to_end(self) -> None:
         try:
@@ -1141,15 +1152,18 @@ class Tailer:
         self.source = source
         self._cursor_path = _cursor_path(cursors_dir, key)
         state = self._load_cursor()
-        if state:
-            source.restore(state)
-        elif has_journal:
-            # Journal exists but the cursor is gone: skip backfill so
-            # history is not duplicated; live appends still land.
-            source.skip_to_end()
-        elif hasattr(source, "start_near_end"):
-            # First sight of this session: recent history only.
-            source.start_near_end()
+        # A cursor the source can't verify as its own (another file
+        # after a resume in another folder, a rewrite while down) counts
+        # as none: resuming at 0 would re-journal the whole transcript.
+        if not (state and source.restore(state)):
+            state = {}
+            if has_journal:
+                # Journal exists but the cursor is gone: skip backfill
+                # so history is not duplicated; live appends still land.
+                source.skip_to_end()
+            elif hasattr(source, "start_near_end"):
+                # First sight of this session: recent history only.
+                source.start_near_end()
         self.next_poll_at = 0.0
         self._pending_save = False
         # Whether the last poll moved the source (bytes, rows or

@@ -750,6 +750,56 @@ class TestTailer(unittest.TestCase):
         t = tail.Tailer("k", _session_for(), src, self.tmp, has_journal=True)
         self.assertEqual(t.poll(time.time(), True), [])
 
+    def test_cursor_for_another_path_does_not_replay_history(self):
+        # A resume in another folder moves the transcript: the old
+        # cursor names the old path. It used to leave the offset at 0,
+        # so the whole transcript was journaled again.
+        old = self.tmp / "old.jsonl"
+        old.write_text(json.dumps(_claude_user("a")) + "\n")
+        cursors = self.tmp / "cursors"
+        t1 = tail.Tailer("k", _session_for(),
+                         tail.JsonlTailSource(old, "claude"), cursors, False)
+        t1.poll(time.time(), True)
+        t1.commit_cursor()
+        moved = self.tmp / "moved.jsonl"
+        moved.write_text(json.dumps(_claude_user("a")) + "\n"
+                         + json.dumps(_claude_user("b")) + "\n")
+        src = tail.JsonlTailSource(moved, "claude")
+        t2 = tail.Tailer("k", _session_for(), src, cursors, True)
+        self.assertEqual(t2.poll(time.time(), True), [])
+        with open(moved, "a") as fh:
+            fh.write(json.dumps(_claude_user("c")) + "\n")
+        self.assertEqual([m["text"] for m in t2.poll(time.time(), True)],
+                         ["c"])
+
+    def test_unverified_cursor_without_journal_backfills_recent(self):
+        # No journal yet: a cursor that fails its head check starts
+        # near the end like a first sight, not at byte 0.
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("a")) + "\n")
+        cursors = self.tmp / "cursors"
+        t1 = tail.Tailer("k", _session_for(),
+                         tail.JsonlTailSource(path, "claude"), cursors, False)
+        t1.poll(time.time(), True)
+        t1.commit_cursor()
+        path.write_text("".join(json.dumps(_claude_user(f"m{i}")) + "\n"
+                                for i in range(50)))
+        src = tail.JsonlTailSource(path, "claude")
+        with patch.object(tail, "BACKFILL_BYTES", 200):
+            t2 = tail.Tailer("k", _session_for(), src, cursors, False)
+        self.assertGreater(src.offset, 0)
+        texts = [m["text"] for m in t2.poll(time.time(), True)]
+        self.assertTrue(texts)
+        self.assertNotIn("m0", texts)
+
+    def test_opencode_cursor_for_another_session_is_not_restored(self):
+        src = tail.OpencodeSource(self.tmp / "none.db", "s2")
+        self.assertFalse(src.restore(
+            {"source": "opencode", "session_id": "s1", "cursor": [5, "x"]}))
+        self.assertEqual(src.cursor, (0, ""))
+        self.assertTrue(src.restore(
+            {"source": "opencode", "session_id": "s2", "cursor": [5, "x"]}))
+
     def test_cursor_commits_only_after_emit(self):
         # The cursor must lag the journal write: a crash between poll
         # and commit replays events (duplicates) instead of losing them.
