@@ -72,8 +72,10 @@ def capability(name: str, reg: dict | None = None) -> dict | None:
         except (OSError, ValueError):
             reg = {}
     entry = reg.get(name) if isinstance(reg, dict) else None
-    caps = ((entry if isinstance(entry, dict) else {})
-            .get("capabilities") or {}).get("model")
+    # A hand-edited registry can hold anything here; a malformed
+    # declaration is ignored rather than taking the hub down with it.
+    caps = (entry if isinstance(entry, dict) else {}).get("capabilities")
+    caps = caps.get("model") if isinstance(caps, dict) else None
     base = dict(MODEL_FALLBACK.get(name) or {})
     if isinstance(caps, dict):
         if "supported" in caps and not caps["supported"]:

@@ -18,7 +18,8 @@ Claude's ``<synthetic>`` and Cursor's "(Auto …)" labels), ``unknown``,
 and per-harness internal names (``JUNK_MODELS``). OpenCode replies whose
 row kept no provider are named ``provider/model`` from ``opencode.db``'s
 ``session_v2.model`` JSON (``{id, providerID}``), the form its launch
-needs; one with no provider anywhere is dropped.
+needs (a bare id can carry a slash of its own, so every OpenCode name
+is looked up); a slash-less one with no provider anywhere is dropped.
 """
 
 from __future__ import annotations
@@ -85,7 +86,11 @@ def _fold(path: Path) -> dict[str, dict[str, float]]:
     now = time.time()
     entry = _state.get(key)
     sig = _signature(path)
-    if entry is not None and entry["sig"] == sig:
+    # An unchanged ledger is served from memory, but only until the
+    # periodic full re-read is due: an in-place relabel keeps its rowid,
+    # so only that re-read ever sees it.
+    if entry is not None and entry["sig"] == sig \
+            and now - entry["full_at"] < _FULL_EVERY_S:
         return entry["seen"]
     db = _open_ro(path)
     if db is None:
@@ -193,15 +198,21 @@ def recent_models(home: Path | str | None = None,
             picks: list[str] = []
             for model, _ts in sorted(models.items(),
                                      key=lambda kv: kv[1], reverse=True):
-                if harness == "opencode" and "/" not in model:
+                if harness == "opencode":
                     if providers is None:
                         base = root if root is not None else Path.home()
                         providers = _opencode_providers(
                             base / ".local/share/opencode/opencode.db")
+                    # A slash doesn't prove a provider: the ledger keeps
+                    # a bare id (``nvidia/nemotron:free``) when the row
+                    # had none. An id opencode.db knows is bare, so it
+                    # takes its provider; a name with no slash and no
+                    # known provider can't launch.
                     provider = providers.get(model)
-                    if not provider:
+                    if provider:
+                        model = f"{provider}/{model}"
+                    elif "/" not in model:
                         continue
-                    model = f"{provider}/{model}"
                 if model in picks or not _keep(harness, model):
                     continue
                 picks.append(model)

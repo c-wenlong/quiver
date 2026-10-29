@@ -43,6 +43,13 @@ class TestLaunchModel(unittest.TestCase):
             launch_model.model_argv("devin", "x", settings_dir=Path("/nx"),
                                     stem="s", reg=reg)
 
+    def test_malformed_capabilities_are_ignored(self):
+        for caps in ("oops", ["model"], {"model": "--model"}):
+            reg = {"claude": {"capabilities": caps}}
+            # Falls back to the table instead of raising.
+            self.assertEqual(launch_model.capability("claude", reg),
+                             {"flag": "--model"})
+
     def test_settings_file_nests_the_key_and_prunes_old_ones(self):
         folder = Path(tempfile.mkdtemp())
         stale = folder / "old.json"
@@ -142,14 +149,33 @@ class TestRecentModels(unittest.TestCase):
                    (json.dumps({"id": "MiniMax-M3", "providerID": "minimax",
                                 "variant": "thinking"}),))
         db.execute("INSERT INTO session_v2 VALUES ('s2', NULL, 2)")
+        db.execute("INSERT INTO session_v2 VALUES ('s3', ?, 3)",
+                   (json.dumps({"id": "nvidia/nemotron:free",
+                                "providerID": "openrouter"}),))
         db.commit()
         db.close()
         self._add(_rec("o1", "opencode", "MiniMax-M3", 3),
                   _rec("o2", "opencode", "anthropic/claude-opus-5", 2),
                   _rec("o3", "opencode", "minimax/MiniMax-M3", 1),
-                  _rec("o4", "opencode", "no-provider-anywhere", 4))
+                  _rec("o4", "opencode", "no-provider-anywhere", 4),
+                  # A bare id with a slash of its own still takes one.
+                  _rec("o5", "opencode", "nvidia/nemotron:free", 0))
         self.assertEqual(recent_models.recent_models(self.home)["opencode"],
-                         ["minimax/MiniMax-M3", "anthropic/claude-opus-5"])
+                         ["minimax/MiniMax-M3", "anthropic/claude-opus-5",
+                          "openrouter/nvidia/nemotron:free"])
+
+    def test_an_in_place_relabel_shows_after_the_full_reread(self):
+        self._add(_rec("a", "claude", "sonnet", 1))
+        recent_models.recent_models(self.home)
+        # A relabel keeps the rowid, so only the periodic re-read sees
+        # it, even when the ledger then stays unchanged.
+        self.store.db.execute("UPDATE events SET model = 'opus'")
+        self.store.db.commit()
+        recent_models.recent_models(self.home)
+        key = str(ledger_path_for(self.home))
+        recent_models._state[key]["full_at"] -= recent_models._FULL_EVERY_S
+        self.assertEqual(recent_models.recent_models(self.home),
+                         {"claude": ["opus"]})
 
     def test_no_ledger_is_no_history(self):
         self.assertEqual(
