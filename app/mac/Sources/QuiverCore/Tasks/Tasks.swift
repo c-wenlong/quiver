@@ -749,6 +749,15 @@ public enum LaunchOptions {
         return machine?.lastModels?[harness] ?? ""
     }
 
+    /// The field's refill on a harness or machine change: nil for an
+    /// edited field (its text, even a clear back to the prefill, is the
+    /// user's own and stays), else the machine's last-used model for
+    /// the harness — empty when none ran.
+    public static func modelText(edited: Bool, _ harness: String?, on machine: HubMachine?) -> String? {
+        guard !edited else { return nil }
+        return lastModel(harness, on: machine)
+    }
+
     /// What the POST body's `model` is: `text` trimmed, or nil when
     /// it's blank or this launch can't take a pick.
     public static func model(_ text: String, supported: Bool) -> String? {

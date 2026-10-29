@@ -28,9 +28,10 @@ struct ResolveIssueSheet: View {
     /// The launch `model` pick: free text, blank for the harness's
     /// default.
     @State private var modelName = ""
-    /// The last prefill the sheet wrote into `modelName`; the
-    /// `filledPrompt` rule — a typed pick survives a harness change.
-    @State private var filledModel: String?
+    /// The field's own binding sets this on any keystroke, so even a
+    /// clear back to the prefill counts: a harness change must not
+    /// overwrite what the user left.
+    @State private var modelEdited = false
     /// The suggested prompt last put in the field. A newer read replaces
     /// it only while the field still holds it, so edits stay.
     @State private var filledPrompt: String?
@@ -175,7 +176,8 @@ struct ResolveIssueSheet: View {
     @ViewBuilder private var modelField: some View {
         if LaunchOptions.showsModel(on: hubMachine) {
             group("Model (optional)") {
-                TextField("e.g. sonnet, blank for the default", text: $modelName)
+                TextField("e.g. sonnet, blank for the default",
+                          text: Binding(get: { modelName }, set: { modelName = $0; modelEdited = true }))
                     .quiverField(monospaced: true)
                     .disabled(!takesModel)
                 if !takesModel {
@@ -326,14 +328,12 @@ struct ResolveIssueSheet: View {
     }
 
     /// The Model field's prefill: the hub's last-used model for the
-    /// picked harness. A re-fill lands only while the field is empty or
-    /// still holds the sheet's own suggestion, so a typed pick survives
-    /// a harness change — `fillPrompt`'s rule.
+    /// picked harness. A re-fill lands only while the user hasn't
+    /// touched the field — a typed pick, even a clear, keeps what
+    /// they left.
     private func prefillModel() {
-        let last = LaunchOptions.lastModel(harness, on: hubMachine)
-        guard modelName.isEmpty || modelName == filledModel else { return }
-        modelName = last
-        filledModel = last
+        guard let next = LaunchOptions.modelText(edited: modelEdited, harness, on: hubMachine) else { return }
+        modelName = next
     }
 
     private func start() async {

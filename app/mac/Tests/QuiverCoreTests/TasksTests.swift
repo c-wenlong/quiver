@@ -408,6 +408,12 @@ import Testing
         #expect(LaunchOptions.model("provider/x", supported: true) == "provider/x")
         #expect(LaunchOptions.model("  ", supported: true) == nil)
         #expect(LaunchOptions.model("sonnet", supported: false) == nil)
+
+        // The refill keeps an edited field's text — a deliberate clear
+        // included — and otherwise serves the last-used model.
+        #expect(LaunchOptions.modelText(edited: true, "claude", on: machine) == nil)
+        #expect(LaunchOptions.modelText(edited: false, "claude", on: machine) == "claude-sonnet-4.5")
+        #expect(LaunchOptions.modelText(edited: false, "codex", on: machine) == "")
     }
 }
 

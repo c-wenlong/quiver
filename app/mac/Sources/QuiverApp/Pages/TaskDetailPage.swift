@@ -28,10 +28,10 @@ struct TaskDetailPage: View {
     /// The launch `model` pick: free text, blank for the harness's
     /// default.
     @State private var modelName = ""
-    /// The last prefill the panel wrote into `modelName`. A harness
-    /// change re-fills only while the field still holds it, so a typed
-    /// pick survives — the resolve sheet's `filledPrompt` rule.
-    @State private var filledModel: String?
+    /// The field's own binding sets this on any keystroke, so even a
+    /// clear back to the prefill counts: a harness change must not
+    /// overwrite what the user left.
+    @State private var modelEdited = false
     @State private var flow = IssueLaunchFlow()
     /// The running launch, so going back stops it before it can open a
     /// chat under a view that is gone.
@@ -256,7 +256,7 @@ struct TaskDetailPage: View {
             // send one it would drop; `false` disables with a note.
             if let picked = pickedHarness, picked.launchModel != nil {
                 TextField("Model, e.g. sonnet; blank for the default",
-                          text: $modelName)
+                          text: Binding(get: { modelName }, set: { modelName = $0; modelEdited = true }))
                     .quiverField(monospaced: true)
                     .disabled(flow.busy || picked.launchModel != true)
                 if picked.launchModel != true {
@@ -314,14 +314,12 @@ struct TaskDetailPage: View {
     }
 
     /// The Model field's prefill: the hub's last-used model for the
-    /// picked harness. A re-fill lands only while the field is empty
-    /// or still holds the sheet's own suggestion, so a typed pick
-    /// survives a harness change.
+    /// picked harness. A re-fill lands only while the user hasn't
+    /// touched the field — a typed pick, even a clear, keeps what
+    /// they left.
     private func prefillModel() {
-        let last = pickedHarness?.lastModel ?? ""
-        guard modelName.isEmpty || modelName == filledModel else { return }
-        modelName = last
-        filledModel = last
+        guard !modelEdited else { return }
+        modelName = pickedHarness?.lastModel ?? ""
     }
 
     /// The hub's step while the launch works, then why it stopped.
