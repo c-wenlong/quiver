@@ -23,9 +23,13 @@ final class LaunchSheetsUITests: XCTestCase {
         app.launch()
     }
 
-    private func openNewSessionSheet() {
+    /// The landing button only exists when the app is paired; an
+    /// unpaired simulator skips rather than fails, so these can stay in
+    /// the scheme's default test action.
+    private func openNewSessionSheet() throws {
         let newSession = app.buttons["New session"]
-        XCTAssertTrue(newSession.waitForExistence(timeout: 15), "Sessions page: no New session button — is the app paired?")
+        try XCTSkipUnless(newSession.waitForExistence(timeout: 15),
+                          "no paired hub on this simulator — pair once with a quiver://pair link")
         newSession.tap()
     }
 
@@ -39,49 +43,66 @@ final class LaunchSheetsUITests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label == %@", name)).firstMatch
     }
 
+    /// An empty TextField reports its placeholder through `value`; both
+    /// mean "no model picked".
+    private func isEmptyOrPlaceholder(_ field: XCUIElement) -> Bool {
+        let value = field.value as? String ?? ""
+        return value.isEmpty || value == field.placeholderValue as? String
+    }
+
+    /// A harness chip that is not the current selection, so tapping it
+    /// always switches. nil when every candidate is missing.
+    private func otherChip(than names: [String]) -> XCUIElement? {
+        names.map(chip).first { $0.exists && !$0.isSelected }
+    }
+
     func testModelFieldPrefillsRefillsAndKeepsAnEdit() throws {
-        openNewSessionSheet()
+        try openNewSessionSheet()
 
         let field = modelField
         XCTAssertTrue(field.waitForExistence(timeout: 10), "Model field missing on the New session sheet")
+        let harnesses = ["Codex", "Claude Code", "Claude", "Gemini"]
 
         // Prefill: whatever the harness's last-used model is, the field
         // starts non-empty for a model-capable default harness.
+        XCTAssertFalse(isEmptyOrPlaceholder(field), "Model field was not prefilled")
         let initial = field.value as? String ?? ""
-        XCTAssertFalse(initial.isEmpty, "Model field was not prefilled")
 
-        // A harness switch re-prefills while the field is untouched.
-        let codex = chip("Codex")
-        XCTAssertTrue(codex.waitForExistence(timeout: 5), "no Codex harness chip")
-        codex.tap()
+        // A harness switch re-prefills while the field is untouched: tap
+        // whichever offered chip is not the current selection.
+        guard let first = otherChip(than: harnesses) else {
+            XCTFail("no alternate harness chip to switch to"); return
+        }
+        first.tap()
         XCTAssertTrue(field.waitForExistence(timeout: 5))
-        let codexValue = field.value as? String ?? ""
-        XCTAssertFalse(codexValue.isEmpty, "Model field did not re-prefill for Codex")
-        XCTAssertNotEqual(initial, codexValue, "Model field kept the old suggestion across a harness switch")
+        let refilled = field.value as? String ?? ""
+        XCTAssertFalse(isEmptyOrPlaceholder(field), "Model field did not re-prefill after the switch")
+        XCTAssertNotEqual(initial, refilled, "Model field kept the old suggestion across a harness switch")
 
         // A typed value survives the next harness switch.
         field.tap()
         field.typeText("-typed")
         let typed = field.value as? String ?? ""
-        let claude = chip("Claude Code")
-        if !claude.exists { chip("Claude").tap() } else { claude.tap() }
+        guard let second = otherChip(than: harnesses) else {
+            XCTFail("no second harness chip to switch to"); return
+        }
+        second.tap()
         XCTAssertEqual(field.value as? String, typed, "typed model was overwritten by a harness switch")
 
-        // A deliberate clear is an edit too: it stays cleared. An empty
-        // field reports its placeholder as value, so compare against it.
+        // A deliberate clear is an edit too: it stays cleared. Delete
+        // once per character present (plus margin), then compare
+        // against the placeholder, which empty fields report.
         field.tap()
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 32))
-        let cleared = field.value as? String ?? ""
-        XCTAssertTrue(cleared.isEmpty || cleared == field.placeholderValue as? String,
-                      "field did not clear: \(cleared)")
-        codex.tap()
-        let after = field.value as? String ?? ""
-        XCTAssertTrue(after.isEmpty || after == field.placeholderValue as? String,
-                      "cleared model was resurrected by a harness switch: \(after)")
+        let chars = (field.value as? String ?? "").count
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: chars + 8))
+        XCTAssertTrue(isEmptyOrPlaceholder(field), "field did not clear: \(field.value ?? "")")
+        first.tap()
+        XCTAssertTrue(isEmptyOrPlaceholder(field),
+                      "cleared model was resurrected by a harness switch: \(field.value ?? "")")
     }
 
     func testAnUnsupportedHarnessDisablesTheField() throws {
-        openNewSessionSheet()
+        try openNewSessionSheet()
 
         let kilo = chip("Kilo")
         XCTAssertTrue(kilo.waitForExistence(timeout: 10), "no Kilo harness chip")
@@ -97,13 +118,13 @@ final class LaunchSheetsUITests: XCTestCase {
     /// The resolve sheet on a GitHub issue gets the same Model field.
     func testIssueResolveSheetShowsTheField() throws {
         // Deep links need a paired app on screen first.
-        XCTAssertTrue(app.buttons["New session"].waitForExistence(timeout: 15))
+        try XCTSkipUnless(app.buttons["New session"].waitForExistence(timeout: 15),
+                          "no paired hub on this simulator — pair once with a quiver://pair link")
         XCUIDevice.shared.system.open(URL(string: "quiver://issue/c-wenlong/quiver/914")!)
         let resolve = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Resolve with agent")).firstMatch
         XCTAssertTrue(resolve.waitForExistence(timeout: 15), "no Resolve with agent button on the issue")
         resolve.tap()
         XCTAssertTrue(modelField.waitForExistence(timeout: 10), "Model field missing on the resolve sheet")
-        let value = modelField.value as? String ?? ""
-        XCTAssertFalse(value.isEmpty, "resolve-sheet Model field was not prefilled")
+        XCTAssertFalse(isEmptyOrPlaceholder(modelField), "resolve-sheet Model field was not prefilled")
     }
 }
