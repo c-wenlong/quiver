@@ -15,12 +15,22 @@ struct ResolveIssueSheet: View {
 
     /// What the hub can start, once asked; nil while asking.
     @State private var offered: [String]?
+    /// The hub machine's own `/v1/machines` row — the launch lands
+    /// there, so its `model_at_launch`/`last_models` drive the Model
+    /// row. nil while asking or when the ask failed.
+    @State private var hubMachine: HubMachine?
     /// Why the hub couldn't be asked: down, unpaired, or refusing.
     @State private var hubProblem: String?
     @State private var harness: String?
     @State private var context = ""
     @State private var postContext = true
     @State private var prompt = ""
+    /// The launch `model` pick: free text, blank for the harness's
+    /// default.
+    @State private var modelName = ""
+    /// The last prefill the sheet wrote into `modelName`; the
+    /// `filledPrompt` rule — a typed pick survives a harness change.
+    @State private var filledModel: String?
     /// The suggested prompt last put in the field. A newer read replaces
     /// it only while the field still holds it, so edits stay.
     @State private var filledPrompt: String?
@@ -60,6 +70,7 @@ struct ResolveIssueSheet: View {
         .onSheetDismissRequest { if !flow.busy { dismiss() } }
         .task { await loadIssue() }
         .task { await loadHarnesses() }
+        .onChange(of: harness) { prefillModel() }
         .onDisappear { launch?.cancel() }
     }
 
@@ -81,6 +92,7 @@ struct ResolveIssueSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 startsIn(issue)
                 harnessPicker
+                modelField
                 contextField
                 promptField
             }
@@ -145,6 +157,31 @@ struct ResolveIssueSheet: View {
                     ProgressView().controlSize(.small)
                     Text("Asking the hub what it can start…")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+    }
+
+    /// Whether the hub's launch honours a `model` for the picked
+    /// harness — the Model field's enabled state.
+    private var takesModel: Bool {
+        LaunchOptions.takesModel(harness, on: hubMachine)
+    }
+
+    /// The launch `model` pick (#914). Only a hub whose machine row
+    /// reports `model_at_launch` gets the row: an older build would
+    /// take the pick and silently drop it. A harness outside the list
+    /// keeps the field disabled — its launch always runs the default.
+    @ViewBuilder private var modelField: some View {
+        if LaunchOptions.showsModel(on: hubMachine) {
+            group("Model (optional)") {
+                TextField("e.g. sonnet, blank for the default", text: $modelName)
+                    .quiverField(monospaced: true)
+                    .disabled(!takesModel)
+                if !takesModel {
+                    Text("This harness can't take a model at launch; it starts on its default.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -265,10 +302,12 @@ struct ResolveIssueSheet: View {
             let machines = try await app.hub.withClient { try await $0.machines() }
             list = IssueResolve.offeredHarnesses(machines: machines, localMachineId: local,
                                                  fallback: installed)
+            hubMachine = IssueResolve.hubMachine(machines: machines, localMachineId: local)
             hubProblem = nil
         } catch is CancellationError {
             return
         } catch {
+            hubMachine = nil
             hubProblem = (error as? HubError)?.message ?? error.localizedDescription
         }
         offered = list
@@ -286,12 +325,25 @@ struct ResolveIssueSheet: View {
         filledPrompt = suggested
     }
 
+    /// The Model field's prefill: the hub's last-used model for the
+    /// picked harness. A re-fill lands only while the field is empty or
+    /// still holds the sheet's own suggestion, so a typed pick survives
+    /// a harness change — `fillPrompt`'s rule.
+    private func prefillModel() {
+        let last = LaunchOptions.lastModel(harness, on: hubMachine)
+        guard modelName.isEmpty || modelName == filledModel else { return }
+        modelName = last
+        filledModel = last
+    }
+
     private func start() async {
         guard let harness else { return }
         let repo = selection.repo
         let number = selection.number
         let context = context
         let prompt = prompt
+        // A pick goes only for a harness that can honour it.
+        let modelPick = LaunchOptions.model(modelName, supported: takesModel)
         let posts = IssueResolve.postsComment(context: context, ticked: postContext,
                                               posted: postedContext)
         let model = model
@@ -310,7 +362,7 @@ struct ResolveIssueSheet: View {
             post: {
                 try await hub.withClient {
                     try await $0.resolveIssue(repo: repo, number: number, harness: harness,
-                                              prompt: prompt, context: context)
+                                              prompt: prompt, context: context, model: modelPick)
                 }
             },
             fetch: { id in try await hub.withClient { try await $0.launch(id) } })

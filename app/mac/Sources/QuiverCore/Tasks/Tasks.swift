@@ -297,13 +297,28 @@ public struct HubTaskHarness: Decodable, Sendable, Equatable, Identifiable {
     /// Quiver can read this harness's sessions; an untracked one starts
     /// but never opens a chat.
     public var tracked: Bool?
+    /// Whether this harness's launches honour a `model` pick. Absent on
+    /// a hub older than the launch-option fields — it would take the
+    /// pick and drop it, so the panel gives that hub no Model row.
+    public var launchModel: Bool?
+    /// `launchModel`'s effort twin; decoded for completeness, unused
+    /// until the effort picker ships.
+    public var launchEffort: Bool?
+    /// The hub ledger's most recent model for this harness — the Model
+    /// field's prefill ("" when none ran).
+    public var lastModel: String?
 
     public var id: String { name }
 
-    public init(name: String, displayName: String? = nil, tracked: Bool? = nil) {
+    public init(name: String, displayName: String? = nil, tracked: Bool? = nil,
+                launchModel: Bool? = nil, launchEffort: Bool? = nil,
+                lastModel: String? = nil) {
         self.name = name
         self.displayName = displayName
         self.tracked = tracked
+        self.launchModel = launchModel
+        self.launchEffort = launchEffort
+        self.lastModel = lastModel
     }
 }
 
@@ -656,5 +671,43 @@ public enum NewSessionOptions {
 
     private static func newestFirst(_ rows: [HubSessionRow]) -> [HubSessionRow] {
         rows.sorted { ($0.lastActiveAt ?? 0) > ($1.lastActiveAt ?? 0) }
+    }
+}
+
+/// The launch sheets' Model row: whether a machine or harness row can
+/// take a `model` pick at launch, what the field prefills, and what the
+/// POST body carries. Pure, so tests feed it rows.
+///
+/// The row hides rather than disables for a build that doesn't report
+/// the launch fields (`model_at_launch` on a machine row,
+/// `launch_model` on a task-harness row): it predates them, and would
+/// take a pick it then silently drops — the hub's own gate refuses it
+/// the same way (`unsupported_launch_option`).
+public enum LaunchOptions {
+    /// Whether the sheet shows the Model row at all: only a machine
+    /// row that reports `model_at_launch` knows the launch fields.
+    public static func showsModel(on machine: HubMachine?) -> Bool {
+        machine?.modelAtLaunch != nil
+    }
+
+    /// Whether a launch on `machine` honours a `model` for `harness` —
+    /// the field's enabled state.
+    public static func takesModel(_ harness: String?, on machine: HubMachine?) -> Bool {
+        guard let harness else { return false }
+        return machine?.modelAtLaunch?.contains(harness) == true
+    }
+
+    /// `machine`'s most recent ledger model for `harness`, the field's
+    /// prefill ("" when none ran).
+    public static func lastModel(_ harness: String?, on machine: HubMachine?) -> String {
+        guard let harness else { return "" }
+        return machine?.lastModels?[harness] ?? ""
+    }
+
+    /// What the POST body's `model` is: `text` trimmed, or nil when
+    /// it's blank or this launch can't take a pick.
+    public static func model(_ text: String, supported: Bool) -> String? {
+        let pick = text.trimmingCharacters(in: .whitespaces)
+        return supported && !pick.isEmpty ? pick : nil
     }
 }
