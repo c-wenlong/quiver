@@ -36,6 +36,10 @@
 .tk-pick { max-height: 300px; overflow-y: auto; margin: 0 -4px; }
 .tk-link-go { flex: none; height: 28px; align-self: center; margin-right: 4px; }
 
+/* The rail's row mark: Repositories' CI dot in a slot as wide as the
+ * All tasks icon, so every row's name starts at one edge. */
+.tk-rail-mark { width: 14px; flex: none; display: grid; place-items: center; }
+
 /* The stale note above stored rows while a source is blocked. */
 .tk-stale { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
 .tk-stale .gh-ico { width: 12px; height: 12px; }

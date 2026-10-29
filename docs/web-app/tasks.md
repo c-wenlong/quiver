@@ -11,7 +11,7 @@ is deferred.
 |---|---|
 | `src/quiver/webapp/pages/tasks.py` | `GET /v1/app/tasks` — `quiver.remote.tasks.list_view` in process, plus the page's session and launch joins; `?harnesses=1` answers what the hub can start |
 | `src/quiver/webapp/static/pages/tasks.js` | The page. Shares `GhUI` (icons, setup card, poll, POST helper, `hashParams`, `keepFocus`) with the other GitHub pages |
-| `src/quiver/webapp/static/pages/tasks.css` | The state stepper, chips and detail layout on the `gh-*`/`styles.css` vocabulary |
+| `src/quiver/webapp/static/pages/tasks.css` | The state stepper, chips, rail mark and detail layout on the `gh-*`/`styles.css` vocabulary |
 
 Reads stay in process: the module calls `tasks.list_view(ctx.state,
 args)` — the same builder `GET /v1/tasks` serves — so the page and the
@@ -90,13 +90,28 @@ harness's model.
 
 **List.** Rows group under a repo header (`owner / name`, with links to
 GitHub and to the Repositories page's focus view) or, for other
-sources, the project key or the source's name; order is the payload's
-last-activity-first. Each row is the kind's icon (open/merged/closed,
-draft), title, ref and state word, when it last moved, a `PR #<n>`
-badge, a linked-session count, and an "Agent running" chip. Tabs filter
-without another fetch: **All**, **Running** (`agent_running`), **PR
-open** (the `pr_open` state, or an open pull task), **Done** (`merged`
-or `closed`).
+sources, `Source / project` (or the source's name alone), all in one
+box as on Repositories; order is the payload's last-activity-first.
+Each group shows five rows, then the Repositories dashboard's "Show N
+more" / "Show less" fold; an unfolded group stays open per group and
+tab across repaints and polls while the page is open. Each row is the
+kind's icon (open/merged/closed, draft), title, ref and state word,
+when it last moved, a `PR #<n>` badge, a linked-session count, and an
+"Agent running" chip. Tabs filter without another fetch: **All**,
+**Running** (`agent_running`), **PR open** (the `pr_open` state, or an
+open pull task), **Done** (`merged` or `closed`).
+
+**Rail.** Beside the list, whenever there are rows, sits the
+Repositories rail (same classes, same narrow-width chip strip), headed
+"Sources" with Refresh: "All tasks" with the tab's count, then GitHub
+repos under their owner, Linear projects under "Linear", any other
+source under its name, each with its count on the current tab; a group
+with nothing on the tab folds under "N quiet". Groups and rows sort by
+name so the rail holds still while the list reorders. Its dot lights
+while an agent runs on one of the group's tasks. A tap narrows the list
+to that group, unfolded; a group that leaves the payload drops the
+narrowing back to All tasks. No gear, Add repository or drag order:
+nothing here is pinned.
 
 **Detail.** `#/tasks?task=<id>` — the state ladder as a stepper (Open →
 In progress → PR open → Merged/Closed; the PR rung exists only where a

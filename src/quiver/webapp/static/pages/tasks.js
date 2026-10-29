@@ -1,7 +1,9 @@
 /* Tasks: the work items the hub's agents are on — the task store over
  * the pinned repos' open issues and PRs (and Linear's, when a key is
  * configured). The list groups by repository under All / Running /
- * PR open / Done tabs; a task's detail (#/tasks?task=<id>) shows the
+ * PR open / Done tabs, five rows a group before a Show more fold, with
+ * the Repositories page's rail beside it (every source's groups and
+ * their counts; a tap narrows the list to one); a task's detail (#/tasks?task=<id>) shows the
  * state ladder, its linked sessions (each deep-linking into the chat),
  * its linked PR (deep link into the Repositories page's PR sheet) and
  * the two actions the phone has: start a new agent on it — the
@@ -55,6 +57,9 @@
     data: null, status: 0, error: null, loading: false,
     filter: "all", busy: new Set(), actionError: null,
     seq: 0, forTask: null,
+    // The list: the rail's chosen group (null is every task), the groups
+    // unfolded past their first rows, and the rail's open quiet folds.
+    shown: null, expanded: new Set(), openQuiet: new Set(),
     // The detail's two panels; at most one is open at a time.
     action: null,      // "new" | "link"
     session: null,     // the New agent session panel's state
@@ -68,8 +73,11 @@
 
   /* A github task groups under its repo; another source's task under its
    * project or the source's name. */
+  const SOURCE_NAMES = { github: "GitHub", linear: "Linear", notion: "Notion" };
+  const sourceName = (s) => SOURCE_NAMES[s] || (s ? s[0].toUpperCase() + s.slice(1) : "Other");
   const groupName = (t) => t.repo || t.project
     || { linear: "Linear", notion: "Notion" }[t.source] || t.source;
+  const PREVIEW = 5; // rows a group shows before its Show more fold
   /* ``#42`` for a github issue/pull; the ref as it is anywhere else. */
   const refLabel = (t) => (t.source === "github" ? `#${t.ref}` : `${t.ref}`);
 
@@ -166,19 +174,37 @@
     </a>`;
   }
 
-  function groupHead(name, repo, count) {
-    if (repo) {
-      const [owner, short] = repo.includes("/") ? repo.split("/", 2) : [null, repo];
+  /* Repositories' group header: a repo reads "owner / name" with its
+   * links out; another source's project reads "Linear / project". */
+  function groupHead(g) {
+    if (g.repo) {
+      const [owner, short] = g.repo.includes("/") ? g.repo.split("/", 2) : [null, g.repo];
       return `<div class="gh-group-head">
         ${owner ? `<span class="gh-muted">${esc(owner)} /</span>` : ""}<span>${esc(short)}</span>
-        <span class="caption num gh-muted">${count}</span><span class="gh-spacer"></span>
+        <span class="gh-spacer"></span>
         <span class="gh-head-links">
-          <a href="https://github.com/${esc(repo)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open ${esc(repo)} on GitHub">${ico("external")}</a>
-          <a href="#/repositories?repo=${encodeURIComponent(repo)}" title="Open ${esc(repo)} in Repositories" aria-label="Open ${esc(repo)} in Repositories">${ico("expand")}</a>
+          <a href="https://github.com/${esc(g.repo)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open ${esc(g.repo)} on GitHub">${ico("external")}</a>
+          <a href="#/repositories?repo=${encodeURIComponent(g.repo)}" title="Open ${esc(g.repo)} in Repositories" aria-label="Open ${esc(g.repo)} in Repositories">${ico("expand")}</a>
         </span></div>`;
     }
-    return `<div class="gh-group-head"><span class="gh-muted">${esc(name)}</span>
-      <span class="caption num gh-muted">${count}</span></div>`;
+    const source = g.source && sourceName(g.source);
+    return `<div class="gh-group-head">
+      ${source && source !== g.name ? `<span class="gh-muted">${esc(source)} /</span>` : ""}<span>${esc(g.name)}</span></div>`;
+  }
+
+  /* A group's rows: the first five and a Show more fold, as the
+   * Repositories dashboard; the fold stays open per group and tab
+   * across repaints. A group the rail narrowed to shows every row. */
+  function groupRows(g) {
+    if (page.shown) return g.rows.map(taskRow).join("");
+    const key = `${g.name}:${page.filter}`;
+    const open = page.expanded.has(key);
+    const visible = open ? g.rows : g.rows.slice(0, PREVIEW);
+    const hidden = g.rows.length - PREVIEW;
+    const more = hidden > 0 ? `<button type="button" class="gh-expand" data-expand="${esc(key)}"
+        title="${open ? `Show only the first ${PREVIEW}` : "Show every row"}">${ico(open ? "chevronUp" : "chevronDown")}<span>${
+        open ? "Show less" : hidden === 1 ? "Show 1 more" : `Show ${hidden} more`}</span></button>` : "";
+    return visible.map(taskRow).join("") + more;
   }
 
   /* Rows grouped by repository, in the list's own order (last activity
@@ -187,21 +213,90 @@
     const seen = new Map();
     for (const t of rows) {
       const name = groupName(t);
-      if (!seen.has(name)) seen.set(name, { name, repo: t.source === "github" ? t.repo : null, rows: [] });
+      if (!seen.has(name)) seen.set(name, { name, source: t.source, repo: t.source === "github" ? t.repo : null, rows: [] });
       seen.get(name).rows.push(t);
     }
     // A failed repo keeps its stored rows under its error, in its own
     // group: one header per repo, never a second one for the failure.
     for (const r of failed) {
-      if (!seen.has(r.name)) seen.set(r.name, { name: r.name, repo: r.name, rows: [] });
-      seen.get(r.name).error = r.error || r.status;
+      if (!seen.has(r.name)) seen.set(r.name, { name: r.name, source: "github", repo: r.name, rows: [] });
+      seen.get(r.name).error = r.error;
     }
     const groups = [...seen.values()];
     const last = groups.length - 1;
-    return `<div class="gh-box">${groups.map((g, i) => `${groupHead(g.name, g.repo, g.rows.length || "")}
+    return `<div class="gh-box">${groups.map((g, i) => `${groupHead(g)}
       <div class="gh-surface${i === last ? " last" : ""}">${g.error
-        ? `<div class="gh-error-row"><span class="error">${esc(g.error)}</span></div>` : ""}${g.rows.map(taskRow).join("")}</div>`).join("")}</div>`;
+        ? `<div class="gh-state"><div class="gh-error-row"><span class="error">${esc(g.error)}</span></div></div>` : ""}${groupRows(g)}</div>`).join("")}</div>`;
   }
+
+  /* ------------------------------------------------------------- rail */
+
+  /* The repos whose read failed this refresh, from ``repos``. */
+  const failedRepos = () => ((page.data && page.data.repos) || [])
+    .map((r) => ({ name: r.repo || r.name, error: r.error || r.status }));
+
+  /* The rail's sections: GitHub groups under their repo's owner, every
+   * other source under its own name, each row one list group (keyed by
+   * the group's name). Sections and rows sort by name, so the rail stays
+   * put while the list reorders by activity. */
+  function railSections() {
+    const sections = new Map();
+    const add = (id, caption, key, label) => {
+      if (!sections.has(id)) sections.set(id, { id, caption, rows: new Map() });
+      const rows = sections.get(id).rows;
+      if (!rows.has(key)) rows.set(key, { key, label });
+    };
+    const addRepo = (repo) => {
+      const [owner, short] = repo.includes("/") ? repo.split("/", 2) : [repo, repo];
+      add(`gh:${owner}`, owner, repo, short);
+    };
+    for (const t of tasks()) {
+      if (t.source === "github" && t.repo) addRepo(t.repo);
+      else add(`src:${t.source}`, sourceName(t.source), groupName(t), groupName(t));
+    }
+    for (const r of failedRepos()) addRepo(r.name);
+    const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base" });
+    const rank = (sec) => (sec.id.startsWith("gh:") ? 0 : 1); // owners, then the other sources
+    return [...sections.values()]
+      .sort((a, b) => rank(a) - rank(b) || byName(a.caption, b.caption))
+      .map((sec) => ({ ...sec, rows: [...sec.rows.values()].sort((a, b) => byName(a.label, b.label)) }));
+  }
+
+  function railHtml() {
+    const rows = tasks().filter(filterOf().test);
+    const count = (key) => rows.filter((t) => groupName(t) === key).length;
+    const running = (key) => tasks().some((t) => t.agent_running && groupName(t) === key);
+    // No CI here: the dot lights only while an agent is on a task there.
+    const row = (r, quiet) => {
+      const n = count(r.key);
+      const on = running(r.key);
+      return `<button type="button" class="gh-rail-row${page.shown === r.key ? " selected" : ""}${quiet ? " quiet" : ""}"
+          data-shown="${esc(r.key)}" title="${esc(r.key)}${on ? ". An agent is running here." : ""}">
+        <span class="tk-rail-mark"><span class="gh-dot gh-dot-${on ? "running" : "none"}"></span></span>
+        <span class="gh-rail-name">${esc(r.label)}</span>
+        <span class="gh-spacer"></span>${n ? `<span class="caption num gh-muted">${n}</span>` : ""}</button>`;
+    };
+    const body = railSections().map((sec) => {
+      const active = sec.rows.filter((r) => count(r.key) !== 0);
+      const quiet = sec.rows.filter((r) => count(r.key) === 0);
+      const open = page.openQuiet.has(sec.id);
+      return `<div class="gh-owner">${esc(sec.caption)}</div>${active.map((r) => row(r, false)).join("")}
+        ${quiet.length ? `<button type="button" class="gh-quiet-toggle${open ? " open" : ""}" data-quiet="${esc(sec.id)}"
+          title="${open ? "Hide groups with nothing on this tab" : "Show groups with nothing on this tab"}">${ico("chevronRight")}<span>${quiet.length} quiet</span></button>
+          <div class="gh-quiet${open ? " open" : ""}">${quiet.map((r) => row(r, true)).join("")}</div>` : ""}`;
+    }).join("");
+    return `<aside class="gh-rail" aria-label="Task sources">
+      <div class="gh-rail-head"><span class="caption gh-muted">Sources</span><span class="gh-spacer"></span>
+        <button type="button" class="gh-rail-btn${page.loading ? " spinning" : ""}" id="page-refresh" title="Fetch again" aria-label="Fetch again">${ico("refresh")}</button></div>
+      <div class="gh-rail-list">
+        <button type="button" class="gh-rail-row${page.shown ? "" : " selected"}" data-shown="">${ico("stack")}<span>All tasks</span>
+          <span class="gh-spacer"></span><span class="caption num gh-muted">${rows.length}</span></button>
+        ${body}
+      </div>
+    </aside>`;
+  }
+
+  /* ------------------------------------------------------------- body */
 
   /* ``gh`` ran but failed (a timeout, a crash): not a setup problem, so
    * no setup card, but the GitHub rows are only what the store kept. */
@@ -237,43 +332,81 @@
     const blocked = GhUI.envSetup(d.github) || githubFailed(d)
       || (d.linear && d.linear.status !== "ok" && d.linear.status !== "disabled");
     const stored = tasks().length;
-    const rows = tasks().filter(filterOf().test);
-    const failed = (d.repos || []).map((r) => ({ name: r.repo || r.name, error: r.error || r.status }));
+    const inScope = (name) => !page.shown || name === page.shown;
+    const rows = tasks().filter((t) => filterOf().test(t) && inScope(groupName(t)));
+    const failed = failedRepos().filter((r) => inScope(r.name));
     // The refresh error outranks the empty states: an "empty" answer is
     // still an answer, and this is why the next read didn't land.
     const error = page.error ? `<div class="card"><div class="gh-error-row"><span class="error">${esc(page.error)}</span></div></div>` : "";
-    if (!stored && !failed.length) {
+    if (!stored && !failedRepos().length) {
       // A blocked source with no store is the offer card alone; a fresh
       // hub is the empty state.
       if (blocked) return [...cards, error].join("");
       return [...cards, error, `<div class="card"><div class="gh-empty">${ico("stack", "gh-muted")}<span>No tasks yet. Tasks are the issues and pull requests your agents touch — resolve an issue or open a PR from Repositories, or link a running session to one.</span>
         <a class="gh-button" href="#/repositories">${ico("expand")}<span>Repositories</span></a></div></div>`].join("");
     }
-    const failedRows = failed.some((r) => tasks().some((t) => t.repo === r.name));
+    const failedRows = failedRepos().some((r) => tasks().some((t) => t.repo === r.name));
     const stale = (blocked || failedRows) && stored
       ? `<div class="caption gh-muted tk-stale">${ico("refresh", "gh-small")}<span>Last known state — a source isn't answering, so this is what the store remembers.</span></div>` : "";
     const body = rows.length || failed.length
       ? listGroups(rows, failed)
-      : emptyCard(FILTER_EMPTY[page.filter] || "No tasks.");
+      : emptyCard(emptyText());
     return [...cards, stale, error, body].join("");
   }
 
-  function listHeader() {
+  /* What an empty tab says, naming the rail's group when it narrowed. */
+  function emptyText() {
+    const place = page.shown;
+    if (!place) return FILTER_EMPTY[page.filter] || "No tasks.";
+    return {
+      running: `Nothing is running in ${place}.`,
+      pr_open: `No task in ${place} has a pull request open.`,
+      done: `Nothing in ${place} is merged or closed yet.`,
+    }[page.filter] || `No tasks in ${place}.`;
+  }
+
+  /* With the rail showing, Refresh rides in its head, as Repositories. */
+  function listHeader(refresh) {
     return pageHeader("Tasks", "The issues and pull requests your agents are on.",
       `<div class="tabs" role="tablist" aria-label="Which tasks to list">${FILTERS.map((f) => {
         const n = tasks().filter(f.test).length;
         return `<button class="tab${f.id === page.filter ? " selected" : ""}" role="tab" aria-selected="${f.id === page.filter}"
           data-filter="${f.id}">${f.title} <span class="num">${n}</span></button>`;
       }).join("")}</div>
-      <button class="icon-button${page.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>`);
+      ${refresh ? `<button class="icon-button${page.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>` : ""}`);
   }
 
   function paintList() {
-    document.getElementById("panel").innerHTML = `<div class="page gh-page">${listHeader()}<div class="stack">${listContent()}</div></div>`;
+    // No rail beside the setup card or the empty state: only rows earn one.
+    const rail = !!page.data && (tasks().length > 0 || failedRepos().length > 0);
+    document.getElementById("panel").innerHTML = `<div class="page gh-page">
+      <div class="gh-dash${rail ? " with-rail" : ""}">
+        <div class="gh-head">${listHeader(!rail)}</div>
+        ${rail ? railHtml() : ""}
+        <div class="gh-body stack">${listContent()}</div>
+      </div></div>`;
     bindRefresh(() => load(true));
     GhUI.bindSetup(() => load(true));
-    for (const btn of document.querySelectorAll("#panel [data-filter]")) {
+    const panel = document.getElementById("panel");
+    for (const btn of panel.querySelectorAll("[data-filter]")) {
       btn.onclick = () => { page.filter = btn.dataset.filter; paintList(); };
+    }
+    for (const row of panel.querySelectorAll("[data-shown]")) {
+      row.onclick = () => { page.shown = row.dataset.shown || null; paintList(); };
+    }
+    for (const btn of panel.querySelectorAll("[data-quiet]")) {
+      btn.onclick = () => {
+        const id = btn.dataset.quiet;
+        if (page.openQuiet.has(id)) page.openQuiet.delete(id); else page.openQuiet.add(id);
+        paintList();
+      };
+    }
+    for (const btn of panel.querySelectorAll("[data-expand]")) {
+      btn.onclick = () => {
+        const key = btn.dataset.expand;
+        if (page.expanded.has(key)) page.expanded.delete(key); else page.expanded.add(key);
+        paintList();
+      };
     }
     // GitHub and Linear can each put up a Refresh card at once.
     for (const retry of document.querySelectorAll("#panel .tk-source-refresh")) {
@@ -692,6 +825,9 @@
     page.data = data;
     page.status = status;
     page.error = null;
+    // The rail's group went away (all closed out, unpinned): back to All.
+    if (page.shown && !tasks().some((t) => groupName(t) === page.shown)
+      && !failedRepos().some((r) => r.name === page.shown)) page.shown = null;
     paint();
   }
 

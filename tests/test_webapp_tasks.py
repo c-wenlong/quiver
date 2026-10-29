@@ -6,7 +6,11 @@ store links live in the test hub's in-memory launch table."""
 
 import contextlib
 import json
+import shutil
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from quiver.github import gh, manage, repos
@@ -239,6 +243,123 @@ class TestStoreOverlay(_Base):
         row = {t["id"]: t for t in body["tasks"]}["github:issue:o/r:5"]
         self.assertTrue(row["agent_running"])
         self.assertEqual(row["session_rows"][0]["title"], "test")
+
+
+# The list as tasks.js paints it: seven tasks in o/a (one running), one
+# merged in o/b, two in Linear's Core project and one with no project,
+# and x/y's read failing. ``click`` presses a control the last paint
+# bound, found by its selector and data attribute.
+LIST_FLOW = r"""
+const out = {};
+const lastQ = {};
+const qsa = panel.querySelectorAll.bind(panel);
+panel.querySelectorAll = (sel) => (lastQ[sel] = qsa(sel));
+const click = (attr, value) => lastQ[`[data-${attr}]`]
+  .find((e) => e.attrs[`data-${attr}`] === value).onclick();
+// The header's actions hold the chips (and Refresh when there's no rail).
+globalThis.pageHeader = (title, subtitle, actions = "") => `<header>${actions}</header>`;
+const row = (id, repo, extra = {}) => ({ id, source: "github", kind: "issue", ref: id,
+  title: "T" + id, repo, state: "open", status: "Open", sessions: [], ...extra });
+const lin = (id, project) => ({ id, source: "linear", kind: "issue", ref: id,
+  title: "L" + id, project, state: "open", status: "Todo", sessions: [] });
+const all = [
+  ...[1, 2, 3, 4, 5, 6, 7].map((n) => row(String(n), "o/a", n === 1 ? { agent_running: true } : {})),
+  row("8", "o/b", { state: "merged" }), lin("ENG-1", "Core"), lin("ENG-2", "Core"), lin("ENG-3", null)];
+let data = { machine: "hub", github: { status: "ok" }, tasks: all,
+  repos: [{ repo: "x/y", status: "upstream-error", error: "x/y timed out" }] };
+apiAnswers.push(["/v1/app/tasks", { status: 200, get data() { return data; } }]);
+const html = () => panel.innerHTML;
+const rows = () => (html().match(/class="gh-row gh-center"/g) || []).length;
+const rail = () => html().slice(html().indexOf('<aside class="gh-rail"'), html().indexOf("</aside>"));
+const railNames = () => [...rail().matchAll(/class="gh-owner">([^<]*)<|class="gh-rail-name">([^<]*)</g)]
+  .map((m) => m[1] != null ? "#" + m[1] : m[2]);
+(async () => {
+  location.hash = "#/tasks";
+  PAGES.tasks();
+  await tick();
+  out.withRail = html().includes("gh-dash with-rail");
+  out.refreshInRail = rail().includes(`id="page-refresh"`) && html().split(`id="page-refresh"`).length === 2;
+  out.allCount = (rail().match(/All tasks<\/span>\s*<span class="gh-spacer"><\/span><span class="caption num gh-muted">(\d+)/) || [])[1];
+  out.railNames = railNames();
+  out.running = /data-shown="o\/a"[^>]*>\s*<span class="tk-rail-mark"><span class="gh-dot gh-dot-running"/.test(rail());
+  out.folded = rows();
+  out.more = (html().match(/Show (\d+) more/) || [])[1];
+  out.failedGroup = html().includes("x/y timed out");
+  click("expand", "o/a:all");
+  out.expanded = rows();
+  out.less = html().includes("Show less");
+  PAGES.tasks();
+  await tick();
+  out.expandedAfterReload = rows();
+  // Running: only o/a has a row; the rest fold under each section's quiet.
+  click("filter", "running");
+  out.runningQuiet = [...rail().matchAll(/<span>(\d+) quiet<\/span>/g)].map((m) => +m[1]);
+  out.runningAll = (rail().match(/All tasks<\/span>\s*<span class="gh-spacer"><\/span><span class="caption num gh-muted">(\d+)/) || [])[1];
+  click("quiet", "gh:o");
+  out.quietOpen = rail().includes('class="gh-quiet open"');
+  click("filter", "all");
+  click("shown", "Core");
+  out.scoped = rows();
+  out.scopedHead = html().includes('<span class="gh-muted">Linear /</span><span>Core</span>');
+  out.selected = /class="gh-rail-row selected"\s*data-shown="Core"/.test(rail());
+  click("filter", "running");
+  out.scopedEmpty = html().includes("Nothing is running in Core.");
+  click("filter", "all");
+  click("shown", "o/a");
+  out.scopedUnfolded = rows();
+  // o/a's tasks leave the list: the scope falls back to every task.
+  data = { ...data, tasks: all.filter((t) => t.repo !== "o/a") };
+  PAGES.tasks();
+  await tick();
+  out.fellBack = /class="gh-rail-row selected" data-shown=""/.test(rail()) && rows() === 4;
+  // No tasks and no failure: the empty card, and no rail.
+  data = { machine: "hub", github: { status: "ok" }, tasks: [] };
+  PAGES.tasks();
+  await tick();
+  out.emptyNoRail = !html().includes("gh-rail") && html().includes("No tasks yet");
+  process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestListRailAndFold(unittest.TestCase):
+    """tasks.js's list under node: five rows a group with Repositories'
+    Show more fold, and its rail of sources that narrows the list."""
+
+    def test_fold_and_rail(self):
+        from tests.test_webapp_launch_sheets import MENU_JS, PAGES, STUB
+        script = (STUB + MENU_JS.read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "tasks.js").read_text(encoding="utf-8") + "\n" + LIST_FLOW)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run.js"
+            path.write_text(script)
+            done = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        self.assertTrue(out["withRail"])
+        self.assertTrue(out["refreshInRail"])
+        self.assertEqual(out["allCount"], "11")
+        # Owners A to Z, then the other sources; rows by name within.
+        self.assertEqual(out["railNames"], ["#o", "a", "b", "#x", "y", "#Linear", "Core", "Linear"])
+        self.assertTrue(out["running"])
+        self.assertEqual(out["folded"], 5 + 1 + 3)
+        self.assertEqual(out["more"], "2")
+        self.assertTrue(out["failedGroup"])
+        self.assertEqual(out["expanded"], 11)
+        self.assertTrue(out["less"])
+        self.assertEqual(out["expandedAfterReload"], 11)
+        self.assertEqual(out["runningQuiet"], [1, 1, 2])
+        self.assertEqual(out["runningAll"], "1")
+        self.assertTrue(out["quietOpen"])
+        self.assertEqual(out["scoped"], 2)
+        self.assertTrue(out["scopedHead"])
+        self.assertTrue(out["selected"])
+        self.assertTrue(out["scopedEmpty"])
+        self.assertEqual(out["scopedUnfolded"], 7)
+        self.assertTrue(out["fellBack"])
+        self.assertTrue(out["emptyNoRail"])
 
 
 if __name__ == "__main__":
