@@ -204,6 +204,59 @@ import Testing
         #expect(none.isEmpty)
     }
 
+    @Test func railGroupsScopesBySourceAndCountsUnderTheFilter() {
+        let tasks = [
+            row("a", repo: "o/s", running: true),
+            row("b", source: "linear", ref: "QUI-1", repo: nil, project: "QUI"),
+            row("c", repo: "p/x"),
+            row("d", repo: "o/r"),
+            row("e", repo: "o/s"),
+            row("f", source: "notion", kind: "page", ref: "x", repo: nil),
+        ]
+        let failed = [HubTaskRepoFailure(name: "p/a", error: "gh timed out")]
+        let rail = TaskGrouping.rail(of: tasks, failed: failed, filter: .running)
+        // Owners by name, then the other sources by name; rows by name,
+        // so the rail holds still while the list reorders by activity.
+        #expect(rail.map(\.title) == ["o", "p", "Linear", "Notion"])
+        #expect(rail[0].scopes.map(\.label) == ["r", "s"])
+        #expect(rail[0].scopes.map(\.name) == ["o/r", "o/s"])
+        // A failed repo with no rows still gets a row, quiet.
+        #expect(rail[1].scopes.map(\.name) == ["p/a", "p/x"])
+        #expect(rail[1].scopes.map(\.count) == [0, 0])
+        #expect(rail[2].scopes.map(\.label) == ["QUI"])
+        #expect(rail[3].scopes.map(\.name) == ["Other"])
+        // Every scope keeps its row; the count is what the chip leaves,
+        // so a scope with none still lists (the rail folds it as quiet).
+        #expect(rail[0].scopes.map(\.count) == [0, 1])
+        #expect(rail[0].scopes.map(\.running) == [false, true])
+        #expect(TaskGrouping.rail(of: tasks, filter: .all)[0].scopes.map(\.count) == [1, 2])
+
+        // A rail pick narrows the sections and the chip counts alike.
+        let picked = TaskGrouping.sections(of: tasks, filter: .all, scope: "o/s")
+        #expect(picked.map(\.name) == ["o/s"])
+        #expect(picked[0].rows?.map(\.id) == ["a", "e"])
+        #expect(TaskGrouping.count(tasks, filter: .all, scope: "o/s") == 2)
+        #expect(TaskGrouping.count(tasks, filter: .running, scope: "QUI") == 0)
+    }
+
+    @Test func aFailedRepoJoinsItsSectionOrKeepsOneForItsError() {
+        let tasks = [row("a", repo: "o/r"), row("b", repo: "o/s")]
+        let failed = [HubTaskRepoFailure(name: "o/r", error: "gh timed out"),
+                      HubTaskRepoFailure(name: "o/t", status: "upstream-error")]
+        let sections = TaskGrouping.sections(of: tasks, failed: failed, filter: .all)
+        // o/r keeps one header with its rows and the reason on it.
+        #expect(sections.map(\.name) == ["o/r", "o/s", "o/t"])
+        #expect(sections[0].error == "gh timed out")
+        #expect(sections[0].rows?.map(\.id) == ["a"])
+        #expect(sections[1].error == nil)
+        #expect(sections[2].rows?.isEmpty == true)
+        #expect(sections[2].error == "upstream-error")
+        #expect(sections[2].repo == "o/t")
+        // A rail pick leaves out every other repo's failure.
+        let picked = TaskGrouping.sections(of: tasks, failed: failed, filter: .all, scope: "o/s")
+        #expect(picked.map(\.name) == ["o/s"])
+    }
+
     @Test func sourceLineAndLabels() {
         #expect(row("a", kind: "issue").sourceLine == "GitHub issue · o/r")
         #expect(row("a", kind: "pull").sourceLine == "GitHub pull request · o/r")

@@ -416,12 +416,15 @@ public enum TaskGrouping {
     /// repo for GitHub rows, the project elsewhere, ordered by the most
     /// recently active task each holds — the reply is already sorted by
     /// `last_active_at`, so first sight of a scope is its rank.
-    public static func sections(of tasks: [HubTaskRow], filter: TaskFilter) -> [TaskSection] {
+    /// `scope` narrows to the one section the rail picked.
+    public static func sections(of tasks: [HubTaskRow], filter: TaskFilter,
+                                scope only: String? = nil) -> [TaskSection] {
         var order: [String] = []
         var buckets: [String: [HubTaskRow]] = [:]
         var repos: [String: String] = [:]
         for task in tasks where filter.includes(task) {
-            let scope = task.scope.isEmpty ? "Other" : task.scope
+            let scope = sectionName(task)
+            if let only, scope != only { continue }
             if buckets[scope] == nil {
                 order.append(scope)
                 repos[scope] = task.source == "github" ? task.repo : nil
@@ -431,10 +434,106 @@ public enum TaskGrouping {
         return order.map { TaskSection(name: $0, rows: buckets[$0] ?? [], error: nil, repo: repos[$0]) }
     }
 
-    /// `filter`'s matching count across every task — the filter chips.
-    public static func count(_ tasks: [HubTaskRow], filter: TaskFilter) -> Int {
-        tasks.filter(filter.includes).count
+    /// The sections with each failed repo's reason on its own section;
+    /// a failed repo with no rows under the filter keeps a section for
+    /// the error. One header per repo, never a second for the failure.
+    public static func sections(of tasks: [HubTaskRow], failed: [HubTaskRepoFailure],
+                                filter: TaskFilter, scope only: String? = nil) -> [TaskSection] {
+        var sections = sections(of: tasks, filter: filter, scope: only)
+        for failure in failed where only == nil || failure.name == only {
+            let reason = failure.error ?? failure.status ?? "Can't list this repo's work."
+            if let at = sections.firstIndex(where: { $0.name == failure.name }) {
+                sections[at].error = reason
+            } else {
+                sections.append(TaskSection(name: failure.name, rows: [], error: reason,
+                                            repo: failure.name))
+            }
+        }
+        return sections
     }
+
+    /// `filter`'s matching count across every task — the filter chips;
+    /// under a rail pick, that scope's tasks only.
+    public static func count(_ tasks: [HubTaskRow], filter: TaskFilter,
+                             scope: String? = nil) -> Int {
+        tasks.filter { filter.includes($0) && (scope == nil || sectionName($0) == scope) }.count
+    }
+
+    /// The section a task lists under: its repo or project, else "Other".
+    public static func sectionName(_ task: HubTaskRow) -> String {
+        task.scope.isEmpty ? "Other" : task.scope
+    }
+
+    /// The page's rail: every scope, `filter` or not, so one with nothing
+    /// under the chip still has a row to fold as quiet, plus each failed
+    /// repo so its error can be picked. GitHub repos group by owner as the
+    /// Repositories rail does; Linear projects under "Linear", any other
+    /// source under its own name. Owners come first, then the other
+    /// sources, and groups and rows sort by name: the list reorders by
+    /// activity, the rail holds still. The web's `tasks.js` sorts the same.
+    public static func rail(of tasks: [HubTaskRow], failed: [HubTaskRepoFailure] = [],
+                            filter: TaskFilter) -> [TaskRailGroup] {
+        struct Key: Hashable { var github: Bool; var title: String }
+        var groups: [Key: [String: TaskRailScope]] = [:]
+        func add(_ key: Key, _ name: String, label: String, hit: Int, running: Bool) {
+            var scope = groups[key, default: [:]][name]
+                ?? TaskRailScope(name: name, label: label, count: 0, running: false)
+            scope.count += hit
+            scope.running = scope.running || running
+            groups[key, default: [:]][name] = scope
+        }
+        for task in tasks {
+            let name = sectionName(task)
+            let github = task.source == "github" && task.repo?.contains("/") == true
+            add(Key(github: github, title: railGroupTitle(task)), name,
+                label: github ? shortName(name) : name,
+                hit: filter.includes(task) ? 1 : 0, running: task.agentRunning == true)
+        }
+        for failure in failed where failure.name.contains("/") {
+            let owner = String(failure.name.split(separator: "/", maxSplits: 1)[0])
+            add(Key(github: true, title: owner), failure.name,
+                label: shortName(failure.name), hit: 0, running: false)
+        }
+        let byName = { (a: String, b: String) in a.localizedStandardCompare(b) == .orderedAscending }
+        return groups.keys
+            .sorted { $0.github != $1.github ? $0.github : byName($0.title, $1.title) }
+            .map { key in
+                TaskRailGroup(title: key.title,
+                              scopes: (groups[key] ?? [:]).values.sorted { byName($0.label, $1.label) })
+            }
+    }
+
+    private static func shortName(_ repo: String) -> String {
+        String(repo.split(separator: "/").last ?? Substring(repo))
+    }
+
+    /// A repo's owner for GitHub; the source's own name elsewhere.
+    private static func railGroupTitle(_ task: HubTaskRow) -> String {
+        if task.source == "github", let repo = task.repo, repo.contains("/") {
+            return String(repo.split(separator: "/", maxSplits: 1)[0])
+        }
+        guard let source = task.source, !source.isEmpty else { return "Other" }
+        return source.prefix(1).uppercased() + source.dropFirst()
+    }
+}
+
+/// One rail row: a scope the list groups under, the short name the
+/// rail shows, and how many of its tasks the chip filter leaves.
+public struct TaskRailScope: Identifiable, Sendable, Equatable {
+    /// The `TaskSection` name a tap narrows the list to.
+    public var name: String
+    public var label: String
+    public var count: Int
+    /// An agent is on one of its tasks: the rail's green dot.
+    public var running: Bool
+    public var id: String { name }
+}
+
+/// A rail heading (a GitHub owner, "Linear") and its scopes in order.
+public struct TaskRailGroup: Identifiable, Sendable, Equatable {
+    public var title: String
+    public var scopes: [TaskRailScope]
+    public var id: String { title }
 }
 
 /// The state stepper the detail page draws: rungs with which are
@@ -522,6 +621,9 @@ public final class TasksModel {
     public private(set) var loaded = false
     /// The rows' filter, shared by the list's chips.
     public var filter: TaskFilter = .all
+    /// The rail's pick: one section name the list narrows to, nil for
+    /// every task. Kept across visits like `filter`.
+    public var shownScope: String?
     /// A link, unlink or launch in flight — keyed so the same action on
     /// the same object can't fire twice.
     public private(set) var busy: Set<String> = []
