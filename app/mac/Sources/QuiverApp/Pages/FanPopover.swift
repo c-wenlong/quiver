@@ -59,6 +59,10 @@ private struct FanPopover: View {
         Binding(get: { fans.threshold }, set: { fans.threshold = $0 })
     }
 
+    private var release: Binding<Double> {
+        Binding(get: { fans.releaseBelow }, set: { fans.releaseBelow = $0 })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -128,7 +132,7 @@ private struct FanPopover: View {
     @ViewBuilder private var thresholdControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Toggle("Turn fans up above", isOn: thresholdOn)
+                Toggle("Fan on temperature", isOn: thresholdOn)
                     .toggleStyle(.checkbox)
                     .font(Theme.bodySmall)
                     .disabled(fans.busy)
@@ -137,6 +141,20 @@ private struct FanPopover: View {
                     .font(Theme.bodySmall.monospacedDigit())
                     .foregroundStyle(fans.thresholdEnabled ? Theme.textPrimary : Theme.textSecondary)
                 Stepper("", value: threshold, in: FanControl.thresholdRange, step: 1)
+                    .labelsHidden()
+            }
+            HStack(spacing: 8) {
+                Text("Fan off temperature")
+                    .font(Theme.bodySmall)
+                    .foregroundStyle(fans.thresholdEnabled ? Theme.textPrimary : Theme.textSecondary)
+                Spacer()
+                Text("\(Int(fans.releaseBelow.rounded())) °C")
+                    .font(Theme.bodySmall.monospacedDigit())
+                    .foregroundStyle(fans.thresholdEnabled ? Theme.textPrimary : Theme.textSecondary)
+                // Its ceiling is a degree under the on line, so stepping
+                // can never put the fans down at or over it.
+                Stepper("", value: release,
+                        in: FanControl.releaseRange.lowerBound...fans.threshold - 1, step: 1)
                     .labelsHidden()
             }
             if fans.thresholdEnabled {

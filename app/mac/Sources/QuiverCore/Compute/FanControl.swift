@@ -153,8 +153,8 @@ public final class FanControl {
     public static let levelKey = "fanManualLevel"
 
     /// The optional rule: above `threshold` °C on the CPU, hold the fans
-    /// at `level` until it falls `thresholdHysteresis` below. Only while
-    /// Quiver runs, like any manual speed.
+    /// at `level` until it falls to `releaseBelow`. Only while Quiver
+    /// runs, like any manual speed.
     public var thresholdEnabled: Bool {
         didSet {
             defaults.set(thresholdEnabled, forKey: Self.thresholdEnabledKey)
@@ -167,6 +167,20 @@ public final class FanControl {
             let clamped = min(max(threshold, Self.thresholdRange.lowerBound), Self.thresholdRange.upperBound)
             if clamped != threshold { threshold = clamped; return }
             defaults.set(threshold, forKey: Self.thresholdKey)
+            // The off temperature must stay under the line, or a held fan
+            // would drop out while the CPU is still over it.
+            if releaseBelow >= threshold { releaseBelow = threshold - 1 }
+        }
+    }
+
+    /// Where the fans go back to macOS: the second field under the on
+    /// temperature, always at least a degree under it. Kept in
+    /// UserDefaults like the threshold.
+    public var releaseBelow: Double {
+        didSet {
+            let clamped = Self.clampRelease(releaseBelow, threshold: threshold)
+            if clamped != releaseBelow { releaseBelow = clamped; return }
+            defaults.set(releaseBelow, forKey: Self.releaseBelowKey)
         }
     }
 
@@ -177,12 +191,19 @@ public final class FanControl {
     public static let thresholdKey = "fanThresholdCelsius"
     public static let thresholdRange = 50.0...100.0
     public static let defaultThreshold = 80.0
-    /// How far below the threshold the CPU must fall before the fans go
-    /// back, so a reading hovering at the line does not flap them.
+    public static let releaseBelowKey = "fanReleaseBelowCelsius"
+    /// The off temperature's own bounds; its live ceiling is a degree
+    /// under `threshold`, which the clamp applies on top.
+    public static let releaseRange = 30.0...99.0
+    /// The gap the off temperature starts at under the line, so a CPU
+    /// hovering at it does not flap the fans; the field is the user's
+    /// to move after that.
     public static let thresholdHysteresis = 5.0
 
-    /// Where the fans go back to macOS.
-    public var releaseBelow: Double { threshold - Self.thresholdHysteresis }
+    /// The off temperature inside its range and a degree under the line.
+    private static func clampRelease(_ value: Double, threshold: Double) -> Double {
+        min(max(value, releaseRange.lowerBound), min(releaseRange.upperBound, threshold - 1))
+    }
     /// How long `starting` may last before the request counts as failed.
     /// Taking the fans on an M4 takes up to about ten seconds.
     static let startTimeout: TimeInterval = 20
@@ -238,7 +259,12 @@ public final class FanControl {
         helperInstalled = false
         level = defaults.object(forKey: Self.levelKey) as? Double ?? 0.5
         thresholdEnabled = defaults.bool(forKey: Self.thresholdEnabledKey)
-        threshold = defaults.object(forKey: Self.thresholdKey) as? Double ?? Self.defaultThreshold
+        let line = defaults.object(forKey: Self.thresholdKey) as? Double ?? Self.defaultThreshold
+        threshold = line
+        // Installs from before the field existed get the old fixed gap.
+        releaseBelow = Self.clampRelease(
+            defaults.object(forKey: Self.releaseBelowKey) as? Double ?? line - Self.thresholdHysteresis,
+            threshold: line)
     }
 
     /// The helper is installed, steered by this control file, at this
@@ -478,8 +504,8 @@ public final class FanControl {
     /// The rule, run on each trend tick with the CPU's temperature. It
     /// takes the fans only from Automatic (a speed the user set wins) and
     /// only once the helper is installed; it gives them back once the CPU
-    /// is `thresholdHysteresis` below the line, or as soon as anything
-    /// else (the user, a failure) has moved them off its speed.
+    /// reaches `releaseBelow`, or as soon as anything else (the user, a
+    /// failure) has moved them off its speed.
     public func checkTemperature(_ cpu: Double?) async {
         guard thresholdEnabled, let cpu else { return }
         if heldByThreshold {

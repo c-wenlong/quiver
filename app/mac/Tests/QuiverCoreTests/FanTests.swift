@@ -954,10 +954,47 @@ import Testing
         #expect(fans.threshold == 100)
         fans.threshold = 72
         fans.thresholdEnabled = true
+        fans.releaseBelow = 60
         let again = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                                isInstalled: { _ in false }, defaults: defaults)
         #expect(again.threshold == 72 && again.thresholdEnabled)
-        #expect(again.releaseBelow == 67)
+        #expect(again.releaseBelow == 60)
+    }
+
+    @MainActor @Test func theOffTemperatureDecidesWhereTheFansLetGo() async {
+        let (fans, url, _) = await installedControl()
+        fans.thresholdEnabled = true
+        fans.threshold = 80
+        fans.releaseBelow = 60
+        await fans.checkTemperature(85)
+        #expect(fans.heldByThreshold)
+        // Under the line but over the off temperature, the fans stay held.
+        await fans.checkTemperature(75)
+        #expect(fans.heldByThreshold)
+        await fans.checkTemperature(60)
+        #expect(!fans.heldByThreshold)
+        #expect(fans.phase == .automatic)
+        #expect(FanControlFile.request(at: url) == nil)
+    }
+
+    @MainActor @Test func theOffTemperatureStaysUnderTheOnLine() async {
+        let defaults = UserDefaults(suiteName: "fan-\(UUID().uuidString)")!
+        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
+                              isInstalled: { _ in false }, defaults: defaults)
+        #expect(fans.releaseBelow == 75)
+        fans.threshold = 80
+        // It cannot reach or pass the on line.
+        fans.releaseBelow = 95
+        #expect(fans.releaseBelow == 79)
+        fans.releaseBelow = 60
+        #expect(fans.releaseBelow == 60)
+        // Moving the line under it drags it down with a degree to spare.
+        fans.threshold = 55
+        #expect(fans.releaseBelow == 54)
+        // Nor under its floor.
+        fans.releaseBelow = 10
+        #expect(fans.releaseBelow == 30)
     }
 
     @MainActor @Test func removingTheHelperHandsTheFansBackFirst() async {
