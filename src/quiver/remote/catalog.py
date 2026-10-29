@@ -775,15 +775,17 @@ class Catalog:
                 last <= dismissed[row["key"]]
             ):
                 continue
+            # Satellite rows arrive as pushed: an older agent may leave
+            # a field out, which must not fail the whole inbox.
             item = {
                 "key": row["key"],
-                "machine_id": row["machine_id"],
-                "harness": row["harness"],
-                "agent": row["agent"],
-                "title": row["title"],
-                "cwd": row["cwd"],
+                "machine_id": row.get("machine_id"),
+                "harness": row.get("harness"),
+                "agent": row.get("agent"),
+                "title": row.get("title"),
+                "cwd": row.get("cwd"),
                 "status": status,
-                "last_active_at": row["last_active_at"],
+                "last_active_at": row.get("last_active_at"),
             }
             if rid is not None:
                 item["request_id"] = rid

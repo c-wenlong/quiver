@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import protocol
 from quiver.remote import tail
 from quiver.remote.hub import APPROVAL_TTL_S, HubState, make_server
-from quiver.remote import pairing
+from quiver.remote import catalog as catalog_mod, pairing
 from quiver.sessions.models import Session
 
 
@@ -579,6 +579,52 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["status"], "followup")
         self.assertEqual(items[0]["key"], "claude:f1")
+
+    def test_inbox_takes_a_satellite_row_missing_fields(self):
+        """An older satellite may push a row without agent or title; the
+        inbox lists it rather than answering 500."""
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        catalog_mod.merge_remote_rows(srv.home, "sat1", [{
+            "key": "claude:x", "status": "followup",
+            "last_active_at": time.time()}])
+        srv.state.catalog.refresh()
+        cred = srv.pair()
+        status, data = srv.request(
+            "GET", "/v1/inbox",
+            headers={"Authorization": f"Bearer {cred['credential']}"})
+        self.assertEqual(status, 200, data)
+        [item] = [i for i in json.loads(data)["items"]
+                  if i["key"] == "claude:x@sat1"]
+        self.assertIsNone(item["harness"])
+
+    def test_a_route_bug_answers_500_instead_of_dropping(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        with patch.object(srv.state.catalog, "rows",
+                          side_effect=RuntimeError("boom")), \
+                patch("traceback.print_exc"):
+            status, data = srv.request("GET", "/v1/sessions", headers=hdr)
+        self.assertEqual(status, 500)
+        self.assertEqual(json.loads(data)["error"]["code"], "internal")
+        status, _ = srv.request("GET", "/v1/sessions", headers=hdr)
+        self.assertEqual(status, 200)
+
+    def test_a_page_bug_answers_500_page_failed(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        broken = type("Page", (), {"get": staticmethod(
+            lambda ctx, args: {}["missing"])})
+        with patch("quiver.webapp.pages.load", return_value=broken), \
+                patch("traceback.print_exc"):
+            status, data = srv.request(
+                "GET", "/v1/app/skills",
+                headers={"Authorization": f"Bearer {cred['credential']}"})
+        self.assertEqual(status, 500)
+        self.assertEqual(json.loads(data)["error"]["code"], "page_failed")
 
     def test_inbox_shows_pending_approval_on_active(self):
         # A pane-only prompt leaves the transcript "active" — the inbox

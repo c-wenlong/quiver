@@ -197,6 +197,15 @@ class TestForkRoute(unittest.TestCase):
         self.assertEqual(launch["state"], "failed")
         self.assertEqual(launch["note"], "claude exited")
 
+    def test_a_fork_that_raises_still_settles_the_launch(self):
+        with patch.object(fork_mod, "start",
+                          side_effect=RuntimeError("tmux vanished")):
+            _s, body = self._fork("claude:abc")
+            self._wait()
+        launch = self.srv.state.launches[body["launch_id"]]
+        self.assertEqual(launch["state"], "failed")
+        self.assertIn("tmux vanished", launch["note"])
+
     def test_fork_carries_the_pick(self):
         with patch.object(fork_mod, "start",
                           return_value=(True, "forked")) as start:

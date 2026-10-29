@@ -26,6 +26,7 @@ import socket
 import sqlite3
 import threading
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from email.utils import formatdate
 from pathlib import Path
@@ -882,7 +883,22 @@ class _Handler(BaseHTTPRequestHandler):
         self._must_close = False
         self._body_cache = _UNSET
         self._device_row = None
-        super().handle_one_request()
+        self._sent_headers = None
+        try:
+            super().handle_one_request()
+        except (ConnectionResetError, BrokenPipeError):
+            # The client went away; nothing to answer and nothing to log.
+            self.close_connection = True
+        except Exception:
+            # A route bug. Answer 500 if nothing went out yet, so the
+            # client sees an error instead of a dropped connection.
+            traceback.print_exc()
+            self.close_connection = True
+            if self._sent_headers is None:
+                try:
+                    self._send_error(500, "internal", "the hub hit an error")
+                except OSError:
+                    pass
 
     def parse_request(self) -> bool:
         if not super().parse_request():
@@ -980,7 +996,7 @@ class _Handler(BaseHTTPRequestHandler):
         # no other site may frame a hub page, sniff a body into a script
         # or learn the hub's URL from a referrer. A route that sets its
         # own policy (page previews) keeps it.
-        sent = getattr(self, "_sent_headers", set())
+        sent = getattr(self, "_sent_headers", None) or set()
         for name, value in _SECURITY_HEADERS:
             if name.lower() not in sent:
                 self.send_header(name, value)
@@ -3384,6 +3400,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
         except (OSError, ValueError, sqlite3.Error) as exc:
             self._send_error(503, "page_unavailable", str(exc))
+            return
+        except Exception as exc:  # a page bug: answer, don't drop the socket
+            traceback.print_exc()
+            self._send_error(500, "page_failed", type(exc).__name__)
             return
         self._send_json(200, body)
 
