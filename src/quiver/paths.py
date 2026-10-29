@@ -339,6 +339,10 @@ backups/
 # rewritten on every scan, so never versioned.
 data/ledger/
 
+# The web app's own usage ledger (a different schema from the app's): the
+# same personal rows, rebuilt from the transcripts by any hub that serves it.
+data/web-ledger/
+
 # Devin cloud sessions the app syncs from the API: titles, links, repos and
 # message times of your own sessions. Personal, and rewritten on each sync.
 data/devin-cloud/
