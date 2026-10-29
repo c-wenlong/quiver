@@ -56,12 +56,35 @@ The joins, always present:
 
 `GET /v1/app/tasks?harnesses=1` does not touch the task list at all: it
 answers `{"harnesses": [{name, display_name, tracked, launch_model,
-launch_effort, last_model}], machine}` —
+launch_effort, last_model, recent_models}], machine}` —
 `catalog.launchable_harnesses`, the same list the Repositories page's
 PR sheet and the phone's new-session sheet offer. `launch_model` says
-the harness takes a `model` pick at launch and `last_model` (the
-ledger's most recent model for it, `""` when none) prefills the sheet's
-Model field; `launch_effort` rides along, unused here so far.
+the harness takes a `model` pick at launch, `recent_models` lists the
+ledger's recent models for it (newest first, at most five) and
+`last_model` is the head of that list (`""` when none); together they
+fill the sheet's Model menu. `launch_effort` rides along, unused here
+so far.
+
+### The Model menu
+
+`static/model-menu.js` draws one control for every web launch sheet:
+this page's New agent session, the Repositories page's Open in session
+and the Sessions page's New session. It shows only while the picked
+harness can take a model at launch, and offers, in order:
+
+- **Harness default**: sends no `model` key.
+- Each of the harness's `recent_models`, newest first. An old hub that
+  sends only `last_model` (or `last_models` on a machine row) gives a
+  one-item list.
+- **Other…**: shows a monospace box for a typed model id; its trimmed
+  value is sent, or nothing when it is blank.
+
+It opens on the newest recent model, else Harness default. A harness or
+machine switch re-defaults an untouched menu to the new harness's
+newest model. Any pick the user made, Harness default and Other…
+included, survives the switch, except a recent model the new harness
+has never used: that one re-defaults, so a sheet never sends another
+harness's model.
 
 ## The page
 
@@ -89,9 +112,9 @@ card deep-links into the Repositories page's PR sheet
 added to that route).
 
 **Actions.** On a GitHub issue or pull, "New agent session" asks for a
-harness (`?harnesses=1`), an optional model (a free-text field shown
-only when the picked harness reports `launch_model`, prefilled with its
-`last_model`; empty sends no `model` key) and an optional first
+harness (`?harnesses=1`), an optional model (the Model menu above,
+shown only when the picked harness reports `launch_model`) and an
+optional first
 message, then posts to
 `POST /v1/issues/resolve` (issues) or `POST /v1/pulls/<o>/<r>/<n>/open`
 (pulls) — both stamp the launch's `origin`, so the session that lands

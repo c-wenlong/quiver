@@ -34,7 +34,7 @@ Status words:
 | --- | --- | --- | --- | --- |
 | Repositories | yes | yes | - | |
 | Pull requests | yes | yes | yes | Mac and Web: inside Repositories, with merge, rerun and "Open in session". iOS: own tab and detail page |
-| Issues, resolve with agent | yes | yes | yes | iOS: own tab plus a Resolve sheet; Mac: detail sheet and ResolveIssueSheet. All sheets carry the model picker prefilled with the last-used model (#914); on the Mac it is a menu of the harness's `recent_models` plus Other… |
+| Issues, resolve with agent | yes | yes | yes | iOS: own tab plus a Resolve sheet; Mac: detail sheet and ResolveIssueSheet. All sheets carry the model picker prefilled with the last-used model (#914); on the Mac and the web it is a menu of the harness's `recent_models` plus Other… (web: Harness default first, `static/model-menu.js`) |
 | Tasks | yes | yes | yes | Mac: sidebar page with the same filters, groups, state stepper, sessions and link/unlink |
 | Inbox | yes | yes | yes | Pending decisions. iOS badges count only "Waiting on you"; dismissals live on the hub per device |
 
@@ -79,7 +79,7 @@ hosts the hub; the web app and the iOS app are its clients.
 | --- | --- | --- | --- | --- |
 | Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval |
 | Devices list and revoke | yes | yes | yes | Mac and Web: Settings. iOS: under the hub chip menu |
-| Launch a new session | yes | yes | yes | All three: machine, folder and harness pickers, first prompt, launch poll, then the chat opens. All sheets carry the model picker prefilled with the last-used model (`last_models`/`last_model`, #914); on the Mac it is a menu of the harness's `recent_models` plus Other… |
+| Launch a new session | yes | yes | yes | All three: machine, folder and harness pickers, first prompt, launch poll, then the chat opens. All sheets carry the model picker prefilled with the last-used model (`last_models`/`last_model`, #914); on the Mac and the web it is a menu of the harness's `recent_models` plus Other… (web: Harness default first, `static/model-menu.js`) |
 | Machine switcher | - | - | planned | iOS P4: one machine today |
 | Machine vitals | yes | yes | planned | Compute page on Mac and Web; iOS P9 carries the samples over the hub |
 | Push notifications | - | - | part | ntfy today; APNs planned |

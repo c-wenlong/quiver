@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: the launch sheets' Model box is now a menu.** New session,
+  a task's New agent session and a PR's Open in session list "Harness
+  default" (sends no model), the harness's recent models newest first
+  (the hub's `recent_models`), and "Other…", which opens a box for a
+  typed model id. The menu opens on the newest recent model, as the box
+  was prefilled before. A pick of your own survives a harness or
+  machine switch, except a recent model the new harness never used,
+  which re-defaults so a sheet never sends another harness's model. An
+  older hub that sends only `last_models` gives a one-item list. Part of
+  [#914](https://github.com/c-wenlong/quiver/issues/914), the same menu
+  as the Mac app's below.
+
 - **Mac app: the launch sheets pick a model from a menu.** New session,
   Resolve issue and a task's New agent session swap the free-text
   Model field for a menu: "Harness default" (no `model` sent), the
