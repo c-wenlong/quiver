@@ -359,8 +359,10 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(chat.working)
     }
 
-    /// Holds the reveal's pauses until the test lets them go.
-    private final class Gate {
+    /// Holds the reveal's pauses until the test lets them go. On the main
+    /// actor like the chat, so a released pause resumes within `settle`'s
+    /// yields instead of waiting on a hop back from the thread pool.
+    @MainActor private final class Gate {
         var waits: [Duration] = []
         private var held: [CheckedContinuation<Void, Never>] = []
         func pause(_ d: Duration) async {
