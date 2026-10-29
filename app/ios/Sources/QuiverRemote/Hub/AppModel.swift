@@ -378,11 +378,18 @@ final class AppModel {
     /// when they appear.
     var pendingIssue: IssueLink?
 
-    /// `quiver://pair` deep link or a scanned QR; `quiver://issue/…`
-    /// deep link onto the Issues stack.
+    /// A `quiver://pair` link that came from outside the app (the Camera
+    /// app, a tapped link), held until the person confirms the hub it
+    /// names. Anyone can craft one, and a hub paired by it sees every
+    /// prompt and approval, so nothing goes to that hub before then.
+    var pairOffer: PairLink?
+
+    /// A `quiver://pair` deep link waits in `pairOffer`; a
+    /// `quiver://issue/…` deep link goes onto the Issues stack.
     func handle(_ url: URL) async {
         if let link = PairLink(url) {
-            await pair(with: link)
+            pairing.error = nil
+            pairOffer = link
             return
         }
         if let issue = IssueLink(url) {
@@ -390,20 +397,50 @@ final class AppModel {
         }
     }
 
-    func pair(with link: PairLink) async {
+    /// Pairs with the hub `pairOffer` names, which the person confirmed.
+    /// The offer stays up on failure so its error shows where they are.
+    func acceptPairOffer() async {
+        guard let link = pairOffer else { return }
+        offerPairing = true
+        defer { offerPairing = false }
+        if await pair(with: link) { pairOffer = nil }
+    }
+
+    /// The offer's own pair, if one is out, can no longer add the hub. A
+    /// Tailscale pairing under way behind the sheet carries on.
+    func declinePairOffer() {
+        if offerPairing {
+            pairingGen += 1
+            pairing.busy = false
+        }
+        pairOffer = nil
+        pairing.error = nil
+    }
+
+    /// True while `acceptPairOffer` waits on the hub.
+    @ObservationIgnored private var offerPairing = false
+
+    /// A scanned QR, or a confirmed `pairOffer`. True once the hub is
+    /// paired and on screen. A second call while one is out is dropped:
+    /// the scanner can read the same code twice before it closes.
+    @discardableResult
+    func pair(with link: PairLink) async -> Bool {
+        guard !pairing.busy else { return false }
         let gen = pairingGen
         pairing.busy = true
         pairing.error = nil
         let client = HubClient(baseURL: link.baseURL, credential: nil)
         do {
             let cred = try await client.pair(token: link.token, name: link.name ?? pairing.deviceName)
-            guard gen == pairingGen else { return }
+            guard gen == pairingGen else { return false }
             pairing.busy = false
             adopt(PairedHub(baseURL: link.baseURL, credential: cred))
+            return true
         } catch {
-            guard gen == pairingGen else { return }
+            guard gen == pairingGen else { return false }
             pairing.busy = false
             pairing.error = (error as? HubError)?.message ?? error.localizedDescription
+            return false
         }
     }
 
