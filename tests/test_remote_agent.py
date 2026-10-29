@@ -1234,6 +1234,65 @@ class TestAgentEdges(unittest.TestCase):
     def test_push_events_empty_ok(self):
         self.assertTrue(self._agent()._push_events())
 
+    def test_push_events_cuts_batches_by_bytes(self):
+        # 50 events of 200 KB each are ~10 MB: the hub would refuse that
+        # body with a 400 forever. Each POST stays under the cap.
+        ag = self._agent()
+        ag.outbox = [{"type": "notify", "seq": i, "data": {"x": "a" * 200_000}}
+                     for i in range(1, 51)]
+        sizes = []
+
+        def post(hub, path, cred, payload, timeout=10.0):
+            sizes.append(len(json.dumps(payload).encode()))
+            return 200, {}
+
+        with patch.object(agent_mod, "_post", side_effect=post):
+            while ag.outbox:
+                self.assertTrue(ag._push_events())
+        self.assertGreater(len(sizes), 1)
+        self.assertTrue(all(n <= agent_mod.EVENTS_BODY_MAX + 1024
+                            for n in sizes))
+        self.assertEqual(ag._outbox_ack, 50)
+
+    def test_push_events_clips_an_oversized_event(self):
+        ag = self._agent()
+        ag.outbox = [{"type": "notify", "seq": 1,
+                      "data": {"kind": "x", "text": "a" * (6 << 20)}}]
+        with patch.object(agent_mod, "_post", return_value=(200, {})) as post:
+            self.assertTrue(ag._push_events())
+        sent = post.call_args[0][3]["events"][0]
+        self.assertTrue(sent["data"]["text"].endswith("(truncated)"))
+        self.assertEqual(sent["data"]["kind"], "x")
+        self.assertLessEqual(len(json.dumps(sent).encode()),
+                             agent_mod.EVENTS_BODY_MAX)
+        self.assertEqual(ag._outbox_ack, 1)
+
+    def test_push_events_acks_past_an_unclippable_event(self):
+        # Many short strings can't be clipped under the cap: the event
+        # is dropped and acked, and the next one still goes.
+        ag = self._agent()
+        ag.outbox = [{"type": "notify", "seq": 1,
+                      "data": {"parts": ["b" * 500] * 20_000}},
+                     {"type": "notify", "seq": 2, "data": {}}]
+        with patch.object(agent_mod, "_post", return_value=(200, {})) as post:
+            self.assertTrue(ag._push_events())
+        self.assertEqual(post.call_args[0][3]["events"],
+                         [{"type": "notify", "seq": 2, "data": {}}])
+        self.assertEqual(ag._outbox_ack, 2)
+        self.assertEqual(ag.outbox, [])
+
+    def test_outbox_is_bounded(self):
+        ag = self._agent()
+        with patch.object(agent_mod, "OUTBOX_MAX", 3):
+            for i in range(5):
+                ag._capture("k", protocol.event("notify", "k", ag.machine_id,
+                                                {"kind": "finished", "i": i}))
+            self.assertEqual([e["data"]["i"] for e in ag.outbox], [2, 3, 4])
+            # A failed push requeues without growing past the bound.
+            with patch.object(agent_mod, "_post", return_value=(0, {})):
+                self.assertFalse(ag._push_events())
+            self.assertEqual(len(ag.outbox), 3)
+
     def test_push_catalog_posts_rows(self):
         ag = self._agent()
         ag.catalog._fetch = lambda: []
