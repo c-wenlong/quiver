@@ -343,8 +343,10 @@ struct HubClient: Sendable {
     /// Returns true when the hub queued it for a satellite (202), so the
     /// outcome arrives later as `command.result` or `session.ownership`.
     @discardableResult
-    func control(_ key: String, op: String) async throws -> Bool {
-        let (_, status) = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/control", body: ["op": op]))
+    func control(_ key: String, op: String, value: String? = nil) async throws -> Bool {
+        var body: [String: Any] = ["op": op]
+        if let value { body["value"] = value }
+        let (_, status) = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/control", body: body))
         return status == 202
     }
 

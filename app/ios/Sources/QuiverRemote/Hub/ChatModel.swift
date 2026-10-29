@@ -482,7 +482,7 @@ final class ChatModel {
             // The turn ended (or stopped to ask) without a message to show.
             if !["", "active"].contains(status) { awaitingReply = false }
         case "session.ownership":
-            app?.patch(key, ownership: env.decode(OwnershipData.self)?.ownership)
+            if let event = env.decode(OwnershipData.self) { app?.patch(key, ownershipEvent: event) }
             attachQueued = false
         case "session.meta":
             // A pin or rename from any device.
@@ -532,6 +532,9 @@ final class ChatModel {
             }
         } else if msg.kind != "tool_result" {
             awaitingReply = false
+        }
+        if ["assistant", "thinking", "tool_use"].contains(msg.kind ?? "assistant") {
+            modelSwitch?.noteReply(at: Date(), messageTs: msg.ts)
         }
         Self.add(msg, id: "m\(seq)", to: &items, cards: &toolCards, orphans: &orphanResults)
     }
@@ -663,6 +666,8 @@ final class ChatModel {
             return
         }
         if r.ok == false {
+            // A satellite answers a model switch here, after the 202.
+            if r.op == "control" { modelSwitch = nil }
             items.append(ChatItem(id: UUID().uuidString, kind: .system("\(r.op ?? "Command") failed: \(r.note ?? "unknown error")")))
         }
     }
@@ -1051,6 +1056,41 @@ final class ChatModel {
             updateApproval(requestId) { queued ? .queued : .resolved(decision) }
         } catch {
             updateApproval(requestId) { .failed((error as? HubError)?.message ?? "Approval failed") }
+        }
+    }
+
+    // MARK: Model
+
+    /// The switch sent from the Model menu, until the transcript shows
+    /// it (`ModelSwitch` says when that is).
+    private(set) var modelSwitch: ModelSwitch?
+
+    /// The model the header shows as asked for, while the transcript
+    /// hasn't caught up; nil once it has.
+    var pendingModel: String? {
+        guard let modelSwitch, row?.canSwitchModel == true,
+              !modelSwitch.settled(currentModel: row?.model, listRefreshedAt: app?.refreshedAt) else { return nil }
+        return modelSwitch.requested
+    }
+
+    /// The Model menu's entries, newest first.
+    var modelChoices: [String] {
+        guard let row else { return [] }
+        return ModelSwitchOptions.choices(for: row, on: app?.machines.first { $0.id == row.machineId })
+    }
+
+    /// Types `/model <value>` into the session's pane through the hub.
+    /// Picking the model it already runs (with nothing pending) sends
+    /// nothing; an invalid id never leaves the phone.
+    func switchModel(to text: String) async {
+        guard let client = hubClient, let value = ModelSwitchOptions.validValue(text) else { return }
+        if pendingModel == nil, value == row?.model { return }
+        let from = row?.model
+        do {
+            try await client.control(key, op: "model", value: value)
+            modelSwitch = ModelSwitch(requested: value, from: from, sentAt: Date())
+        } catch {
+            items.append(ChatItem(id: UUID().uuidString, kind: .system((error as? HubError)?.message ?? "Couldn't switch the model")))
         }
     }
 
