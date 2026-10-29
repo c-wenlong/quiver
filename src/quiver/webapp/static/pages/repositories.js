@@ -1212,7 +1212,7 @@
     // The first message survives a repaint (a refetch landing mid-typing).
     const typed = dlg.querySelector("#gh-session-prompt");
     const caret = typed && document.activeElement === typed ? [typed.selectionStart, typed.selectionEnd] : null;
-    const typedModel = dlg.querySelector("#gh-session-model");
+    const typedModel = dlg.querySelector("#gh-session-model-other");
     const modelCaret = typedModel && document.activeElement === typedModel ? [typedModel.selectionStart, typedModel.selectionEnd] : null;
     dlg.innerHTML = `<div class="sheet-body">${content}${mergeErr}${confirmPanel(s, pr)}${sessionPanel(s, pr)}
       <div class="gh-sheet-actions">${mergeControls(s, pr)}<span class="gh-spacer"></span>
@@ -1263,11 +1263,12 @@
   const LAUNCH_POLLS = 60;
 
   /* ``POST /v1/sessions`` takes an optional ``model`` pick where the
-   * harness reports ``launch_model``; ``last_model`` (the ledger's most
-   * recent model for it) prefills the field, and an empty field sends
-   * no ``model`` key. */
+   * harness reports ``launch_model``: the shared Model menu
+   * (model-menu.js) offers its ``recent_models``, newest first by
+   * default, and Harness default or an empty Other… sends no ``model``
+   * key. */
   const pickedHarness = (x) => (x.harnesses || []).find((h) => h.name === x.harness) || null;
-  const lastModel = (x) => { const h = pickedHarness(x); return (h && h.last_model) || ""; };
+  const recentModels = (x) => ModelMenu.harnessRecents(pickedHarness(x));
 
   function sessionPanel(s, pr) {
     const x = s.session;
@@ -1280,8 +1281,7 @@
       x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;
     const picked = pickedHarness(x);
     const model = picked && picked.launch_model
-      ? `<input class="field gh-mono" id="gh-session-model" type="text" aria-label="Model" value="${esc(x.model)}"
-        placeholder="Model (optional)" autocomplete="off" spellcheck="false"${busy || x.started ? " disabled" : ""}>`
+      ? ModelMenu.html(x.model, recentModels(x), "gh-session-model", busy || x.started)
       : "";
     const ready = x.harnesses && x.harnesses.length && x.prompt.trim() && !busy && !x.started;
     const where = s.data && s.data.machine ? ` on ${esc(s.data.machine)}` : " on the hub";
@@ -1309,18 +1309,16 @@
     const harness = dlg.querySelector("#gh-session-harness");
     if (harness) harness.onchange = () => {
       x.harness = harness.value;
-      // Re-prefill the model from this harness's last-used unless the
-      // user typed a pick of their own; the field may appear or go away.
-      if (!x.modelDirty) x.model = lastModel(x);
+      // Re-default the model menu to this harness's newest unless the
+      // user picked; the menu may appear or go away.
+      ModelMenu.redefault(x.model, recentModels(x));
       paintSheet();
       const again = dlg.querySelector("#gh-session-harness");
       if (again) again.focus();
     };
-    const model = dlg.querySelector("#gh-session-model");
-    if (model) {
-      model.oninput = () => { x.model = model.value; x.modelDirty = true; };
-      if (modelCaret) { model.focus(); model.setSelectionRange(modelCaret[0], modelCaret[1]); }
-    }
+    ModelMenu.bind(dlg, x.model, recentModels(x), "gh-session-model", paintSheet);
+    const typedModel = dlg.querySelector("#gh-session-model-other");
+    if (typedModel && modelCaret) { typedModel.focus(); typedModel.setSelectionRange(modelCaret[0], modelCaret[1]); }
     const prompt = dlg.querySelector("#gh-session-prompt");
     const start = dlg.querySelector("#gh-session-start");
     if (prompt) {
@@ -1340,7 +1338,7 @@
   }
 
   async function openSession(s, pr) {
-    const x = { harnesses: null, harness: null, model: "", modelDirty: false,
+    const x = { harnesses: null, harness: null, model: ModelMenu.fresh(),
       phase: null, error: null, note: null, started: false,
       prompt: `Review pull request #${pr.number}, "${pr.title}", in ${pr.repo}. Its head is checked out in this folder.` };
     s.session = x;
@@ -1352,7 +1350,7 @@
     x.harnesses = status === 200 && data ? data.harnesses || [] : [];
     if (status !== 200) x.error = GhUI.failMessage(status, data);
     x.harness = x.harnesses.length ? x.harnesses[0].name : null;
-    x.model = lastModel(x);
+    ModelMenu.redefault(x.model, recentModels(x));
     paintSheet();
   }
 
@@ -1368,7 +1366,8 @@
     say({ phase: "Starting…" });
     const body = { harness: x.harness, cwd: made.data.path, prompt: x.prompt.trim() };
     const h = pickedHarness(x);
-    if (h && h.launch_model && x.model.trim()) body.model = x.model.trim();
+    const model = ModelMenu.value(x.model);
+    if (h && h.launch_model && model) body.model = model;
     const launched = await GhUI.post("/v1/sessions", body);
     if (!alive()) return;
     const id = launched.data && launched.data.launch_id;

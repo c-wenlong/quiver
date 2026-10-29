@@ -365,11 +365,11 @@
   const canLaunch = (t) => t.source === "github" && (t.kind === "issue" || t.kind === "pull") && t.repo;
 
   /* The launch routes take an optional ``model`` pick where the harness
-   * reports ``launch_model``; ``last_model`` (the ledger's most recent
-   * model for it) prefills the field, and an empty field sends no
-   * ``model`` key. */
+   * reports ``launch_model``: the shared Model menu (model-menu.js)
+   * offers its ``recent_models``, newest first by default, and Harness
+   * default or an empty Other… sends no ``model`` key. */
   const pickedHarness = (x) => (x.harnesses || []).find((h) => h.name === x.harness) || null;
-  const lastModel = (x) => { const h = pickedHarness(x); return (h && h.last_model) || ""; };
+  const recentModels = (x) => ModelMenu.harnessRecents(pickedHarness(x));
 
   function newPanel(t) {
     const x = page.session;
@@ -386,8 +386,7 @@
     }
     const picked = pickedHarness(x);
     const model = picked && picked.launch_model
-      ? `<input class="field gh-mono" id="tk-model" type="text" aria-label="Model" value="${esc(x.model)}"
-        placeholder="Model (optional)" autocomplete="off" spellcheck="false"${busy || x.started ? " disabled" : ""}>`
+      ? ModelMenu.html(x.model, recentModels(x), "tk-model", busy || x.started)
       : "";
     const where = (page.data && page.data.machine) ? ` on ${esc(page.data.machine)}` : " on the hub";
     const what = `${t.kind === "pull" ? "PR" : "issue"} ${refLabel(t)}`;
@@ -492,7 +491,7 @@
   /* ---------------------------------------------------------- actions */
 
   async function openNew(t) {
-    const x = { harnesses: null, harness: null, model: "", modelDirty: false,
+    const x = { harnesses: null, harness: null, model: ModelMenu.fresh(),
       phase: null, error: null, note: null, started: false, prompt: "" };
     page.action = "new";
     page.link = null;
@@ -505,7 +504,7 @@
     x.harnesses = status === 200 && data ? data.harnesses || [] : [];
     if (status !== 200) x.error = GhUI.failMessage(status, data);
     x.harness = x.harnesses.length ? x.harnesses[0].name : null;
-    x.model = lastModel(x);
+    ModelMenu.redefault(x.model, recentModels(x));
     paint();
   }
 
@@ -517,7 +516,8 @@
     say({ phase: "Starting…", error: null, note: null });
     const body = { harness: x.harness, prompt: x.prompt.trim() };
     const h = pickedHarness(x);
-    if (h && h.launch_model && x.model.trim()) body.model = x.model.trim();
+    const model = ModelMenu.value(x.model);
+    if (h && h.launch_model && model) body.model = model;
     const [owner, name] = (t.repo || "/").split("/", 2);
     const launched = t.kind === "pull"
       ? await GhUI.post(`/v1/pulls/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/${encodeURIComponent(t.ref)}/open`, body)
@@ -646,18 +646,16 @@
       const x = page.session;
       if (!x) return;
       x.harness = harness.value;
-      // Re-prefill the model from this harness's last-used unless the
-      // user typed a pick of their own; the field may appear or go away.
-      if (!x.modelDirty) x.model = lastModel(x);
+      // Re-default the model menu to this harness's newest unless the
+      // user picked; the menu may appear or go away.
+      ModelMenu.redefault(x.model, recentModels(x));
       paint();
       const again = document.getElementById("tk-harness");
       if (again) again.focus();
     };
-    const model = document.getElementById("tk-model");
-    if (model && page.session) model.oninput = () => {
-      page.session.model = model.value;
-      page.session.modelDirty = true;
-    };
+    if (page.session) {
+      ModelMenu.bind(document.getElementById("panel"), page.session.model, recentModels(page.session), "tk-model", paint);
+    }
     const prompt = document.getElementById("tk-prompt");
     if (prompt && page.session) prompt.oninput = () => { page.session.prompt = prompt.value; };
     const cancelLink = document.getElementById("tk-link-cancel");
