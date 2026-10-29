@@ -213,7 +213,9 @@ def deploy_targets(
             contract = contract_for(registry, name, home)
             if not contract.shim_able:
                 continue
-            root = contract.root
+            # Table roots are home-relative; left bare they resolve
+            # against the cwd, so a project's .claude/ read as an install.
+            root = None if contract.root is None else home / contract.root
             if root is None or not _harness_installed(
                     root, name, registry, home):
                 continue
