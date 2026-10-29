@@ -146,6 +146,9 @@ extension TaskRow {
         case "pr_open": return "PR open"
         case "merged": return "Merged"
         case "closed": return "Closed"
+        case "in_progress" where source != "github":
+            // Another source says itself that work has started.
+            return "Started"
         default: return agentRunning == true ? "Agent running" : "Open"
         }
     }

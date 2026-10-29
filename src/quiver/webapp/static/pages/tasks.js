@@ -218,14 +218,14 @@
       cards.push(`<div class="card offer"><div class="offer-text">
           <div class="card-title">GitHub didn't answer</div>
           <p class="card-subtitle">${esc(d.github.error || "gh failed on the hub this refresh.")}</p></div>
-        <button type="button" class="offer-button" id="tk-source-refresh">Refresh</button></div>`);
+        <button type="button" class="offer-button tk-source-refresh">Refresh</button></div>`);
     }
     const lin = d.linear;
     if (lin && lin.status !== "ok" && lin.status !== "disabled") {
       cards.push(`<div class="card offer"><div class="offer-text">
           <div class="card-title">Linear: ${esc(String(lin.status).replace(/-/g, " "))}</div>
           <p class="card-subtitle">${esc(lin.error || "Linear did not answer this refresh.")}</p></div>
-        <button type="button" class="offer-button" id="tk-source-refresh">Refresh</button></div>`);
+        <button type="button" class="offer-button tk-source-refresh">Refresh</button></div>`);
     }
     return cards;
   }
@@ -275,8 +275,10 @@
     for (const btn of document.querySelectorAll("#panel [data-filter]")) {
       btn.onclick = () => { page.filter = btn.dataset.filter; paintList(); };
     }
-    const retry = document.getElementById("tk-source-refresh");
-    if (retry) retry.onclick = () => load(true);
+    // GitHub and Linear can each put up a Refresh card at once.
+    for (const retry of document.querySelectorAll("#panel .tk-source-refresh")) {
+      retry.onclick = () => load(true);
+    }
   }
 
   /* ----------------------------------------------------------- detail */

@@ -165,6 +165,9 @@ final class TaskRowTests: XCTestCase {
         var linear = row("a", source: "linear", repo: nil, project: "QUI", state: "in_progress")
         linear.status = "In Review"
         XCTAssertEqual(linear.stateLabel, "In Review")
+        // An older hub sends no status: started Linear work still reads so.
+        linear.status = nil
+        XCTAssertEqual(linear.stateLabel, "Started")
         // A ref under a repo reads "o/r#5"; a bare ref stays itself.
         XCTAssertEqual(row("a", ref: "QUI-1", repo: nil, project: "QUI").refLabel, "QUI-1")
     }
