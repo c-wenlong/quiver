@@ -953,6 +953,12 @@ import Testing
         fans.threshold = 140
         #expect(fans.threshold == 100)
         fans.threshold = 72
+        // Unpicked, the off temperature follows the line, so a restart
+        // finds the same value it left rather than a shifted one.
+        #expect(fans.releaseBelow == 67)
+        let mid = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
+                             isInstalled: { _ in false }, defaults: defaults)
+        #expect(mid.releaseBelow == 67)
         fans.thresholdEnabled = true
         fans.releaseBelow = 60
         let again = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
@@ -983,13 +989,15 @@ import Testing
         let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                               isInstalled: { _ in false }, defaults: defaults)
         #expect(fans.releaseBelow == 75)
-        fans.threshold = 80
-        // It cannot reach or pass the on line.
+        // Unpicked, it follows the line at the default gap.
+        fans.threshold = 90
+        #expect(fans.releaseBelow == 85)
+        // Picked, it cannot reach or pass the on line.
         fans.releaseBelow = 95
-        #expect(fans.releaseBelow == 79)
+        #expect(fans.releaseBelow == 89)
         fans.releaseBelow = 60
         #expect(fans.releaseBelow == 60)
-        // Moving the line under it drags it down with a degree to spare.
+        // Moving the line under a pick drags it down with a degree to spare.
         fans.threshold = 55
         #expect(fans.releaseBelow == 54)
         // Nor under its floor.

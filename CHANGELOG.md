@@ -11,12 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A "Fan off temperature" for the Compute fan rule.** The popover's
   first field is now "Fan on temperature", and a second field under it
-  picks where the held fans drop back to macOS (default five degrees
-  under the line, as before; it always stays at least a degree under,
-  and lowering the line drags it down). A CPU that hovers at the line
-  no longer flaps the fans on and off. The menu bar panel's fan popover
-  gains the same field as a "Fan off below" dropdown, and the choice is
-  remembered in `fanReleaseBelowCelsius`.
+  picks where the held fans drop back to macOS. Until a temperature is
+  picked it follows the line at five degrees under, as before; a pick
+  is remembered in `fanReleaseBelowCelsius`, stays at least a degree
+  under the line, and moves down with it. A CPU that hovers at the
+  line no longer flaps the fans on and off. The menu bar panel's fan
+  popover gains the same field as a "Fan off below" dropdown.
 
 - **The web app's chat shows the tmux pane and can detach.** A session
   Quiver runs under tmux shows its `qv-…` name in the chat's top bar;

@@ -167,20 +167,33 @@ public final class FanControl {
             let clamped = min(max(threshold, Self.thresholdRange.lowerBound), Self.thresholdRange.upperBound)
             if clamped != threshold { threshold = clamped; return }
             defaults.set(threshold, forKey: Self.thresholdKey)
-            // The off temperature must stay under the line, or a held fan
-            // would drop out while the CPU is still over it.
-            if releaseBelow >= threshold { releaseBelow = threshold - 1 }
+            // A picked off temperature must stay under the line, or a held
+            // fan would drop out while the CPU is still over it; an
+            // unpicked one just follows the line at the default gap.
+            if let releasePick, releasePick >= threshold { self.releasePick = threshold - 1 }
         }
     }
 
-    /// Where the fans go back to macOS: the second field under the on
-    /// temperature, always at least a degree under it. Kept in
-    /// UserDefaults like the threshold.
+    /// Where the fans go back to macOS: the "Fan off temperature" field's
+    /// value in effect — the user's pick, or the default gap under the
+    /// line until they pick one. Writing it pins a temperature.
     public var releaseBelow: Double {
+        get { releasePick ?? threshold - Self.thresholdHysteresis }
+        set { releasePick = newValue }
+    }
+
+    /// The user's picked off temperature; nil means the field follows
+    /// the line at `thresholdHysteresis`. Only a pick is remembered, so
+    /// a restart cannot move an unpicked value.
+    private var releasePick: Double? {
         didSet {
-            let clamped = Self.clampRelease(releaseBelow, threshold: threshold)
-            if clamped != releaseBelow { releaseBelow = clamped; return }
-            defaults.set(releaseBelow, forKey: Self.releaseBelowKey)
+            guard let releasePick else {
+                defaults.removeObject(forKey: Self.releaseBelowKey)
+                return
+            }
+            let clamped = Self.clampRelease(releasePick, threshold: threshold)
+            if clamped != releasePick { self.releasePick = clamped; return }
+            defaults.set(releasePick, forKey: Self.releaseBelowKey)
         }
     }
 
@@ -195,9 +208,8 @@ public final class FanControl {
     /// The off temperature's own bounds; its live ceiling is a degree
     /// under `threshold`, which the clamp applies on top.
     public static let releaseRange = 30.0...99.0
-    /// The gap the off temperature starts at under the line, so a CPU
-    /// hovering at it does not flap the fans; the field is the user's
-    /// to move after that.
+    /// The gap an unpicked off temperature keeps under the line, so a
+    /// CPU hovering at it does not flap the fans.
     public static let thresholdHysteresis = 5.0
 
     /// The off temperature inside its range and a degree under the line.
@@ -261,10 +273,8 @@ public final class FanControl {
         thresholdEnabled = defaults.bool(forKey: Self.thresholdEnabledKey)
         let line = defaults.object(forKey: Self.thresholdKey) as? Double ?? Self.defaultThreshold
         threshold = line
-        // Installs from before the field existed get the old fixed gap.
-        releaseBelow = Self.clampRelease(
-            defaults.object(forKey: Self.releaseBelowKey) as? Double ?? line - Self.thresholdHysteresis,
-            threshold: line)
+        releasePick = (defaults.object(forKey: Self.releaseBelowKey) as? Double)
+            .map { Self.clampRelease($0, threshold: line) }
     }
 
     /// The helper is installed, steered by this control file, at this
