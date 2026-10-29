@@ -139,6 +139,54 @@ import Testing
         #expect(toks.contains { $0.0 == .comment && $0.1 == "-- x" })
     }
 
+    @Test func uppercaseSqlAndDockerfileFold() {
+        // SQL is conventionally uppercase and dockerfile lowercase; the
+        // word sets match either way without changing the text.
+        let toks = kinds("SELECT name FROM t WHERE x = TRUE", "sql")
+        #expect(toks.contains { $0.0 == .keyword && $0.1 == "SELECT" })
+        #expect(toks.contains { $0.0 == .keyword && $0.1 == "FROM" })
+        #expect(toks.contains { $0.0 == .keyword && $0.1 == "WHERE" })
+        #expect(toks.contains { $0.0 == .number && $0.1 == "TRUE" })
+        #expect(kindOf("from node:22", "dockerfile", "from") == .keyword)
+    }
+
+    @Test func xmlFencesAndPathsUseHtml() {
+        #expect(SyntaxHighlight.language(tag: "xml") == "html")
+        #expect(SyntaxHighlight.language(path: "/a/b/pom.xml") == "html")
+        #expect(kindOf("<a>x</a>", "xml", "<a") == .keyword)
+    }
+
+    @Test func surrogatePairsSurvivePlainRuns() {
+        // 🚀 and 𝛼 are two UTF-16 units each; decoding a run of plain
+        // units at once keeps them whole.
+        let code = "echo 🚀 done  path"
+        #expect(SyntaxHighlight.tokens(code, language: "bash")
+            .map(\.text).joined() == code)
+        #expect(kindOf(code, "bash", "🚀") != nil)
+    }
+
+    @Test func numberedMultilineKeepsPrefixes() {
+        // A template string spanning numbered lines must not swallow
+        // the following `2→` and `3→` prefixes.
+        let toks = kinds("  1\u{2192}s = `\n  2\u{2192}mid\n  3\u{2192}end`\n  4\u{2192}x = 1", "javascript")
+        #expect(toks.filter { $0.0 == .meta }.count == 4)
+        #expect(toks.contains { $0.0 == .string && $0.1 == "mid" })
+        #expect(toks.contains { $0.0 == .number && $0.1 == "1" })
+    }
+
+    @Test func commentStateCarriesAcrossCalls() {
+        // Diff rows scan a line at a time: an open /* resumes inside
+        // the next row's tokens.
+        var st: ScanState?
+        _ = SyntaxHighlight.tokens("/* a", language: "javascript", state: &st)
+        #expect(st != nil)
+        let toks = SyntaxHighlight.tokens("still comment */ return 1",
+                                          language: "javascript", state: &st)
+        #expect(toks.contains { $0.kind == .comment && $0.text == "still comment */" })
+        #expect(toks.contains { $0.kind == .keyword && $0.text == "return" })
+        #expect(st == nil)
+    }
+
     @Test func rustAndGo() {
         #expect(kindOf("fn main() { let x = 1; }", "rust", "fn") == .keyword)
         #expect(kindOf("func main() { fmt.Println(1) }", "go", "func") == .keyword)
@@ -186,6 +234,17 @@ import Testing
     @Test func readableArrayCommand() {
         let call = HubToolCall(name: "Bash", argsFull: #"{"command":["git","status"]}"#)
         #expect(ToolDisplay.readable(call)?.text == "git status")
+    }
+
+    @Test func readableArrayCommandQuotesArgBoundaries() {
+        // `bash -lc echo hi` would be a different command: spaces keep
+        // their quotes.
+        let call = HubToolCall(name: "Bash",
+                               argsFull: #"{"command":["bash","-lc","echo hi"]}"#)
+        #expect(ToolDisplay.readable(call)?.text == "bash -lc 'echo hi'")
+        let quoted = HubToolCall(name: "Bash",
+                                 argsFull: #"{"command":["git","commit","-m","it's done"]}"#)
+        #expect(ToolDisplay.readable(quoted)?.text == #"git commit -m 'it'\''s done'"#)
     }
 
     @Test func readableFileContentTakesFileLanguage() {

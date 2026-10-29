@@ -24,16 +24,33 @@ public struct SyntaxToken: Equatable, Sendable {
     }
 }
 
+/// A comment or multiline string left open at a chunk's end, picked up
+/// by the next `tokens` call — diff rows and numbered output scan one
+/// line at a time, and an open token resumes inside the next chunk the
+/// way it would have without the break.
+public struct ScanState: Sendable {
+    var kind: SyntaxToken.Kind = .plain
+    var close = ""
+    var escapable = false
+}
+
 public enum SyntaxHighlight {
     /// `code` split into styled runs for `tag` (a fence label or a
     /// language id); unknown and empty tags stay one plain run. `diff`
     /// colours by line sigil the way the patch view does.
     public static func tokens(_ code: String, language tag: String) -> [SyntaxToken] {
+        var state: ScanState?
+        return tokens(code, language: tag, state: &state)
+    }
+
+    /// Same, threading multiline state between calls (the diff rows).
+    public static func tokens(_ code: String, language tag: String, state: inout ScanState?) -> [SyntaxToken] {
         guard !code.isEmpty, let name = language(tag: tag), name != "text" else {
+            state = nil
             return code.isEmpty ? [] : [SyntaxToken(kind: .plain, text: code)]
         }
-        if name == "diff" { return diffTokens(code) }
-        return scan(code, langs[name] ?? Spec(), numbered: isNumbered(code))
+        if name == "diff" { state = nil; return diffTokens(code) }
+        return scan(code, langs[name] ?? Spec(), numbered: isNumbered(code), state: &state)
     }
 
     /// A fence tag or extension onto the language table (`"py"` →
@@ -77,6 +94,7 @@ public enum SyntaxHighlight {
         var patterns: [Pat] = []          // tried before words; `b` needs a break before
         var call = false                  // name( → builtin (a call site)
         var caps = false                  // Capitalised word → builtin (a type)
+        var fold = false                  // word sets match case-insensitively (SQL, dockerfile)
 
         /// A sticky-at-position pattern like the JS side's /…/y.
         struct Pat {
@@ -107,6 +125,14 @@ public enum SyntaxHighlight {
     private static func spec(_ over: (inout Spec) -> Void) -> Spec {
         var s = Spec()
         over(&s)
+        // fold lowercases the word before lookup; the sets fold too, so
+        // SQL's lowercase tables and dockerfile's uppercase both work.
+        if s.fold {
+            s.keywords = Set(s.keywords.map { $0.lowercased() })
+            s.builtins = Set(s.builtins.map { $0.lowercased() })
+            s.constants = Set(s.constants.map { $0.lowercased() })
+            s.variables = Set(s.variables.map { $0.lowercased() })
+        }
         return s
     }
 
@@ -161,6 +187,7 @@ public enum SyntaxHighlight {
         l["dockerfile"] = spec {
             $0.line = ["#"]
             $0.keywords = words("FROM RUN CMD ENTRYPOINT COPY ADD WORKDIR EXPOSE ENV ARG LABEL USER VOLUME SHELL HEALTHCHECK ONBUILD STOPSIGNAL AS")
+            $0.fold = true
             $0.patterns = [pat(.variable, #"\$\{?[A-Za-z0-9_]+\}?"#)]
         }
         l["python"] = spec {
@@ -197,7 +224,10 @@ public enum SyntaxHighlight {
             $0.patterns = [
                 pat(.keyword, #"@[A-Za-z0-9_-]+"#),                        // @media and friends
                 pat(.builtin, #"--[A-Za-z0-9_-]+"#),                       // --custom-property
-                pat(.meta, #"[^{};]+(?=\s*\{)"#, boundary: true),          // a selector before {
+                // [^{};\s] keeps whitespace positions O(1): retried at
+                // each space, an unbounded run would rescan to the next
+                // { } ; — quadratic on a block with a long indent.
+                pat(.meta, #"[^{};\s][^{};]{0,300}(?=\s*\{)"#, boundary: true), // a selector before {
                 pat(.number, #"#[0-9a-fA-F]{3,8}\b"#),                     // #rrggbb
                 pat(.builtin, #"[a-zA-Z-][A-Za-z0-9_-]*(?=\s*:)"#, boundary: true), // a property before :
                 pat(.variable, #"[.#:][A-Za-z0-9_-]+"#),                   // .class, #id, :pseudo
@@ -239,7 +269,9 @@ public enum SyntaxHighlight {
             $0.strings = ["'", "\"", "`"]
             $0.keywords = words("select from where and or not in is null like between join inner left right outer full cross on group by order having limit offset insert into values update set delete create alter drop table index view trigger procedure function if exists unique primary key foreign references default check constraint union all distinct as case when then else end cast with recursive returning begin commit rollback transaction grant revoke vacuum explain analyze asc desc fetch first next only")
             $0.builtins = words("count sum avg min max coalesce now date datetime substr substring length upper lower trim abs round concat replace nullif ifnull current_timestamp current_date current_user row_number rank dense_rank over partition")
+            $0.constants = words("true false")
             $0.call = true
+            $0.fold = true
         }
         l["ruby"] = spec {
             $0.line = ["#"]
@@ -297,7 +329,7 @@ public enum SyntaxHighlight {
         "ts": "typescript", "tsx": "typescript", "mts": "typescript", "cts": "typescript",
         "json5": "json", "jsonc": "json", "jsonl": "json",
         "scss": "css", "less": "css",
-        "htm": "html", "svg": "html", "xhtml": "html", "xsl": "html", "plist": "html", "vue": "html", "svelte": "html",
+        "htm": "html", "svg": "html", "xhtml": "html", "xml": "html", "xsl": "html", "plist": "html", "vue": "html", "svelte": "html",
         "yml": "yaml",
         "rb": "ruby", "rake": "ruby", "gemfile": "ruby",
         "c++": "cpp", "cplusplus": "cpp", "cc": "cpp", "cxx": "cpp", "hpp": "cpp", "hh": "cpp", "h": "cpp",
@@ -351,10 +383,12 @@ public enum SyntaxHighlight {
     }
     private static func isWord(_ u: UInt16) -> Bool { isWordStart(u) || isDigit(u) }
 
-    /// The end index of the string starting at i (its prefix included),
-    /// or 0. A 1-char delimiter unclosed by end of line stops before the
+    /// The string starting at i: its end index (prefix included),
+    /// whether its delimiter was found, and the delimiter itself; or
+    /// nil. A 1-char delimiter unclosed by end of line stops before the
     /// newline unless the language lets it wrap (bash's, js's backtick).
-    private static func stringEnd(_ u: [UInt16], _ i: Int, _ sp: Spec) -> Int {
+    private static func stringAt(_ u: [UInt16], _ i: Int, _ sp: Spec)
+        -> (end: Int, closed: Bool, d: String, multi: Bool, escapable: Bool)? {
         var d = ""
         var pre = 0
         for q in sp.strings where has(u, i, q) { d = q; break }
@@ -365,17 +399,17 @@ public enum SyntaxHighlight {
                 for q in sp.strings where has(u, k, q) { d = q; pre = k - i; break }
             }
         }
-        guard !d.isEmpty else { return 0 }
+        guard !d.isEmpty else { return nil }
         let multi = sp.multiline.contains(d)
         let escapable = !sp.noEscape.contains(d)
-        var j = i + pre + d.count
+        var j = i + pre + d.utf16.count
         while j < u.count {
             if escapable, u[j] == 0x5C { j += 2; continue }   // backslash
-            if has(u, j, d) { return j + d.count }
-            if u[j] == 0x0A, !multi { return j }            // newline
+            if has(u, j, d) { return (j + d.utf16.count, true, d, multi, escapable) }
+            if u[j] == 0x0A, !multi { return (j, false, d, multi, escapable) }   // newline
             j += 1
         }
-        return u.count
+        return (u.count, false, d, multi, escapable)
     }
 
     private static func isStrPrefixChar(_ u: UInt16) -> Bool {
@@ -418,29 +452,68 @@ public enum SyntaxHighlight {
     /// `foo-bar` is not a flag and `input:hover` not a YAML key.
     private static let breakChars: Set<UInt16> = Set(Array(" \t\n;|&(){}<>=,".utf16))
 
-    /// [SyntaxToken] covering `code` end to end.
-    private static func scan(_ code: String, _ sp: Spec, numbered: Bool) -> [SyntaxToken] {
+    /// Whole-input scan. Numbered output splits at each line so a line
+    /// number is never swallowed by a multiline token reaching across
+    /// it — the number peels off first, then the open token resumes.
+    private static func scan(_ code: String, _ sp: Spec, numbered: Bool,
+                             state: inout ScanState?) -> [SyntaxToken] {
+        guard numbered else { return scanBlock(code, sp, &state) }
+        var toks: [SyntaxToken] = []
+        var first = true
+        for line in code.components(separatedBy: "\n") {
+            if first { first = false } else { toks.append(SyntaxToken(kind: .plain, text: "\n")) }
+            var rest = line
+            let u = Array(line.utf16)
+            let len = numberedPrefix(u, 0, cap: true)
+            if len > 0 {
+                toks.append(SyntaxToken(kind: .meta, text: String(decoding: u[0..<len], as: UTF16.self)))
+                rest = String(decoding: u[len...], as: UTF16.self)
+            }
+            toks.append(contentsOf: scanBlock(rest, sp, &state))
+        }
+        return toks
+    }
+
+    /// [SyntaxToken] covering `code` end to end. `state` carries an
+    /// unfinished comment or multiline string between calls — diff rows
+    /// and numbered output scan one line at a time.
+    private static func scanBlock(_ code: String, _ sp: Spec,
+                                  _ state: inout ScanState?) -> [SyntaxToken] {
         let u = Array(code.utf16)
         let n = u.count
         var toks: [SyntaxToken] = []
-        var plain = ""
+        var plain: [UInt16] = []   // units, so a surrogate pair survives
         var i = 0
 
+        func flushPlain() {
+            if !plain.isEmpty {
+                toks.append(SyntaxToken(kind: .plain, text: String(decoding: plain, as: UTF16.self)))
+                plain.removeAll(keepingCapacity: true)
+            }
+        }
         func emit(_ kind: SyntaxToken.Kind, _ j: Int) {
             if kind == .plain {
-                plain += String(decoding: u[i..<j], as: UTF16.self)
+                plain.append(contentsOf: u[i..<j])
             } else {
-                if !plain.isEmpty { toks.append(SyntaxToken(kind: .plain, text: plain)); plain = "" }
+                flushPlain()
                 toks.append(SyntaxToken(kind: kind, text: String(decoding: u[i..<j], as: UTF16.self)))
             }
             i = j
         }
 
-        while i < n {
-            if numbered, i == 0 || u[i - 1] == 0x0A {
-                let len = numberedPrefix(u, i, cap: true)
-                if len > 0 { emit(.meta, i + len); continue }
+        // Resume a token left open by the previous chunk: run to its
+        // delimiter (escapes skipped inside strings) or the chunk's end.
+        if let s0 = state {
+            var j = 0
+            while j < n {
+                if s0.escapable, u[j] == 0x5C { j += 2; continue }
+                if has(u, j, s0.close) { j += s0.close.utf16.count; state = nil; break }
+                j += 1
             }
+            emit(s0.kind, j)
+        }
+
+        while i < n {
             var hit = false
             for c in sp.line where has(u, i, c) {
                 emit(.comment, find(u, i, "\n") ?? n)
@@ -449,21 +522,27 @@ public enum SyntaxHighlight {
             }
             if hit { continue }
             for pair in sp.block where has(u, i, pair.0) {
-                let end = find(u, i + pair.0.count, pair.1).map { $0 + pair.1.count } ?? n
-                emit(.comment, end)
+                if let end = find(u, i + pair.0.count, pair.1) {
+                    emit(.comment, end + pair.1.count)
+                } else {
+                    emit(.comment, n)
+                    state = ScanState(kind: .comment, close: pair.1, escapable: false)
+                }
                 hit = true
                 break
             }
             if hit { continue }
-            let send = stringEnd(u, i, sp)
-            if send > 0 {
+            if let sa = stringAt(u, i, sp) {
                 var kind = SyntaxToken.Kind.string
                 if sp.keyAfter {
-                    var j = send
+                    var j = sa.end
                     while j < n, u[j] == 0x20 || u[j] == 0x09 { j += 1 }
                     if j < n, u[j] == 0x3A { kind = .builtin }   // ":"
                 }
-                emit(kind, send)
+                if !sa.closed, sa.multi {
+                    state = ScanState(kind: kind, close: sa.d, escapable: sa.escapable)
+                }
+                emit(kind, sa.end)
                 continue
             }
             for p in sp.patterns where !p.boundary || i == 0 || breakChars.contains(u[i - 1]) {
@@ -479,20 +558,21 @@ public enum SyntaxHighlight {
                 var j = i + 1
                 while j < n, isWord(u[j]) { j += 1 }
                 let w = String(decoding: u[i..<j], as: UTF16.self)
+                let key = sp.fold ? w.lowercased() : w
                 var kind = SyntaxToken.Kind.plain
-                if sp.keywords.contains(w) { kind = .keyword }
-                else if sp.constants.contains(w) { kind = .number }
-                else if sp.variables.contains(w) { kind = .variable }
-                else if sp.builtins.contains(w) { kind = .builtin }
+                if sp.keywords.contains(key) { kind = .keyword }
+                else if sp.constants.contains(key) { kind = .number }
+                else if sp.variables.contains(key) { kind = .variable }
+                else if sp.builtins.contains(key) { kind = .builtin }
                 else if sp.call, j < n, u[j] == 0x28 { kind = .builtin }   // "("
                 else if sp.caps, (0x41...0x5A).contains(u[i]) { kind = .builtin }
                 emit(kind, j)
                 continue
             }
-            plain += String(decoding: u[i..<(i + 1)], as: UTF16.self)
+            plain.append(u[i])
             i += 1
         }
-        if !plain.isEmpty { toks.append(SyntaxToken(kind: .plain, text: plain)) }
+        flushPlain()
         return toks
     }
 

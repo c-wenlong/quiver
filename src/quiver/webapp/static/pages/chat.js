@@ -113,7 +113,16 @@ const SessionChat = (() => {
       if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
         flush();
         const fence = trimmed.slice(0, 3);
-        const lang = trimmed.slice(3).trim();
+        // A fence closed on its opening line keeps that line as
+        // content — its first word is not a language tag.
+        if (trimmed.length > fence.length && trimmed.endsWith(fence)) {
+          blocks.push({ t: "code", lang: "", code: trimmed.slice(3, -3).trim() });
+          i += 1;
+          continue;
+        }
+        // The info string's first word is the language tag; any rest
+        // (a title, run flags) is metadata, not part of the code.
+        const lang = trimmed.slice(3).trim().split(/\s+/)[0];
         // A fence indented under a list item: its lines lose that indent.
         const indent = (line.match(/^ */) || [""])[0].length;
         const body = [];
@@ -507,7 +516,7 @@ const SessionChat = (() => {
    * prefix, line comment, block comment, string, patterns, number,
    * keyword-ish word. Anything unmatched is plain text. */
   function langSpec(over) {
-    return Object.assign({
+    const s = Object.assign({
       line: [], block: [],
       strings: ["'", '"'],
       multiline: null,   // delimiters allowed to span newlines
@@ -519,7 +528,16 @@ const SessionChat = (() => {
       patterns: [],      // [{k, r, b?}] tried before words; b = needs a break before
       call: false,       // name( → builtin (a call site)
       caps: false,       // Capitalised word → builtin (a type)
+      fold: false,       // word sets match case-insensitively (SQL, dockerfile)
     }, over);
+    /* fold lowercases the word before lookup; the sets fold too, so
+     * SQL's lowercase tables and dockerfile's uppercase both work. */
+    if (s.fold) {
+      for (const k of ["keywords", "builtins", "constants", "variables"]) {
+        if (s[k]) s[k] = new Set([...s[k]].map((w) => w.toLowerCase()));
+      }
+    }
+    return s;
   }
 
   /* `kws` is the C family's shared shape: line and block comments, strings,
@@ -562,6 +580,7 @@ const SessionChat = (() => {
     dockerfile: langSpec({
       line: ["#"],
       keywords: tkSet("FROM RUN CMD ENTRYPOINT COPY ADD WORKDIR EXPOSE ENV ARG LABEL USER VOLUME SHELL HEALTHCHECK ONBUILD STOPSIGNAL AS"),
+      fold: true,
       patterns: [tkPattern("tk-v", String.raw`\$\{?\w+\}?`)],
     }),
     python: langSpec({
@@ -595,7 +614,10 @@ const SessionChat = (() => {
       patterns: [
         tkPattern("tk-k", String.raw`@[\w-]+`),                       // @media and friends
         tkPattern("tk-b", String.raw`--[\w-]+`),                      // --custom-property
-        tkPattern("tk-m", String.raw`[^{};]+(?=\s*\{)`, true),        // a selector before {
+        /* [^{};\s] keeps whitespace positions O(1): retried at each
+         * space, an unbounded run would rescan to the next { } ; —
+         * quadratic on a declaration block with a long indent. */
+        tkPattern("tk-m", String.raw`[^{};\s][^{};]{0,300}(?=\s*\{)`, true), // a selector before {
         tkPattern("tk-n", String.raw`#[0-9a-fA-F]{3,8}\b`),           // #rrggbb
         tkPattern("tk-b", String.raw`[a-zA-Z-][\w-]*(?=\s*:)`, true), // a property before :
         tkPattern("tk-v", String.raw`[.#:][\w-]+`),                   // .class, #id, :pseudo
@@ -637,7 +659,8 @@ const SessionChat = (() => {
       strings: ["'", '"', "`"],
       keywords: tkSet("select from where and or not in is null like between join inner left right outer full cross on group by order having limit offset insert into values update set delete create alter drop table index view trigger procedure function if exists unique primary key foreign references default check constraint union all distinct as case when then else end cast with recursive returning begin commit rollback transaction grant revoke vacuum explain analyze asc desc fetch first next only"),
       builtins: tkSet("count sum avg min max coalesce now date datetime substr substring length upper lower trim abs round concat replace nullif ifnull current_timestamp current_date current_user row_number rank dense_rank over partition"),
-      call: true,
+      constants: tkSet("true false"),
+      call: true, fold: true,
     }),
     ruby: langSpec({
       line: ["#"], block: [["=begin", "=end"]],
@@ -690,7 +713,7 @@ const SessionChat = (() => {
     ts: "typescript", tsx: "typescript", mts: "typescript", cts: "typescript",
     json5: "json", jsonc: "json", jsonl: "json",
     scss: "css", less: "css",
-    htm: "html", svg: "html", xhtml: "html", xsl: "html", plist: "html", vue: "html", svelte: "html",
+    htm: "html", svg: "html", xhtml: "html", xml: "html", xsl: "html", plist: "html", vue: "html", svelte: "html",
     yml: "yaml",
     rb: "ruby", rake: "ruby", gemfile: "ruby",
     "c++": "cpp", cplusplus: "cpp", cc: "cpp", cxx: "cpp", hpp: "cpp", hh: "cpp", h: "cpp",
@@ -738,10 +761,11 @@ const SessionChat = (() => {
     return lines.filter((l) => NUMBERED_LINE.test(l)).length / lines.length >= 0.8;
   }
 
-  /* The end index of the string starting at i (its prefix included),
-   * or 0. A 1-char delimiter unclosed by end of line stops before the
-   * newline unless the language lets it wrap (bash's, js's backtick). */
-  function stringEnd(s, i, sp) {
+  /* The string starting at i: its end index (prefix included), whether
+   * its delimiter was found, and the delimiter itself; or null. A
+   * 1-char delimiter unclosed by end of line stops before the newline
+   * unless the language lets it wrap (bash's, js's backtick). */
+  function stringAt(s, i, sp) {
     let d = "", pre = "";
     for (const q of sp.strings) {
       if (s.startsWith(q, i)) { d = q; break; }
@@ -755,22 +779,26 @@ const SessionChat = (() => {
         }
       }
     }
-    if (!d) return 0;
+    if (!d) return null;
     const multi = !!(sp.multiline && sp.multiline.includes(d));
     const escapable = !sp.noEscape || !sp.noEscape.includes(d);
     let j = i + pre.length + d.length;
     while (j < s.length) {
       const c = s[j];
       if (escapable && c === "\\") { j += 2; continue; }
-      if (s.startsWith(d, j)) return j + d.length;
-      if (c === "\n" && !multi) return j;
+      if (s.startsWith(d, j)) return { end: j + d.length, closed: true, d, multi, escapable };
+      if (c === "\n" && !multi) return { end: j, closed: false, d, multi, escapable };
       j += 1;
     }
-    return s.length;
+    return { end: s.length, closed: false, d, multi, escapable };
   }
 
-  /* [tokenClass, text] pairs covering `code` end to end; "" class = plain. */
-  function scanCode(code, sp, numbered) {
+  /* [tokenClass, text] pairs covering `code` end to end; "" class = plain.
+   * `ctx` carries an unfinished comment or multiline string between calls
+   * ({s: {k, close, esc} | null}): diff rows and numbered output scan one
+   * line at a time, and a token open at the line's end resumes inside the
+   * next chunk the way it would have without the break. */
+  function scanBlock(code, sp, ctx) {
     const toks = [];
     const n = code.length;
     let i = 0, plain = "";
@@ -785,11 +813,19 @@ const SessionChat = (() => {
     /* A pattern flagged `b` only fires after whitespace or punctuation,
      * so `foo-bar` is not a flag and `input:hover` not a YAML key. */
     const atBreak = () => i === 0 || " \t\n;|&(){}<>=,".includes(code[i - 1]);
-    while (i < n) {
-      if (numbered && (i === 0 || code[i - 1] === "\n")) {
-        const m = NUMBERED_LINE.exec(code.slice(i, i + 16));
-        if (m) { emit("tk-m", i + m[0].length); continue; }
+    /* Resume a token left open by the previous chunk: run to its
+     * delimiter (escapes skipped inside strings) or the chunk's end. */
+    if (ctx.s) {
+      const s0 = ctx.s;
+      let j = 0;
+      while (j < n) {
+        if (s0.esc && code[j] === "\\") { j += 2; continue; }
+        if (code.startsWith(s0.close, j)) { j += s0.close.length; ctx.s = null; break; }
+        j += 1;
       }
+      emit(s0.k, j);
+    }
+    while (i < n) {
       let hit = false;
       for (const c of sp.line) {
         if (code.startsWith(c, i)) {
@@ -801,19 +837,24 @@ const SessionChat = (() => {
       for (const pair of sp.block) {
         if (code.startsWith(pair[0], i)) {
           const e = code.indexOf(pair[1], i + pair[0].length);
-          emit("tk-c", e < 0 ? n : e + pair[1].length); hit = true; break;
+          if (e < 0) {
+            emit("tk-c", n);
+            ctx.s = { k: "tk-c", close: pair[1], esc: false };
+          } else emit("tk-c", e + pair[1].length);
+          hit = true; break;
         }
       }
       if (hit) continue;
-      const send = stringEnd(code, i, sp);
-      if (send) {
+      const sa = stringAt(code, i, sp);
+      if (sa) {
         let k = "tk-s";
         if (sp.keyAfter) {
-          let j = send;
+          let j = sa.end;
           while (j < n && " \t".includes(code[j])) j++;
           if (code[j] === ":") k = "tk-b";
         }
-        emit(k, send); continue;
+        if (!sa.closed && sa.multi) ctx.s = { k, close: sa.d, esc: sa.escapable };
+        emit(k, sa.end); continue;
       }
       for (const p of sp.patterns) {
         if (p.b && !atBreak()) continue;
@@ -831,11 +872,12 @@ const SessionChat = (() => {
         let j = i + 1;
         while (j < n && /[\w$]/.test(code[j])) j++;
         const w = code.slice(i, j);
+        const key = sp.fold ? w.toLowerCase() : w;
         let k = "";
-        if (sp.keywords && sp.keywords.has(w)) k = "tk-k";
-        else if (sp.constants && sp.constants.has(w)) k = "tk-n";
-        else if (sp.variables && sp.variables.has(w)) k = "tk-v";
-        else if (sp.builtins && sp.builtins.has(w)) k = "tk-b";
+        if (sp.keywords && sp.keywords.has(key)) k = "tk-k";
+        else if (sp.constants && sp.constants.has(key)) k = "tk-n";
+        else if (sp.variables && sp.variables.has(key)) k = "tk-v";
+        else if (sp.builtins && sp.builtins.has(key)) k = "tk-b";
         else if (sp.call && code[j] === "(") k = "tk-b";
         else if (sp.caps && w[0] >= "A" && w[0] <= "Z") k = "tk-b";
         emit(k, j); continue;
@@ -846,13 +888,32 @@ const SessionChat = (() => {
     return toks;
   }
 
+  /* Whole-input scan. Numbered output splits at each line so a line
+   * number is never swallowed by a multiline token reaching across it —
+   * the number peels off first, then the open token resumes. */
+  function scanCode(code, sp, numbered, ctx) {
+    ctx = ctx || { s: null };
+    if (!numbered) return scanBlock(code, sp, ctx);
+    const toks = [];
+    code.split("\n").forEach((ln, idx) => {
+      if (idx) toks.push(["", "\n"]);
+      let off = 0;
+      const m = NUMBERED_LINE.exec(ln.slice(0, 16));
+      if (m) { toks.push(["tk-m", m[0]]); off = m[0].length; }
+      for (const t of scanBlock(ln.slice(off), sp, ctx)) toks.push(t);
+    });
+    return toks;
+  }
+
   /* Escaped, span-wrapped HTML for `code` in `lang` (a fence tag or a
    * language id); unknown and empty langs stay plain. `diff` colours by
-   * line sigil the way the patch view does. */
-  function hl(code, lang) {
+   * line sigil the way the patch view does. `ctx` threads multiline
+   * state between calls (the diff rows below). */
+  function hl(code, lang, ctx) {
     const name = langName(lang);
-    if (!name || name === "text") return esc(code);
-    if (name === "diff") {
+    if (!name || name === "text" || name === "diff") {
+      if (ctx) ctx.s = null;
+      if (!name || name === "text") return esc(code);
       return code.split("\n").map((ln) => {
         const k = ln.startsWith("+") && !ln.startsWith("+++") ? "diff-add"
           : ln.startsWith("-") && !ln.startsWith("---") ? "diff-del"
@@ -860,7 +921,7 @@ const SessionChat = (() => {
         return k ? `<span class="${k}">${esc(ln)}</span>` : esc(ln);
       }).join("\n");
     }
-    return scanCode(code, LANGS[name], isNumbered(code))
+    return scanCode(code, LANGS[name], isNumbered(code), ctx)
       .map(([k, t]) => (k ? `<span class="${k}">${esc(t)}</span>` : esc(t)))
       .join("");
   }
@@ -869,6 +930,12 @@ const SessionChat = (() => {
 
   const filePathOf = (obj) =>
     obj.file_path || obj.path || obj.filename || obj.notebook_path || obj.filePath || "";
+
+  /* A shell word shown the way it could be pasted back: bare when safe,
+   * single-quoted when it holds whitespace or shell syntax, so a
+   * ["bash","-lc","echo hi"] array reads as `bash -lc 'echo hi'`. */
+  const shQuote = (s) => /^[A-Za-z0-9_@%+=:,./~-]+$/.test(s) ? String(s)
+    : `'${String(s).replace(/'/g, "'\\''")}'`;
 
   /* The tool's args as readable text plus a language: a shell command
    * leaves its JSON wrapper, a file's contents go under their own
@@ -884,7 +951,7 @@ const SessionChat = (() => {
     for (const key of ["command", "cmd", "script"]) {
       const v = obj[key];
       if (typeof v === "string") return { text: v, lang: "bash" };
-      if (Array.isArray(v)) return { text: v.join(" "), lang: "bash" };
+      if (Array.isArray(v)) return { text: v.map(shQuote).join(" "), lang: "bash" };
     }
     const file = filePathOf(obj);
     for (const key of ["content", "new_source", "code", "source"]) {
@@ -947,33 +1014,54 @@ const SessionChat = (() => {
 
   /* A diff row: the sigil unstyled, the line's own code highlighted in
    * the file's language; the add/del tint stays on the row's background
-   * (meta rows are prose, not code). */
-  const diffRow = (cls, text, lang) =>
-    `<div class="diff-line ${cls}">${cls === "diff-meta" ? esc(text) : hl(text, lang)}</div>`;
+   * (meta rows are prose, not code). `st` threads multiline comment and
+   * string state through the file the row belongs to — removed rows see
+   * the old file, added and context rows the new one — so a /* open on
+   * one row still comments out the next. */
+  const diffRow = (cls, text, lang, st) =>
+    `<div class="diff-line ${cls}">${cls === "diff-meta" ? esc(text) : hl(text, lang, st)}</div>`;
 
   function renderDiff(filePath, oldText, newText) {
     const lang = langFromPath(filePath);
     const d = diffLines(oldText, newText);
+    const stOld = { s: null }, stNew = { s: null };
     const rows = [];
-    const emit = (lines, cls, sign) => { for (const ln of lines) rows.push(diffRow(cls, `${sign} ${ln}`, lang)); };
-    if (d.ctxTop.length > 3) rows.push(diffRow("diff-meta", `${d.ctxTop.length - 3} unchanged lines`, lang));
-    emit(d.ctxTop.slice(-3), "diff-ctx", " ");
-    emit(d.del, "diff-del", "-");
-    emit(d.add, "diff-add", "+");
+    /* A context line exists in both files: show it through the new
+     * side's state, and walk the old side over it silently too. */
+    const ctxRow = (ln) => {
+      rows.push(diffRow("diff-ctx", ` ${ln}`, lang, stNew));
+      hl(` ${ln}`, lang, stOld);
+    };
+    if (d.ctxTop.length > 3) rows.push(diffRow("diff-meta", `${d.ctxTop.length - 3} unchanged lines`));
+    for (const ln of d.ctxTop.slice(-3)) ctxRow(ln);
+    for (const ln of d.del) rows.push(diffRow("diff-del", `- ${ln}`, lang, stOld));
+    for (const ln of d.add) rows.push(diffRow("diff-add", `+ ${ln}`, lang, stNew));
     if (d.ctxBot.length) {
-      emit(d.ctxBot.slice(0, 2), "diff-ctx", " ");
-      if (d.ctxBot.length > 2) rows.push(diffRow("diff-meta", `${d.ctxBot.length - 2} more lines`, lang));
+      for (const ln of d.ctxBot.slice(0, 2)) ctxRow(ln);
+      if (d.ctxBot.length > 2) rows.push(diffRow("diff-meta", `${d.ctxBot.length - 2} more lines`));
     }
     return `<div class="diff">${diffFile(filePath)}${rows.join("")}</div>`;
   }
 
   /* Raw patch text (codex apply_patch): colour by line sigil, with the
-   * file's language inside the changed lines. */
+   * file's language inside the changed lines. A hunk header jumps to
+   * unrelated code, so any token left open resets there. */
   function renderPatch(filePath, patch) {
     const lang = langFromPath(filePath);
-    const rows = String(patch || "").split("\n").slice(0, 400).map((ln) => diffRow(
-      ln.startsWith("+") ? "diff-add" : ln.startsWith("-") ? "diff-del"
-        : ln.startsWith("@@") || ln.startsWith("***") ? "diff-meta" : "diff-ctx", ln, lang));
+    const stOld = { s: null }, stNew = { s: null };
+    const rows = String(patch || "").split("\n").slice(0, 400).map((ln) => {
+      if (ln.startsWith("@@") || ln.startsWith("***")) {
+        stOld.s = stNew.s = null;
+        return diffRow("diff-meta", ln);
+      }
+      const cls = ln.startsWith("+") ? "diff-add" : ln.startsWith("-") ? "diff-del" : "diff-ctx";
+      if (cls === "diff-ctx") {
+        const html = diffRow(cls, ln, lang, stNew);
+        hl(ln, lang, stOld);
+        return html;
+      }
+      return diffRow(cls, ln, lang, cls === "diff-del" ? stOld : stNew);
+    });
     return `<div class="diff">${diffFile(filePath)}${rows.join("")}</div>`;
   }
 

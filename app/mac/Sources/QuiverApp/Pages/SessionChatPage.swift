@@ -804,9 +804,16 @@ extension ToolCard {
 
 /// An edit call's changes: the file on top, then sign-column rows tinted
 /// added/removed with the file's own language inside (the web app's
-/// `.diff` panel).
+/// `.diff` panel). Removed rows scan the old file's code, added and
+/// context rows the new one's, so a comment or string open on one row
+/// still colours the next.
 private struct ToolDiffView: View {
     var diff: ToolDiff
+    /// Sections are capped at 200 rows until tapped open — a Write's
+    /// thousand added rows would bury everything after them.
+    @State private var expandedSections: Set<Int> = []
+
+    private static let rowCap = 200
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -818,29 +825,75 @@ private struct ToolDiffView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .overlay(alignment: .bottom) { Divider().overlay(Theme.border) }
             }
-            ForEach(Array(diff.sections.enumerated()), id: \.offset) { _, lines in
-                ForEach(Array(lines.prefix(200).enumerated()), id: \.offset) { _, line in
+            ForEach(Array(diff.sections.enumerated()), id: \.offset) { si, lines in
+                let shown = expandedSections.contains(si) ? lines : Array(lines.prefix(Self.rowCap))
+                ForEach(Array(rows(shown).enumerated()), id: \.offset) { _, row in
                     HStack(alignment: .top, spacing: 6) {
-                        Text(sign(line.kind))
-                            .foregroundStyle(tint(line.kind))
+                        Text(sign(row.kind))
+                            .foregroundStyle(tint(row.kind))
                             .frame(width: 8)
-                        if line.kind == .meta {
-                            Text(line.text.isEmpty ? " " : line.text)
+                        if row.kind == .meta {
+                            Text(row.text.isEmpty ? " " : row.text)
                                 .foregroundStyle(Theme.textMuted)
                         } else {
-                            Text(AttributedString(highlighting: line.text.isEmpty ? " " : line.text,
-                                                  language: diff.language))
+                            Text(AttributedString(tokens: row.toks))
                         }
                         Spacer(minLength: 0)
                     }
                     .font(Theme.font(size: 11, design: .monospaced))
                     .padding(.horizontal, 10).padding(.vertical, 1)
-                    .background(background(line.kind))
+                    .background(background(row.kind))
+                }
+                if !expandedSections.contains(si), lines.count > Self.rowCap {
+                    Button {
+                        expandedSections.insert(si)
+                    } label: {
+                        Text("Show \(lines.count - Self.rowCap) more rows")
+                            .font(Theme.font(size: 11, design: .monospaced))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.horizontal, 10).padding(.vertical, 3)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.vertical, 6)
         }
         .background(Theme.code, in: .rect(cornerRadius: 6))
+    }
+
+    /// Each row's styled runs, computed once per body so multiline
+    /// comment and string state carries across rows — a meta row jumps
+    /// to unrelated code, so an open token resets there.
+    private func rows(_ lines: [DiffLine]) -> [(kind: DiffLine.Kind, text: String, toks: [SyntaxToken])] {
+        let lang = diff.language ?? ""
+        var stOld: ScanState?
+        var stNew: ScanState?
+        return lines.map { line in
+            let text = line.text.isEmpty ? " " : line.text
+            switch line.kind {
+            case .meta:
+                // An @@ or *** header jumps to unrelated code; an
+                // "N unchanged lines" row is elided context in the
+                // same region, so the open token carries through it.
+                if line.text.hasPrefix("@@") || line.text.hasPrefix("***") {
+                    stOld = nil
+                    stNew = nil
+                }
+                return (.meta, line.text, [])
+            case .removed:
+                return (.removed, line.text,
+                        SyntaxHighlight.tokens(text, language: lang, state: &stOld))
+            case .added:
+                return (.added, line.text,
+                        SyntaxHighlight.tokens(text, language: lang, state: &stNew))
+            case .context:
+                // The same line sits in both files: show it through the
+                // new side's state, and walk the old side over it too.
+                let toks = SyntaxHighlight.tokens(text, language: lang, state: &stNew)
+                _ = SyntaxHighlight.tokens(text, language: lang, state: &stOld)
+                return (.context, line.text, toks)
+            }
+        }
     }
 
     private func sign(_ kind: DiffLine.Kind) -> String {

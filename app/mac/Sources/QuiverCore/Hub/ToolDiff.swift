@@ -131,7 +131,9 @@ public enum ToolDisplay {
         guard let dict = obj as? [String: Any] else { return (full, "json") }
         for key in ["command", "cmd", "script"] {
             if let v = dict[key] as? String { return (v, "bash") }
-            if let parts = dict[key] as? [String] { return (parts.joined(separator: " "), "bash") }
+            if let parts = dict[key] as? [String] {
+                return (parts.map(shQuote).joined(separator: " "), "bash")
+            }
         }
         let file = filePath(dict)
         for key in ["content", "new_source", "code", "source"] {
@@ -173,6 +175,18 @@ public enum ToolDisplay {
     private static func filePath(_ obj: [String: Any]) -> String {
         (obj["file_path"] ?? obj["path"] ?? obj["filename"]
             ?? obj["notebook_path"] ?? obj["filePath"]) as? String ?? ""
+    }
+
+    /// A shell word shown the way it could be pasted back: bare when
+    /// safe, single-quoted when it holds whitespace or shell syntax, so
+    /// a ["bash","-lc","echo hi"] array reads as `bash -lc 'echo hi'`.
+    static func shQuote(_ s: String) -> String {
+        let punct = Set("_@%+=:,./~-".utf8)
+        let safe = !s.isEmpty && s.utf8.allSatisfy {
+            (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0)
+                || (0x30...0x39).contains($0) || punct.contains($0)
+        }
+        return safe ? s : "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     private static func looksJson(_ text: String) -> Bool {
