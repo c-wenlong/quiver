@@ -1,7 +1,7 @@
 # Remote control
 
 Status: shipped. R1–R5 all landed — `swe remote serve|setup|agent|pair|
-status|devices|attach|notify|ssh`, the hub-served PWA, the iOS app and
+status|devices|attach|notify|ssh`, the hub-served web app, the iOS app and
 the macOS app's Settings › Remote checklist all exist. This doc stays as
 the design record: what follows describes the build as it is, and the
 milestones table at the end is history, not a plan.
@@ -17,7 +17,8 @@ generalised across every harness `swe` already understands.
 ```
               ┌─────────────┐
               │ phone       │
-              │ (PWA → iOS) │
+              │ (web app /  │
+              │  iOS app)   │
               └──────┬──────┘
                      │ HTTPS + SSE over Tailscale
                      ▼
@@ -341,8 +342,7 @@ GET  /v1/inbox                       pending decisions; ?done=1 adds finished-to
 GET  /v1/app/overview                the web app's Overview (docs/web-app.md)
 GET  /v1/app/sessions                the web app's Sessions: catalog rows + usage
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
-GET  /app/                           the web app's pages, static
-GET  /harness-<id>.svg               a harness's bundled logo, static (aliases resolve, colour wins)
+GET  /app/                           the web app's pages, static; / redirects here, fragment intact
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
 GET  /v1/devices                     every paired device (device_view rows + paired_via + this_device) and the pending pair requests, for the pair-requests-and-devices screen
@@ -980,7 +980,7 @@ hub can't freeze them (the Mac app strips it for the same reason), and
 concurrent requests share one fetch. `refresh=1` refetches only readings older than 60 s and
 failed ones, so a refresh button can't hammer providers that rate-limit.
 Each reading carries `fetched_at`; one older than the cache window is
-the 24 h outage fallback (newer fetches failed), and the PWA marks it
+the 24 h outage fallback (newer fetches failed), and the clients mark it
 stale. An unreadable registry answers 503 `usage_unavailable`.
 
 Satellites run the same snapshot every 300 s and post it to
@@ -994,8 +994,8 @@ so a sleeping MacBook still shows its last figures after a hub restart.
 snapshot and `received_at` the hub's when the report arrived, so a
 client can age a satellite's `fetched_at` stamps without trusting the
 two clocks to agree. The top-level `harnesses` stay the hub's own rows.
-The PWA's Usage tab reads this route, with a machine switcher once more
-than one machine reports.
+The iOS app's Usage tab reads this route, with a machine switcher once
+more than one machine reports.
 
 `journal.py` is the reconnect story: seq-numbered per-session ring on
 disk; client resumes with `?last=seq`. "Open the app, catch up on 30 min
@@ -1079,15 +1079,18 @@ writes-go-through-tested-Python rule.
 [app/ios/ROADMAP.md](../app/ios/ROADMAP.md) tracks the client redesign:
 every page, component and feature, and the hub work each needs.
 
-Two clients. The hub serves a static SPA (`src/quiver/remote/web/`),
-so the whole feature works in any browser over Tailscale with "add to
-home screen". On iPhone the client is native SwiftUI (`app/ios/`):
+Two clients. The web app (`src/quiver/webapp/`, served by the hub under
+`/app/`; `/` redirects there, fragment intact) works in any browser over
+Tailscale: its `#pair=` fragment trades a pair token for the credential
+it keeps in localStorage, and pending pair requests are decided inline
+in Settings › Integrations › Remote. On iPhone the client is native
+SwiftUI (`app/ios/`):
 it reads the same REST routes and SSE streams, keeps one credential per
 paired hub in the Keychain (it can be paired with several hubs and
 switches between them from the hub menu), and leaves room for widgets, Live Activities, Face ID and
 APNs. It replaced an earlier WKWebView wrapper around the SPA once the
 webview's scrolling, keyboard handling and blank offline launch showed.
-Push comes from ntfy for now. A device paired in Safari's PWA and the
+Push comes from ntfy for now. A device paired in a browser and the
 app pair separately; each holds its own credential. Share only protocol
 DTOs with QuiverCore: decoding stays server-side and most of QuiverCore
 is AppKit-bound.
@@ -1166,11 +1169,12 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   its Tailscale node with `tailscale whois <peer ip>` and hands back a
   6-digit code + a poll secret. A second device — or the hub's own
   shell — approves it (`swe remote devices --approve=<code>`, the
-  `#approve` page on another Mac's browser, or any already-paired
-  device). Approving mints a stored credential in `devices.json`
+  web app's Settings › Integrations › Remote on another browser, or
+  any already-paired device). Approving mints a stored credential in
+  `devices.json`
   (0600), revocable per device — Trusted Devices minus biometrics. A
   device can't approve its own request; five wrong codes deny it. The
-  QR/token path (`swe remote pair`, `http://hub/#pair=token`; `--app`
+  QR/token path (`swe remote pair`, `http://hub/app/#pair=token`; `--app`
   swaps in the `quiver://` deep link) stays as the fallback for devices
   `whois` can't identify. Either way, only a tailnet device can reach
   the pairing routes at all.
@@ -1178,8 +1182,8 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   mac/windows/linux/browser), `model`, `client` and `os` — explicit
   `device` fields the client posts, else whatever the User-Agent lets
   `pairing.client_meta` infer — plus the tailnet `node_name` where the
-  request came from (the only "location" CGNAT offers). The PWA's
-  "My device" tab reads `/v1/devices/me` and renames itself through
+  request came from (the only "location" CGNAT offers). A paired client
+  reads its own row on `/v1/devices/me` and renames itself through
   `/v1/devices/rename` (`display_name` beats `name` everywhere the
   device is listed). Requests from devices paired before these fields
   existed backfill them from the User-Agent on the same throttled write

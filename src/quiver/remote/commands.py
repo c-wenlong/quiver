@@ -443,7 +443,7 @@ def _cmd_pair(flags: dict, json_view: bool) -> int:
     if qrencode:
         try:
             # --app encodes the quiver:// deep link so the Camera app
-            # opens the iOS wrapper instead of Safari/the PWA.
+            # opens the iOS app instead of the browser web app.
             qr = payload if flags.get("--app") else url
             subprocess.run(
                 [qrencode, "-t", "ANSIUTF8", qr], check=False, timeout=10

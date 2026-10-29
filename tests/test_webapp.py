@@ -43,8 +43,9 @@ class TestWebAppRoutes(HubBase):
         self.assertEqual(self.srv.request("GET", "/app")[0], 301)
         for path in ("/app/../hub.py", "/app/%2e%2e/hub.py", "/app/api.py", "/app/x/y.js"):
             self.assertEqual(self.srv.request("GET", path)[0], 404, path)
-        # The PWA's own routes are untouched.
-        self.assertEqual(self.srv.request("GET", "/app.js")[0], 200)
+        # The remote PWA's own routes are gone; ``/`` lands here.
+        self.assertEqual(self.srv.request("GET", "/app.js")[0], 404)
+        self.assertEqual(self.srv.request("GET", "/")[0], 301)
 
     def test_overview_needs_a_device_and_reads_the_ledger(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/overview")[0], 401)

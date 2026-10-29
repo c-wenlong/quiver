@@ -1,8 +1,8 @@
 /* Sessions chat: remote control inside the Sessions page. Opening a
  * session row shows its transcript, live over the hub's SSE, with the
- * composer (Queue/Steer, Stop), approval cards and Attach. A port of the
- * hub PWA's chat (src/quiver/remote/web/app.js): the same session routes,
- * the same ownership rules and the same event handling, restyled.
+ * composer (Queue/Steer, Stop), approval cards and Attach. Ported from
+ * the remote PWA's chat, which this file replaced: the same session
+ * routes, the same ownership rules and the same event handling.
  *
  * Not a page of its own: sessions.js calls SessionChat.open(key) for
  * #/sessions?chat=<key>, so the sidebar keeps Sessions selected. The
@@ -2450,8 +2450,8 @@ const SessionChat = (() => {
      session's harness runs (the hub's GET .../commands), filtered here
      as the name grows. The hub only lists them: a pick inserts
      "/name " (or the command's own `insert`), and the harness expands
-     it when the message lands. A port of the hub PWA's "/" menu
-     (src/quiver/remote/web/app.js). Positions are offsets into the
+     it when the message lands. Ported from the remote PWA's "/" menu.
+     Positions are offsets into the
      box's value; the caret is the input's selectionEnd. */
 
   /* A `/command` being typed: the box starts with / and the caret is

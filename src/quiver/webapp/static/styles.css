@@ -221,6 +221,11 @@ table.breakdown { width: 100%; border-collapse: collapse; font-size: 14px; }
 /* Pair gate */
 .gate { max-width: 440px; margin: 15vh auto; }
 .gate a { color: var(--link); }
+.gate-field { width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+.gate-error { color: var(--danger, #c66); font-size: 13px; margin: 10px 0 0; min-height: 18px; }
+.gate-token { margin-top: 12px; font-size: 13px; color: var(--text-secondary); }
+.gate-token .field { margin-top: 10px; }
+.gate-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 34px; letter-spacing: 4px; margin: 12px 0 6px; }
 code { background: var(--subtle); border-radius: 4px; padding: 1px 4px; font-size: 12px; }
 
 @media (max-width: 720px) {

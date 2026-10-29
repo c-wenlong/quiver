@@ -39,10 +39,13 @@ final class PairLinkTests: XCTestCase {
     }
 
     func testBrowserFragmentForm() {
-        let link = PairLink(URL(string: "http://mac.ts.net:8477/#pair=tok&name=ipad")!)
+        let link = PairLink(URL(string: "http://mac.ts.net:8477/app/#pair=tok&name=ipad")!)
         XCTAssertEqual(link?.baseURL.absoluteString, "http://mac.ts.net:8477")
         XCTAssertEqual(link?.token, "tok")
         XCTAssertEqual(link?.name, "ipad")
+        // Older tickets minted before the web app took `/` keep parsing.
+        let legacy = PairLink(URL(string: "http://mac.ts.net:8477/#pair=tok")!)
+        XCTAssertEqual(legacy?.token, "tok")
     }
 
     func testHubURLFromTypedInput() {

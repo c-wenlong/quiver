@@ -14,7 +14,7 @@
 const WINDOWS = [["today", "Today"], ["7d", "7 days"], ["30d", "30 days"], ["90d", "90 days"],
   ["365d", "365 days"], ["all", "All time"]];
 const DAY_FOLD = 10;
-const STATUS_BADGE = { active: "Active", error: "Error", interrupted: "Interrupted", followup: "Waiting" };
+const STATUS_BADGE = { active: "Active", approval: "Approval", error: "Error", interrupted: "Interrupted", followup: "Waiting" };
 // Transcript search waits for a pause in typing and a query this long.
 const SEARCH_DEBOUNCE_MS = 250;
 const SEARCH_MIN_CHARS = 2;
