@@ -2,7 +2,8 @@
 
 The catalog turns ``swe session`` rows into the phone's ``/v1/sessions``
 payload: every ``SessionRow.to_json`` field verbatim, plus ``key`` (the
-journal/stream name), ``machine_id`` and ``ownership``. Machines register
+journal/stream name), ``machine_id``, ``ownership`` and ``model`` (the
+model of the transcript's newest reply, ``session_model``). Machines register
 in ``data/remote/machines.json`` — the hub writes its own row at serve
 time, satellites upsert theirs over the agent channel.
 """
@@ -437,6 +438,7 @@ def session_to_row(
     machine_id: str,
     supervised: dict[str, dict],
     kept: dict[str, dict] | None = None,
+    model: str = "",
 ) -> tuple[str, dict]:
     """``Session`` → (key, ``/v1/sessions`` row).
 
@@ -444,7 +446,14 @@ def session_to_row(
     the ``qv-…`` pane name. An observed row left running by a ``keep``
     detach carries ``kept`` and the pane name, so a client can offer the
     pane back: attach adopts it live instead of relaunching.
+
+    ``model`` is the model the transcript's newest reply ran, left out
+    when unknown. ``model_modes`` lists the supervised modes in which the
+    ``model`` control op works for this harness, so a client offers a
+    model switch only on an attached row whose ``mode`` is in it.
     """
+    from quiver.remote import session_model
+
     key = protocol.session_key(
         session.tool_name, session.session_id, session.path
     )
@@ -472,6 +481,9 @@ def session_to_row(
     row["attachable"] = row["resume"] is not None or bool(row.get("kept"))
     # Whether Fork is: the harness's CLI has a fork command line.
     row["can_fork"] = fork_mod.can_fork(session)
+    if model:
+        row["model"] = model
+    row["model_modes"] = session_model.model_modes(session.tool_name)
     return key, row
 
 
@@ -486,6 +498,7 @@ class Catalog:
         status_of: Callable[[list[Session]], list[str]] | None = None,
         fetch_github: Callable[[], list[dict] | None] | None = None,
         max_rows: int = MAX_ROWS,
+        model_of: Callable[[list[Session]], list[str]] | None = None,
     ) -> None:
         self.home = Path(home) if home is not None else None
         self.machine_id = machine_id or load_machine_id(self.home)
@@ -508,8 +521,13 @@ class Catalog:
             from quiver.sessions.status import session_statuses
 
             status_of = session_statuses
+        if model_of is None:
+            from quiver.remote.session_model import session_models
+
+            model_of = session_models
         self._fetch = fetch_sessions
         self._status_of = status_of
+        self._model_of = model_of
         # The GitHub notification feed is hub-only: serve() wires it, so
         # a bare catalog — tests, the satellite agent — never reaches for
         # ``gh``. ``fetch_github`` returns the unread ``github`` inbox
@@ -556,12 +574,18 @@ class Catalog:
             statuses = self._status_of(sessions)
         except Exception:
             statuses = [""] * len(sessions)
+        try:
+            models = self._model_of(sessions)
+        except Exception:
+            models = []
+        if len(models) != len(sessions):
+            models = [""] * len(sessions)
         supervised = _supervised(self.home)
         kept = _kept(self.home)
         rows: list[tuple[str, Session | None, dict, str]] = []
-        for session, status in zip(sessions, statuses):
+        for session, status, model in zip(sessions, statuses, models):
             key, row = session_to_row(
-                session, status, self.machine_id, supervised, kept
+                session, status, self.machine_id, supervised, kept, model
             )
             rows.append((key, session, row, status))
         # Satellite sessions travel as row dicts (no Session object — the

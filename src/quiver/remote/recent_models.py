@@ -165,7 +165,10 @@ def _opencode_providers(db_path: Path) -> dict[str, str]:
     return out
 
 
-def _keep(harness: str, model: str) -> bool:
+def usable(harness: str, model: str) -> bool:
+    """Whether ``model`` is a name ``harness`` could launch on: not
+    junk (see the module docstring). The session rows' ``model``
+    (``session_model``) drops the same names."""
     from quiver.remote import protocol
 
     if model in _JUNK_EVERYWHERE or model in JUNK_MODELS.get(harness, ()):
@@ -213,7 +216,7 @@ def recent_models(home: Path | str | None = None,
                         model = f"{provider}/{model}"
                     elif "/" not in model:
                         continue
-                if model in picks or not _keep(harness, model):
+                if model in picks or not usable(harness, model):
                     continue
                 picks.append(model)
                 if len(picks) >= MAX_RECENT:

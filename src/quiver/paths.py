@@ -108,6 +108,11 @@ def session_status_cache_file_for(home: Path | None = None) -> Path:
     return cache_dir_for(home) / "session_status_cache.json"
 
 
+def session_model_cache_file_for(home: Path | None = None) -> Path:
+    """The model each transcript's last reply ran, for the remote rows."""
+    return cache_dir_for(home) / "session_model_cache.json"
+
+
 def task_states_cache_for(home: Path | None = None) -> Path:
     """The last state each stored task's source reported, which
     ``GET /v1/tasks`` serves while that source can't be read."""
