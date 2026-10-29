@@ -167,6 +167,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   captions under the Automatic and Manual controls move into the app's
   usual info tip at the row's edge — a rest shows it, a click pins it —
   so the popover reads as controls alone.
+
+- **The remote PWA folded into the web app.** The standalone remote
+  client at `/` is gone: `/` now redirects to `/app/` with the fragment
+  intact, so old `/#pair=<token>` and `/#approve` links still land.
+  Browser pairing moved to the web app's gate — "Pair with Tailscale"
+  asks for approval like the iPhone app does, and the `#pair=` handler
+  trades a token — while Tailscale pair requests are approved inline
+  in Settings › Integrations › Remote, which polls for new ones, and
+  sessions waiting on an approval are badged "Approval" in the
+  Sessions list. `swe remote pair` and the pair QR now hand out
+  `…/app/#pair=<token>` links; the `quiver://pair` deep link, the
+  pairing APIs and stored device credentials are unchanged.
+
 - **Flatter Mac app window.** The page now fills the window to its edges
   instead of sitting in a rounded, inset panel, split from the sidebar by
   a hairline. The Quiver wordmark and the sidebar toggle moved up into the
@@ -201,7 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Explore on an empty hub is gone with it.
 
 - **Slash-command lists load when the chat opens, not on the first
-  `/`.** Every client — the web app, the remote PWA, iOS and the Mac
+  `/`.** Every client — the web app, iOS and the Mac
   app — now warms the command list as the chat opens and keeps the
   answer per session key, so the menu opens filled instead of showing
   "Loading commands" for a beat, and a reopened chat shows the kept

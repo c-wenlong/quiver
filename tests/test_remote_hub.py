@@ -602,6 +602,29 @@ class TestHubWriteRoutes(unittest.TestCase):
         status, data = srv.request("GET", "/v1/inbox", headers=hdr)
         self.assertEqual(json.loads(data)["items"], [])
 
+    def test_app_sessions_marks_pending_approval(self):
+        # The web app has no session inbox; a row waiting on an answer
+        # reads "approval" in the Sessions list instead.
+        srv = _Server(sessions=[_session(sid="a5")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        srv.state.emit("claude:a5", protocol.event(
+            "approval.requested", "claude:a5", "mbp",
+            {"request_id": "req-5", "prompt": "run it?"}))
+        status, data = srv.request("GET", "/v1/app/sessions", headers=hdr)
+        row = next(r for r in json.loads(data)["sessions"]
+                   if r["key"] == "claude:a5")
+        self.assertEqual(row["status"], "approval")
+        srv.state.emit("claude:a5", protocol.event(
+            "approval.resolved", "claude:a5", "mbp",
+            {"request_id": "req-5"}))
+        status, data = srv.request("GET", "/v1/app/sessions", headers=hdr)
+        row = next(r for r in json.loads(data)["sessions"]
+                   if r["key"] == "claude:a5")
+        self.assertEqual(row["status"], "active")
+
     def test_inbox_old_approval_never_cut_or_dismissed(self):
         # A pending approval blocks its agent, so neither the age cutoff
         # nor a dismissal may hide it.
@@ -1056,51 +1079,26 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(self.srv.state.launches[lid]["state"], "started")
 
     def test_static_assets(self):
-        for path in ("/", "/app.js", "/styles.css",
-                     "/manifest.webmanifest", "/icon-192.png",
-                     "/icon-512.png"):
+        """``/`` and a bookmarked /index.html land on the web app; the
+        icons are the only root assets left (its pages reference them
+        there). The remote PWA's paths are gone."""
+        for path in ("/", "/index.html"):
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", self.srv.port, timeout=5)
+            try:
+                conn.request("GET", path)
+                resp = conn.getresponse()
+                resp.read()
+                self.assertEqual(resp.status, 301, path)
+                self.assertEqual(
+                    resp.getheader("Location"), "/app/", path)
+            finally:
+                conn.close()
+        for path in ("/icon-192.png", "/icon-512.png"):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 200, path)
-        status, _ = self.srv.request("GET", "/nope.js")
-        self.assertEqual(status, 404)
-
-    def test_static_harness_logos(self):
-        """``/harness-<id>.svg`` serves the web app's bundled logos:
-        aliases resolve (``claude-code`` to ``claude``), colour wins,
-        ``-color`` asks for that variant alone."""
-        from quiver.webapp import static as webapp_static
-
-        def file_bytes(name):
-            return (webapp_static.STATIC_DIR / name).read_bytes()
-
-        cases = {
-            "/harness-claude.svg": "harness-claude-color.svg",
-            "/harness-claude-color.svg": "harness-claude-color.svg",
-            "/harness-devin.svg": "harness-devin.svg",
-            "/harness-copilot.svg": "harness-copilot.svg",
-        }
-        for path, name in cases.items():
-            status, data = self.srv.request("GET", path)
-            self.assertEqual(status, 200, path)
-            self.assertEqual(data, file_bytes(name), path)
-        # Every alias in the table answers like its harness's id:
-        # the colour file when there is one, mono otherwise, and 404
-        # when the alias's harness has no bundled logo at all.
-        for alias, hid in webapp_static._LOGO_ALIASES.items():
-            status, data = self.srv.request("GET", f"/harness-{alias}.svg")
-            color = webapp_static.STATIC_DIR / f"harness-{hid}-color.svg"
-            mono = webapp_static.STATIC_DIR / f"harness-{hid}.svg"
-            if color.is_file():
-                self.assertEqual(data, color.read_bytes(), alias)
-            elif mono.is_file():
-                self.assertEqual(data, mono.read_bytes(), alias)
-            else:
-                self.assertEqual(status, 404, alias)
-        # ``-color`` means the colour variant only: devin's is mono.
-        status, _ = self.srv.request("GET", "/harness-devin-color.svg")
-        self.assertEqual(status, 404)
-        for path in ("/harness-nosuch.svg", "/harness-../x.svg",
-                     "/harness-icons.tsv"):
+        for path in ("/app.js", "/styles.css", "/manifest.webmanifest",
+                     "/pair", "/harness-claude.svg", "/nope.js"):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 404, path)
 

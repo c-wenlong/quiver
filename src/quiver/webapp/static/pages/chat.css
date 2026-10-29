@@ -1,4 +1,4 @@
-/* Sessions chat (chat.js): the PWA's chat in the web app's tokens.
+/* Sessions chat (chat.js): the remote PWA's chat in the web app's tokens.
  * The page is the chat column (920px) beside the session rail.
  *
  * An open chat is app-shaped, not document-shaped: the window stops
@@ -346,7 +346,7 @@ details.tool-run > summary {
   background: var(--text-primary); color: var(--card); font-size: 13px; font-weight: 500;
 }
 
-/* The composer's / menu (the hub PWA's #prompt-menu): the commands the
+/* The composer's / menu (the remote PWA's #prompt-menu): the commands the
  * session's harness runs, straight above the box; past six rows it
  * scrolls. */
 .chat-menu {

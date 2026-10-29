@@ -13,7 +13,7 @@ work each one needs.
 |---|---|
 | Look | The TokenTracker style package (`systems/tokentracker` in design-systems), dark first, the same as the Mac app. Near-black page, `#171717` hairline cards, white primary buttons, green only for "active" and "on", amber for "needs you", red for errors and destructive actions, sentence case everywhere, a visible focus ring. Values come from its `tokens.json`. |
 | Icon | The Mac app's dark icon (`app/mac/Icons/AppIcon-dark.png`) |
-| Client | Native SwiftUI on iPhone (`app/ios/`), decided 2026-10-23. The PWA stays as the client for browsers and other devices. See "SwiftUI or PWA" below. |
+| Client | Native SwiftUI on iPhone (`app/ios/`), decided 2026-10-23. The hub's web app at `/app/` is the client for browsers and other devices; it took the standalone PWA's `#pair=` and `#approve` fragments and the PWA is gone. See "SwiftUI or PWA" below. |
 | Signing | A paid Apple Developer team, so profiles last a year and APNs, TestFlight, widgets and Live Activities are all available |
 | Push | ntfy stays the push path until the APNs work under "Features" lands |
 | Shared code | Protocol DTOs only. Decoding stays on the hub; most of QuiverCore is AppKit-bound. |
@@ -34,9 +34,10 @@ work each one needs.
 | Version drift | The app can lag the hub, so the protocol needs a version field and the app must handle a newer hub | None; the hub serves the client that matches it |
 | Other devices | iPhone and iPad only | Android, any browser, and the `#approve` page on a Mac |
 
-Decision: the iPhone client is SwiftUI, and the PWA stays for every
-other device. The checkboxes below track the SwiftUI app; the PWA
-restyle is its own item under "Features".
+Decision: the iPhone client is SwiftUI. The PWA's "every other device"
+role later moved to the web app (`/app/`), which took its `#pair=` and
+`#approve` fragments and deleted the standalone client. The checkboxes
+below track the SwiftUI app.
 
 ## Pages
 
@@ -156,7 +157,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Hub: `GET /v1/issues` (list + `mine`, `?state=` picks the `gh` list state for the Closed chip), `GET /v1/issues/<o>/<r>/<n>` (detail), `POST /v1/issues/resolve {repo, number, harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the issues stack
 - [x] Comments on the detail page
 - [x] Closed-issue filter chip (fetches `?state=closed` on first pick)
-- [x] PWA Issues tab: list → detail (comments) → resolve sheet on the hub-served web app, the same loop browsers and Android get
+- [x] Issues tab: list → detail (comments) → resolve sheet on the hub-served web app, the same loop browsers and Android get
 - [ ] "Assigned to you" push notifications once APNs lands
 
 ### P13. Tasks
@@ -227,12 +228,12 @@ and per-source env blocks so a missing token explains an empty page.
 - [ ] Dictation in the composer
 - [x] Search sessions from Sessions: transcripts through the hub's FTS index when present, titles and folders as text always (`GET /v1/search`)
 - [ ] Search satellite transcripts (the index covers the hub machine only)
-- [x] Usage and limits view from `swe list --usage --json`. Hub: `GET /v1/usage` serves those rows for the hub machine, and the PWA's Usage tab shows them. The app's Usage tab adds tokens and cost from `GET /v1/app/overview`
+- [x] Usage and limits view from `swe list --usage --json`. Hub: `GET /v1/usage` serves those rows for the hub machine, and the web app shows them. The app's Usage tab adds tokens and cost from `GET /v1/app/overview`
 - [x] Hub: satellites report their own usage, so a MacBook's quota shows too (`POST /v1/agent/usage`, `machines` in `GET /v1/usage`)
 - [ ] Diff viewer with commit and push through `swe gh`
 - [ ] iPad layout: sessions list and chat side by side
 - [ ] Protocol version check, with a "hub is newer, update the app" message
-- [ ] PWA restyle to the same look, for browsers and Android
+- [x] Browser client: the web app at `/app/` replaced the standalone PWA outright, taking its `#pair=` and `#approve` fragments, so no restyle was needed
 - [x] SSH console: a terminal on the hub's machine for when the hub is down, dialling sshd over the tailnet with a Secure Enclave key (SwiftNIO SSH + SwiftTerm), in the hub menu on Sessions
 - [x] Hub: `GET /v1/ssh` (host keys to pin, login user) and `POST /v1/ssh/key`; `swe remote ssh --on` writes paired phones' keys into `authorized_keys`, and a revoke removes them
 - [ ] Hub: satellites install the same keys and report their host keys, so the console reaches every machine

@@ -4,9 +4,8 @@ The native SwiftUI client for remote control. It talks to the hub that
 `swe remote serve` runs, over the tailnet: REST for lists and actions,
 one SSE stream per open chat for live events. The protocol is in
 [docs/remote-control.md](../../docs/remote-control.md); the plan for
-every page is in [ROADMAP.md](ROADMAP.md). The PWA in
-`src/quiver/remote/web/` stays as the client for browsers and other
-devices.
+every page is in [ROADMAP.md](ROADMAP.md). The web app the hub serves
+at `/app/` is the client for browsers and other devices.
 
 ## Layout
 
@@ -31,7 +30,8 @@ copies the Mac app's `harness-*.svg` into `Assets.xcassets/Harnesses`.
 - **Tailscale:** type the hub's Tailscale name or address and pair. The
   app shows a 6-digit code; approve it from a paired device (Pair
   requests, in the hub menu on Sessions), from the hub with
-  `swe remote devices --approve=<code>`, or from the `#approve` page.
+  `swe remote devices --approve=<code>`, or from the web app's
+  Settings › Integrations › Remote.
 - **QR:** on the hub machine, open Quiver › Settings › Remote › Pair a
   device (the Mac app, or the hub's web app), choose Quiver app, and
   scan its code, either in the app or with the Camera app (the

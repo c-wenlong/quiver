@@ -726,8 +726,8 @@ class TestChatScript(unittest.TestCase):
         self.assertEqual(out["keys"], ["claude:s1@mac", None, None])
 
     def test_slash_command_menu_helpers(self):
-        """The / menu's token, filtering and insertion, as the hub PWA's
-        prompt menu has them."""
+        """The / menu's token, filtering and insertion, as the remote
+        client's prompt menu has them."""
         out = self.run_js("""
           const rows = [
             { name: "clear", description: "Clear history", source: "builtin" },

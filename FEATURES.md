@@ -73,7 +73,7 @@ Status words:
 ## Remote control
 
 The hub (`swe remote serve`) is the shared backend for all of these. The Mac
-hosts the hub; the PWA and the iOS app are its clients.
+hosts the hub; the web app and the iOS app are its clients.
 
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
@@ -102,7 +102,7 @@ owes the other the same change; say so in the row's Notes until it is paid.
 | MCP redaction and the managed server repo | `McpRedaction`, `SecretText.maskingKeys`, `McpServerRepo` | `src/quiver/webapp/pages/mcp.py` |
 | Plugin drift severity | `CatalogPlugin.worstDrift` | `src/quiver/webapp/pages/plugins.py` |
 | OpenCode model naming | `openCodeModel` | `src/quiver/ledger/parsers.py` |
-| Chat rendering: Markdown, diffs, tool cards, syntax highlighting | `QuiverCore/Syntax/SyntaxHighlight.swift` + `Hub/ToolDiff.swift` (`ToolDisplay`) under the Mac chat views; iOS has `ToolDiff`/`ToolArgs` and is owed highlighting | `src/quiver/webapp/static/pages/chat.js` and `src/quiver/remote/web/app.js` (`md`, `hl`, `readableArgs`, `renderDiff` in each) |
+| Chat rendering: Markdown, diffs, tool cards, syntax highlighting | `QuiverCore/Syntax/SyntaxHighlight.swift` + `Hub/ToolDiff.swift` (`ToolDisplay`) under the Mac chat views; iOS has `ToolDiff`/`ToolArgs` and is owed highlighting | `src/quiver/webapp/static/pages/chat.js` (`md`, `hl`, `readableArgs`, `renderDiff`) |
 
 The iOS app shares only the protocol DTOs with the Mac app today; its
 decoding lives on the hub. So a Swift-side bug repeats on iOS only where
