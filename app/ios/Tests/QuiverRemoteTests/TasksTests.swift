@@ -172,8 +172,8 @@ final class TaskRowTests: XCTestCase {
 }
 
 final class TaskStepperTests: XCTestCase {
-    private func row(kind: String? = "issue", state: String? = "open") -> TaskRow {
-        TaskRow(id: "t", source: "github", kind: kind, ref: "5",
+    private func row(kind: String? = "issue", state: String? = "open", source: String? = "github") -> TaskRow {
+        TaskRow(id: "t", source: source, kind: kind, ref: "5",
                 title: "t", url: "u", repo: "o/r", project: nil,
                 state: state, sessions: nil, launches: nil,
                 agentRunning: false, linked: nil, lastActiveAt: nil,
@@ -195,6 +195,13 @@ final class TaskStepperTests: XCTestCase {
         XCTAssertEqual(rungs(row(state: "merged")).last,
                        step("Merged", true, true))
         XCTAssertEqual(rungs(row()).first, step("Open", true, true))
+    }
+
+    func testNonGithubIssueLadderSkipsThePrRung() {
+        // Only a GitHub issue's own PR can stand between "an agent is
+        // on it" and done; Linear cards and Notion pages end at started.
+        let steps = rungs(row(state: "in_progress", source: "linear"))
+        XCTAssertEqual(steps.map(\.title), ["Open", "In progress", "Merged"])
     }
 
     func testPullLadderSkipsThePrRung() {
