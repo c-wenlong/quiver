@@ -207,6 +207,11 @@ public struct FanHold {
     /// What became of a request, for the app to show. Called once per
     /// change, not every pass.
     public var report: (FanHelperStatus) -> Void = { _ in }
+    /// Called at the top of every pass. The daemon wires it to a
+    /// watchdog, so a pass that never finishes — a wedged SMC call —
+    /// gets the process relaunched instead of sitting deaf to every
+    /// request while looking alive.
+    public var beat: () -> Void = {}
 
     public init(smc: any SMCAccess, request: @escaping () -> FanControlFile?,
                 ownerAlive: @escaping (Int32) -> Bool, underPressure: @escaping () -> Bool,
@@ -246,6 +251,7 @@ public struct FanHold {
             report(FanHelperStatus(state: state, reason: reason, request: request))
         }
         while !shouldStop() {
+            beat()
             if let request = request(), request != failed, let level = request.level, let owner = request.owner {
                 if ownerAlive(owner) {
                     let wanted = { self.request() == request && self.ownerAlive(owner) }
@@ -389,7 +395,17 @@ public enum FanHelper {
     /// before helpers had one) counts as not installed, so the next Set
     /// speed reinstalls it once instead of steering an old or broken one.
     /// 2: its own executable, after copies of Quiver's crashed in dyld.
-    public static let version = 2
+    /// 3: the watchdog, so a pass wedged on an SMC call relaunches it.
+    public static let version = 3
+
+    /// How often the watchdog checks the heartbeat, and how long may
+    /// pass without a beat before the daemon counts itself wedged and
+    /// exits for launchd to relaunch. Generous next to a healthy pass of
+    /// about a second; thermalmonitord takes the fans back when the
+    /// process dies, so a stuck SMC call must end the process, not be
+    /// waited out.
+    static let watchdogTick: TimeInterval = 10
+    static let watchdogTimeout: TimeInterval = 30
     static let versionFlag = "--helper-version"
     /// The helper inside the app bundle, where build-app.sh puts it.
     public static let bundledName = "QuiverFanHelper"
@@ -498,13 +514,31 @@ public enum FanHelper {
             do { try status.write() } catch { log("couldn't write \(statusFile): \(error.localizedDescription)") }
         }
         log("started (pid \(getpid())), control \(control.path)")
+        // A pass runs on the one thread with no timeout around the SMC
+        // calls, and one that hangs leaves the daemon deaf to every
+        // request while looking alive to launchd. The watchdog exits so
+        // KeepAlive relaunches it with a fresh connection.
+        let heartbeat = Heartbeat()
+        let watchdog = DispatchSource.makeTimerSource(queue: .global())
+        watchdog.schedule(deadline: .now() + watchdogTick, repeating: watchdogTick)
+        watchdog.setEventHandler {
+            if heartbeat.silentFor > watchdogTimeout {
+                log("no beat in \(Int(watchdogTimeout)) s; exiting so launchd restarts the helper")
+                _exit(1)
+            }
+        }
+        watchdog.resume()
+        defer { watchdog.cancel() }
+        heartbeat.beat()
         guard let smc = AppleSMC() else {
             log("couldn't open the AppleSMC")
             report(FanHelperStatus(state: .error, reason: "The fan helper couldn't open the SMC."))
             return 1
         }
+        heartbeat.beat()
         FanKeys.survey(smc).forEach { log($0) }
         report(FanHelperStatus(state: .ready))
+        heartbeat.beat()
         let stop = StopFlag()
         let sources = [SIGTERM, SIGINT, SIGHUP].map { sig in
             signal(sig, SIG_IGN)
@@ -527,6 +561,7 @@ public enum FanHelper {
         )
         hold.log = log
         hold.report = report
+        hold.beat = { heartbeat.beat() }
         hold.run()
         log("stopped")
         return 0
@@ -540,4 +575,13 @@ private final class StopFlag: @unchecked Sendable {
 
     var isSet: Bool { lock.withLock { value } }
     func set() { lock.withLock { value = true } }
+}
+
+/// The last moment the helper got through a beat (a pass, a startup
+/// step); the watchdog reads it off the loop's thread.
+private final class Heartbeat: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last = Date()
+    func beat() { lock.withLock { last = Date() } }
+    var silentFor: TimeInterval { lock.withLock { Date().timeIntervalSince(last) } }
 }

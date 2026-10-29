@@ -128,7 +128,9 @@ public final class FanControl {
     }
 
     public private(set) var fans: [FanReading] = []
-    public private(set) var phase: Phase = .automatic
+    public private(set) var phase: Phase = .automatic {
+        didSet { failedAt = if case .failed = phase { clock() } else { nil } }
+    }
     /// Whether the SMC has answered at least once.
     public private(set) var loaded = false
     /// Whether the root helper is installed; the first Set speed installs it.
@@ -219,6 +221,11 @@ public final class FanControl {
     /// How long `starting` may last before the request counts as failed.
     /// Taking the fans on an M4 takes up to about ten seconds.
     static let startTimeout: TimeInterval = 20
+    /// How long after a failed takeover the rule may try again. A helper
+    /// that never answers used to switch it off until someone toggled the
+    /// rule or set a speed by hand; a minute's wait lets it recover on
+    /// its own without pestering a helper that is still down.
+    static let retryAfter: TimeInterval = 60
     /// The timeout's message when the helper never said what happened:
     /// not running, or a copy from before it wrote a status. Reinstalling
     /// puts the current one in place.
@@ -240,6 +247,9 @@ public final class FanControl {
     private let sleep: @Sendable (TimeInterval) async -> Void
     private let defaults: UserDefaults
     private var startedAt: Date?
+    /// When the phase last went `failed`; once `retryAfter` has passed
+    /// the rule may take the fans again instead of staying off forever.
+    private var failedAt: Date?
     /// The request last written, to match the helper's status against.
     private var current: FanControlFile?
     /// The helper's status as of the last refresh.
@@ -511,11 +521,22 @@ public final class FanControl {
         thresholdEnabled = true
     }
 
+    /// Whether the rule may take the fans now: from Automatic always, or
+    /// back out of a failure once `retryAfter` has passed, and never
+    /// while a speed is already held or being waited on.
+    private var thresholdMayAct: Bool {
+        switch phase {
+        case .automatic: true
+        case .failed: failedAt.map { clock().timeIntervalSince($0) >= Self.retryAfter } ?? false
+        case .starting, .manual: false
+        }
+    }
+
     /// The rule, run on each trend tick with the CPU's temperature. It
-    /// takes the fans only from Automatic (a speed the user set wins) and
-    /// only once the helper is installed; it gives them back once the CPU
-    /// reaches `releaseBelow`, or as soon as anything else (the user, a
-    /// failure) has moved them off its speed.
+    /// takes the fans only when `thresholdMayAct` (a speed the user set
+    /// wins) and only once the helper is installed; it gives them back
+    /// once the CPU reaches `releaseBelow`, or as soon as anything else
+    /// (the user, a failure) has moved them off its speed.
     public func checkTemperature(_ cpu: Double?) async {
         guard thresholdEnabled, let cpu else { return }
         if heldByThreshold {
@@ -531,9 +552,9 @@ public final class FanControl {
             }
             return
         }
-        guard phase == .automatic, cpu >= threshold else { return }
+        guard thresholdMayAct, cpu >= threshold else { return }
         if installUnchecked { await refresh() }
-        guard helperInstalled, thresholdEnabled, phase == .automatic, !heldByThreshold else { return }
+        guard helperInstalled, thresholdEnabled, thresholdMayAct, !heldByThreshold else { return }
         // Claimed before the wait, so switching the rule off (or the user
         // taking over) during it is seen and undone, not left held.
         heldByThreshold = true
