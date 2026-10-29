@@ -58,6 +58,9 @@ struct HubClient: Sendable {
         parts.percentEncodedPath = path
         if !query.isEmpty {
             parts.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+            // URLComponents leaves `+` bare, and the hub's `parse_qs` reads
+            // a bare `+` as a space: `a+b.html` would ask for `a b.html`.
+            parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         }
         return parts.url!
     }
@@ -89,6 +92,13 @@ struct HubClient: Sendable {
     }
 
     func raw(_ req: URLRequest) async throws -> (Data, Int) {
+        let (data, response) = try await fetch(req)
+        return (data, response.statusCode)
+    }
+
+    /// Runs a request and hands back a 2xx body with its response, for a
+    /// route whose headers matter (the preview's `Content-Type`).
+    func fetch(_ req: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: URLResponse
         do {
@@ -96,9 +106,11 @@ struct HubClient: Sendable {
         } catch {
             throw HubError.network(error)
         }
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else { throw Self.error(status: status, body: data) }
-        return (data, status)
+        let http = response as? HTTPURLResponse
+        guard let http, (200..<300).contains(http.statusCode) else {
+            throw Self.error(status: http?.statusCode ?? 0, body: data)
+        }
+        return (data, http)
     }
 
     /// A non-2xx answer as the error the phone shows.
@@ -309,6 +321,17 @@ struct HubClient: Sendable {
     func files(_ key: String, query: String, limit: Int = 50) async throws -> FilesResponse {
         try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/files",
                                query: ["q": query, "limit": "\(limit)"]))
+    }
+
+    /// `GET /v1/sessions/{key}/preview?path=`: one `.html`, `.htm` or
+    /// `.svg` file from the session's working folder as it is on disk
+    /// now, for a tool card's Preview. `path` is relative to that folder
+    /// (`PagePreview.relative`). Hub-machine sessions only.
+    func preview(_ key: String, path: String) async throws -> PagePreview.Page {
+        let (data, response) = try await fetch(request("GET", "/v1/sessions/\(Self.encodeKey(key))/preview",
+                                                        query: ["path": path]))
+        return PagePreview.Page(path: path, body: data,
+                                contentType: response.value(forHTTPHeaderField: "Content-Type"))
     }
 
     /// The slash commands this session's harness will run, for the prompt

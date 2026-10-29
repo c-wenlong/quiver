@@ -201,6 +201,27 @@ final class ChatModel {
 
     var row: SessionRow? { app?.session(key) }
 
+    /// The page a tool card's Preview opened. The sheet hangs off the
+    /// chat, not the card, so a card folding into a run of tool calls
+    /// while you look doesn't close it.
+    var previewing: PagePreview.Target?
+
+    /// The pages this tool call wrote that the hub can serve, relative to
+    /// the session's working folder.
+    func pageTargets(for call: ToolCall) -> [PagePreview.Target] {
+        let files = PagePreview.files(of: call)
+        // Only a page write looks up the row: reading the sessions list
+        // from every card would redraw them all on each list refresh.
+        guard !files.isEmpty else { return [] }
+        return PagePreview.targets(files, cwd: row?.cwd)
+    }
+
+    /// The page as it is on disk now, from the hub.
+    func loadPreview(_ target: PagePreview.Target) async throws -> PagePreview.Page {
+        guard let client = hubClient else { throw HubError.network(CancellationError()) }
+        return try await client.preview(key, path: target.path)
+    }
+
     /// The name of the machine the session runs on, as the Sessions list
     /// shows it.
     var machineName: String {

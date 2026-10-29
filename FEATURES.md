@@ -24,7 +24,7 @@ Status words:
 | --- | --- | --- | --- | --- |
 | Overview | yes | yes | part | Mac and Web: tokens, cost, harness split, daily activity, top models. iOS: the Usage tab has limits and spend; harness split, daily activity and top models are missing |
 | Sessions | yes | yes | yes | Web: "Copy resume command" instead of Resume, no Devin-cloud or account-profile rows yet. iOS: the hub's remote sessions grouped by machine and folder |
-| Session chat | yes | yes | yes | Transcript, composer (Queue/Steer/Stop), approvals. Web renders its own chat page (`static/pages/chat.js`); iOS observe and attach is the app's core |
+| Session chat | yes | yes | yes | Transcript, composer (Queue/Steer/Stop), approvals. Web renders its own chat page (`static/pages/chat.js`); iOS observe and attach is the app's core, plus link cards and a locked Preview of `.html`/`.svg` files a tool call wrote (the web PWA's is planned in #634) |
 | Calendar | yes | yes | - | |
 | Pricing | yes | yes | - | |
 

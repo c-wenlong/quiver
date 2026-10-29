@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: Preview on tool cards that write a page.** When
+  a tool call writes or edits an `.html`, `.htm` or `.svg` file inside
+  the session's folder (Write, Edit, MultiEdit, a Codex patch and the
+  like), its card gets a Preview button. Preview asks the hub for the
+  file as it is on disk now and draws it in a sheet with scripts,
+  network and navigation off; an SVG is drawn as an image. The card's
+  raw content is still one tap away, and a missing, too-big or
+  unsupported file says so in plain words
+  ([#634](https://github.com/c-wenlong/quiver/issues/634)).
+
 - **Syntax highlighting in the chat, on the web app, the remote web
   client and the Mac app.** Fenced code blocks, tool arguments and tool
   output are tokenised and coloured: a shell command keeps its flags
