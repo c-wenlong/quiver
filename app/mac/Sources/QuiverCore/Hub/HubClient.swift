@@ -151,9 +151,12 @@ public struct HubClient: Sendable {
 
     /// The JSON `POST /v1/issues/resolve` carries. `prompt` and
     /// `context` go only when they hold text: an absent prompt means
-    /// "use your suggested one".
+    /// "use your suggested one". `model` goes only as a non-blank
+    /// token — the hub refuses a malformed one and a harness whose
+    /// launches can't honour it.
     public static func resolveIssueBody(repo: String, number: Int, harness: String,
-                                        prompt: String?, context: String?) -> [String: any Sendable] {
+                                        prompt: String?, context: String?,
+                                        model: String? = nil) -> [String: any Sendable] {
         var body: [String: any Sendable] = ["repo": repo, "number": number, "harness": harness]
         if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             body["prompt"] = prompt
@@ -161,17 +164,27 @@ public struct HubClient: Sendable {
         if let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             body["context"] = context
         }
+        if let model = launchToken(model) { body["model"] = model }
         return body
+    }
+
+    /// A launch option as the hub takes it: one token, or nil when the
+    /// field was blank — whitespace would fail the hub's shape check,
+    /// so it is trimmed before it can travel.
+    static func launchToken(_ value: String?) -> String? {
+        let pick = (value ?? "").trimmingCharacters(in: .whitespaces)
+        return pick.isEmpty ? nil : pick
     }
 
     /// Starts a session on the hub machine to resolve issue `number`:
     /// the hub makes the `quiver/issue-<n>` worktree, sends the first
     /// prompt and titles the session. Answers with the launch to poll.
     public func resolveIssue(repo: String, number: Int, harness: String,
-                             prompt: String?, context: String?) async throws -> HubLaunchStatus {
+                             prompt: String?, context: String?,
+                             model: String? = nil) async throws -> HubLaunchStatus {
         try await send(request("POST", "/v1/issues/resolve",
                                body: Self.resolveIssueBody(repo: repo, number: number, harness: harness,
-                                                           prompt: prompt, context: context)))
+                                                           prompt: prompt, context: context, model: model)))
     }
 
     /// Where launch `id` stands.
@@ -189,10 +202,14 @@ public struct HubClient: Sendable {
     /// The JSON `POST /v1/sessions` carries: a launchable harness, an
     /// absolute folder, and the first prompt — the hub refuses a blank
     /// one. `machine` targets a satellite; nil means the hub itself.
+    /// `model` is the optional launch pick: a non-blank token or
+    /// nothing.
     public static func launchBody(harness: String, cwd: String, prompt: String,
-                                  machine: String? = nil) -> [String: any Sendable] {
+                                  machine: String? = nil,
+                                  model: String? = nil) -> [String: any Sendable] {
         var body: [String: any Sendable] = ["harness": harness, "cwd": cwd, "prompt": prompt]
         if let machine, !machine.isEmpty { body["machine"] = machine }
+        if let model = launchToken(model) { body["model"] = model }
         return body
     }
 
@@ -200,21 +217,24 @@ public struct HubClient: Sendable {
     /// 202 answer is the launch to poll through `launch(_:)` — the same
     /// shape `resolveIssue` returns.
     public func startSession(harness: String, cwd: String, prompt: String,
-                             machine: String? = nil) async throws -> HubLaunchStatus {
+                             machine: String? = nil,
+                             model: String? = nil) async throws -> HubLaunchStatus {
         try await send(request("POST", "/v1/sessions",
                                body: Self.launchBody(harness: harness, cwd: cwd,
-                                                     prompt: prompt, machine: machine)))
+                                                     prompt: prompt, machine: machine,
+                                                     model: model)))
     }
 
     /// `POST /v1/pulls/<o>/<r>/<n>/open`: detached PR worktree + launch,
     /// the resolve shape. Its `origin` links the adopted session to the
     /// pull's task row, as an issue resolve's does.
     public func openPull(owner: String, repo: String, number: Int, harness: String,
-                         prompt: String? = nil) async throws -> HubLaunchStatus {
+                         prompt: String? = nil, model: String? = nil) async throws -> HubLaunchStatus {
         var body: [String: any Sendable] = ["harness": harness]
         if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             body["prompt"] = prompt
         }
+        if let model = Self.launchToken(model) { body["model"] = model }
         let path = "/v1/pulls/\(Self.encodeKey(owner))/\(Self.encodeKey(repo))/\(number)/open"
         return try await send(request("POST", path, body: body))
     }

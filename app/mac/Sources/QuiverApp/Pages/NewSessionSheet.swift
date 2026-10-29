@@ -23,6 +23,14 @@ struct NewSessionSheet: View {
     @State private var folder = ""
     @State private var folderQuery = ""
     @State private var prompt = ""
+    /// The launch `model` pick: free text, blank for the harness's
+    /// default.
+    @State private var modelName = ""
+    /// The last prefill the sheet wrote into `modelName`. A harness or
+    /// machine change re-fills only while the field still holds that
+    /// suggestion, so a typed pick survives — the same rule
+    /// `filledPrompt` follows in the resolve sheet.
+    @State private var filledModel: String?
     /// The folder browser's place; non-nil swaps the form for it.
     @State private var browse: FolderBrowse?
     @State private var flow = IssueLaunchFlow()
@@ -65,6 +73,12 @@ struct NewSessionSheet: View {
         return (machine.untrackedHarnesses ?? []).contains(harness)
     }
 
+    /// Whether a launch on the picked machine honours a `model` for
+    /// the picked harness — the Model field's enabled state.
+    private var takesModel: Bool {
+        LaunchOptions.takesModel(harness, on: machine)
+    }
+
     private var ready: Bool {
         (harness.map { offered.contains($0) } ?? false) && !machinesPending
             && folder.trimmingCharacters(in: .whitespaces).hasPrefix("/")
@@ -90,6 +104,10 @@ struct NewSessionSheet: View {
         // Cancel stops a running launch first.
         .onSheetDismissRequest { if !flow.busy { dismiss() } }
         .task { await load() }
+        .onChange(of: harness) { prefillModel() }
+        // A machine switch re-fills even when the harness stays: the
+        // last-used models are the new machine's own.
+        .onChange(of: machineId) { prefillModel() }
         .onDisappear { launchTask?.cancel() }
     }
 
@@ -100,6 +118,7 @@ struct NewSessionSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 machineSection
                 harnessSection
+                modelSection
                 folderSection
                 promptSection
             }
@@ -162,6 +181,25 @@ struct NewSessionSheet: View {
                 if untracked {
                     Text("Quiver can't read \(NewSessionOptions.name(harness ?? "", on: machine, sessions: sessions)) sessions yet: it starts, but no chat opens.")
                         .font(Theme.caption).foregroundStyle(Theme.warningText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// The launch `model` pick (#914). Only a machine row that reports
+    /// `model_at_launch` gets the row: an older build would take the
+    /// pick and silently drop it. A harness outside the list keeps the
+    /// field disabled — its launch always runs the default.
+    @ViewBuilder private var modelSection: some View {
+        if LaunchOptions.showsModel(on: machine) {
+            group("Model (optional)") {
+                TextField("e.g. sonnet, blank for the default", text: $modelName)
+                    .quiverField(monospaced: true)
+                    .disabled(!takesModel)
+                if !takesModel {
+                    Text("This harness can't take a model at launch; it starts on its default.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -441,6 +479,17 @@ struct NewSessionSheet: View {
         harnessFromFolder()
     }
 
+    /// The Model field's prefill: the picked machine's last-used model
+    /// for the picked harness. A re-fill lands only while the field is
+    /// empty or still holds the sheet's own suggestion, so a typed pick
+    /// survives a harness or machine change.
+    private func prefillModel() {
+        let last = LaunchOptions.lastModel(harness, on: machine)
+        guard modelName.isEmpty || modelName == filledModel else { return }
+        modelName = last
+        filledModel = last
+    }
+
     /// A folder change re-defaults the harness unless the user picked
     /// one by hand — and the hand-pick only holds while it's on offer.
     private func harnessFromFolder() {
@@ -466,11 +515,15 @@ struct NewSessionSheet: View {
         // The hub is the default machine; a satellite is named — the
         // resolved machine's id, not whatever the picker stored.
         let target = machine.id == hubMachineId ? nil : machine.id
+        // A pick goes only for a harness that can honour it — anything
+        // else is a token the hub would refuse or a satellite would drop.
+        let modelPick = LaunchOptions.model(modelName, supported: takesModel)
         let key = await flow.run(
             post: {
                 try await hub.withClient {
                     try await $0.startSession(harness: harness, cwd: cwd,
-                                              prompt: text, machine: target)
+                                              prompt: text, machine: target,
+                                              model: modelPick)
                 }
             },
             fetch: { id in try await hub.withClient { try await $0.launch(id) } })

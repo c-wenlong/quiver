@@ -284,10 +284,23 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
     /// Launchable harnesses swe can't read sessions of: they start,
     /// but no chat ever opens.
     public var untrackedHarnesses: [String]?
+    /// The launchable harnesses whose launches honour a `model` pick.
+    /// Absent on a machine build older than the launch-option fields —
+    /// it would take the pick and drop it, so the sheets give that row
+    /// no Model field at all.
+    public var modelAtLaunch: [String]?
+    /// `modelAtLaunch`'s effort twin; decoded for completeness, unused
+    /// until the effort picker ships.
+    public var effortAtLaunch: [String]?
+    /// The machine ledger's most recent model per harness — the Model
+    /// field's prefill.
+    public var lastModels: [String: String]?
 
     public init(id: String, name: String? = nil, online: Bool? = nil,
                 harnesses: [String]? = nil, launchable: [String]? = nil,
-                harnessNames: [String: String]? = nil, untrackedHarnesses: [String]? = nil) {
+                harnessNames: [String: String]? = nil, untrackedHarnesses: [String]? = nil,
+                modelAtLaunch: [String]? = nil, effortAtLaunch: [String]? = nil,
+                lastModels: [String: String]? = nil) {
         self.id = id
         self.name = name
         self.online = online
@@ -295,6 +308,9 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
         self.launchable = launchable
         self.harnessNames = harnessNames
         self.untrackedHarnesses = untrackedHarnesses
+        self.modelAtLaunch = modelAtLaunch
+        self.effortAtLaunch = effortAtLaunch
+        self.lastModels = lastModels
     }
 
     /// "dev-macbook-pro.local" reads as "dev-macbook-pro".

@@ -90,6 +90,31 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
         #expect(HubError.from(status: 401, body: Data()).isUnauthorized)
     }
 
+    @Test func machineRowsCarryTheLaunchOptionFields() throws {
+        let json = Data(#"""
+        {"machines": [
+            {"id": "m1", "name": "mac", "online": true,
+             "launchable": ["claude", "codex"],
+             "model_at_launch": ["claude"],
+             "effort_at_launch": ["claude"],
+             "last_models": {"claude": "claude-sonnet-4.5", "codex": "gpt-5"}},
+            {"id": "m2", "name": "old-sat", "online": true,
+             "launchable": ["gemini"]}
+        ]}
+        """#.utf8)
+        let machines = try HubWire.decoder.decode(HubMachinesResponse.self, from: json).machines
+        let new = try #require(machines.first)
+        #expect(new.modelAtLaunch == ["claude"])
+        #expect(new.effortAtLaunch == ["claude"])
+        #expect(new.lastModels == ["claude": "claude-sonnet-4.5", "codex": "gpt-5"])
+        // An older satellite reports none: the sheets hide the Model
+        // row for it rather than send a pick it would drop.
+        let old = machines[1]
+        #expect(old.modelAtLaunch == nil)
+        #expect(old.effortAtLaunch == nil)
+        #expect(old.lastModels == nil)
+    }
+
     @Test func baseURLsComeFromSwesAddress() {
         #expect(LocalHub.baseURL("127.0.0.1:8477")?.absoluteString == "http://127.0.0.1:8477")
         #expect(LocalHub.baseURL("0.0.0.0:8477")?.absoluteString == "http://127.0.0.1:8477")
