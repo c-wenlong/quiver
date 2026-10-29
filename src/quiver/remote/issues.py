@@ -305,7 +305,7 @@ def request(state, body: dict | None) -> tuple[int, dict]:
             "not_launchable",
             f"{harness} can't start here: archived, switched off in "
             f"Provider visibility, or not installed")
-    blocked = supervise.launch_tuning_error(
+    blocked = supervise.fresh_launch_error(
         harness, cmd["model"], cmd["effort"])
     if blocked:
         return 409, protocol.error("unsupported_launch_option", blocked)

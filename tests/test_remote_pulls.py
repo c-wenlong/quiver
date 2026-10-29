@@ -375,7 +375,7 @@ class TestOpen(_Base):
         self.assertEqual((view["model"], view["effort"]), ("opus", "high"))
 
     def test_open_refuses_a_pick_the_harness_cannot_take(self):
-        # gemini's TUI has no verified /model; nothing is prepared.
+        # gemini declares no capabilities.model; nothing is prepared.
         with self._stubs() as (wt, ln):
             status, body = self._open(
                 {"harness": "gemini", "model": "opus"})

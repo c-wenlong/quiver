@@ -79,7 +79,7 @@ hosts the hub; the PWA and the iOS app are its clients.
 | --- | --- | --- | --- | --- |
 | Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval |
 | Devices list and revoke | yes | yes | yes | Mac and Web: Settings. iOS: under the hub chip menu |
-| Launch a new session | yes | yes | yes | All three: machine, folder and harness pickers, first prompt, launch poll, then the chat opens |
+| Launch a new session | yes | yes | yes | All three: machine, folder and harness pickers, first prompt, launch poll, then the chat opens. The hub takes a `model` and serves `recent_models` per harness (#914); no client has the model picker yet |
 | Machine switcher | - | - | planned | iOS P4: one machine today |
 | Machine vitals | yes | yes | planned | Compute page on Mac and Web; iOS P9 carries the samples over the hub |
 | Push notifications | - | - | part | ntfy today; APNs planned |

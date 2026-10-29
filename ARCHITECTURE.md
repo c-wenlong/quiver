@@ -219,10 +219,14 @@ see: `active` (default), `archived`, or `all`.
 Hardcoded tables predate the registry knowing about capabilities:
 `skills/layout.py`'s `HARNESS_ROOTS` (which harness's skills root lives
 where), `find/plugins.py`'s `PLUGIN_FALLBACK` (which harnesses support
-plugins, and where their install record lives), and `init/hooks.py`'s
-`HOOK_FALLBACK` (where hook scripts go). All are fallbacks, not sources of
+plugins, and where their install record lives), `init/hooks.py`'s
+`HOOK_FALLBACK` (where hook scripts go) and `remote/launch_model.py`'s
+`MODEL_FALLBACK` (how a remote launch puts a picked model on the
+harness's command line). All are fallbacks, not sources of
 truth. A harness entry's own `capabilities.skills.{supported,root}`,
-`capabilities.plugins.{...}` or `capabilities.hooks.{...}` wins whenever the registry has one; the table only fires for a harness the
+`capabilities.plugins.{...}`, `capabilities.hooks.{...}` or
+`capabilities.model.{supported,flag,subcommand,settings_flag,settings_key,provider}`
+wins whenever the registry has one; the table only fires for a harness the
 registry has never heard of, or for a machine with no registry data at
 all.
 

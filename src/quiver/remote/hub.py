@@ -764,16 +764,7 @@ class HubState:
         """Keep this machine's ``launchable`` current: Provider visibility
         and the registry can change while the hub runs."""
         launchable = catalog_mod.launchable_harnesses()
-        fields = {
-            "launchable": [item["name"] for item in launchable],
-            "harness_names": catalog_mod.harness_names(launchable),
-            "untracked_harnesses": catalog_mod.untracked(launchable),
-            "model_at_launch": catalog_mod.launch_op_names(
-                launchable, "model"),
-            "effort_at_launch": catalog_mod.launch_op_names(
-                launchable, "effort"),
-            "last_models": catalog_mod.last_used_models(self.home),
-        }
+        fields = catalog_mod.launch_fields(launchable, self.home)
         if all(self.machine.get(k) == v for k, v in fields.items()):
             return
         self.machine.update(fields)
@@ -2275,10 +2266,11 @@ class _Handler(BaseHTTPRequestHandler):
                     f"{machine} runs an agent too old to take launch "
                     "options; upgrade it, or launch without them")
                 return
-            # The hub's table answers for the satellite's too: a launch
-            # command never carries a field its receiver can't apply.
-            blocked = supervise.launch_tuning_error(
-                harness, cmd["model"], cmd["effort"])
+            # The satellite's own advertised lists answer: its registry
+            # (capabilities.model) decides what its launch can take, so a
+            # launch command never carries a field it can't apply.
+            blocked = catalog_mod.launch_option_error(
+                row, harness, cmd["model"], cmd["effort"])
             if blocked:
                 self._send_error(409, "unsupported_launch_option", blocked)
                 return
@@ -2317,7 +2309,7 @@ class _Handler(BaseHTTPRequestHandler):
                 f"Provider visibility, or not installed",
             )
             return
-        blocked = supervise.launch_tuning_error(
+        blocked = supervise.fresh_launch_error(
             harness, cmd["model"], cmd["effort"])
         if blocked:
             self._send_error(409, "unsupported_launch_option", blocked)
