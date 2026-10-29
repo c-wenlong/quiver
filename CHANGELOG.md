@@ -205,6 +205,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tasks say what the source says, and say when GitHub didn't
+  answer.** The web Tasks page and the iPhone Tasks tab showed the
+  hub's internal ladder as each task's status, so an issue whose agent
+  had finished (or whose launch failed) read "In progress" forever.
+  Each `/v1/tasks` row now carries `status` in the source's words:
+  GitHub's pipeline (`Agent running`, `PR open`, `Merged`, `Closed`,
+  otherwise `Open`) and a Linear workflow state's own name. The stepper
+  reads Open → Agent → PR open → Merged for GitHub and Open → Started →
+  Done elsewhere. When `gh` times out or fails on the hub, both clients
+  now say GitHub didn't answer and mark its rows as last known, where
+  they used to show an empty or normal list. Also: a failed repo shows
+  its error inside its own group instead of a second group, iOS shows a
+  refresh error when only failed repos are left, a late link from a
+  plain launch reloads the list, an old unlink error clears, both
+  clients count a pull task as "PR open" until it lands, and linking,
+  unlinking or closing the launch sheet no longer refetches every
+  repo from `gh` ([#875](https://github.com/c-wenlong/quiver/issues/875)).
 - **Cursor usage works for editor-only users on macOS.** The Cursor
   editor now stores its session token encrypted
   (`cursor-safe-storage:v1:` in `state.vscdb`), so usage showed only

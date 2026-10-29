@@ -27,7 +27,7 @@ struct TasksView: View {
             }
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
-            if let error = model.error, !model.tasks.isEmpty {
+            if let error = model.error, !(model.tasks.isEmpty && model.failedRepos.isEmpty) {
                 Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .lineLimit(2)
@@ -42,14 +42,16 @@ struct TasksView: View {
                 // state: the banner says why, each of its rows is marked.
                 if let blocked = model.envBlocked {
                     blockedBanner(source: "GitHub", message: blocked)
+                } else if let failed = model.githubFailed {
+                    blockedBanner(source: "GitHub", message: failed)
                 }
                 if let blocked = model.linearBlocked {
                     blockedBanner(source: "Linear", message: blocked)
                 }
                 if model.tasks.isEmpty && model.failedRepos.isEmpty {
-                    if model.envBlocked != nil {
+                    if let reason = model.envBlocked ?? model.githubFailed {
                         StateCard(icon: "exclamationmark.lock", title: "Can't reach GitHub",
-                                  message: "On \(model.machine ?? app.hubName): \(model.envBlocked ?? "")")
+                                  message: "On \(model.machine ?? app.hubName): \(reason)")
                     } else {
                         StateCard(icon: "checklist", title: emptyTitle, message: emptyMessage)
                     }
@@ -59,6 +61,12 @@ struct TasksView: View {
                     ForEach(sections) { section in
                         if let rows = section.rows {
                             GroupLabel(text: section.name, trailing: "\(rows.count)")
+                            // A failed repo keeps its stored rows under
+                            // its error, in its own group.
+                            if let failed = model.failedRepos.first(where: { $0.name == section.name }) {
+                                StateCard(icon: "exclamationmark.triangle", title: "Can't list this repo's work",
+                                          message: failed.error ?? failed.status ?? "unknown error", tone: .error)
+                            }
                             CardList(data: rows) { task in
                                 SwipeRow(key: task.id, leading: [.newSession], trailing: [],
                                          coordinator: swipes,
@@ -77,7 +85,7 @@ struct TasksView: View {
                     }
                     // `gh` failed on these repos: their slots stay,
                     // dimmed, with why.
-                    ForEach(model.failedRepos) { repo in
+                    ForEach(model.failedRepos.filter { repo in !sections.contains { $0.name == repo.name } }) { repo in
                         GroupLabel(text: repo.name)
                         StateCard(icon: "exclamationmark.triangle", title: "Can't list this repo's work",
                                   message: repo.error ?? repo.status ?? "unknown error", tone: .error)
@@ -88,6 +96,10 @@ struct TasksView: View {
         .modifier(CloseSwipesOnScroll(swipes: swipes))
         .refreshable { await model.load(client: app.client, refresh: true) }
         .navigationTitle("Tasks")
+        // A plain launch's link can land after the sheet closed.
+        .onReceive(NotificationCenter.default.publisher(for: .taskLinked)) { _ in
+            Task { await model.load(client: app.client) }
+        }
         .task(id: app.hub?.id) { await model.load(client: app.client) }
         // The chat opens after the sheet is gone, so the push isn't
         // lost under the dismiss animation. Any launch — landed or
@@ -96,7 +108,9 @@ struct TasksView: View {
         .sheet(item: $launching, onDismiss: {
             if let key = startedKey { onStarted(key) }
             startedKey = nil
-            Task { await model.load(client: app.client, refresh: true) }
+            // The hub reads the store on every call; only gh's lists
+            // are cached, and a launch doesn't change them.
+            Task { await model.load(client: app.client) }
         }) { task in
             TaskSessionSheet(task: task, machineId: model.machineId) { startedKey = $0 }
         }

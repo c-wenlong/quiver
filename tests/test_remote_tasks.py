@@ -302,6 +302,7 @@ class TestTasksRoute(_Base):
                           issue["repo"], issue["ref"]),
                          ("github", "issue", "o/r", "5"))
         self.assertEqual(issue["state"], "open")
+        self.assertEqual(issue["status"], "Open")
         self.assertFalse(issue["agent_running"])
         self.assertFalse(issue["linked"])
         self.assertEqual(issue["sessions"], [])
@@ -316,6 +317,7 @@ class TestTasksRoute(_Base):
             _s, body = self._get("/v1/tasks")
         row = {t["id"]: t for t in body["tasks"]}["github:issue:o/r:5"]
         self.assertEqual(row["state"], "pr_open")
+        self.assertEqual(row["status"], "PR open")
         self.assertEqual(row["pr"]["number"], 9)
         self.assertEqual(row["pr"]["state"], "open")
 
@@ -337,6 +339,7 @@ class TestTasksRoute(_Base):
         with self._stubs():
             row = self._task("github:issue:o/r:5")
         self.assertEqual(row["state"], "in_progress")
+        self.assertEqual(row["status"], "Agent running")
         self.assertTrue(row["agent_running"])
         self.assertEqual(row["sessions"], ["claude:s1"])
         # The session finishing flips the flag off.
@@ -346,6 +349,10 @@ class TestTasksRoute(_Base):
         with self._stubs():
             row = self._task("github:issue:o/r:5")
         self.assertFalse(row["agent_running"])
+        # The ladder still sorts it as worked on; what the row says is
+        # GitHub's own word, not "in progress" for ever (#875).
+        self.assertEqual(row["state"], "in_progress")
+        self.assertEqual(row["status"], "Open")
 
     def test_stored_task_gets_fresh_state(self):
         """A closed issue leaves the open list; ``get`` still tells
@@ -793,3 +800,29 @@ class TestPullsAgentRunning(_Base):
                    return_value=_pr_status()):
             _s, body = self._get("/v1/pulls")
         self.assertTrue(body["repos"][0]["pulls"][0]["agent_running"])
+
+
+class StatusWordsTest(unittest.TestCase):
+    """``status``: the row's label in the source's words, never the ladder."""
+
+    def status(self, source_name="", **row):
+        return tasks_mod._status({"source": "github", "kind": "issue", **row},
+                                 source_name)
+
+    def test_github_reads_the_pipeline(self):
+        self.assertEqual(self.status(state="open"), "Open")
+        self.assertEqual(self.status(state="in_progress", agent_running=True),
+                         "Agent running")
+        self.assertEqual(self.status(state="in_progress", agent_running=False), "Open")
+        self.assertEqual(self.status(state="pr_open", agent_running=True), "PR open")
+        self.assertEqual(self.status(state="merged"), "Merged")
+        self.assertEqual(self.status(state="closed"), "Closed")
+        self.assertEqual(self.status(kind="pull", state="in_progress",
+                                     pr={"draft": True}), "Draft")
+
+    def test_linear_passes_its_workflow_state_through(self):
+        row = {"source": "linear", "kind": "issue", "state": "in_progress"}
+        self.assertEqual(tasks_mod._status(row, "In Review"), "In Review")
+        # A stored row with no fresh read has no name: the ladder's word.
+        self.assertEqual(tasks_mod._status(row, ""), "Started")
+

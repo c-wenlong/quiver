@@ -712,6 +712,12 @@ struct TaskRow: Decodable, Identifiable, Hashable, Sendable {
     /// The source's own stamp — ISO-8601 from GitHub and Linear both.
     let updatedAt: String?
     let pr: TaskPr?
+    /// What the row says, in the source's own words ("Agent running",
+    /// "PR open", a Linear workflow state's name). `state` is the
+    /// ladder the list sorts and filters by, never shown as text.
+    /// A `var` with a default so a hand-built row (tests, previews) can
+    /// leave it out; decoding still reads it.
+    var status: String? = nil
 
     /// The list's group key: the repo for GitHub, the project elsewhere.
     var scope: String { repo ?? project ?? "" }

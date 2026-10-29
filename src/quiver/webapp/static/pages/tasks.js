@@ -17,15 +17,15 @@
 
   /* The header's tabs. "Running" is a linked agent in flight
    * (``agent_running``); "PR open" is a task whose PR is open — an
-   * issue's ``quiver/issue-<n>`` PR, or a pull task itself; "Done" is
-   * merged or closed. */
+   * issue's ``quiver/issue-<n>`` PR, or a pull task until it lands, as
+   * the phone counts it; "Done" is merged or closed. */
   const FILTERS = [
     { id: "all", title: "All", test: () => true },
     { id: "running", title: "Running", test: (t) => !!t.agent_running },
     {
       id: "pr_open", title: "PR open",
       test: (t) => t.state === "pr_open"
-        || (t.kind === "pull" && t.pr && t.pr.state === "open"),
+        || (t.kind === "pull" && t.state !== "merged" && t.state !== "closed"),
     },
     {
       id: "done", title: "Done",
@@ -39,10 +39,16 @@
   };
   const filterOf = () => FILTERS.find((f) => f.id === page.filter) || FILTERS[0];
 
-  const STATE_WORDS = {
-    open: "Open", in_progress: "In progress", pr_open: "PR open",
+  /* ``state`` is the ladder, a sort and group key (#875); what a row
+   * says is the hub's ``status``, in the source's own words. These are
+   * the stepper's rungs: GitHub's progress is the pipeline (an agent,
+   * its PR, the merge), another source's is its own started and done. */
+  const RUNG_WORDS = {
+    open: "Open", in_progress: "Agent", pr_open: "PR open",
     merged: "Merged", closed: "Closed",
   };
+  const OTHER_RUNG_WORDS = { ...RUNG_WORDS, in_progress: "Started", merged: "Done" };
+  const statusOf = (t) => t.status || RUNG_WORDS[t.state] || t.state;
   const LAUNCH_POLLS = 60;
 
   const page = {
@@ -130,7 +136,7 @@
       const mark = i < at ? ico("checkFill", "tk-step-check")
         : `<span class="tk-num num">${i + 1}</span>`;
       return `${i ? '<span class="tk-line" aria-hidden="true"></span>' : ""}
-      <span class="tk-step ${cls}" role="listitem"${i === at ? ' aria-current="step"' : ""}>${mark}<span>${STATE_WORDS[r]}</span></span>`;
+      <span class="tk-step ${cls}" role="listitem"${i === at ? ' aria-current="step"' : ""}>${mark}<span>${(t.source === "github" ? RUNG_WORDS : OTHER_RUNG_WORDS)[r]}</span></span>`;
     }).join("")}</div>`;
   }
 
@@ -152,7 +158,7 @@
       <span class="gh-row-lead">${taskIcon(t)}</span>
       <span class="gh-row-main">
         <span class="gh-row-title"><span class="gh-title">${esc(t.title || refLabel(t))}</span>${prBadge}</span>
-        <span class="gh-row-sub">${esc(refLabel(t))} · ${esc(STATE_WORDS[t.state] || t.state)}${when}</span>
+        <span class="gh-row-sub">${esc(refLabel(t))} · ${esc(statusOf(t))}${when}</span>
       </span>
       <span class="gh-row-side">${t.agent_running
         ? `<span class="gh-label gh-success tk-running">${ico("running", "gh-spin gh-small")}<span>Agent running</span></span>` : ""}
@@ -184,14 +190,22 @@
       if (!seen.has(name)) seen.set(name, { name, repo: t.source === "github" ? t.repo : null, rows: [] });
       seen.get(name).rows.push(t);
     }
+    // A failed repo keeps its stored rows under its error, in its own
+    // group: one header per repo, never a second one for the failure.
+    for (const r of failed) {
+      if (!seen.has(r.name)) seen.set(r.name, { name: r.name, repo: r.name, rows: [] });
+      seen.get(r.name).error = r.error || r.status;
+    }
     const groups = [...seen.values()];
-    for (const r of failed) groups.push({ name: r.name, repo: r.name, error: r.error || r.status });
     const last = groups.length - 1;
-    return `<div class="gh-box">${groups.map((g, i) => `${groupHead(g.name, g.repo, g.rows ? g.rows.length : "")}
+    return `<div class="gh-box">${groups.map((g, i) => `${groupHead(g.name, g.repo, g.rows.length || "")}
       <div class="gh-surface${i === last ? " last" : ""}">${g.error
-        ? `<div class="gh-error-row"><span class="error">${esc(g.error)}</span></div>`
-        : g.rows.map(taskRow).join("")}</div>`).join("")}</div>`;
+        ? `<div class="gh-error-row"><span class="error">${esc(g.error)}</span></div>` : ""}${g.rows.map(taskRow).join("")}</div>`).join("")}</div>`;
   }
+
+  /* ``gh`` ran but failed (a timeout, a crash): not a setup problem, so
+   * no setup card, but the GitHub rows are only what the store kept. */
+  const githubFailed = (d) => !!(d.github && d.github.status === "upstream-error");
 
   /* The blocked-source offer: gh's setup card for GitHub, a plain offer
    * for a configured-but-failing Linear (``disabled`` means off, not
@@ -200,6 +214,12 @@
     const cards = [];
     const setup = GhUI.envSetup(d.github);
     if (setup) cards.push(GhUI.setupCard(setup, d.machine));
+    else if (githubFailed(d)) {
+      cards.push(`<div class="card offer"><div class="offer-text">
+          <div class="card-title">GitHub didn't answer</div>
+          <p class="card-subtitle">${esc(d.github.error || "gh failed on the hub this refresh.")}</p></div>
+        <button type="button" class="offer-button" id="tk-source-refresh">Refresh</button></div>`);
+    }
     const lin = d.linear;
     if (lin && lin.status !== "ok" && lin.status !== "disabled") {
       cards.push(`<div class="card offer"><div class="offer-text">
@@ -214,7 +234,8 @@
     const d = page.data;
     if (!d) return loadingCard("Reading the task list…");
     const cards = sourceCards(d);
-    const blocked = GhUI.envSetup(d.github) || (d.linear && d.linear.status !== "ok" && d.linear.status !== "disabled");
+    const blocked = GhUI.envSetup(d.github) || githubFailed(d)
+      || (d.linear && d.linear.status !== "ok" && d.linear.status !== "disabled");
     const stored = tasks().length;
     const rows = tasks().filter(filterOf().test);
     const failed = (d.repos || []).map((r) => ({ name: r.repo || r.name, error: r.error || r.status }));
@@ -228,7 +249,8 @@
       return [...cards, error, `<div class="card"><div class="gh-empty">${ico("stack", "gh-muted")}<span>No tasks yet. Tasks are the issues and pull requests your agents touch — resolve an issue or open a PR from Repositories, or link a running session to one.</span>
         <a class="gh-button" href="#/repositories">${ico("expand")}<span>Repositories</span></a></div></div>`].join("");
     }
-    const stale = blocked && stored
+    const failedRows = failed.some((r) => tasks().some((t) => t.repo === r.name));
+    const stale = (blocked || failedRows) && stored
       ? `<div class="caption gh-muted tk-stale">${ico("refresh", "gh-small")}<span>Last known state — a source isn't answering, so this is what the store remembers.</span></div>` : "";
     const body = rows.length || failed.length
       ? listGroups(rows, failed)
@@ -322,7 +344,7 @@
           : ico("prOpen", "gh-success");
     const link = t.source === "github" && t.repo
       ? `#/repositories?repo=${encodeURIComponent(t.repo)}&pr=${encodeURIComponent(pr.number)}` : null;
-    const caption = [pr.draft ? "Draft" : null, pr.state ? STATE_WORDS[pr.state] || pr.state : null]
+    const caption = [pr.draft ? "Draft" : null, pr.state ? RUNG_WORDS[pr.state] || pr.state : null]
       .filter(Boolean).join(" · ");
     const row = `<span class="gh-row-lead">${iconHtml}</span><span class="gh-row-main">
       <span class="gh-row-title"><span class="gh-title">#${esc(pr.number)} ${esc(pr.title)}</span></span>
@@ -408,7 +430,7 @@
   function detailHeader(t) {
     const where = t.repo || t.project || "";
     return pageHeader(t.title || refLabel(t),
-      `${refLabel(t)} · ${where} · ${STATE_WORDS[t.state] || t.state}`,
+      `${refLabel(t)} · ${where} · ${statusOf(t)}`,
       `<a class="gh-button" href="#/tasks" title="Back to the task list">${ico("chevronLeft")}<span>Tasks</span></a>
        <button class="icon-button${page.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>
        ${t.url ? `<a class="icon-button" href="${esc(t.url)}" target="_blank" rel="noopener" title="Open on ${t.source === "github" ? "GitHub" : esc(t.source)}" aria-label="Open on ${esc(t.source)}">${ico("external")}</a>` : ""}`);
@@ -559,7 +581,9 @@
       page.action = null;
       page.link = null;
     }
-    if (onTasks()) load(true);
+    // The hub reads the store on every call; only gh's lists are cached,
+    // and a link doesn't change them.
+    if (onTasks()) load();
   }
 
   async function unlinkSession(t, key) {
@@ -581,7 +605,7 @@
       }
       return;
     }
-    if (onTasks()) load(true);
+    if (onTasks()) load();
   }
 
   function bindDetail(t) {

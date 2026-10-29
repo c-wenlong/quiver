@@ -15,6 +15,10 @@ final class TasksModel {
     /// `gh` missing or signed out on the hub (`env_blocked`): GitHub rows
     /// are the last-known ones and read as stale.
     private(set) var envBlocked: String?
+    /// `gh` ran on the hub but failed (`github.status` of
+    /// `upstream-error`: a timeout, a crash). Not a setup problem, so no
+    /// `env_blocked`, but the GitHub rows are only what the store kept.
+    private(set) var githubFailed: String?
     /// Linear's blocking state with its reason (`auth-required`,
     /// `bad-config`, `upstream-error`), nil when ok, disabled or absent.
     private(set) var linearBlocked: String?
@@ -37,6 +41,8 @@ final class TasksModel {
             machine = body.machine
             machineId = body.machineId
             envBlocked = body.envBlocked
+            githubFailed = body.github?.status == "upstream-error"
+                ? (body.github?.error ?? "gh failed on the hub") : nil
             fetchedAt = body.fetchedAt
             error = nil
             let status = body.linear?.status
@@ -62,7 +68,7 @@ final class TasksModel {
     func stale(_ task: TaskRow) -> Bool {
         switch task.source {
         case "github":
-            envBlocked != nil
+            envBlocked != nil || githubFailed != nil
                 || (task.repo.map { repo in failedRepos.contains { $0.name == repo } } ?? false)
         case "linear": linearBlocked != nil
         default: false
@@ -131,15 +137,16 @@ enum TaskFilter: String, CaseIterable, Identifiable {
 }
 
 extension TaskRow {
-    /// The state word the row and detail show: `in_progress` and
-    /// `pr_open` as the stepper's labels, anything unknown as Open.
+    /// The status the row and detail show: the hub's `status`, in the
+    /// source's words. An older hub sends none; then the pipeline's own
+    /// words, never "in progress" for a session that has ended (#875).
     var stateLabel: String {
+        if let status, !status.isEmpty { return status }
         switch state {
-        case "in_progress": "In progress"
-        case "pr_open": "PR open"
-        case "merged": "Merged"
-        case "closed": "Closed"
-        default: "Open"
+        case "pr_open": return "PR open"
+        case "merged": return "Merged"
+        case "closed": return "Closed"
+        default: return agentRunning == true ? "Agent running" : "Open"
         }
     }
 
@@ -183,16 +190,18 @@ enum TaskStepper {
         var id: String { title }
     }
 
-    /// `open → in progress → PR open → merged` for GitHub issues, the
-    /// only tasks whose own PR can stand between "an agent is on it"
-    /// and done; `open → in progress → merged` for pulls and every
-    /// other source. `closed` keeps the ladder's shape with "Closed"
+    /// `open → agent → PR open → merged` for GitHub issues, the only
+    /// tasks whose own PR can stand between "an agent is on it" and
+    /// done; `open → agent → merged` for pulls, and `open → started →
+    /// done` for every other source, whose own words these are. `closed` keeps the ladder's shape with "Closed"
     /// as the terminal rung — how far a hand-closed task got isn't
     /// inferable, so only its ends are lit.
     static func steps(for task: TaskRow) -> [Step] {
         let githubIssue = task.source == "github" && task.kind == "issue"
-        var rungs = githubIssue ? ["Open", "In progress", "PR open", "Merged"]
-                                : ["Open", "In progress", "Merged"]
+        let github = task.source == "github"
+        var rungs = githubIssue ? ["Open", "Agent", "PR open", "Merged"]
+                    : github ? ["Open", "Agent", "Merged"]
+                    : ["Open", "Started", "Done"]
         let order = githubIssue ? ["open", "in_progress", "pr_open", "merged"]
                                 : ["open", "in_progress", "merged"]
         let last = rungs.count - 1

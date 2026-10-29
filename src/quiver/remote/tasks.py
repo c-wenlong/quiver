@@ -472,6 +472,9 @@ def list_view(state, args) -> tuple[int, dict]:
             "tasks": []}
     rows: dict[str, dict] = {}
     source_state: dict[str, str] = {}
+    # A source's own word for the state, where it has one beyond the
+    # ladder's: a Linear workflow state's name.
+    status_name: dict[str, str] = {}
     # Tasks a source listed this round, and those whose PR a read
     # answered outright: a listed issue with no open PR on its branch
     # may still have a merged one the open list can't see.
@@ -507,6 +510,8 @@ def list_view(state, args) -> tuple[int, dict]:
                              "pr": item.get("pr"),
                              "updated_at": item.get("updated_at")}
                 source_state[tid] = str(item.get("state") or "")
+                if item.get("status_name"):
+                    status_name[tid] = str(item["status_name"])
                 on_list.add(tid)
                 if item.get("pr") is not None:
                     pr_read.add(tid)
@@ -568,6 +573,8 @@ def list_view(state, args) -> tuple[int, dict]:
                     row[k] = fresh[k]
             if fresh.get("state"):
                 source_state[tid] = str(fresh["state"])
+            if fresh.get("status_name"):
+                status_name[tid] = str(fresh["status_name"])
             if fresh.get("pr"):
                 row["pr"] = fresh["pr"]
             if "pr" in fresh:
@@ -592,6 +599,7 @@ def list_view(state, args) -> tuple[int, dict]:
             or any(l in pending for l in launches))
         row["state"] = _derive(row.get("kind"), source_state.get(tid, ""),
                                row.get("pr"), row["linked"])
+        row["status"] = _status(row, status_name.get(tid, ""))
         last = stored.get(tid, {}).get("last_active_at") or 0.0
         for k in sessions:
             last = max(last, _num(
@@ -648,6 +656,38 @@ def _last_known(home, stored: dict[str, dict], rows: dict[str, dict],
         row["state_source"] = "cached"
     if fresh:
         _remember(home, fresh)
+
+
+# The words ``status`` falls back to for a ladder state, where neither
+# the pipeline nor the source has a better one.
+_STATE_WORDS = {"open": "Open", "in_progress": "Started", "pr_open": "PR open",
+                "merged": "Merged", "closed": "Closed"}
+
+
+def _status(row: dict, source_name: str) -> str:
+    """What a client shows as the task's status, in the source's words.
+
+    ``state`` is the ladder, a sort and group key only (#875). GitHub's
+    progress reads off the pipeline: an agent running, then its PR, then
+    the merge; a linked session that has ended says nothing, so the
+    issue reads Open again rather than "in progress" forever. Linear's
+    workflow state passes through by name ("In Review").
+    """
+    state = row.get("state") or "open"
+    if row.get("source") == "github":
+        if state in ("merged", "closed", "pr_open"):
+            return _STATE_WORDS[state]
+        if row.get("agent_running"):
+            return "Agent running"
+        pr = row.get("pr") or {}
+        if row.get("kind") == "pull" and pr.get("draft"):
+            return "Draft"
+        return "Open"
+    if source_name:
+        return source_name
+    if row.get("agent_running") and state not in ("merged", "closed"):
+        return "Agent running"
+    return _STATE_WORDS.get(state, "Open")
 
 
 def _derive(kind, source_state: str, pr, linked: bool) -> str:

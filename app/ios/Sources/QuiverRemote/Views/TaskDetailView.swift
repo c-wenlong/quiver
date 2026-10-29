@@ -70,13 +70,13 @@ struct TaskDetailView: View {
         .sheet(item: $launching, onDismiss: {
             if let key = startedKey { onRoute(.chat(key)) }
             startedKey = nil
-            Task { await model.load(client: app.client, refresh: true) }
+            Task { await model.load(client: app.client) }
         }) { task in
             TaskSessionSheet(task: task, machineId: model.machineId) { startedKey = $0 }
         }
         .sheet(item: $linking) { task in
             LinkSessionSheet(task: task) {
-                Task { await model.load(client: app.client, refresh: true) }
+                Task { await model.load(client: app.client) }
             }
         }
     }
@@ -268,10 +268,11 @@ struct TaskDetailView: View {
 
     private func unlink(_ key: String) {
         guard let task, let client = app.client else { return }
+        linkError = nil
         Task {
             do {
                 try await client.unlinkTask(key, task: task)
-                await model.load(client: client, refresh: true)
+                await model.load(client: client)
             } catch {
                 linkError = (error as? HubError)?.message ?? error.localizedDescription
             }
