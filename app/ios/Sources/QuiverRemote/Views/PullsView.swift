@@ -5,7 +5,9 @@ import SwiftUI
 /// the web app's Repositories page agree.
 struct PullsView: View {
     @Environment(AppModel.self) private var app
-    @State private var model = PullsModel()
+    /// Owned by the tab bar, so switching the GitHub tab between Issues
+    /// and Pull requests keeps what each already loaded.
+    let model: PullsModel
     @State private var filter: PullFilter = .all
 
     var body: some View {

@@ -9,8 +9,10 @@ struct IssuesView: View {
     @Environment(AppModel.self) private var app
     /// The tab pushes the new session's chat once a launch lands.
     var onStarted: (String) -> Void
+    /// Owned by the tab bar, so switching the GitHub tab between Issues
+    /// and Pull requests keeps what each already loaded.
+    let model: IssuesModel
 
-    @State private var model = IssuesModel()
     @State private var filter: IssueFilter = .all
     @State private var swipes = SwipeCoordinator()
     /// The issue a row's Resolve swipe or context menu opened the sheet for.
