@@ -25,13 +25,9 @@ struct ResolveIssueSheet: View {
     @State private var context = ""
     @State private var postContext = true
     @State private var prompt = ""
-    /// The launch `model` pick: free text, blank for the harness's
-    /// default.
-    @State private var modelName = ""
-    /// The field's own binding sets this on any keystroke, so even a
-    /// clear back to the prefill counts: a harness change must not
-    /// overwrite what the user left.
-    @State private var modelEdited = false
+    /// The launch `model` menu's state; a harness change refits it
+    /// (`ModelPick.refit`).
+    @State private var modelPick = ModelPick()
     /// The suggested prompt last put in the field. A newer read replaces
     /// it only while the field still holds it, so edits stay.
     @State private var filledPrompt: String?
@@ -172,19 +168,12 @@ struct ResolveIssueSheet: View {
     /// The launch `model` pick (#914). Only a hub whose machine row
     /// reports `model_at_launch` gets the row: an older build would
     /// take the pick and silently drop it. A harness outside the list
-    /// keeps the field disabled — its launch always runs the default.
+    /// keeps the menu disabled — its launch always runs the default.
     @ViewBuilder private var modelField: some View {
         if LaunchOptions.showsModel(on: hubMachine) {
-            group("Model (optional)") {
-                TextField("e.g. sonnet, blank for the default",
-                          text: Binding(get: { modelName }, set: { modelName = $0; modelEdited = true }))
-                    .quiverField(monospaced: true)
-                    .disabled(!takesModel)
-                if !takesModel {
-                    Text("This harness can't take a model at launch; it starts on its default.")
-                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            group("Model") {
+                ModelMenu(recent: LaunchOptions.recentModels(harness, on: hubMachine),
+                          pick: $modelPick, supported: takesModel)
             }
         }
     }
@@ -327,13 +316,10 @@ struct ResolveIssueSheet: View {
         filledPrompt = suggested
     }
 
-    /// The Model field's prefill: the hub's last-used model for the
-    /// picked harness. A re-fill lands only while the user hasn't
-    /// touched the field — a typed pick, even a clear, keeps what
-    /// they left.
+    /// Refits the Model menu to the picked harness: an untouched menu
+    /// takes its newest model; a pick survives as `ModelPick.refit` says.
     private func prefillModel() {
-        guard let next = LaunchOptions.modelText(edited: modelEdited, harness, on: hubMachine) else { return }
-        modelName = next
+        modelPick.refit(LaunchOptions.recentModels(harness, on: hubMachine))
     }
 
     private func start() async {
@@ -343,7 +329,7 @@ struct ResolveIssueSheet: View {
         let context = context
         let prompt = prompt
         // A pick goes only for a harness that can honour it.
-        let modelPick = LaunchOptions.model(modelName, supported: takesModel)
+        let launchModel = modelPick.model(supported: takesModel)
         let posts = IssueResolve.postsComment(context: context, ticked: postContext,
                                               posted: postedContext)
         let model = model
@@ -362,7 +348,7 @@ struct ResolveIssueSheet: View {
             post: {
                 try await hub.withClient {
                     try await $0.resolveIssue(repo: repo, number: number, harness: harness,
-                                              prompt: prompt, context: context, model: modelPick)
+                                              prompt: prompt, context: context, model: launchModel)
                 }
             },
             fetch: { id in try await hub.withClient { try await $0.launch(id) } })

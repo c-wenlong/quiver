@@ -390,8 +390,10 @@ import Testing
         #expect(LaunchOptions.takesModel("claude", on: machine))
         #expect(!LaunchOptions.takesModel("codex", on: machine))
         #expect(!LaunchOptions.takesModel(nil, on: machine))
-        #expect(LaunchOptions.lastModel("claude", on: machine) == "claude-sonnet-4.5")
-        #expect(LaunchOptions.lastModel("codex", on: machine) == "")
+        // An old hub sends only `last_models`: a one-item list.
+        #expect(LaunchOptions.recentModels("claude", on: machine) == ["claude-sonnet-4.5"])
+        #expect(LaunchOptions.recentModels("codex", on: machine) == [])
+        #expect(LaunchOptions.recentModels(nil, on: machine) == [])
 
         // A row that reports the key but lists nothing shows the row
         // disabled; a row too old to report it shows nothing.
@@ -408,12 +410,108 @@ import Testing
         #expect(LaunchOptions.model("provider/x", supported: true) == "provider/x")
         #expect(LaunchOptions.model("  ", supported: true) == nil)
         #expect(LaunchOptions.model("sonnet", supported: false) == nil)
+    }
 
-        // The refill keeps an edited field's text — a deliberate clear
-        // included — and otherwise serves the last-used model.
-        #expect(LaunchOptions.modelText(edited: true, "claude", on: machine) == nil)
-        #expect(LaunchOptions.modelText(edited: false, "claude", on: machine) == "claude-sonnet-4.5")
-        #expect(LaunchOptions.modelText(edited: false, "codex", on: machine) == "")
+    /// `recent_models` wins over `last_models`; a task-harness row reads
+    /// the same way, blanks and repeats dropped.
+    @Test func recentModelsPreferTheListAndFallBackToTheLastModel() {
+        let machine = HubMachine(id: "m", modelAtLaunch: ["claude"],
+                                 lastModels: ["claude": "opus", "codex": "gpt-5"],
+                                 recentModels: ["claude": ["opus", "sonnet", "haiku"]])
+        #expect(LaunchOptions.recentModels("claude", on: machine) == ["opus", "sonnet", "haiku"])
+        // A harness the map leaves out reads as none: the fallback is
+        // only for a row with no `recent_models` at all.
+        #expect(LaunchOptions.recentModels("codex", on: machine) == [])
+        #expect(LaunchOptions.recentModels("claude", on: nil) == [])
+
+        let row = HubTaskHarness(name: "claude", launchModel: true, lastModel: "opus",
+                                 recentModels: ["opus", "", "opus", "sonnet"])
+        #expect(LaunchOptions.recentModels(of: row) == ["opus", "sonnet"])
+        let oldRow = HubTaskHarness(name: "claude", launchModel: true, lastModel: "opus")
+        #expect(LaunchOptions.recentModels(of: oldRow) == ["opus"])
+        let blankRow = HubTaskHarness(name: "codex", launchModel: true, lastModel: "")
+        #expect(LaunchOptions.recentModels(of: blankRow) == [])
+        #expect(LaunchOptions.recentModels(of: nil) == [])
+    }
+
+    /// The menu: default, recent newest first, Other — defaulting to
+    /// the newest model, else "Harness default".
+    @Test func modelMenuListsDefaultRecentThenOther() {
+        #expect(ModelPick.options(["opus", "sonnet"])
+                == [.harnessDefault, .recent("opus"), .recent("sonnet"), .other])
+        #expect(ModelPick.options([]) == [.harnessDefault, .other])
+        #expect(ModelPick.defaultChoice(["opus", "sonnet"]) == .recent("opus"))
+        #expect(ModelPick.defaultChoice([]) == .harnessDefault)
+        #expect(ModelChoice.harnessDefault.title == "Harness default")
+        #expect(ModelChoice.other.title == "Other…")
+        #expect(ModelChoice.recent("opus").title == "opus")
+
+        let fresh = ModelPick(recent: ["opus"])
+        #expect(fresh.choice == .recent("opus"))
+        #expect(!fresh.picked)
+    }
+
+    /// What the body carries for each choice.
+    @Test func modelMenuSendsTheChosenModelOnly() {
+        var pick = ModelPick(recent: ["opus"])
+        #expect(pick.model(supported: true) == "opus")
+        #expect(pick.model(supported: false) == nil)
+        pick.pick(.harnessDefault)
+        #expect(pick.model(supported: true) == nil)
+        pick.pick(.other)
+        #expect(pick.model(supported: true) == nil)
+        pick.otherText = "  "
+        #expect(pick.model(supported: true) == nil)
+        pick.otherText = " provider/x "
+        #expect(pick.model(supported: true) == "provider/x")
+        #expect(pick.model(supported: false) == nil)
+        // Typed text left behind by a switch back to a recent model
+        // never travels.
+        pick.pick(.recent("opus"))
+        #expect(pick.model(supported: true) == "opus")
+    }
+
+    /// The survival rules across harness and machine switches.
+    @Test func modelMenuRefitsAcrossSwitches() {
+        // Untouched: each switch re-defaults to the new newest model.
+        var pick = ModelPick()
+        pick.refit(["opus", "sonnet"])
+        #expect(pick.choice == .recent("opus"))
+        pick.refit(["gpt-5"])
+        #expect(pick.choice == .recent("gpt-5"))
+        pick.refit([])
+        #expect(pick.choice == .harnessDefault)
+        #expect(!pick.picked)
+
+        // An explicit "Harness default" stays, even where models exist.
+        pick.pick(.harnessDefault)
+        pick.refit(["opus"])
+        #expect(pick.choice == .harnessDefault)
+        #expect(pick.picked)
+
+        // Other keeps its typed text, blank included.
+        pick.pick(.other)
+        pick.otherText = "my-model"
+        pick.refit(["gpt-5"])
+        #expect(pick.choice == .other)
+        #expect(pick.model(supported: true) == "my-model")
+
+        // A picked recent model stays while the new list has it...
+        pick.pick(.recent("sonnet"))
+        pick.refit(["opus", "sonnet"])
+        #expect(pick.choice == .recent("sonnet"))
+        #expect(pick.picked)
+        // ...and re-defaults (untouched again) where it doesn't, so
+        // another harness's model never travels.
+        pick.refit(["gpt-5", "o3"])
+        #expect(pick.choice == .recent("gpt-5"))
+        #expect(!pick.picked)
+        pick.pick(.recent("o3"))
+        pick.refit([])
+        #expect(pick.choice == .harnessDefault)
+        #expect(!pick.picked)
+        pick.refit(["opus"])
+        #expect(pick.choice == .recent("opus"))
     }
 }
 
@@ -468,7 +566,7 @@ extension HubStubbed {
         HubStub.requests = []
         HubStub.handler = { req in
             req.url?.path == "/v1/app/tasks"
-                ? (200, Data(#"{"harnesses": [{"name": "claude", "display_name": "Claude Code", "tracked": true, "launch_model": true, "launch_effort": true, "last_model": "claude-sonnet-4.5"}, {"name": "codex", "display_name": "Codex", "tracked": true, "launch_model": false, "launch_effort": false, "last_model": ""}], "machine": "kai"}"#.utf8))
+                ? (200, Data(#"{"harnesses": [{"name": "claude", "display_name": "Claude Code", "tracked": true, "launch_model": true, "launch_effort": true, "last_model": "claude-sonnet-4.5", "recent_models": ["claude-sonnet-4.5", "claude-opus-4.1"]}, {"name": "codex", "display_name": "Codex", "tracked": true, "launch_model": false, "launch_effort": false, "last_model": ""}], "machine": "kai"}"#.utf8))
                 : (404, Data())
         }
         let (harnesses, machine) = try await client().taskHarnesses()
@@ -479,7 +577,9 @@ extension HubStubbed {
         #expect(harnesses.first?.launchModel == true)
         #expect(harnesses.first?.launchEffort == true)
         #expect(harnesses.first?.lastModel == "claude-sonnet-4.5")
+        #expect(harnesses.first?.recentModels == ["claude-sonnet-4.5", "claude-opus-4.1"])
         #expect(harnesses[1].launchModel == false)
+        #expect(harnesses[1].recentModels == nil)
         #expect(machine == "kai")
         #expect(HubStub.requests.first.map(query) == ["harnesses": "1"])
     }

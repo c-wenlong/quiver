@@ -97,7 +97,9 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
              "launchable": ["claude", "codex"],
              "model_at_launch": ["claude"],
              "effort_at_launch": ["claude"],
-             "last_models": {"claude": "claude-sonnet-4.5", "codex": "gpt-5"}},
+             "last_models": {"claude": "claude-sonnet-4.5", "codex": "gpt-5"},
+             "recent_models": {"claude": ["claude-sonnet-4.5", "claude-opus-4.1"],
+                               "codex": ["gpt-5"]}},
             {"id": "m2", "name": "old-sat", "online": true,
              "launchable": ["gemini"]}
         ]}
@@ -107,12 +109,15 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
         #expect(new.modelAtLaunch == ["claude"])
         #expect(new.effortAtLaunch == ["claude"])
         #expect(new.lastModels == ["claude": "claude-sonnet-4.5", "codex": "gpt-5"])
+        #expect(new.recentModels == ["claude": ["claude-sonnet-4.5", "claude-opus-4.1"],
+                                     "codex": ["gpt-5"]])
         // An older satellite reports none: the sheets hide the Model
         // row for it rather than send a pick it would drop.
         let old = machines[1]
         #expect(old.modelAtLaunch == nil)
         #expect(old.effortAtLaunch == nil)
         #expect(old.lastModels == nil)
+        #expect(old.recentModels == nil)
     }
 
     @Test func baseURLsComeFromSwesAddress() {
