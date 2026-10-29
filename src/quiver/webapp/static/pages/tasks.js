@@ -272,7 +272,7 @@
       const on = running(r.key);
       return `<button type="button" class="gh-rail-row${page.shown === r.key ? " selected" : ""}${quiet ? " quiet" : ""}"
           data-shown="${esc(r.key)}" title="${esc(r.key)}${on ? ". An agent is running here." : ""}">
-        <span class="tk-rail-mark"><span class="gh-dot gh-dot-${on ? "running" : "none"}"></span></span>
+        <span class="tk-rail-mark"><span class="gh-dot${on ? " tk-dot-agent" : " gh-dot-none"}"></span></span>
         <span class="gh-rail-name">${esc(r.label)}</span>
         <span class="gh-spacer"></span>${n ? `<span class="caption num gh-muted">${n}</span>` : ""}</button>`;
     };

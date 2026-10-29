@@ -39,6 +39,8 @@
 /* The rail's row mark: Repositories' CI dot in a slot as wide as the
  * All tasks icon, so every row's name starts at one edge. */
 .tk-rail-mark { width: 14px; flex: none; display: grid; place-items: center; }
+/* Green like a row's Agent running chip; orange is the repo rail's running CI. */
+.tk-dot-agent { background: var(--success); }
 
 /* The stale note above stored rows while a source is blocked. */
 .tk-stale { display: flex; align-items: center; gap: 6px; padding: 0 4px; }

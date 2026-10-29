@@ -281,7 +281,7 @@ const railNames = () => [...rail().matchAll(/class="gh-owner">([^<]*)<|class="gh
   out.refreshInRail = rail().includes(`id="page-refresh"`) && html().split(`id="page-refresh"`).length === 2;
   out.allCount = (rail().match(/All tasks<\/span>\s*<span class="gh-spacer"><\/span><span class="caption num gh-muted">(\d+)/) || [])[1];
   out.railNames = railNames();
-  out.running = /data-shown="o\/a"[^>]*>\s*<span class="tk-rail-mark"><span class="gh-dot gh-dot-running"/.test(rail());
+  out.running = /data-shown="o\/a"[^>]*>\s*<span class="tk-rail-mark"><span class="gh-dot tk-dot-agent"/.test(rail());
   out.folded = rows();
   out.more = (html().match(/Show (\d+) more/) || [])[1];
   out.failedGroup = html().includes("x/y timed out");
