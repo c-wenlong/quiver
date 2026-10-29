@@ -300,6 +300,9 @@ struct SessionRowView: View {
                     Text(status.label).foregroundStyle(waiting ? Theme.warningText : Theme.textSecondary)
                     let when = RelativeTime.short(row.lastActiveAt)
                     if !when.isEmpty { Text("· \(when)") }
+                    if let model = row.modelLabel {
+                        Text("· \(model)").accessibilityLabel("model \(model)")
+                    }
                     if let place { Text("· \(place)").truncationMode(.head) }
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
