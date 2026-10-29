@@ -183,16 +183,18 @@ enum TaskStepper {
         var id: String { title }
     }
 
-    /// `open → in progress → PR open → merged` for issues and cards;
-    /// `open → in progress → merged` for pulls. `closed` keeps the
-    /// ladder's shape with "Closed" as the terminal rung — how far a
-    /// hand-closed task got isn't inferable, so only its ends are lit.
+    /// `open → in progress → PR open → merged` for GitHub issues, the
+    /// only tasks whose own PR can stand between "an agent is on it"
+    /// and done; `open → in progress → merged` for pulls and every
+    /// other source. `closed` keeps the ladder's shape with "Closed"
+    /// as the terminal rung — how far a hand-closed task got isn't
+    /// inferable, so only its ends are lit.
     static func steps(for task: TaskRow) -> [Step] {
-        let pull = task.kind == "pull"
-        var rungs = pull ? ["Open", "In progress", "Merged"]
-                         : ["Open", "In progress", "PR open", "Merged"]
-        let order = pull ? ["open", "in_progress", "merged"]
-                         : ["open", "in_progress", "pr_open", "merged"]
+        let githubIssue = task.source == "github" && task.kind == "issue"
+        var rungs = githubIssue ? ["Open", "In progress", "PR open", "Merged"]
+                                : ["Open", "In progress", "Merged"]
+        let order = githubIssue ? ["open", "in_progress", "pr_open", "merged"]
+                                : ["open", "in_progress", "merged"]
         let last = rungs.count - 1
         if task.state == "closed" {
             rungs[last] = "Closed"
