@@ -510,7 +510,8 @@ public enum SyntaxHighlight {
                 if has(u, j, s0.close) { j += s0.close.utf16.count; state = nil; break }
                 j += 1
             }
-            emit(s0.kind, j)
+            // A backslash ending the chunk skips past it.
+            emit(s0.kind, min(j, n))
         }
 
         while i < n {
