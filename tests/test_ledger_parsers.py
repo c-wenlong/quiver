@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from quiver.ledger import parsers
-from quiver.ledger.models import parse_timestamp
+from quiver.ledger.models import MAX_TOKENS, parse_timestamp
 
 
 def _claude(**over):
@@ -43,6 +43,16 @@ class TestClaude(unittest.TestCase):
         self.assertEqual((e.input, e.output, e.cache_read, e.cache_write), (10, 20, 300, 40))
         self.assertEqual(e.total, 370)
         self.assertEqual((e.session, e.cwd, e.model, e.account), ("s1", "/w", "claude-opus-5", "/h"))
+
+    def test_absurd_counts_are_capped(self):
+        """A corrupt count (1e19) is capped, so the event's sums and the
+        store's 64-bit integers can't overflow and abort the scan."""
+        usage = {"input_tokens": 1e19, "output_tokens": 5,
+                 "cache_read_input_tokens": 2 ** 70}
+        [rec] = parsers.claude_records(_claude(usage=usage), "/h")
+        self.assertEqual(rec.event.input, MAX_TOKENS)
+        self.assertEqual(rec.event.cache_read, MAX_TOKENS)
+        self.assertEqual(rec.event.output, 5)
 
     def test_key_without_request_or_message_id(self):
         line = json.loads(_claude())
