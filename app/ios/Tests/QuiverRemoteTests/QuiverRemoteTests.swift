@@ -82,6 +82,32 @@ final class ToolDiffTests: XCTestCase {
         XCTAssertEqual(lines.first?.kind, .meta)
         XCTAssertEqual(lines.filter { $0.kind == .context }.count, 3)
     }
+
+    func testCodexPatchArrivesAsAJSONString() {
+        // Codex's apply_patch input is the patch text, so args_full is a
+        // JSON string rather than an object.
+        let patch = "*** Begin Patch\n*** Update File: src/a.py\n@@\n-old\n+new\n*** End Patch"
+        let full = String(decoding: try! JSONSerialization.data(withJSONObject: patch, options: [.fragmentsAllowed]), as: UTF8.self)
+        let diff = ToolDiff.from(ToolCall(name: "apply_patch", callId: nil, argsSummary: nil, argsFull: full))
+        XCTAssertEqual(diff?.file, "src/a.py")
+        XCTAssertEqual(diff?.added, 1)
+        XCTAssertEqual(diff?.removed, 1)
+        XCTAssertNil(ToolDiff.from(ToolCall(name: "apply_patch", callId: nil, argsSummary: nil, argsFull: #""""#)))
+    }
+
+    func testPatchUnderAnInputKeyNamesItsFile() {
+        let tool = ToolCall(name: "apply_patch", callId: nil, argsSummary: nil,
+                            argsFull: #"{"input":"*** Add File: n.txt\n+hi"}"#)
+        XCTAssertEqual(ToolDiff.from(tool)?.file, "n.txt")
+        XCTAssertEqual(ToolDiff.from(tool)?.added, 1)
+    }
+
+    func testMultiEditSeparatesOnlyTheEditsShown() {
+        let tool = ToolCall(name: "MultiEdit", callId: nil, argsSummary: nil,
+                            argsFull: #"{"file_path":"a","edits":[{"replace_all":true},{"old_string":"x","new_string":"y"},{"old_string":"p","new_string":"q"}]}"#)
+        let kinds = ToolDiff.from(tool)?.lines.map(\.kind)
+        XCTAssertEqual(kinds, [.removed, .added, .meta, .removed, .added], "no separator before the first edit shown")
+    }
 }
 
 final class MarkdownTests: XCTestCase {
