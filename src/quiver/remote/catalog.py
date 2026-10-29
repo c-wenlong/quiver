@@ -111,10 +111,15 @@ def launchable_harnesses() -> list[dict]:
     """What ``POST /v1/sessions`` can start here, in Provider visibility
     order: every harness ``swe list`` shows (not archived) whose command
     is on PATH, minus the ones switched off in the Mac app's Settings.
-    Each item is ``{name, command, display_name, tracked}``; ``tracked``
-    is false for a harness swe has no session parser for (qwen-code): it
-    starts, but no session ever shows up to open as a chat."""
+    Each item is ``{name, command, display_name, tracked, launch_model,
+    launch_effort}``; ``tracked`` is false for a harness swe has no
+    session parser for (qwen-code): it starts, but no session ever shows
+    up to open as a chat. ``launch_model``/``launch_effort`` are true
+    when ``supervise.launch_tuning_error`` would accept the field — a
+    verified ``/model <v>``/``/effort <v>`` TUI command, the only
+    launch-time mechanism a tmux pane has."""
     from quiver.harness import registry
+    from quiver.remote import slash_builtins
 
     try:
         reg = registry.load_registry_readonly()
@@ -137,6 +142,8 @@ def launchable_harnesses() -> list[dict]:
             "command": command,
             "display_name": str(entry.get("display_name") or name),
             "tracked": name in parsers,
+            "launch_model": slash_builtins.launch_op_ok(name, "model"),
+            "launch_effort": slash_builtins.launch_op_ok(name, "effort"),
         }))
     out.sort(key=lambda pair: pair[0])
     return [item for _rank, item in out]
@@ -170,6 +177,42 @@ def harness_names(launchable: list[dict]) -> dict[str, str]:
 
 def untracked(launchable: list[dict]) -> list[str]:
     return [item["name"] for item in launchable if not item["tracked"]]
+
+
+def launch_op_names(launchable: list[dict], op: str) -> list[str]:
+    """Harnesses whose launch honours ``model``/``effort`` (``launch_<op>``)."""
+    return [item["name"] for item in launchable if item.get(f"launch_{op}")]
+
+
+def last_used_models(home: Path | str | None = None) -> dict[str, str]:
+    """``harness`` → the model its most recent ledger event ran.
+
+    The web ledger already records the model of every past session, so
+    "last used" is one read of it — no new persistence. A machine with
+    no ledger (or a locked one) simply has no history to offer.
+    """
+    import sqlite3
+
+    from quiver.ledger.store import ledger_path_for
+
+    path = ledger_path_for(Path(home) if home is not None else None)
+    try:
+        # Read-only: this path must never create the store itself.
+        db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+    except (sqlite3.Error, ValueError):
+        return {}
+    try:
+        # SQLite's bare-column rule: the ``model`` comes from the row
+        # the MAX matched — each harness's latest event.
+        rows = db.execute(
+            "SELECT harness, model, MAX(ts) FROM events"
+            " WHERE model != '' GROUP BY harness"
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        db.close()
+    return {h: m for h, m, _ts in rows if h and m}
 
 
 def launch_command(harness: str) -> str | None:
@@ -206,6 +249,9 @@ def local_machine(home: Path | str | None = None) -> dict:
 
     ``launchable`` is what the phone's new-session sheet offers, in order
     (``launchable_harnesses``); ``harness_names`` names each one.
+    ``model_at_launch``/``effort_at_launch`` name the harnesses whose
+    launches accept ``model``/``effort``; ``last_models`` prefills the
+    picker with the ledger's most recent model per harness.
     """
     harnesses = detected_harnesses()
     launchable = launchable_harnesses()
@@ -219,6 +265,9 @@ def local_machine(home: Path | str | None = None) -> dict:
         "launchable": [item["name"] for item in launchable],
         "harness_names": harness_names(launchable),
         "untracked_harnesses": untracked(launchable),
+        "model_at_launch": launch_op_names(launchable, "model"),
+        "effort_at_launch": launch_op_names(launchable, "effort"),
+        "last_models": last_used_models(home),
     }
 
 

@@ -700,6 +700,190 @@ class TestLaunchNew(unittest.TestCase):
         self.assertIsNone(supervise.meta_for(home, "k1"))
 
 
+class TestLaunchTuning(unittest.TestCase):
+    """``model``/``effort`` picks: what a launch (or attach) can apply."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.proj = tempfile.mkdtemp()
+
+    def test_tuning_error_names_the_ops_the_tui_cannot_take(self):
+        self.assertEqual(
+            supervise.launch_tuning_error("claude", "opus", "high"), "")
+        self.assertEqual(
+            supervise.launch_tuning_error("codex", "gpt-5", None), "")
+        self.assertEqual(supervise.launch_tuning_error("pi", None, None), "")
+        self.assertIn(
+            "/effort", supervise.launch_tuning_error("codex", None, "high"))
+        self.assertIn(
+            "/model", supervise.launch_tuning_error("opencode", "x", None))
+        self.assertIn(
+            "/effort", supervise.launch_tuning_error("opencode", None, "x"))
+
+    def test_channel_tuning_error_per_mode(self):
+        # tmux is the launch pane: the TUI-builtin rule applies.
+        self.assertEqual(
+            supervise.channel_tuning_error("tmux", "claude", "m", "e"), "")
+        self.assertIn("/model", supervise.channel_tuning_error(
+            "tmux", "gemini", "m", None))
+        # headless: --model rides the argv; effort has no flag.
+        self.assertEqual(
+            supervise.channel_tuning_error("headless", "claude", "m", None),
+            "")
+        self.assertIn("effort", supervise.channel_tuning_error(
+            "headless", "claude", None, "high"))
+        # serve takes provider/model (its {providerID, modelID} field)
+        # plus an effort variant; a bare model name can't map and is
+        # refused rather than silently dropped.
+        self.assertIn("provider/model", supervise.channel_tuning_error(
+            "serve", "opencode", "m", None))
+        self.assertEqual(supervise.channel_tuning_error(
+            "serve", "opencode", "acme/m", "high"), "")
+        # appserver's turn/start overrides take both.
+        self.assertEqual(supervise.channel_tuning_error(
+            "appserver", "codex", "gpt-5", "high"), "")
+        self.assertEqual(supervise.channel_tuning_error(
+            "serve", "opencode", None, None), "")
+
+    def _launch(self, tool="claude", **kw):
+        with patch.object(supervise.shutil, "which",
+                          return_value="/x/bin"), \
+             patch.object(supervise, "launch_tmux", return_value="qv-n"), \
+             patch.object(supervise, "prime_pane", return_value=True) as pp, \
+             patch.object(supervise, "boot_pane", return_value="❯"), \
+             patch.object(supervise, "send_text", return_value=True) as st:
+            out = supervise.launch_new(self.home, tool, self.proj, "hi", **kw)
+        return out, pp, st
+
+    def test_launch_types_model_and_effort_before_the_prompt(self):
+        (ok, _n, name), pp, st = self._launch(model="opus", effort="high")
+        self.assertTrue(ok)
+        self.assertEqual(name, "qv-n")
+        # The TUI's own commands, in order, before the first prompt.
+        self.assertEqual([c[0][1] for c in st.call_args_list],
+                         ["/model opus", "/effort high"])
+        pp.assert_called_once_with("qv-n", "hi")
+        marker = json.loads(
+            (supervise._pending_dir(self.home) / "qv-n.json").read_text())
+        self.assertEqual(
+            (marker["model"], marker["effort"]), ("opus", "high"))
+
+    def test_launch_refuses_a_pick_the_tui_cannot_take(self):
+        with patch.object(supervise, "launch_tmux") as lt:
+            ok, note, _ = supervise.launch_new(
+                self.home, "opencode", self.proj, "hi", model="x")
+        self.assertFalse(ok)
+        self.assertIn("/model", note)
+        lt.assert_not_called()
+
+    def test_a_failed_control_send_is_reported_not_swallowed(self):
+        with patch.object(supervise.shutil, "which",
+                          return_value="/x/bin"), \
+             patch.object(supervise, "launch_tmux", return_value="qv-n"), \
+             patch.object(supervise, "boot_pane", return_value="❯"), \
+             patch.object(supervise, "send_text", return_value=False):
+            ok, note, name = supervise.launch_new(
+                self.home, "claude", self.proj, "hi", model="opus")
+        self.assertTrue(ok)
+        self.assertIn("could not be delivered", note)
+
+    def test_fork_records_and_applies_tuning(self):
+        src = _session(sid="abc", path=self.proj)
+        with patch.object(supervise.shutil, "which",
+                          return_value="/x/bin"), \
+             patch.object(supervise, "launch_tmux", return_value="qv-f"), \
+             patch.object(supervise, "tmux_name", return_value="qv-f"), \
+             patch.object(supervise, "boot_pane", return_value="❯"), \
+             patch.object(supervise, "prime_pane", return_value=True) as pp, \
+             patch.object(supervise, "send_text", return_value=True) as st:
+            ok, _n, _ = supervise.launch_fork(
+                self.home, src, ["claude"], "go", model="opus")
+        self.assertTrue(ok)
+        self.assertEqual(st.call_args_list[0][0][1], "/model opus")
+        pp.assert_called_once_with("qv-f", "go")
+        marker = json.loads(
+            (supervise._pending_dir(self.home) / "qv-f.json").read_text())
+        self.assertEqual(marker["model"], "opus")
+
+    def test_adopt_pending_carries_the_pick_into_meta(self):
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "qv-f.json").write_text(json.dumps({
+            "tmux": "qv-f", "tool_name": "claude", "cwd": self.proj,
+            "launched_at": time.time(), "launch_id": "l1",
+            "model": "opus", "effort": "high"}))
+        with patch.object(supervise, "_pending_match",
+                          return_value="claude:new"):
+            self.assertEqual(
+                supervise.adopt_pending(self.home, []), ["claude:new"])
+        meta = supervise.meta_for(self.home, "claude:new")
+        self.assertEqual((meta["model"], meta["effort"]), ("opus", "high"))
+
+    def _attach(self, session, mode, **kw):
+        key = f"{session.tool_name}:{session.session_id}"
+        with patch.object(supervise, "resume_flags",
+                          return_value=["--resume", "abc"]), \
+             patch.object(supervise, "resolve_mode",
+                          return_value=mode), \
+             patch.object(supervise, "launch_tmux",
+                          return_value="qv-a"), \
+             patch.object(supervise, "boot_pane",
+                          return_value="❯"), \
+             patch.object(supervise, "tmux_alive",
+                          return_value=True), \
+             patch.object(supervise, "_local_writer_pids",
+                          return_value=[]), \
+             patch.object(supervise, "_stop_local_writers"), \
+             patch.object(supervise, "send_text",
+                          return_value=True) as st, \
+             patch.object(supervise.shutil, "which",
+                          return_value="/x/bin"):
+            out = supervise.attach(
+                self.home, key, session,
+                last_append_at=None, status="done", mode=mode, **kw)
+        return out, st, key
+
+    def test_attach_tmux_types_the_pick_and_records_it(self):
+        (ok, note), st, key = self._attach(
+            _session(sid="abc", path=self.proj), "tmux", model="opus")
+        self.assertTrue(ok, note)
+        self.assertEqual(st.call_args_list[0][0][1], "/model opus")
+        meta = supervise.meta_for(self.home, key)
+        self.assertEqual(meta["model"], "opus")
+
+    def test_attach_headless_records_model_and_refuses_effort(self):
+        src = _session(sid="abc", path=self.proj)
+        (ok, note), _st, key = self._attach(src, "headless", model="opus")
+        self.assertTrue(ok, note)
+        self.assertEqual(supervise.meta_for(self.home, key)["model"], "opus")
+        supervise.unmark(self.home, key)
+        (ok, note), _st, _ = self._attach(src, "headless", effort="high")
+        self.assertFalse(ok)
+        self.assertIn("effort", note)
+
+    def test_attach_serve_needs_provider_slash_model(self):
+        src = _session(tool="opencode", sid="abc", path=self.proj)
+        (ok, note), _st, key = self._attach(src, "serve", model="opus")
+        self.assertFalse(ok)
+        self.assertIn("provider/model", note)
+        self.assertIsNone(supervise.meta_for(self.home, key))
+        (ok, note), _st, key = self._attach(
+            src, "serve", model="acme/kimi-k3", effort="high")
+        self.assertTrue(ok, note)
+        meta = supervise.meta_for(self.home, key)
+        self.assertEqual((meta["model"], meta["effort"]),
+                         ("acme/kimi-k3", "high"))
+
+    def test_attach_appserver_records_the_pick(self):
+        src = _session(tool="codex", sid="abc", path=self.proj)
+        (ok, note), _st, key = self._attach(
+            src, "appserver", model="gpt-5", effort="high")
+        self.assertTrue(ok, note)
+        meta = supervise.meta_for(self.home, key)
+        self.assertEqual((meta["model"], meta["effort"]),
+                         ("gpt-5", "high"))
+
+
 class TestStopLocalWriters(unittest.TestCase):
     """Attach SIGTERMs the original resumed writer when identifiable."""
 

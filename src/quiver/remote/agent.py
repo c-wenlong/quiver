@@ -393,6 +393,11 @@ class RemoteAgent:
             "launchable": [item["name"] for item in launchable],
             "harness_names": catalog_mod.harness_names(launchable),
             "untracked_harnesses": catalog_mod.untracked(launchable),
+            "model_at_launch": catalog_mod.launch_op_names(
+                launchable, "model"),
+            "effort_at_launch": catalog_mod.launch_op_names(
+                launchable, "effort"),
+            "last_models": catalog_mod.last_used_models(self.home),
         }
         if all(self.machine.get(k) == v for k, v in fields.items()):
             return False
@@ -558,6 +563,8 @@ class RemoteAgent:
                     str(data.get("prompt") or ""), known_ids=known,
                     launch_id=str(data.get("launch_id") or ""),
                     binary=binary,
+                    model=str(data.get("model") or "") or None,
+                    effort=str(data.get("effort") or "") or None,
                 )
                 return ok, note, False
             if op == "attachment":
@@ -586,6 +593,8 @@ class RemoteAgent:
                     self.home, session, self.catalog.tail_rows(),
                     str(data.get("prompt") or ""),
                     str(data.get("launch_id") or ""),
+                    model=str(data.get("model") or "") or None,
+                    effort=str(data.get("effort") or "") or None,
                 )
                 return ok, note, False
             if op == "attach":
@@ -597,6 +606,8 @@ class RemoteAgent:
                     last_append_at=self.tail_manager.last_append_at(key),
                     status=str(data.get("status") or ""),
                     mode=str(data.get("mode") or "auto"),
+                    model=str(data.get("model") or "") or None,
+                    effort=str(data.get("effort") or "") or None,
                 )
                 if ok:
                     self.tail_manager.wake(key)

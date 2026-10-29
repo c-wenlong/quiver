@@ -70,6 +70,16 @@ _OPS_TEXT = {
     "effort": "/effort {value}",
 }
 
+
+def control_text(op: str, value: str) -> str:
+    """The pane text a control op types (``/model sonnet``); "" for an
+    op the TUI has no line for."""
+    template = _OPS_TEXT.get(op)
+    if template is None:
+        return ""
+    return template.format(value=value).rstrip()
+
+
 class InjectResult(NamedTuple):
     ok: bool
     note: str = ""
@@ -176,10 +186,9 @@ class TmuxInjector:
                 supervise.detach(self.home, self.key),
                 "supervisor stopped; session is observed again",
             )
-        template = _OPS_TEXT.get(op)
-        if template is None:
+        text = control_text(op, value)
+        if not text:
             return InjectResult(False, f"unsupported control {op}")
-        text = template.format(value=value).rstrip()
         ok = supervise.send_text(self.name, text)
         return InjectResult(ok, f"sent {text!r}" if ok else "pane unreachable")
 
@@ -196,12 +205,18 @@ class ClaudeHeadlessInjector:
         self._locks.setdefault(session_key, threading.Lock())
 
     @staticmethod
-    def argv(session: Session, text: str) -> list[str]:
-        return [
+    def argv(session: Session, text: str, model: str = "") -> list[str]:
+        args = [
             "claude", "-p", "--resume", session.session_id,
             "--output-format", "stream-json",
-            "--verbose", text,
+            "--verbose",
         ]
+        # A launch-time pick recorded on the session's meta rides every
+        # print-mode invocation as ``--model`` — the headless channel's
+        # own mechanism for the launch ``model`` field.
+        if model:
+            args += ["--model", model]
+        return [*args, text]
 
     def _run(self, session: Session, argv: list[str]) -> tuple[bool, str]:
         env = account_env(session)
@@ -294,11 +309,13 @@ class ClaudeHeadlessInjector:
             # A detach could land between the route's ownership check and
             # this write; under the session lock the registry is the
             # last word.
-            if supervise.meta_for(self.home, self.key) is None:
+            meta = supervise.meta_for(self.home, self.key)
+            if meta is None:
                 return InjectResult(
                     False, "session detached; refusing the write"
                 )
-            ok, note = self._run(session, self.argv(session, text))
+            ok, note = self._run(session, self.argv(
+                session, text, str(meta.get("model") or "")))
             if ok and degraded:
                 note = (note or "turn complete") + \
                     " (steer queued: headless runs are atomic)"
@@ -584,17 +601,32 @@ class OpencodeServeInjector:
             text = f"@{path} {text}"
         if not text.strip():
             return InjectResult(False, "empty message")
-        if supervise.meta_for(self.home, self.key) is None:
+        meta = supervise.meta_for(self.home, self.key)
+        if meta is None:
             return InjectResult(False, "session detached; refusing the write")
         serve = self._serve_for(session)
         if serve is None:
             return InjectResult(False, "opencode serve failed to start")
         # prompt_async queues server-side — steer and queue are the same
         # call; opencode decides whether mid-turn input lands or waits.
+        payload: dict = {"parts": [{"type": "text", "text": text}]}
+        # The attach-time pick rides the channel's own fields: model as
+        # {providerID, modelID} (provider/model is the only form the
+        # server parses — channel_tuning_error enforces it; a stale or
+        # hand-edited meta without the slash is left to the server's
+        # default), effort as the model's variant.
+        model = str(meta.get("model") or "")
+        if "/" in model:
+            provider, _, model_id = model.partition("/")
+            payload["model"] = {"providerID": provider,
+                                "modelID": model_id}
+        effort = str(meta.get("effort") or "")
+        if effort:
+            payload["variant"] = effort
         status_code, body = _serve_call(
             serve.base, "POST",
             f"/session/{session.session_id}/prompt_async",
-            {"parts": [{"type": "text", "text": text}]},
+            payload,
         )
         if status_code not in (200, 204):
             return InjectResult(
@@ -898,15 +930,24 @@ class CodexAppServerInjector:
             return InjectResult(
                 False, "session is mid-turn; steer to write anyway"
             )
-        if supervise.meta_for(self.home, self.key) is None:
+        meta = supervise.meta_for(self.home, self.key)
+        if meta is None:
             return InjectResult(False, "session detached; refusing the write")
         server = self._server_for(session)
         if server is None:
             return InjectResult(False, "codex app-server failed to start")
-        resp = self._call(server, "turn/start", {
+        params: dict = {
             "threadId": server.thread_id,
             "input": [{"type": "text", "text": text}],
-        })
+        }
+        # turn/start's own overrides carry the attach-time pick (each
+        # holds for the turn and the ones after, matching headless's
+        # per-call --model).
+        for field in ("model", "effort"):
+            value = str(meta.get(field) or "")
+            if value:
+                params[field] = value
+        resp = self._call(server, "turn/start", params)
         if resp is None:
             return InjectResult(False, "codex app-server timed out")
         if "error" in resp:

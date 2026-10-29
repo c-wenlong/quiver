@@ -48,7 +48,7 @@ _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
 _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
     "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
-    "--approve", "--deny", "--public-url",
+    "--approve", "--deny", "--public-url", "--model", "--effort",
 }
 _BOOL_FLAGS = {"--on", "--off", "--app", "--requests", "--install",
                "--uninstall", "--tailnet", "--apply", "--recheck",
@@ -67,7 +67,7 @@ _USAGE = f"""\
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
   {c('cyan', 'swe remote devices [--revoke=<id>] [--requests] [--approve=<code>] [--deny=<code>]')}
                                   List/revoke devices and approve pair requests
-  {c('cyan', 'swe remote attach <session> [--mode=auto|tmux|headless|serve|appserver]')}
+  {c('cyan', 'swe remote attach <session> [--mode=auto|tmux|headless|serve|appserver] [--model=<m>] [--effort=<e>]')}
                                   Move an observed session under supervision
   {c('cyan', 'swe remote notify [--ntfy=URL --topic=T] [--on|--off]')}
                                   Configure ntfy push notifications
@@ -671,9 +671,18 @@ def _cmd_attach(flags: dict, rest: list[str]) -> int:
         last_append = transcript.stat().st_mtime if transcript else None
     except OSError:
         pass
+    tuning = {"model": flags.get("--model") or "",
+              "effort": flags.get("--effort") or ""}
+    try:
+        model = protocol._launch_value(tuning, "model")
+        effort = protocol._launch_value(tuning, "effort")
+    except ValueError as exc:
+        print(c("red", str(exc)), file=sys.stderr)
+        return 1
     ok, note = supervise.attach(
         None, key, session,
         last_append_at=last_append, status=status, mode=mode,
+        model=model, effort=effort,
     )
     if not ok:
         print(c("red", note), file=sys.stderr)

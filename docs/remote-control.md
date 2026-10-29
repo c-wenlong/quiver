@@ -320,15 +320,15 @@ POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns r
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/pin           {pinned: bool} → pin or unpin on the hub
 POST /v1/sessions/{id}/title         {title: string} → display name, "" clears it
-POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}
-POST /v1/sessions                    new session {machine, harness, cwd, prompt} → launch_id
-POST /v1/sessions/{id}/fork          {prompt?} new session from this one's history → launch_id
+POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}; attach also takes {mode: auto|tmux|headless|serve|appserver, model?, effort?}
+POST /v1/sessions                    new session {machine, harness, cwd, prompt, model?, effort?} → launch_id
+POST /v1/sessions/{id}/fork          {prompt?, model?, effort?} new session from this one's history → launch_id
 GET  /v1/issues                      every pinned repo's issues, each row plus `mine` (`?state=open|closed|all`, open default)
 GET  /v1/issues/<o>/<r>/<n>          one issue in full: row + body, comments, branch, worktree, suggested_prompt
-POST /v1/issues/resolve              {repo, number, harness, prompt?, context?} worktree + agent for a GitHub issue → launch_id
+POST /v1/issues/resolve              {repo, number, harness, prompt?, context?, model?, effort?} worktree + agent for a GitHub issue → launch_id
 GET  /v1/pulls                       every pinned repo's open PRs, each row plus `mine` and `review_requested`
 GET  /v1/pulls/<o>/<r>/<n>           one PR in full: row + body, per-check runs, reviews, worktree, suggested_prompt
-POST /v1/pulls/<o>/<r>/<n>/open      {harness, prompt?} detached PR-head worktree + agent → launch_id
+POST /v1/pulls/<o>/<r>/<n>/open      {harness, prompt?, model?, effort?} detached PR-head worktree + agent → launch_id
 GET  /v1/tasks                       the task store over the sources' open items: state, sessions, agent_running
 POST /v1/sessions/{id}/task          {task_ref} link a work item to this session
 DELETE /v1/sessions/{id}/task        {task_ref}? unlink one task, or all without a ref
@@ -537,11 +537,48 @@ on the hub, an existing folder
 (a satellite checks its own disk and fails the command otherwise);
 `prompt` is required, since a harness writes no transcript until its
 first message, and is typed into the pane once the TUI is up. Each
-machine row in `/v1/machines` carries `launchable` (in order) and
-`harness_names`, and the hub refuses a launch outside it
+machine row in `/v1/machines` carries `launchable` (in order),
+`harness_names`, `model_at_launch` and `effort_at_launch` (the
+harnesses whose launches accept `model`/`effort`, per the launch-tuning
+rules below) and `last_models` (the ledger's most recent model per
+harness, `{}` on a machine with no history — the picker's default).
+The hub refuses a launch outside `launchable`
 (`422 not_launchable`). Errors: `422 bad_command`
 (body), `422 bad_cwd` (no such folder on the hub), `422 launch_failed`
-(tmux missing), `429 backlog_full` (satellite too far behind).
+(tmux missing), `409 unsupported_launch_option` (the harness's launch
+can't honour `model`/`effort`), `429 backlog_full` (satellite too far
+behind).
+
+Optional `model` and `effort` ride every launch route — `POST
+/v1/sessions`, `POST /v1/issues/resolve`, `POST
+/v1/pulls/<o>/<r>/<n>/open`, `POST /v1/sessions/{id}/fork` — and the
+`attach` control op (`{op: "attach", mode, model?, effort?}`, CLI
+`--model`/`--effort`). Each is one short token —
+`[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,127}`, the shape a `/model <v>`
+command line takes — and a bad shape is `422 bad_command` (the same
+parse error a bad `prompt` gets); absent or `""` means "no pick".
+
+Application is per channel, and a pick a channel can't honour is
+refused outright — `409 unsupported_launch_option` — never silently
+dropped (the same honesty `unsupported_control` gives a live control
+op):
+
+| Channel | `model` | `effort` |
+|---|---|---|
+| tmux pane (every launch, and `mode: tmux` attaches) | Typed as `/model <v>` once the TUI is up, before the first prompt — only where the harness has a verified `/model <arg>` builtin (claude and codex today; `slash_builtins.launch_op_ok`) | Same rule — claude's `/effort <v>`; nothing else has a verified one |
+| headless (`mode: headless`, claude only) | `--model <v>` on every `claude -p --resume` invocation, read off the session's supervised meta | Refused — print mode has no effort flag |
+| `serve` (opencode attach) | `prompt_async`'s `model` object — the value must be `provider/model` (split into `{providerID, modelID}`), anything else is refused | `prompt_async`'s `variant` |
+| `appserver` (codex attach) | `turn/start`'s `model` override (holds for the turn and the ones after) | `turn/start`'s `effort` override — a name codex doesn't know fails the turn loudly, not silently |
+
+On the two API channels the pick rides the session's supervised meta
+into every send — the same plumbing headless uses for `--model` — so it
+keeps applying until the session is detached. The pick also rides
+hub→satellite launch and fork command envelopes and attach commands
+the same way (`{model, effort}` in the command data — a satellite too
+old to check its own table just fails the command with the same note),
+the launch's pending marker and supervised-entry meta (as bookkeeping
+— a session's *current* model is a transcript/ledger question), and
+the launch record (`GET /v1/launches/{id}` carries `model`/`effort`).
 
 The answer is `202 {launch_id, state: "pending", note}` (plus
 `queued: true` for a satellite). On the hub it comes before the pane is
@@ -558,7 +595,8 @@ phone can open the chat straight away; a satellite's failed `launch`
 command (`command.result` echoing `launch_id`) turns it `failed` with the
 note. The hub keeps launches in memory for a day.
 
-`POST /v1/sessions/{id}/fork {prompt?}` (`fork.py`) starts a new run of
+`POST /v1/sessions/{id}/fork {prompt?, model?, effort?}` (`fork.py`)
+starts a new run of
 the session's harness that continues from its history, in the session's
 folder under tmux, and leaves the original as it was. The source can be
 attached or only watched; the fork never writes to it, and attaching the
@@ -574,7 +612,9 @@ works. Errors: `404 unknown_session`, `409 fork_unsupported` (the harness
 has no fork command line, or its session has no id to pass), `422
 bad_cwd` (the session's folder is gone from the hub), `409 fork_pending`
 (see below), `422 not_installed`,
-`422 launch_failed` (tmux missing), `422 bad_command`, `429 backlog_full`.
+`422 launch_failed` (tmux missing), `422 bad_command`,
+`409 unsupported_launch_option` (`model`/`effort` the harness's launch
+can't honour), `429 backlog_full`.
 
 Each harness's fork command line, read off the installed binary's
 `--help` on 2026-10-24:
@@ -642,13 +682,15 @@ client renders it rather than a blank page. The phone's
 `quiver://issue/<owner>/<repo>/<n>` deep link (a row's Copy link writes
 it) opens this detail on the Issues stack.
 
-`POST /v1/issues/resolve {repo, number, harness, prompt?, context?}`
+`POST /v1/issues/resolve {repo, number, harness, prompt?, context?,
+model?, effort?}`
 (`issues.py`) starts an agent on a GitHub issue, on the hub machine
 only. It answers what a client can fix at once with a 422: `bad_command`
 for a bad body, `not_pinned` for a repo not pinned on the hub (`swe gh
 repo add`), `not_launchable`, `launch_failed` (no tmux), and
 `gh_unavailable` when `gh` is missing or signed out, with the message
-saying which. A second resolve of an issue whose last one is still
+saying which; `409 unsupported_launch_option` for `model`/`effort` the
+harness's launch can't honour. A second resolve of an issue whose last one is still
 starting (preparing, or its pane not yet adopted) gets `409
 resolve_pending`: adoption has only the folder and start time to go on,
 so two launches waiting in one checkout could claim each other's
@@ -702,14 +744,17 @@ failure answers `200 {status, pr: null, error}` — the row's `status`
 carries `gh`'s word (`not-found`, `upstream-error`), so the client
 renders it rather than a blank page.
 
-`POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?}` is a resolve for
+`POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?, model?, effort?}`
+is a resolve for
 pull requests, run by the same asynchronous-launch shape: the hub
 answers what a client can fix at once — `400 bad_body`, `422 bad_repo`,
 `bad_pr`, `bad_command` (a `harness` that fails the name pattern or a
 `prompt` past the launch cap), `not_pinned`, `not_launchable`,
 `launch_failed` (no tmux), `gh_unavailable` (missing or signed out) —
 and `409 open_pending` while another open of the same PR is still
-starting in its worktree, the same reason `resolve_pending` exists.
+starting in its worktree, the same reason `resolve_pending` exists;
+`409 unsupported_launch_option` covers `model`/`effort` a launch can't
+honour.
 Otherwise `202 {launch_id, state: "pending", note: "preparing
 worktree"}` and the rest runs on a thread: read the PR (for the title
 and the default prompt), `manage.pr_worktree` — the repo's bare mirror

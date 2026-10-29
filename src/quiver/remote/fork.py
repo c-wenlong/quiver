@@ -95,19 +95,21 @@ def can_fork(session: Session) -> bool:
     return bool(fork_argv(session, "id"))
 
 
-def parse_fork_body(body: dict) -> str:
-    """The optional first message; raises ValueError on bad input."""
+def parse_fork_body(body: dict) -> dict:
+    """The optional first message plus launch tuning; ValueError on bad."""
     if not isinstance(body, dict):
         raise ValueError("body must be a JSON object")
     prompt = body.get("prompt")
     if prompt is None:
-        return ""
+        prompt = ""
     if not isinstance(prompt, str):
         raise ValueError("prompt must be a string")
     if len(prompt) > protocol.MAX_LAUNCH_PROMPT:
         raise ValueError(
             f"prompt is over {protocol.MAX_LAUNCH_PROMPT} characters")
-    return prompt if prompt.strip() else ""
+    return {"prompt": prompt if prompt.strip() else "",
+            "model": protocol._launch_value(body, "model"),
+            "effort": protocol._launch_value(body, "effort")}
 
 
 def start(
@@ -116,6 +118,8 @@ def start(
     rows: list[tuple[str, Session, str]],
     prompt: str,
     launch_id: str,
+    model: str | None = None,
+    effort: str | None = None,
 ) -> tuple[bool, str]:
     """Fork ``session`` on this machine (the hub, or a satellite's agent).
 
@@ -135,6 +139,7 @@ def start(
     ok, note, _name = supervise.launch_fork(
         home, session, argv, prompt,
         known_ids=known, launch_id=launch_id, expect_id=new_id,
+        model=model, effort=effort,
     )
     return ok, note
 
@@ -158,9 +163,10 @@ def request(state, key: str, row: dict, body: dict | None) -> tuple[int, dict]:
     if body is None:
         return 400, protocol.error("bad_body", "unreadable JSON body")
     try:
-        prompt = parse_fork_body(body)
+        cmd = parse_fork_body(body)
     except ValueError as exc:
         return 422, protocol.error("bad_command", str(exc))
+    prompt, model, effort = cmd["prompt"], cmd["model"], cmd["effort"]
     harness = str(row.get("harness") or "")
     cwd = str(row.get("cwd") or "")
     mid = row.get("machine_id")
@@ -169,9 +175,15 @@ def request(state, key: str, row: dict, body: dict | None) -> tuple[int, dict]:
         # send it has no fork op either.
         if not row.get("can_fork"):
             return _unsupported(harness)
-        launch_id = state.new_launch(mid, harness, cwd)
+        # The hub's table answers for the satellite's too.
+        blocked = supervise.launch_tuning_error(harness, model, effort)
+        if blocked:
+            return 409, protocol.error("unsupported_launch_option", blocked)
+        launch_id = state.new_launch(
+            mid, harness, cwd, model=model or "", effort=effort or "")
         queued = state.queue_command(mid, "fork", key, {
-            "prompt": prompt, "launch_id": launch_id,
+            "prompt": prompt, "model": model or "", "effort": effort or "",
+            "launch_id": launch_id,
         })
         if queued is None:
             state.settle_launch(launch_id, state="failed",
@@ -203,11 +215,18 @@ def request(state, key: str, row: dict, body: dict | None) -> tuple[int, dict]:
         # is the answer the phone can show straight away.
         return 409, protocol.error(
             "fork_pending", supervise.fork_busy_note(session.tool_name))
-    launch_id = state.new_launch(state.machine_id, session.tool_name, cwd)
+    blocked = supervise.launch_tuning_error(
+        session.tool_name, model, effort)
+    if blocked:
+        return 409, protocol.error("unsupported_launch_option", blocked)
+    launch_id = state.new_launch(
+        state.machine_id, session.tool_name, cwd,
+        model=model or "", effort=effort or "")
     rows = state.catalog.tail_rows()
 
     def run() -> None:
-        ok, note = start(state.home, session, rows, prompt, launch_id)
+        ok, note = start(state.home, session, rows, prompt, launch_id,
+                         model=model, effort=effort)
         if not ok:
             state.settle_launch(launch_id, state="failed", note=note)
 

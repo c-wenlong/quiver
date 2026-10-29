@@ -896,6 +896,94 @@ class TestHubWriteRoutes(unittest.TestCase):
         launch.assert_not_called()
         self.assertEqual(self.srv.state.launches, {})
 
+    def test_launch_carries_model_and_effort(self):
+        with patch("quiver.remote.supervise.launch_new",
+                   return_value=(True, "launched", "qv-t")) as launch:
+            status, body = self._launch(
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
+                 "model": "opus", "effort": "high"})
+            self._wait_launch_threads()
+        self.assertEqual(status, 202, body)
+        self.assertEqual(launch.call_args[1]["model"], "opus")
+        self.assertEqual(launch.call_args[1]["effort"], "high")
+        # The launch record keeps the pick for the picker UI and
+        # command.result bookkeeping.
+        _, view = self._launch_view(body["launch_id"])
+        self.assertEqual(view["model"], "opus")
+        self.assertEqual(view["effort"], "high")
+
+    def test_launch_refuses_a_pick_the_harness_cannot_take(self):
+        with patch("quiver.remote.supervise.launch_new") as launch:
+            status, body = self._launch(
+                {"harness": "gemini", "cwd": "/tmp", "prompt": "hi",
+                 "model": "opus"})
+        self.assertEqual((status, body["error"]["code"]),
+                         (409, "unsupported_launch_option"))
+        launch.assert_not_called()
+        self.assertEqual(self.srv.state.launches, {})
+
+    def test_launch_rejects_a_bad_model_shape(self):
+        with patch("quiver.remote.supervise.launch_new") as launch:
+            for bad in ({"model": 3}, {"model": ["opus"]},
+                        {"model": "two words"}, {"effort": {"x": 1}}):
+                status, body = self._launch(
+                    {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
+                     **bad})
+                self.assertEqual(
+                    (status, body["error"]["code"]),
+                    (422, "bad_command"), bad)
+        launch.assert_not_called()
+        self.assertEqual(self.srv.state.launches, {})
+
+    def _attach_srv(self):
+        srv = _Server(
+            sessions=[_session(sid="ao")], statuses=lambda ss: ["done"])
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        return srv, {"Authorization": f"Bearer {cred['credential']}"}
+
+    def test_attach_carries_model_and_effort(self):
+        # The pick's channel check runs on the resolved attach mode.
+        srv, hdr = self._attach_srv()
+        with patch("quiver.remote.supervise.attach",
+                   return_value=(True, "attached")) as att, \
+             patch("quiver.remote.supervise.resolve_mode",
+                   return_value="headless"):
+            status, body = srv.request(
+                "POST", "/v1/sessions/claude:ao/control",
+                {"op": "attach", "mode": "headless", "model": "opus"},
+                headers=hdr)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(att.call_args[1]["model"], "opus")
+        self.assertIsNone(att.call_args[1]["effort"])
+
+    def test_attach_refuses_a_pick_the_channel_cannot_take(self):
+        srv, hdr = self._attach_srv()
+        with patch("quiver.remote.supervise.attach") as att, \
+             patch("quiver.remote.supervise.resolve_mode",
+                   return_value="headless"):
+            status, body = srv.request(
+                "POST", "/v1/sessions/claude:ao/control",
+                {"op": "attach", "mode": "headless", "effort": "high"},
+                headers=hdr)
+        self.assertEqual(status, 409, body)
+        self.assertEqual(json.loads(body)["error"]["code"],
+                         "unsupported_launch_option")
+        att.assert_not_called()
+
+    def test_attach_rejects_a_bad_model_shape(self):
+        srv, hdr = self._attach_srv()
+        with patch("quiver.remote.supervise.attach") as att, \
+             patch("quiver.remote.supervise.resolve_mode",
+                   return_value="headless"):
+            status, body = srv.request(
+                "POST", "/v1/sessions/claude:ao/control",
+                {"op": "attach", "mode": "headless", "model": 5},
+                headers=hdr)
+        self.assertEqual(status, 422, body)
+        self.assertEqual(json.loads(body)["error"]["code"], "bad_command")
+        att.assert_not_called()
+
     def test_unknown_launch_404(self):
         status, _ = self._launch_view("lnope")
         self.assertEqual(status, 404)

@@ -313,6 +313,12 @@ class TestHeadless(unittest.TestCase):
         self.assertIn("stream-json", argv)
         self.assertEqual(argv[-1], "hello")
 
+    def test_argv_model_rides_as_a_flag(self):
+        argv = self.inj.argv(self.session, "hello", model="opus")
+        i = argv.index("--model")
+        self.assertEqual(argv[i + 1], "opus")
+        self.assertEqual(argv[-1], "hello")
+
     def test_approval_unsupported(self):
         out = self.inj.approval(self.session, "r1", "allow")
         self.assertFalse(out.ok)
