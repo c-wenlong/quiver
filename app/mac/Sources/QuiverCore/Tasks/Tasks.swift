@@ -152,6 +152,10 @@ public struct HubTaskRow: Codable, Sendable, Equatable, Hashable, Identifiable {
     /// The source's own stamp — ISO-8601 from GitHub and Linear both.
     public var updatedAt: String?
     public var pr: HubTaskPr?
+    /// What the row says, in the source's own words ("Agent running",
+    /// "PR open", a Linear workflow state's name). `state` is the
+    /// ladder the list sorts and filters by, never shown as text (#875).
+    public var status: String?
     /// `session_rows` in the reply: each linked key's catalog row.
     public var sessionRows: [HubTaskSessionRow]?
     /// `launch_rows`: the live view of each linked launch still tracked.
@@ -162,7 +166,8 @@ public struct HubTaskRow: Codable, Sendable, Equatable, Hashable, Identifiable {
                 project: String? = nil, state: String? = nil, sessions: [String]? = nil,
                 launches: [String]? = nil, agentRunning: Bool? = nil, linked: Bool? = nil,
                 lastActiveAt: Double? = nil, createdAt: Double? = nil, updatedAt: String? = nil,
-                pr: HubTaskPr? = nil, sessionRows: [HubTaskSessionRow]? = nil,
+                pr: HubTaskPr? = nil, status: String? = nil,
+                sessionRows: [HubTaskSessionRow]? = nil,
                 launchRows: [HubTaskLaunchRow]? = nil) {
         self.id = id
         self.source = source
@@ -181,6 +186,7 @@ public struct HubTaskRow: Codable, Sendable, Equatable, Hashable, Identifiable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.pr = pr
+        self.status = status
         self.sessionRows = sessionRows
         self.launchRows = launchRows
     }
@@ -206,14 +212,18 @@ public struct HubTaskRow: Codable, Sendable, Equatable, Hashable, Identifiable {
         source == "github" && (kind == "issue" || kind == "pull") && repo?.isEmpty == false
     }
 
-    /// The state word the row and detail show, unknown values as Open.
+    /// The status the row and detail show: the hub's `status`, in the
+    /// source's words. An older hub sends none; then the pipeline's own
+    /// words for GitHub (never "in progress" for a session that has
+    /// ended) and "Started" where another source says work has started.
     public var stateLabel: String {
+        if let status, !status.isEmpty { return status }
         switch state {
-        case "in_progress": "In progress"
-        case "pr_open": "PR open"
-        case "merged": "Merged"
-        case "closed": "Closed"
-        default: "Open"
+        case "pr_open": return "PR open"
+        case "merged": return "Merged"
+        case "closed": return "Closed"
+        case "in_progress" where source != "github": return "Started"
+        default: return agentRunning == true ? "Agent running" : "Open"
         }
     }
 
@@ -422,15 +432,17 @@ public enum TaskStepper {
         public var id: String { title }
     }
 
-    /// `open → in progress → (PR open) → merged`: only a GitHub issue's
-    /// own PR stands between "an agent is on it" and done — a pull IS
-    /// its PR, and Linear/Notion ladders end at started. `closed` keeps
+    /// `open → agent → (PR open) → merged`: only a GitHub issue's own
+    /// PR stands between "an agent is on it" and done — a pull IS its
+    /// PR. Linear and Notion read `open → started → done`, their words. `closed` keeps
     /// the ladder's shape with "Closed" as the terminal rung — how far a
     /// hand-closed task got isn't inferable, so only its ends are lit.
     public static func steps(for task: HubTaskRow) -> [Step] {
         let viaPR = task.source == "github" && task.kind == "issue"
-        var rungs = viaPR ? ["Open", "In progress", "PR open", "Merged"]
-                          : ["Open", "In progress", "Merged"]
+        let github = task.source == "github"
+        var rungs = viaPR ? ["Open", "Agent", "PR open", "Merged"]
+                    : github ? ["Open", "Agent", "Merged"]
+                    : ["Open", "Started", "Done"]
         let order = viaPR ? ["open", "in_progress", "pr_open", "merged"]
                           : ["open", "in_progress", "merged"]
         let last = rungs.count - 1
