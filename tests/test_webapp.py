@@ -201,9 +201,6 @@ class TestMacOnlySidebar(unittest.TestCase):
             self.assertEqual((out["rendered"], out["replaced"]), (["overview"], []), hash_)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 FORMAT_JS = APP_JS.with_name("format.js")
 
@@ -231,3 +228,7 @@ class TestShellWord(unittest.TestCase):
         self.assertEqual(self.word("$(id)"), "'$(id)'")
         self.assertEqual(self.word("it's"), "'it'\\''s'")
         self.assertEqual(self.word(""), "''")
+
+
+if __name__ == "__main__":
+    unittest.main()
