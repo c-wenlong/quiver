@@ -37,7 +37,8 @@ class TestWebAppRoutes(HubBase):
         status, body = self.srv.request("GET", "/app/")
         self.assertEqual(status, 200)
         self.assertIn(b"/app/app.js", body)
-        for path in ("/app/app.js", "/app/format.js", "/app/styles.css",
+        self.assertIn(b"/app/model-menu.js", body)
+        for path in ("/app/app.js", "/app/format.js", "/app/model-menu.js", "/app/styles.css",
                      "/app/harness-devin.svg"):
             self.assertEqual(self.srv.request("GET", path)[0], 200, path)
         self.assertEqual(self.srv.request("GET", "/app")[0], 301)

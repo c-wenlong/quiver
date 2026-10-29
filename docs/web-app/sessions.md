@@ -122,7 +122,11 @@ filtered as you type, and on the hub machine can browse subfolders via
 `GET /v1/folders` (a satellite's disk can't be listed from here, so its
 box stays typed-or-recent and the browser shows the hub's reason). The
 harness defaults to the one last used in that folder on that machine,
-else the first offered.
+else the first offered. When the machine row's `model_at_launch` names
+the picked harness, a Model menu follows the harness chips, filled from
+the row's `recent_models` (or `last_models` on an old hub); it is the
+same control as the Tasks page's, see
+[The Model menu](tasks.md#the-model-menu).
 
 Start posts `POST /v1/sessions` once (the button locks) and then polls
 `GET /v1/launches/<id>` once a second like the phone's `LaunchFlow`:
