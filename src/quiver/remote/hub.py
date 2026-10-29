@@ -85,6 +85,15 @@ _DRAIN_S = 2.0
 _MAX_WORKERS = 64
 # How often an open SSE stream re-checks that its device wasn't revoked.
 _REVOCATION_CHECK_S = 5.0
+# Sent on every response that doesn't set its own. The policy leaves
+# script sources alone: the page bundle evaluates each page script.
+_SECURITY_HEADERS = (
+    ("Content-Security-Policy",
+     "frame-ancestors 'self'; object-src 'none'; base-uri 'none'"),
+    ("X-Frame-Options", "SAMEORIGIN"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+)
 
 # Peers that count as "this machine". Behind ``tailscale serve`` every
 # request arrives from one of these, with the real client in headers.
@@ -941,19 +950,40 @@ class _Handler(BaseHTTPRequestHandler):
             except OSError:
                 pass
 
+    def version_string(self) -> str:
+        # The default appends the Python version, which tells any peer
+        # what to try before it has authenticated.
+        return self.server_version
+
     def send_response(self, code, message=None) -> None:
         # 100 Continue goes out through send_response_only, so a client
         # waiting for it is never drained here.
         self._settle_body()
+        self._sent_headers: set[str] = set()
         super().send_response(code, message)
         if self._must_close:
             self.send_header("Connection", "close")
+
+    def send_header(self, keyword, value) -> None:
+        sent = getattr(self, "_sent_headers", None)
+        if sent is not None:
+            sent.add(keyword.lower())
+        super().send_header(keyword, value)
 
     def end_headers(self) -> None:
         # A handler's own "Connection: keep-alive" must not reopen a
         # connection whose request body was left on the socket.
         if self._must_close:
             self.close_connection = True
+        # The web app keeps its bearer in this origin's storage and the
+        # owner's own devices get in on their tailnet identity alone, so
+        # no other site may frame a hub page, sniff a body into a script
+        # or learn the hub's URL from a referrer. A route that sets its
+        # own policy (page previews) keeps it.
+        sent = getattr(self, "_sent_headers", set())
+        for name, value in _SECURITY_HEADERS:
+            if name.lower() not in sent:
+                self.send_header(name, value)
         super().end_headers()
 
     def _read_body(self) -> dict | None:

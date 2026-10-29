@@ -1102,6 +1102,39 @@ class TestHubWriteRoutes(unittest.TestCase):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 404, path)
 
+    def _headers(self, path, headers=None):
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5)
+        try:
+            conn.request("GET", path, headers=headers or {})
+            resp = conn.getresponse()
+            resp.read()
+            return resp.status, resp.getheaders()
+        finally:
+            conn.close()
+
+    def test_every_response_refuses_framing_and_sniffing(self):
+        """The app shell, its data, an error and a redirect all carry the
+        same policy: no foreign frame, no sniffing, no referrer."""
+        for path, headers in (("/app/", {}), ("/v1/sessions", self.hdr),
+                              ("/v1/sessions", {}), ("/", {})):
+            status, pairs = self._headers(path, headers)
+            names = [k.lower() for k, _ in pairs]
+            got = dict((k.lower(), v) for k, v in pairs)
+            for name in ("content-security-policy", "x-frame-options",
+                         "x-content-type-options", "referrer-policy"):
+                self.assertEqual(names.count(name), 1, (path, status, name))
+            self.assertIn("frame-ancestors 'self'",
+                          got["content-security-policy"], path)
+            self.assertEqual(got["x-frame-options"], "SAMEORIGIN", path)
+            self.assertEqual(got["x-content-type-options"], "nosniff", path)
+            self.assertEqual(got["referrer-policy"], "no-referrer", path)
+
+    def test_server_header_names_no_python(self):
+        _, pairs = self._headers("/app/")
+        server = dict((k.lower(), v) for k, v in pairs)["server"]
+        self.assertEqual(server, "quiver-remote")
+
     def test_bad_body_400(self):
         conn = http.client.HTTPConnection(
             "127.0.0.1", self.srv.port, timeout=5
