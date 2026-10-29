@@ -8,7 +8,12 @@ struct PullsView: View {
     /// Owned by the tab bar, so switching the GitHub tab between Issues
     /// and Pull requests keeps what each already loaded.
     let model: PullsModel
-    @State private var filter: PullFilter = .all
+    /// Kept on the model, so it survives the GitHub tab's switch to
+    /// Issues and back.
+    private var filter: PullFilter {
+        get { model.filter }
+        nonmutating set { model.filter = newValue }
+    }
 
     var body: some View {
         let sections = PullGrouping.sections(of: model.repos, filter: filter)

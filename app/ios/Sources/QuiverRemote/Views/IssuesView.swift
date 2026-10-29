@@ -13,7 +13,12 @@ struct IssuesView: View {
     /// and Pull requests keeps what each already loaded.
     let model: IssuesModel
 
-    @State private var filter: IssueFilter = .all
+    /// Kept on the model, so it survives the GitHub tab's switch to
+    /// Pull requests and back.
+    private var filter: IssueFilter {
+        get { model.filter }
+        nonmutating set { model.filter = newValue }
+    }
     @State private var swipes = SwipeCoordinator()
     /// The issue a row's Resolve swipe or context menu opened the sheet for.
     @State private var resolving: IssueRef?
