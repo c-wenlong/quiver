@@ -131,6 +131,22 @@ import Testing
         #expect(back.issue.firstSeen == clock.now)
     }
 
+    @Test func anOutageThatChangesKindKeepsCounting() {
+        let store = tempStore()
+        // timeout, unavailable, timeout: one outage three polls long, so
+        // Doctor's persistence threshold is met despite the flapping.
+        _ = store.record(harness: "devin", status: .timeout, remedy: nil)
+        _ = store.record(harness: "devin", status: .unavailable, remedy: nil)
+        let third = store.record(harness: "devin", status: .timeout, remedy: nil)
+        #expect(third.issue.occurrences == 3)
+        #expect(store.open().map(\.id) == ["devin/timeout"])
+        // A login problem in between is a different story: counting
+        // starts over once it is an outage again.
+        _ = store.record(harness: "devin", status: .authRequired, remedy: nil)
+        let after = store.record(harness: "devin", status: .unavailable, remedy: nil)
+        #expect(after.issue.occurrences == 1)
+    }
+
     @Test func aSuccessfulReadMarksTheSlotHealthy() {
         let store = tempStore()
         // Never read: a sign-out is an account that was never set up.

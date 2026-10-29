@@ -268,6 +268,24 @@ class IssueFindingsTest(unittest.TestCase):
         self.assertEqual(got[0].fix, command)
         self.assertIn("(Work)", got[0].message)
 
+    def test_an_extra_accounts_outage_takes_the_tables_fix(self):
+        # A file from before remedy_for_account stopped retargeting
+        # outages may hold a login command for one; the table's retry
+        # fix replaces it.
+        self._write({
+            "devin/devin-work/unavailable": {
+                "harness": "devin", "status": "unavailable",
+                "account": "Work", "accountKey": "devin-work",
+                "occurrences": 3,
+                "remedy": {"summary": "This account isn't signed in to Devin",
+                           "steps": ["Log in."],
+                           "command": 'XDG_DATA_HOME="/tmp/acct" devin auth login'},
+            },
+        })
+        got = issue_findings(self.home)
+        self.assertNotIn("auth login", got[0].fix)
+        self.assertNotIn("signed in", got[0].message)
+
     def test_a_permission_fix_is_the_settings_link(self):
         self._write({
             "devin/permission-required": {

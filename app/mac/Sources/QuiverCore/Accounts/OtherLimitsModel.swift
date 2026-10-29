@@ -289,14 +289,15 @@ public final class OtherLimitsModel {
         // starred gets its extras read, one just unstarred is skipped.
         let extras = extraAccounts().filter { !$0.0.isDefault && !$0.0.vendor.hasDefaultProfile }
         // A removed profile's reading is never asked for again — and
-        // its open issues close once this load records, since a deleted
-        // account can't fail again.
+        // its open issues close now, whatever swe answers below, since a
+        // deleted account can't fail again.
         let live = Set(extras.map { $0.0.id })
         extraReadings = extraReadings.filter { live.contains($0.key) }
         var liveKeys: [String: Set<String>] = [:]
         for (profile, _) in extras {
             liveKeys[profile.vendor.rawValue, default: []].insert(Self.accountKey(for: profile))
         }
+        await issues?.record([], accounts: liveKeys)
         do {
             // An swe too old for a flag fails the whole call, so each
             // attempt drops what the last error named: the new usage
@@ -413,8 +414,8 @@ public final class OtherLimitsModel {
             note = nil
             persist()
             // One store pass for the whole poll, off the main actor. The
-            // starred set and live accounts close what is no longer
-            // polled: an unstarred harness or a removed account.
+            // starred set, known only once swe answered, closes the issues
+            // of a harness that is no longer polled.
             await issues?.record(polls, starred: starred ?? [], accounts: liveKeys)
         } catch is CancellationError {
             return

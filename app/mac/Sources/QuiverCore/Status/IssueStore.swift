@@ -231,12 +231,19 @@ public struct IssueStore: Sendable {
             // One open issue per slot: whatever else is open for this
             // harness+account closes, whether this verdict reopens an
             // older issue in the slot or opens a new one.
+            var outagePolls = 0
             for (other, issue) in issues where !issue.resolved
                 && issue.harness == harness && issue.accountKey == key
                 && other != id {
                 var closed = issue
                 closed.resolved = true
                 issues[other] = closed
+                // An outage that flips between timeout and unavailable is
+                // one outage: its poll count carries over, so Doctor's
+                // "persistent" threshold still counts every failed poll.
+                if issue.status.isOutage && status.isOutage {
+                    outagePolls = max(outagePolls, issue.occurrences)
+                }
             }
             if var existing = issues[id] {
                 if !existing.resolved {
@@ -268,6 +275,11 @@ public struct IssueStore: Sendable {
                                   remedy: remedy, at: now)
                 issues[id] = issue
                 notify = Outcome(issue: issue, shouldNotify: true)
+            }
+            if outagePolls > 0, var carried = issues[id] {
+                carried.occurrences += outagePolls
+                issues[id] = carried
+                notify = Outcome(issue: carried, shouldNotify: notify.shouldNotify)
             }
             notify.wasHealthy = file.healthy?[Self.slot(harness: harness, accountKey: key)] != nil
             file.issues = issues

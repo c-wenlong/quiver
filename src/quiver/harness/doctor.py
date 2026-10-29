@@ -102,7 +102,12 @@ def issue_findings(home: Path | None = None) -> list[DoctorFinding]:
     ``PERSISTENT_POLLS`` polls in a row; a single blip stays on its card.
     """
     from quiver import paths
-    from quiver.harness.remedies import PERSISTENT_POLLS, remedy_for
+    from quiver.harness.remedies import (
+        AUTH_REQUIRED,
+        PERSISTENT_POLLS,
+        SIGNED_OUT,
+        remedy_for,
+    )
 
     try:
         raw = json.loads(paths.issues_file_for(home or Path.home()).read_text())
@@ -125,15 +130,17 @@ def issue_findings(home: Path | None = None) -> list[DoctorFinding]:
                            and occurrences >= PERSISTENT_POLLS):
             continue
         stored = issue.get("remedy") if isinstance(issue.get("remedy"), dict) else None
-        # The table is authoritative for the harness's own login — it may
-        # have learned a better fix since the app wrote the issue. An
-        # extra account's stored remedy was aimed at that account's own
-        # files (``remedy_for_account``), which this file can't redo
-        # without the account's directory, so it wins there.
-        extra = bool(issue.get("accountKey") or issue.get("account"))
-        remedy = ((stored if extra else None) or remedy_for(name, status)
-                  or stored or {})
-        summary = (stored or {}).get("summary") or remedy.get("summary")
+        # The table is authoritative — it may have learned a better fix
+        # since the app wrote the issue. The one exception is an extra
+        # account's login fix: ``remedy_for_account`` aimed it at that
+        # account's own files, which this file can't redo without the
+        # account's directory. Every other status has the same fix for
+        # every account, so the table wins there too.
+        account_login = (bool(issue.get("accountKey") or issue.get("account"))
+                         and status in (SIGNED_OUT, AUTH_REQUIRED))
+        remedy = ((stored if account_login else None)
+                  or remedy_for(name, status) or stored or {})
+        summary = remedy.get("summary") or (stored or {}).get("summary")
         message = summary or f"{name}: {status}"
         account = issue.get("account")
         if isinstance(account, str) and account:
