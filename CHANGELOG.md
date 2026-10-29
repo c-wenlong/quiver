@@ -151,6 +151,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The menu bar fan popover's notes fold into an ⓘ mark.** The
+  captions under the Automatic and Manual controls move into the app's
+  usual info tip at the row's edge — a rest shows it, a click pins it —
+  so the popover reads as controls alone.
 - **Flatter Mac app window.** The page now fills the window to its edges
   instead of sitting in a rounded, inset panel, split from the sidebar by
   a hairline. The Quiver wordmark and the sidebar toggle moved up into the
