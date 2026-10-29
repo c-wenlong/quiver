@@ -63,14 +63,18 @@ badge where its control would be.
   a line in the card says it is signed in through Tailscale and has
   nothing to revoke. The hub refuses a revoke of a `tailnet:` id.
 - **Pair a device** mints a token and opens a sheet like the app's: the
-  QR code, a Browser / Quiver app switch (the PWA link or the
+  QR code, a Browser / Quiver app switch (the `/app/#pair=` link or the
   `quiver://pair` deep link), the app's instructions, the link, Copy
   link, and a countdown that turns into "Expired — mint a new code".
   Closing the sheet reloads the list, so a phone that paired shows up.
 - **Waiting for approval**: tailnet pair requests (`swe remote devices
-  --requests`), no codes or secrets. The Mac section has no approve
-  controls, so neither does this page: "Open approvals" goes to the hub's
-  remote page (`/#approve`), where the code is typed.
+  --requests`), no codes or secrets, relisted every few seconds while
+  the section is open so a phone's new request (or an expired one
+  leaving) shows without a reload. Each row takes the code the asking
+  device shows and decides it inline — Approve or Deny posts
+  `/v1/pair/requests/<decide>` with the request id pinned, the same
+  routes a paired device or the owner's tailnet identity may call. A
+  half-typed code survives the relist.
 
 ### Providers › Inference
 
@@ -300,5 +304,3 @@ decode a PNG drawn from the SVG.
   providers, the shell status and the `source` line, drag to reorder,
   and coding plans.
 - Editing paths.
-- Approving and denying pair requests here: the Mac section has neither;
-  the hub's remote page does it.

@@ -19,6 +19,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unsupported file says so in plain words
   ([#634](https://github.com/c-wenlong/quiver/issues/634)).
 
+- **Syntax highlighting in the chat, on the web app, the remote web
+  client and the Mac app.** Fenced code blocks, tool arguments and tool
+  output are tokenised and coloured: a shell command keeps its flags
+  and variables apart, JSON keys differ from strings, and Python,
+  JavaScript, CSS, HTML, YAML, TOML, SQL, Go, Rust, Swift and friends
+  get their keywords and literals. A Bash call's `command` shows as the
+  command itself instead of its JSON wrapper, a Read's output colours
+  as the file it came from, and diff rows keep their added/removed
+  tints with the file's own highlighting inside. The Mac app's tool
+  cards also gain the diff view iOS and the web already had, with
+  added/removed counts in the collapsed row.
+
+- **Remote launches start on a picked model, with each harness's recent
+  models to pick from.** `POST /v1/sessions`, `POST /v1/issues/resolve`
+  and `POST /v1/pulls/<o>/<r>/<n>/open` put an optional `model` on the
+  harness's command line, as a new `capabilities.model` entry in
+  harness.json declares (claude, cursor, pi and devin `--model`, codex
+  and cline `-m`, droid a per-launch `--settings` file, opencode
+  `opencode mini -m provider/model`). A harness with no such entry
+  answers `409 unsupported_launch_option` instead of starting on its
+  default. Machine rows and the web app's `?harnesses=1` lists gain
+  `recent_models`: up to five recently used models per launchable
+  harness, newest first, read from the usage ledger without internal
+  names like Devin's `compactor` or Cursor's `default`, and OpenCode
+  names completed to `provider/model`. Part of
+  [#914](https://github.com/c-wenlong/quiver/issues/914); the client
+  pickers come next.
+
 - **A "Fan off temperature" for the Compute fan rule.** The popover's
   first field is now "Fan on temperature", and a second field under it
   picks where the held fans drop back to macOS. Until a temperature is
@@ -145,6 +173,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The menu bar fan popover's notes fold into an ⓘ mark.** The
+  captions under the Automatic and Manual controls move into the app's
+  usual info tip at the row's edge — a rest shows it, a click pins it —
+  so the popover reads as controls alone.
+
+- **The remote PWA folded into the web app.** The standalone remote
+  client at `/` is gone: `/` now redirects to `/app/` with the fragment
+  intact, so old `/#pair=<token>` and `/#approve` links still land.
+  Browser pairing moved to the web app's gate — "Pair with Tailscale"
+  asks for approval like the iPhone app does, and the `#pair=` handler
+  trades a token — while Tailscale pair requests are approved inline
+  in Settings › Integrations › Remote, which polls for new ones, and
+  sessions waiting on an approval are badged "Approval" in the
+  Sessions list. `swe remote pair` and the pair QR now hand out
+  `…/app/#pair=<token>` links; the `quiver://pair` deep link, the
+  pairing APIs and stored device credentials are unchanged.
+
 - **Flatter Mac app window.** The page now fills the window to its edges
   instead of sitting in a rounded, inset panel, split from the sidebar by
   a hairline. The Quiver wordmark and the sidebar toggle moved up into the
@@ -179,7 +224,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Explore on an empty hub is gone with it.
 
 - **Slash-command lists load when the chat opens, not on the first
-  `/`.** Every client — the web app, the remote PWA, iOS and the Mac
+  `/`.** Every client — the web app, iOS and the Mac
   app — now warms the command list as the chat opens and keeps the
   answer per session key, so the menu opens filled instead of showing
   "Loading commands" for a beat, and a reopened chat shows the kept
@@ -224,6 +269,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The fan rule comes back on its own after the helper stops
+  answering.** A fan request the root helper never took used to switch
+  the rule off until someone toggled it or set a speed by hand, and a
+  wedged SMC call could leave the helper alive but deaf to every
+  request forever. The helper now exits when a pass runs over 30
+  seconds without a beat, so launchd relaunches it with a fresh SMC
+  connection, and a failed takeover retries after a minute instead of
+  parking in its error.
+- **The Mac app's Tasks page recovers when the hub comes back.** The
+  hub restarts on every app install and at login, and a page opened
+  while it was still starting said "This Mac's hub isn't running" until
+  you clicked Refresh, even after the hub was up. The page now tries
+  again on its own while the hub is down (after 3 s, doubling to 30 s)
+  and fills in once it answers.
+- **The Mac app's Tasks page says what the source says.** Like the web
+  and iPhone pages before #916, it showed the hub's ladder as each
+  task's status, so an issue whose agent had finished read "In
+  progress" forever. It now shows the hub's `status` (`Agent running`,
+  `PR open`, `Merged`, `Closed`, `Open`, or a Linear workflow state's
+  name), and its stepper reads Open → Agent → PR open → Merged for
+  GitHub and Open → Started → Done elsewhere
+  ([#875](https://github.com/c-wenlong/quiver/issues/875)).
 - **The iPhone app's tab bar fits again.** The Tasks tab made six tabs,
   and iPhone shows four plus "More" past five, so Issues and Usage were
   hidden behind More and `quiver://issue` links landed inside it.

@@ -219,6 +219,7 @@ class TestRemoteCatalog(unittest.TestCase):
         self.assertEqual(row["model_at_launch"], ["qwen-code"])
         self.assertEqual(row["effort_at_launch"], [])
         self.assertEqual(row["last_models"], {})
+        self.assertEqual(row["recent_models"], {})
 
     def test_last_used_models_reads_the_ledger(self):
         from quiver.ledger.models import LedgerRecord, UsageEvent
@@ -757,16 +758,29 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(self.srv.state.launches, {})
 
     def test_launch_to_named_machine_refuses_what_it_cannot_take(self):
-        # The hub's table answers for the satellite's: gemini's TUI has
-        # no verified /model, so nothing is queued.
+        # The satellite's own advertised lists answer: it takes a model
+        # for cursor (its registry says so, whatever the hub's says) but
+        # not for gemini, so nothing is queued for gemini.
+        catalog_mod.upsert_machine(self.srv.home, {
+            "id": self.mid, "model_at_launch": ["cursor"],
+            "effort_at_launch": []})
         status, data = self.srv.request(
             "POST", "/v1/sessions",
             {"machine": "sat-m1", "harness": "gemini",
              "cwd": "/tmp/x", "prompt": "go", "model": "opus"},
             headers=self.srv.auth)
         self.assertEqual(status, 409, data)
-        self.assertEqual(json.loads(data)["error"]["code"],
-                         "unsupported_launch_option")
+        body = json.loads(data)
+        self.assertEqual(body["error"]["code"], "unsupported_launch_option")
+        self.assertIn("can't take a model", body["error"]["message"])
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "cursor",
+             "cwd": "/tmp/x", "prompt": "go", "effort": "high"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 409, data)
+        self.assertIn("can't take an effort level",
+                      json.loads(data)["error"]["message"])
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
         self.assertEqual(replay, [])
         self.assertEqual(self.srv.state.launches, {})

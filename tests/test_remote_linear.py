@@ -99,6 +99,12 @@ class TestListFilter(unittest.TestCase):
         self.assertEqual(f["or"][1]["team"]["key"]["in"], ["QUI", "ENG"])
         self.assertIn("state", f)  # the terminal filter still applies
 
+    def test_list_query_orderby_is_a_valid_enum(self):
+        # PaginationOrderBy is lowercase; "UpdatedAt" once shipped and the
+        # real API answered GRAPHQL_VALIDATION_FAILED (HTTP 400).
+        self.assertIn("orderBy: updatedAt", linear._LIST_QUERY)
+        self.assertNotIn("orderBy: UpdatedAt", linear._LIST_QUERY)
+
 
 class TestEnv(unittest.TestCase):
     """probe(): section, key resolution, the viewer call."""

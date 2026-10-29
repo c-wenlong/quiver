@@ -753,7 +753,8 @@ class TestLaunchTuning(unittest.TestCase):
     def _launch(self, tool="claude", **kw):
         with patch.object(supervise.shutil, "which",
                           return_value="/x/bin"), \
-             patch.object(supervise, "launch_tmux", return_value="qv-n"), \
+             patch.object(supervise, "launch_tmux",
+                          return_value="qv-n") as lt, \
              patch.object(supervise, "prime_pane", return_value=True) as pp, \
              patch.object(supervise, "boot_pane", return_value="❯"), \
              patch.object(supervise, "capture_pane",
@@ -761,28 +762,86 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise.time, "sleep"), \
              patch.object(supervise, "send_text", return_value=True) as st:
             out = supervise.launch_new(self.home, tool, self.proj, "hi", **kw)
+        self.argv = lt.call_args[0][1] if lt.call_args else None
         return out, pp, st
 
-    def test_launch_types_model_and_effort_before_the_prompt(self):
+    def test_launch_puts_the_model_on_argv_and_types_effort(self):
         (ok, _n, name), pp, st = self._launch(model="opus", effort="high")
         self.assertTrue(ok)
         self.assertEqual(name, "qv-n")
-        # The TUI's own commands, in order, before the first prompt.
+        # The model rides the command line; only /effort is typed, before
+        # the first prompt.
+        self.assertEqual(self.argv, ["claude", "--model", "opus"])
         self.assertEqual([c[0][1] for c in st.call_args_list],
-                         ["/model opus", "/effort high"])
+                         ["/effort high"])
         pp.assert_called_once_with("qv-n", "hi")
         marker = json.loads(
             (supervise._pending_dir(self.home) / "qv-n.json").read_text())
         self.assertEqual(
             (marker["model"], marker["effort"]), ("opus", "high"))
 
-    def test_launch_refuses_a_pick_the_tui_cannot_take(self):
+    def test_launch_model_argv_per_harness(self):
+        cases = {
+            "codex": ["codex", "-m", "gpt-5"],
+            "cursor": ["cursor", "--model", "gpt-5"],
+            "pi": ["pi", "--model", "gpt-5"],
+            "cline": ["cline", "-m", "gpt-5"],
+            "devin": ["devin", "--model", "gpt-5"],
+        }
+        for tool, argv in cases.items():
+            (ok, _n, _name), _pp, st = self._launch(tool, model="gpt-5")
+            self.assertTrue(ok, tool)
+            self.assertEqual(self.argv, argv)
+            st.assert_not_called()
+        (ok, _n, _), _pp, _st = self._launch(
+            "opencode", model="anthropic/claude-opus-5")
+        self.assertTrue(ok)
+        self.assertEqual(self.argv, ["opencode", "mini", "-m",
+                                     "anthropic/claude-opus-5"])
+        # No pick: the plain harness, the full TUI for opencode.
+        self._launch("opencode")
+        self.assertEqual(self.argv, ["opencode"])
+
+    def test_droid_model_goes_through_a_settings_file(self):
+        (ok, _n, _), _pp, _st = self._launch("droid", model="glm-5")
+        self.assertTrue(ok)
+        self.assertEqual(self.argv[:2], ["droid", "--settings"])
+        written = json.loads(Path(self.argv[2]).read_text())
+        self.assertEqual(written,
+                         {"sessionDefaultSettings": {"model": "glm-5"}})
+        self.assertTrue(Path(self.argv[2]).is_relative_to(
+            supervise._launch_settings_dir(self.home)))
+
+    def test_launch_refuses_a_model_the_harness_cannot_take(self):
         with patch.object(supervise, "launch_tmux") as lt:
             ok, note, _ = supervise.launch_new(
+                self.home, "gemini", self.proj, "hi", model="x")
+            self.assertFalse(ok)
+            self.assertIn("capabilities.model", note)
+            # opencode mini needs provider/model to pick a model at all.
+            ok, note, _ = supervise.launch_new(
                 self.home, "opencode", self.proj, "hi", model="x")
-        self.assertFalse(ok)
-        self.assertIn("/model", note)
+            self.assertFalse(ok)
+            self.assertIn("provider/model", note)
         lt.assert_not_called()
+
+    def test_fresh_launch_error(self):
+        self.assertEqual(
+            supervise.fresh_launch_error("claude", "opus", "high"), "")
+        self.assertEqual(
+            supervise.fresh_launch_error("cursor", "gpt-5", None), "")
+        self.assertIn(
+            "/effort", supervise.fresh_launch_error("cursor", None, "high"))
+        self.assertIn(
+            "capabilities.model",
+            supervise.fresh_launch_error("gemini", "x", None))
+        # harness.json wins over the fallback either way.
+        reg = {"gemini": {"capabilities": {"model": {"flag": "-m"}}},
+               "claude": {"capabilities": {"model": {"supported": False}}}}
+        self.assertEqual(
+            supervise.fresh_launch_error("gemini", "x", None, reg), "")
+        self.assertIn("capabilities.model",
+                      supervise.fresh_launch_error("claude", "x", None, reg))
 
     def test_a_failed_control_send_fails_the_launch(self):
         # The pick asked for could not be applied: the launch record
@@ -794,18 +853,18 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise, "boot_pane", return_value="❯"), \
              patch.object(supervise, "send_text", return_value=False):
             ok, note, name = supervise.launch_new(
-                self.home, "claude", self.proj, "hi", model="opus")
+                self.home, "claude", self.proj, "hi", effort="high")
         self.assertFalse(ok)
         self.assertEqual(name, "qv-n")
         self.assertIn("could not be delivered", note)
 
     def test_a_control_swallowed_enter_is_pressed_again(self):
         # Checked delivery, the same race _deliver handles for prompts:
-        # /model stuck in the input box gets Enter pressed for it before
+        # /effort stuck in the input box gets Enter pressed for it before
         # the prompt ever goes out.
         rule = "─" * 20
-        unsent = f"Claude Code\n{rule}\n❯ /model opus\n{rule}\n  auto"
-        sent = f"Claude Code\nmodel: opus\n{rule}\n❯ \n{rule}\n  auto"
+        unsent = f"Claude Code\n{rule}\n❯ /effort high\n{rule}\n  auto"
+        sent = f"Claude Code\neffort: high\n{rule}\n❯ \n{rule}\n  auto"
         panes = iter(["❯", "❯", unsent, sent])
         with patch.object(supervise.shutil, "which",
                           return_value="/x/bin"), \
@@ -818,7 +877,7 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise.time, "sleep"), \
              patch.object(supervise, "send_text", return_value=True):
             ok, _note, _ = supervise.launch_new(
-                self.home, "claude", self.proj, "hi", model="opus")
+                self.home, "claude", self.proj, "hi", effort="high")
         self.assertTrue(ok)
         self.assertEqual(sk.call_args_list[0][0], ("qv-n", "Enter"))
 

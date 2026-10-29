@@ -315,8 +315,9 @@ def pair_payload(host: str, port: int, token: str,
 
 def pair_url(host: str, port: int, token: str, name: str = "",
              scheme: str = "http") -> str:
-    """The form a phone browser can open directly."""
-    out = f"{scheme}://{host}:{port}/#pair={quote(token, safe='')}"
+    """The form a phone browser can open directly: the web app's
+    ``#pair=`` handler trades the token for a device credential."""
+    out = f"{scheme}://{host}:{port}/app/#pair={quote(token, safe='')}"
     if name:
         out += f"&name={quote(name, safe='')}"
     return out

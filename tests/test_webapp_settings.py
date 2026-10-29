@@ -51,7 +51,7 @@ HELLO_M = [
     "#######.#...#####.#.#",
 ]
 
-PAIR_URL = "https://home-server.tail0000.ts.net:8477/#pair=0Ol_Evny-OSYVP3QLNEl6GxapePaqECo"
+PAIR_URL = "https://home-server.tail0000.ts.net:8477/app/#pair=0Ol_Evny-OSYVP3QLNEl6GxapePaqECo"
 DEEP_LINK = ("quiver://pair?host=home-server.tail0000.ts.net&port=8477"
              "&token=oiXzLUI8gplt6g-ofdf9jvOSUE9C6eZz&scheme=https")
 
@@ -617,7 +617,7 @@ class TestPair(_Settings):
         self.assertEqual(status, 200, body)
         t = body["ticket"]
         self.assertEqual((t["host"], t["port"]), ("100.64.0.7", 8477))
-        self.assertEqual(t["url"], f"http://100.64.0.7:8477/#pair={t['token']}")
+        self.assertEqual(t["url"], f"http://100.64.0.7:8477/app/#pair={t['token']}")
         self.assertTrue(t["deep_link"].startswith("quiver://pair?host=100.64.0.7&port=8477&token="))
         self.assertEqual(t["expires_in_s"], pairing.TOKEN_TTL_S)
         # The QR codes carry exactly the two links.
@@ -633,14 +633,14 @@ class TestPair(_Settings):
     def test_pair_links_use_the_public_url_behind_serve(self):
         save_hub_config(self.home, "127.0.0.1", 8477, "https://box.example.ts.net:8477")
         t = settings_page.post(self.ctx(), "pair", {})["ticket"]
-        self.assertEqual(t["url"], f"https://box.example.ts.net:8477/#pair={t['token']}")
+        self.assertEqual(t["url"], f"https://box.example.ts.net:8477/app/#pair={t['token']}")
         q = parse_qs(urlsplit(t["deep_link"]).query)
         self.assertEqual((q["host"], q["port"], q["scheme"]), (["box.example.ts.net"], ["8477"], ["https"]))
 
     def test_pair_links_use_the_advertised_address(self):
         self.srv.state.base_url = "http://100.64.0.9:9000"
         t = settings_page.post(self.ctx(), "pair", {})["ticket"]
-        self.assertEqual(t["url"], f"http://100.64.0.9:9000/#pair={t['token']}")
+        self.assertEqual(t["url"], f"http://100.64.0.9:9000/app/#pair={t['token']}")
 
     def test_cross_site_and_unpaired_posts_are_refused(self):
         me = self.device("laptop")

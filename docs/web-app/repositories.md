@@ -166,11 +166,15 @@ card in the sheet, with the confirm still open to retry or cancel.
 **Open in session** (the PR sheet's terminal button, the app's "Open in
 session" menu). The panel names the PR and the hub machine, offers the
 harnesses the hub can start (`GET /v1/app/repositories?harnesses=1`:
-`{"harnesses": [{"name", "display_name", "tracked"}]}`, what the phone's
+`{"harnesses": [{"name", "display_name", "tracked", "launch_model",
+"launch_effort", "last_model"}]}`, what the phone's
 new-session sheet offers, in Provider visibility order) and a first
 message, prefilled ("Review pull request #7, "…", in owner/name. Its
 head is checked out in this folder.") and editable: the hub's launch
 needs one, since a harness under tmux writes nothing until it gets one.
+A Model field sits under the harness while the picked one reports
+`launch_model`, prefilled with its `last_model` (the ledger's most
+recent for it); empty sends no `model` key.
 Start then:
 
 1. `POST /v1/app/repositories/worktree` `{"repo", "number"}`: `swe gh

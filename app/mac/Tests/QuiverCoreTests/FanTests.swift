@@ -297,6 +297,16 @@ import Testing
             + "and opening the Ftst gate failed (refused).")
     }
 
+    @Test func everyPassBeatsForTheWatchdog() {
+        var beats = 0
+        var hold = hold(FakeSMC.twoFans(gate: false), [ask(0.5)])
+        hold.beat = { beats += 1 }
+        hold.run()
+        // One pass takes the request, one empty one hands it back: a
+        // pass that never ends is a beat that never comes.
+        #expect(beats == 2)
+    }
+
     @Test func aHeldRequestIsReportedOnce() {
         var reports: [FanHelperStatus] = []
         var hold = hold(FakeSMC.twoFans(gate: false), [ask(0.5), ask(0.5), ask(0.7, at: 2)])
@@ -834,6 +844,33 @@ import Testing
         #expect(fans.phase == .failed(FanControl.notTaken))
         #expect(!fans.heldByThreshold)
         #expect(FanControlFile.request(at: url) == nil)
+    }
+
+    @MainActor @Test func aFailedTakeoverRetriesAfterAWait() async {
+        let clock = Box(Date(timeIntervalSince1970: 1_800_000_000))
+        let installer = FakeInstaller()
+        installer.installed.value = true
+        let (fans, url) = control(FakeSMC.twoFans(), installer: installer, clock: clock)
+        await fans.refresh()
+        fans.thresholdEnabled = true
+        await fans.checkTemperature(90)
+        #expect(fans.phase == .starting)
+        clock.value = clock.value.addingTimeInterval(FanControl.startTimeout + 1)
+        await fans.checkTemperature(90)
+        #expect(fans.phase == .failed(FanControl.notTaken))
+        #expect(FanControlFile.request(at: url) == nil)
+        // Inside the backoff the failure stands.
+        clock.value = clock.value.addingTimeInterval(FanControl.retryAfter - 1)
+        await fans.checkTemperature(90)
+        #expect(FanControlFile.request(at: url) == nil)
+        #expect(fans.phase == .failed(FanControl.notTaken))
+        // Past it the rule asks again instead of staying off until the
+        // app happens to be poked.
+        clock.value = clock.value.addingTimeInterval(2)
+        await fans.checkTemperature(90)
+        #expect(FanControlFile.request(at: url) != nil)
+        #expect(fans.phase == .starting)
+        #expect(fans.heldByThreshold)
     }
 
     @MainActor @Test func startingGivesUpOnItsOwnClockWhileAReadHangs() async {

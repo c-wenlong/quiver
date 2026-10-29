@@ -197,13 +197,14 @@ struct HubClient: Sendable {
                                query: refresh ? ["refresh": "1"] : [:]))
     }
 
-    /// `POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?}` → a launch
-    /// in the PR's detached worktree; poll `launch(_:)` for the session
-    /// key, as for `startSession`. An empty `prompt` lets the hub build
-    /// its review brief.
-    func openPull(repo: String, number: Int, harness: String, prompt: String) async throws -> LaunchStatus {
+    /// `POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?, model?}` → a
+    /// launch in the PR's detached worktree; poll `launch(_:)` for the
+    /// session key, as for `startSession`. An empty `prompt` lets the
+    /// hub build its review brief; a nil `model` sends no pick.
+    func openPull(repo: String, number: Int, harness: String, prompt: String, model: String? = nil) async throws -> LaunchStatus {
         var body: [String: Any] = ["harness": harness]
         if !prompt.isEmpty { body["prompt"] = prompt }
+        if let model, !model.isEmpty { body["model"] = model }
         return try await send(request("POST", "/v1/pulls/\(Self.repoPath(repo))/\(number)/open",
                                       body: body))
     }
@@ -234,13 +235,15 @@ struct HubClient: Sendable {
                                query: refresh ? ["refresh": "1"] : [:]))
     }
 
-    /// `POST /v1/issues/resolve {repo, number, harness, prompt?}` → a
-    /// launch on branch `quiver/issue-<n>` in the issue's worktree; poll
-    /// `launch(_:)` for the session key, as for `startSession`. An empty
-    /// `prompt` lets the hub build its resolve brief.
-    func resolveIssue(repo: String, number: Int, harness: String, prompt: String) async throws -> LaunchStatus {
+    /// `POST /v1/issues/resolve {repo, number, harness, prompt?, model?}`
+    /// → a launch on branch `quiver/issue-<n>` in the issue's worktree;
+    /// poll `launch(_:)` for the session key, as for `startSession`. An
+    /// empty `prompt` lets the hub build its resolve brief; a nil `model`
+    /// sends no pick.
+    func resolveIssue(repo: String, number: Int, harness: String, prompt: String, model: String? = nil) async throws -> LaunchStatus {
         var body: [String: Any] = ["repo": repo, "number": number, "harness": harness]
         if !prompt.isEmpty { body["prompt"] = prompt }
+        if let model, !model.isEmpty { body["model"] = model }
         return try await send(request("POST", "/v1/issues/resolve", body: body))
     }
 
@@ -380,10 +383,13 @@ struct HubClient: Sendable {
 
     /// Starts `harness` in `cwd` on `machine` with `prompt` as its first
     /// message. The hub answers before the harness has a session id, so
-    /// poll `launch(_:)` for the key.
-    func startSession(machine: String, harness: String, cwd: String, prompt: String) async throws -> LaunchStatus {
-        try await send(request("POST", "/v1/sessions",
-                               body: ["machine": machine, "harness": harness, "cwd": cwd, "prompt": prompt]))
+    /// poll `launch(_:)` for the key. `model` is the sheet's pick: the
+    /// field sends it only when the machine's `model_at_launch` says the
+    /// harness honours one, and a nil sends no pick.
+    func startSession(machine: String, harness: String, cwd: String, prompt: String, model: String? = nil) async throws -> LaunchStatus {
+        var body: [String: Any] = ["machine": machine, "harness": harness, "cwd": cwd, "prompt": prompt]
+        if let model, !model.isEmpty { body["model"] = model }
+        return try await send(request("POST", "/v1/sessions", body: body))
     }
 
     func launch(_ id: String) async throws -> LaunchStatus {

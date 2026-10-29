@@ -114,12 +114,14 @@ def launchable_harnesses() -> list[dict]:
     Each item is ``{name, command, display_name, tracked, launch_model,
     launch_effort}``; ``tracked`` is false for a harness swe has no
     session parser for (qwen-code): it starts, but no session ever shows
-    up to open as a chat. ``launch_model``/``launch_effort`` are true
-    when ``supervise.launch_tuning_error`` would accept the field — a
-    verified ``/model <v>``/``/effort <v>`` TUI command, the only
-    launch-time mechanism a tmux pane has."""
+    up to open as a chat. ``launch_model`` is true when the harness
+    declares how its command line takes a model (``capabilities.model``
+    in harness.json, ``launch_model.MODEL_FALLBACK`` underneath);
+    ``launch_effort`` when its TUI has a verified ``/effort <v>``
+    command, typed in once the pane is up (``supervise.fresh_launch_error``
+    checks both)."""
     from quiver.harness import registry
-    from quiver.remote import slash_builtins
+    from quiver.remote import launch_model, slash_builtins
 
     try:
         reg = registry.load_registry_readonly()
@@ -142,7 +144,7 @@ def launchable_harnesses() -> list[dict]:
             "command": command,
             "display_name": str(entry.get("display_name") or name),
             "tracked": name in parsers,
-            "launch_model": slash_builtins.launch_op_ok(name, "model"),
+            "launch_model": launch_model.capability(name, reg) is not None,
             "launch_effort": slash_builtins.launch_op_ok(name, "effort"),
         }))
     out.sort(key=lambda pair: pair[0])
@@ -197,73 +199,45 @@ def reads_launch_options(row: dict | None) -> bool:
     return isinstance((row or {}).get("model_at_launch"), list)
 
 
-# ``last_used_models`` is asked once per catalog refresh (~10 s per
-# machine) while the ledger only moves on session events, so the
-# answer is cached behind the db+WAL file signature: an idle machine
-# pays two stats, not a whole-table scan.
-_last_models_cache: dict[str, tuple[tuple, dict[str, str]]] = {}
-_last_models_lock = threading.Lock()
+def launch_option_error(row: dict | None, harness: str,
+                        model: str | None, effort: str | None) -> str:
+    """The refusal note when a satellite's machine row says its launch of
+    ``harness`` can't take ``model``/``effort``, else "".
+
+    The satellite's own ``model_at_launch``/``effort_at_launch`` lists
+    answer, not the hub's registry: what a launch takes is declared per
+    machine in its harness.json (``capabilities.model``). The satellite
+    re-checks its own registry when the command lands, so a value-shape
+    rule the lists can't carry (opencode's ``provider/model``) still
+    fails the launch rather than being dropped.
+    """
+    row = row or {}
+    missing = [
+        op for op, value in (("model", model), ("effort", effort))
+        if value and harness not in (row.get(f"{op}_at_launch") or [])
+    ]
+    if not missing:
+        return ""
+    what = {"model": "a model", "effort": "an effort level"}
+    ops = " or ".join(what[op] for op in missing)
+    return f"{harness} launches on this machine can't take {ops}"
 
 
-def _ledger_signature(path: Path) -> tuple:
-    """``(mtime_ns, size)`` of the ledger db and its WAL, or None each."""
-    sig = []
-    for candidate in (path, path.with_name(path.name + "-wal")):
-        try:
-            st = candidate.stat()
-        except OSError:
-            sig.append(None)
-        else:
-            sig.append((st.st_mtime_ns, st.st_size))
-    return tuple(sig)
+def recent_models(home: Path | str | None = None,
+                  harnesses: list[str] | None = None,
+                  ) -> dict[str, list[str]]:
+    """``harness`` → its recently used models, newest first (at most 5),
+    for the launch pickers; see ``recent_models.recent_models``."""
+    from quiver.remote import recent_models as recent_mod
+
+    return recent_mod.recent_models(home, harnesses)
 
 
 def last_used_models(home: Path | str | None = None) -> dict[str, str]:
-    """``harness`` → the model its most recent ledger event ran.
-
-    The web ledger already records the model of every past session, so
-    "last used" is one read of it — no new persistence. A machine with
-    no ledger (or a locked one) simply has no history to offer.
-    """
-    import sqlite3
-
-    from quiver.ledger.store import ledger_path_for
-
-    path = ledger_path_for(Path(home) if home is not None else None)
-    key = str(path)
-    # The signature rides into the cache with the answer: taken before
-    # the query so a mid-query write re-reads next call rather than
-    # serving a stale map until the next change.
-    sig = _ledger_signature(path)
-    with _last_models_lock:
-        hit = _last_models_cache.get(key)
-        if hit is not None and hit[0] == sig:
-            return dict(hit[1])
-    rows = []
-    try:
-        # Read-only: this path must never create the store itself.
-        db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
-    except (sqlite3.Error, ValueError):
-        db = None
-    if db is not None:
-        try:
-            # SQLite's bare-column rule: the ``model`` comes from the
-            # row the MAX matched — each harness's latest event.
-            rows = db.execute(
-                "SELECT harness, model, MAX(ts) FROM events"
-                " WHERE model != '' GROUP BY harness"
-            ).fetchall()
-        except sqlite3.Error:
-            rows = []
-        finally:
-            db.close()
-    result = {h: m for h, m, _ts in rows if h and m}
-    with _last_models_lock:
-        # Throwaway HOMEs in tests would grow the map forever otherwise.
-        if len(_last_models_cache) >= 64:
-            _last_models_cache.clear()
-        _last_models_cache[key] = (sig, result)
-    return result
+    """``harness`` → the model its most recent ledger event ran: the
+    head of each ``recent_models`` list, so the same junk filter and
+    OpenCode provider naming apply."""
+    return {h: models[0] for h, models in recent_models(home).items()}
 
 
 def launch_command(harness: str) -> str | None:
@@ -301,8 +275,10 @@ def local_machine(home: Path | str | None = None) -> dict:
     ``launchable`` is what the phone's new-session sheet offers, in order
     (``launchable_harnesses``); ``harness_names`` names each one.
     ``model_at_launch``/``effort_at_launch`` name the harnesses whose
-    launches accept ``model``/``effort``; ``last_models`` prefills the
-    picker with the ledger's most recent model per harness.
+    launches accept ``model``/``effort``; ``recent_models`` lists each
+    launchable harness's recently used models, newest first (at most
+    5), and ``last_models`` is the head of each list, the picker's
+    default.
     """
     harnesses = detected_harnesses()
     launchable = launchable_harnesses()
@@ -313,12 +289,26 @@ def local_machine(home: Path | str | None = None) -> dict:
         "online": True,
         "last_seen_at": time.time(),
         "harnesses": harnesses,
+        **launch_fields(launchable, home),
+    }
+
+
+def launch_fields(launchable: list[dict],
+                  home: Path | str | None = None) -> dict:
+    """The machine-row fields the launch sheets read, from
+    ``launchable_harnesses()``: ``launchable``, ``harness_names``,
+    ``untracked_harnesses``, ``model_at_launch``, ``effort_at_launch``,
+    ``recent_models`` and ``last_models``. One builder for the hub's own
+    row, a satellite's and ``local_machine``."""
+    recent = recent_models(home, [item["name"] for item in launchable])
+    return {
         "launchable": [item["name"] for item in launchable],
         "harness_names": harness_names(launchable),
         "untracked_harnesses": untracked(launchable),
         "model_at_launch": launch_op_names(launchable, "model"),
         "effort_at_launch": launch_op_names(launchable, "effort"),
-        "last_models": last_used_models(home),
+        "recent_models": recent,
+        "last_models": {h: models[0] for h, models in recent.items()},
     }
 
 

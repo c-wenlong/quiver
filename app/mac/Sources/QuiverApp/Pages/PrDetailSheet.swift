@@ -387,7 +387,7 @@ struct MarkdownBlocks: View {
                             Text(lang).font(Theme.caption)
                                 .foregroundStyle(Theme.textMuted)
                         }
-                        Text(code)
+                        Text(AttributedString(highlighting: code, language: lang))
                             .font(Theme.font(size: 11, design: .monospaced))
                             .foregroundStyle(Theme.textPrimary)
                             .textSelection(.enabled)

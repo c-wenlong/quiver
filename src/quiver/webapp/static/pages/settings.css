@@ -140,6 +140,8 @@
 
 /* Remote */
 .set-pair-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 0 12px; }
+.set-decide { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.field.set-code { width: 84px; height: 32px; text-align: center; letter-spacing: 1px; }
 .set-confirm { background: color-mix(in srgb, var(--danger) 6%, transparent); margin: 0 -20px; padding: 14px 20px; }
 .set-confirm + .set-divider, .set-divider:has(+ .set-confirm) { visibility: hidden; }
 dialog.set-pair-sheet { width: min(520px, calc(100vw - 32px)); }

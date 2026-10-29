@@ -66,7 +66,7 @@ _VIEWER_QUERY = "query { viewer { displayName email } }"
 
 _LIST_QUERY = """\
 query QuiverTasks($filter: IssueFilter) {
-  issues(first: 50, filter: $filter, orderBy: UpdatedAt) {
+  issues(first: 50, filter: $filter, orderBy: updatedAt) {
     nodes {
       identifier title url updatedAt
       state { name type }

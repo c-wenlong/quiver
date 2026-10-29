@@ -36,19 +36,23 @@ app loads. The hub identifies the caller with `tailscale whois` (behind
 `tailscale serve`, on the client serve forwards for) and lets in a node
 whose login is the hub owner's, as long as the request carries
 `X-Quiver-Pair: 1`, names a Host the hub answers to, and has no foreign
-`Origin`. That is the approval page's gate: a page on another site can't
-send the header, so it can't borrow the owner's network identity. Tagged
-nodes and other people's logins still pair, with the device credential the
-hub's PWA pairs (`Authorization: Bearer`, kept in `localStorage` under the
-hub's origin); `/app/` and `/` share that origin. Satellite routes
-(`/v1/agent/*`) always want a bearer.
+`Origin`. That is the gate the app's tailnet-identity calls use: a page
+on another site can't send the header, so it can't borrow the owner's
+network identity. Tagged nodes and other people's logins still pair
+from the gate itself: "Pair with Tailscale" posts
+`POST /v1/pair/request` and polls for the owner's yes, the token field
+below trades a pair token through the app's own `#pair=` fragment, and
+either mints a device credential (`Authorization: Bearer`, kept in
+`localStorage` under the hub's origin); `/` redirects to `/app/` with
+the fragment intact, so an old `/#pair=` or `/#approve` link still
+lands. Satellite routes (`/v1/agent/*`) always want a bearer.
 Behind `tailscale serve`, run the hub with `--public-url=https://…` so it
 reads the tailnet client from Serve's headers: "Pair with Tailscale" then
 works, and the Origin check accepts the `https://` origin Serve presents.
 A pair token (`swe remote pair`) works either way.
 
 Writes are `POST /v1/app/<page>/<action>` with the same bearer and the
-same Origin check the PWA's writes use. The first is the Harnesses page's
+same Origin check every `/v1` write uses. The first is the Harnesses page's
 star, archive and restore (docs/web-app/harness.md).
 
 Doctor (`#/doctor`, docs/web-app/doctor.md) is a page with no sidebar
@@ -81,7 +85,7 @@ already do, through satellites; that is a later step.
    without one the page says it is matching titles and details only and
    links to that switch. The index covers the hub machine, so a
    satellite's sessions match on their details.
-   A row opens the session's chat, the remote PWA's remote control
+   A row opens the session's chat, the remote control client
    (docs/web-app/sessions.md); its Details button is the old sheet.
 3. Harnesses and Accounts limits. Shipped, read only. Harnesses lists
    `/v1/app/harnesses` (every registered harness, archived included, as

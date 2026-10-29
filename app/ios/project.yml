@@ -90,12 +90,29 @@ targets:
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.0"
+  QuiverRemoteUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/QuiverRemoteUITests
+    dependencies:
+      - target: QuiverRemote
+    settings:
+      base:
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        TEST_TARGET_NAME: QuiverRemote
 schemes:
   QuiverRemote:
     build:
       targets:
         QuiverRemote: all
         QuiverRemoteTests: [test]
+        QuiverRemoteUITests: [test]
     test:
       targets:
         - QuiverRemoteTests
+        - QuiverRemoteUITests

@@ -48,7 +48,7 @@ final class AppModel {
     // MARK: Refresh
 
     /// Polls sessions and inbox every 15 s while the app is in front,
-    /// the same cadence as the PWA.
+    /// the cadence the remote PWA used.
     func startRefreshing() {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
@@ -678,7 +678,7 @@ enum SessionGrouping {
         return path
     }
 
-    /// The last two path components, as the PWA shows them.
+    /// The last two path components, as the web client shows them.
     static func shortDir(_ path: String?) -> String {
         guard let path, !path.isEmpty else { return "No folder" }
         let parts = path.split(separator: "/")

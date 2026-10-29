@@ -143,7 +143,7 @@ _SAT_EVENT_TYPES = protocol.EVENT_TYPES | {
 }
 
 # Per-type ``data.kind`` vocabularies for the events that carry one.
-# The journal feeds the PWA verbatim, so an unknown kind would render
+# The journal feeds the clients verbatim, so an unknown kind would render
 # unvetted markup there; these events must name a known kind.
 _SAT_KIND_SETS = {
     "message.appended": protocol.MESSAGE_KINDS,
@@ -764,16 +764,7 @@ class HubState:
         """Keep this machine's ``launchable`` current: Provider visibility
         and the registry can change while the hub runs."""
         launchable = catalog_mod.launchable_harnesses()
-        fields = {
-            "launchable": [item["name"] for item in launchable],
-            "harness_names": catalog_mod.harness_names(launchable),
-            "untracked_harnesses": catalog_mod.untracked(launchable),
-            "model_at_launch": catalog_mod.launch_op_names(
-                launchable, "model"),
-            "effort_at_launch": catalog_mod.launch_op_names(
-                launchable, "effort"),
-            "last_models": catalog_mod.last_used_models(self.home),
-        }
+        fields = catalog_mod.launch_fields(launchable, self.home)
         if all(self.machine.get(k) == v for k, v in fields.items()):
             return
         self.machine.update(fields)
@@ -1615,11 +1606,13 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/app/sessions":
             try:
+                self._state.expire_pending_approvals()
                 body = self._state.webapp.sessions(
                     self._state.catalog.rows(),
                     hub_machine_id=self._state.machine_id,
                     machines=catalog_mod.load_machines(self._state.home),
                     rescan=str((args.get("rescan") or [""])[0]) in {"1", "true"},
+                    pending=self._state.pending_approvals,
                 )
             except (OSError, sqlite3.Error) as exc:
                 self._send_error(503, "ledger_unavailable", str(exc))
@@ -1947,7 +1940,7 @@ class _Handler(BaseHTTPRequestHandler):
                 )
                 return
             # Snapshot ownership before the merge so attach/detach done
-            # on the satellite surfaces as an event the PWA reacts to.
+            # on the satellite surfaces as an event the clients react to.
             before = {
                 protocol.remote_key(mid, str(r.get("key") or "")):
                     r.get("ownership")
@@ -2275,10 +2268,11 @@ class _Handler(BaseHTTPRequestHandler):
                     f"{machine} runs an agent too old to take launch "
                     "options; upgrade it, or launch without them")
                 return
-            # The hub's table answers for the satellite's too: a launch
-            # command never carries a field its receiver can't apply.
-            blocked = supervise.launch_tuning_error(
-                harness, cmd["model"], cmd["effort"])
+            # The satellite's own advertised lists answer: its registry
+            # (capabilities.model) decides what its launch can take, so a
+            # launch command never carries a field it can't apply.
+            blocked = catalog_mod.launch_option_error(
+                row, harness, cmd["model"], cmd["effort"])
             if blocked:
                 self._send_error(409, "unsupported_launch_option", blocked)
                 return
@@ -2317,7 +2311,7 @@ class _Handler(BaseHTTPRequestHandler):
                 f"Provider visibility, or not installed",
             )
             return
-        blocked = supervise.launch_tuning_error(
+        blocked = supervise.fresh_launch_error(
             harness, cmd["model"], cmd["effort"])
         if blocked:
             self._send_error(409, "unsupported_launch_option", blocked)
@@ -2521,7 +2515,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         Anything outside ``_SAT_EVENT_TYPES`` is dropped, and an event
         whose ``data.kind`` is not in that type's vocabulary is dropped:
-        the journal feeds the PWA verbatim, so an unknown kind would
+        the journal feeds the clients verbatim, so an unknown kind would
         render unvetted markup there.
         """
         accepted = 0
@@ -3200,32 +3194,26 @@ class _Handler(BaseHTTPRequestHandler):
             })
         return out
 
-    # -- static PWA --------------------------------------------------------
+    # -- static ------------------------------------------------------------
 
     def _serve_static(self, path: str) -> None:
         if path == "/app" or path.startswith("/app/"):
             self._serve_webapp(path)
             return
-        web = Path(__file__).resolve().parent / "web"
-        name = {
-            "/": "index.html",
-            "/pair": "index.html",
-            "/index.html": "index.html",
-            "/app.js": "app.js",
-            "/styles.css": "styles.css",
-            "/manifest.webmanifest": "manifest.webmanifest",
-            "/icon-192.png": "icon-192.png",
-            "/icon-512.png": "icon-512.png",
-        }.get(path)
-        if name is not None:
-            self._send_asset(web / name)
+        # The web app is the only page now: ``/`` (and a bookmarked
+        # ``/index.html``) lands on it. The fragment survives the
+        # redirect, so an old ``/#pair=<token>`` or ``/#approve`` link
+        # still reaches the app's handlers.
+        if path in {"/", "/index.html"}:
+            self.send_response(301)
+            self.send_header("Location", "/app/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
-        # ``/harness-<id>.svg`` is a session's logo from the web app's
-        # files: the same svgs the Mac and iPhone apps draw, resolved
-        # through their alias table so an id like ``claude-code`` works.
-        logo = webapp_static.harness_logo(path)
-        if logo is not None:
-            self._send_asset(logo)
+        # The icons live with the web app's assets; its pages (and the
+        # manifest it may grow) reference them at the root.
+        if path in {"/icon-192.png", "/icon-512.png"}:
+            self._send_asset(webapp_static.STATIC_DIR / path[1:])
             return
         self._send_error(404, "not_found", "unknown route")
 
@@ -3234,8 +3222,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         Only a flat file name of a known type is served, so no request
         can climb out of the folder. The pages fetch ``/v1/app/*`` with
-        the same device credential the PWA pairs, which this origin
-        shares.
+        the device credential the app's ``#pair=`` handler pairs, which
+        this origin shares.
         """
         if path == "/app":
             self.send_response(301)

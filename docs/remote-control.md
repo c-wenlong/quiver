@@ -1,7 +1,7 @@
 # Remote control
 
 Status: shipped. R1–R5 all landed — `swe remote serve|setup|agent|pair|
-status|devices|attach|notify|ssh`, the hub-served PWA, the iOS app and
+status|devices|attach|notify|ssh`, the hub-served web app, the iOS app and
 the macOS app's Settings › Remote checklist all exist. This doc stays as
 the design record: what follows describes the build as it is, and the
 milestones table at the end is history, not a plan.
@@ -17,7 +17,8 @@ generalised across every harness `swe` already understands.
 ```
               ┌─────────────┐
               │ phone       │
-              │ (PWA → iOS) │
+              │ (web app /  │
+              │  iOS app)   │
               └──────┬──────┘
                      │ HTTPS + SSE over Tailscale
                      ▼
@@ -341,8 +342,7 @@ GET  /v1/inbox                       pending decisions; ?done=1 adds finished-to
 GET  /v1/app/overview                the web app's Overview (docs/web-app.md)
 GET  /v1/app/sessions                the web app's Sessions: catalog rows + usage
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
-GET  /app/                           the web app's pages, static
-GET  /harness-<id>.svg               a harness's bundled logo, static (aliases resolve, colour wins)
+GET  /app/                           the web app's pages, static; / redirects here, fragment intact
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
 GET  /v1/devices                     every paired device (device_view rows + paired_via + this_device) and the pending pair requests, for the pair-requests-and-devices screen
@@ -543,8 +543,19 @@ first message, and is typed into the pane once the TUI is up. Each
 machine row in `/v1/machines` carries `launchable` (in order),
 `harness_names`, `model_at_launch` and `effort_at_launch` (the
 harnesses whose launches accept `model`/`effort`, per the launch-tuning
-rules below) and `last_models` (the ledger's most recent model per
-harness, `{}` on a machine with no history — the picker's default).
+rules below), `recent_models` (each launchable harness's recently used
+models, newest first, at most 5; `{}` on a machine with no history) and
+`last_models` (the head of each `recent_models` list, the picker's
+default). Both come from the web ledger (`remote/recent_models.py`),
+cached behind the ledger file's signature and read incrementally past
+the last folded `rowid`, so a refresh never rescans history. Names a
+launch could never take back are dropped: anything outside the `model`
+token shape (Claude's `<synthetic>`, Cursor's "(Auto …)" labels),
+`unknown`, Devin's internal `compactor`/`summarizer` and Cursor's
+`default`. An OpenCode name the ledger kept without its provider is
+named `provider/model` from `opencode.db`'s `session_v2.model` JSON
+(`{id, providerID}`), the form its launch needs, and dropped when no
+provider is recorded anywhere.
 The hub refuses a launch outside `launchable`
 (`422 not_launchable`). Errors: `422 bad_command`
 (body), `422 bad_cwd` (no such folder on the hub), `422 launch_failed`
@@ -568,10 +579,36 @@ op):
 
 | Channel | `model` | `effort` |
 |---|---|---|
-| tmux pane (every launch, and `mode: tmux` attaches) | Typed as `/model <v>` once the TUI is up, before the first prompt — only where the harness has a verified `/model <arg>` builtin (claude and codex today; `slash_builtins.launch_op_ok`) | Same rule — claude's `/effort <v>`; nothing else has a verified one |
+| fresh launch (`POST /v1/sessions`, issue resolve, PR open) | On the harness's command line, as its `capabilities.model` in harness.json declares (table below; `launch_model.py`) | Typed as `/effort <v>` once the TUI is up, before the first prompt (claude only) |
+| tmux pane of a fork or a `mode: tmux` attach | Typed as `/model <v>` once the TUI is up, before the first prompt — only where the harness has a verified `/model <arg>` builtin (claude and codex today; `slash_builtins.launch_op_ok`) | Same rule — claude's `/effort <v>`; nothing else has a verified one |
 | headless (`mode: headless`, claude only) | `--model <v>` on every `claude -p --resume` invocation, read off the session's supervised meta | Refused — print mode has no effort flag |
 | `serve` (opencode attach) | `prompt_async`'s `model` object — the value must be `provider/model` (split into `{providerID, modelID}`), anything else is refused | `prompt_async`'s `variant` |
 | `appserver` (codex attach) | `turn/start`'s `model` override (holds for the turn and the ones after) | `turn/start`'s `effort` override — a name codex doesn't know fails the turn loudly, not silently |
+
+A fresh launch reads `capabilities.model` from the machine's own
+harness.json, over `launch_model.MODEL_FALLBACK` for a harness that
+declares none (`supported: false` switches it off). Its fields are
+`flag` (the argv flag that takes the model), `subcommand` (tokens put
+right after the binary, only when a model is picked), `settings_flag`
+plus `settings_key` (the model goes into a per-launch JSON file under
+`data/remote/launch-settings/`, nested at that dotted key, passed as
+`<settings_flag> <file>`) and `provider` (the value must be
+`provider/model`). The fallback, each flag tried on 2026-10-27:
+
+| Harness | Command line with a pick |
+|---|---|
+| claude | `claude --model <v>` |
+| codex | `codex -m <v>` |
+| cursor | `cursor-agent --model <v>` |
+| pi | `pi --model <v>` |
+| cline | `cline -m <v>` |
+| devin | `devin --model <v>` |
+| droid (0.219: no interactive `-m`) | `droid --settings <file>`, the file `{"sessionDefaultSettings": {"model": "<v>"}}` |
+| opencode (v2: the full TUI has no model flag) | `opencode mini -m <provider/model>`; plain `opencode` with no pick, and a bare name is refused |
+
+Any other harness gets `409 unsupported_launch_option` for a `model`.
+The value is already one token with no leading `-` (the shape check
+above), so it can't smuggle a flag of its own into the argv.
 
 On the two API channels the pick rides the session's supervised meta
 into every send — the same plumbing headless uses for `--model` — so it
@@ -582,9 +619,13 @@ forwards a nonempty pick when the satellite's machine row advertises
 the build that reads it — `model_at_launch` present as a list, the
 field that release started reporting; an older agent would accept the
 command and silently drop the fields, so it gets `409
-unsupported_launch_option` instead. Once the command lands the
-satellite re-checks its own table and fails it with the same note, so
-the pick is applied or refused, never dropped. It also rides the
+unsupported_launch_option` instead. A launch's pick must also be one
+that satellite advertises (the harness listed in its row's
+`model_at_launch`/`effort_at_launch`, which its own registry decides),
+else `409 unsupported_launch_option` before anything is queued (forks
+still check the hub's `/model` table). Once the command
+lands the satellite re-checks its own registry and fails it with the
+same note, so the pick is applied or refused, never dropped. It also rides the
 launch's pending marker and supervised-entry meta (as bookkeeping —
 a session's *current* model is a transcript/ledger question), and the
 launch record (`GET /v1/launches/{id}` carries `model`/`effort`).
@@ -950,7 +991,7 @@ hub can't freeze them (the Mac app strips it for the same reason), and
 concurrent requests share one fetch. `refresh=1` refetches only readings older than 60 s and
 failed ones, so a refresh button can't hammer providers that rate-limit.
 Each reading carries `fetched_at`; one older than the cache window is
-the 24 h outage fallback (newer fetches failed), and the PWA marks it
+the 24 h outage fallback (newer fetches failed), and the clients mark it
 stale. An unreadable registry answers 503 `usage_unavailable`.
 
 Satellites run the same snapshot every 300 s and post it to
@@ -964,8 +1005,8 @@ so a sleeping MacBook still shows its last figures after a hub restart.
 snapshot and `received_at` the hub's when the report arrived, so a
 client can age a satellite's `fetched_at` stamps without trusting the
 two clocks to agree. The top-level `harnesses` stay the hub's own rows.
-The PWA's Usage tab reads this route, with a machine switcher once more
-than one machine reports.
+The iOS app's Usage tab reads this route, with a machine switcher once
+more than one machine reports.
 
 `journal.py` is the reconnect story: seq-numbered per-session ring on
 disk; client resumes with `?last=seq`. "Open the app, catch up on 30 min
@@ -1049,15 +1090,18 @@ writes-go-through-tested-Python rule.
 [app/ios/ROADMAP.md](../app/ios/ROADMAP.md) tracks the client redesign:
 every page, component and feature, and the hub work each needs.
 
-Two clients. The hub serves a static SPA (`src/quiver/remote/web/`),
-so the whole feature works in any browser over Tailscale with "add to
-home screen". On iPhone the client is native SwiftUI (`app/ios/`):
+Two clients. The web app (`src/quiver/webapp/`, served by the hub under
+`/app/`; `/` redirects there, fragment intact) works in any browser over
+Tailscale: its `#pair=` fragment trades a pair token for the credential
+it keeps in localStorage, and pending pair requests are decided inline
+in Settings › Integrations › Remote. On iPhone the client is native
+SwiftUI (`app/ios/`):
 it reads the same REST routes and SSE streams, keeps one credential per
 paired hub in the Keychain (it can be paired with several hubs and
 switches between them from the hub menu), and leaves room for widgets, Live Activities, Face ID and
 APNs. It replaced an earlier WKWebView wrapper around the SPA once the
 webview's scrolling, keyboard handling and blank offline launch showed.
-Push comes from ntfy for now. A device paired in Safari's PWA and the
+Push comes from ntfy for now. A device paired in a browser and the
 app pair separately; each holds its own credential. Share only protocol
 DTOs with QuiverCore: decoding stays server-side and most of QuiverCore
 is AppKit-bound.
@@ -1136,11 +1180,12 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   its Tailscale node with `tailscale whois <peer ip>` and hands back a
   6-digit code + a poll secret. A second device — or the hub's own
   shell — approves it (`swe remote devices --approve=<code>`, the
-  `#approve` page on another Mac's browser, or any already-paired
-  device). Approving mints a stored credential in `devices.json`
+  web app's Settings › Integrations › Remote on another browser, or
+  any already-paired device). Approving mints a stored credential in
+  `devices.json`
   (0600), revocable per device — Trusted Devices minus biometrics. A
   device can't approve its own request; five wrong codes deny it. The
-  QR/token path (`swe remote pair`, `http://hub/#pair=token`; `--app`
+  QR/token path (`swe remote pair`, `http://hub/app/#pair=token`; `--app`
   swaps in the `quiver://` deep link) stays as the fallback for devices
   `whois` can't identify. Either way, only a tailnet device can reach
   the pairing routes at all.
@@ -1148,8 +1193,8 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   mac/windows/linux/browser), `model`, `client` and `os` — explicit
   `device` fields the client posts, else whatever the User-Agent lets
   `pairing.client_meta` infer — plus the tailnet `node_name` where the
-  request came from (the only "location" CGNAT offers). The PWA's
-  "My device" tab reads `/v1/devices/me` and renames itself through
+  request came from (the only "location" CGNAT offers). A paired client
+  reads its own row on `/v1/devices/me` and renames itself through
   `/v1/devices/rename` (`display_name` beats `name` everywhere the
   device is listed). Requests from devices paired before these fields
   existed backfill them from the User-Agent on the same throttled write

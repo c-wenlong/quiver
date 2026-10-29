@@ -171,7 +171,7 @@ tmux fallback). A session is `attached` (supervised, writable) or
 `observed` (someone's terminal owns it, read-only) so two writers never
 share one transcript.
 
-- [ ] R1: hub, byte-offset tailers, session catalog, SSE journal, PWA read-only chat
+- [ ] R1: hub, byte-offset tailers, session catalog, SSE journal, web read-only chat
 - [ ] R2: claude headless-resume inject + tmux supervisor + Attach flow
 - [ ] R3: satellite daemon, machine registry, offline command queue
 - [ ] R4: native iOS app, Inbox of pending decisions, push via ntfy

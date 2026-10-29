@@ -1,8 +1,8 @@
 /* Quiver web app: the Mac app's pages, served by the hub under /app/.
  * No build step, no deps. Data comes from /v1/app/*. The hub owner's own
  * tailnet devices need no pairing (the hub knows them from Tailscale);
- * any other browser uses the device credential the hub's PWA (at /)
- * pairs and keeps in localStorage.
+ * any other browser uses the device credential its #pair= link minted,
+ * kept in localStorage.
  */
 "use strict";
 
@@ -116,16 +116,220 @@ function pageHeader(title, subtitle, actions = "") {
 }
 
 /* Only a device the hub can't place reaches this: the owner's own tailnet
- * devices are let in without pairing. */
+ * devices are let in without pairing. The card is the old remote page's
+ * pair view: ask the tailnet for a code the owner approves elsewhere, or
+ * paste a token a ``swe remote pair`` or Settings' QR minted. */
 function renderGate(message) {
   const lead = credential() ? message
     : "This device isn't signed in to the hub owner's Tailscale account, so it needs pairing.";
   document.getElementById("panel").innerHTML = `<div class="page"><div class="card gate">
     <div class="card-title">Pair this browser</div>
     <p>${esc(lead)}</p>
-    <p class="caption">Open <a href="/">this hub's remote page</a> and pair with a token from
-      <code>swe remote pair</code> on the hub, then come back to <a href="/app/">/app/</a>.</p>
+    <div id="pair-start">
+      <input class="field gate-field" id="pair-name" type="text" autocomplete="off"
+        placeholder="Name for this device" aria-label="Name for this device">
+      <button class="set-button primary" id="pair-ts">Pair with Tailscale</button>
+      <p class="gate-error" id="pair-error"></p>
+      <details class="gate-token">
+        <summary>Have a pair token?</summary>
+        <input class="field gate-field" id="pair-token" type="text" inputmode="text"
+          autocomplete="off" placeholder="pair token" spellcheck="false">
+        <button class="set-button" id="pair-go">Pair with token</button>
+      </details>
+    </div>
+    <div id="pair-code-card" hidden>
+      <div class="gate-code" id="pair-code"></div>
+      <p class="caption" id="pair-node"></p>
+      <p class="caption">Approve it on the hub with
+        <code>swe remote devices --approve=<span id="pair-code-flat"></span></code>,
+        or in Settings &rsaquo; Integrations &rsaquo; Remote on a signed-in browser.</p>
+      <p class="caption" id="pair-code-status"></p>
+      <button class="set-button" id="pair-retry" hidden>Try again</button>
+    </div>
   </div></div>`;
+  const el = (id) => document.getElementById(id);
+  el("pair-ts").onclick = pairRequestStart;
+  el("pair-retry").onclick = pairRequestStart;
+  el("pair-go").onclick = () => {
+    const token = el("pair-token").value.trim();
+    if (token) pairExchange(token, el("pair-name").value.trim());
+  };
+}
+
+/* ── pairing entry points (the old remote PWA's, now the app's) ────── */
+
+/* What the pair exchange claims about this browser. The hub merges it
+ * over what the User-Agent lets it infer, and the browser knows things
+ * the UA won't say: an iPad in desktop mode sends a Macintosh UA but
+ * still has a touch screen. */
+function pairMeta() {
+  const ua = navigator.userAgent || "";
+  let kind = "browser";
+  if (/iPhone|iPod/.test(ua)) kind = "iphone";
+  else if (/iPad/.test(ua)) kind = "ipad";
+  else if (/Android/.test(ua)) kind = "android";
+  else if (/Macintosh|Mac OS X/.test(ua)) kind = (navigator.maxTouchPoints || 0) > 1 ? "ipad" : "mac";
+  else if (/Windows/.test(ua)) kind = "windows";
+  else if (/Linux/.test(ua)) kind = "linux";
+  let os = "";
+  let m = ua.match(/OS (\d+[._\d]*) like Mac OS X/);
+  if (m) os = (/iPad/.test(ua) ? "iPadOS " : "iOS ") + m[1].replace(/_/g, ".");
+  else if ((m = ua.match(/Android (\d+[\d.]*)/))) os = "Android " + m[1];
+  else if ((m = ua.match(/Mac OS X (\d+[._\d]+)/))) os = "macOS " + m[1].replace(/_/g, ".");
+  else if ((m = ua.match(/Windows NT ([\d.]+)/))) os = "Windows NT " + m[1];
+  // Desktop-mode iPadOS: the UA is all lies; the touchscreen isn't.
+  if (kind === "ipad" && !/iPad/.test(ua)) os = "iPadOS";
+  return { kind, client: "Quiver Web", os };
+}
+
+/* One pair flow at a time: a new request or navigation bumps the
+ * generation and late replies drop instead of painting over the page
+ * the user moved to. A good credential still lands — pairing is the
+ * point — it just doesn't drag the route back. */
+let pairGen = 0;
+
+function pairStillLive(gen, rgen) {
+  return gen === pairGen && rgen === routeGen;
+}
+
+/* Bank a minted credential where every page looks for it. */
+function pairStore(data) {
+  try { localStorage.setItem("quiver.remote", JSON.stringify(data)); } catch { }
+}
+
+/* ``#pair=<token>[&name=]``: the address `swe remote pair` and Settings'
+ * QR mint. The token buys one device credential, kept where every page
+ * looks for it, then leaves the URL so a refresh can't spend it again.
+ * The POST is unauthenticated — the token is the credential. */
+async function pairExchange(token, name) {
+  const gen = ++pairGen, rgen = routeGen;
+  renderSidebar("");
+  document.getElementById("panel").innerHTML = `<div class="page"><div class="card gate">
+    <div class="card-title">Pair this browser</div><p>Pairing…</p></div></div>`;
+  let status = 0, data = null;
+  try {
+    const resp = await fetch("/v1/pair", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, name: name || "", device: pairMeta() }),
+    });
+    status = resp.status;
+    try { data = await resp.json(); } catch { /* empty body */ }
+  } catch { /* offline or connection lost */ }
+  if (status === 200 && data && data.credential) {
+    pairStore(data);
+    if (!pairStillLive(gen, rgen)) return;
+    history.replaceState(null, "", "#/overview");
+    route();
+    return;
+  }
+  if (!pairStillLive(gen, rgen)) return;
+  const msg = (data && data.error && data.error.message)
+    || (status ? `the hub answered ${status}` : "the hub couldn't be reached");
+  renderGate(`The pair link didn't work: ${msg} Mint a fresh one — it lives only minutes.`);
+}
+
+/* ── pair by tailnet identity (the asking side of /v1/pair/request) ── */
+
+/* "Pair with Tailscale": the hub reads this device's tailnet identity
+ * itself, so the browser just asks; a 6-digit code comes back and a
+ * paired device or the hub's own shell approves it. The code poll
+ * carries the request's secret, so only this browser sees the minted
+ * credential. */
+async function pairRequestStart() {
+  const gen = ++pairGen;
+  const name = (document.getElementById("pair-name") || {}).value || "";
+  const err = document.getElementById("pair-error");
+  if (err) err.textContent = "";
+  let status = 0, data = null;
+  try {
+    const resp = await fetch("/v1/pair/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim(), device: pairMeta() }),
+    });
+    status = resp.status;
+    try { data = await resp.json(); } catch { /* empty body */ }
+  } catch { /* offline or connection lost */ }
+  if (gen !== pairGen) return;
+  if (status === 201 && data) {
+    showPairCode(data);
+    pairRequestPoll(data.request_id, data.poll_secret, gen, routeGen);
+    return;
+  }
+  if (err) err.textContent = (status === 403)
+    ? "This device isn't identifiable on the tailnet — use a pair token below."
+    : (data && data.error && data.error.message) || `pair request failed (${status || "offline"})`;
+}
+
+function pairCodeEl(id) { return document.getElementById(id); }
+
+function showPairCode(req) {
+  const start = pairCodeEl("pair-start"), card = pairCodeEl("pair-code-card");
+  if (!start || !card) return;
+  start.hidden = true;
+  card.hidden = false;
+  const code = String(req.code || "");
+  pairCodeEl("pair-code").textContent = `${code.slice(0, 3)} ${code.slice(3)}`;
+  pairCodeEl("pair-code-flat").textContent = code;
+  pairCodeEl("pair-node").textContent =
+    `as ${(req.node && req.node.name) || "this device"}` +
+    (req.node && req.node.login ? ` (${req.node.login})` : "");
+  pairCodeEl("pair-code-status").textContent = "waiting for approval…";
+  pairCodeEl("pair-retry").hidden = true;
+}
+
+function pairRequestPoll(requestId, secret, gen, rgen) {
+  const tick = async () => {
+    if (gen !== pairGen) return;
+    let status = 0, data = null;
+    try {
+      const resp = await fetch(
+        `/v1/pair/request/${encodeURIComponent(requestId)}?secret=${encodeURIComponent(secret)}`);
+      status = resp.status;
+      try { data = await resp.json(); } catch { /* empty body */ }
+    } catch { /* transient — poll again */ }
+    if (gen !== pairGen) return;
+    if (data && data.status === "approved" && data.credential) {
+      pairStore(data);
+      if (rgen !== routeGen) return;
+      history.replaceState(null, "", "#/overview");
+      route();
+      return;
+    }
+    if (data && data.status === "denied") return pairRequestFailed("Pairing was denied.");
+    if (status === 404) return pairRequestFailed("Request expired.");
+    setTimeout(tick, 2000);
+  };
+  setTimeout(tick, 2000);
+}
+
+function pairRequestFailed(msg) {
+  ++pairGen;
+  const st = pairCodeEl("pair-code-status");
+  if (st) st.textContent = msg;
+  const retry = pairCodeEl("pair-retry");
+  if (retry) retry.hidden = false;
+  // Back to the form, where the same message lands on another miss.
+  const start = pairCodeEl("pair-start"), err = pairCodeEl("pair-error");
+  if (start) start.hidden = false;
+  if (err) err.textContent = msg;
+}
+
+/* Bare fragments the old PWA routes carried. ``/`` redirects here with
+ * the fragment intact, so ``/#pair=<token>`` and ``/#approve`` still
+ * land. Returns true when the hash was claimed. */
+function pairHash() {
+  const hash = location.hash || "";
+  if (hash === "#approve") {
+    history.replaceState(null, "", "#/settings?section=integrations");
+    return false;
+  }
+  const m = hash.match(/#pair=([^&]+)/);
+  if (!m) return false;
+  const nm = hash.match(/[?&]name=([^&]+)/);
+  pairExchange(decodeURIComponent(m[1]), nm ? decodeURIComponent(nm[1]) : "");
+  return true;
 }
 
 function renderSoon(id) {
@@ -137,6 +341,7 @@ function renderSoon(id) {
 }
 
 function route() {
+  if (pairHash()) return;
   let id = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
   // A Mac-only page has nothing to show here, so an old link or a typed
   // #/menubar lands on Overview instead.
