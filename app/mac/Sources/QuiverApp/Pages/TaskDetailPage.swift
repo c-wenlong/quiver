@@ -25,13 +25,9 @@ struct TaskDetailPage: View {
     @State private var harnessesError: String?
     @State private var harness: String?
     @State private var prompt = ""
-    /// The launch `model` pick: free text, blank for the harness's
-    /// default.
-    @State private var modelName = ""
-    /// The field's own binding sets this on any keystroke, so even a
-    /// clear back to the prefill counts: a harness change must not
-    /// overwrite what the user left.
-    @State private var modelEdited = false
+    /// The launch `model` menu's state; a harness change or a panel
+    /// re-open refits it (`ModelPick.refit`).
+    @State private var modelPick = ModelPick()
     @State private var flow = IssueLaunchFlow()
     /// The running launch, so going back stops it before it can open a
     /// chat under a view that is gone.
@@ -255,15 +251,9 @@ struct TaskDetailPage: View {
             // too old to apply a pick, so the row hides rather than
             // send one it would drop; `false` disables with a note.
             if let picked = pickedHarness, picked.launchModel != nil {
-                TextField("Model, e.g. sonnet; blank for the default",
-                          text: Binding(get: { modelName }, set: { modelName = $0; modelEdited = true }))
-                    .quiverField(monospaced: true)
-                    .disabled(flow.busy || picked.launchModel != true)
-                if picked.launchModel != true {
-                    Text("This harness can't take a model at launch; it starts on its default.")
-                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                ModelMenu(recent: LaunchOptions.recentModels(of: picked), pick: $modelPick,
+                          supported: picked.launchModel == true, label: "Model")
+                    .disabled(flow.busy)
             }
             TextField("Its first message — leave blank for the hub's built prompt",
                       text: $prompt, axis: .vertical)
@@ -313,13 +303,10 @@ struct TaskDetailPage: View {
         harnesses?.first { $0.name == harness }
     }
 
-    /// The Model field's prefill: the hub's last-used model for the
-    /// picked harness. A re-fill lands only while the user hasn't
-    /// touched the field — a typed pick, even a clear, keeps what
-    /// they left.
+    /// Refits the Model menu to the picked harness: an untouched menu
+    /// takes its newest model; a pick survives as `ModelPick.refit` says.
     private func prefillModel() {
-        guard !modelEdited else { return }
-        modelName = pickedHarness?.lastModel ?? ""
+        modelPick.refit(LaunchOptions.recentModels(of: pickedHarness))
     }
 
     /// The hub's step while the launch works, then why it stopped.
@@ -385,8 +372,7 @@ struct TaskDetailPage: View {
         let hub = app.hub
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         // A pick goes only for a harness that can honour it.
-        let modelPick = LaunchOptions.model(modelName,
-                                            supported: pickedHarness?.launchModel == true)
+        let launchModel = modelPick.model(supported: pickedHarness?.launchModel == true)
         let key = await flow.run(
             post: {
                 try await hub.withClient { client in
@@ -398,11 +384,11 @@ struct TaskDetailPage: View {
                         return try await client.openPull(owner: parts[0], repo: parts[1],
                                                          number: number, harness: harness,
                                                          prompt: text.isEmpty ? nil : text,
-                                                         model: modelPick)
+                                                         model: launchModel)
                     }
                     return try await client.resolveIssue(repo: repo, number: number, harness: harness,
                                                          prompt: text.isEmpty ? nil : text, context: nil,
-                                                         model: modelPick)
+                                                         model: launchModel)
                 }
             },
             fetch: { id in try await hub.withClient { try await $0.launch(id) } })
