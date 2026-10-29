@@ -671,6 +671,8 @@ struct PageView: View {
             PricingPage()
         case .repositories:
             RepositoriesPage()
+        case .tasks:
+            TasksPage()
         case .inbox:
             InboxPage()
         case .accounts:

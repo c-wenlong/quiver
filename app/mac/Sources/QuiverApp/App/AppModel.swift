@@ -453,6 +453,9 @@ final class AppModel {
     /// path change needs no rebuild here. Boards and the inbox persist
     /// to ~/.quiver/cache for a warm start.
     let github: GitHubModel
+    /// The Tasks page: the work items the hub's agents are on, read
+    /// through this Mac's hub (`GET /v1/app/tasks`).
+    let tasks = TasksModel()
     /// Polls the inbox while the app runs — regardless of which page is
     /// open — and turns new notifications into banners plus board
     /// invalidations. Assigned in init, where `~/.quiver` is known.

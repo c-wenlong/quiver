@@ -1,7 +1,7 @@
 /// The main window's sidebar, as app/mac/ROADMAP.md lays it out.
 public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case overview, sessions, calendar, pricing
-    case repositories, inbox
+    case repositories, tasks, inbox
     case accounts, harnesses, compute, skills, agentsMd, mcpServers, plugins, hooks, models
     case menuBar, widgets, serviceStatus, settings
 
@@ -14,6 +14,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .calendar: "Calendar"
         case .pricing: "Pricing"
         case .repositories: "Repositories"
+        case .tasks: "Tasks"
         case .inbox: "Inbox"
         case .accounts: "Accounts"
         case .harnesses: "Harnesses"
@@ -39,6 +40,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .calendar: "calendar"
         case .pricing: "dollarsign.circle"
         case .repositories: "shippingbox"
+        case .tasks: "checklist"
         case .inbox: "tray"
         case .accounts: "person.2"
         case .harnesses: "terminal"
@@ -93,7 +95,7 @@ public enum SidebarGroup: CaseIterable, Identifiable, Sendable {
     public var sections: [AppSection] {
         switch self {
         case .usage: [.overview, .sessions, .calendar, .pricing]
-        case .github: [.repositories, .inbox]
+        case .github: [.repositories, .tasks, .inbox]
         case .manage: [.accounts, .harnesses, .compute]
         case .primitives: [.plugins, .skills, .agentsMd, .mcpServers, .hooks, .models]
         case .system: [.menuBar, .widgets, .serviceStatus, .settings]
