@@ -248,6 +248,10 @@ struct ResolveIssueSheet: View {
     /// improves the *default*.
     @State private var harnessTouched = false
     @State private var prompt: String
+    @State private var model = ""
+    /// What the Model field last prefilled: `model` differing from it
+    /// means the user typed, so a harness change must not overwrite.
+    @State private var modelFilled = ""
     @State private var flow = LaunchFlow()
     @State private var launch: Task<Void, Never>?
     /// The session list as it was when the sheet opened, for the
@@ -279,6 +283,7 @@ struct ResolveIssueSheet: View {
                 if let machine {
                     startsIn(machine)
                     harnessSection(machine)
+                    ModelField(machine: machine, harness: harness, text: $model, sessions: rows, disabled: flow.busy)
                     promptSection
                     startSection(machine)
                 } else {
@@ -302,8 +307,20 @@ struct ResolveIssueSheet: View {
             rows = app.sessions
             if harness == nil { harness = defaultHarness() }
         }
+        .onChange(of: harness) { _, _ in
+            if let machine { refillModel(on: machine) }
+        }
         .task { await loadDetail() }
         .onDisappear { launch?.cancel() }
+    }
+
+    /// The Model field's prefill after a harness change: an untouched
+    /// field takes the machine's last-used model for the new harness, a
+    /// typed one keeps what the user wrote.
+    private func refillModel(on machine: Machine) {
+        let next = NewSessionOptions.modelText(text: model, filled: modelFilled, for: harness, on: machine)
+        model = next.text
+        modelFilled = next.filled
     }
 
     /// Same default as the new-session sheet: the harness last run in
@@ -436,8 +453,9 @@ struct ResolveIssueSheet: View {
     private func start(_ machine: Machine) async {
         guard let client = app.client, let harness else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pick = NewSessionOptions.modelPick(model, for: harness, on: machine)
         let key = await flow.run(
-            post: { try await client.resolveIssue(repo: repo, number: number, harness: harness, prompt: text) },
+            post: { try await client.resolveIssue(repo: repo, number: number, harness: harness, prompt: text, model: pick) },
             fetch: { try await client.launch($0) })
         guard let key, !Task.isCancelled else { return }
         await app.refresh()

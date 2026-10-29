@@ -50,6 +50,46 @@ enum NewSessionOptions {
         return offered.first
     }
 
+    /// Whether a sheet's Model row shows at all: only a machine row
+    /// carrying `model_at_launch` can answer for its harnesses. An older
+    /// satellite's row lacks it and would refuse any pick, so the row
+    /// stays hidden rather than offer what can't work.
+    static func showsModelField(on machine: Machine) -> Bool {
+        machine.modelAtLaunch != nil
+    }
+
+    /// Whether `harness` honours a `model` pick at launch on `machine`.
+    static func acceptsModel(_ harness: String?, on machine: Machine) -> Bool {
+        guard let harness else { return false }
+        return machine.modelAtLaunch?.contains(harness) == true
+    }
+
+    /// The model `machine` last ran `harness` with, for the field's
+    /// prefill.
+    static func lastModel(_ harness: String?, on machine: Machine) -> String? {
+        guard let harness, let model = machine.lastModels?[harness], !model.isEmpty else { return nil }
+        return model
+    }
+
+    /// The Model field's refill on a harness change. `filled` is what the
+    /// sheet last prefilled: `text` still matching it means the field
+    /// holds only a default and refills freely, while anything else is
+    /// the user's own typing and stays.
+    static func modelText(text: String, filled: String, for harness: String?, on machine: Machine) -> (text: String, filled: String) {
+        guard text == filled else { return (text, filled) }
+        let next = lastModel(harness, on: machine) ?? ""
+        return (next, next)
+    }
+
+    /// What the launch posts as `model`: the trimmed pick, or nil when
+    /// the field is empty or the harness can't honour one — on the wire
+    /// an absent key already means "no pick".
+    static func modelPick(_ text: String, for harness: String?, on machine: Machine) -> String? {
+        guard acceptsModel(harness, on: machine) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     /// The machine's name for it, else what its sessions call it, with a
     /// capital first letter.
     static func name(_ harness: String, on machine: Machine?, sessions: [SessionRow]) -> String {

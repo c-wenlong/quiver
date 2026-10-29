@@ -246,6 +246,10 @@ struct OpenPullSheet: View {
 
     @State private var harness: String?
     @State private var prompt: String
+    @State private var model = ""
+    /// What the Model field last prefilled: `model` differing from it
+    /// means the user typed, so a harness change must not overwrite.
+    @State private var modelFilled = ""
     @State private var flow = LaunchFlow()
     @State private var launch: Task<Void, Never>?
     /// The session list as it was when the sheet opened, for the
@@ -272,6 +276,7 @@ struct OpenPullSheet: View {
                 if let machine {
                     startsIn(machine)
                     harnessSection(machine)
+                    ModelField(machine: machine, harness: harness, text: $model, sessions: rows, disabled: flow.busy)
                     promptSection
                     startSection(machine)
                 } else {
@@ -302,7 +307,19 @@ struct OpenPullSheet: View {
                     sessions: rows)
             }
         }
+        .onChange(of: harness) { _, _ in
+            if let machine { refillModel(on: machine) }
+        }
         .onDisappear { launch?.cancel() }
+    }
+
+    /// The Model field's prefill after a harness change: an untouched
+    /// field takes the machine's last-used model for the new harness, a
+    /// typed one keeps what the user wrote.
+    private func refillModel(on machine: Machine) {
+        let next = NewSessionOptions.modelText(text: model, filled: modelFilled, for: harness, on: machine)
+        model = next.text
+        modelFilled = next.filled
     }
 
     private func startsIn(_ machine: Machine) -> some View {
@@ -393,8 +410,9 @@ struct OpenPullSheet: View {
     private func start(_ machine: Machine) async {
         guard let client = app.client, let harness else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pick = NewSessionOptions.modelPick(model, for: harness, on: machine)
         let key = await flow.run(
-            post: { try await client.openPull(repo: repo, number: detail.number, harness: harness, prompt: text) },
+            post: { try await client.openPull(repo: repo, number: detail.number, harness: harness, prompt: text, model: pick) },
             fetch: { try await client.launch($0) })
         guard let key, !Task.isCancelled else { return }
         await app.refresh()

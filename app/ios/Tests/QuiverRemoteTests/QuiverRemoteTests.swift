@@ -1026,6 +1026,55 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertNil(NewSessionOptions.defaultHarness(folder: "/p", machineId: "m1", offered: [], sessions: rows))
     }
 
+    func testModelFieldFollowsTheMachinesList() {
+        var m = machine("m1", name: "mac", launchable: ["claude", "gemini"])
+        m.modelAtLaunch = ["claude"]
+        m.effortAtLaunch = ["claude"]
+        m.lastModels = ["claude": "claude-sonnet-4-5", "gemini": "gemini-3-pro"]
+        XCTAssertTrue(NewSessionOptions.showsModelField(on: m))
+        // An old satellite's row lacks the field entirely: the row hides.
+        XCTAssertFalse(NewSessionOptions.showsModelField(on: machine("m2", name: "old", launchable: ["claude"])))
+        // And it keys on `model_at_launch` alone, not `effort_at_launch`.
+        var effortOnly = machine("m3", name: "e", launchable: ["claude"])
+        effortOnly.effortAtLaunch = ["claude"]
+        XCTAssertFalse(NewSessionOptions.showsModelField(on: effortOnly))
+        XCTAssertTrue(NewSessionOptions.acceptsModel("claude", on: m))
+        XCTAssertFalse(NewSessionOptions.acceptsModel("gemini", on: m))
+        XCTAssertFalse(NewSessionOptions.acceptsModel(nil, on: m))
+        XCTAssertEqual(NewSessionOptions.lastModel("claude", on: m), "claude-sonnet-4-5")
+        XCTAssertEqual(NewSessionOptions.lastModel("gemini", on: m), "gemini-3-pro")
+        XCTAssertNil(NewSessionOptions.lastModel("pi", on: m))
+    }
+
+    func testModelPickOnlySendsASupportedNonemptyToken() {
+        var m = machine("m1", name: "mac", launchable: ["claude", "gemini"])
+        m.modelAtLaunch = ["claude"]
+        XCTAssertEqual(NewSessionOptions.modelPick(" claude-opus-4-1 ", for: "claude", on: m), "claude-opus-4-1")
+        // An empty field and a harness that can't take one both send
+        // no `model` key.
+        XCTAssertNil(NewSessionOptions.modelPick("   ", for: "claude", on: m))
+        XCTAssertNil(NewSessionOptions.modelPick("gpt-5", for: "gemini", on: m))
+        XCTAssertNil(NewSessionOptions.modelPick("x", for: "claude", on: machine("m2", name: "old")))
+    }
+
+    func testModelTextRefillsOnlyAnUntouchedField() {
+        var m = machine("m1", name: "mac", launchable: ["claude", "codex"])
+        m.lastModels = ["claude": "a", "codex": "b"]
+        // A fresh field takes the prefill, and retakes it on a change.
+        var r = NewSessionOptions.modelText(text: "", filled: "", for: "claude", on: m)
+        XCTAssertEqual(r.text, "a")
+        r = NewSessionOptions.modelText(text: r.text, filled: r.filled, for: "codex", on: m)
+        XCTAssertEqual(r.text, "b")
+        // Typed text is the user's: a harness change never overwrites it.
+        r = NewSessionOptions.modelText(text: "mine", filled: "b", for: "claude", on: m)
+        XCTAssertEqual(r.text, "mine")
+        XCTAssertEqual(r.filled, "b")
+        // A cleared field counts as typed: it stays empty rather than
+        // refilling.
+        r = NewSessionOptions.modelText(text: "", filled: "b", for: "claude", on: m)
+        XCTAssertEqual(r.text, "")
+    }
+
     func testDecodesHubLaunchAndMachineRows() throws {
         let launch = try Hub.decoder.decode(LaunchStatus.self, from: Data(
             #"{"ok":true,"launch_id":"l1a2","state":"pending","queued":true,"note":"queued for satellite"}"#.utf8))
@@ -1035,6 +1084,15 @@ final class NewSessionOptionsTests: XCTestCase {
             #"{"id":"m","name":"mac","harnesses":["claude","gemini"],"launchable":["claude"],"harness_names":{"claude":"Claude Code"}}"#.utf8))
         XCTAssertEqual(m.launchable, ["claude"])
         XCTAssertEqual(m.harnessNames?["claude"], "Claude Code")
+        // An old satellite's row carries no launch-option fields at all.
+        XCTAssertNil(m.modelAtLaunch)
+        XCTAssertNil(m.effortAtLaunch)
+        XCTAssertNil(m.lastModels)
+        let newer = try Hub.decoder.decode(Machine.self, from: Data(
+            #"{"id":"m2","launchable":["claude","codex"],"model_at_launch":["claude","codex"],"effort_at_launch":["claude"],"last_models":{"claude":"claude-opus-4-1"}}"#.utf8))
+        XCTAssertEqual(newer.modelAtLaunch, ["claude", "codex"])
+        XCTAssertEqual(newer.effortAtLaunch, ["claude"])
+        XCTAssertEqual(newer.lastModels?["claude"], "claude-opus-4-1")
         let listing = try Hub.decoder.decode(FolderListing.self, from: Data(
             #"{"path":"/Users/k","parent":"/Users","folders":[{"name":"Projects","path":"/Users/k/Projects"}],"truncated":false}"#.utf8))
         XCTAssertEqual(listing.folders.map(\.name), ["Projects"])

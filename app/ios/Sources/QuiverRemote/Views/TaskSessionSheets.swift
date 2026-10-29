@@ -20,6 +20,10 @@ struct TaskSessionSheet: View {
     /// improves the *default*.
     @State private var harnessTouched = false
     @State private var prompt: String
+    @State private var model = ""
+    /// What the Model field last prefilled: `model` differing from it
+    /// means the user typed, so a harness change must not overwrite.
+    @State private var modelFilled = ""
     @State private var folder: String?
     @State private var showAllFolders = false
     @State private var folderQuery = ""
@@ -75,6 +79,7 @@ struct TaskSessionSheet: View {
                 if let machine {
                     startsIn(machine)
                     harnessSection(machine)
+                    ModelField(machine: machine, harness: harness, text: $model, sessions: rows, disabled: flow.busy)
                     promptSection
                     if !worktreeLaunch { folderSection(machine) }
                     startSection(machine)
@@ -119,7 +124,19 @@ struct TaskSessionSheet: View {
             harness = NewSessionOptions.defaultHarness(
                 folder: folder, machineId: machine.id, offered: offered, sessions: rows)
         }
+        .onChange(of: harness) { _, _ in
+            if let machine { refillModel(on: machine) }
+        }
         .onDisappear { launch?.cancel() }
+    }
+
+    /// The Model field's prefill after a harness change: an untouched
+    /// field takes the machine's last-used model for the new harness, a
+    /// typed one keeps what the user wrote.
+    private func refillModel(on machine: Machine) {
+        let next = NewSessionOptions.modelText(text: model, filled: modelFilled, for: harness, on: machine)
+        model = next.text
+        modelFilled = next.filled
     }
 
     private func startsIn(_ machine: Machine) -> some View {
@@ -310,14 +327,15 @@ struct TaskSessionSheet: View {
     private func start(_ machine: Machine) async {
         guard let client = app.client, let harness else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pick = NewSessionOptions.modelPick(model, for: harness, on: machine)
         let post: () async throws -> LaunchStatus
         if let r = issueRoute {
-            post = { try await client.resolveIssue(repo: r.repo, number: r.number, harness: harness, prompt: text) }
+            post = { try await client.resolveIssue(repo: r.repo, number: r.number, harness: harness, prompt: text, model: pick) }
         } else if let r = pullRoute {
-            post = { try await client.openPull(repo: r.repo, number: r.number, harness: harness, prompt: text) }
+            post = { try await client.openPull(repo: r.repo, number: r.number, harness: harness, prompt: text, model: pick) }
         } else {
             guard let folder else { return }
-            post = { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text) }
+            post = { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text, model: pick) }
         }
         let key = await flow.run(post: post, fetch: { try await client.launch($0) })
         if !worktreeLaunch, let launchId = flow.launchId {
