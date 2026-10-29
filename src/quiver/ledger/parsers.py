@@ -1,9 +1,10 @@
 """Harness logs to ledger records.
 
-Ports ``ClaudeLogParser.swift``, ``CodexFileParser.swift`` and the OpenCode
-and Devin readers in ``DatabaseSources.swift``. Keys and token splits must
-stay identical to the Swift ones, so both ledgers count a response once and
-the same way.
+Ports ``ClaudeLogParser.swift``, ``CodexFileParser.swift``, the OpenCode
+and Devin readers in ``DatabaseSources.swift``, and the Pi, Droid and
+Cline readers in ``SessionFileParsers.swift``. Keys and token splits must
+stay identical to the Swift ones, so both ledgers count a response once
+and the same way.
 """
 
 from __future__ import annotations
@@ -500,3 +501,200 @@ def devin_records(db: Path) -> list[LedgerRecord]:
         if ev.total > 0 and request_id:
             out.append(LedgerRecord(key=f"devin:{request_id}", event=ev))
     return out
+
+
+# ---------------------------------------------------------------- Pi
+
+_PI_MARKERS = (b'"message"', b'"session"')
+
+
+class PiFileParser:
+    """One Pi session log (``<pi home>/agent/sessions/``), read line by
+    line (``PiFileParser`` in ``SessionFileParsers.swift``).
+
+    Assistant ``message`` lines carry a ``usage`` block with per-request
+    counts and a USD ``cost`` Pi computed itself. ``usage.output`` already
+    includes ``reasoning``, so reasoning is split back out of output the
+    way the Codex reader splits it. The session's cwd arrives once on its
+    ``session`` line, so it is kept as line-parser state. Timestamps are
+    milliseconds.
+    """
+
+    def __init__(self, path: Path, account: str, cwd: str | None = None):
+        self.path, self.account, self.cwd = path, account, cwd
+
+    @staticmethod
+    def wants(line: bytes) -> bool:
+        return any(m in line for m in _PI_MARKERS)
+
+    def records(self, obj: dict) -> list[LedgerRecord]:
+        kind = obj.get("type")
+        if kind == "session":
+            cwd = json_str(obj.get("cwd"))
+            if cwd:
+                self.cwd = cwd
+            return []
+        if kind != "message":
+            return []
+        message = obj.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            return []
+        usage = message.get("usage")
+        ms = message.get("timestamp")
+        # Swift's ``as? NSNumber``, which a JSON bool also passes.
+        if not isinstance(usage, dict) or not isinstance(ms, (int, float)):
+            return []
+        output = json_int(usage.get("output"))
+        reasoning = min(json_int(usage.get("reasoning")), output)
+        cost = usage.get("cost")
+        total_cost = cost.get("total") if isinstance(cost, dict) else None
+        logged = (float(total_cost)
+                  if isinstance(total_cost, (int, float)) and not isinstance(total_cost, bool)
+                  else None)
+        ev = UsageEvent(
+            harness="pi", account=self.account, session=str(self.path), cwd=self.cwd,
+            model=json_str(message.get("model")) or "unknown", ts=float(ms) / 1000,
+            input=json_int(usage.get("input")), output=output - reasoning,
+            cache_read=json_int(usage.get("cacheRead")),
+            cache_write=json_int(usage.get("cacheWrite")), reasoning=reasoning,
+            cost=logged)
+        if not (ev.total > 0 or (logged or 0) > 0):
+            return []
+        identity = json_str(obj.get("id")) or f"{float(ms):.3f}"
+        return [LedgerRecord(key=f"pi:{self.path.name}:{identity}", event=ev)]
+
+
+def pi_file_records(path: Path, account: str) -> list[LedgerRecord]:
+    parser = PiFileParser(path, account)
+    out: list[LedgerRecord] = []
+    for line in iter_lines(path):
+        if not parser.wants(line):
+            continue
+        try:
+            obj = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if isinstance(obj, dict):
+            out.extend(parser.records(obj))
+    return out
+
+
+# ---------------------------------------------------------------- session totals
+
+
+class Empty:
+    """``SessionTotals.empty``: the session's file parses but reports no
+    usage, so a previous scan's event under ``key`` is deleted, not left
+    behind."""
+
+    __slots__ = ("key",)
+
+    def __init__(self, key: str):
+        self.key = key
+
+
+def _read_json_object(path: Path) -> dict:
+    """The file's JSON object (``SessionTotalsFile.readJSON``). ``OSError``
+    and ``ValueError`` propagate, so the scan notes the file and keeps it
+    unread — its cursor is saved only on a clean parse."""
+    obj = json.loads(path.read_bytes())
+    if not isinstance(obj, dict):
+        raise ValueError(f"{path}: not a JSON object")
+    return obj
+
+
+def droid_transcript(settings: Path) -> Path:
+    """The transcript a ``<uuid>.settings.json`` is derived from —
+    ``<uuid>.jsonl`` beside it. Its stamp is part of the settings file's
+    read cursor, so a transcript change alone re-reads the pair."""
+    return settings.with_suffix("").with_suffix("").with_suffix(".jsonl")
+
+
+def droid_session_totals(settings: Path, account: str):
+    """Droid ``<droid home>/sessions/<project>/<uuid>.settings.json``
+    (``SessionTotalsFile.droid``).
+
+    The settings file mirrors the session's cumulative token usage; the
+    transcript beside it supplies cwd and the timestamp of the last event
+    (its own mtime when there is none — the whole-file guard is the scan's,
+    like Swift's ``max(transcript?... , settings.mtime)``).
+    """
+    session_id = settings.with_suffix("").with_suffix("").name
+    key = f"droid:{session_id}"
+    obj = _read_json_object(settings)
+    usage = first_present(obj, "inclusiveTokenUsage", "tokenUsage")
+    if not isinstance(usage, dict):
+        return Empty(key)
+    input_ = json_int(usage.get("inputTokens"))
+    output = json_int(usage.get("outputTokens"))
+    cache_read = json_int(usage.get("cacheReadTokens"))
+    cache_write = json_int(usage.get("cacheCreationTokens"))
+    reasoning = json_int(usage.get("thinkingTokens"))
+    if input_ + output + cache_read + cache_write + reasoning <= 0:
+        return Empty(key)
+
+    cwd = None
+    last = settings.stat().st_mtime
+    try:
+        lines = open(droid_transcript(settings), "rb")
+    except OSError:
+        lines = None
+    if lines is not None:
+        with lines:
+            try:
+                for line in lines:
+                    try:
+                        entry = json.loads(line)
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("type") == "session_start" and cwd is None:
+                        cwd = json_str(entry.get("cwd"))
+                    stamp = parse_timestamp(entry.get("timestamp"))
+                    if stamp is not None:
+                        last = stamp
+            except OSError:
+                # A mid-read failure ends the scan of the transcript, as
+                # a ``nil`` read does the line loop.
+                pass
+
+    ev = UsageEvent(
+        harness="droid", account=account, session=session_id, cwd=cwd,
+        model=json_str(obj.get("model")) or "unknown", ts=last,
+        input=input_, output=output, cache_read=cache_read,
+        cache_write=cache_write, reasoning=reasoning, session_total=True)
+    return LedgerRecord(key=key, event=ev, authoritative=True)
+
+
+def cline_session_totals(path: Path, account: str):
+    """Cline ``<cline home>/data/sessions/<id>/<id>.json``
+    (``SessionTotalsFile.cline``). ``None`` when the file is not a
+    session's — a legacy shape the scan leaves alone rather than deletes."""
+    obj = _read_json_object(path)
+    session_id = json_str(obj.get("session_id"))
+    if session_id is None:
+        return None
+    key = f"cline:{session_id}"
+    metadata = obj.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    input_ = json_int(metadata.get("tokensIn"))
+    output = json_int(metadata.get("tokensOut"))
+    cache_read = json_int(metadata.get("cacheReads"))
+    cache_write = json_int(metadata.get("cacheWrites"))
+    logged = metadata.get("totalCost")
+    cost = (float(logged)
+            if isinstance(logged, (int, float)) and not isinstance(logged, bool)
+            and logged > 0 else None)
+    if input_ + output + cache_read + cache_write <= 0 and cost is None:
+        return Empty(key)
+    ts = parse_timestamp(obj.get("ended_at")) or parse_timestamp(obj.get("started_at"))
+    if ts is None:
+        return Empty(key)
+    ev = UsageEvent(
+        harness="cline", account=account, session=session_id,
+        cwd=json_str(first_present(obj, "cwd", "workspace_root")),
+        model=json_str(obj.get("model")) or "unknown", ts=ts,
+        input=input_, output=output, cache_read=cache_read,
+        cache_write=cache_write, cost=cost, session_total=True)
+    return LedgerRecord(key=key, event=ev, authoritative=True)

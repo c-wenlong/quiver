@@ -27,6 +27,11 @@ class UsageEvent:
     reasoning: int = 0
     cost: float | None = None
     tier: str | None = None
+    # Droid and Cline report one total per session, not per request. Such
+    # an event never crosses a model's long-context threshold: its summed
+    # input says nothing about any single request's prompt size
+    # (``isSessionTotal``).
+    session_total: bool = False
 
     @property
     def total(self) -> int:
@@ -47,6 +52,17 @@ class LedgerRecord:
     # row (the totals tied) still moves the row to this record's model, so
     # a reader that names models differently renames old rows in place.
     relabels_model: bool = False
+    # Session-total sources (Droid, Cline) rewrite one file per session, so
+    # a re-read under the same key replaces whatever the file said before,
+    # even when the totals went down (``authoritative``).
+    authoritative: bool = False
+    # The account in ``key`` is a real account id more than one profile can
+    # read — the Cursor feed when the reply names an ``account_id``. An
+    # authoritative write then removes a stale row for the same event
+    # under any profile's account home. Without it the account is the
+    # profile itself, so only this profile's stale rows match
+    # (``accountSpansProfiles``).
+    account_spans_profiles: bool = False
 
 
 def json_int(value) -> int:

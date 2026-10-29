@@ -578,5 +578,6 @@ def _session_rows(ctx, blocks: list[dict], usage: dict, scan_ok: bool) -> dict[s
             ref["row"] = row["key"]
             ref["title"] = session_title(row.get("title"), sid, harness, grok)
     machines = catalog_mod.load_machines(ctx.home)
-    built = sessions_mod.build(list(chosen.values()), usage, hub, machines, scanned=scan_ok)
+    built = sessions_mod.build(list(chosen.values()), usage, hub, machines,
+                               scanned=scan_ok, home=ctx.home)
     return {r["key"]: r for r in built}

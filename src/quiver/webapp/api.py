@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from quiver.ledger import overview as overview_mod
+from quiver.ledger import feed, overview as overview_mod
 from quiver.ledger.sessions import by_session
 from quiver.ledger.pricing import load_catalog
 from quiver.ledger.scan import scan
@@ -38,6 +38,11 @@ class WebApp:
         self._catalog_at = 0.0
         self._scanned_at = 0.0
         self._last_scan = None
+        # Cursor's feed fetches over the network, so a round runs off
+        # this lock on its own thread and store (``keepFresh``); its last
+        # notes surface with the next page's.
+        self._feed_thread: threading.Thread | None = None
+        self._feed_notes: list[str] = []
 
     def _ensure(self, rescan: bool) -> None:
         if self._store is None:
@@ -49,6 +54,36 @@ class WebApp:
         if rescan or now - self._scanned_at > SCAN_TTL_S:
             self._last_scan = scan(self._store, self.home)
             self._scanned_at = time.time()
+        self._kick_feed()
+
+    def _kick_feed(self) -> None:
+        """Start a background feed round when the cadence says one is
+        due and none is running. A first signed-in poll walks 180 days
+        one slice at a time, which must never hold the page lock."""
+        if self._feed_thread is not None and self._feed_thread.is_alive():
+            return
+        if not feed.due(self._store):
+            return
+        self._feed_thread = threading.Thread(
+            target=self._poll_feed, name="ledger-cursor-feed", daemon=True)
+        self._feed_thread.start()
+
+    def _poll_feed(self) -> None:
+        """One feed round on a second connection to the same store: WAL
+        keeps a reader and this writer unblocked, ``feed.poll``'s round
+        lock keeps two rounds ordered, and either side finishing or
+        failing leaves the other's rows untouched."""
+        notes: list[str] = []
+        try:
+            store = LedgerStore(ledger_path_for(self.home))
+            try:
+                feed.poll(store, self.home, errors=notes)
+            finally:
+                store.close()
+        except Exception as exc:  # a failed poll must not sink a page
+            notes.append(f"cursor feed: {exc}")
+        with self._lock:
+            self._feed_notes = notes
 
     def overview(self, period: str, tz_name: str | None, rescan: bool = False) -> dict:
         with self._lock:
@@ -76,7 +111,8 @@ class WebApp:
             return {
                 "sessions": sessions_mod.build(rows, usage, hub_machine_id, machines,
                                                scanned=(self._last_scan is not None
-                                                        and not self._last_scan.errors)),
+                                                        and not self._last_scan.errors),
+                                               home=self.home),
                 "ledger_harnesses": sorted(sessions_mod.LEDGER_HARNESSES),
                 # Whether "Run in terminal" is wired on this hub (the
                 # sessions page plugin opens Terminal.app via osascript).
@@ -103,10 +139,13 @@ class WebApp:
                    self._last_scan is not None and not self._last_scan.errors)
 
     def _notes(self) -> list[str]:
-        if self._last_scan is None or not self._last_scan.errors:
-            return []
-        errors = self._last_scan.errors
-        return [f"{len(errors)} log files couldn't be read: " + "; ".join(errors[:3])]
+        notes: list[str] = []
+        if self._last_scan is not None and self._last_scan.errors:
+            errors = self._last_scan.errors
+            notes.append(f"{len(errors)} log files couldn't be read: "
+                         + "; ".join(errors[:3]))
+        notes += self._feed_notes
+        return notes
 
     def close(self) -> None:
         with self._lock:
