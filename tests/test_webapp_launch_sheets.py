@@ -40,7 +40,7 @@ function attrsOf(src) {
  * (an input has no close tag, so a lazy capture would swallow the rest). */
 function parseEls(html) {
   const out = [];
-  const re = /<(select|textarea)\b([^>]*)>([\s\S]*?)<\/\1>|<(input|button|a)\b([^>]*?)\/?>/g;
+  const re = /<(select|textarea)\b([^>]*)>([\s\S]*?)<\/\1>|<(input|button|a|div)\b([^>]*?)\/?>/g;
   let m;
   while ((m = re.exec(html))) out.push([attrsOf(m[2] || m[5] || ""), m[3] || "", m[1] || m[4]]);
   return out;
@@ -110,7 +110,8 @@ const panel = { _html: "",
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
   querySelectorAll(sel) { return queryAllIn(this._html, sel); } };
 globalThis.document = {
-  getElementById: (id) => (id === "panel" ? panel : registry.get(id) || created.get(id) || null),
+  getElementById: (id) => (id === "panel" ? panel : registry.get(id) || created.get(id)
+    || [...created.values()].map((e) => e.querySelector("#" + id)).find(Boolean) || null),
   querySelectorAll: (sel) => queryAllIn(panel.innerHTML, sel),
   createElement: (tag) => makeEl("", { __tag: tag }, "", tag),
   addEventListener() {}, hidden: false,
@@ -306,7 +307,9 @@ apiAnswers.push(
   ["/v1/launches/", { status: 200, data: { state: "untracked" } }]);
 fetchRoutes.push(
   ["/v1/sessions", { status: 202, body: { launch_id: "L1", state: "pending" } }]);
-sessionsPage.data = { sessions: [{ cwd: "/tmp/wt", harness: "claude", machine_id: "m1" }] };
+sessionsPage.data = { sessions: [
+  { cwd: "/tmp/wt", harness: "claude", machine_id: "m1" },
+  { cwd: "/tmp/gem", harness: "gemini", machine_id: "m1" }] };
 const out = {};
 (async () => {
   await openNewSession();
@@ -352,6 +355,24 @@ const out = {};
   await openNewSession();
   await tick();
   out.hiddenOldSat = !q("#ns-model");
+  // A typed folder that flips the model row must not rebuild the sheet:
+  // the folder input keeps its node (and so its focus and caret).
+  apiAnswers.length = 0;
+  apiAnswers.push(["/v1/machines", { status: 200, data: { machines: [
+    { id: "m1", name: "hub", online: true, launchable: ["claude", "gemini", "codex"],
+      model_at_launch: ["claude", "codex"], effort_at_launch: ["claude"],
+      last_models: { claude: "opus", codex: "gpt-5-codex" } }] } }]);
+  await openNewSession();
+  await tick();
+  const folderEl = q("#ns-folder");
+  const slot = q("#ns-model-slot");
+  folderEl.value = "/tmp/gem"; folderEl.oninput(); await tick();
+  out.flipHidesRow = slot.querySelector("#ns-model") == null;
+  out.folderNodeKeptOff = q("#ns-folder") === folderEl;
+  folderEl.value = "/tmp/wt"; folderEl.oninput(); await tick();
+  const shown2 = slot.querySelector("#ns-model");
+  out.flipShowsRow = shown2 && shown2.value;
+  out.folderNodeKeptOn = q("#ns-folder") === folderEl;
   process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
@@ -420,6 +441,14 @@ class TestLaunchModelField(unittest.TestCase):
                          "a clean field re-prefills from the new machine's ledger")
         self.assertTrue(out["hiddenOldSat"],
                         "a machine row without model_at_launch shows no field")
+        self.assertTrue(out["flipHidesRow"],
+                        "a folder re-defaulting to a non-model harness drops the row")
+        self.assertTrue(out["folderNodeKeptOff"],
+                        "the folder input is rebuilt on a model-row flip — focus is lost")
+        self.assertEqual(out["flipShowsRow"], "opus",
+                         "a folder re-defaulting back re-fills the row")
+        self.assertTrue(out["folderNodeKeptOn"],
+                        "the folder input is rebuilt when the row returns — focus is lost")
 
 
 if __name__ == "__main__":

@@ -712,6 +712,22 @@ function nsRefillModel() {
   if (!ns.modelDirty) ns.model = nsLastModel(nsMachine());
 }
 
+function nsModelHtml(machine, busy) {
+  return nsModelOk(machine) ? `<div class="caption">Model</div>
+    <input class="field gh-mono" id="ns-model" type="text" autocomplete="off" spellcheck="false"
+      aria-label="Model" placeholder="Model (optional)" value="${esc(ns.model)}"${busy ? " disabled" : ""}>` : "";
+}
+
+/* The model row repaints alone when a typed folder flips whether the
+ * picked harness can take a model — the folder input keeps focus. */
+function nsPaintModel() {
+  const slot = document.getElementById("ns-model-slot");
+  if (!slot) return;
+  slot.innerHTML = nsModelHtml(nsMachine(), nsBusy());
+  const modelIn = slot.querySelector("#ns-model");
+  if (modelIn) modelIn.oninput = () => { ns.model = modelIn.value; ns.modelDirty = true; };
+}
+
 /* Recent folders on the chosen machine, most recent first, the session
  * rows' cwd deduped; the box's words all have to match, any case. */
 function nsFolders(m) {
@@ -756,9 +772,7 @@ function nsPaint() {
       ${(browse.folders || []).map((f) => `<button type="button" class="ns-folder" data-path="${esc(f.path)}">${esc(f.name)}/</button>`).join("")}
       ${!browse.loading && !browse.error ? `<div class="sheet-actions"><button type="button" class="tab selected" id="ns-browse-use" data-path="${esc(browse.path)}">Use this folder</button></div>` : ""}
     </div>` : "";
-  const modelUi = nsModelOk(machine) ? `<div class="caption">Model</div>
-    <input class="field gh-mono" id="ns-model" type="text" autocomplete="off" spellcheck="false"
-      aria-label="Model" placeholder="Model (optional)" value="${esc(ns.model)}"${busy ? " disabled" : ""}>` : "";
+  const modelUi = `<div id="ns-model-slot">${nsModelHtml(machine, busy)}</div>`;
   const note = ns.message ? `<p class="${ns.phase === "failed" ? "error" : "note"}">${esc(ns.message)}</p>` : "";
   const startLabel = { starting: "Starting…", waiting: "Waiting for the session…", started: "Opening the chat…" }[ns.phase] || "Start";
   sheet.innerHTML = `<div class="sheet-body">
@@ -814,14 +828,11 @@ function nsPaint() {
   if (folderIn) folderIn.oninput = () => {
     ns.folder = folderIn.value;
     // A typed folder re-defaults the harness too, repainted in place so
-    // the field keeps its caret.
+    // the field keeps its caret — even when the model row itself
+    // appears or drops, only its slot is redrawn.
     if (!ns.harnessTouched) {
       nsPickHarness(); nsPaintHarness();
-      nsRefillModel();
-      const mi = sheet.querySelector("#ns-model");
-      if (mi) mi.value = ns.model;
-      // A re-defaulted harness can also drop or add the field itself.
-      if (!!mi !== nsModelOk(nsMachine())) nsPaint();
+      nsRefillModel(); nsPaintModel();
     }
     nsPaintStart();
   };
