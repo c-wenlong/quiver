@@ -31,7 +31,7 @@ and the fixture that pins the shape. Fixtures live under
 | `swe plugins catalog --json` | `PluginCatalog` | `swe-plugins-catalog.json` |
 | `swe plugins install|uninstall|enable|disable <ref> --harness=<id> --json` | `PluginActionResult` | `swe-plugins-action.json` |
 | `swe install --json` | `InstallList` → `[InstallableHarness]` | `swe-install.json` |
-| `swe harness usage <devin|cursor> --account-dir=<dir> --json` | `{"name", "account_dir", "limit"}` where `limit` is a row's `rate_limit` object or null | |
+| `swe harness usage <devin|cursor> --account-dir=<dir> --json` | `{"name", "account_dir", "status", "remedy", "limit"}` — `status` is `ok` \| `no-sub` \| `signed-out` \| `auth-required` \| `permission-required` \| `unavailable` \| `timeout`; `remedy` is a `Remedy` aimed at this account's own files, null for `ok`; `limit` is a row's `rate_limit` object or null. Exits 1 for any status but `ok`, `no-sub` and `signed-out`, after printing the document | |
 | `swe harness usage-events cursor [--account-dir=<dir>] [--since=<s>] --json` | `{"status", "account_id", "events"}` — `status` is `ok` \| `incomplete` \| `signed-out` \| `auth-required` \| `unavailable` (`incomplete` means a 7-day slice filled all 50 pages; the events are real but the window may have more). `account_id` is the Cursor user id from the token's `sub` claim, null when there is no token; each event has `timestamp` (epoch seconds), `model`, `kind`, `conversation_id`, `headless`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd` (dollars, null when Cursor logged none) | |
 | `swe harness usage-daily codex [--account-dir=<dir>] --json` | `{"status", "summary", "days"}` — `status` is `ok` \| `auth-required` \| `unsupported` \| `unavailable`. `summary` is `{lifetime_tokens, peak_daily_tokens, current_streak_days, longest_streak_days}` or null; each `days` entry is `{"date": "YYYY-MM-DD", "tokens": int}` | |
 | `swe doctor --json` | `DoctorReport` (`allowFailure`) | `swe-doctor.json` |
@@ -167,6 +167,14 @@ The CLI side of remote also speaks `--json`:
   but the fetch failed), or null with a reading, without `--usage`, or
   when swe can't tell. Readers that predate it keep showing "no reading";
   treat any other value as null.
+- `Harness.issue` (with `--usage`): `{status, remedy}` when the row's usage
+  read failed or came back as a sentinel, null on a healthy row. `status` is
+  the same vocabulary as `swe harness usage`, finer than `no_reading`.
+- `Remedy`: `{kind, title, summary, steps: [str], command?, url?}` from
+  `harness/remedies.py`'s `REMEDIES`. `kind` is `relogin`, `run-command`,
+  `open-app`, `grant-permission` or `retry`; `command` is a line to copy or
+  run in a terminal, `url` a link to open (the macOS privacy pane for
+  `grant-permission`). `swe doctor`'s `usage.*` findings carry the same fix.
 - `RateLimit`: `status`, `used_percent`, `remaining_percent`,
   `limit_reached`, `reset_at`, `window`, `window_seconds`, `plan_type`,
   `remaining_units`, `total_units`, `fetched_at`, `windows`,

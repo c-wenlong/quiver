@@ -237,6 +237,64 @@ class IssueFindingsTest(unittest.TestCase):
         got = issue_findings(self.home)
         self.assertEqual(got[0].severity, "info")
 
+    def test_an_outage_waits_until_it_persists(self):
+        # One or two failed polls are a blip the card shows; Doctor lists
+        # an outage once it has failed PERSISTENT_POLLS polls in a row.
+        for count, listed in ((1, False), (2, False), (3, True)):
+            with self.subTest(occurrences=count):
+                self.tearDown()
+                self.setUp()
+                self._write({
+                    "devin/timeout": {
+                        "harness": "devin", "status": "timeout",
+                        "occurrences": count,
+                    },
+                })
+                self.assertEqual(bool(issue_findings(self.home)), listed)
+
+    def test_an_extra_accounts_own_fix_beats_the_table(self):
+        # The app stored a fix aimed at the account's own data dir; the
+        # table's would sign in the default account instead.
+        command = 'XDG_DATA_HOME="/tmp/acct" devin auth login'
+        self._write({
+            "devin/devin-work/auth-required": {
+                "harness": "devin", "status": "auth-required",
+                "account": "Work", "accountKey": "devin-work",
+                "remedy": {"summary": "This account's Devin API key was rejected",
+                           "steps": ["Log in."], "command": command},
+            },
+        })
+        got = issue_findings(self.home)
+        self.assertEqual(got[0].fix, command)
+        self.assertIn("(Work)", got[0].message)
+
+    def test_an_extra_accounts_outage_takes_the_tables_fix(self):
+        # A file from before remedy_for_account stopped retargeting
+        # outages may hold a login command for one; the table's retry
+        # fix replaces it.
+        self._write({
+            "devin/devin-work/unavailable": {
+                "harness": "devin", "status": "unavailable",
+                "account": "Work", "accountKey": "devin-work",
+                "occurrences": 3,
+                "remedy": {"summary": "This account isn't signed in to Devin",
+                           "steps": ["Log in."],
+                           "command": 'XDG_DATA_HOME="/tmp/acct" devin auth login'},
+            },
+        })
+        got = issue_findings(self.home)
+        self.assertNotIn("auth login", got[0].fix)
+        self.assertNotIn("signed in", got[0].message)
+
+    def test_a_permission_fix_is_the_settings_link(self):
+        self._write({
+            "devin/permission-required": {
+                "harness": "devin", "status": "permission-required",
+            },
+        })
+        got = issue_findings(self.home)
+        self.assertTrue(got[0].fix.startswith("x-apple.systempreferences:"))
+
     def test_resolved_and_malformed_rows_are_skipped(self):
         self._write({
             "cursor/auth-required": {"resolved": True, "harness": "cursor",

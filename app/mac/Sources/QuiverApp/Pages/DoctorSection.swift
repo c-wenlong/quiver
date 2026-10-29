@@ -181,6 +181,12 @@ private struct FindingRow: View {
                             }
                         } else if fix.hasPrefix("swe ") {
                             terminalButton(fix)
+                        } else if fix.hasPrefix("x-apple.systempreferences:"),
+                                  let url = URL(string: fix) {
+                            // A usage issue's permission fix is a settings
+                            // pane, not a command.
+                            Button("Open System Settings") { NSWorkspace.shared.open(url) }
+                                .secondaryButton()
                         }
                         CopyButton(help: "Copy the command") { copyToPasteboard(fix) }
                             .iconButton()

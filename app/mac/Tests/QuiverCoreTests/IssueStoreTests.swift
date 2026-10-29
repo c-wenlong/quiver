@@ -113,7 +113,128 @@ import Testing
         #expect(entry["status"] as? String == "auth-required")
         #expect(entry["account"] as? String == "Work")
         #expect(entry["occurrences"] as? Int == 1)
+        // swe doctor prefers this stored fix for an extra account.
+        #expect(entry["accountKey"] as? String == "work")
         #expect((entry["remedy"] as? [String: Any])?["command"] as? String == "cursor-agent status")
+    }
+
+    @Test func aRecurrenceCountsItsPollsFromOne() {
+        let clock = TestClock()
+        let store = tempStore(clock: clock)
+        for _ in 0..<3 { _ = store.record(harness: "devin", status: .unavailable, remedy: nil) }
+        store.resolve(harness: "devin")
+        clock.advance(600)
+        // A new episode: Doctor's "persistent" count starts over, and it
+        // dates from now, not the first outage.
+        let back = store.record(harness: "devin", status: .unavailable, remedy: nil)
+        #expect(back.issue.occurrences == 1)
+        #expect(back.issue.firstSeen == clock.now)
+    }
+
+    @Test func anOutageThatChangesKindKeepsCounting() {
+        let store = tempStore()
+        // timeout, unavailable, timeout: one outage three polls long, so
+        // Doctor's persistence threshold is met despite the flapping.
+        _ = store.record(harness: "devin", status: .timeout, remedy: nil)
+        _ = store.record(harness: "devin", status: .unavailable, remedy: nil)
+        let third = store.record(harness: "devin", status: .timeout, remedy: nil)
+        #expect(third.issue.occurrences == 3)
+        #expect(store.open().map(\.id) == ["devin/timeout"])
+        // A login problem in between is a different story: counting
+        // starts over once it is an outage again.
+        _ = store.record(harness: "devin", status: .authRequired, remedy: nil)
+        let after = store.record(harness: "devin", status: .unavailable, remedy: nil)
+        #expect(after.issue.occurrences == 1)
+    }
+
+    @Test func aSuccessfulReadMarksTheSlotHealthy() {
+        let store = tempStore()
+        // Never read: a sign-out is an account that was never set up.
+        let first = store.record(harness: "cursor", status: .signedOut, remedy: nil)
+        #expect(!first.wasHealthy)
+        store.resolve(harness: "cursor")
+        // It worked once, so signing out again is a regression.
+        let again = store.record(harness: "cursor", status: .signedOut, remedy: nil)
+        #expect(again.shouldNotify)
+        #expect(again.wasHealthy)
+        // Another account's slot is its own.
+        let other = store.record(harness: "cursor", status: .signedOut, remedy: nil,
+                                 account: "Work", accountKey: "work")
+        #expect(!other.wasHealthy)
+    }
+
+    @Test func unpolledSlotsClose() {
+        let store = tempStore()
+        _ = store.record(harness: "cursor", status: .authRequired, remedy: nil)
+        _ = store.record(harness: "devin", status: .authRequired, remedy: nil,
+                         account: "Work", accountKey: "work")
+        _ = store.record(harness: "devin", status: .authRequired, remedy: nil,
+                         account: "Side", accountKey: "side")
+        // Cursor was unstarred and Devin's "work" account removed: neither
+        // is polled again, so neither can recover. "side" stays open.
+        store.resolveMissing(starred: ["devin"], accounts: ["devin": ["side"]])
+        #expect(store.open().map(\.id) == ["devin/side/auth-required"])
+    }
+
+    @Test func aRenamedAccountsLabelFollows() {
+        let store = tempStore()
+        _ = store.record(harness: "devin", status: .authRequired, remedy: nil,
+                         account: "Work", accountKey: "work")
+        let renamed = store.record(harness: "devin", status: .authRequired, remedy: nil,
+                                   account: "Day job", accountKey: "work")
+        #expect(!renamed.shouldNotify)
+        #expect(renamed.issue.message.hasSuffix("(Day job)"))
+    }
+}
+
+/// What each surface makes of a status: the card's "Action needed" line
+/// and the Fix sheet's buttons.
+@Suite struct IssueSurfaceTests {
+    private let settings = "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"
+
+    @Test func onlyLoginAndPermissionProblemsNeedAction() {
+        let needing = IssueStatus.allCases.filter(\.needsAction)
+        #expect(needing == [.authRequired, .permissionRequired])
+        #expect(IssueStatus.allCases.filter(\.isOutage) == [.unavailable, .timeout])
+    }
+
+    @Test func theCardLineIsTheRemedySummaryOrAPlainReading() {
+        let named = HarnessIssue(status: .authRequired, remedy: UsageRemedy(
+            kind: "run-command", title: "Refresh Cursor's session",
+            summary: "Cursor's stored login is stale", steps: ["Run cursor-agent once."]))
+        #expect(named.actionNeededLine == "Cursor's stored login is stale")
+        #expect(HarnessIssue(status: .permissionRequired).actionNeededLine
+                == "macOS won't let Quiver read its credentials")
+        // Signed out and outages keep the card's own wording (Sign in,
+        // Refresh), so there is no Action needed line.
+        for status in [IssueStatus.signedOut, .unavailable, .timeout, .ok] {
+            #expect(HarnessIssue(status: status).actionNeededLine == nil)
+        }
+    }
+
+    @Test func theFixSheetOffersTheCommandThenTheLink() throws {
+        let both = UsageRemedy(kind: "grant-permission", title: "t", summary: "s",
+                               steps: ["a"], command: "cursor-agent status", url: settings)
+        let link = try #require(URL(string: settings))
+        #expect(both.actions == [.command("cursor-agent status"),
+                                 .open(link, label: "Open System Settings")])
+        let web = UsageRemedy(kind: "relogin", title: "t", summary: "s", steps: [],
+                              url: "https://cursor.com/settings")
+        #expect(web.actions.map { if case .open(_, let label) = $0 { label } else { "" } }
+                == ["Open Link"])
+        #expect(UsageRemedy(kind: "retry", title: "t", summary: "s", steps: []).actions.isEmpty)
+    }
+
+    @Test func aPermissionRemedyDecodesItsLink() throws {
+        let json = """
+        {"status": "permission-required",
+         "remedy": {"kind": "grant-permission", "title": "Let Quiver read Cursor's data",
+                    "summary": "macOS is blocking Cursor's session files",
+                    "steps": ["Open System Settings."], "url": "\(settings)"}}
+        """
+        let issue = try JSONDecoder().decode(HarnessIssue.self, from: Data(json.utf8))
+        #expect(issue.remedy?.url == settings)
+        #expect(issue.remedy?.actions.count == 1)
     }
 }
 
@@ -127,46 +248,110 @@ import Testing
         return (IssuesModel(store: store), store)
     }
 
-    @Test func anActionableFailureToastsOnce() {
+    @Test func aStaleLoginToastsOnceAndBadges() async {
         let (issues, _) = model()
-        issues.record(harness: "cursor", status: .authRequired,
-                      remedy: nil)
+        await issues.record(harness: "cursor", status: .authRequired, remedy: nil)
         #expect(issues.toast?.id == "cursor/auth-required")
-        #expect(issues.actionableCount == 1)
+        #expect(issues.badgeCount == 1)
         issues.dismissToast()
         // The same failure on the next poll does not toast again.
-        issues.record(harness: "cursor", status: .authRequired,
-                      remedy: nil)
+        await issues.record(harness: "cursor", status: .authRequired, remedy: nil)
         #expect(issues.toast == nil)
     }
 
-    @Test func anOutageIsACardStateNotAToast() {
+    @Test func aPermissionProblemToastsBadgesAndOffersTheSettingsPane() async {
         let (issues, _) = model()
-        issues.record(harness: "devin", status: .unavailable, remedy: nil)
-        #expect(issues.toast == nil)
-        // Transient failures still count for Doctor, not the badge.
-        #expect(issues.actionableCount == 0)
-        #expect(issues.open.count == 1)
+        let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"
+        await issues.record(harness: "devin", status: .permissionRequired,
+                            remedy: UsageRemedy(kind: "grant-permission",
+                                                title: "Let Quiver read Devin's credentials",
+                                                summary: "macOS is blocking Devin's credentials",
+                                                steps: ["Open System Settings."], url: pane))
+        #expect(issues.toast?.id == "devin/permission-required")
+        #expect(issues.badgeCount == 1)
+        // No command to run: Doctor's fix is the pane to open.
+        #expect(issues.findings.first?.fix == pane)
     }
 
-    @Test func okResolvesTheOpenIssuesForThatSlot() {
+    @Test func anOutageIsACardStateUntilItPersists() async {
         let (issues, _) = model()
-        issues.record(harness: "devin", status: .signedOut, remedy: nil,
-                      account: "Work", accountKey: "work")
-        #expect(issues.actionableCount == 1)
-        issues.record(harness: "devin", status: .ok, remedy: nil,
-                      account: "Work", accountKey: "work")
+        for poll in 1...IssuesModel.persistentPolls {
+            await issues.record(harness: "devin", status: .unavailable, remedy: nil)
+            // No toast and no badge, ever; Doctor only once it persists.
+            #expect(issues.toast == nil)
+            #expect(issues.badgeCount == 0)
+            #expect(issues.findings.isEmpty == (poll < IssuesModel.persistentPolls))
+        }
+        #expect(issues.findings.first?.severity == .info)
+    }
+
+    @Test func aSignOutToastsOnlyWhereAReadUsedToWork() async {
+        let (issues, _) = model()
+        // Starred but never signed in: Doctor lists it, nothing toasts.
+        await issues.record(harness: "cursor", status: .signedOut, remedy: nil)
+        #expect(issues.toast == nil)
+        #expect(issues.badgeCount == 0)
+        #expect(issues.findings.first?.severity == .warning)
+        // It signs in, works, then signs out: that regression toasts, but
+        // the badge stays for problems only the user can fix by hand.
+        await issues.record(harness: "cursor", status: .ok, remedy: nil)
+        await issues.record(harness: "cursor", status: .signedOut, remedy: nil)
+        #expect(issues.toast?.id == "cursor/signed-out")
+        #expect(issues.badgeCount == 0)
+    }
+
+    @Test func everyFailureInOnePollGetsItsTurn() async {
+        let (issues, _) = model()
+        await issues.record([
+            .init(harness: "cursor", status: .authRequired),
+            .init(harness: "devin", status: .permissionRequired),
+        ])
+        #expect(issues.toast?.id == "cursor/auth-required")
+        issues.dismissToast()
+        #expect(issues.toast?.id == "devin/permission-required")
+        issues.dismissToast()
+        #expect(issues.toast == nil)
+    }
+
+    @Test func okResolvesTheOpenIssuesForThatSlot() async {
+        let (issues, _) = model()
+        await issues.record(harness: "devin", status: .authRequired, remedy: nil,
+                            account: "Work", accountKey: "work")
+        #expect(issues.badgeCount == 1)
+        await issues.record(harness: "devin", status: .ok, remedy: nil,
+                            account: "Work", accountKey: "work")
         #expect(issues.open.isEmpty)
-        #expect(issues.actionableCount == 0)
+        #expect(issues.badgeCount == 0)
     }
 
-    @Test func doctorRowsComeFromTheStore() {
+    @Test func anUnstarredHarnessLeavesTheBadge() async {
         let (issues, _) = model()
-        issues.record(harness: "cursor", status: .authRequired,
-                      remedy: UsageRemedy(kind: "run-command", title: "Refresh",
-                                          summary: "Cursor's stored login is stale",
-                                          steps: ["Run cursor-agent once."],
-                                          command: "cursor-agent status"))
+        await issues.record([.init(harness: "cursor", status: .authRequired)],
+                            starred: ["cursor"], accounts: [:])
+        #expect(issues.badgeCount == 1)
+        // The next poll no longer stars Cursor: it can't recover, so it
+        // must not hold the badge forever.
+        await issues.record([], starred: [], accounts: [:])
+        #expect(issues.open.isEmpty)
+    }
+
+    @Test func aRelaunchReadsWhatTheLastRunLeft() async {
+        let (issues, store) = model()
+        await issues.record(harness: "cursor", status: .authRequired, remedy: nil)
+        let relaunched = IssuesModel(store: store)
+        await relaunched.reload()
+        #expect(relaunched.open.map(\.id) == ["cursor/auth-required"])
+        // Told last run: not raised again.
+        #expect(relaunched.toast == nil)
+    }
+
+    @Test func doctorRowsComeFromTheStore() async {
+        let (issues, _) = model()
+        await issues.record(harness: "cursor", status: .authRequired,
+                            remedy: UsageRemedy(kind: "run-command", title: "Refresh",
+                                                summary: "Cursor's stored login is stale",
+                                                steps: ["Run cursor-agent once."],
+                                                command: "cursor-agent status"))
         let finding = issues.findings.first
         #expect(finding?.check == "usage.cursor/auth-required")
         #expect(finding?.severity == .warning)

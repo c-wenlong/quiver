@@ -248,7 +248,7 @@ private struct Sidebar: View {
                                     isFocused: focused == section,
                                     collapsed: !isExpanded,
                                     badge: section == .inbox ? model.github.unreadCount
-                                        : section == .settings ? model.issues.actionableCount : 0,
+                                        : section == .settings ? model.issues.badgeCount : 0,
                                     shortcut: CommandKeyHold.shared.isHeld
                                         ? model.sidebar.shortcutNumber(of: section) : nil) {
                                 // Reselecting the open page asks a detail
@@ -372,7 +372,7 @@ private struct IssueToast: View {
             Button("Dismiss", systemImage: "xmark", action: onDismiss)
                 .labelStyle(.iconOnly)
                 .iconButton()
-                .help("Dismiss")
+                .hoverTip("Dismiss")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
