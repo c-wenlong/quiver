@@ -25,6 +25,13 @@ from quiver.skills.symlinks import SkillsSymlinkHint
 
 
 class SetupWizardTest(unittest.TestCase):
+    def setUp(self):
+        # The hub stage joins only while ~/.quiver can take a clone, which a
+        # throwaway HOME always can; these tests are about the other six.
+        patcher = patch("quiver.init.hub.can_clone", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_backup_file_preserves_source_and_uses_timestamped_sibling(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "config.json"

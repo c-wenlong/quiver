@@ -406,6 +406,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--apply", "Apply safe discovery changes"),
         ("--json", "Print discovery preview as JSON"),
         ("--non-interactive", "Preview without prompts or writes"),
+        ("--hub=", "Clone your hub repo as ~/.quiver first"),
     ],
     "gh": [
         ("--repo", "Repo as owner/name or a github.com URL"),

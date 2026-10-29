@@ -149,6 +149,7 @@ swe setup                    # six-stage interactive onboarding wizard
 swe setup --quick            # only missing or actionable setup stages
 swe setup report             # configure coding-session report models only
 swe setup --apply            # apply safe defaults and link AGENTS.md and skills, no prompts
+swe setup --hub=<git url>    # clone your hub repo as ~/.quiver first (fork one to start)
 swe --version                # print the swe version (also: swe -v, swe version)
 swe bug                      # open a GitHub bug report with your versions filled in
 swe harness discover         # scan PATH for unregistered AI CLIs
