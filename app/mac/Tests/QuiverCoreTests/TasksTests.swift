@@ -610,6 +610,16 @@ extension HubStubbed {
         #expect(model.tasks.map(\.id) == ["github:issue:o/r:5"])
     }
 
+    @Test func aRestartingHubIsRetriedWhetherOrNotTheAppHasAClient() {
+        // No client yet: swe's status says the hub is down. A client the
+        // app already holds: the connection itself fails. Both pass once
+        // the hub is up; a misbound hub or a bad reply doesn't.
+        #expect(TasksModel.hubNotAnswering(HubError(status: 0, code: "hub_down", message: "")))
+        #expect(TasksModel.hubNotAnswering(HubError(status: 0, code: "network", message: "")))
+        #expect(!TasksModel.hubNotAnswering(HubError(status: 0, code: "hub_blocked", message: "")))
+        #expect(!TasksModel.hubNotAnswering(HubError(status: 500, code: "internal", message: "")))
+    }
+
     @Test func aCancelledRetryStopsWithTheHubStillDown() async throws {
         let hub = LocalHub(locator: FakeLocator(address: nil),
                            store: HubDeviceStore(url: dir.appending(path: "\(UUID().uuidString)/d.json")))

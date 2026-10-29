@@ -476,9 +476,18 @@ public final class TasksModel {
     /// `bad-config`, `upstream-error`), nil when ok, disabled or absent.
     public private(set) var linearBlocked: String?
     public private(set) var error: String?
-    /// The last load found this Mac's hub not answering (`hub_down`):
-    /// stopped, or still starting after a restart.
+    /// The last load found this Mac's hub not answering: stopped, or
+    /// still starting after a restart (see `hubNotAnswering`).
     public private(set) var hubDown = false
+
+    /// The failures a restart produces, worth trying again: swe's status
+    /// says the hub is down (`hub_down`, when the app has no client
+    /// yet), or a client the app already holds can't connect (`network`).
+    /// A hub bound off this Mac, a refused credential or a bad reply is
+    /// not fixed by waiting.
+    public static func hubNotAnswering(_ error: HubError) -> Bool {
+        error.code == "hub_down" || error.code == "network"
+    }
     public private(set) var loaded = false
     /// The rows' filter, shared by the list's chips.
     public var filter: TaskFilter = .all
@@ -518,7 +527,7 @@ public final class TasksModel {
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message
-            hubDown = e.code == "hub_down"
+            hubDown = Self.hubNotAnswering(e)
         } catch {
             guard gen == generation else { return }
             self.error = error.localizedDescription
