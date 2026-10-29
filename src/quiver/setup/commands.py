@@ -111,8 +111,13 @@ def _setup_help():
                                 catalog ones that aren't registered yet)
   {c('cyan', 'swe setup --json')}       Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
+  {c('cyan', 'swe setup --hub=<git url>')}  Clone your hub repo as ~/.quiver first, then
+                                carry on with any of the above. ~/.quiver must
+                                be missing or empty; fork a hub repo first
 
 {c('bold', 'Steps')}
+  First, only while ~/.quiver is missing or empty: your hub repo's URL
+  (a blank answer starts an empty hub, as before)
   1. Discover and register AI coding CLI harnesses
   2. Check LLM provider credential coverage without storing secrets
   3. Import discovered MCP servers into the source-of-truth
@@ -126,7 +131,91 @@ def _setup_help():
     )
 
 
+def _take_hub(args: list[str]) -> tuple[list[str], str | None]:
+    """Pull ``--hub=<url>`` or ``--hub <url>`` out of ``args`` (the last
+    one wins). Raises ValueError for a ``--hub`` with no URL after it."""
+    rest: list[str] = []
+    url = None
+    at = 0
+    while at < len(args):
+        arg = args[at]
+        if arg.startswith("--hub="):
+            url = arg.split("=", 1)[1]
+        elif arg == "--hub":
+            if at + 1 >= len(args) or args[at + 1].startswith("-"):
+                raise ValueError("--hub takes a git URL: swe setup --hub=<url>")
+            url = args[at + 1]
+            at += 1
+        else:
+            rest.append(arg)
+        at += 1
+    return rest, url
+
+
+def _clone_hub(home: Path, url: str, *, quiet: bool) -> dict | None:
+    """``--hub``: clone the hub as ``~/.quiver`` and register its plugin
+    marketplaces. Returns what was cloned, or None after saying why not
+    (on stderr when ``quiet``, so --json keeps stdout for its document)."""
+    from quiver.init.hub import HubError, clone_and_register, public_url
+
+    if not quiet:
+        print(f"\n  Cloning {public_url(url.strip())} into ~/.quiver…")
+    try:
+        cloned = clone_and_register(home, url)
+    except HubError as exc:
+        print(c("red", f"  {exc}"), file=sys.stderr if quiet else sys.stdout)
+        return None
+    if not quiet:
+        print(c("green", "  Cloned."))
+        _print_marketplaces(cloned["marketplaces"])
+    return cloned
+
+
+def _print_marketplaces(rows: list[dict]) -> None:
+    if not rows:
+        return
+    print(f"  {c('bold', 'Plugin marketplaces')}")
+    for row in rows:
+        if row["error"] is None:
+            print(f"    {c('green', '✓')} {row['marketplace']} registered in {row['harness']}")
+        else:
+            print(f"    {c('yellow', '!')} {row['marketplace']} not registered in "
+                  f"{row['harness']}: {row['error']}")
+    if any(row["error"] for row in rows):
+        print(c("dim", "    swe find plugins lists what is left; --fix=<id> retries one."))
+
+
+def _hub_data(home: Path, cloned: dict | None) -> dict:
+    """The ``hub`` key of ``swe setup --json``: whether a hub can still be
+    cloned as ``~/.quiver`` (the apps show their hub URL field only then),
+    the demo hub to fork (null until it exists), and what this run cloned."""
+    from quiver.init.hub import DEMO_HUB_URL, can_clone
+
+    return {"can_clone": can_clone(home), "demo_url": DEMO_HUB_URL or None,
+            "cloned": cloned}
+
+
+def _print_hub_hint(home: Path) -> None:
+    """The dry run's pointer to --hub, while ~/.quiver has no hub yet."""
+    from quiver.init.hub import DEMO_HUB_URL, FORK_NOTE, can_clone
+
+    if not can_clone(home):
+        return
+    print(c("dim", "  ~/.quiver has no hub yet. To start from your own hub repo:\n"))
+    print(f"    {c('cyan', 'swe setup --hub=<git url>')}")
+    print(c("dim", f"    {FORK_NOTE}"))
+    if DEMO_HUB_URL:
+        print(c("dim", f"    Demo hub: {DEMO_HUB_URL}"))
+    print()
+
+
 def cmd_setup(args):
+    try:
+        args, hub_url = _take_hub(list(args))
+    except ValueError as exc:
+        stream = sys.stderr if "--json" in args else sys.stdout
+        print(c("red", f"  {exc}"), file=stream)
+        return 1
     adopt_args = [arg for arg in args if arg.startswith("--adopt=")]
     starred_args = [arg for arg in args if arg.startswith("--starred=")]
     args = [arg for arg in args
@@ -171,6 +260,14 @@ def cmd_setup(args):
     if starred is not None and not apply:
         print(c("red", "  --starred only works with --apply."), file=refusal_stream)
         return 1
+    if hub_url is not None and not hub_url.strip():
+        print(c("red", "  --hub needs a git URL: swe setup --hub=<url>"), file=refusal_stream)
+        return 1
+    if hub_url is not None and adopt is not None:
+        # The hub brings its own AGENTS.md, so there is nothing to adopt into.
+        print(c("red", "  --hub and --adopt both start AGENTS.md; pick one."),
+              file=refusal_stream)
+        return 1
     if adopt is not None:
         reason = check_adoptable(Path.home(), adopt)
         if reason:
@@ -178,9 +275,8 @@ def cmd_setup(args):
             return 1
 
     interactive = sys.stdin.isatty() and not non_interactive
-    if not apply and not json_out and interactive:
-        return run_setup_wizard(section=section, quick=quick)
-    if section:
+    wizard = not apply and not json_out and interactive
+    if section and not wizard:
         print(c("red", "  This setup section requires an interactive terminal."))
         return 1
     if quick and not interactive:
@@ -188,10 +284,20 @@ def cmd_setup(args):
         return 1
 
     home = Path.home()
+    cloned = None
+    if hub_url is not None:
+        # The hub comes first, so everything after it (the wizard, the
+        # preview, the apply) runs on the cloned ~/.quiver.
+        cloned = _clone_hub(home, hub_url, quiet=json_out)
+        if cloned is None:
+            return 1
+    if wizard:
+        return run_setup_wizard(section=section, quick=quick)
+
     if json_out:
         # One document per --json invocation: --apply results ride inside
         # the same envelope instead of printing a second document.
-        data, discovery_error = _setup_data(home, apply, adopt, starred)
+        data, discovery_error = _setup_data(home, apply, adopt, starred, cloned)
         if discovery_error is not None:
             print(c("red", f"  setup failed: {discovery_error}"), file=sys.stderr)
             emit(data)
@@ -212,6 +318,8 @@ def cmd_setup(args):
     actionable_skills = _actionable(skill_hints)
 
     print(f"\n{c('bold', 'quiver setup')}\n")
+    if not apply:
+        _print_hub_hint(home)
 
     # Step 1 — harnesses
     print(c("dim", "  Step 1/3 — AI coding CLI harnesses\n"))
@@ -333,10 +441,18 @@ def _actionable(skill_hints) -> list:
 
 
 def _setup_data(home: Path, apply: bool, adopt: Path | None = None,
-                starred: list[str] | None = None) -> tuple[dict, str | None]:
+                starred: list[str] | None = None,
+                cloned: dict | None = None) -> tuple[dict, str | None]:
     """The ``swe setup --json`` document's ``data``, and the discovery
     error when discovery itself failed (the document then carries it as
     data, so the caller still gets a well-formed reply)."""
+    data, error = _setup_findings_data(home, apply, adopt, starred)
+    data["hub"] = _hub_data(home, cloned)
+    return data, error
+
+
+def _setup_findings_data(home: Path, apply: bool, adopt: Path | None,
+                         starred: list[str] | None) -> tuple[dict, str | None]:
     try:
         new_harness, new_mcp, skill_hints = _setup_findings(home)
     except (EOFError, KeyboardInterrupt):

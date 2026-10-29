@@ -21,6 +21,7 @@ from quiver.configuration import (
 )
 from quiver.console import c
 from quiver.harness.discover import apply_findings, discover_harnesses
+from quiver.init import hub as hub_repo
 from quiver.mcp.discover import apply_mcp_findings, discover_mcp_servers
 from quiver.paths import HARNESS_FILE, MCP_SOURCE_FILE
 from quiver.prompt import read_line
@@ -61,6 +62,7 @@ SECTION_ALIASES = {
 }
 
 SECTION_LABELS = {
+    "hub": "Your hub",
     "harnesses": "AI coding harnesses",
     "providers": "LLM providers",
     "mcp": "MCP servers",
@@ -112,6 +114,54 @@ def _stage_header(number: int, total: int, label: str) -> None:
     print()
     print(c("cyan", c("bold", f"  Step {number}/{total}  {label}")))
     print(c("dim", f"  {'-' * 56}"))
+
+
+def _stage_hub(
+    number: int,
+    total: int,
+    *,
+    input_fn: InputFn,
+    home: Path,
+    quick: bool,
+) -> StageOutcome:
+    """Clone the user's hub repo as ~/.quiver, or leave it to start empty.
+
+    The wizard runs this first and only while ~/.quiver is missing or
+    empty, so nothing else has written there yet. A failed clone asks
+    again; a blank answer moves on, and the stages after it build an
+    empty hub as they always have.
+    """
+    del quick
+    _stage_header(number, total, SECTION_LABELS["hub"])
+    print(c("dim", "  ~/.quiver has no hub yet. Clone your hub repo into it, or leave"))
+    print(c("dim", "  the answer blank to start an empty hub."))
+    print(f"  {hub_repo.FORK_NOTE}")
+    if hub_repo.DEMO_HUB_URL:
+        print(f"  Demo hub: {hub_repo.DEMO_HUB_URL}")
+    label = SECTION_LABELS["hub"]
+    while True:
+        url = input_fn("  Hub repo URL (blank for an empty hub): ").strip()
+        if not url:
+            return StageOutcome("hub", label, "skipped", "starting an empty hub")
+        print(c("dim", f"  Cloning {hub_repo.public_url(url)}…"))
+        try:
+            cloned = hub_repo.clone_and_register(home, url)
+        except hub_repo.HubError as exc:
+            print(c("red", f"  {exc}"))
+            if not hub_repo.can_clone(home):
+                # Something else wrote ~/.quiver meanwhile: asking again
+                # can't help, and the later stages repair what is there.
+                return StageOutcome("hub", label, "attention", str(exc))
+            continue
+        print(c("green", f"  Cloned {cloned['url']} into ~/.quiver."))
+        for row in cloned["marketplaces"]:
+            if row["error"] is None:
+                print(f"    {c('green', '+')} {row['marketplace']} registered in {row['harness']}")
+            else:
+                print(f"    {c('yellow', '!')} {row['marketplace']} not registered in "
+                      f"{row['harness']}: {row['error']}")
+        return StageOutcome("hub", label, "changed", f"cloned {cloned['url']}",
+                            (cloned["url"],))
 
 
 def _stage_harnesses(
@@ -352,6 +402,7 @@ def _stage_check(
 
 
 _STAGES = {
+    "hub": _stage_hub,
     "harnesses": _stage_harnesses,
     "providers": _stage_providers,
     "mcp": _stage_mcp,
@@ -415,6 +466,10 @@ def run_setup_wizard(
         keys = [section]
     else:
         keys = ["harnesses", "providers", "mcp", "skills", "report", "check"]
+        # The hub URL is asked first, before any stage writes ~/.quiver,
+        # and only while there is no ~/.quiver to clone over.
+        if hub_repo.can_clone(home):
+            keys.insert(0, "hub")
 
     _print_banner(section, quick)
     outcomes: list[StageOutcome] = []

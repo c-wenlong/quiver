@@ -1,4 +1,5 @@
-"""`swe init --hub=<git url>`: bring an existing hub onto a new machine.
+"""`swe init --hub=<git url>` and `swe setup --hub=<git url>`: bring an
+existing hub onto a new machine.
 
 A hub is the user's own git repository (a fork of the demo hub, or one that
 grew on their first machine). Cloning it as ``~/.quiver`` gives a second
@@ -26,6 +27,15 @@ from quiver.paths import quiver_dir_for
 REACH_TIMEOUT_S = 30
 CLONE_TIMEOUT_S = 600
 
+# The public demo hub people fork to start their own. It doesn't exist yet
+# (#696), so this is empty, and every surface that asks for a hub URL shows
+# its link line only when it is set: adding the repo is this one line.
+DEMO_HUB_URL = ""
+
+# What every surface says beside the hub URL field.
+FORK_NOTE = ("Fork a hub repo first (or use it as a template for a private copy), "
+             "then paste your fork's URL.")
+
 
 class HubError(Exception):
     """Why the hub could not be cloned, worded for the person running init."""
@@ -50,7 +60,7 @@ def check_target(home: Path) -> None:
     if not os.path.lexists(root):
         return
     if root.is_symlink():
-        raise HubError("~/.quiver is a symlink; init will not clone through it")
+        raise HubError("~/.quiver is a symlink; swe will not clone through it")
     if not root.is_dir():
         raise HubError("~/.quiver is a file, not a folder")
     try:
@@ -59,8 +69,18 @@ def check_target(home: Path) -> None:
         raise HubError(f"can't read ~/.quiver: {exc.strerror or exc}") from None
     if busy:
         raise HubError(
-            "~/.quiver already has files, so init will not clone over it. "
+            "~/.quiver already has files, so swe will not clone over it. "
             "Run swe init without --hub to repair it, or move it aside first.")
+
+
+def can_clone(home: Path) -> bool:
+    """Whether a hub can be cloned as ``~/.quiver`` now. Setup asks for a
+    hub URL only then."""
+    try:
+        check_target(home)
+    except HubError:
+        return False
+    return True
 
 
 def _git(args: list[str], timeout: int, run) -> subprocess.CompletedProcess:
@@ -114,6 +134,26 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return root
+
+
+def clone_and_register(home: Path, url: str, run=subprocess.run) -> dict:
+    """Clone ``url`` as ``~/.quiver``, then register its marketplaces.
+
+    What ``swe setup --hub`` runs; ``swe init --hub`` does the same with
+    its linking pass in between. Returns ``{"url", "path",
+    "marketplaces": [{"harness", "marketplace", "error"}]}`` with ``url``
+    already stripped of credentials. Raises HubError when nothing was
+    cloned.
+    """
+    root = clone_hub(home, url, run=run)
+    return {
+        "url": public_url(url.strip()),
+        "path": str(root),
+        "marketplaces": [
+            {"harness": harness, "marketplace": marketplace, "error": error}
+            for harness, marketplace, error in register_marketplaces(home)
+        ],
+    }
 
 
 def register_marketplaces(home: Path, run=None) -> list[tuple[str, str, str | None]]:
