@@ -630,6 +630,26 @@ launch's pending marker and supervised-entry meta (as bookkeeping —
 a session's *current* model is a transcript/ledger question), and the
 launch record (`GET /v1/launches/{id}` carries `model`/`effort`).
 
+Each session row says which model the session runs now: `model` is the
+model of the newest reply in its transcript, left out when unknown
+(`remote/session_model.py`). A switch with no reply since does not show
+until the next reply lands. Claude Code, Codex and Pi are read from the
+transcript's tail, backward, parsing only lines that can name a model,
+and cached per file under its stat signature in
+`cache/session_model_cache.json`, so an unchanged transcript costs one
+`stat` per refresh. OpenCode, Kilo and Devin ask their database for the
+session's newest assistant row, cached in memory until the session's
+activity time moves. The names follow the ledger's rules (OpenCode's
+`provider/model`), and the junk `recent_models` drops (`<synthetic>`,
+`unknown`, Devin's `compactor`) is skipped for the reply before it. The
+web ledger is not the source because it is scanned only when a web page
+asks, so it can trail the transcript by days on a hub nobody browses.
+`model_modes` lists the supervised modes in which the `model` control op
+switches that harness: `["tmux"]` where its TUI has a verified
+`/model <name>` builtin (claude and codex), `[]` elsewhere, since the
+API channels answer `unsupported_control` today. A client offers a model
+switch only on an attached row whose `mode` is in the list.
+
 A pick can only change what a fresh run starts with, so two attach
 shapes refuse a changed value rather than dropping it: attaching a
 session that is already attached or kept running (`409 not_idle` —
