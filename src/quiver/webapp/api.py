@@ -103,16 +103,26 @@ class WebApp:
         return _first_run(self.home or Path.home())
 
     def sessions(self, rows: list[dict], hub_machine_id: str, machines: dict,
-                 rescan: bool = False) -> dict:
-        """The Sessions page: the hub's catalog rows with usage joined."""
+                 rescan: bool = False, pending: dict | None = None) -> dict:
+        """The Sessions page: the hub's catalog rows with usage joined.
+        ``pending`` maps session key -> outstanding approval request id;
+        a row carrying one reads ``approval`` so the list shows which
+        agent waits on an answer, the inbox's job on the old remote
+        page."""
         with self._lock:
             self._ensure(rescan)
             usage = by_session(self._store, self._catalog)
+            sessions = sessions_mod.build(
+                rows, usage, hub_machine_id, machines,
+                scanned=(self._last_scan is not None
+                         and not self._last_scan.errors),
+                home=self.home)
+            if pending:
+                for s in sessions:
+                    if s.get("key") in pending:
+                        s["status"] = "approval"
             return {
-                "sessions": sessions_mod.build(rows, usage, hub_machine_id, machines,
-                                               scanned=(self._last_scan is not None
-                                                        and not self._last_scan.errors),
-                                               home=self.home),
+                "sessions": sessions,
                 "ledger_harnesses": sorted(sessions_mod.LEDGER_HARNESSES),
                 # Whether "Run in terminal" is wired on this hub (the
                 # sessions page plugin opens Terminal.app via osascript).

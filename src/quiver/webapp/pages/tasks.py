@@ -93,16 +93,20 @@ def _session_row(row: dict | None, key: str, machines: dict) -> dict:
 
 def harnesses() -> list[dict]:
     """``{name, display_name, tracked, launch_model, launch_effort,
-    last_model}`` for each harness the hub can start, in Provider
+    last_model, recent_models}`` for each harness the hub can start, in Provider
     visibility order — the same answer ``/v1/app/repositories?harnesses=1``
-    gives the PR sheet. ``last_model`` is the ledger's most recent model
-    for the harness ("" when none), the picker's default."""
+    gives the PR sheet. ``recent_models`` is the harness's recently used
+    models, newest first (at most 5); ``last_model`` is its head (""
+    when none), the picker's default."""
     from quiver.remote import catalog as catalog_mod
 
-    last = catalog_mod.last_used_models()
+    launchable = catalog_mod.launchable_harnesses()
+    recent = catalog_mod.recent_models(
+        None, [h["name"] for h in launchable])
     return [{"name": h["name"], "display_name": h["display_name"],
              "tracked": h["tracked"],
              "launch_model": h["launch_model"],
              "launch_effort": h["launch_effort"],
-             "last_model": last.get(h["name"], "")}
-            for h in catalog_mod.launchable_harnesses()]
+             "last_model": (recent.get(h["name"]) or [""])[0],
+             "recent_models": recent.get(h["name"], [])}
+            for h in launchable]

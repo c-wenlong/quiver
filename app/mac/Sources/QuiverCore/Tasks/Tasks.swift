@@ -307,13 +307,28 @@ public struct HubTaskHarness: Decodable, Sendable, Equatable, Identifiable {
     /// Quiver can read this harness's sessions; an untracked one starts
     /// but never opens a chat.
     public var tracked: Bool?
+    /// Whether this harness's launches honour a `model` pick. Absent on
+    /// a hub older than the launch-option fields — it would take the
+    /// pick and drop it, so the panel gives that hub no Model row.
+    public var launchModel: Bool?
+    /// `launchModel`'s effort twin; decoded for completeness, unused
+    /// until the effort picker ships.
+    public var launchEffort: Bool?
+    /// The hub ledger's most recent model for this harness — the Model
+    /// field's prefill ("" when none ran).
+    public var lastModel: String?
 
     public var id: String { name }
 
-    public init(name: String, displayName: String? = nil, tracked: Bool? = nil) {
+    public init(name: String, displayName: String? = nil, tracked: Bool? = nil,
+                launchModel: Bool? = nil, launchEffort: Bool? = nil,
+                lastModel: String? = nil) {
         self.name = name
         self.displayName = displayName
         self.tracked = tracked
+        self.launchModel = launchModel
+        self.launchEffort = launchEffort
+        self.lastModel = lastModel
     }
 }
 
@@ -488,6 +503,18 @@ public final class TasksModel {
     /// `bad-config`, `upstream-error`), nil when ok, disabled or absent.
     public private(set) var linearBlocked: String?
     public private(set) var error: String?
+    /// The last load found this Mac's hub not answering: stopped, or
+    /// still starting after a restart (see `hubNotAnswering`).
+    public private(set) var hubDown = false
+
+    /// The failures a restart produces, worth trying again: swe's status
+    /// says the hub is down (`hub_down`, when the app has no client
+    /// yet), or a client the app already holds can't connect (`network`).
+    /// A hub bound off this Mac, a refused credential or a bad reply is
+    /// not fixed by waiting.
+    public static func hubNotAnswering(_ error: HubError) -> Bool {
+        error.code == "hub_down" || error.code == "network"
+    }
     public private(set) var loaded = false
     /// The rows' filter, shared by the list's chips.
     public var filter: TaskFilter = .all
@@ -518,6 +545,7 @@ public final class TasksModel {
                 ? (github?.error ?? "GitHub did not answer this refresh.")
                 : nil
             error = nil
+            hubDown = false
             let status = body.linear?.status
             linearBlocked = switch status {
             case nil, "ok", "disabled": nil
@@ -526,11 +554,31 @@ public final class TasksModel {
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message
+            hubDown = Self.hubNotAnswering(e)
         } catch {
             guard gen == generation else { return }
             self.error = error.localizedDescription
+            hubDown = false
         }
         loaded = true
+    }
+
+    /// Loads, then keeps trying while this Mac's hub is down, so the page
+    /// fills in once the hub is up rather than keeping its error until
+    /// Refresh. The hub restarts on every app install and at login, and
+    /// can take a while to answer. Waits 3 s, doubling to 30 s; ends when
+    /// the calling task is cancelled (the page went away).
+    public func loadUntilHubAnswers(
+        hub: LocalHub,
+        pause: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) async {
+        await load(hub: hub)
+        var wait = 3
+        while hubDown {
+            do { try await pause(.seconds(wait)) } catch { return }
+            await load(hub: hub)
+            wait = min(wait * 2, 30)
+        }
     }
 
     /// The detail page's row, live as the list refreshes under it.
@@ -668,5 +716,52 @@ public enum NewSessionOptions {
 
     private static func newestFirst(_ rows: [HubSessionRow]) -> [HubSessionRow] {
         rows.sorted { ($0.lastActiveAt ?? 0) > ($1.lastActiveAt ?? 0) }
+    }
+}
+
+/// The launch sheets' Model row: whether a machine or harness row can
+/// take a `model` pick at launch, what the field prefills, and what the
+/// POST body carries. Pure, so tests feed it rows.
+///
+/// The row hides rather than disables for a build that doesn't report
+/// the launch fields (`model_at_launch` on a machine row,
+/// `launch_model` on a task-harness row): it predates them, and would
+/// take a pick it then silently drops — the hub's own gate refuses it
+/// the same way (`unsupported_launch_option`).
+public enum LaunchOptions {
+    /// Whether the sheet shows the Model row at all: only a machine
+    /// row that reports `model_at_launch` knows the launch fields.
+    public static func showsModel(on machine: HubMachine?) -> Bool {
+        machine?.modelAtLaunch != nil
+    }
+
+    /// Whether a launch on `machine` honours a `model` for `harness` —
+    /// the field's enabled state.
+    public static func takesModel(_ harness: String?, on machine: HubMachine?) -> Bool {
+        guard let harness else { return false }
+        return machine?.modelAtLaunch?.contains(harness) == true
+    }
+
+    /// `machine`'s most recent ledger model for `harness`, the field's
+    /// prefill ("" when none ran).
+    public static func lastModel(_ harness: String?, on machine: HubMachine?) -> String {
+        guard let harness else { return "" }
+        return machine?.lastModels?[harness] ?? ""
+    }
+
+    /// The field's refill on a harness or machine change: nil for an
+    /// edited field (its text, even a clear back to the prefill, is the
+    /// user's own and stays), else the machine's last-used model for
+    /// the harness — empty when none ran.
+    public static func modelText(edited: Bool, _ harness: String?, on machine: HubMachine?) -> String? {
+        guard !edited else { return nil }
+        return lastModel(harness, on: machine)
+    }
+
+    /// What the POST body's `model` is: `text` trimmed, or nil when
+    /// it's blank or this launch can't take a pick.
+    public static func model(_ text: String, supported: Bool) -> String? {
+        let pick = text.trimmingCharacters(in: .whitespaces)
+        return supported && !pick.isEmpty ? pick : nil
     }
 }

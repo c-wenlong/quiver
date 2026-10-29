@@ -364,6 +364,13 @@
    * origin, so the session that lands links itself to this task. */
   const canLaunch = (t) => t.source === "github" && (t.kind === "issue" || t.kind === "pull") && t.repo;
 
+  /* The launch routes take an optional ``model`` pick where the harness
+   * reports ``launch_model``; ``last_model`` (the ledger's most recent
+   * model for it) prefills the field, and an empty field sends no
+   * ``model`` key. */
+  const pickedHarness = (x) => (x.harnesses || []).find((h) => h.name === x.harness) || null;
+  const lastModel = (x) => { const h = pickedHarness(x); return (h && h.last_model) || ""; };
+
   function newPanel(t) {
     const x = page.session;
     if (page.action !== "new" || !x) return "";
@@ -377,11 +384,17 @@
       picker = `<select class="field" id="tk-harness" aria-label="Harness"${busy || x.started ? " disabled" : ""}>${
         x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;
     }
+    const picked = pickedHarness(x);
+    const model = picked && picked.launch_model
+      ? `<input class="field gh-mono" id="tk-model" type="text" aria-label="Model" value="${esc(x.model)}"
+        placeholder="Model (optional)" autocomplete="off" spellcheck="false"${busy || x.started ? " disabled" : ""}>`
+      : "";
     const where = (page.data && page.data.machine) ? ` on ${esc(page.data.machine)}` : " on the hub";
     const what = `${t.kind === "pull" ? "PR" : "issue"} ${refLabel(t)}`;
     return `<div class="gh-confirm" role="group" aria-label="New agent session">
       <div class="gh-confirm-text">Start an agent on <strong>${esc(what)}</strong>${where} — the session links itself here when it lands.</div>
       ${picker}
+      ${model}
       <textarea class="field gh-session-prompt" id="tk-prompt" rows="3" aria-label="First message"
         placeholder="Its first message — leave blank for the hub's built prompt"${busy || x.started ? " disabled" : ""}>${esc(x.prompt)}</textarea>
       <div class="caption gh-muted">It runs under tmux in a worktree the hub prepares. The chat opens once the session shows up.</div>
@@ -479,7 +492,8 @@
   /* ---------------------------------------------------------- actions */
 
   async function openNew(t) {
-    const x = { harnesses: null, harness: null, phase: null, error: null, note: null, started: false, prompt: "" };
+    const x = { harnesses: null, harness: null, model: "", modelDirty: false,
+      phase: null, error: null, note: null, started: false, prompt: "" };
     page.action = "new";
     page.link = null;
     page.session = x;
@@ -491,6 +505,7 @@
     x.harnesses = status === 200 && data ? data.harnesses || [] : [];
     if (status !== 200) x.error = GhUI.failMessage(status, data);
     x.harness = x.harnesses.length ? x.harnesses[0].name : null;
+    x.model = lastModel(x);
     paint();
   }
 
@@ -501,6 +516,8 @@
     const say = (fields) => { Object.assign(x, fields); if (alive()) paint(); };
     say({ phase: "Starting…", error: null, note: null });
     const body = { harness: x.harness, prompt: x.prompt.trim() };
+    const h = pickedHarness(x);
+    if (h && h.launch_model && x.model.trim()) body.model = x.model.trim();
     const [owner, name] = (t.repo || "/").split("/", 2);
     const launched = t.kind === "pull"
       ? await GhUI.post(`/v1/pulls/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/${encodeURIComponent(t.ref)}/open`, body)
@@ -625,7 +642,22 @@
     const start = document.getElementById("tk-new-start");
     if (start && t2) start.onclick = () => startNew(t2);
     const harness = document.getElementById("tk-harness");
-    if (harness && page.session) harness.onchange = () => { page.session.harness = harness.value; };
+    if (harness && page.session) harness.onchange = () => {
+      const x = page.session;
+      if (!x) return;
+      x.harness = harness.value;
+      // Re-prefill the model from this harness's last-used unless the
+      // user typed a pick of their own; the field may appear or go away.
+      if (!x.modelDirty) x.model = lastModel(x);
+      paint();
+      const again = document.getElementById("tk-harness");
+      if (again) again.focus();
+    };
+    const model = document.getElementById("tk-model");
+    if (model && page.session) model.oninput = () => {
+      page.session.model = model.value;
+      page.session.modelDirty = true;
+    };
     const prompt = document.getElementById("tk-prompt");
     if (prompt && page.session) prompt.oninput = () => { page.session.prompt = prompt.value; };
     const cancelLink = document.getElementById("tk-link-cancel");

@@ -1212,6 +1212,8 @@
     // The first message survives a repaint (a refetch landing mid-typing).
     const typed = dlg.querySelector("#gh-session-prompt");
     const caret = typed && document.activeElement === typed ? [typed.selectionStart, typed.selectionEnd] : null;
+    const typedModel = dlg.querySelector("#gh-session-model");
+    const modelCaret = typedModel && document.activeElement === typedModel ? [typedModel.selectionStart, typedModel.selectionEnd] : null;
     dlg.innerHTML = `<div class="sheet-body">${content}${mergeErr}${confirmPanel(s, pr)}${sessionPanel(s, pr)}
       <div class="gh-sheet-actions">${mergeControls(s, pr)}<span class="gh-spacer"></span>
         ${pr && !s.session ? `<button type="button" class="icon-button" id="gh-session-open" title="Open in session: check the PR out on the hub and start an agent there"
@@ -1247,7 +1249,7 @@
     if (goBtn) goBtn.onclick = runMerge;
     const toggle = dlg.querySelector("#gh-checks-toggle");
     if (toggle) toggle.onclick = () => { s.checksOpen = !s.checksOpen; paintSheet(); };
-    bindSession(dlg, s, pr, caret);
+    bindSession(dlg, s, pr, caret, modelCaret);
     GhUI.bindSetup(() => loadPr(true));
   }
 
@@ -1260,6 +1262,13 @@
    * the session shows up, as the phone's new-session sheet does. */
   const LAUNCH_POLLS = 60;
 
+  /* ``POST /v1/sessions`` takes an optional ``model`` pick where the
+   * harness reports ``launch_model``; ``last_model`` (the ledger's most
+   * recent model for it) prefills the field, and an empty field sends
+   * no ``model`` key. */
+  const pickedHarness = (x) => (x.harnesses || []).find((h) => h.name === x.harness) || null;
+  const lastModel = (x) => { const h = pickedHarness(x); return (h && h.last_model) || ""; };
+
   function sessionPanel(s, pr) {
     const x = s.session;
     if (!x || !pr) return "";
@@ -1269,11 +1278,17 @@
     else if (!x.harnesses.length) picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Provider visibility.</div>`;
     else picker = `<select class="field" id="gh-session-harness" aria-label="Harness"${busy || x.started ? " disabled" : ""}>${
       x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;
+    const picked = pickedHarness(x);
+    const model = picked && picked.launch_model
+      ? `<input class="field gh-mono" id="gh-session-model" type="text" aria-label="Model" value="${esc(x.model)}"
+        placeholder="Model (optional)" autocomplete="off" spellcheck="false"${busy || x.started ? " disabled" : ""}>`
+      : "";
     const ready = x.harnesses && x.harnesses.length && x.prompt.trim() && !busy && !x.started;
     const where = s.data && s.data.machine ? ` on ${esc(s.data.machine)}` : " on the hub";
     return `<div class="gh-confirm gh-session" role="group" aria-label="Open in session">
       <div class="gh-confirm-text">Check out <strong>#${esc(pr.number)}</strong>'s head${where} and start an agent in it.</div>
       ${picker}
+      ${model}
       <textarea class="field gh-session-prompt" id="gh-session-prompt" rows="3" aria-label="First message"
         placeholder="Its first message"${busy || x.started ? " disabled" : ""}>${esc(x.prompt)}</textarea>
       <div class="caption gh-muted">It runs under tmux in ~/.quiver/worktrees. The chat opens once the session shows up.</div>
@@ -1285,14 +1300,27 @@
       </div></div>`;
   }
 
-  function bindSession(dlg, s, pr, caret) {
+  function bindSession(dlg, s, pr, caret, modelCaret) {
     const open = dlg.querySelector("#gh-session-open");
     if (open) open.onclick = () => openSession(s, pr);
     const x = s.session;
     // The panel is drawn only over a loaded PR; a failed refetch hides it.
     if (!x || !pr) return;
     const harness = dlg.querySelector("#gh-session-harness");
-    if (harness) harness.onchange = () => { x.harness = harness.value; };
+    if (harness) harness.onchange = () => {
+      x.harness = harness.value;
+      // Re-prefill the model from this harness's last-used unless the
+      // user typed a pick of their own; the field may appear or go away.
+      if (!x.modelDirty) x.model = lastModel(x);
+      paintSheet();
+      const again = dlg.querySelector("#gh-session-harness");
+      if (again) again.focus();
+    };
+    const model = dlg.querySelector("#gh-session-model");
+    if (model) {
+      model.oninput = () => { x.model = model.value; x.modelDirty = true; };
+      if (modelCaret) { model.focus(); model.setSelectionRange(modelCaret[0], modelCaret[1]); }
+    }
     const prompt = dlg.querySelector("#gh-session-prompt");
     const start = dlg.querySelector("#gh-session-start");
     if (prompt) {
@@ -1312,7 +1340,8 @@
   }
 
   async function openSession(s, pr) {
-    const x = { harnesses: null, harness: null, phase: null, error: null, note: null, started: false,
+    const x = { harnesses: null, harness: null, model: "", modelDirty: false,
+      phase: null, error: null, note: null, started: false,
       prompt: `Review pull request #${pr.number}, "${pr.title}", in ${pr.repo}. Its head is checked out in this folder.` };
     s.session = x;
     paintSheet();
@@ -1323,6 +1352,7 @@
     x.harnesses = status === 200 && data ? data.harnesses || [] : [];
     if (status !== 200) x.error = GhUI.failMessage(status, data);
     x.harness = x.harnesses.length ? x.harnesses[0].name : null;
+    x.model = lastModel(x);
     paintSheet();
   }
 
@@ -1336,7 +1366,10 @@
     if (!alive()) return;
     if (made.status !== 200 || !made.data) return say({ phase: null, error: GhUI.failMessage(made.status, made.data) });
     say({ phase: "Starting…" });
-    const launched = await GhUI.post("/v1/sessions", { harness: x.harness, cwd: made.data.path, prompt: x.prompt.trim() });
+    const body = { harness: x.harness, cwd: made.data.path, prompt: x.prompt.trim() };
+    const h = pickedHarness(x);
+    if (h && h.launch_model && x.model.trim()) body.model = x.model.trim();
+    const launched = await GhUI.post("/v1/sessions", body);
     if (!alive()) return;
     const id = launched.data && launched.data.launch_id;
     if ((launched.status !== 202 && launched.status !== 200) || !id) {

@@ -19,6 +19,16 @@ struct Machine: Codable, Identifiable, Hashable {
     /// Launchable harnesses swe can't read sessions of: they start, but
     /// no chat ever opens.
     var untrackedHarnesses: [String]? = nil
+    /// Harnesses whose launch honours a `model` pick. Absent on a
+    /// satellite older than the field: it would accept the pick and
+    /// silently drop it, so the launch sheets hide the Model row rather
+    /// than offer one the machine can't apply.
+    var modelAtLaunch: [String]? = nil
+    /// The same gate for `effort`; decoded now so a later row can use it.
+    var effortAtLaunch: [String]? = nil
+    /// The machine ledger's most recent model per harness: the Model
+    /// field's prefill.
+    var lastModels: [String: String]? = nil
 
     /// "dev-macbook-pro.local" reads as "dev-macbook-pro".
     var displayName: String {

@@ -14,7 +14,7 @@
 const WINDOWS = [["today", "Today"], ["7d", "7 days"], ["30d", "30 days"], ["90d", "90 days"],
   ["365d", "365 days"], ["all", "All time"]];
 const DAY_FOLD = 10;
-const STATUS_BADGE = { active: "Active", error: "Error", interrupted: "Interrupted", followup: "Waiting" };
+const STATUS_BADGE = { active: "Active", approval: "Approval", error: "Error", interrupted: "Interrupted", followup: "Waiting" };
 // Transcript search waits for a pause in typing and a query this long.
 const SEARCH_DEBOUNCE_MS = 250;
 const SEARCH_MIN_CHARS = 2;
@@ -647,6 +647,7 @@ const ns = {
   machines: null,            // /v1/machines answer, cached per sheet open
   machineId: null, harness: null, folder: "", prompt: "", query: "",
   harnessTouched: false,     // a picked harness keeps its choice across folder changes
+  model: "", modelDirty: false,  // a typed pick survives harness re-defaults
   browse: null, browseSeq: 0,  // {path, parent, folders, error, loading}
   phase: "idle", message: "", seq: 0,  // idle|starting|waiting|started|failed|unconfirmed
 };
@@ -690,6 +691,41 @@ function nsHarnessName(m, h) {
   const names = (m && m.harness_names) || {};
   const raw = names[h] || h;
   return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+/* A machine's `model_at_launch` names the harnesses that take a model
+ * pick at launch; the key absent means an old satellite that would drop
+ * it, so the field hides rather than hint at a pick that can't land. */
+function nsModelOk(machine) {
+  return !!(machine && ns.harness
+    && Array.isArray(machine.model_at_launch)
+    && machine.model_at_launch.includes(ns.harness));
+}
+
+/* The ledger's most recent model for the picked harness on this machine
+ * — the field's prefill while the user hasn't typed their own. */
+function nsLastModel(machine) {
+  return ((machine && machine.last_models) || {})[ns.harness] || "";
+}
+
+function nsRefillModel() {
+  if (!ns.modelDirty) ns.model = nsLastModel(nsMachine());
+}
+
+function nsModelHtml(machine, busy) {
+  return nsModelOk(machine) ? `<div class="caption">Model</div>
+    <input class="field gh-mono" id="ns-model" type="text" autocomplete="off" spellcheck="false"
+      aria-label="Model" placeholder="Model (optional)" value="${esc(ns.model)}"${busy ? " disabled" : ""}>` : "";
+}
+
+/* The model row repaints alone when a typed folder flips whether the
+ * picked harness can take a model — the folder input keeps focus. */
+function nsPaintModel() {
+  const slot = document.getElementById("ns-model-slot");
+  if (!slot) return;
+  slot.innerHTML = nsModelHtml(nsMachine(), nsBusy());
+  const modelIn = slot.querySelector("#ns-model");
+  if (modelIn) modelIn.oninput = () => { ns.model = modelIn.value; ns.modelDirty = true; };
 }
 
 /* Recent folders on the chosen machine, most recent first, the session
@@ -736,6 +772,7 @@ function nsPaint() {
       ${(browse.folders || []).map((f) => `<button type="button" class="ns-folder" data-path="${esc(f.path)}">${esc(f.name)}/</button>`).join("")}
       ${!browse.loading && !browse.error ? `<div class="sheet-actions"><button type="button" class="tab selected" id="ns-browse-use" data-path="${esc(browse.path)}">Use this folder</button></div>` : ""}
     </div>` : "";
+  const modelUi = `<div id="ns-model-slot">${nsModelHtml(machine, busy)}</div>`;
   const note = ns.message ? `<p class="${ns.phase === "failed" ? "error" : "note"}">${esc(ns.message)}</p>` : "";
   const startLabel = { starting: "Starting…", waiting: "Waiting for the session…", started: "Opening the chat…" }[ns.phase] || "Start";
   sheet.innerHTML = `<div class="sheet-body">
@@ -747,6 +784,7 @@ function nsPaint() {
     <div class="caption">Harness</div>
     ${harnessChips}
     ${untracked ? `<p class="note">Quiver can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
+    ${modelUi}
     <div class="caption">Folder</div>
     <input class="field ns-path-input" id="ns-folder" type="text" autocomplete="off" spellcheck="false"
       placeholder="/absolute/path" value="${esc(ns.folder)}"${busy ? " disabled" : ""}>
@@ -773,11 +811,12 @@ function nsPaint() {
       ns.harnessTouched = false;
       ns.browse = null;
       nsPickHarness();
+      nsRefillModel();
       nsPaint();
     };
   }
   for (const b of sheet.querySelectorAll("[data-harness]")) {
-    b.onclick = () => { ns.harness = b.dataset.harness; ns.harnessTouched = true; nsPaint(); };
+    b.onclick = () => { ns.harness = b.dataset.harness; ns.harnessTouched = true; nsRefillModel(); nsPaint(); };
   }
   for (const b of sheet.querySelectorAll(".ns-folder")) {
     b.onclick = () => {
@@ -789,14 +828,20 @@ function nsPaint() {
   if (folderIn) folderIn.oninput = () => {
     ns.folder = folderIn.value;
     // A typed folder re-defaults the harness too, repainted in place so
-    // the field keeps its caret.
-    if (!ns.harnessTouched) { nsPickHarness(); nsPaintHarness(); }
+    // the field keeps its caret — even when the model row itself
+    // appears or drops, only its slot is redrawn.
+    if (!ns.harnessTouched) {
+      nsPickHarness(); nsPaintHarness();
+      nsRefillModel(); nsPaintModel();
+    }
     nsPaintStart();
   };
   const queryIn = sheet.querySelector("#ns-query");
   if (queryIn) queryIn.oninput = () => { ns.query = queryIn.value; nsPaintLists(); };
   const promptIn = sheet.querySelector("#ns-prompt");
   if (promptIn) promptIn.oninput = () => { ns.prompt = promptIn.value; nsPaintStart(); };
+  const modelIn = sheet.querySelector("#ns-model");
+  if (modelIn) modelIn.oninput = () => { ns.model = modelIn.value; ns.modelDirty = true; };
   const browseBtn = sheet.querySelector("#ns-browse");
   if (browseBtn) browseBtn.onclick = () => nsBrowse(ns.folder.trim());
   const use = sheet.querySelector("#ns-browse-use");
@@ -840,7 +885,7 @@ function nsPaintHarness() {
   if (!box) return;
   box.innerHTML = nsHarnessChips(nsMachine(), nsBusy());
   for (const b of box.querySelectorAll("[data-harness]")) {
-    b.onclick = () => { ns.harness = b.dataset.harness; ns.harnessTouched = true; nsPaint(); };
+    b.onclick = () => { ns.harness = b.dataset.harness; ns.harnessTouched = true; nsRefillModel(); nsPaint(); };
   }
 }
 
@@ -849,6 +894,7 @@ function nsPaintHarness() {
 function nsPickFolder(path) {
   ns.folder = path;
   if (!ns.harnessTouched) nsPickHarness();
+  nsRefillModel();
   nsPaint();
 }
 
@@ -897,6 +943,8 @@ async function openNewSession() {
   ns.machineId = null;
   ns.harness = null;
   ns.harnessTouched = false;
+  ns.model = "";
+  ns.modelDirty = false;
   ns.folder = ns.folder || "";   // the last folder is a good next guess
   ns.prompt = "";
   ns.query = "";
@@ -922,6 +970,7 @@ async function openNewSession() {
   const first = nsMachines()[0];
   if (first && !ns.machineId) ns.machineId = first.id;
   nsPickHarness();
+  nsRefillModel();
   nsPaint();
 }
 
@@ -933,6 +982,7 @@ async function nsStart() {
   nsPaint();
   const body = { harness: ns.harness, cwd: ns.folder.trim(), prompt: ns.prompt.trim() };
   if (ns.machineId) body.machine = ns.machineId;
+  if (nsModelOk(nsMachine()) && ns.model.trim()) body.model = ns.model.trim();
   const { status, data } = await apiPost("/v1/sessions", body);
   if (mine !== ns.seq) return;
   if (status === 401) {

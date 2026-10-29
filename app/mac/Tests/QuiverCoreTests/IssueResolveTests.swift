@@ -232,15 +232,24 @@ import Testing
 @Suite struct IssueResolveTests {
     @Test func resolveBodyCarriesOnlyTheTextGiven() {
         let full = HubClient.resolveIssueBody(repo: "o/r", number: 7, harness: "claude",
-                                              prompt: "Fix it", context: "Use the v2 API")
+                                              prompt: "Fix it", context: "Use the v2 API",
+                                              model: "sonnet")
         #expect(full["repo"] as? String == "o/r")
         #expect(full["number"] as? Int == 7)
         #expect(full["harness"] as? String == "claude")
         #expect(full["prompt"] as? String == "Fix it")
         #expect(full["context"] as? String == "Use the v2 API")
+        #expect(full["model"] as? String == "sonnet")
         let bare = HubClient.resolveIssueBody(repo: "o/r", number: 7, harness: "codex",
                                               prompt: "  ", context: nil)
         #expect(Set(bare.keys) == ["repo", "number", "harness"])
+        // A blank or whitespace model is no pick: the key stays out,
+        // never a token the hub would refuse.
+        #expect(HubClient.resolveIssueBody(repo: "o/r", number: 7, harness: "claude",
+                                           prompt: nil, context: nil, model: " ")["model"] == nil)
+        let trimmed = HubClient.resolveIssueBody(repo: "o/r", number: 7, harness: "claude",
+                                                 prompt: nil, context: nil, model: " opus ")
+        #expect(trimmed["model"] as? String == "opus")
     }
 
     @Test func offeredHarnessesComeFromTheHubsOwnRow() {
@@ -258,6 +267,23 @@ import Testing
                                               fallback: []) == ["claude", "codex"])
         #expect(IssueResolve.offeredHarnesses(machines: machines, localMachineId: nil,
                                               fallback: ["claude"]) == ["claude"])
+    }
+
+    @Test func hubMachinePicksTheHubsOwnRow() {
+        let machines = [
+            HubMachine(id: "sat", launchable: ["gemini"]),
+            HubMachine(id: "mac", launchable: ["claude"], modelAtLaunch: ["claude"],
+                       lastModels: ["claude": "sonnet"]),
+        ]
+        // The resolve launch lands on the hub, so the row is the one
+        // this Mac's machine.json names — a satellite's fields never
+        // stand in for it.
+        #expect(IssueResolve.hubMachine(machines: machines, localMachineId: "mac")?.id == "mac")
+        #expect(IssueResolve.hubMachine(machines: machines, localMachineId: "sat")?.id == "sat")
+        // One row and no id to match: that row is the hub's.
+        #expect(IssueResolve.hubMachine(machines: [machines[1]], localMachineId: nil)?.id == "mac")
+        // No match and no single row: the hub's fields are unknown.
+        #expect(IssueResolve.hubMachine(machines: machines, localMachineId: nil) == nil)
     }
 
     private func session(_ harness: String, _ cwd: String?, _ age: TimeInterval) -> SessionInfo {
@@ -491,7 +517,7 @@ extension HubStubbed {
                 case ("GET", "/v1/launches/l9"):
                     return (200, Data(#"{"launch_id": "l9", "state": "started", "key": "claude:s1", "note": "Started"}"#.utf8))
                 case ("GET", "/v1/machines"):
-                    return (200, Data(#"{"machines": [{"id": "m1", "name": "mac", "online": true, "launchable": ["claude"], "harness_names": {"claude": "Claude Code"}}]}"#.utf8))
+                    return (200, Data(#"{"machines": [{"id": "m1", "name": "mac", "online": true, "launchable": ["claude"], "harness_names": {"claude": "Claude Code"}, "model_at_launch": ["claude"], "last_models": {"claude": "sonnet"}}]}"#.utf8))
                 default:
                     return (404, Data())
                 }
@@ -512,6 +538,8 @@ extension HubStubbed {
             #expect(status.key == "claude:s1")
             let machines = try await hub.machines()
             #expect(machines.first?.launchable == ["claude"])
+            #expect(machines.first?.modelAtLaunch == ["claude"])
+            #expect(machines.first?.lastModels == ["claude": "sonnet"])
         }
 
         @Test func refusalsReadInTheHubsWords() async {

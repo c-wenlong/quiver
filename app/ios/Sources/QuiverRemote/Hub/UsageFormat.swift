@@ -4,7 +4,7 @@ import Foundation
 /// views so the rules are tested on their own.
 enum UsageFormat {
     /// A reading older than this when its machine took the snapshot is the
-    /// outage fallback: the 300 s rate-limit cache plus slack, as the PWA.
+    /// outage fallback: the 300 s rate-limit cache plus slack, as the remote PWA used.
     static let staleReadingS: Double = 360
     /// A satellite reports every 300 s; two missed reports means its
     /// figures are that old.

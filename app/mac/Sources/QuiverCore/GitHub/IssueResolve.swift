@@ -5,6 +5,13 @@ import Observation
 /// can launch, which one to preselect, and whether the context posts as
 /// a comment. Pure, so tests feed it rows.
 public enum IssueResolve {
+    /// The hub's own `/v1/machines` row: the one whose id matches this
+    /// Mac's `machine.json`, or the only row there is.
+    public static func hubMachine(machines: [HubMachine], localMachineId: String?) -> HubMachine? {
+        machines.first { $0.id == localMachineId }
+            ?? (machines.count == 1 ? machines.first : nil)
+    }
+
     /// The harnesses this Mac's hub can start, from its own
     /// `/v1/machines` row (`launchable`, else every harness it detected).
     /// The hub's row is the one whose id matches this Mac's
@@ -13,9 +20,9 @@ public enum IssueResolve {
     /// one it can't start.
     public static func offeredHarnesses(machines: [HubMachine], localMachineId: String?,
                                         fallback: [String]) -> [String] {
-        let own = machines.first { $0.id == localMachineId }
-            ?? (machines.count == 1 ? machines.first : nil)
-        guard let own else { return fallback }
+        guard let own = hubMachine(machines: machines, localMachineId: localMachineId) else {
+            return fallback
+        }
         return own.launchable ?? own.harnesses ?? fallback
     }
 

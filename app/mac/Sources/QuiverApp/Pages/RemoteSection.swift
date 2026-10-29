@@ -4,8 +4,8 @@ import SwiftUI
 
 /// Settings › Integrations › Remote: Clockwork-style pairing card. Shows whether the hub
 /// is reachable, lists paired devices, and mints a one-time pair token it
-/// renders as a QR code — the phone scans it to reach the PWA or the iOS
-/// wrapper over Tailscale.
+/// renders as a QR code — the phone scans it to reach the web app or the
+/// iOS app over Tailscale.
 struct RemoteSection: View {
     @Environment(AppModel.self) private var app
     @State private var model: RemoteModel?

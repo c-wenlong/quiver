@@ -160,6 +160,9 @@ private struct PanelFanPopover: View {
                                + Self.thresholdSteps.map { (Double($0), "\($0) °C") },
                            selection: thresholdPick, width: nil)
                     .disabled(fans.busy)
+                Image(systemName: "info.circle")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .hoverTip(thresholdCaption)
             }
             if fans.thresholdEnabled {
                 HStack {
@@ -171,9 +174,6 @@ private struct PanelFanPopover: View {
                 }
                 speedSlider("Speed above it", value: thresholdLevel)
             }
-            Text(thresholdCaption)
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -206,14 +206,18 @@ private struct PanelFanPopover: View {
                     .primaryButton()
                     .disabled(fans.phase == .starting || fans.busy)
                 Spacer()
+                Image(systemName: "info.circle")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .hoverTip(manualCaption)
             }
-            Text("A manual speed holds while Quiver is open. macOS takes the fans back when you pick "
-                 + "Automatic or quit Quiver."
-                 + (fans.helperInstalled ? ""
-                    : " The first time, Quiver installs a small helper, which asks for your password once."))
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var manualCaption: String {
+        "A manual speed holds while Quiver is open. macOS takes the fans back when you pick "
+            + "Automatic or quit Quiver."
+            + (fans.helperInstalled ? ""
+               : " The first time, Quiver installs a small helper, which asks for your password once.")
     }
 
     private var buttonTitle: String {

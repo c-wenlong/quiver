@@ -29,6 +29,8 @@ belongs to the hub machine:
   apart because it calls tailscale and probes the hub's own https
   address. Read only: the page never runs ``--apply``, which can move the
   very hub serving it.
+- ``?part=remote``: just the remote card (devices, pair requests), which
+  the section polls while it is open.
 
 Writes, all behind the device bearer and the Origin check:
 
@@ -105,6 +107,8 @@ def get(ctx, args: dict) -> dict:
         from quiver.remote import setup
 
         return {"remote_setup": setup.evaluate(setup.gather(home=ctx.home))}
+    if part == "remote":
+        return {"remote": _remote(ctx)}
     if part:
         raise PageError(400, "bad_part", f"unknown part: {part}")
     home = _home(ctx)

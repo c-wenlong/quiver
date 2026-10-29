@@ -14,6 +14,11 @@ struct NewSessionView: View {
     @State private var harness: String?
     @State private var harnessPicked = false
     @State private var prompt = ""
+    @State private var model = ""
+    /// The field's own binding sets this on any keystroke, so even a
+    /// clear back to the prefill counts: a harness or machine change
+    /// must not overwrite what the user left.
+    @State private var modelEdited = false
     @State private var showAllFolders = false
     @State private var folderQuery = ""
     @State private var browsePath: [FolderBrowse] = []
@@ -56,6 +61,9 @@ struct NewSessionView: View {
                 machinePicker(machines)
                 if let machine {
                     harnessSection(machine)
+                    ModelField(machine: machine, harness: harness,
+                               text: Binding(get: { model }, set: { model = $0; modelEdited = true }),
+                               sessions: rows, disabled: flow.busy)
                     promptSection
                     startSection(machine)
                     folderSection(machine)
@@ -77,6 +85,14 @@ struct NewSessionView: View {
             guard machineId == nil else { return }
             rows = app.sessions
             select(machine: NewSessionOptions.machines(app.machines).first)
+        }
+        .onChange(of: harness) { _, _ in
+            if let machine { refillModel(on: machine) }
+        }
+        // A machine switch can keep the same harness while last_models
+        // changes, so the refill listens to the machine too.
+        .onChange(of: machineId) { _, _ in
+            if let machine { refillModel(on: machine) }
         }
     }
 
@@ -281,11 +297,20 @@ struct NewSessionView: View {
         }
     }
 
+    /// The Model field's prefill after a harness or machine change: an
+    /// unedited field takes the machine's last-used model for the new
+    /// harness, an edited one keeps what the user left.
+    private func refillModel(on machine: Machine) {
+        guard let next = NewSessionOptions.modelText(edited: modelEdited, for: harness, on: machine) else { return }
+        model = next
+    }
+
     private func start(_ machine: Machine) async {
         guard let client = app.client, let folder, let harness else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pick = NewSessionOptions.modelPick(model, for: harness, on: machine)
         let key = await flow.run(
-            post: { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text) },
+            post: { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text, model: pick) },
             fetch: { try await client.launch($0) })
         guard let key, !Task.isCancelled else { return }
         await app.refresh()
@@ -405,6 +430,41 @@ struct FolderBrowserView: View {
 private struct FolderChoice: Identifiable {
     let path: String
     var id: String { path }
+}
+
+/// The Model row every launch sheet shows under its harness picker: a
+/// free-text field for the model the agent starts with, prefilled by
+/// the sheet from the machine's last-used ledger. It hides on a machine
+/// row too old to name the harnesses that honour a pick (an old
+/// satellite would refuse one anyway), and disables for a harness that
+/// can't — the hub would answer that pick with a 409.
+struct ModelField: View {
+    let machine: Machine
+    let harness: String?
+    @Binding var text: String
+    /// The sheet's session rows, for the harness's display name.
+    var sessions: [SessionRow] = []
+    /// A launch in flight locks the field with the sheet's other inputs.
+    var disabled = false
+
+    private var accepts: Bool { NewSessionOptions.acceptsModel(harness, on: machine) }
+
+    var body: some View {
+        if machine.modelAtLaunch != nil {
+            GroupLabel(text: "Model")
+            TextField("Harness default", text: $text)
+                .quiverField()
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .disabled(disabled || !accepts)
+            if !accepts, let harness {
+                Text("\(NewSessionOptions.name(harness, on: machine, sessions: sessions)) can't take a model at launch: it starts with its own default.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+            }
+        }
+    }
 }
 
 struct FolderRow: View {

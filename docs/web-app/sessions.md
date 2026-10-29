@@ -3,7 +3,7 @@
 The Sessions page (sidebar id `sessions`, drawn by `static/sessions.js`
 from `GET /v1/app/sessions`, see docs/web-app.md) opens a session's chat
 when you click its row. The chat is `static/pages/chat.js` (+ `chat.css`),
-a port of the hub PWA's chat (`src/quiver/remote/web/app.js`): remote
+a port of the remote PWA's chat it replaced: remote
 control from the web app, with the same routes, ownership rules and event
 handling as the phone. It has no page module and no `/v1/app` route of
 its own; it talks to the hub's session routes (docs/remote-control.md,
@@ -35,10 +35,10 @@ the chat, like the Repositories rail's fold.
 |---|---|
 | Top bar | Back, harness logo, title, harness · folder (· machine for a satellite), the status badge, a `qv-…` tmux chip when the row names a pane (click copies `tmux attach -t qv-…`), a Live / Reconnecting dot, Detach (attached sessions only), and Details: the sheet the row used to open (harness, machine, folder, last active, id, models, the supervised mode and pane, tokens and spend, icon copy buttons, Run in terminal on macOS hubs). |
 | Rail | Every session the page lists, grouped by day like the list: harness logo, title and a status dot (the badge colours; nothing for a finished one). A row swaps the chat to that session; the open one is marked and stays listed even when the list's data or filters would leave it out. The header button relists; under 960 px the rail is a strip of chips above the chat. |
-| Transcript | The last 500 messages from `GET /v1/sessions/{key}/messages?limit=500`, then live events. User text right in a bubble, assistant text left, both with the PWA's markdown (fenced code, inline code, bold; everything else escaped). Thinking folds under "Thought". Tool calls are cards ("Edit src/x.py") that open to their arguments and output; Edit, MultiEdit, Write, NotebookEdit and apply_patch cards show a diff instead. Compaction is a "Context compacted" rule; system notes are centred captions; errors are red. |
+| Transcript | The last 500 messages from `GET /v1/sessions/{key}/messages?limit=500`, then live events. User text right in a bubble, assistant text left, both with the app's markdown (fenced code, inline code, bold; everything else escaped). Thinking folds under "Thought". Tool calls are cards ("Edit src/x.py") that open to their arguments and output; Edit, MultiEdit, Write, NotebookEdit and apply_patch cards show a diff instead. Compaction is a "Context compacted" rule; system notes are centred captions; errors are red. |
 | Approval card | "Approval needed", the prompt, and the menu rows the pane shows as stacked option buttons (the event carries `options` with each row's digit and label, so "6 Edit command" or "Yes, switch to bypass mode" are answerable too). Older events and non-tmux approvals carry no menu; they show Allow, Always, Deny. Once answered the card folds to a "Approval · {what was picked}" row that re-opens to the full prompt and menu, the picked row at full shade and the rest greyed. |
 | Working dots | While the session is active, a send waits for its reply, or live messages are still being revealed. |
-| Composer | Queue or Steer, the message box (Enter sends, Shift+Enter is a new line), Stop and Send. Off, reading "Read-only until this session is attached", unless the session is attached. Pinned to the bottom of the panel: an open chat is a fixed-height layout where the transcript is the only scroller (chat.js toggles `body.chat-open`), like the apps'. Typing `/` as the box's first character opens the PWA's command menu above it: `GET /v1/sessions/{key}/commands`, fetched when the chat opens (and kept per session key, so a reopened chat shows it at once) and filtered as the name grows, each row with its argument hint, description and source tag (Built-in, User, Project, Skill, Plugin). Arrows highlight, Enter or Tab inserts `/name ` (or the row's own `insert`, like a Codex skill's `$name`), Escape dismisses until the token changes. The hub only lists commands; the harness expands the text when the message arrives. |
+| Composer | Queue or Steer, the message box (Enter sends, Shift+Enter is a new line), Stop and Send. Off, reading "Read-only until this session is attached", unless the session is attached. Pinned to the bottom of the panel: an open chat is a fixed-height layout where the transcript is the only scroller (chat.js toggles `body.chat-open`), like the apps'. Typing `/` as the box's first character opens the command menu above it: `GET /v1/sessions/{key}/commands`, fetched when the chat opens (and kept per session key, so a reopened chat shows it at once) and filtered as the name grows, each row with its argument hint, description and source tag (Built-in, User, Project, Skill, Plugin). Arrows highlight, Enter or Tab inserts `/name ` (or the row's own `insert`, like a Codex skill's `$name`), Escape dismisses until the token changes. The hub only lists commands; the harness expands the text when the message arrives. |
 | Observed banner | "Observed session: read-only until attached." with Attach when the hub says the session is `attachable` and it isn't mid-turn; otherwise why it can't be attached (mid-turn, or a harness that can't be resumed). A `kept` row reads "Still running in tmux…" and offers Reattach even mid-turn — the pane is adopted, nothing restarts. |
 | Detaching banner | While a `when_idle` detach is pending: "Detaches when this turn ends." with Stay attached, which posts `op: attach` to cancel it. |
 | Detach sheet | From the bar's Detach button, an attached session gets the phone's three-way choice as stacked options: Detach when it finishes (`when_idle`), Keep it running in tmux (`keep`, only when the mode has a pane), Detach now (`now`). |
@@ -57,7 +57,7 @@ the chat, like the Repositories rail's fold.
    the stream has started.
 3. `GET /v1/sessions/{key}/events?last=<seq of the last message shown>`,
    read with a fetch stream (EventSource can't send the bearer). Events
-   are revealed one at a time with a short gap, as in the PWA; a replay of
+   are revealed one at a time with a short gap; a replay of
    more than 24 lands at once. A dropped stream reconnects after 2 s from
    the last seq shown, and again when the tab becomes visible. Leaving the
    chat by any route aborts the stream, so it never keeps one of the
@@ -134,15 +134,15 @@ says it starts when the machine is online. Closing the sheet cancels the
 wait, not the launch — the hub keeps it and the session appears in the
 list whenever it lands.
 
-## Differences from the PWA
+## Differences from the remote PWA it replaced
 
-- Attach asks first. The PWA attaches on one tap; here it stops the
+- Attach asks first. The PWA attached on one tap; here it stops the
   harness in its terminal, so the banner names that before it happens.
 - Opening a chat streams from the last message the backfill showed, not
   from a seq saved in `localStorage`, so an approval asked or a result
   reported after the last message is replayed into view, and a waiting
   approval asked before it is restored too. Within an open chat,
-  reconnects resume from the last seq shown, as in the PWA.
+  reconnects resume from the last seq shown, as the PWA did.
 - Codex's `apply_patch` (raw patch text) renders as a diff, and code
   blocks keep `**` and backticks as written.
 - New messages scroll the page only when it is already at the bottom, so
@@ -151,7 +151,7 @@ list whenever it lands.
   says what was decided.
 - A reconnect that finds the hub's journal trimmed past where the view
   stopped (`journal.truncated`) adds a notice that some events were
-  missed and are gone from the journal, where the PWA carries on as if
+  missed and are gone from the journal, where the PWA carried on as if
   nothing were missing.
 - Not ported: attachments, the waiting-sends tray, the `@` file-mention
   menu and "load earlier" (the hub's `queue` and `attachments` routes are

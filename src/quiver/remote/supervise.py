@@ -1170,8 +1170,10 @@ def launch_tuning_error(
     """The refusal note when ``tool_name``'s launch can't honour
     ``model``/``effort``, else "".
 
-    A launch is always a tmux pane, so the only mechanism is typing
-    ``/op <v>`` into it — allowed only where ``slash_builtins`` verifies
+    For a fork or a ``mode: tmux`` attach, whose command line is a
+    resume, the mechanism is typing ``/op <v>`` into the pane (a fresh
+    launch puts the model on its argv instead: ``fresh_launch_error``),
+    allowed only where ``slash_builtins`` verifies
     the TUI runs the command with an argument (claude and codex for
     ``model``, claude for ``effort``). Anything else would send the text
     to the model as a prompt, so the field is refused rather than
@@ -1191,6 +1193,30 @@ def launch_tuning_error(
         f"{tool_name} launches can't take {ops}: its TUI has no "
         f"verified {ops} command"
     )
+
+
+def fresh_launch_error(
+    tool_name: str, model: str | None, effort: str | None,
+    reg: dict | None = None,
+) -> str:
+    """The refusal note when a fresh launch of ``tool_name``
+    (``launch_new``) can't honour ``model``/``effort``, else "".
+
+    A fresh process takes the model on its command line, as
+    ``capabilities.model`` in harness.json declares
+    (``launch_model``); ``effort`` has no launch flag anywhere yet, so
+    it keeps the typed ``/effort <v>`` rule of ``launch_tuning_error``.
+    """
+    from quiver.remote import launch_model
+
+    note = launch_model.model_error(tool_name, model, reg)
+    if note:
+        return note
+    return launch_tuning_error(tool_name, None, effort)
+
+
+def _launch_settings_dir(home: Path | None) -> Path:
+    return remote_dir_for(home) / "launch-settings"
 
 
 def channel_tuning_error(
@@ -1318,13 +1344,17 @@ def launch_new(
     ``launch_id`` rides the marker into the supervised entry, so the hub
     can tell the phone which session its launch became. ``binary`` is the
     harness's registry command (``cursor`` runs as ``cursor-agent``);
-    without it the session tool name is the binary. ``model``/``effort``
-    are typed into the pane once it is up (``launch_tuning_error`` names
-    the harnesses that can't take them); they ride the marker into the
-    supervised entry as launch bookkeeping.
+    without it the session tool name is the binary. ``model`` goes on
+    the harness's command line (``launch_model.model_argv``, per
+    harness.json ``capabilities.model``); ``effort`` is typed into the
+    pane once it is up. ``fresh_launch_error`` names what a harness
+    can't take. Both ride the marker into the supervised entry as
+    launch bookkeeping.
     Returns ``(ok, note, tmux_name)``.
     """
-    blocked = launch_tuning_error(tool_name, model, effort)
+    from quiver.remote import launch_model
+
+    blocked = fresh_launch_error(tool_name, model, effort)
     if blocked:
         return False, blocked, None
     binary = binary or launch_tool_name(tool_name)
@@ -1336,6 +1366,13 @@ def launch_new(
     # inside one second, and the tmux name derives from the key.
     key = f"new:{tool_name}:{int(time.time())}-{os.getpid()}-{secrets.token_hex(3)}"
     argv = [binary]
+    if model:
+        try:
+            argv += launch_model.model_argv(
+                tool_name, model, settings_dir=_launch_settings_dir(home),
+                stem=tmux_name(key))
+        except (OSError, ValueError) as exc:
+            return False, f"can't start {tool_name} on {model}: {exc}", None
     name = launch_tmux(key, argv, cwd or None)
     if name is None:
         return False, (
@@ -1356,9 +1393,9 @@ def launch_new(
         }))
     except OSError:
         pass
-    if not _prime_launch(name, prompt, model, effort):
-        what = "the launch controls or prompt" if (model or effort) \
-            else "the prompt"
+    # The model is already on the command line; only effort is typed.
+    if not _prime_launch(name, prompt, None, effort):
+        what = "the launch controls or prompt" if effort else "the prompt"
         # Nothing was delivered, so no turn will ever start: the record
         # says failed rather than leaving the phone polling a pending
         # launch. The pane itself stays up for a terminal attach.

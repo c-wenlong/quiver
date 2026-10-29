@@ -378,6 +378,43 @@ import Testing
         #expect(NewSessionOptions.defaultHarness(folder: "/p", machineId: "m1",
                                                  offered: [], sessions: rows) == nil)
     }
+
+    /// The launch Model row (#914): shown only where the launch fields
+    /// exist, enabled only where the picked harness is listed, prefilled
+    /// from the machine's ledger, and sent only as a non-blank token.
+    @Test func launchOptionsReadTheMachinesModelFields() {
+        let machine = HubMachine(id: "m", launchable: ["claude", "codex"],
+                                 modelAtLaunch: ["claude"],
+                                 lastModels: ["claude": "claude-sonnet-4.5"])
+        #expect(LaunchOptions.showsModel(on: machine))
+        #expect(LaunchOptions.takesModel("claude", on: machine))
+        #expect(!LaunchOptions.takesModel("codex", on: machine))
+        #expect(!LaunchOptions.takesModel(nil, on: machine))
+        #expect(LaunchOptions.lastModel("claude", on: machine) == "claude-sonnet-4.5")
+        #expect(LaunchOptions.lastModel("codex", on: machine) == "")
+
+        // A row that reports the key but lists nothing shows the row
+        // disabled; a row too old to report it shows nothing.
+        let noneTake = HubMachine(id: "m2", modelAtLaunch: [])
+        #expect(LaunchOptions.showsModel(on: noneTake))
+        #expect(!LaunchOptions.takesModel("claude", on: noneTake))
+        let old = HubMachine(id: "m3", launchable: ["claude"])
+        #expect(!LaunchOptions.showsModel(on: old))
+        #expect(!LaunchOptions.takesModel("claude", on: old))
+        #expect(!LaunchOptions.showsModel(on: nil))
+
+        // The body's `model`: trimmed, gone when blank or unsupported.
+        #expect(LaunchOptions.model(" sonnet ", supported: true) == "sonnet")
+        #expect(LaunchOptions.model("provider/x", supported: true) == "provider/x")
+        #expect(LaunchOptions.model("  ", supported: true) == nil)
+        #expect(LaunchOptions.model("sonnet", supported: false) == nil)
+
+        // The refill keeps an edited field's text — a deliberate clear
+        // included — and otherwise serves the last-used model.
+        #expect(LaunchOptions.modelText(edited: true, "claude", on: machine) == nil)
+        #expect(LaunchOptions.modelText(edited: false, "claude", on: machine) == "claude-sonnet-4.5")
+        #expect(LaunchOptions.modelText(edited: false, "codex", on: machine) == "")
+    }
 }
 
 /// The hub calls the pages make: paths, queries and bodies, answered
@@ -431,13 +468,18 @@ extension HubStubbed {
         HubStub.requests = []
         HubStub.handler = { req in
             req.url?.path == "/v1/app/tasks"
-                ? (200, Data(#"{"harnesses": [{"name": "claude", "display_name": "Claude Code", "tracked": true}], "machine": "kai"}"#.utf8))
+                ? (200, Data(#"{"harnesses": [{"name": "claude", "display_name": "Claude Code", "tracked": true, "launch_model": true, "launch_effort": true, "last_model": "claude-sonnet-4.5"}, {"name": "codex", "display_name": "Codex", "tracked": true, "launch_model": false, "launch_effort": false, "last_model": ""}], "machine": "kai"}"#.utf8))
                 : (404, Data())
         }
         let (harnesses, machine) = try await client().taskHarnesses()
-        #expect(harnesses.map(\.name) == ["claude"])
+        #expect(harnesses.map(\.name) == ["claude", "codex"])
         #expect(harnesses.first?.displayName == "Claude Code")
         #expect(harnesses.first?.tracked == true)
+        // The launch-option fields decode; an older hub leaves them nil.
+        #expect(harnesses.first?.launchModel == true)
+        #expect(harnesses.first?.launchEffort == true)
+        #expect(harnesses.first?.lastModel == "claude-sonnet-4.5")
+        #expect(harnesses[1].launchModel == false)
         #expect(machine == "kai")
         #expect(HubStub.requests.first.map(query) == ["harnesses": "1"])
     }
@@ -486,6 +528,11 @@ extension HubStubbed {
         #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go",
                                      machine: "m2")["machine"] as? String == "m2")
         #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go")["machine"] == nil)
+        // A model pick travels only as a non-blank, trimmed token.
+        #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go",
+                                     model: " sonnet ")["model"] as? String == "sonnet")
+        #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go",
+                                     model: "  ")["model"] == nil)
     }
 
     @Test func startSessionPostsAndReadsTheLaunch() async throws {
@@ -496,11 +543,13 @@ extension HubStubbed {
                 : (404, Data())
         }
         let launch = try await client().startSession(harness: "claude", cwd: "/p",
-                                                     prompt: "fix it", machine: "m2")
+                                                     prompt: "fix it", machine: "m2",
+                                                     model: "sonnet")
         #expect(launch.launchId == "l-9")
         #expect(launch.state == "pending")
         let sent = HubStub.body(try #require(HubStub.requests.first))
-        #expect(sent == ["harness": "claude", "cwd": "/p", "prompt": "fix it", "machine": "m2"])
+        #expect(sent == ["harness": "claude", "cwd": "/p", "prompt": "fix it",
+                         "machine": "m2", "model": "sonnet"])
     }
 
     @Test func launchPollReadsWhereItStands() async throws {
@@ -522,9 +571,10 @@ extension HubStubbed {
                 : (404, Data())
         }
         _ = try await client().openPull(owner: "o", repo: "r", number: 9,
-                                        harness: "codex", prompt: "review it")
+                                        harness: "codex", prompt: "review it",
+                                        model: "gpt-5")
         let sent = HubStub.body(try #require(HubStub.requests.first))
-        #expect(sent == ["harness": "codex", "prompt": "review it"])
+        #expect(sent == ["harness": "codex", "prompt": "review it", "model": "gpt-5"])
         // A blank prompt is left out: the hub's built one wins.
         _ = try await client().openPull(owner: "o", repo: "r", number: 9, harness: "codex")
         #expect(HubStub.body(try #require(HubStub.requests.last)) == ["harness": "codex"])
@@ -594,6 +644,50 @@ extension HubStubbed {
         #expect(model.error == nil)
         // The failed repo's rows are last-known; a healthy one's aren't.
         #expect(model.stale(model.tasks[0]) == false)
+    }
+
+    @Test func aHubThatIsStillStartingIsRetriedUntilItAnswers() async throws {
+        // The hub restarts on every app install: the first loads find it
+        // down, and the page fills in once it answers, with no Refresh.
+        HubStub.handler = { req in
+            req.url?.path == "/v1/app/tasks" ? (200, Data(Self.listJSON.utf8)) : (404, Data())
+        }
+        let store = HubDeviceStore(url: dir.appending(path: "\(UUID().uuidString)/app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let locator = FakeLocator(address: nil)
+        let hub = LocalHub(locator: locator, store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session())
+        }
+        let model = TasksModel()
+        let waits = WaitLog()
+        await model.loadUntilHubAnswers(hub: hub) { wait in
+            await waits.add(wait)
+            // Up after the second wait.
+            if await waits.count == 2 { locator.address = "127.0.0.1:8477" }
+        }
+        #expect(await waits.all == [.seconds(3), .seconds(6)])
+        #expect(model.hubDown == false)
+        #expect(model.error == nil)
+        #expect(model.tasks.map(\.id) == ["github:issue:o/r:5"])
+    }
+
+    @Test func aRestartingHubIsRetriedWhetherOrNotTheAppHasAClient() {
+        // No client yet: swe's status says the hub is down. A client the
+        // app already holds: the connection itself fails. Both pass once
+        // the hub is up; a misbound hub or a bad reply doesn't.
+        #expect(TasksModel.hubNotAnswering(HubError(status: 0, code: "hub_down", message: "")))
+        #expect(TasksModel.hubNotAnswering(HubError(status: 0, code: "network", message: "")))
+        #expect(!TasksModel.hubNotAnswering(HubError(status: 0, code: "hub_blocked", message: "")))
+        #expect(!TasksModel.hubNotAnswering(HubError(status: 500, code: "internal", message: "")))
+    }
+
+    @Test func aCancelledRetryStopsWithTheHubStillDown() async throws {
+        let hub = LocalHub(locator: FakeLocator(address: nil),
+                           store: HubDeviceStore(url: dir.appending(path: "\(UUID().uuidString)/d.json")))
+        let model = TasksModel()
+        await model.loadUntilHubAnswers(hub: hub) { _ in throw CancellationError() }
+        #expect(model.hubDown)
+        #expect(model.error == "This Mac's hub isn't running. Start it in Settings › Remote.")
     }
 
     @Test func anUpstreamGithubFailureMarksRowsStale() async throws {
@@ -686,4 +780,11 @@ extension HubStubbed {
         #expect(model.busy.isEmpty)
     }
 }
+}
+
+/// The waits `loadUntilHubAnswers` asked for, in order.
+private actor WaitLog {
+    private(set) var all: [Duration] = []
+    var count: Int { all.count }
+    func add(_ wait: Duration) { all.append(wait) }
 }

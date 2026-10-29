@@ -129,6 +129,10 @@ const settingsPage = {
   ticket: null, target: "web", minting: false, pairError: null,
   showsAllDevices: false,
   confirming: null, revoking: new Set(), revokeErrors: {}, timer: null,
+  // Tailnet pair requests: the row mid-decision, its last error, the
+  // digits typed into each row (kept across repaints), and the poll
+  // that relists while the section is open.
+  deciding: null, decideErrors: {}, codeDrafts: {}, reqPoll: null,
   // Session search: a switch write in flight, its error, the poll that
   // runs while a pass does.
   searchBusy: false, searchError: null, searchPoll: null,
@@ -627,10 +631,10 @@ function remoteCards() {
   const devices = live.length
     ? `<div class="set-card"><div class="set-card-title">Paired devices</div>${viaTailnet}${shown.map(deviceRow).join('<div class="set-divider"></div>')}<div class="set-divider"></div>${fold}${pair}</div>`
     : `<div class="set-card"><div class="set-card-title">Paired devices</div>${viaTailnet}<p class="caption set-empty">No devices paired yet.</p>${pair}</div>`;
-  const requests = (r.requests || []).length ? setCard([...r.requests.map((q) => setRow(q.name || "device",
-      [q.node_name, q.login, q.peer_ip, `expires in ${Math.max(0, Math.round(q.expires_in_s / 60))} min`].filter(Boolean).join(" · "))),
-    setRow("Approve or deny", "Phones that asked to pair through Tailscale wait here. Decide on the hub's remote page, where you type the code the phone shows.",
-      '<a class="set-button" href="/#approve">Open approvals</a>')], "Waiting for approval") : "";
+  // Devices that asked to pair through Tailscale wait for the code they
+  // show: the old /#approve page's rows, now inline here.
+  const requests = (r.requests || []).length ? setCard(
+    r.requests.map(requestRow), "Waiting for approval") : "";
   return `<div class="set-stack">${setupCard()}${hub}${devices}${requests}</div>${pairSheet()}`;
 }
 
@@ -701,6 +705,26 @@ async function settingsLoadSetup() {
   if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote();
 }
 
+/* One pending pair request: name and node, the code field the asking
+ * device shows, and the two decisions. ``request_id`` pins the answer so
+ * a code meant for another request can't land here. The field's value is
+ * kept in ``codeDrafts`` and its id lets a repaint hand focus back, so a
+ * poll or a sibling card's refresh can't eat digits mid-typing. */
+function requestRow(q) {
+  const p = settingsPage;
+  const detail = [q.node_name, q.login, q.peer_ip,
+    `expires in ${Math.max(0, Math.round(q.expires_in_s / 60))} min`].filter(Boolean).join(" · ");
+  const busy = p.deciding === q.request_id;
+  const control = `<span class="set-decide" data-request="${esc(q.request_id)}">
+    <input class="field set-code" id="set-code-${esc(q.request_id)}" inputmode="numeric" maxlength="7"
+      placeholder="000 000" aria-label="Code the device shows" data-code
+      value="${esc(p.codeDrafts[q.request_id] || "")}"${busy ? " disabled" : ""}>
+    <button class="set-button primary" data-act="approve"${busy ? " disabled" : ""}>Approve</button>
+    <button class="set-button" data-act="deny"${busy ? " disabled" : ""}>Deny</button></span>`;
+  return setRow(q.name || "device", detail, control,
+    { warning: p.decideErrors[q.request_id] || null });
+}
+
 function deviceRow(dev) {
   const p = settingsPage;
   // The name it renamed itself to, then what it paired as — the fields
@@ -738,7 +762,7 @@ function pairSheet() {
   const target = settingsPage.target;
   const payload = target === "web" ? t.url : t.deep_link;
   const instructions = target === "web"
-    ? "On your phone, scan the code to open the remote in a browser, then Add to Home Screen to keep it."
+    ? "On your phone, scan the code to pair the browser and open the web app, then Add to Home Screen to keep it."
     : "On your phone, scan the code to open the pairing link in the Quiver app.";
   return `<dialog class="sheet set-pair-sheet" id="set-pair-sheet" aria-labelledby="set-pair-title">
     <div class="sheet-body">
@@ -1196,6 +1220,7 @@ function bindRemote() {
   const p = settingsPage;
   if (!p.github && !p.githubBusy) settingsLoadGithub(false);
   if ((!p.setup || p.setupStale) && !p.setupBusy) settingsLoadSetup();
+  if (p.data) settingsPollRequests();
   const recheck = document.getElementById("set-setup-recheck");
   if (recheck) recheck.onclick = () => settingsLoadSetup();
   for (const btn of document.querySelectorAll("[data-setup-copy]")) {
@@ -1222,6 +1247,13 @@ function bindRemote() {
         if (btn.dataset.act === "cancel") { p.confirming = null; settingsRepaintRemote(`[data-device="${CSS.escape(id)}"] [data-act="revoke"]`); }
         if (btn.dataset.act === "revoke-confirm") settingsRevoke(id);
       };
+    }
+  }
+  for (const row of document.querySelectorAll("[data-request]")) {
+    const rid = row.dataset.request;
+    const code = () => (row.querySelector("[data-code]").value || "").replace(/\D/g, "");
+    for (const btn of row.querySelectorAll("[data-act]")) {
+      btn.onclick = () => settingsDecide(rid, btn.dataset.act, code());
     }
   }
   const sheet = document.getElementById("set-pair-sheet");
@@ -1264,9 +1296,15 @@ function bindRemint(sheet) {
 }
 
 /* Repaint the section, keeping focus where it was when that element is
- * still there, else on ``fallback``. */
+ * still there, else on ``fallback``. Code fields being typed in bank
+ * their digits into ``codeDrafts`` first, so a repaint mid-typing —
+ * this poll's, or a sibling card's — loses nothing. */
 function settingsRepaintRemote(fallback) {
   if (!onSettingsPage()) return;
+  for (const row of document.querySelectorAll("[data-request]")) {
+    const input = row.querySelector("[data-code]");
+    if (input) settingsPage.codeDrafts[row.dataset.request] = input.value;
+  }
   const el = document.activeElement;
   const key = el && el.id ? `#${CSS.escape(el.id)}` : null;
   paintSettings();
@@ -1344,6 +1382,30 @@ function settingsDismissTicket() {
   if (p.setup && !p.setup.ready && !p.setupBusy) settingsLoadSetup();
 }
 
+/* Approve or deny a pending pair request, on the protocol's own routes
+ * (the same ones a paired phone or the owner's tailnet identity may
+ * call): the web app's bearer or X-Quiver-Pair header satisfies both. */
+async function settingsDecide(rid, act, code) {
+  const p = settingsPage;
+  if (p.deciding) return;
+  p.deciding = rid;
+  delete p.decideErrors[rid];
+  settingsRepaintRemote();
+  const { status, data } = await apiPost(`/v1/pair/requests/${act}`, { code, request_id: rid });
+  p.deciding = null;
+  if (status === 401) { if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 200) {
+    // The request is decided: its draft dies with it, and the device
+    // and request lists are read again.
+    delete p.codeDrafts[rid];
+    settingsRefreshRemote();
+    return;
+  }
+  p.decideErrors[rid] = (data && data.error && data.error.message)
+    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  settingsRepaintRemote(`[data-request="${CSS.escape(rid)}"] [data-act="${act}"]`);
+}
+
 async function settingsRefreshRemote(focus) {
   const gen = routeGen;
   const mine = ++settingsPage.gen;
@@ -1352,6 +1414,43 @@ async function settingsRefreshRemote(focus) {
   if (gen !== routeGen || mine !== settingsPage.gen) return;
   if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   if (status === 200 && data) { settingsPage.data = data; settingsRepaintRemote(focus); }
+  settingsPollRequests();
+}
+
+/* What about the remote card could change between reads: the request
+ * and device ids. Names and expiries don't tick the signature, so a
+ * quiet poll costs no repaint — and a typed code field is never
+ * redrawn under the user's fingers. */
+function remoteSig(remote) {
+  const r = remote || {};
+  return JSON.stringify([
+    (r.requests || []).map((q) => q.request_id),
+    (r.devices || []).map((d) => d.id),
+  ]);
+}
+
+/* The remote PWA's approvals page polled every few seconds; the inline
+ * rows do the same while Integrations is open, so a phone's new request
+ * (or an expired one leaving) shows without a reload. */
+function settingsPollRequests() {
+  const p = settingsPage;
+  if (p.reqPoll) return;
+  p.reqPoll = setInterval(async () => {
+    if (!onSettingsPage() || settingsSection() !== "integrations") {
+      clearInterval(p.reqPoll);
+      p.reqPoll = null;
+      return;
+    }
+    const gen = routeGen;
+    const { status, data } = await api("/v1/app/settings?part=remote");
+    if (gen !== routeGen) return;
+    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 200 && data && p.data
+        && remoteSig(data.remote) !== remoteSig(p.data.remote)) {
+      p.data.remote = data.remote;
+      settingsRepaintRemote();
+    }
+  }, 3000);
 }
 
 async function settingsRevoke(id) {
