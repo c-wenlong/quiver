@@ -347,6 +347,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Mac app's Model menu keeps your pick across a harness round
+  trip.** On New session, Resolve issue and a task's New agent session,
+  picking `claude-opus`, switching to Codex and back used to land on
+  Claude's newest model instead, and the launch sent that if you missed
+  it. The menu now remembers a picked recent model until you pick
+  something else. A harness that lists it shows it; one that doesn't
+  (Codex, or Kilo, which takes no model) shows and sends its own
+  default, and the next harness that lists it gets it back. What the
+  menu shows is still what gets sent. Follows
+  [#914](https://github.com/c-wenlong/quiver/issues/914).
 - **The fan rule comes back on its own after the helper stops
   answering.** A fan request the root helper never took used to switch
   the rule off until someone toggled it or set a speed by hand, and a
