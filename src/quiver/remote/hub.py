@@ -1064,8 +1064,16 @@ class _Handler(BaseHTTPRequestHandler):
         """The paired device, else the owner's own device. Satellite
         routes stay bearer-only: a satellite is a paired machine."""
         device_id = self._device()
-        if device_id is None and not path.startswith("/v1/agent/"):
+        agent_route = path.startswith("/v1/agent/")
+        if device_id is None and not agent_route:
             device_id = self._owner_device()
+        # The other way round too: a satellite credential is a machine's,
+        # for /v1/agent/* only. Any pair token can mint one, so without
+        # this it would carry every phone power (launch agents, approve
+        # pairings, read API keys through /v1/app).
+        elif (device_id is not None and not agent_route
+              and (self._device_row or {}).get("role") == "satellite"):
+            return None
         return device_id
 
     def _scoped_approval_device(self, path: str) -> str | None:
