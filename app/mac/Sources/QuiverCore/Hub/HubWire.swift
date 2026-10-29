@@ -293,14 +293,19 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
     /// until the effort picker ships.
     public var effortAtLaunch: [String]?
     /// The machine ledger's most recent model per harness — the Model
-    /// field's prefill.
+    /// menu's default. Always the head of `recentModels`.
     public var lastModels: [String: String]?
+    /// Each launchable harness's recently used models, newest first (at
+    /// most 5): the Model menu's entries. nil from a hub older than the
+    /// menu, which sends only `lastModels`.
+    public var recentModels: [String: [String]]?
 
     public init(id: String, name: String? = nil, online: Bool? = nil,
                 harnesses: [String]? = nil, launchable: [String]? = nil,
                 harnessNames: [String: String]? = nil, untrackedHarnesses: [String]? = nil,
                 modelAtLaunch: [String]? = nil, effortAtLaunch: [String]? = nil,
-                lastModels: [String: String]? = nil) {
+                lastModels: [String: String]? = nil,
+                recentModels: [String: [String]]? = nil) {
         self.id = id
         self.name = name
         self.online = online
@@ -311,6 +316,7 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
         self.modelAtLaunch = modelAtLaunch
         self.effortAtLaunch = effortAtLaunch
         self.lastModels = lastModels
+        self.recentModels = recentModels
     }
 
     /// "dev-macbook-pro.local" reads as "dev-macbook-pro".
