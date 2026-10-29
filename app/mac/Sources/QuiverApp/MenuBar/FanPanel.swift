@@ -62,6 +62,12 @@ private struct PanelFanPopover: View {
         Binding(get: { fans.level }, set: { fans.setThresholdLevel($0) })
     }
 
+    /// The off temperature's dropdown only moves the line; the rule is
+    /// already on when it shows.
+    private var releasePick: Binding<Double> {
+        Binding(get: { fans.releaseBelow }, set: { fans.releaseBelow = $0 })
+    }
+
     /// What the dropdown last picked, so an enable still installing
     /// when Off is picked cannot switch the rule back on.
     @State private var wantedPick: Double = 0
@@ -156,6 +162,13 @@ private struct PanelFanPopover: View {
                     .disabled(fans.busy)
             }
             if fans.thresholdEnabled {
+                HStack {
+                    Text("Fan off below").font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    SelectMenu(options: Self.releaseSteps(below: fans.threshold)
+                                   .map { (Double($0), "\($0) °C") },
+                               selection: releasePick, width: nil)
+                }
                 speedSlider("Speed above it", value: thresholdLevel)
             }
             Text(thresholdCaption)
@@ -178,6 +191,12 @@ private struct PanelFanPopover: View {
     /// there always has a row here.
     private static let thresholdSteps =
         Array(Int(FanControl.thresholdRange.lowerBound)...Int(FanControl.thresholdRange.upperBound))
+
+    /// The off temperature's steps: every degree under the on line, so
+    /// no pick can land the fans' drop-out at or over it.
+    private static func releaseSteps(below threshold: Double) -> [Int] {
+        Array(Int(FanControl.releaseRange.lowerBound)...Int(threshold) - 1)
+    }
 
     @ViewBuilder private var manualControls: some View {
         VStack(alignment: .leading, spacing: 8) {
