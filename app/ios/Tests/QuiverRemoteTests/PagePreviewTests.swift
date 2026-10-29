@@ -1,3 +1,4 @@
+import Network
 import WebKit
 import XCTest
 @testable import QuiverRemote
@@ -209,11 +210,85 @@ final class LockedWebViewTests: XCTestCase {
     }
 
     func testNavigationAfterTheFirstLoadIsCancelled() async throws {
-        let (view, _) = try await loaded("<html><head><title>page</title></head><body>hi</body></html>")
-        _ = try? await view.evaluateJavaScript("location.href = 'https://example.com/'; 1")
+        let server = try await LoopbackServer.start()
+        defer { server.stop() }
+        let (view, lock) = try await loaded("<html><head><title>page</title></head><body>hi</body></html>")
+        // The web view holds its delegate weakly: keep the lock alive to
+        // the end, or the navigation below would meet no delegate at all.
+        defer { withExtendedLifetime(lock) {} }
+        _ = try? await view.evaluateJavaScript("location.href = '\(server.base)/next'; 1")
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(view.url?.absoluteString, "about:blank")
         let title = try await view.evaluateJavaScript("document.title") as? String
         XCTAssertEqual(title, "page")
+        XCTAssertEqual(server.connections, 0, "the cancelled navigation reached the server")
     }
+
+    func testExternalLoadsNeverLeaveWhileDataImagesDraw() async throws {
+        let dot = Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>"#.utf8).base64EncodedString()
+        func page(_ base: String) -> String {
+            """
+            <html><head><link rel="stylesheet" href="\(base)/s.css">
+            <style>body{background:url(\(base)/bg.png)}</style></head><body>
+            <img src="\(base)/a.png"><img id="i" src="data:image/svg+xml;base64,\(dot)"></body></html>
+            """
+        }
+
+        // Control: the same page in an unlocked web view does reach the
+        // server, so a zero below means the rules stopped the loads.
+        let control = try await LoopbackServer.start()
+        defer { control.stop() }
+        let open = WKWebView()
+        open.loadHTMLString(page(control.base), baseURL: nil)
+        for _ in 0..<100 where control.connections == 0 {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertGreaterThan(control.connections, 0, "the control page never reached the server")
+
+        let server = try await LoopbackServer.start()
+        defer { server.stop() }
+        let (view, lock) = try await loaded(page(server.base))
+        defer { withExtendedLifetime(lock) {} }
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertEqual(server.connections, 0, "a locked preview reached the network")
+        let width = try await view.evaluateJavaScript("document.getElementById('i').naturalWidth") as? Int
+        XCTAssertEqual(width, 4)
+    }
+}
+
+/// A TCP listener on 127.0.0.1 that counts the connections it gets.
+@MainActor
+private final class LoopbackServer {
+    private let listener: NWListener
+    private(set) var connections = 0
+    private(set) var port: UInt16 = 0
+    var base: String { "http://127.0.0.1:\(port)" }
+
+    private init(_ listener: NWListener) { self.listener = listener }
+
+    static func start() async throws -> LoopbackServer {
+        let params = NWParameters.tcp
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let server = LoopbackServer(try NWListener(using: params))
+        server.listener.newConnectionHandler = { [weak server] conn in
+            conn.cancel()
+            Task { @MainActor in server?.connections += 1 }
+        }
+        try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+            var resumed = false
+            server.listener.stateUpdateHandler = { state in
+                guard !resumed else { return }
+                switch state {
+                case .ready: resumed = true; done.resume()
+                case .failed(let error): resumed = true; done.resume(throwing: error)
+                default: break
+                }
+            }
+            server.listener.start(queue: .main)
+        }
+        server.port = server.listener.port?.rawValue ?? 0
+        return server
+    }
+
+    func stop() { listener.cancel() }
 }
