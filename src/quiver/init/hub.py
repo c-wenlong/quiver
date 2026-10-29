@@ -25,7 +25,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from quiver.paths import quiver_dir_for
+from quiver.paths import GITIGNORE_BODY, quiver_dir_for
 
 # Long enough for a slow first contact over SSH, short enough that a host
 # that never answers does not hang a terminal forever.
@@ -43,7 +43,13 @@ FORK_NOTE = ("Fork a hub repo first (or use it as a template for a private copy)
 
 
 class HubError(Exception):
-    """Why the hub could not be cloned, worded for the person running init."""
+    """Why the hub could not be cloned, worded for the person running init.
+    ``keep_staging`` asks clone_hub to leave its staging folder, which the
+    message names, because part of the clone could not be put back."""
+
+    def __init__(self, message: str, keep_staging: bool = False):
+        super().__init__(message)
+        self.keep_staging = keep_staging
 
 
 def public_url(url: str) -> str:
@@ -121,13 +127,56 @@ def _move_in(clone: Path, root: Path) -> None:
         for src, dest in moves:
             src.rename(dest)
             done.append((src, dest))
-    except OSError:
+    except OSError as exc:
+        stuck = []
         for src, dest in reversed(done):
             try:
                 dest.rename(src)
             except OSError:
-                pass
-        raise
+                stuck.append(dest)
+        reason = f"can't move the clone into ~/.quiver: {exc.strerror or exc}"
+        if not stuck:
+            raise HubError(reason) from None
+        # Some of the clone is in ~/.quiver and won't come back out: say
+        # exactly what, and keep the rest of it where the user can see it.
+        names = ", ".join(f"~/.quiver/{p.relative_to(root)}" for p in reversed(stuck))
+        raise HubError(
+            f"{reason}. These couldn't be moved back and are still there: {names}. "
+            f"The rest of the clone is in {clone}; remove both before trying again.",
+            keep_staging=True) from None
+
+
+def _exclude_local_state(root: Path) -> None:
+    """Keep this machine's own state out of the cloned hub's git.
+
+    A hub's ``.gitignore`` may be older than ours and miss a path swe now
+    writes (``data/web-ledger/``), and the clone lands beside that state.
+    The missing patterns go into ``.git/info/exclude``, which is this
+    clone's alone, so the hub's own files stay untouched."""
+    git_dir = root / ".git"
+    if not git_dir.is_dir() or git_dir.is_symlink():
+        return
+    patterns = [line.strip() for line in GITIGNORE_BODY.splitlines()
+                if line.strip() and not line.lstrip().startswith("#")]
+    have: set[str] = set()
+    for name in (root / ".gitignore", git_dir / "info" / "exclude"):
+        try:
+            have.update(line.strip() for line in name.read_text(encoding="utf-8").splitlines())
+        except (OSError, UnicodeDecodeError):
+            pass
+    missing = [p for p in patterns if p not in have]
+    if not missing:
+        return
+    exclude = git_dir / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        before = exclude.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        before = ""
+    lead = "" if not before or before.endswith("\n") else "\n"
+    with exclude.open("a", encoding="utf-8") as fh:
+        fh.write(f"{lead}# Added by swe: this machine's own state, never versioned.\n")
+        fh.write("".join(f"{p}\n" for p in missing))
 
 
 def can_clone(home: Path) -> bool:
@@ -175,6 +224,7 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
     except OSError as exc:
         raise HubError(f"can't make a folder to clone into: {exc.strerror or exc}") from None
     target = staging / "hub"
+    keep = False
     try:
         cloned = _git(["clone", url, str(target)], CLONE_TIMEOUT_S, run)
         if cloned.returncode != 0:
@@ -184,10 +234,20 @@ def clone_hub(home: Path, url: str, run=subprocess.run) -> Path:
         check_target(home)  # no hub appeared there while git ran
         try:
             _move_in(target, root)
+        except HubError as exc:
+            keep = exc.keep_staging
+            raise
         except OSError as exc:
             raise HubError(f"can't move the clone into ~/.quiver: {exc.strerror or exc}") from None
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        if not keep:
+            shutil.rmtree(staging, ignore_errors=True)
+    try:
+        _exclude_local_state(root)
+    except OSError:
+        # The clone is in place and the hub's own .gitignore still applies;
+        # failing now would report a finished clone as not done.
+        pass
     return root
 
 

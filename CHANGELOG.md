@@ -245,9 +245,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overwriting anything; a path on both sides stops it before anything
   moves, naming the path ("~/.quiver/<path> is on this machine and in
   the hub"), and a move that fails puts back what it moved. A symlink or
-  a file at `~/.quiver` is still refused. The hub `.gitignore` seed now
-  also leaves out `data/web-ledger/`, the web app's ledger, so a hub
-  never tracks it ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+  a file at `~/.quiver` is still refused; if putting something back
+  fails too, the message names what stayed and the rest of the clone is
+  kept for you. The hub `.gitignore` seed now also leaves out
+  `data/web-ledger/`, the web app's ledger, and a clone whose own
+  `.gitignore` is older gets the missing patterns in its
+  `.git/info/exclude`, so this machine's state never reaches the hub's
+  git ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
 - **Usage problems say what to do, graded by how much they need you.**
   A stale login or a credentials file macOS won't let Quiver read puts

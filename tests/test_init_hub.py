@@ -224,6 +224,47 @@ class CloneAroundLocalStateTest(unittest.TestCase):
         self.assertFalse((self.quiver / ".git").exists())
         self.assertEqual([p.name for p in self.home.iterdir()], [".quiver"])
 
+    def test_a_move_that_cant_be_undone_names_what_is_left_and_keeps_the_rest(self):
+        real_rename = Path.rename
+        calls = []
+
+        def flaky(path, target):
+            calls.append(path.name)
+            # The first move (.git) lands, the second fails, and putting
+            # .git back fails too.
+            if len(calls) >= 2:
+                raise OSError(18, "Cross-device link")
+            return real_rename(path, target)
+
+        with mock.patch.object(Path, "rename", flaky):
+            with self.assertRaises(HubError) as caught:
+                clone_hub(self.home, str(self.src))
+        message = str(caught.exception)
+        self.assertIn("couldn't be moved back and are still there: ~/.quiver/.git", message)
+        staging = [p for p in self.home.iterdir() if p.name.startswith(".quiver-clone-")]
+        self.assertEqual(len(staging), 1)
+        self.assertIn(str(staging[0] / "hub"), message)
+        self.assertTrue((staging[0] / "hub" / "AGENTS.md").is_file())
+
+    def test_this_machines_state_stays_out_of_an_older_hubs_git(self):
+        # A hub whose .gitignore predates data/web-ledger/.
+        (self.src / ".gitignore").write_text("cache/\n")
+        _git("add", "-A", cwd=self.src)
+        _git("commit", "-q", "-m", "ignore", cwd=self.src)
+        (self.quiver / "data" / "web-ledger").mkdir(parents=True)
+        (self.quiver / "data" / "web-ledger" / "ledger.sqlite").write_text("personal")
+        clone_hub(self.home, str(self.src))
+        self.assertEqual((self.quiver / ".gitignore").read_text(), "cache/\n")
+        exclude = (self.quiver / ".git" / "info" / "exclude").read_text()
+        self.assertIn("data/web-ledger/\n", exclude)
+        self.assertNotIn("\ncache/\n", exclude)  # the hub already ignores it
+        status = subprocess.run(["git", "-C", str(self.quiver), "status", "--porcelain"],
+                                capture_output=True, text=True).stdout
+        self.assertNotIn("data", status)
+        ignored = subprocess.run(["git", "-C", str(self.quiver), "check-ignore", "-q",
+                                  "data/web-ledger/ledger.sqlite"])
+        self.assertEqual(ignored.returncode, 0)
+
 
 class RegisterMarketplacesTest(unittest.TestCase):
     def _hub_with_plugin(self, home: Path) -> Path:
