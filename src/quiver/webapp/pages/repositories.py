@@ -330,12 +330,19 @@ def rerun(ctx, repo: str, run: str, failed: bool) -> dict:
 # ---------------------------------------------------------------- PR session
 
 def harnesses() -> list[dict]:
-    """``{name, display_name, tracked}`` for each harness the hub can
-    start, in Provider visibility order (``catalog.launchable_harnesses``,
-    what the phone's new-session sheet offers)."""
+    """``{name, display_name, tracked, launch_model, launch_effort,
+    last_model}`` for each harness the hub can start, in Provider
+    visibility order (``catalog.launchable_harnesses``, what the phone's
+    new-session sheet offers). ``last_model`` is the ledger's most recent
+    model for the harness ("" when none), the picker's default."""
     from quiver.remote import catalog as catalog_mod
 
-    return [{"name": h["name"], "display_name": h["display_name"], "tracked": h["tracked"]}
+    last = catalog_mod.last_used_models()
+    return [{"name": h["name"], "display_name": h["display_name"],
+             "tracked": h["tracked"],
+             "launch_model": h["launch_model"],
+             "launch_effort": h["launch_effort"],
+             "last_model": last.get(h["name"], "")}
             for h in catalog_mod.launchable_harnesses()]
 
 

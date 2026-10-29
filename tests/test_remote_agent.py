@@ -204,14 +204,44 @@ class TestRemoteCatalog(unittest.TestCase):
                           return_value=["claude", "gemini", "opencode"]), \
              patch.object(catalog_mod, "launchable_harnesses", return_value=[
                  {"name": "opencode", "command": "opencode",
-                  "display_name": "OpenCode", "tracked": True},
+                  "display_name": "OpenCode", "tracked": True,
+                  "launch_model": False, "launch_effort": False},
                  {"name": "qwen-code", "command": "qwen",
-                  "display_name": "Qwen Code", "tracked": False}]):
+                  "display_name": "Qwen Code", "tracked": False,
+                  "launch_model": True, "launch_effort": False}]):
             row = catalog_mod.local_machine(self.home)
         self.assertEqual(row["harnesses"], ["claude", "gemini", "opencode"])
         self.assertEqual(row["launchable"], ["opencode", "qwen-code"])
         self.assertEqual(row["harness_names"]["opencode"], "OpenCode")
         self.assertEqual(row["untracked_harnesses"], ["qwen-code"])
+        # Picker hints ride the machine row: launch-capable ops per
+        # harness, and the ledger's last-used model per harness.
+        self.assertEqual(row["model_at_launch"], ["qwen-code"])
+        self.assertEqual(row["effort_at_launch"], [])
+        self.assertEqual(row["last_models"], {})
+
+    def test_last_used_models_reads_the_ledger(self):
+        from quiver.ledger.models import LedgerRecord, UsageEvent
+        from quiver.ledger.store import LedgerStore, ledger_path_for
+
+        def rec(key, harness, model, ts):
+            return LedgerRecord(
+                key=key,
+                event=UsageEvent(
+                    harness=harness, account="", session="s", cwd="",
+                    model=model, ts=ts, input=1, output=1))
+
+        store = LedgerStore(ledger_path_for(self.home))
+        store.upsert(rec("a", "claude", "sonnet", 10))
+        store.upsert(rec("b", "claude", "opus", 20))   # newer wins
+        store.upsert(rec("c", "codex", "gpt-5", 15))
+        store.upsert(rec("d", "claude", "", 30))       # empty is no pick
+        store.db.commit()  # writers commit; upsert only stages
+        store.close()
+        self.assertEqual(catalog_mod.last_used_models(self.home),
+                         {"claude": "opus", "codex": "gpt-5"})
+        self.assertEqual(catalog_mod.last_used_models(
+            Path(tempfile.mkdtemp())), {})
 
     def _launchable(self, reg, prefs=None, on_path=None):
         import plistlib
@@ -479,9 +509,12 @@ class TestAgentState(unittest.TestCase):
             supervise, "attach", return_value=(True, "attached")
         ) as att:
             ok, _, _deg = a._execute("claude:s1", "attach",
-                               {"mode": "tmux", "status": "idle"})
+                               {"mode": "tmux", "status": "idle",
+                                "model": "opus", "effort": "high"})
         self.assertTrue(ok)
         self.assertEqual(att.call_args[1]["mode"], "tmux")
+        self.assertEqual(att.call_args[1]["model"], "opus")
+        self.assertEqual(att.call_args[1]["effort"], "high")
 
     def test_execute_unknown_session(self):
         a = self._agent()
@@ -618,6 +651,10 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(replay[0]["data"]["client_id"], "cid-9")
 
     def test_observed_remote_rejects_message_allows_attach(self):
+        # The machine row advertises the build that reads launch picks.
+        catalog_mod.upsert_machine(self.srv.home, {
+            "id": self.mid, "model_at_launch": ["claude"],
+            "effort_at_launch": []})
         self._push_catalog([{
             "key": "claude:r1", "status": "idle",
             "ownership": "observed", "attachable": True,
@@ -630,10 +667,46 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(status, 409)
         status, _ = self.srv.request(
             "POST", f"/v1/sessions/{key}/control",
-            {"op": "attach", "mode": "tmux"}, headers=self.srv.auth)
+            {"op": "attach", "mode": "tmux", "model": "opus"},
+            headers=self.srv.auth)
         self.assertEqual(status, 202)
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
         self.assertEqual(replay[0]["data"]["op"], "attach")
+        self.assertEqual(replay[0]["data"]["model"], "opus")
+        # A malformed pick is a 422 on the hub, never queued.
+        status, data = self.srv.request(
+            "POST", f"/v1/sessions/{key}/control",
+            {"op": "attach", "mode": "tmux", "model": "two words"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 422, data)
+        self.assertEqual(json.loads(data)["error"]["code"], "bad_command")
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(len(replay), 1)
+
+    def test_attach_to_an_old_satellite_refuses_the_pick(self):
+        # Same gate as a satellite launch: without the field the agent
+        # would accept the attach and silently drop model/effort.
+        self._push_catalog([{
+            "key": "claude:r1", "status": "idle",
+            "ownership": "observed", "attachable": True,
+        }])
+        self.srv.state.catalog.refresh()
+        key = "claude%3Ar1%40sat-m1"
+        status, data = self.srv.request(
+            "POST", f"/v1/sessions/{key}/control",
+            {"op": "attach", "mode": "tmux", "effort": "high"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 409, data)
+        body = json.loads(data)
+        self.assertEqual(body["error"]["code"], "unsupported_launch_option")
+        self.assertIn("too old", body["error"]["message"])
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(replay, [])
+        # And with no pick the same old agent attaches as before.
+        status, _ = self.srv.request(
+            "POST", f"/v1/sessions/{key}/control",
+            {"op": "attach", "mode": "tmux"}, headers=self.srv.auth)
+        self.assertEqual(status, 202)
 
     def test_launch_to_named_machine_queues(self):
         status, data = self.srv.request(
@@ -648,6 +721,79 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(replay[0]["data"]["harness"], "claude")
         launch_id = json.loads(data)["launch_id"]
         self.assertEqual(replay[0]["data"]["launch_id"], launch_id)
+
+    def test_launch_to_named_machine_carries_the_pick(self):
+        # The satellite advertises launch-option support on its machine
+        # row, the same fields its own agent reports.
+        catalog_mod.upsert_machine(self.srv.home, {
+            "id": self.mid, "model_at_launch": ["claude"],
+            "effort_at_launch": ["claude"]})
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go",
+             "model": "opus", "effort": "high"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 202, data)
+        launch_id = json.loads(data)["launch_id"]
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(replay[0]["data"]["model"], "opus")
+        self.assertEqual(replay[0]["data"]["effort"], "high")
+        launch = self.srv.state.launches[launch_id]
+        self.assertEqual((launch["model"], launch["effort"]),
+                         ("opus", "high"))
+
+    def test_launch_to_named_machine_refuses_a_bad_pick(self):
+        # A malformed pick is a 422 before anything is queued.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go", "effort": {"x": 1}},
+            headers=self.srv.auth)
+        self.assertEqual(status, 422, data)
+        self.assertEqual(json.loads(data)["error"]["code"], "bad_command")
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(replay, [])
+        self.assertEqual(self.srv.state.launches, {})
+
+    def test_launch_to_named_machine_refuses_what_it_cannot_take(self):
+        # The hub's table answers for the satellite's: gemini's TUI has
+        # no verified /model, so nothing is queued.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "gemini",
+             "cwd": "/tmp/x", "prompt": "go", "model": "opus"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 409, data)
+        self.assertEqual(json.loads(data)["error"]["code"],
+                         "unsupported_launch_option")
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(replay, [])
+        self.assertEqual(self.srv.state.launches, {})
+
+    def test_launch_to_an_old_satellite_refuses_the_pick(self):
+        # A satellite too old to report launch-option support would
+        # accept the command and silently drop the fields — so the hub
+        # refuses before queueing instead.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go", "model": "opus"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 409, data)
+        body = json.loads(data)
+        self.assertEqual(body["error"]["code"], "unsupported_launch_option")
+        self.assertIn("too old", body["error"]["message"])
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(replay, [])
+        self.assertEqual(self.srv.state.launches, {})
+        # No pick at all still queues on the same old agent.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 202, data)
 
     def test_satellite_launch_settles_from_events(self):
         _, data = self.srv.request(
@@ -1100,9 +1246,11 @@ class TestAgentEdges(unittest.TestCase):
             ok, note, _deg = ag._execute(
                 "k", "launch",
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
-                 "launch_id": "l1"})
+                 "launch_id": "l1", "model": "opus", "effort": "high"})
         self.assertTrue(ok)
         self.assertEqual(ln.call_args[1]["known_ids"], [])
+        self.assertEqual(ln.call_args[1]["model"], "opus")
+        self.assertEqual(ln.call_args[1]["effort"], "high")
         self.assertEqual(ln.call_args[1]["launch_id"], "l1")
         self.assertEqual(ln.call_args[1]["binary"], "claude")
         with patch.object(supervise, "launch_new") as ln, \

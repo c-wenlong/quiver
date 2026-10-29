@@ -216,7 +216,9 @@ def parse_body(body) -> dict:
     if len(prompt) > protocol.MAX_LAUNCH_PROMPT:
         raise ValueError(
             f"prompt is over {protocol.MAX_LAUNCH_PROMPT} characters")
-    return {"harness": harness, "prompt": prompt if prompt.strip() else ""}
+    return {"harness": harness, "prompt": prompt if prompt.strip() else "",
+            "model": protocol._launch_value(body, "model"),
+            "effort": protocol._launch_value(body, "effort")}
 
 
 def request(state, owner: str, name: str, number_raw: str,
@@ -250,6 +252,10 @@ def request(state, owner: str, name: str, number_raw: str,
             "not_launchable",
             f"{harness} can't start here: archived, switched off in "
             f"Provider visibility, or not installed")
+    blocked = supervise.launch_tuning_error(
+        harness, cmd["model"], cmd["effort"])
+    if blocked:
+        return 409, protocol.error("unsupported_launch_option", blocked)
     if not supervise.tmux_bin():
         return 422, protocol.error("launch_failed", "tmux is not installed")
     env = gh.probe_env()
@@ -270,7 +276,9 @@ def request(state, owner: str, name: str, number_raw: str,
                 f"an agent for {repo}#{number} is still starting in its "
                 f"worktree; open it again once its session shows up")
         _preparing.add(ref)
-    launch_id = state.new_launch(state.machine_id, harness, "")
+    launch_id = state.new_launch(
+        state.machine_id, harness, "",
+        model=cmd["model"] or "", effort=cmd["effort"] or "")
     state.settle_launch(launch_id, note="preparing worktree")
     threading.Thread(
         target=_run,
@@ -348,5 +356,6 @@ def _prepare_and_launch(state, launch_id: str, repo: str, number: int,
     ok, msg, _name = supervise.launch_new(
         state.home, cmd["harness"], cwd, prompt,
         known_ids=known, launch_id=launch_id, binary=binary,
+        model=cmd["model"], effort=cmd["effort"],
     )
     return "" if ok else (msg or "the harness did not start")

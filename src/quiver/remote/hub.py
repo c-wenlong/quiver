@@ -298,7 +298,10 @@ class HubState:
         self.launches: dict[str, dict] = {}
         self._launch_lock = threading.Lock()
 
-    def new_launch(self, machine: str, harness: str, cwd: str) -> str:
+    def new_launch(
+        self, machine: str, harness: str, cwd: str,
+        model: str = "", effort: str = "",
+    ) -> str:
         now = time.time()
         launch_id = "l" + secrets.token_hex(6)
         with self._launch_lock:
@@ -308,6 +311,7 @@ class HubState:
             self.launches[launch_id] = {
                 "launch_id": launch_id, "machine": machine,
                 "harness": harness, "cwd": cwd, "state": "pending",
+                "model": model, "effort": effort,
                 "key": "", "note": "", "created_at": now,
             }
         return launch_id
@@ -764,6 +768,11 @@ class HubState:
             "launchable": [item["name"] for item in launchable],
             "harness_names": catalog_mod.harness_names(launchable),
             "untracked_harnesses": catalog_mod.untracked(launchable),
+            "model_at_launch": catalog_mod.launch_op_names(
+                launchable, "model"),
+            "effort_at_launch": catalog_mod.launch_op_names(
+                launchable, "effort"),
+            "last_models": catalog_mod.last_used_models(self.home),
         }
         if all(self.machine.get(k) == v for k, v in fields.items()):
             return
@@ -2257,9 +2266,28 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(422, "not_launchable",
                                  f"{harness} can't be launched on {machine}")
                 return
-            launch_id = state.new_launch(machine, harness, cwd)
+            # A satellite too old to know the launch-option fields
+            # would accept the command and silently drop the pick.
+            if (cmd["model"] or cmd["effort"]) and not \
+                    catalog_mod.reads_launch_options(row):
+                self._send_error(
+                    409, "unsupported_launch_option",
+                    f"{machine} runs an agent too old to take launch "
+                    "options; upgrade it, or launch without them")
+                return
+            # The hub's table answers for the satellite's too: a launch
+            # command never carries a field its receiver can't apply.
+            blocked = supervise.launch_tuning_error(
+                harness, cmd["model"], cmd["effort"])
+            if blocked:
+                self._send_error(409, "unsupported_launch_option", blocked)
+                return
+            launch_id = state.new_launch(
+                machine, harness, cwd,
+                model=cmd["model"] or "", effort=cmd["effort"] or "")
             queued = state.queue_command(machine, "launch", "", {
                 "harness": harness, "cwd": cwd, "prompt": cmd["prompt"],
+                "model": cmd["model"] or "", "effort": cmd["effort"] or "",
                 "launch_id": launch_id,
             })
             if queued is None:
@@ -2289,12 +2317,19 @@ class _Handler(BaseHTTPRequestHandler):
                 f"Provider visibility, or not installed",
             )
             return
+        blocked = supervise.launch_tuning_error(
+            harness, cmd["model"], cmd["effort"])
+        if blocked:
+            self._send_error(409, "unsupported_launch_option", blocked)
+            return
         if not supervise.tmux_bin():
             self._send_error(422, "launch_failed", "tmux is not installed")
             return
         tracked = harness not in catalog_mod.untracked(
             catalog_mod.launchable_harnesses())
-        launch_id = state.new_launch(machine, harness, cwd)
+        launch_id = state.new_launch(
+            machine, harness, cwd,
+            model=cmd["model"] or "", effort=cmd["effort"] or "")
 
         def run() -> None:
             # Every same-cwd session that exists before launch: adoption
@@ -2304,6 +2339,7 @@ class _Handler(BaseHTTPRequestHandler):
             ok, note, _name = supervise.launch_new(
                 state.home, harness, cwd, cmd["prompt"],
                 known_ids=known, launch_id=launch_id, binary=binary,
+                model=cmd["model"], effort=cmd["effort"],
             )
             if not ok:
                 state.settle_launch(launch_id, state="failed", note=note)
@@ -2435,9 +2471,27 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             op = cmd["op"]
             if op == "attach":
+                try:
+                    a_model = protocol._launch_value(body, "model")
+                    a_effort = protocol._launch_value(body, "effort")
+                except ValueError as exc:
+                    self._send_error(422, "bad_command", str(exc))
+                    return
+                # Same gate as a satellite launch: an agent that does
+                # not report launch-option support would drop the pick.
+                if (a_model or a_effort) and not \
+                        catalog_mod.reads_launch_options(
+                            catalog_mod.load_machines(
+                                self._state.home).get(mid)):
+                    self._send_error(
+                        409, "unsupported_launch_option",
+                        f"{mid} runs an agent too old to take launch "
+                        "options; upgrade it, or attach without them")
+                    return
                 queued = self._state.queue_command(mid, "attach", key, {
                     "mode": body.get("mode") or "auto",
                     "status": row.get("status") or "",
+                    "model": a_model or "", "effort": a_effort or "",
                 })
             else:
                 if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
@@ -2960,11 +3014,22 @@ class _Handler(BaseHTTPRequestHandler):
                 422, "not_attachable", "tmux is not available"
             )
             return
+        try:
+            model = protocol._launch_value(body, "model")
+            effort = protocol._launch_value(body, "effort")
+        except ValueError as exc:
+            self._send_error(422, "bad_command", str(exc))
+            return
+        blocked = supervise.channel_tuning_error(
+            resolved, session.tool_name, model, effort)
+        if blocked:
+            self._send_error(409, "unsupported_launch_option", blocked)
+            return
         ok, note = supervise.attach(
             self._state.home, key, session,
             last_append_at=self._state.tail_manager.last_append_at(key),
             status=str(row.get("status") or ""),
-            mode=mode,
+            mode=mode, model=model, effort=effort,
         )
         if not ok:
             self._send_error(409, "not_idle", note)

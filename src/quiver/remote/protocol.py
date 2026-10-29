@@ -44,6 +44,25 @@ EVENT_TYPES = frozenset(
 # A harness name in a launch body: a registry key, nothing else.
 _HARNESS_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 
+# A launch's ``model``/``effort``: one short token. The value is typed
+# into a pane as ``/model <v>``, so whitespace — which would smuggle a
+# second command or land the rest as prompt text — is never allowed.
+_LAUNCH_VALUE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,127}")
+
+
+def _launch_value(body: dict, field: str) -> str | None:
+    """An optional launch field (``model``, ``effort``): None when
+    absent or empty, else a single-token string."""
+    value = body.get(field)
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or not _LAUNCH_VALUE_RE.fullmatch(value):
+        raise ValueError(
+            f"{field} must be a short name "
+            "(letters, digits and . _ : / + @ -)"
+        )
+    return value
+
 # Cap on a first prompt; the phone's composer never gets near it.
 MAX_LAUNCH_PROMPT = 32_000
 
@@ -324,4 +343,6 @@ def parse_launch_command(body: dict) -> dict:
     if not isinstance(machine, str):
         raise ValueError("machine must be a string")
     return {"machine": machine, "harness": harness, "cwd": cwd,
-            "prompt": prompt}
+            "prompt": prompt,
+            "model": _launch_value(body, "model"),
+            "effort": _launch_value(body, "effort")}

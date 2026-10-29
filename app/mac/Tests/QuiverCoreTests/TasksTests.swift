@@ -16,7 +16,7 @@ import Testing
         {"id": "github:issue:o/r:5", "source": "github", "kind": "issue",
          "repo": "o/r", "ref": "5", "title": "Fix the thing",
          "url": "https://github.com/o/r/issues/5",
-         "state": "in_progress", "sessions": ["claude@/w:abc"],
+         "state": "in_progress", "status": "Agent running", "sessions": ["claude@/w:abc"],
          "launches": ["l-1"], "agent_running": true, "linked": true,
          "last_active_at": 1767323000.0, "created_at": 1767320000.0,
          "updated_at": "2026-01-02T03:04:05Z",
@@ -78,6 +78,8 @@ import Testing
 
         let issue = body.tasks[0]
         #expect(issue.id == "github:issue:o/r:5")
+        #expect(issue.status == "Agent running")
+        #expect(issue.stateLabel == "Agent running")
         #expect(issue.scope == "o/r")
         #expect(issue.refLabel == "#5")
         #expect(issue.number == 5)
@@ -206,9 +208,18 @@ import Testing
         #expect(row("a", kind: "issue").sourceLine == "GitHub issue · o/r")
         #expect(row("a", kind: "pull").sourceLine == "GitHub pull request · o/r")
         #expect(row("a", source: "linear", repo: nil, project: "QUI").sourceLine == "Linear · QUI")
-        #expect(row("a", state: "in_progress").stateLabel == "In progress")
+        // The ladder is never the text (#875): an issue whose agent has
+        // finished reads Open, a running one Agent running.
+        #expect(row("a", state: "in_progress").stateLabel == "Open")
+        #expect(row("a", state: "in_progress", running: true).stateLabel == "Agent running")
         #expect(row("a", state: "pr_open").stateLabel == "PR open")
         #expect(row("a", state: "weird").stateLabel == "Open")
+        // The hub's own status wins, in the source's words; without one,
+        // started work on another source still reads Started.
+        var linear = row("a", source: "linear", repo: nil, project: "QUI", state: "in_progress")
+        #expect(linear.stateLabel == "Started")
+        linear.status = "In Review"
+        #expect(linear.stateLabel == "In Review")
         // A bare ref stays itself; GitHub's reads #5.
         #expect(row("a", source: "linear", ref: "QUI-1", repo: nil, project: "QUI").refLabel == "QUI-1")
         #expect(row("a").refLabel == "#5")
@@ -244,7 +255,7 @@ import Testing
 
     @Test func issueLadderReachesUpToTheState() {
         #expect(TaskStepper.steps(for: row(state: "pr_open"))
-            == [step("Open", true, false), step("In progress", true, false),
+            == [step("Open", true, false), step("Agent", true, false),
                 step("PR open", true, true), step("Merged", false, false)])
         #expect(TaskStepper.steps(for: row(state: "merged")).last
             == step("Merged", true, true))
@@ -253,19 +264,19 @@ import Testing
 
     @Test func pullLadderSkipsThePrRung() {
         let steps = TaskStepper.steps(for: row(kind: "pull", state: "in_progress"))
-        #expect(steps.map(\.title) == ["Open", "In progress", "Merged"])
-        #expect(steps[1] == step("In progress", true, true))
+        #expect(steps.map(\.title) == ["Open", "Agent", "Merged"])
+        #expect(steps[1] == step("Agent", true, true))
     }
 
     @Test func nonGithubLaddersSkipThePrRung() {
         // Linear/Notion issues and cards can never produce a PR, so the
         // rung must not exist — same rule the web page's `rungs()` uses.
         let linear = TaskStepper.steps(for: row(source: "linear", state: "in_progress"))
-        #expect(linear.map(\.title) == ["Open", "In progress", "Merged"])
-        #expect(linear[1] == step("In progress", true, true))
+        #expect(linear.map(\.title) == ["Open", "Started", "Done"])
+        #expect(linear[1] == step("Started", true, true))
         let notion = TaskStepper.steps(
             for: row(source: "notion", kind: "card", state: "in_progress"))
-        #expect(notion.map(\.title) == ["Open", "In progress", "Merged"])
+        #expect(notion.map(\.title) == ["Open", "Started", "Done"])
         // A closed non-GitHub task still lands on the Closed rung.
         let closed = TaskStepper.steps(for: row(source: "linear", state: "closed"))
         #expect(closed.last == step("Closed", true, true))

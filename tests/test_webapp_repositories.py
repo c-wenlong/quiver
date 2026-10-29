@@ -874,10 +874,18 @@ class TestPrWorktree(_Base):
         self.assertEqual(done[0]["head"], self.head)
 
     def test_harnesses_are_what_the_hub_can_launch(self):
-        rows = [{"name": "claude", "command": "claude", "display_name": "Claude Code", "tracked": True}]
-        with patch("quiver.remote.catalog.launchable_harnesses", return_value=rows):
+        rows = [{"name": "claude", "command": "claude",
+                 "display_name": "Claude Code", "tracked": True,
+                 "launch_model": True, "launch_effort": True}]
+        with patch("quiver.remote.catalog.launchable_harnesses",
+                   return_value=rows), \
+             patch("quiver.remote.catalog.last_used_models",
+                   return_value={"claude": "opus"}):
             body = R.get(self.ctx, {"harnesses": "1"})
-        self.assertEqual(body["harnesses"], [{"name": "claude", "display_name": "Claude Code", "tracked": True}])
+        self.assertEqual(body["harnesses"], [{
+            "name": "claude", "display_name": "Claude Code",
+            "tracked": True, "launch_model": True,
+            "launch_effort": True, "last_model": "opus"}])
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")

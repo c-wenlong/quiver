@@ -366,6 +366,40 @@ class TestResolveRoute(unittest.TestCase):
         self.assertEqual(view["note"], "Starting claude…")
         self.assertEqual(view["title"], "o/r#5 Fix the thing")
 
+    def test_resolve_carries_the_pick(self):
+        with self._stubs() as (_wt, ln):
+            status, body = self._post(
+                {"repo": "o/r", "number": 5, "harness": "claude",
+                 "model": "opus", "effort": "high"})
+        self.assertEqual(status, 202, body)
+        kw = ln.call_args[1]
+        self.assertEqual((kw["model"], kw["effort"]), ("opus", "high"))
+        view = self._view(body["launch_id"])
+        self.assertEqual((view["model"], view["effort"]), ("opus", "high"))
+
+    def test_resolve_refuses_a_pick_the_harness_cannot_take(self):
+        # gemini's TUI has no verified /model; nothing is prepared.
+        with self._stubs() as (wt, ln):
+            status, body = self._post(
+                {"repo": "o/r", "number": 5, "harness": "gemini",
+                 "model": "opus"})
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["code"],
+                         "unsupported_launch_option")
+        wt.assert_not_called()
+        ln.assert_not_called()
+        self.assertEqual(self.srv.state.launches, {})
+
+    def test_resolve_rejects_a_bad_model_shape(self):
+        with self._stubs() as (wt, ln):
+            status, body = self._post(
+                {"repo": "o/r", "number": 5, "harness": "claude",
+                 "model": "two words"})
+        self.assertEqual(status, 422, body)
+        self.assertEqual(body["error"]["code"], "bad_command")
+        wt.assert_not_called()
+        ln.assert_not_called()
+
     def test_title_applied_on_adoption_only_for_resolves(self):
         state = self.srv.state
         with self._stubs():

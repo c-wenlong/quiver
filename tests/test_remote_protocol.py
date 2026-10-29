@@ -140,7 +140,8 @@ class TestCommandValidation(unittest.TestCase):
         out = protocol.parse_launch_command(
             {"harness": "codex", "cwd": "/srv/app", "prompt": "go"})
         self.assertEqual(out, {"machine": "", "harness": "codex",
-                               "cwd": "/srv/app", "prompt": "go"})
+                               "cwd": "/srv/app", "prompt": "go",
+                               "model": None, "effort": None})
         bad = [
             {"harness": "Bad Name", "cwd": "/a", "prompt": "go"},
             {"harness": ["claude"], "cwd": "/a", "prompt": "go"},
@@ -151,11 +152,37 @@ class TestCommandValidation(unittest.TestCase):
             {"harness": "claude", "cwd": "/a",
              "prompt": "x" * (protocol.MAX_LAUNCH_PROMPT + 1)},
             {"harness": "claude", "cwd": "/a", "prompt": "go", "machine": 3},
+            {"harness": "claude", "cwd": "/a", "prompt": "go", "model": 3},
+            {"harness": "claude", "cwd": "/a", "prompt": "go",
+             "model": ["opus"]},
+            {"harness": "claude", "cwd": "/a", "prompt": "go",
+             "model": "two words"},
+            {"harness": "claude", "cwd": "/a", "prompt": "go",
+             "model": "/clear now"},
+            {"harness": "claude", "cwd": "/a", "prompt": "go",
+             "effort": {"x": 1}},
+            {"harness": "claude", "cwd": "/a", "prompt": "go",
+             "effort": "m" * 200},
             [],
         ]
         for body in bad:
             with self.assertRaises(ValueError, msg=body):
                 protocol.parse_launch_command(body)
+
+    def test_launch_model_and_effort(self):
+        out = protocol.parse_launch_command(
+            {"harness": "claude", "cwd": "/srv/app", "prompt": "go",
+             "model": "anthropic/claude-opus-4-6", "effort": "high"})
+        self.assertEqual(out["model"], "anthropic/claude-opus-4-6")
+        self.assertEqual(out["effort"], "high")
+        # Absent, null and empty all mean "no pick".
+        for empty in ({}, {"model": None}, {"model": ""}):
+            with self.subTest(body=empty):
+                out = protocol.parse_launch_command(
+                    {"harness": "claude", "cwd": "/a", "prompt": "go",
+                     **empty})
+                self.assertIsNone(out["model"])
+                self.assertIsNone(out["effort"])
 
 
 if __name__ == "__main__":

@@ -371,6 +371,32 @@ class TestHubDetachRoutes(unittest.TestCase):
         launch.assert_not_called()
         self.assertEqual(self._ownership(), "attached")
 
+    def test_a_kept_session_takes_only_the_pick_it_runs(self):
+        # The kept pane is live: the recorded pick is what it already
+        # runs, so the same pick adopts — but a different one can't be
+        # typed into a possibly mid-turn pane and is refused rather
+        # than silently dropped.
+        supervise.unmark(self.srv.home, self.key)
+        supervise._save_kept(self.srv.home, {self.key: dict(
+            _tmux_meta("qv-fake"), model="opus",
+            pane_pid=4242, kept_at=time.time())})
+        self.srv.state.catalog.refresh()  # the row reads observed now
+        with patch.object(supervise, "pane_pid", return_value=4242), \
+             patch.object(supervise, "launch_tmux") as launch:
+            status, data = self._control(
+                {"op": "attach", "model": "sonnet"})
+            self.assertEqual(status, 409, data)
+            self.assertIn("/model", data["error"]["message"])
+            self.assertIn(self.key, supervise.kept(self.srv.home))
+            self.assertEqual(self._ownership(), "observed")
+            status, data = self._control({"op": "attach", "model": "opus"})
+            self.assertEqual(status, 200, data)
+            self.assertIn("adopted", data["note"])
+            launch.assert_not_called()
+            self.assertEqual(
+                supervise.meta_for(self.srv.home, self.key)["model"],
+                "opus")
+
     def test_attach_rechecks_after_a_detach_it_waited_for(self):
         # The attach arrives while the when_idle detach is running and a
         # catalog refresh swaps the rows meanwhile: the request's own
