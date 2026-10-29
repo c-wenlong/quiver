@@ -7,7 +7,7 @@ import SwiftUI
 /// `tasks.js` reads. Laid out like Repositories: one box of groups (a
 /// repo or project each, five rows then "Show N more") beside a rail
 /// of the scopes by owner or source, where a tap narrows the list to
-/// one. All / Running / PR open / Done chips filter both. A task's
+/// one, unfolded. All / Running / PR open / Done chips filter both. A task's
 /// detail shows the state ladder, its linked sessions (each opening
 /// the chat), the linked PR, and the two actions the web and iOS
 /// clients share: start a new agent on it (issues/resolve or
@@ -61,7 +61,8 @@ struct TasksPage: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if showsRail {
-                TaskRail(groups: TaskGrouping.rail(of: model.tasks, filter: model.filter),
+                TaskRail(groups: TaskGrouping.rail(of: model.tasks, failed: model.failedRepos,
+                                                   filter: model.filter),
                          total: TaskGrouping.count(model.tasks, filter: model.filter),
                          shown: shownScope,
                          select: { model.shownScope = $0 },
@@ -79,11 +80,12 @@ struct TasksPage: View {
     /// The rail shows once there are tasks to list.
     private var showsRail: Bool { model.loaded && !model.tasks.isEmpty }
 
-    /// The rail's pick while it still names a scope; a refresh that
-    /// drops it falls back to every task.
+    /// The rail's pick while it still names a scope or a failed repo; a
+    /// refresh that drops it falls back to every task.
     private var shownScope: String? {
         guard let scope = model.shownScope,
               model.tasks.contains(where: { TaskGrouping.sectionName($0) == scope })
+                || model.failedRepos.contains(where: { $0.name == scope })
         else { return nil }
         return scope
     }
@@ -218,12 +220,14 @@ struct TasksPage: View {
             .strokeBorder(Theme.border, lineWidth: Theme.hairline))
     }
 
+    /// A group the rail narrowed to shows every row: the pick is the
+    /// ask to see it all.
     @ViewBuilder private func rows(_ section: TaskSection, edge: ExpandRow.Edge) -> some View {
         let rows = section.rows ?? []
         let key = "\(section.name):\(model.filter.rawValue)"
-        let open = expanded.contains(key)
+        let open = shownScope != nil || expanded.contains(key)
         let visible = open ? rows : Array(rows.prefix(Self.preview))
-        let hasMore = rows.count > Self.preview
+        let hasMore = shownScope == nil && rows.count > Self.preview
         ForEach(Array(visible.enumerated()), id: \.element.id) { index, task in
             TaskRowView(task: task, stale: model.stale(task)) {
                 selectedId = task.id
@@ -266,8 +270,8 @@ struct TasksPage: View {
 
 /// A group's header strip inside the box, as Repositories heads a repo:
 /// `owner /` muted then the name (`Linear /` and the project for
-/// another source), the group's row count, and on hover the link out to
-/// GitHub.
+/// another source), and on hover the link out to GitHub. The rail
+/// carries the counts.
 private struct TaskGroupHeader: View {
     @Environment(\.openURL) private var openURL
     var section: TaskSection
@@ -291,11 +295,6 @@ private struct TaskGroupHeader: View {
                 Text("\(prefix) /").foregroundStyle(Theme.textMuted)
             }
             Text(parts.name).foregroundStyle(Theme.textPrimary)
-            let count = section.rows?.count ?? 0
-            if count > 0 {
-                Text("\(count)").font(Theme.caption).monospacedDigit()
-                    .foregroundStyle(Theme.textMuted)
-            }
             Spacer()
             if let repo = section.repo {
                 Button {
@@ -325,7 +324,8 @@ private struct TaskGroupHeader: View {
 // MARK: - rail
 
 /// The page's right-hand rail, after the Repositories one: Refresh,
-/// "All tasks", then the scopes under their owner or source, each with
+/// "All tasks", then the scopes under their owner or source by name,
+/// each with
 /// a green dot while an agent is on one of its tasks and the chip
 /// filter's count. Scopes with nothing under the chip fold under "N
 /// quiet". A tap narrows the list to that scope.

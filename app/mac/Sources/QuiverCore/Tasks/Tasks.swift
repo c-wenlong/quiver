@@ -465,39 +465,46 @@ public enum TaskGrouping {
     }
 
     /// The page's rail: every scope, `filter` or not, so one with nothing
-    /// under the chip still has a row to fold as quiet. GitHub repos
-    /// group by owner as the Repositories rail does; Linear projects
-    /// under "Linear", any other source under its own name. Groups and
-    /// their rows keep the reply's order (most recently active first).
-    public static func rail(of tasks: [HubTaskRow], filter: TaskFilter) -> [TaskRailGroup] {
-        var groups: [TaskRailGroup] = []
-        var groupIndex: [String: Int] = [:]
-        var scopeIndex: [String: (group: Int, row: Int)] = [:]
+    /// under the chip still has a row to fold as quiet, plus each failed
+    /// repo so its error can be picked. GitHub repos group by owner as the
+    /// Repositories rail does; Linear projects under "Linear", any other
+    /// source under its own name. Owners come first, then the other
+    /// sources, and groups and rows sort by name: the list reorders by
+    /// activity, the rail holds still. The web's `tasks.js` sorts the same.
+    public static func rail(of tasks: [HubTaskRow], failed: [HubTaskRepoFailure] = [],
+                            filter: TaskFilter) -> [TaskRailGroup] {
+        struct Key: Hashable { var github: Bool; var title: String }
+        var groups: [Key: [String: TaskRailScope]] = [:]
+        func add(_ key: Key, _ name: String, label: String, hit: Int, running: Bool) {
+            var scope = groups[key, default: [:]][name]
+                ?? TaskRailScope(name: name, label: label, count: 0, running: false)
+            scope.count += hit
+            scope.running = scope.running || running
+            groups[key, default: [:]][name] = scope
+        }
         for task in tasks {
             let name = sectionName(task)
-            let hit = filter.includes(task) ? 1 : 0
-            let running = task.agentRunning == true
-            if let at = scopeIndex[name] {
-                groups[at.group].scopes[at.row].count += hit
-                if running { groups[at.group].scopes[at.row].running = true }
-                continue
-            }
-            let title = railGroupTitle(task)
-            let group: Int
-            if let known = groupIndex[title] {
-                group = known
-            } else {
-                group = groups.count
-                groupIndex[title] = group
-                groups.append(TaskRailGroup(title: title, scopes: []))
-            }
-            let label = task.source == "github" && task.repo?.contains("/") == true
-                ? String(name.split(separator: "/").last ?? Substring(name)) : name
-            scopeIndex[name] = (group, groups[group].scopes.count)
-            groups[group].scopes.append(TaskRailScope(name: name, label: label, count: hit,
-                                                      running: running))
+            let github = task.source == "github" && task.repo?.contains("/") == true
+            add(Key(github: github, title: railGroupTitle(task)), name,
+                label: github ? shortName(name) : name,
+                hit: filter.includes(task) ? 1 : 0, running: task.agentRunning == true)
         }
-        return groups
+        for failure in failed where failure.name.contains("/") {
+            let owner = String(failure.name.split(separator: "/", maxSplits: 1)[0])
+            add(Key(github: true, title: owner), failure.name,
+                label: shortName(failure.name), hit: 0, running: false)
+        }
+        let byName = { (a: String, b: String) in a.localizedStandardCompare(b) == .orderedAscending }
+        return groups.keys
+            .sorted { $0.github != $1.github ? $0.github : byName($0.title, $1.title) }
+            .map { key in
+                TaskRailGroup(title: key.title,
+                              scopes: (groups[key] ?? [:]).values.sorted { byName($0.label, $1.label) })
+            }
+    }
+
+    private static func shortName(_ repo: String) -> String {
+        String(repo.split(separator: "/").last ?? Substring(repo))
     }
 
     /// A repo's owner for GitHub; the source's own name elsewhere.

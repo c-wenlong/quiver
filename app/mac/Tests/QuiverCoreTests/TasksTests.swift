@@ -213,18 +213,23 @@ import Testing
             row("e", repo: "o/s"),
             row("f", source: "notion", kind: "page", ref: "x", repo: nil),
         ]
-        let rail = TaskGrouping.rail(of: tasks, filter: .running)
-        // Owners and sources in first-sight order; repos by short name.
-        #expect(rail.map(\.title) == ["o", "Linear", "p", "Notion"])
-        #expect(rail[0].scopes.map(\.label) == ["s", "r"])
-        #expect(rail[0].scopes.map(\.name) == ["o/s", "o/r"])
-        #expect(rail[1].scopes.map(\.label) == ["QUI"])
+        let failed = [HubTaskRepoFailure(name: "p/a", error: "gh timed out")]
+        let rail = TaskGrouping.rail(of: tasks, failed: failed, filter: .running)
+        // Owners by name, then the other sources by name; rows by name,
+        // so the rail holds still while the list reorders by activity.
+        #expect(rail.map(\.title) == ["o", "p", "Linear", "Notion"])
+        #expect(rail[0].scopes.map(\.label) == ["r", "s"])
+        #expect(rail[0].scopes.map(\.name) == ["o/r", "o/s"])
+        // A failed repo with no rows still gets a row, quiet.
+        #expect(rail[1].scopes.map(\.name) == ["p/a", "p/x"])
+        #expect(rail[1].scopes.map(\.count) == [0, 0])
+        #expect(rail[2].scopes.map(\.label) == ["QUI"])
         #expect(rail[3].scopes.map(\.name) == ["Other"])
         // Every scope keeps its row; the count is what the chip leaves,
         // so a scope with none still lists (the rail folds it as quiet).
-        #expect(rail[0].scopes.map(\.count) == [1, 0])
-        #expect(rail[0].scopes.map(\.running) == [true, false])
-        #expect(TaskGrouping.rail(of: tasks, filter: .all)[0].scopes.map(\.count) == [2, 1])
+        #expect(rail[0].scopes.map(\.count) == [0, 1])
+        #expect(rail[0].scopes.map(\.running) == [false, true])
+        #expect(TaskGrouping.rail(of: tasks, filter: .all)[0].scopes.map(\.count) == [1, 2])
 
         // A rail pick narrows the sections and the chip counts alike.
         let picked = TaskGrouping.sections(of: tasks, filter: .all, scope: "o/s")
