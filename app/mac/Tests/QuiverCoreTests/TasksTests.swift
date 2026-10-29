@@ -16,7 +16,7 @@ import Testing
         {"id": "github:issue:o/r:5", "source": "github", "kind": "issue",
          "repo": "o/r", "ref": "5", "title": "Fix the thing",
          "url": "https://github.com/o/r/issues/5",
-         "state": "in_progress", "sessions": ["claude@/w:abc"],
+         "state": "in_progress", "status": "Agent running", "sessions": ["claude@/w:abc"],
          "launches": ["l-1"], "agent_running": true, "linked": true,
          "last_active_at": 1767323000.0, "created_at": 1767320000.0,
          "updated_at": "2026-01-02T03:04:05Z",
@@ -78,6 +78,8 @@ import Testing
 
         let issue = body.tasks[0]
         #expect(issue.id == "github:issue:o/r:5")
+        #expect(issue.status == "Agent running")
+        #expect(issue.stateLabel == "Agent running")
         #expect(issue.scope == "o/r")
         #expect(issue.refLabel == "#5")
         #expect(issue.number == 5)
@@ -206,9 +208,18 @@ import Testing
         #expect(row("a", kind: "issue").sourceLine == "GitHub issue · o/r")
         #expect(row("a", kind: "pull").sourceLine == "GitHub pull request · o/r")
         #expect(row("a", source: "linear", repo: nil, project: "QUI").sourceLine == "Linear · QUI")
-        #expect(row("a", state: "in_progress").stateLabel == "In progress")
+        // The ladder is never the text (#875): an issue whose agent has
+        // finished reads Open, a running one Agent running.
+        #expect(row("a", state: "in_progress").stateLabel == "Open")
+        #expect(row("a", state: "in_progress", running: true).stateLabel == "Agent running")
         #expect(row("a", state: "pr_open").stateLabel == "PR open")
         #expect(row("a", state: "weird").stateLabel == "Open")
+        // The hub's own status wins, in the source's words; without one,
+        // started work on another source still reads Started.
+        var linear = row("a", source: "linear", repo: nil, project: "QUI", state: "in_progress")
+        #expect(linear.stateLabel == "Started")
+        linear.status = "In Review"
+        #expect(linear.stateLabel == "In Review")
         // A bare ref stays itself; GitHub's reads #5.
         #expect(row("a", source: "linear", ref: "QUI-1", repo: nil, project: "QUI").refLabel == "QUI-1")
         #expect(row("a").refLabel == "#5")
@@ -244,7 +255,7 @@ import Testing
 
     @Test func issueLadderReachesUpToTheState() {
         #expect(TaskStepper.steps(for: row(state: "pr_open"))
-            == [step("Open", true, false), step("In progress", true, false),
+            == [step("Open", true, false), step("Agent", true, false),
                 step("PR open", true, true), step("Merged", false, false)])
         #expect(TaskStepper.steps(for: row(state: "merged")).last
             == step("Merged", true, true))
@@ -253,19 +264,19 @@ import Testing
 
     @Test func pullLadderSkipsThePrRung() {
         let steps = TaskStepper.steps(for: row(kind: "pull", state: "in_progress"))
-        #expect(steps.map(\.title) == ["Open", "In progress", "Merged"])
-        #expect(steps[1] == step("In progress", true, true))
+        #expect(steps.map(\.title) == ["Open", "Agent", "Merged"])
+        #expect(steps[1] == step("Agent", true, true))
     }
 
     @Test func nonGithubLaddersSkipThePrRung() {
         // Linear/Notion issues and cards can never produce a PR, so the
         // rung must not exist — same rule the web page's `rungs()` uses.
         let linear = TaskStepper.steps(for: row(source: "linear", state: "in_progress"))
-        #expect(linear.map(\.title) == ["Open", "In progress", "Merged"])
-        #expect(linear[1] == step("In progress", true, true))
+        #expect(linear.map(\.title) == ["Open", "Started", "Done"])
+        #expect(linear[1] == step("Started", true, true))
         let notion = TaskStepper.steps(
             for: row(source: "notion", kind: "card", state: "in_progress"))
-        #expect(notion.map(\.title) == ["Open", "In progress", "Merged"])
+        #expect(notion.map(\.title) == ["Open", "Started", "Done"])
         // A closed non-GitHub task still lands on the Closed rung.
         let closed = TaskStepper.steps(for: row(source: "linear", state: "closed"))
         #expect(closed.last == step("Closed", true, true))
@@ -585,6 +596,50 @@ extension HubStubbed {
         #expect(model.stale(model.tasks[0]) == false)
     }
 
+    @Test func aHubThatIsStillStartingIsRetriedUntilItAnswers() async throws {
+        // The hub restarts on every app install: the first loads find it
+        // down, and the page fills in once it answers, with no Refresh.
+        HubStub.handler = { req in
+            req.url?.path == "/v1/app/tasks" ? (200, Data(Self.listJSON.utf8)) : (404, Data())
+        }
+        let store = HubDeviceStore(url: dir.appending(path: "\(UUID().uuidString)/app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let locator = FakeLocator(address: nil)
+        let hub = LocalHub(locator: locator, store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session())
+        }
+        let model = TasksModel()
+        let waits = WaitLog()
+        await model.loadUntilHubAnswers(hub: hub) { wait in
+            await waits.add(wait)
+            // Up after the second wait.
+            if await waits.count == 2 { locator.address = "127.0.0.1:8477" }
+        }
+        #expect(await waits.all == [.seconds(3), .seconds(6)])
+        #expect(model.hubDown == false)
+        #expect(model.error == nil)
+        #expect(model.tasks.map(\.id) == ["github:issue:o/r:5"])
+    }
+
+    @Test func aRestartingHubIsRetriedWhetherOrNotTheAppHasAClient() {
+        // No client yet: swe's status says the hub is down. A client the
+        // app already holds: the connection itself fails. Both pass once
+        // the hub is up; a misbound hub or a bad reply doesn't.
+        #expect(TasksModel.hubNotAnswering(HubError(status: 0, code: "hub_down", message: "")))
+        #expect(TasksModel.hubNotAnswering(HubError(status: 0, code: "network", message: "")))
+        #expect(!TasksModel.hubNotAnswering(HubError(status: 0, code: "hub_blocked", message: "")))
+        #expect(!TasksModel.hubNotAnswering(HubError(status: 500, code: "internal", message: "")))
+    }
+
+    @Test func aCancelledRetryStopsWithTheHubStillDown() async throws {
+        let hub = LocalHub(locator: FakeLocator(address: nil),
+                           store: HubDeviceStore(url: dir.appending(path: "\(UUID().uuidString)/d.json")))
+        let model = TasksModel()
+        await model.loadUntilHubAnswers(hub: hub) { _ in throw CancellationError() }
+        #expect(model.hubDown)
+        #expect(model.error == "This Mac's hub isn't running. Start it in Settings › Remote.")
+    }
+
     @Test func anUpstreamGithubFailureMarksRowsStale() async throws {
         /// `gh auth status` timed out: no `env_blocked`, no per-repo
         /// failures — but the GitHub list never refreshed, so the rows
@@ -675,4 +730,11 @@ extension HubStubbed {
         #expect(model.busy.isEmpty)
     }
 }
+}
+
+/// The waits `loadUntilHubAnswers` asked for, in order.
+private actor WaitLog {
+    private(set) var all: [Duration] = []
+    var count: Int { all.count }
+    func add(_ wait: Duration) { all.append(wait) }
 }

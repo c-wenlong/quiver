@@ -27,7 +27,7 @@ struct TasksPage: View {
                 list
             }
         }
-        .task { await model.load(hub: app.hub) }
+        .task { await model.loadUntilHubAnswers(hub: app.hub) }
         .onChange(of: app.navReselects) { selectedId = nil }
     }
 

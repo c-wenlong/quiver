@@ -230,6 +230,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Mac app's Tasks page recovers when the hub comes back.** The
+  hub restarts on every app install and at login, and a page opened
+  while it was still starting said "This Mac's hub isn't running" until
+  you clicked Refresh, even after the hub was up. The page now tries
+  again on its own while the hub is down (after 3 s, doubling to 30 s)
+  and fills in once it answers.
+- **The Mac app's Tasks page says what the source says.** Like the web
+  and iPhone pages before #916, it showed the hub's ladder as each
+  task's status, so an issue whose agent had finished read "In
+  progress" forever. It now shows the hub's `status` (`Agent running`,
+  `PR open`, `Merged`, `Closed`, `Open`, or a Linear workflow state's
+  name), and its stepper reads Open → Agent → PR open → Merged for
+  GitHub and Open → Started → Done elsewhere
+  ([#875](https://github.com/c-wenlong/quiver/issues/875)).
 - **The iPhone app's tab bar fits again.** The Tasks tab made six tabs,
   and iPhone shows four plus "More" past five, so Issues and Usage were
   hidden behind More and `quiver://issue` links landed inside it.
