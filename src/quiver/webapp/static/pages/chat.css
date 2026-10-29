@@ -195,6 +195,53 @@ details.tool-run > summary {
   white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto;
 }
 
+/* A tool card that wrote a page: Preview at the right of its toggle
+ * row (floated, so the row keeps its marker and ellipsis). */
+.tool-preview {
+  float: right; display: inline-flex; align-items: center; gap: 5px; height: 22px; margin: -2px -4px 0 8px;
+  padding: 0 9px; border: 1px solid var(--border-strong); border-radius: var(--control-radius);
+  background: var(--card); color: var(--text-primary); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.tool-preview:hover { background: var(--tab-hover); }
+.tool-preview svg { width: 13px; height: 13px; }
+
+/* The page preview sheet: a locked frame (chat.js previewFrameAttrs). */
+dialog.sheet.preview-sheet { width: min(1100px, calc(100vw - 32px)); height: min(880px, calc(100dvh - 32px)); }
+dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
+.preview-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.preview-head .icon-button { width: 30px; height: 30px; }
+.preview-head .tab { border: 1px solid var(--border-strong); }
+.preview-head .tab:disabled { opacity: .45; cursor: default; }
+.preview-titles { flex: 1; min-width: 0; }
+.preview-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-path { font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-pick { max-width: 220px; height: 30px; }
+.preview-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--wash); }
+/* Pages without a background of their own expect white. */
+.preview-frame { flex: 1; width: 100%; border: 0; background: #fff; }
+.preview-source {
+  flex: 1; margin: 0; padding: 12px; overflow: auto; font-size: 12px;
+  white-space: pre-wrap; word-break: break-word; background: var(--card);
+}
+.preview-msg { margin: auto; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; max-width: 420px; }
+.preview-msg-title { font-size: 14px; font-weight: 600; color: var(--danger-text); }
+.preview-foot { padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); text-align: center; }
+
+/* Link cards under a reply (chat.js linkCardsHtml): host, path, Open. */
+.msg .link-cards { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.msg .link-card {
+  display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 12px; max-width: 480px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--card);
+  color: var(--text-primary); text-decoration: none;
+}
+.msg .link-card:hover { background: var(--tab-hover); }
+.link-card-ic svg, .link-card-open svg { width: 13px; height: 13px; display: block; }
+.link-card-ic { color: var(--text-secondary); flex: none; }
+.link-card-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.link-card-host { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-card-path { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-card-open { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); flex: none; }
+
 /* Diffs: Edit and Write cards */
 .diff {
   font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
