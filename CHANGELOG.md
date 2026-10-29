@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Preview on tool cards that write a page, and link cards
+  under replies.** In a session's chat, a tool call that writes or
+  edits an `.html`, `.htm` or `.svg` file inside the session's folder
+  (Write, Edit, MultiEdit, a Codex patch and the like, the iPhone's
+  rules) gets a Preview button. It fetches the file as it is on disk
+  now from the hub's preview route and draws it in a sheet, inside an
+  `<iframe sandbox>` with no permissions at all (no scripts, forms,
+  popups or navigation out, and an opaque origin) and a
+  `default-src 'none'` policy at the top of the page, so nothing loads
+  from the network. That frame sits inside a second locked frame of the
+  app's own, whose policy also stops the page navigating itself (a
+  `target="_self"` link). An SVG is drawn as an image. Source shows the
+  file's text, Reload fetches it again, and a refused file says why in
+  plain words. A reply that links to web pages gets a card per page
+  (host, path, Open in a new tab), up to three. File names with `+` are
+  sent as `%2B`
+  ([#634](https://github.com/c-wenlong/quiver/issues/634)).
+
 - **Remote hub: session rows say which model each session runs.**
   `/v1/sessions` rows, the hub's own and a satellite's, carry `model`,
   the model of the newest reply in the session's transcript (left out
