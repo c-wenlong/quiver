@@ -144,47 +144,74 @@ def _file_model(session: Session, ctx: dict, store) -> str:
 
 # --------------------------------------------------------------- databases
 
+# Rows read per query while looking for a usable name: a run of junk
+# (Devin's compactor turns) pages on rather than hiding an older reply.
+_DB_PAGE = 20
+
+
+def _newest_usable(conn: sqlite3.Connection, sql: str, args: tuple,
+                   harness: str, name) -> tuple[float, str] | None:
+    """``(sort key, model)`` of the newest row ``sql`` (newest first,
+    sort key in column 0) yields whose ``name(row)`` is usable, paging
+    through the rows until one is or they run out."""
+    offset = 0
+    while True:
+        rows = conn.execute(f"{sql} LIMIT ? OFFSET ?",
+                            (*args, _DB_PAGE, offset)).fetchall()
+        for row in rows:
+            model = name(row)
+            if model and usable(harness, model):
+                return float(row[0] or 0), model
+        if len(rows) < _DB_PAGE:
+            return None
+        offset += _DB_PAGE
+
+
+def _opencode_name(row) -> str:
+    _created, provider, model_id = row
+    if not isinstance(model_id, str) or not model_id:
+        return ""
+    return opencode_model(provider, model_id)
+
+
 def _opencode_db_model(conn: sqlite3.Connection, session_id: str,
                        harness: str) -> str:
     """The newest assistant row's ``provider/model``: OpenCode 2.x's
     ``session_message`` or a legacy ``message`` row, whichever is newer."""
-    candidates = []
     tables = {r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table'")}
+    found = []
     if "session_message" in tables:
-        candidates += conn.execute(
+        found.append(_newest_usable(
+            conn,
             "SELECT time_created, json_extract(data, '$.model.providerID'),"
             " json_extract(data, '$.model.id') FROM session_message"
             " WHERE session_id = ? AND type = 'assistant'"
-            " ORDER BY time_created DESC LIMIT 5", (session_id,)).fetchall()
+            " ORDER BY time_created DESC", (session_id,), harness,
+            _opencode_name))
     if "message" in tables:
-        candidates += conn.execute(
+        found.append(_newest_usable(
+            conn,
             "SELECT time_created, json_extract(data, '$.providerID'),"
             " json_extract(data, '$.modelID') FROM message"
             " WHERE session_id = ? AND json_extract(data, '$.role') = 'assistant'"
-            " ORDER BY time_created DESC LIMIT 5", (session_id,)).fetchall()
-    candidates.sort(key=lambda row: row[0] or 0, reverse=True)
-    for _created, provider, model_id in candidates:
-        if not isinstance(model_id, str) or not model_id:
-            continue
-        model = opencode_model(provider, model_id)
-        if usable(harness, model):
-            return model
-    return ""
+            " ORDER BY time_created DESC", (session_id,), harness,
+            _opencode_name))
+    found = [hit for hit in found if hit is not None]
+    return max(found, key=lambda hit: hit[0])[1] if found else ""
 
 
 def _devin_db_model(conn: sqlite3.Connection, session_id: str,
                     harness: str) -> str:
-    rows = conn.execute(
-        "SELECT json_extract(chat_message, '$.metadata.generation_model')"
+    hit = _newest_usable(
+        conn,
+        "SELECT row_id, json_extract(chat_message, '$.metadata.generation_model')"
         " FROM message_nodes WHERE session_id = ? AND json_valid(chat_message)"
         " AND json_extract(chat_message, '$.role') = 'assistant'"
         " AND json_extract(chat_message, '$.metadata.generation_model') IS NOT NULL"
-        " ORDER BY row_id DESC LIMIT 10", (session_id,)).fetchall()
-    for (model,) in rows:
-        if isinstance(model, str) and model and usable(harness, model):
-            return model
-    return ""
+        " ORDER BY row_id DESC", (session_id,), harness,
+        lambda row: row[1] if isinstance(row[1], str) else "")
+    return hit[1] if hit else ""
 
 
 # harness -> (database path under $HOME, reader).

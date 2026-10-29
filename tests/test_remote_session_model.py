@@ -203,6 +203,36 @@ class TestDatabaseHarnesses(_Home):
         self.assertEqual(session_model.session_models([_session("d1", "devin")]),
                          ["swe-1.5"])
 
+    def test_a_long_run_of_housekeeping_rows_pages_past(self):
+        path = self.home / ".local/share/devin/cli/sessions.db"
+        path.parent.mkdir(parents=True)
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE message_nodes (row_id INTEGER PRIMARY KEY,"
+                     " session_id TEXT, chat_message TEXT)")
+        for model in ["swe-1.5"] + ["compactor"] * 45:
+            conn.execute("INSERT INTO message_nodes (session_id, chat_message)"
+                         " VALUES ('d1', ?)", (json.dumps(
+                             {"role": "assistant",
+                              "metadata": {"generation_model": model}}),))
+        conn.commit()
+        conn.close()
+        self.assertEqual(session_model.session_models([_session("d1", "devin")]),
+                         ["swe-1.5"])
+
+    def test_opencode_junk_rows_page_past_in_each_table(self):
+        conn = self.opencode_db()
+        conn.execute("INSERT INTO message VALUES ('m0', 's1', 50, ?)", (json.dumps(
+            {"role": "assistant", "modelID": "claude-opus-4-5",
+             "providerID": "anthropic"}),))
+        for i in range(30):
+            conn.execute("INSERT INTO message VALUES (?, 's1', ?, ?)", (
+                f"j{i}", 100 + i, json.dumps({"role": "assistant",
+                                               "modelID": "unknown"})))
+        conn.commit()
+        conn.close()
+        self.assertEqual(session_model.session_models(
+            [_session("s1", "opencode")]), ["anthropic/claude-opus-4-5"])
+
     def test_missing_database_is_unknown(self):
         self.assertEqual(
             session_model.session_models([_session("s1", "opencode")]), [""])
