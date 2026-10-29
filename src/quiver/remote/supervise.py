@@ -601,12 +601,26 @@ def attach(
     """
     flags = resume_flags(session)
     with _registry_lock(home):
-        if session_key in _load_registry(home):
+        current = _load_registry(home).get(session_key)
+        if current is not None:
+            # Idempotent — but a pick is a request for the session to
+            # run that value, and a live pane's launch-time apply can't
+            # be redone: a pick differing from the recorded one is
+            # refused rather than silently dropped.
+            changed = [op for op, want in
+                       (("model", model), ("effort", effort))
+                       if want and want != str(current.get(op) or "")]
+            if changed:
+                ops = " and ".join(f"/{op}" for op in changed)
+                return False, (
+                    f"already attached; {ops} can only be picked on a "
+                    "fresh attach — detach the session and attach again")
             return True, "already attached"
         # A tmux session kept running by an earlier detach is taken back
         # as it is, mid-turn or not: launching here would start a second
         # run of the same session next to it.
-        adopted = _adopt_kept_locked(home, session_key, session)
+        adopted = _adopt_kept_locked(home, session_key, session,
+                                     model=model, effort=effort)
         if adopted is not None:
             return adopted
         if status == "active":
@@ -700,23 +714,18 @@ def attach(
         # gate with "No, exit" selected: the tailer read it as an
         # approval and the phone's next Enter quit claude. Get past it
         # before anyone can write to the pane.
-        if boot_pane(name, timeout=ATTACH_BOOT_S) is None:
+        settled = boot_pane(name, timeout=ATTACH_BOOT_S)
+        if settled is None:
             kill(name)
             return False, f"{binary} did not finish starting under tmux"
         if not tmux_alive(name):
             return False, f"{binary} exited while starting under tmux"
-        if model or effort:
-            # Launch-time tuning, applied like a launch's: the verified
-            # ``/op <v>`` text, typed once the pane is settled.
-            from quiver.remote import inject
-
-            for op, value in (("model", model), ("effort", effort)):
-                if value and not send_text(
-                        name, inject.control_text(op, value)):
-                    kill(name)
-                    return False, (
-                        f"attached under tmux but /{op} could not be "
-                        "delivered — attach again or send it by hand")
+        if (model or effort) and not _send_launch_controls(
+                name, model, effort, before=settled):
+            kill(name)
+            return False, (
+                "attached under tmux but the launch controls could not "
+                "be delivered — attach again or send them by hand")
         meta["tmux"] = name
         _stop_local_writers(session, writers)
         _mark_locked(home, session_key, meta)
@@ -1001,7 +1010,8 @@ def _kept_state(row: dict) -> str:
 
 
 def _adopt_kept_locked(
-    home: Path | None, session_key: str, session: Session
+    home: Path | None, session_key: str, session: Session,
+    *, model: str | None = None, effort: str | None = None,
 ) -> tuple[bool, str] | None:
     """Take a kept tmux session back under supervision, registry lock held.
 
@@ -1011,6 +1021,11 @@ def _adopt_kept_locked(
     now runs something else is refused rather than launched over. The
     supervised row is written before the kept one is removed (see
     ``keep``).
+
+    A ``model``/``effort`` pick is honoured only when it matches what
+    the kept run was launched with: typing ``/model`` into a live,
+    possibly mid-turn pane is not the launch-time apply the pick asks
+    for, so a different value is refused rather than silently dropped.
     """
     _reconcile_locked(home)
     kept_rows = _load_kept(home)
@@ -1027,6 +1042,15 @@ def _adopt_kept_locked(
         return False, (
             f"tmux session {name} no longer runs this session; close it "
             f"(tmux kill-session -t {name}) and attach again"
+        )
+    changed = [op for op, want in (("model", model), ("effort", effort))
+               if want and want != str(row.get(op) or "")]
+    if changed:
+        ops = " and ".join(f"/{op}" for op in changed)
+        return False, (
+            f"the kept tmux session {name} is still running; {ops} can "
+            "only be picked on a fresh attach — detach the session "
+            "and attach again"
         )
     meta = {k: v for k, v in row.items()
             if k not in {"pane_pid", "kept_at"}}
@@ -1211,6 +1235,40 @@ def channel_tuning_error(
     return ""
 
 
+def _send_launch_controls(
+    name: str,
+    model: str | None,
+    effort: str | None,
+    *,
+    before: str,
+) -> bool:
+    """Type each picked ``/model``/``/effort`` into a settled pane,
+    checking each one actually left the input box.
+
+    A bare ``send_text`` only proves tmux took the keys — a TUI can
+    swallow the Enter behind fast-typed text and leave ``/model opus``
+    sitting in the input, where the next send would merge into it. So
+    each control goes through the same checked delivery the first
+    prompt gets (``_deliver``), and the pane re-settles between
+    controls so a TUI still applying one is never typed over.
+    ``before`` is the settled frame the first control is checked
+    against.
+    """
+    from quiver.remote import inject
+
+    frame = before
+    for op, value in (("model", model), ("effort", effort)):
+        if not value:
+            continue
+        if not _deliver(
+                name, inject.control_text(op, value), before=frame):
+            return False
+        frame = boot_pane(name)
+        if frame is None:
+            return False
+    return True
+
+
 def _prime_launch(
     name: str,
     prompt: str,
@@ -1226,15 +1284,13 @@ def _prime_launch(
     apply the switch — before delivering the prompt. False when the
     pane never settled or a send could not be delivered.
     """
-    from quiver.remote import inject
-
     if model or effort:
-        if boot_pane(name) is None:
+        settled = boot_pane(name)
+        if settled is None:
             return False
-        for op, value in (("model", model), ("effort", effort)):
-            if value and not send_text(
-                    name, inject.control_text(op, value)):
-                return False
+        if not _send_launch_controls(
+                name, model, effort, before=settled):
+            return False
     if not prompt:
         return True
     return prime_pane(name, prompt)
@@ -1303,9 +1359,13 @@ def launch_new(
     if not _prime_launch(name, prompt, model, effort):
         what = "the launch controls or prompt" if (model or effort) \
             else "the prompt"
-        return True, (
+        # Nothing was delivered, so no turn will ever start: the record
+        # says failed rather than leaving the phone polling a pending
+        # launch. The pane itself stays up for a terminal attach.
+        return False, (
             f"launched under tmux but {what} could not be "
-            "delivered — attach from a terminal or retry"
+            "delivered — the pane is still up; attach from a "
+            "terminal or retry"
         ), name
     return True, "launched under tmux; the session appears on refresh", name
 
@@ -1380,9 +1440,13 @@ def launch_fork(
         if not _prime_launch(name, prompt, model, effort):
             what = "the launch controls or prompt" if (model or effort) \
                 else "the prompt"
-            return True, (
+            # Same failed-launch reporting as launch_new: nothing was
+            # delivered, so the phone must not poll a pending launch
+            # for a prompt that never landed.
+            return False, (
                 f"forked under tmux, but {what} could not be "
-                "delivered; attach from a terminal or retry"
+                "delivered; the pane is still up — attach from a "
+                "terminal or retry"
             ), name
     elif boot_pane(name) is None:
         # No prompt to type, but the pane must still get past a trust

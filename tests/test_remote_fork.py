@@ -563,6 +563,11 @@ class TestSatelliteForkRoute(unittest.TestCase):
 
     def test_routes_through_the_command_journal(self):
         self._push(True)
+        # The satellite advertises launch-option support, the same
+        # fields its own agent reports.
+        catalog_mod.upsert_machine(self.srv.home, {
+            "id": "sat-m1", "model_at_launch": ["claude"],
+            "effort_at_launch": ["claude"]})
         status, body = self.srv.request(
             "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork",
             {"prompt": "go", "model": "opus", "effort": "high"})
@@ -615,6 +620,25 @@ class TestSatelliteForkRoute(unittest.TestCase):
                     "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork", {})
                 self.assertEqual(status, 409, body)
                 self.assertEqual(body["error"]["code"], "fork_unsupported")
+
+    def test_pick_refused_when_the_satellite_is_too_old(self):
+        # The agent reads picks only since the release that reports
+        # model_at_launch; without it a fork would drop them silently.
+        self._push(True)
+        status, body = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork",
+            {"prompt": "go", "model": "opus"})
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["code"], "unsupported_launch_option")
+        self.assertIn("too old", body["error"]["message"])
+        self.assertEqual(self.srv.state.launches, {})
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(
+            [c for c in replay if c["data"]["op"] == "fork"], [])
+        # No pick: the same old agent forks as before.
+        status, body = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork", {})
+        self.assertEqual(status, 202, body)
 
 
 if __name__ == "__main__":

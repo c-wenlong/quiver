@@ -492,7 +492,10 @@ A kept session is recorded in `data/remote/kept.json` with its tmux
 name, the pane's pid and `kept_at`. Attaching it again adopts that tmux
 session instead of launching a second run, when the tmux session still
 exists and its pane still runs the same process (same pane pid, same
-harness). Adoption starts nothing, so it is allowed mid-turn. A kept
+harness). Adoption starts nothing, so it is allowed mid-turn — but a
+`model`/`effort` pick only holds when it is the one the run was
+launched with, since `/model` can't safely be typed into a live,
+possibly-watched pane; a different value is refused (`409`). A kept
 tmux session gone since is forgotten and attach launches as usual; one
 whose pane now runs a different process is refused, since a launch
 would reuse the name and bind to that pane. The hub's catalog loop (and
@@ -574,16 +577,31 @@ On the two API channels the pick rides the session's supervised meta
 into every send — the same plumbing headless uses for `--model` — so it
 keeps applying until the session is detached. The pick also rides
 hub→satellite launch and fork command envelopes and attach commands
-the same way (`{model, effort}` in the command data — a satellite too
-old to check its own table just fails the command with the same note),
-the launch's pending marker and supervised-entry meta (as bookkeeping
-— a session's *current* model is a transcript/ledger question), and
-the launch record (`GET /v1/launches/{id}` carries `model`/`effort`).
+the same way (`{model, effort}` in the command data). The hub only
+forwards a nonempty pick when the satellite's machine row advertises
+the build that reads it — `model_at_launch` present as a list, the
+field that release started reporting; an older agent would accept the
+command and silently drop the fields, so it gets `409
+unsupported_launch_option` instead. Once the command lands the
+satellite re-checks its own table and fails it with the same note, so
+the pick is applied or refused, never dropped. It also rides the
+launch's pending marker and supervised-entry meta (as bookkeeping —
+a session's *current* model is a transcript/ledger question), and the
+launch record (`GET /v1/launches/{id}` carries `model`/`effort`).
+
+A pick can only change what a fresh run starts with, so two attach
+shapes refuse a changed value rather than dropping it: attaching a
+session that is already attached or kept running (`409 not_idle` —
+detach first, then attach again), each comparing the request against
+the pick the run was launched with. The same value, or none, attaches
+as before.
 
 The answer is `202 {launch_id, state: "pending", note}` (plus
 `queued: true` for a satellite). On the hub it comes before the pane is
 primed, which can take 30 s; a launch that fails after that reads
-`failed` at the route below. The harness picks its own session id,
+`failed` at the route below — including a pane that came up but never
+took its launch controls or prompt, since no turn will ever start on
+it (the pane is left up for a manual attach). The harness picks its own session id,
 so the key is not known yet: the launch id rides the pending marker into
 the supervised entry when `adopt_pending` claims the new transcript, and
 the adopting machine emits `session.launched {launch_id}` naming the

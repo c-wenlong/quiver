@@ -2267,6 +2267,15 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(422, "not_launchable",
                                  f"{harness} can't be launched on {machine}")
                 return
+            # A satellite too old to know the launch-option fields
+            # would accept the command and silently drop the pick.
+            if (cmd["model"] or cmd["effort"]) and not \
+                    catalog_mod.reads_launch_options(row):
+                self._send_error(
+                    409, "unsupported_launch_option",
+                    f"{machine} runs an agent too old to take launch "
+                    "options; upgrade it, or launch without them")
+                return
             # The hub's table answers for the satellite's too: a launch
             # command never carries a field its receiver can't apply.
             blocked = supervise.launch_tuning_error(
@@ -2468,6 +2477,17 @@ class _Handler(BaseHTTPRequestHandler):
                     a_effort = protocol._launch_value(body, "effort")
                 except ValueError as exc:
                     self._send_error(422, "bad_command", str(exc))
+                    return
+                # Same gate as a satellite launch: an agent that does
+                # not report launch-option support would drop the pick.
+                if (a_model or a_effort) and not \
+                        catalog_mod.reads_launch_options(
+                            catalog_mod.load_machines(
+                                self._state.home).get(mid)):
+                    self._send_error(
+                        409, "unsupported_launch_option",
+                        f"{mid} runs an agent too old to take launch "
+                        "options; upgrade it, or attach without them")
                     return
                 queued = self._state.queue_command(mid, "attach", key, {
                     "mode": body.get("mode") or "auto",

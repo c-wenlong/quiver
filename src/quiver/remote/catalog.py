@@ -184,6 +184,40 @@ def launch_op_names(launchable: list[dict], op: str) -> list[str]:
     return [item["name"] for item in launchable if item.get(f"launch_{op}")]
 
 
+def reads_launch_options(row: dict | None) -> bool:
+    """Whether a satellite's build applies ``model``/``effort`` on the
+    launch, fork and attach commands it is sent.
+
+    The release that understands those fields is the one that started
+    reporting ``model_at_launch`` on its machine row, so the field's
+    presence is the version check: an older agent accepts the command
+    and silently drops the pick, which is exactly what this gate exists
+    to prevent.
+    """
+    return isinstance((row or {}).get("model_at_launch"), list)
+
+
+# ``last_used_models`` is asked once per catalog refresh (~10 s per
+# machine) while the ledger only moves on session events, so the
+# answer is cached behind the db+WAL file signature: an idle machine
+# pays two stats, not a whole-table scan.
+_last_models_cache: dict[str, tuple[tuple, dict[str, str]]] = {}
+_last_models_lock = threading.Lock()
+
+
+def _ledger_signature(path: Path) -> tuple:
+    """``(mtime_ns, size)`` of the ledger db and its WAL, or None each."""
+    sig = []
+    for candidate in (path, path.with_name(path.name + "-wal")):
+        try:
+            st = candidate.stat()
+        except OSError:
+            sig.append(None)
+        else:
+            sig.append((st.st_mtime_ns, st.st_size))
+    return tuple(sig)
+
+
 def last_used_models(home: Path | str | None = None) -> dict[str, str]:
     """``harness`` → the model its most recent ledger event ran.
 
@@ -196,23 +230,40 @@ def last_used_models(home: Path | str | None = None) -> dict[str, str]:
     from quiver.ledger.store import ledger_path_for
 
     path = ledger_path_for(Path(home) if home is not None else None)
+    key = str(path)
+    # The signature rides into the cache with the answer: taken before
+    # the query so a mid-query write re-reads next call rather than
+    # serving a stale map until the next change.
+    sig = _ledger_signature(path)
+    with _last_models_lock:
+        hit = _last_models_cache.get(key)
+        if hit is not None and hit[0] == sig:
+            return dict(hit[1])
+    rows = []
     try:
         # Read-only: this path must never create the store itself.
         db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
     except (sqlite3.Error, ValueError):
-        return {}
-    try:
-        # SQLite's bare-column rule: the ``model`` comes from the row
-        # the MAX matched — each harness's latest event.
-        rows = db.execute(
-            "SELECT harness, model, MAX(ts) FROM events"
-            " WHERE model != '' GROUP BY harness"
-        ).fetchall()
-    except sqlite3.Error:
-        return {}
-    finally:
-        db.close()
-    return {h: m for h, m, _ts in rows if h and m}
+        db = None
+    if db is not None:
+        try:
+            # SQLite's bare-column rule: the ``model`` comes from the
+            # row the MAX matched — each harness's latest event.
+            rows = db.execute(
+                "SELECT harness, model, MAX(ts) FROM events"
+                " WHERE model != '' GROUP BY harness"
+            ).fetchall()
+        except sqlite3.Error:
+            rows = []
+        finally:
+            db.close()
+    result = {h: m for h, m, _ts in rows if h and m}
+    with _last_models_lock:
+        # Throwaway HOMEs in tests would grow the map forever otherwise.
+        if len(_last_models_cache) >= 64:
+            _last_models_cache.clear()
+        _last_models_cache[key] = (sig, result)
+    return result
 
 
 def launch_command(harness: str) -> str | None:

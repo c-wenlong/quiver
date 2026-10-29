@@ -667,15 +667,20 @@ class TestLaunchNew(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIsNone(name)
 
-    def test_undelivered_prompt_is_reported(self):
+    def test_undelivered_prompt_fails_the_launch(self):
+        # Nothing was delivered, so no turn will ever start: the record
+        # must not sit pending while the phone polls it. The pane itself
+        # stays up for a terminal attach.
         home = Path(tempfile.mkdtemp())
         with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane", return_value=False):
             ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi")
-        self.assertTrue(ok)   # the pane exists; only the prompt failed
+        self.assertFalse(ok)
+        self.assertEqual(name, "qv-n")
         self.assertIn("could not be delivered", note)
+        self.assertIn("pane is still up", note)
 
     def test_known_ids_land_in_marker(self):
         home = Path(tempfile.mkdtemp())
@@ -751,6 +756,9 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise, "launch_tmux", return_value="qv-n"), \
              patch.object(supervise, "prime_pane", return_value=True) as pp, \
              patch.object(supervise, "boot_pane", return_value="❯"), \
+             patch.object(supervise, "capture_pane",
+                          return_value="pane moved"), \
+             patch.object(supervise.time, "sleep"), \
              patch.object(supervise, "send_text", return_value=True) as st:
             out = supervise.launch_new(self.home, tool, self.proj, "hi", **kw)
         return out, pp, st
@@ -776,7 +784,10 @@ class TestLaunchTuning(unittest.TestCase):
         self.assertIn("/model", note)
         lt.assert_not_called()
 
-    def test_a_failed_control_send_is_reported_not_swallowed(self):
+    def test_a_failed_control_send_fails_the_launch(self):
+        # The pick asked for could not be applied: the launch record
+        # must say failed, not stay pending for a prompt that never
+        # went out. The pane stays up for a manual attach.
         with patch.object(supervise.shutil, "which",
                           return_value="/x/bin"), \
              patch.object(supervise, "launch_tmux", return_value="qv-n"), \
@@ -784,8 +795,32 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise, "send_text", return_value=False):
             ok, note, name = supervise.launch_new(
                 self.home, "claude", self.proj, "hi", model="opus")
-        self.assertTrue(ok)
+        self.assertFalse(ok)
+        self.assertEqual(name, "qv-n")
         self.assertIn("could not be delivered", note)
+
+    def test_a_control_swallowed_enter_is_pressed_again(self):
+        # Checked delivery, the same race _deliver handles for prompts:
+        # /model stuck in the input box gets Enter pressed for it before
+        # the prompt ever goes out.
+        rule = "─" * 20
+        unsent = f"Claude Code\n{rule}\n❯ /model opus\n{rule}\n  auto"
+        sent = f"Claude Code\nmodel: opus\n{rule}\n❯ \n{rule}\n  auto"
+        panes = iter(["❯", "❯", unsent, sent])
+        with patch.object(supervise.shutil, "which",
+                          return_value="/x/bin"), \
+             patch.object(supervise, "launch_tmux", return_value="qv-n"), \
+             patch.object(supervise, "prime_pane", return_value=True), \
+             patch.object(supervise, "boot_pane", return_value="❯"), \
+             patch.object(supervise, "capture_pane",
+                          side_effect=lambda *_a: next(panes)), \
+             patch.object(supervise, "send_key") as sk, \
+             patch.object(supervise.time, "sleep"), \
+             patch.object(supervise, "send_text", return_value=True):
+            ok, _note, _ = supervise.launch_new(
+                self.home, "claude", self.proj, "hi", model="opus")
+        self.assertTrue(ok)
+        self.assertEqual(sk.call_args_list[0][0], ("qv-n", "Enter"))
 
     def test_fork_records_and_applies_tuning(self):
         src = _session(sid="abc", path=self.proj)
@@ -794,6 +829,9 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise, "launch_tmux", return_value="qv-f"), \
              patch.object(supervise, "tmux_name", return_value="qv-f"), \
              patch.object(supervise, "boot_pane", return_value="❯"), \
+             patch.object(supervise, "capture_pane",
+                          return_value="pane moved"), \
+             patch.object(supervise.time, "sleep"), \
              patch.object(supervise, "prime_pane", return_value=True) as pp, \
              patch.object(supervise, "send_text", return_value=True) as st:
             ok, _n, _ = supervise.launch_fork(
@@ -829,6 +867,9 @@ class TestLaunchTuning(unittest.TestCase):
                           return_value="qv-a"), \
              patch.object(supervise, "boot_pane",
                           return_value="❯"), \
+             patch.object(supervise, "capture_pane",
+                          return_value="pane moved"), \
+             patch.object(supervise.time, "sleep"), \
              patch.object(supervise, "tmux_alive",
                           return_value=True), \
              patch.object(supervise, "_local_writer_pids",

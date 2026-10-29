@@ -651,6 +651,10 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(replay[0]["data"]["client_id"], "cid-9")
 
     def test_observed_remote_rejects_message_allows_attach(self):
+        # The machine row advertises the build that reads launch picks.
+        catalog_mod.upsert_machine(self.srv.home, {
+            "id": self.mid, "model_at_launch": ["claude"],
+            "effort_at_launch": []})
         self._push_catalog([{
             "key": "claude:r1", "status": "idle",
             "ownership": "observed", "attachable": True,
@@ -679,6 +683,31 @@ class TestAgentRoutes(unittest.TestCase):
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
         self.assertEqual(len(replay), 1)
 
+    def test_attach_to_an_old_satellite_refuses_the_pick(self):
+        # Same gate as a satellite launch: without the field the agent
+        # would accept the attach and silently drop model/effort.
+        self._push_catalog([{
+            "key": "claude:r1", "status": "idle",
+            "ownership": "observed", "attachable": True,
+        }])
+        self.srv.state.catalog.refresh()
+        key = "claude%3Ar1%40sat-m1"
+        status, data = self.srv.request(
+            "POST", f"/v1/sessions/{key}/control",
+            {"op": "attach", "mode": "tmux", "effort": "high"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 409, data)
+        body = json.loads(data)
+        self.assertEqual(body["error"]["code"], "unsupported_launch_option")
+        self.assertIn("too old", body["error"]["message"])
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(replay, [])
+        # And with no pick the same old agent attaches as before.
+        status, _ = self.srv.request(
+            "POST", f"/v1/sessions/{key}/control",
+            {"op": "attach", "mode": "tmux"}, headers=self.srv.auth)
+        self.assertEqual(status, 202)
+
     def test_launch_to_named_machine_queues(self):
         status, data = self.srv.request(
             "POST", "/v1/sessions",
@@ -694,6 +723,11 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(replay[0]["data"]["launch_id"], launch_id)
 
     def test_launch_to_named_machine_carries_the_pick(self):
+        # The satellite advertises launch-option support on its machine
+        # row, the same fields its own agent reports.
+        catalog_mod.upsert_machine(self.srv.home, {
+            "id": self.mid, "model_at_launch": ["claude"],
+            "effort_at_launch": ["claude"]})
         status, data = self.srv.request(
             "POST", "/v1/sessions",
             {"machine": "sat-m1", "harness": "claude",
@@ -736,6 +770,30 @@ class TestAgentRoutes(unittest.TestCase):
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
         self.assertEqual(replay, [])
         self.assertEqual(self.srv.state.launches, {})
+
+    def test_launch_to_an_old_satellite_refuses_the_pick(self):
+        # A satellite too old to report launch-option support would
+        # accept the command and silently drop the fields — so the hub
+        # refuses before queueing instead.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go", "model": "opus"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 409, data)
+        body = json.loads(data)
+        self.assertEqual(body["error"]["code"], "unsupported_launch_option")
+        self.assertIn("too old", body["error"]["message"])
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(replay, [])
+        self.assertEqual(self.srv.state.launches, {})
+        # No pick at all still queues on the same old agent.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "sat-m1", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 202, data)
 
     def test_satellite_launch_settles_from_events(self):
         _, data = self.srv.request(

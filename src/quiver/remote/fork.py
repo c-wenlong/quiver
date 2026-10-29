@@ -175,6 +175,17 @@ def request(state, key: str, row: dict, body: dict | None) -> tuple[int, dict]:
         # send it has no fork op either.
         if not row.get("can_fork"):
             return _unsupported(harness)
+        # And one too old to know the launch-option fields would accept
+        # the fork command and silently drop the pick.
+        from quiver.remote import catalog as catalog_mod
+
+        machine_row = catalog_mod.load_machines(state.home).get(mid)
+        if (model or effort) and not \
+                catalog_mod.reads_launch_options(machine_row):
+            return 409, protocol.error(
+                "unsupported_launch_option",
+                f"{mid} runs an agent too old to take launch options; "
+                "upgrade it, or fork without them")
         # The hub's table answers for the satellite's too.
         blocked = supervise.launch_tuning_error(harness, model, effort)
         if blocked:
