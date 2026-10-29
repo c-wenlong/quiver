@@ -1,12 +1,13 @@
 """The launch sheets' Model field, run under node with the DOM stubbed.
 
-``tasks.js``'s New agent session panel and ``repositories.js``'s Open in
-session panel share the same contract: the field shows only while the
-picked harness reports ``launch_model``, opens prefilled with its
-``last_model``, re-prefills on a harness switch until the user types
-their own, and adds ``model`` to the POST body only when non-empty and
-supported. The stub below is a DOM good enough to drive the real page
-scripts: ``#panel`` (and a ``<dialog>`` for the PR sheet) re-parses its
+``tasks.js``'s New agent session panel, ``repositories.js``'s Open in
+session panel and ``sessions.js``'s New session sheet share the same
+contract: the field shows only while the picked harness can take a model
+at launch, opens prefilled with its last-used model, re-prefills on a
+harness (or machine) switch until the user types their own, and adds
+``model`` to the POST body only when non-empty and supported. The stub
+below is a DOM good enough to drive the real page scripts: ``#panel``
+(and ``<dialog>``s for the PR and new-session sheets) re-parses its
 ``innerHTML`` into stub elements on each paint, and ``api``/``fetch``
 answer from canned routes so the POST bodies can be inspected."""
 
@@ -39,7 +40,7 @@ function attrsOf(src) {
  * (an input has no close tag, so a lazy capture would swallow the rest). */
 function parseEls(html) {
   const out = [];
-  const re = /<(select|textarea)\b([^>]*)>([\s\S]*?)<\/\1>|<(input|button|a)\b([^>]*?)\/?>/g;
+  const re = /<(select|textarea)\b([^>]*)>([\s\S]*?)<\/\1>|<(input|button|a|div)\b([^>]*?)\/?>/g;
   let m;
   while ((m = re.exec(html))) out.push([attrsOf(m[2] || m[5] || ""), m[3] || "", m[1] || m[4]]);
   return out;
@@ -109,7 +110,8 @@ const panel = { _html: "",
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
   querySelectorAll(sel) { return queryAllIn(this._html, sel); } };
 globalThis.document = {
-  getElementById: (id) => (id === "panel" ? panel : registry.get(id) || created.get(id) || null),
+  getElementById: (id) => (id === "panel" ? panel : registry.get(id) || created.get(id)
+    || [...created.values()].map((e) => e.querySelector("#" + id)).find(Boolean) || null),
   querySelectorAll: (sel) => queryAllIn(panel.innerHTML, sel),
   createElement: (tag) => makeEl("", { __tag: tag }, "", tag),
   addEventListener() {}, hidden: false,
@@ -284,22 +286,116 @@ fetchRoutes.push(
 """
 
 
+# sessions.js's New session sheet: machine + harness chips over
+# /v1/machines rows (``model_at_launch``/``last_models`` live there, not
+# on a harnesses list), posting /v1/sessions.
+SESSIONS_FLOW = r"""
+globalThis.apiPost = async (path, body) => {
+  fetchCalls.push({ path, body });
+  const r = fetchRoutes.find(([p]) => path.startsWith(p));
+  const a = r ? r[1] : { status: 404, body: { error: { message: "unstubbed " + path } } };
+  return { status: a.status, data: a.body };
+};
+apiAnswers.push(
+  ["/v1/machines", { status: 200, data: { machines: [
+    { id: "m1", name: "hub", online: true, launchable: ["claude", "gemini", "codex"],
+      model_at_launch: ["claude", "codex"], effort_at_launch: ["claude"],
+      last_models: { claude: "opus", codex: "gpt-5-codex" } },
+    { id: "m2", name: "sat", online: true, launchable: ["claude"],
+      model_at_launch: ["claude"], effort_at_launch: [],
+      last_models: { claude: "opus-m2" } }] } }],
+  ["/v1/launches/", { status: 200, data: { state: "untracked" } }]);
+fetchRoutes.push(
+  ["/v1/sessions", { status: 202, body: { launch_id: "L1", state: "pending" } }]);
+sessionsPage.data = { sessions: [
+  { cwd: "/tmp/wt", harness: "claude", machine_id: "m1" },
+  { cwd: "/tmp/gem", harness: "gemini", machine_id: "m1" }] };
+const out = {};
+(async () => {
+  await openNewSession();
+  await tick();
+  const d = created.get("new-session-sheet");
+  const q = (s) => d.querySelector(s);
+  const chip = (h) => d.querySelectorAll("[data-harness]").find((b) => b.dataset.harness === h);
+  out.sheetOpened = !!(d && d.open);
+  out.shown = !!q("#ns-model");
+  out.prefill = q("#ns-model") && q("#ns-model").value;
+  q("#ns-folder").value = "/tmp/wt"; q("#ns-folder").oninput(); await tick();
+  q("#ns-prompt").value = "say ok"; q("#ns-prompt").oninput();
+  chip("gemini").onclick(); await tick();
+  out.hides = !q("#ns-model");
+  chip("claude").onclick(); await tick();
+  out.reprefill = q("#ns-model").value;
+  q("#ns-model").value = "sonnet"; q("#ns-model").oninput();
+  chip("codex").onclick(); await tick();
+  out.dirtyKept = q("#ns-model").value;
+  q("#ns-start").onclick(); await tick();
+  const post = fetchCalls.find((c) => c.path === "/v1/sessions");
+  out.postModel = post && post.body.model;
+  out.postMachine = post && post.body.machine;
+  q("#ns-model").value = ""; q("#ns-model").oninput();
+  chip("claude").onclick(); await tick();
+  out.clearedKept = q("#ns-model").value;
+  q("#ns-start").onclick(); await tick();
+  const post2 = fetchCalls.filter((c) => c.path === "/v1/sessions").pop();
+  out.emptyHasNoModel = !("model" in (post2 && post2.body || {}));
+  // A fresh sheet is clean again: a machine switch re-prefills from
+  // that machine's own ledger.
+  await openNewSession();
+  await tick();
+  q("#ns-folder").value = "/tmp/wt"; q("#ns-folder").oninput(); await tick();
+  q("#ns-prompt").value = "say ok"; q("#ns-prompt").oninput();
+  d.querySelectorAll("[data-machine]").find((b) => b.dataset.machine === "m2").onclick();
+  await tick();
+  out.machineRefill = q("#ns-model").value;
+  // An old satellite's row carries no model_at_launch: the field hides.
+  apiAnswers.length = 0;
+  apiAnswers.push(["/v1/machines", { status: 200, data: { machines: [
+    { id: "m1", name: "hub", online: true, launchable: ["claude"] }] } }]);
+  await openNewSession();
+  await tick();
+  out.hiddenOldSat = !q("#ns-model");
+  // A typed folder that flips the model row must not rebuild the sheet:
+  // the folder input keeps its node (and so its focus and caret).
+  apiAnswers.length = 0;
+  apiAnswers.push(["/v1/machines", { status: 200, data: { machines: [
+    { id: "m1", name: "hub", online: true, launchable: ["claude", "gemini", "codex"],
+      model_at_launch: ["claude", "codex"], effort_at_launch: ["claude"],
+      last_models: { claude: "opus", codex: "gpt-5-codex" } }] } }]);
+  await openNewSession();
+  await tick();
+  const folderEl = q("#ns-folder");
+  const slot = q("#ns-model-slot");
+  folderEl.value = "/tmp/gem"; folderEl.oninput(); await tick();
+  out.flipHidesRow = slot.querySelector("#ns-model") == null;
+  out.folderNodeKeptOff = q("#ns-folder") === folderEl;
+  folderEl.value = "/tmp/wt"; folderEl.oninput(); await tick();
+  const shown2 = slot.querySelector("#ns-model");
+  out.flipShowsRow = shown2 && shown2.value;
+  out.folderNodeKeptOn = q("#ns-folder") === folderEl;
+  process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestLaunchModelField(unittest.TestCase):
-    """Both sheets drive the same contract; each flow returns the
+    """All three sheets drive the same contract; each flow returns the
     observations the assertions below check."""
 
-    def run_flow(self, page_file: str, flow: str) -> dict:
-        script = (STUB
-                  + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
-                  + (PAGES / page_file).read_text(encoding="utf-8") + "\n"
-                  + flow)
+    def run_node(self, script: str) -> dict:
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
             f.write(script)
         self.addCleanup(Path(f.name).unlink)
         done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
+
+    def run_flow(self, page_file: str, flow: str) -> dict:
+        return self.run_node(STUB
+                             + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                             + (PAGES / page_file).read_text(encoding="utf-8") + "\n"
+                             + flow)
 
     def assert_walk(self, out: dict):
         """The shared contract, whichever sheet drove it."""
@@ -325,6 +421,34 @@ class TestLaunchModelField(unittest.TestCase):
         self.assertTrue(out["sheetOpened"])
         self.assertEqual(out["postCwd"], "/tmp/wt")
         self.assertEqual(out["freshPrefill"], "gpt-5-codex")
+
+    def test_sessions_new_session(self):
+        out = self.run_node(STUB
+                            + (PAGES.parent / "sessions.js").read_text(encoding="utf-8") + "\n"
+                            + SESSIONS_FLOW)
+        self.assertTrue(out["sheetOpened"])
+        self.assertTrue(out["shown"], "Model field should show for a model_at_launch harness")
+        self.assertEqual(out["prefill"], "opus")
+        self.assertTrue(out["hides"], "Model field should hide off model_at_launch")
+        self.assertEqual(out["reprefill"], "opus")
+        self.assertEqual(out["dirtyKept"], "sonnet")
+        self.assertEqual(out["postModel"], "sonnet")
+        self.assertEqual(out["postMachine"], "m1")
+        self.assertEqual(out["clearedKept"], "",
+                         "a cleared pick stays cleared across a harness switch")
+        self.assertTrue(out["emptyHasNoModel"], "an empty field must send no model key")
+        self.assertEqual(out["machineRefill"], "opus-m2",
+                         "a clean field re-prefills from the new machine's ledger")
+        self.assertTrue(out["hiddenOldSat"],
+                        "a machine row without model_at_launch shows no field")
+        self.assertTrue(out["flipHidesRow"],
+                        "a folder re-defaulting to a non-model harness drops the row")
+        self.assertTrue(out["folderNodeKeptOff"],
+                        "the folder input is rebuilt on a model-row flip — focus is lost")
+        self.assertEqual(out["flipShowsRow"], "opus",
+                         "a folder re-defaulting back re-fills the row")
+        self.assertTrue(out["folderNodeKeptOn"],
+                        "the folder input is rebuilt when the row returns — focus is lost")
 
 
 if __name__ == "__main__":
