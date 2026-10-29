@@ -67,7 +67,7 @@ Status words:
 | Service status | yes | yes | - | |
 | Settings | yes | yes | part | iOS carries the pairing and notification subset |
 | Doctor | yes | yes | - | Mac: a Settings section; web: `#/doctor`, no sidebar entry |
-| First-run setup | yes | yes | - | Web: `#/setup` |
+| First-run setup | yes | yes | - | Web: `#/setup`. Hub URL step: `swe setup --hub`, web step 2 (clones on the hub's thread, page polls) |
 | API keys | yes | yes | - | Settings › Providers on both |
 
 ## Remote control

@@ -9,7 +9,10 @@ PATH and harness configs never leak in, and PATH lookups find nothing.
 
 import io
 import json
+import shutil
+import subprocess
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -17,9 +20,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from quiver.harness.discover import HarnessFinding
+from quiver.init import hub as hub_mod
 from quiver.webapp.pages import PageError
 from quiver.webapp.pages import setup as setup_page
+from tests.test_init_hub import _hub_repo
 from tests.test_remote_hub import HubBase
+
+GIT = shutil.which("git")
 
 
 def _finding(name):
@@ -367,6 +374,114 @@ class TestInstall(_Home, unittest.TestCase):
             self.assertEqual(refused.exception.status, status, (pid, via))
 
 
+def _wait_for_clone(home: Path, timeout: float = 30.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        hub = setup_page.hub_status(home)
+        if hub["job"]["state"] != "cloning":
+            return hub
+        time.sleep(0.02)
+    raise AssertionError("the clone never finished")
+
+
+class _HubClone(_Home):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.make_home(Path(tmp.name) / "home")
+        self.src = _hub_repo(Path(tmp.name))
+        setup_page._JOBS.clear()
+        self.addCleanup(setup_page._JOBS.clear)
+        register = patch("quiver.init.hub.register_marketplaces", return_value=[])
+        self.register = register.start()
+        self.addCleanup(register.stop)
+
+    def clone(self, url) -> dict:
+        return setup_page.post(self.ctx(), "hub", {"url": url})
+
+    def refused(self, **body) -> PageError:
+        with self.assertRaises(PageError) as caught:
+            setup_page.post(self.ctx(), "hub", body)
+        return caught.exception
+
+
+@unittest.skipUnless(GIT, "git not installed")
+class TestHubClone(_HubClone, unittest.TestCase):
+    def test_get_says_a_hub_can_be_cloned_beside_local_state(self):
+        # make_home made ~/.quiver/config/: local state, no hub.
+        data = setup_page.get(self.ctx(), {})
+        self.assertEqual(data["hub"], {"can_clone": True, "demo_url": None,
+                                       "job": {"state": "idle", "url": None,
+                                               "error": None, "cloned": None}})
+        self.assertEqual(setup_page.get(self.ctx(), {"hub": "1"}), {"hub": data["hub"]})
+
+    def test_a_clone_runs_on_its_own_thread_and_lands_in_quiver(self):
+        reply = self.clone(str(self.src))
+        self.assertIn(reply["hub"]["job"]["state"], ("cloning", "done"))
+        hub = _wait_for_clone(self.home)
+        self.assertEqual(hub["job"]["state"], "done", hub)
+        self.assertEqual(hub["job"]["url"], str(self.src))
+        self.assertEqual(hub["job"]["cloned"]["path"], str(self.home / ".quiver"))
+        self.assertFalse(hub["can_clone"])
+        self.assertEqual(self.agents_md().read_text(), "# from the hub\n")
+        self.assertTrue(self.registry_file.parent.is_dir())  # the local state stayed
+        self.register.assert_called_once_with(self.home)
+        # The setup lock is free again: apply runs on the cloned hub.
+        self.assertTrue(setup_page._LOCK.acquire(blocking=False))
+        setup_page._LOCK.release()
+
+    def test_an_unreachable_url_fails_with_why_and_no_token(self):
+        def fail(args, timeout, run):
+            return subprocess.CompletedProcess(
+                args, 128, "", "fatal: unable to access 'https://me:tok@h/r.git/': 403")
+
+        with patch("quiver.init.hub._git", fail):
+            reply = self.clone("https://me:tok@h/r.git")
+            hub = _wait_for_clone(self.home)
+        self.assertNotIn("tok", json.dumps(reply) + json.dumps(hub))
+        self.assertEqual(hub["job"]["state"], "failed")
+        self.assertEqual(hub["job"]["url"], "https://h/r.git")
+        self.assertIn("can't reach https://h/r.git", hub["job"]["error"])
+        self.assertTrue(hub["can_clone"])
+        self.assertFalse(self.agents_md().exists())
+
+    def test_a_timeout_is_reported(self):
+        def slow(args, **kwargs):
+            raise subprocess.TimeoutExpired(args, 30)
+
+        # _git's own timeout handling, with the run git would have timed out in.
+        real_git = hub_mod._git
+        with patch("quiver.init.hub._git", lambda args, timeout, run: real_git(args, timeout, slow)):
+            self.clone("https://h/r.git")
+            hub = _wait_for_clone(self.home)
+        self.assertEqual(hub["job"]["state"], "failed")
+        self.assertIn("took longer than 30s", hub["job"]["error"])
+
+    def test_an_existing_hub_is_a_409_and_starts_nothing(self):
+        self.agents_md().write_text("mine\n")
+        err = self.refused(url=str(self.src))
+        self.assertEqual((err.status, err.code), (409, "has_hub"))
+        self.assertIn("already has a hub", err.message)
+        self.assertEqual(setup_page.hub_status(self.home)["job"]["state"], "idle")
+        self.assertEqual(self.agents_md().read_text(), "mine\n")
+
+    def test_bad_urls_are_422(self):
+        for url in (None, 3, "", "  ", "a\nb", "x" * 3000, "--upload-pack=touch x"):
+            err = self.refused(url=url)
+            self.assertEqual((err.status, err.code), (422, "bad_url"), url)
+
+    def test_one_at_a_time_with_setup_itself(self):
+        with setup_page._LOCK:
+            err = self.refused(url=str(self.src))
+        self.assertEqual((err.status, err.code), (409, "busy"))
+
+    def test_apply_waits_for_no_clone(self):
+        setup_page._JOBS[str(self.home)] = {"state": "cloning", "url": "u", "error": None, "cloned": None}
+        with self.assertRaises(PageError) as caught:
+            setup_page.post(self.ctx(), "apply", {"starred": []})
+        self.assertEqual((caught.exception.status, caught.exception.code), (409, "busy"))
+
+
 class TestRoute(_Home, HubBase):
     def setUp(self):
         super().setUp()
@@ -405,6 +520,29 @@ class TestRoute(_Home, HubBase):
         self.assertEqual(status, 200, data)
         self.assertEqual(ran.call_args.kwargs, {"name": "gemini", "via": "npm"})
         self.assertIsNone(json.loads(data)["error"])
+
+    @unittest.skipUnless(GIT, "git not installed")
+    def test_hub_clone_through_the_hub_needs_a_device(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        src = _hub_repo(Path(tmp.name))
+        setup_page._JOBS.clear()
+        self.addCleanup(setup_page._JOBS.clear)
+        status, _ = self.srv.request("POST", "/v1/app/setup/hub", body={"url": str(src)})
+        self.assertEqual(status, 401)
+        # Pairing writes ~/.quiver/data/remote: local state the clone lands beside.
+        auth = self.auth()
+        with patch("quiver.init.hub.register_marketplaces", return_value=[]):
+            status, data = self.srv.request("POST", "/v1/app/setup/hub", body={"url": str(src)},
+                                            headers={**auth, "Origin": self.origin()})
+            self.assertEqual(status, 200, data)
+            hub = _wait_for_clone(self.srv.home)
+        self.assertEqual(hub["job"]["state"], "done", hub)
+        status, data = self.srv.request("GET", "/v1/app/setup?hub=1", headers=auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data)["hub"]["job"]["state"], "done")
+        self.assertEqual(self.agents_md().read_text(), "# from the hub\n")
+        self.assertTrue((self.srv.home / ".quiver" / "data" / "remote").is_dir())
 
     def test_a_cross_site_origin_is_refused(self):
         status, data = self.srv.request(
