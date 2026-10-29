@@ -544,7 +544,7 @@ private struct HarnessAccountCard: View {
                 Text(name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     .accessibilityLabel(name == ownName ? name : "\(name), \(ownName)")
                 if let plan = limit?.planType { Badge(planTitle(plan)) }
-                if row.issue?.status.actionable == true {
+                if row.issue?.status.needsAction == true {
                     Text("Action needed")
                         .font(Theme.font(size: 12, weight: .medium))
                         .foregroundStyle(Theme.warningText)
@@ -597,45 +597,20 @@ private struct HarnessAccountCard: View {
             }
             if let limit, limit.status == .ok { usageSection(limit) }
             HStack {
-                Group {
-                    if let issue = row.issue, issue.status.actionable {
-                        // The remedy's summary is the explanation; the Fix
-                        // button beside it opens the full steps.
-                        Text(issue.remedy?.summary ?? issueText(issue))
-                    } else if let limit {
-                        switch limit.status {
-                        case .ok:
-                            if let fetched = limit.fetchedAt {
-                                Text("Fetched \(fetched, format: .relative(presentation: .named))")
-                            } else {
-                                Text("No reading yet")
-                            }
-                        case .authRequired:
-                            Text(HarnessAccess.loginCommand(for: row.name) != nil
-                                 ? "Signed out. Use Sign in from the menu." : "Sign in again in \(ownName).")
-                        case .noSubscription: Text("No subscription")
-                        case .timeout: Text("Didn't answer in time")
-                        }
-                    } else if row.issue?.status == .timeout {
-                        Text("Didn't answer in time. Refresh to try again.")
-                    } else {
-                        switch row.usageNote {
-                        case .signIn?:
-                            // Extra accounts always have Sign in in the menu.
-                            Text(row.profile != nil || HarnessAccess.loginCommand(for: row.name) != nil
-                                 ? "Not signed in. Use Sign in from the menu." : "Not signed in. Sign in from \(ownName).")
-                        case .fetchFailed?: Text("Couldn't fetch usage. Refresh to try again.")
-                        case .updateSwe?: Text("Update swe to read this account's usage")
-                        case nil: Text(noLimitReason)
-                        }
-                    }
+                if let line = row.issue?.actionNeededLine {
+                    // The remedy's summary is the explanation, in amber;
+                    // the Fix button beside it opens the full steps.
+                    Text(line)
+                        .font(Theme.caption).foregroundStyle(Theme.warningText)
+                } else {
+                    statusLine(limit: limit, ownName: ownName)
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 Spacer()
-                if let issue = row.issue, issue.status.actionable {
+                if row.issue?.status.needsAction == true {
                     Button("Fix…") { fixing = true }
                         .secondaryButton()
-                        .help("Show how to fix this")
+                        .hoverTip("Show how to fix this")
                 }
                 if let profile = row.profile {
                     LaunchButtons(
@@ -731,13 +706,37 @@ private struct HarnessAccountCard: View {
         }
     }
 
-    /// The status line for an actionable issue whose swe named no remedy.
-    private func issueText(_ issue: HarnessIssue) -> String {
-        switch issue.status {
-        case .signedOut: "Not signed in"
-        case .authRequired: "Its stored login is stale"
-        case .permissionRequired: "macOS won't let Quiver read its credentials"
-        default: "Something needs attention"
+    /// The card's status line when nothing needs the user: the reading's
+    /// age, or why there is none. Only an outage mentions Refresh, since
+    /// it is the one failure a refresh can fix.
+    @ViewBuilder
+    private func statusLine(limit: RateLimit?, ownName: String) -> some View {
+        if let limit {
+            switch limit.status {
+            case .ok:
+                if let fetched = limit.fetchedAt {
+                    Text("Fetched \(fetched, format: .relative(presentation: .named))")
+                } else {
+                    Text("No reading yet")
+                }
+            case .authRequired:
+                Text(HarnessAccess.loginCommand(for: row.name) != nil
+                     ? "Signed out. Use Sign in from the menu." : "Sign in again in \(ownName).")
+            case .noSubscription: Text("No subscription")
+            case .timeout: Text("Didn't answer in time")
+            }
+        } else if row.issue?.status == .timeout {
+            Text("Didn't answer in time. Refresh to try again.")
+        } else {
+            switch row.usageNote {
+            case .signIn?:
+                // Extra accounts always have Sign in in the menu.
+                Text(row.profile != nil || HarnessAccess.loginCommand(for: row.name) != nil
+                     ? "Not signed in. Use Sign in from the menu." : "Not signed in. Sign in from \(ownName).")
+            case .fetchFailed?: Text("Couldn't fetch usage. Refresh to try again.")
+            case .updateSwe?: Text("Update swe to read this account's usage")
+            case nil: Text(noLimitReason)
+            }
         }
     }
 
@@ -799,30 +798,40 @@ private struct IssueFixSheet: View {
                     }
                 }
             }
-            if let command = issue.remedy?.command {
-                HStack(spacing: 8) {
-                    Text(command)
-                        .font(Self.mono)
-                        .lineSpacing(2)
-                        .foregroundStyle(Theme.textPrimary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Run in Terminal", systemImage: "terminal") {
-                        perform {
-                            try await app.accounts.runInTerminal(line: command)
+            ForEach(Array((issue.remedy?.actions ?? []).enumerated()), id: \.offset) { _, action in
+                switch action {
+                case .command(let command):
+                    HStack(spacing: 8) {
+                        Text(command)
+                            .font(Self.mono)
+                            .lineSpacing(2)
+                            .foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button("Run in Terminal", systemImage: "terminal") {
+                            perform {
+                                try await app.accounts.runInTerminal(line: command)
+                            }
                         }
+                        .secondaryButton()
+                        .hoverTip("Runs \(command) in a new terminal")
+                        CopyButton(help: "Copy the command") { copyToPasteboard(command) }
+                            .iconButton()
+                    }
+                    .padding(.leading, 12)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 6)
+                    .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                        .strokeBorder(Theme.border, lineWidth: 1))
+                case .open(let url, let label):
+                    // A permission grant happens in System Settings: open
+                    // the pane the steps name instead of a command.
+                    Button(label, systemImage: "arrow.up.forward.app") {
+                        NSWorkspace.shared.open(url)
                     }
                     .secondaryButton()
-                    .hoverTip("Runs \(command) in a new terminal")
-                    CopyButton(help: "Copy the command") { copyToPasteboard(command) }
-                        .iconButton()
                 }
-                .padding(.leading, 12)
-                .padding(.trailing, 6)
-                .padding(.vertical, 6)
-                .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
-                    .strokeBorder(Theme.border, lineWidth: 1))
             }
         }
         .padding(20)

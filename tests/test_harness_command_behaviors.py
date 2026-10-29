@@ -638,6 +638,11 @@ class HarnessUsageCommandTest(unittest.TestCase):
         self.assertEqual(data["status"], "unavailable")
         self.assertIsNone(data["limit"])
         self.assertEqual(data["remedy"]["kind"], "retry")
+        # An outage is not a login problem: the account's remedy keeps
+        # the retry wording and offers no sign-in command.
+        self.assertEqual(data["remedy"]["summary"],
+                         "Devin's usage couldn't be fetched")
+        self.assertNotIn("command", data["remedy"])
 
     def test_an_auth_failure_names_its_fix(self):
         with tempfile.TemporaryDirectory() as tmp:

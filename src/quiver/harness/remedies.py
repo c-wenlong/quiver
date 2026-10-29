@@ -31,6 +31,34 @@ _PRIVACY_FILES_URL = (
 
 _DEFAULT = "_default"
 
+# How many polls in a row an outage (``unavailable``/``timeout``) must
+# fail before Doctor lists it: one failed read is a blip the card already
+# shows, three at the app's five-minute cadence is a pattern. The app's
+# ``IssuesModel.persistentPolls`` uses the same number, since both read
+# ``occurrences`` from the same issues file.
+PERSISTENT_POLLS = 3
+
+
+def _login_rows(name: str, command: str, how: str) -> dict[str, dict]:
+    """The signed-out and auth-required rows for a harness whose fix is
+    one login command: the same command renews a session it rejected."""
+    return {
+        SIGNED_OUT: {
+            "kind": "relogin",
+            "title": f"Sign in to {name}",
+            "summary": f"{name} isn't signed in",
+            "steps": [f"{how}, then refresh."],
+            "command": command,
+        },
+        AUTH_REQUIRED: {
+            "kind": "relogin",
+            "title": f"Sign in to {name} again",
+            "summary": f"{name}'s stored login was rejected",
+            "steps": [f"{how} to renew the login Quiver reads, then refresh."],
+            "command": command,
+        },
+    }
+
 # harness → status → remedy. Each remedy says what to show (``summary``,
 # the problem as one line; ``title``, the fix's name), what to do
 # (``steps``, numbered in the Fix sheet), and what to offer:
@@ -140,6 +168,22 @@ REMEDIES: dict[str, dict[str, dict]] = {
             ],
         },
     },
+    # The rest fix a stale or missing login with their own CLI's login
+    # command (the web app's LOGIN_COMMANDS); every other status takes
+    # the generic row.
+    "claude": _login_rows(
+        "Claude", "claude auth login", "Run `claude auth login`"),
+    "codex": _login_rows(
+        "Codex", "codex login", "Run `codex login`"),
+    # swe reads Copilot's limits with the GitHub CLI's token.
+    "copilot": _login_rows(
+        "Copilot", "gh auth login",
+        "Run `gh auth login` with the GitHub account that has Copilot"),
+    # Droid signs in from inside its own TUI.
+    "droid": _login_rows(
+        "Droid", "droid", "Run `droid` and sign in when it asks"),
+    "freebuff": _login_rows(
+        "Freebuff", "freebuff login", "Run `freebuff login`"),
     _DEFAULT: {
         SIGNED_OUT: {
             "kind": "relogin",
@@ -208,15 +252,20 @@ def remedy_for_account(name: str, status: str, account_dir: str) -> dict | None:
     credentials.toml and Cursor's extra accounts sign in through a
     desktop app pointed at their own ``--user-data-dir``. Retarget those
     at the account's data dir so the offered fix reaches the account
-    that failed.
+    that failed. Only a login fix is retargeted: an outage or a
+    permission grant has the same fix for every account.
     """
     remedy = remedy_for(name, status)
     if remedy is None:
         return None
     remedy = dict(remedy)
+    if status not in (SIGNED_OUT, AUTH_REQUIRED):
+        return remedy
     if name == "devin":
         remedy.update({
-            "summary": "This account isn't signed in to Devin",
+            "summary": ("This account isn't signed in to Devin"
+                        if status == SIGNED_OUT
+                        else "This account's Devin API key was rejected"),
             "command": f'XDG_DATA_HOME="{account_dir}" devin auth login',
             "steps": [
                 "Run `devin auth login` with XDG_DATA_HOME pointed at "
@@ -224,10 +273,12 @@ def remedy_for_account(name: str, status: str, account_dir: str) -> dict | None:
                 "the key."
             ],
         })
-    elif name == "cursor" and status in (SIGNED_OUT, AUTH_REQUIRED):
+    elif name == "cursor":
         remedy.update({
             "kind": "open-app",
-            "summary": "This account's Cursor login is stale",
+            "summary": ("This account isn't signed in to Cursor"
+                        if status == SIGNED_OUT
+                        else "This account's Cursor login is stale"),
             "command": ('open -na "/Applications/Cursor.app" --args '
                         f'--user-data-dir="{account_dir}"'),
             "steps": [

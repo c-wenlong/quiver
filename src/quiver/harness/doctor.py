@@ -98,10 +98,11 @@ def issue_findings(home: Path | None = None) -> list[DoctorFinding]:
     user"; each entry becomes a finding whose fix text comes from the
     REMEDIES table, so ``swe doctor`` and the app describe the same fix.
     All of them are warnings or info — a stale sign-in must never fail
-    doctor's exit status.
+    doctor's exit status. An outage is listed only once it has failed
+    ``PERSISTENT_POLLS`` polls in a row; a single blip stays on its card.
     """
     from quiver import paths
-    from quiver.harness.remedies import remedy_for
+    from quiver.harness.remedies import PERSISTENT_POLLS, remedy_for
 
     try:
         raw = json.loads(paths.issues_file_for(home or Path.home()).read_text())
@@ -118,10 +119,20 @@ def issue_findings(home: Path | None = None) -> list[DoctorFinding]:
         status = issue.get("status")
         if not isinstance(name, str) or not isinstance(status, str):
             continue
+        outage = status in ("unavailable", "timeout")
+        occurrences = issue.get("occurrences")
+        if outage and not (isinstance(occurrences, int)
+                           and occurrences >= PERSISTENT_POLLS):
+            continue
         stored = issue.get("remedy") if isinstance(issue.get("remedy"), dict) else None
-        # The table is authoritative — it may have learned a better fix
-        # since the app wrote the issue; the stored remedy is the fallback.
-        remedy = remedy_for(name, status) or stored or {}
+        # The table is authoritative for the harness's own login — it may
+        # have learned a better fix since the app wrote the issue. An
+        # extra account's stored remedy was aimed at that account's own
+        # files (``remedy_for_account``), which this file can't redo
+        # without the account's directory, so it wins there.
+        extra = bool(issue.get("accountKey") or issue.get("account"))
+        remedy = ((stored if extra else None) or remedy_for(name, status)
+                  or stored or {})
         summary = (stored or {}).get("summary") or remedy.get("summary")
         message = summary or f"{name}: {status}"
         account = issue.get("account")
@@ -132,8 +143,7 @@ def issue_findings(home: Path | None = None) -> list[DoctorFinding]:
             steps = remedy.get("steps")
             if isinstance(steps, list) and steps:
                 fix = steps[0]
-        severity = ("info" if status in ("unavailable", "timeout")
-                    else "warning")
+        severity = "info" if outage else "warning"
         findings.append(DoctorFinding(
             f"usage.{issue_id}", severity, message, fix, harness=name))
     return findings

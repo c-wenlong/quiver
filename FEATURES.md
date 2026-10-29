@@ -42,7 +42,7 @@ Status words:
 
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
-| Accounts | yes | part | - | Web: limit cards per starred harness and machine. Quiver account profiles, history and Open app / Terminal are Mac-only |
+| Accounts | yes | part | - | Web: limit cards per starred harness and machine. Quiver account profiles, history and Open app / Terminal are Mac-only. A failed read's "Action needed" state, Fix sheet and banner are Mac-only too; web cards still word only `no_reading`, not `issue.remedy` |
 | Harnesses | yes | yes | - | Web: star, archive, restore, edit, detect, add |
 | Compute | yes | yes | planned | Read-only on web. iOS P9 wants the Compute samplers carried over the hub |
 

@@ -289,14 +289,14 @@ public final class OtherLimitsModel {
         // starred gets its extras read, one just unstarred is skipped.
         let extras = extraAccounts().filter { !$0.0.isDefault && !$0.0.vendor.hasDefaultProfile }
         // A removed profile's reading is never asked for again — and
-        // its open issues close, since a deleted account can't fail again.
+        // its open issues close once this load records, since a deleted
+        // account can't fail again.
         let live = Set(extras.map { $0.0.id })
         extraReadings = extraReadings.filter { live.contains($0.key) }
         var liveKeys: [String: Set<String>] = [:]
         for (profile, _) in extras {
             liveKeys[profile.vendor.rawValue, default: []].insert(Self.accountKey(for: profile))
         }
-        issues?.dropMissingAccounts(live: liveKeys)
         do {
             // An swe too old for a flag fails the whole call, so each
             // attempt drops what the last error named: the new usage
@@ -357,10 +357,9 @@ public final class OtherLimitsModel {
             // Every outcome becomes a persisted issue (or resolves one):
             // swe names the failure itself now; an older swe's coarse
             // reason or sentinel reading maps onto the same statuses.
-            for harness in harnesses
-            where !Self.ownAccounts.contains(harness.name) && harness.state == .starred {
-                noteOutcome(harness)
-            }
+            var polls = harnesses
+                .filter { !Self.ownAccounts.contains($0.name) && $0.state == .starred }
+                .compactMap(Self.poll)
             var cardList = harnesses
                 .filter { !Self.ownAccounts.contains($0.name) && $0.state == .starred }
                 .map { harness in
@@ -391,7 +390,7 @@ public final class OtherLimitsModel {
                                 issue: reading?.issue,
                                 displayName: nil, command: profile.vendor.cliCommand,
                                 cliInstalled: installed[vendor], limit: reading?.limit)
-                noteOutcome(profile, reading)
+                if let poll = Self.poll(profile, reading) { polls.append(poll) }
                 if let own = cardList.firstIndex(where: { $0.profile == nil && $0.name == vendor }) {
                     cardList.insert(card, at: own + 1)
                 } else {
@@ -413,6 +412,10 @@ public final class OtherLimitsModel {
             cliInstalled = installed
             note = nil
             persist()
+            // One store pass for the whole poll, off the main actor. The
+            // starred set and live accounts close what is no longer
+            // polled: an unstarred harness or a removed account.
+            await issues?.record(polls, starred: starred ?? [], accounts: liveKeys)
         } catch is CancellationError {
             return
         } catch {
@@ -445,56 +448,48 @@ public final class OtherLimitsModel {
     /// it sent one, else the same verdict derived from what it sent —
     /// sentinel plan statuses are statuses, not plans, and no_reading's
     /// coarse pair maps onto the same vocabulary.
-    private func noteOutcome(_ harness: Harness) {
-        guard let issues else { return }
+    static func poll(_ harness: Harness) -> IssuesModel.Poll? {
         if let issue = harness.issue {
-            issues.record(harness: harness.name, status: issue.status,
-                          remedy: issue.remedy)
-            return
+            return .init(harness: harness.name, status: issue.status, remedy: issue.remedy)
         }
+        let status: IssueStatus
         switch harness.rateLimit?.status {
-        case .authRequired?:
-            issues.record(harness: harness.name, status: .authRequired, remedy: nil)
-        case .timeout?:
-            issues.record(harness: harness.name, status: .timeout, remedy: nil)
-        case .ok?, .noSubscription?:
-            issues.record(harness: harness.name, status: .ok, remedy: nil)
+        case .authRequired?: status = .authRequired
+        case .timeout?: status = .timeout
+        case .ok?, .noSubscription?: status = .ok
         case nil:
             switch harness.noReading {
-            case .signedOut?:
-                issues.record(harness: harness.name, status: .signedOut, remedy: nil)
-            case .error?:
-                issues.record(harness: harness.name, status: .unavailable, remedy: nil)
-            case nil:
-                break  // Can't tell; the stored issue stands.
+            case .signedOut?: status = .signedOut
+            case .error?: status = .unavailable
+            case nil: return nil  // Can't tell; the stored issue stands.
             }
         }
+        return .init(harness: harness.name, status: status)
     }
 
-    /// An extra account's poll verdict into the issue store, under its
+    /// An extra account's poll verdict for the issue store, under its
     /// own slot so a failure on one login never reads as another's.
-    private func noteOutcome(_ profile: Profile, _ reading: ExtraReading?) {
-        guard let issues, let reading else { return }
+    static func poll(_ profile: Profile, _ reading: ExtraReading?) -> IssuesModel.Poll? {
+        guard let reading else { return nil }
         let vendor = profile.vendor.rawValue
-        let key = Self.accountKey(for: profile)
+        let key = accountKey(for: profile)
+        let status: IssueStatus
+        var remedy: UsageRemedy?
         if let issue = reading.issue {
-            issues.record(harness: vendor, status: issue.status,
-                          remedy: issue.remedy, account: profile.name,
-                          accountKey: key)
+            status = issue.status
+            remedy = issue.remedy
         } else if let limit = reading.limit {
-            let status: IssueStatus = switch limit.status {
+            let read: IssueStatus = switch limit.status {
             case .authRequired: .authRequired
             case .timeout: .timeout
             case .ok, .noSubscription: .ok
             }
-            issues.record(harness: vendor,
-                          status: reading.failed && status == .ok ? .unavailable : status,
-                          remedy: nil, account: profile.name, accountKey: key)
+            status = reading.failed && read == .ok ? .unavailable : read
         } else {
-            issues.record(harness: vendor,
-                          status: reading.failed ? .unavailable : .signedOut,
-                          remedy: nil, account: profile.name, accountKey: key)
+            status = reading.failed ? .unavailable : .signedOut
         }
+        return .init(harness: vendor, status: status, remedy: remedy,
+                     account: profile.name, accountKey: key)
     }
 
     /// Whether a fetch is owed: nothing read yet, the reading is older

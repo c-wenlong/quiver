@@ -2781,6 +2781,8 @@ def cmd_harness_usage(args):
                 print(f"    {i}. {step}")
             if remedy.get("command"):
                 print(c("dim", f"      {remedy['command']}"))
+            if remedy.get("url"):
+                print(c("dim", f"      open '{remedy['url']}'"))
         else:
             print(c("red", f"  {outcome.detail or outcome.status}"))
         return 1

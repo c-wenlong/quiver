@@ -135,6 +135,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Usage problems say what to do, graded by how much they need you.**
+  A stale login or a credentials file macOS won't let Quiver read puts
+  an account card in its amber "Action needed" state with a Fix sheet,
+  raises a banner over the window (it never takes focus) and counts on
+  the Settings badge. A sign-out banners only where a read used to work,
+  so a starred harness you never signed in to stays quiet. An outage
+  stays on its card, with Refresh, and joins Settings › Doctor and
+  `swe doctor` only after three polls in a row. A permission fix opens
+  System Settings' Files and Folders pane from the sheet and from
+  Doctor. Claude, Codex, Copilot, Droid and Freebuff now name their own
+  login command, and an extra Devin or Cursor account's Doctor row keeps
+  the fix aimed at that account's files. Issues of a harness you unstar
+  close instead of holding the badge, and the issue store's file work
+  runs off the main thread ([#797](https://github.com/c-wenlong/quiver/issues/797)).
+
 - **Flatter Mac app window.** The page now fills the window to its edges
   instead of sitting in a rounded, inset panel, split from the sidebar by
   a hairline. The Quiver wordmark and the sidebar toggle moved up into the
