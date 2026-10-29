@@ -348,10 +348,12 @@ struct TaskDetailPage: View {
     private func openNewPanel() {
         panel = .new
         linkError = nil
-        guard harnesses == nil else { return }
         // A nil harnesses means unanswered — clear the last failure so
-        // this retry draws the spinner instead of the stale error.
-        harnessesError = nil
+        // this retry draws the spinner instead of the stale error. A
+        // cached list still refetches: a re-open would otherwise keep
+        // suggesting a last-used model another launch already moved on
+        // from.
+        if harnesses == nil { harnessesError = nil }
         Task {
             do {
                 let (offered, _) = try await app.hub.withClient { try await $0.taskHarnesses() }
@@ -365,9 +367,13 @@ struct TaskDetailPage: View {
                 prefillModel()
             } catch is CancellationError {
             } catch {
-                // Leave harnesses nil: a failed ask isn't an empty answer,
-                // and reopening the panel must be allowed to retry.
-                harnessesError = (error as? HubError)?.message ?? error.localizedDescription
+                // A refresh that fails while cached rows are up keeps
+                // them: the stale list beats no panel. Only an
+                // unanswered ask reports the failure — and reopening
+                // the panel must be allowed to retry.
+                if harnesses == nil {
+                    harnessesError = (error as? HubError)?.message ?? error.localizedDescription
+                }
             }
         }
     }
