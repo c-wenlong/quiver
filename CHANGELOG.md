@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Syntax highlighting in the chat, on the web app, the remote web
+  client and the Mac app.** Fenced code blocks, tool arguments and tool
+  output are tokenised and coloured: a shell command keeps its flags
+  and variables apart, JSON keys differ from strings, and Python,
+  JavaScript, CSS, HTML, YAML, TOML, SQL, Go, Rust, Swift and friends
+  get their keywords and literals. A Bash call's `command` shows as the
+  command itself instead of its JSON wrapper, a Read's output colours
+  as the file it came from, and diff rows keep their added/removed
+  tints with the file's own highlighting inside. The Mac app's tool
+  cards also gain the diff view iOS and the web already had, with
+  added/removed counts in the collapsed row.
+
 - **Remote launches start on a picked model, with each harness's recent
   models to pick from.** `POST /v1/sessions`, `POST /v1/issues/resolve`
   and `POST /v1/pulls/<o>/<r>/<n>/open` put an optional `model` on the

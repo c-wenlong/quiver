@@ -463,16 +463,48 @@ class TestChatScript(unittest.TestCase):
     def test_markdown_escapes_then_restores_code_and_bold(self):
         out = self.run_js(
             "return [T.md('<img src=x onerror=alert(1)> **bold** `a<b`'),"
-            " T.md('before\\n```python\\nx = 1\\n```\\nafter')];")
+            " T.md('before\\n```python\\nx = 1\\n```\\nafter'),"
+            " T.md('```notalang\\nx = 1\\n```')];")
         self.assertEqual(out[0], "<p>&lt;img src=x onerror=alert(1)&gt; <strong>bold</strong> <code>a&lt;b</code></p>")
-        self.assertEqual(out[1], '<p>before</p><pre class="code"><code>x = 1</code></pre><p>after</p>')
+        # A known fence language tokenises the code; unknown tags stay plain.
+        self.assertEqual(out[1], '<p>before</p><pre class="code"><code>x = <span class="tk-n">1</span></code></pre><p>after</p>')
+        self.assertEqual(out[2], '<pre class="code"><code>x = 1</code></pre>')
 
     def test_code_keeps_its_markers(self):
         out = self.run_js(
             "return [T.md('```js\\nconst s = \"**keep**\"; // `tick`\\n```'),"
             " T.md('`**raw**` and **bold**')];")
-        self.assertEqual(out[0], '<pre class="code"><code>const s = &quot;**keep**&quot;; // `tick`</code></pre>')
+        # In a fence the markers are string and comment text, not emphasis.
+        self.assertEqual(out[0], '<pre class="code"><code><span class="tk-k">const</span> s = <span class="tk-s">&quot;**keep**&quot;</span>; <span class="tk-c">// `tick`</span></code></pre>')
         self.assertEqual(out[1], "<p><code>**raw**</code> and <strong>bold</strong></p>")
+
+    def test_syntax_tokens_and_tool_args(self):
+        """hl() colours shell and file code, readableArgs unwraps a
+        command, and toolOutLang only claims a language for read-ish
+        calls — the same rules ToolDisplay.swift pins."""
+        out = self.run_js("""
+          return {
+            bash: T.hl('sudo apt-get install -y jq # done', 'bash'),
+            numbered: T.hl('  1\u2192import os\\n  2\u2192x = 1\\n  3\u2192print(x)', 'python'),
+            cmd: T.readableArgs({ name: 'Bash', args_full: '{"command":"ls -la"}' }),
+            file: T.readableArgs({ name: 'Write', args_full: '{"file_path":"/a/x.py","content":"print(1)"}' }),
+            read: T.toolOutLang({ name: 'Read', args_full: '{"file_path":"/a/x.css"}' }),
+            edit: T.toolOutLang({ name: 'Edit', args_full: '{"file_path":"/a/x.css","old_string":"a","new_string":"b"}' }),
+            jsonish: T.looksJson('{"a":1}'), prose: T.looksJson('file updated'),
+            diff: T.toolDiff({ name: 'Edit', args_full: JSON.stringify({ file_path: 'a.py', old_string: 'x = 1', new_string: 'x = 2' }) }) };""")
+        self.assertIn('<span class="tk-b">sudo</span>', out["bash"])
+        self.assertIn('<span class="tk-m">-y</span>', out["bash"])
+        self.assertIn('<span class="tk-c"># done</span>', out["bash"])
+        self.assertIn('<span class="tk-m">  1\u2192</span>', out["numbered"])
+        self.assertIn('<span class="tk-k">import</span>', out["numbered"])
+        self.assertEqual(out["cmd"], {"text": "ls -la", "lang": "bash"})
+        self.assertEqual(out["file"], {"text": "print(1)", "lang": "python"})
+        self.assertEqual(out["read"], "css")
+        self.assertEqual(out["edit"], "")
+        self.assertTrue(out["jsonish"])
+        self.assertFalse(out["prose"])
+        # A diff row keeps its add/del class, with the file's own tokens inside.
+        self.assertIn('<div class="diff-line diff-add">+ x = <span class="tk-n">2</span></div>', out["diff"])
 
     def test_inline_links_escapes_and_labels(self):
         """The phone hands inline text to AttributedString(markdown:), so

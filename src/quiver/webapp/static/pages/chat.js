@@ -456,7 +456,7 @@ const SessionChat = (() => {
           return `<div class="md-li" style="padding-left:${Math.min(b.indent, 4) * 18}px"><span class="md-marker">${marker}</span><span class="md-li-text">${perLine(box ? box[1] : b.text)}</span></div>`;
         }
         case "quote": return `<blockquote>${perLine(b.text)}</blockquote>`;
-        case "code": return `<pre class="code"><code>${esc(b.code)}</code></pre>`;
+        case "code": return `<pre class="code"><code>${hl(b.code, b.lang)}</code></pre>`;
         case "table": return tableHtml(b);
         case "hr": return "<hr>";
         case "img": return noteChip("image", b.alt || "Image", `${b.src.split("/").pop() || b.src} · on the machine`);
@@ -490,6 +490,440 @@ const SessionChat = (() => {
     if (log) log.scrollTop = log.scrollHeight;
   }
 
+  /* ------------------------------------------------- syntax highlighting
+     The code a transcript shows — shell commands, tool arguments, file
+     bodies and fenced blocks — tokenised by a small hand-rolled scanner
+     (the web app has no build step, so no highlighter library). The same
+     rules live in src/quiver/remote/web/app.js and, in Swift, in
+     app/mac/Sources/QuiverCore/Syntax/SyntaxHighlight.swift; keep the
+     three in step. Token classes live in chat.css, their colours in
+     styles.css's --tk-* variables (Theme.swift's syntax* colours). */
+
+  const tkPattern = (k, src, boundary, flags) => ({ k, r: new RegExp(src, flags || "y"), b: !!boundary });
+  const tkSet = (s) => new Set(s.split(" "));
+
+  /* A language spec: comment/string delimiters, word sets and extra
+   * patterns. At each position the scanner tries, in order: line-number
+   * prefix, line comment, block comment, string, patterns, number,
+   * keyword-ish word. Anything unmatched is plain text. */
+  function langSpec(over) {
+    return Object.assign({
+      line: [], block: [],
+      strings: ["'", '"'],
+      multiline: null,   // delimiters allowed to span newlines
+      noEscape: null,    // delimiters where \ does not escape
+      strPrefix: null,   // an optional run before a delimiter (r"", f'')
+      keyAfter: false,   // a string followed by `:` is a key (JSON)
+      number: /0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?/y,
+      keywords: null, builtins: null, constants: null, variables: null,
+      patterns: [],      // [{k, r, b?}] tried before words; b = needs a break before
+      call: false,       // name( → builtin (a call site)
+      caps: false,       // Capitalised word → builtin (a type)
+    }, over);
+  }
+
+  /* `kws` is the C family's shared shape: line and block comments, strings,
+   * words with keyword/constant sets, call sites and Capitalised types. */
+  function cLang(kws, extra) {
+    return langSpec(Object.assign({
+      line: ["//"], block: [["/*", "*/"]],
+      keywords: tkSet(kws),
+      constants: tkSet("true false null nil nullptr None TRUE FALSE"),
+      call: true, caps: true,
+      patterns: [
+        tkPattern("tk-m", String.raw`@[A-Za-z_][\w.]*`, true),   // decorators, annotations
+        tkPattern("tk-m", String.raw`#[A-Za-z_][\w!]*`, true),   // C #include, rust attrs
+        tkPattern("tk-v", String.raw`\$\w+`, true),              // php
+      ],
+    }, extra || {}));
+  }
+
+  const JS_COMMON = {
+    line: ["//"], block: [["/*", "*/"]],
+    strings: ["'", '"', "`"], multiline: ["`"],
+    constants: tkSet("true false null undefined NaN Infinity"),
+    builtins: tkSet("console window document global globalThis process require module exports fetch Promise Symbol Math JSON Object Array String Number Boolean BigInt Map Set WeakMap WeakSet Reflect Proxy Date RegExp Error TypeError RangeError SyntaxError parseInt parseFloat isNaN isFinite setTimeout setInterval clearTimeout clearInterval queueMicrotask structuredClone Intl"),
+    call: true, caps: true,
+    patterns: [tkPattern("tk-m", String.raw`@[A-Za-z_][\w.]*`, true)],
+  };
+
+  const LANGS = {
+    bash: langSpec({
+      line: ["#"],
+      multiline: ["'", '"'], noEscape: ["'"],
+      keywords: tkSet("if then else elif fi for while until do done case esac function select in time coproc break continue return exit"),
+      builtins: tkSet("cd echo printf read test source eval exec export local declare typeset readonly set unset shift trap wait alias unalias umask ulimit getopts command builtin type hash dirs pushd popd jobs fg bg kill disown suspend logout true false let mapfile readarray enable help caller sudo doas env xargs nohup nice install"),
+      patterns: [
+        tkPattern("tk-v", String.raw`\$\{(?:[^}"'\\]|\\.)*\}|\$[A-Za-z_]\w*|\$[@#?$!*0-9_-]+`),
+        tkPattern("tk-b", String.raw`\[(?=\s)`, true),
+        tkPattern("tk-m", String.raw`-{1,2}[A-Za-z][\w=-]*`, true),
+      ],
+    }),
+    dockerfile: langSpec({
+      line: ["#"],
+      keywords: tkSet("FROM RUN CMD ENTRYPOINT COPY ADD WORKDIR EXPOSE ENV ARG LABEL USER VOLUME SHELL HEALTHCHECK ONBUILD STOPSIGNAL AS"),
+      patterns: [tkPattern("tk-v", String.raw`\$\{?\w+\}?`)],
+    }),
+    python: langSpec({
+      line: ["#"],
+      strings: ["'''", '"""', "'", '"'],
+      multiline: ["'''", '"""'],
+      strPrefix: /[rRfFbBuU]{1,3}/y,
+      keywords: tkSet("and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case"),
+      builtins: tkSet("print len range str int float bool bytes list dict set tuple frozenset object type isinstance issubclass enumerate zip map filter sorted reversed min max sum any all abs round divmod pow input open super property staticmethod classmethod getattr setattr hasattr delattr callable iter next repr format chr ord hex bin oct id vars dir exec eval compile globals locals breakpoint hash slice memoryview bytearray complex"),
+      constants: tkSet("True False None NotImplemented Ellipsis"),
+      variables: tkSet("self cls"),
+      patterns: [
+        tkPattern("tk-m", String.raw`@[A-Za-z_][\w.]*`, true),
+        tkPattern("tk-b", String.raw`__\w+__`),
+      ],
+      number: /0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?[jJ]?/y,
+    }),
+    javascript: langSpec(Object.assign({}, JS_COMMON, {
+      keywords: tkSet("await async break case catch class const continue debugger default delete do else export extends finally for from function get if import in instanceof let new of return set static super switch this throw try typeof var void while with yield"),
+    })),
+    typescript: langSpec(Object.assign({}, JS_COMMON, {
+      keywords: tkSet("await async abstract as break case catch class const continue debugger declare default delete do else enum export extends finally for from function get if implements import in instanceof infer interface is keyof let namespace new of private protected public readonly return satisfies set static super switch this throw try type typeof using var void while with yield"),
+    })),
+    json: langSpec({
+      strings: ['"'], keyAfter: true,
+      keywords: tkSet("true false null"),
+    }),
+    css: langSpec({
+      block: [["/*", "*/"]],
+      number: /\d[\d.]*(?:px|em|rem|%|vh|vw|vmin|vmax|s|ms|fr|deg|turn|ch|ex|lh|cm|mm|in|pt|pc|dppx)?/y,
+      patterns: [
+        tkPattern("tk-k", String.raw`@[\w-]+`),                       // @media and friends
+        tkPattern("tk-b", String.raw`--[\w-]+`),                      // --custom-property
+        tkPattern("tk-m", String.raw`[^{};]+(?=\s*\{)`, true),        // a selector before {
+        tkPattern("tk-n", String.raw`#[0-9a-fA-F]{3,8}\b`),           // #rrggbb
+        tkPattern("tk-b", String.raw`[a-zA-Z-][\w-]*(?=\s*:)`, true), // a property before :
+        tkPattern("tk-v", String.raw`[.#:][\w-]+`),                   // .class, #id, :pseudo
+        tkPattern("tk-k", String.raw`!\w+`),                          // !important
+      ],
+    }),
+    html: langSpec({
+      strings: ['"', "'"],
+      block: [["<!--", "-->"]],
+      number: null,
+      patterns: [
+        tkPattern("tk-k", String.raw`<![A-Za-z]+|<\?[\w:-]*|\?>`),
+        tkPattern("tk-k", String.raw`<\/?[A-Za-z][\w:-]*|\/?>`),
+        tkPattern("tk-b", String.raw`[\w:-]+(?==)`),
+        tkPattern("tk-n", String.raw`&[\w#]+;`),
+      ],
+    }),
+    yaml: langSpec({
+      line: ["#"],
+      keywords: tkSet("true false yes no on off null"),
+      patterns: [
+        tkPattern("tk-b", String.raw`[\w."'\[\]-]+(?=\s*:(?:\s|$))`, true),
+        tkPattern("tk-v", String.raw`[&*][\w-]+`, true),
+      ],
+    }),
+    toml: langSpec({
+      line: ["#"],
+      strings: ['"""', "'''", '"', "'"],
+      multiline: ['"""', "'''"],
+      keywords: tkSet("true false"),
+      number: /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?|\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}(?:\.\d+)?|0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[+-]?(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?|\b(?:inf|nan)\b/y,
+      patterns: [
+        tkPattern("tk-k", String.raw`^[ \t]*\[{1,2}[^\]\n]+\]{1,2}`, false, "my"),
+        tkPattern("tk-b", String.raw`[\w.-]+(?=\s*=)`, true),
+      ],
+    }),
+    sql: langSpec({
+      line: ["--"], block: [["/*", "*/"]],
+      strings: ["'", '"', "`"],
+      keywords: tkSet("select from where and or not in is null like between join inner left right outer full cross on group by order having limit offset insert into values update set delete create alter drop table index view trigger procedure function if exists unique primary key foreign references default check constraint union all distinct as case when then else end cast with recursive returning begin commit rollback transaction grant revoke vacuum explain analyze asc desc fetch first next only"),
+      builtins: tkSet("count sum avg min max coalesce now date datetime substr substring length upper lower trim abs round concat replace nullif ifnull current_timestamp current_date current_user row_number rank dense_rank over partition"),
+      call: true,
+    }),
+    ruby: langSpec({
+      line: ["#"], block: [["=begin", "=end"]],
+      strings: ["'", '"', "`"],
+      keywords: tkSet("def end class module if else elsif unless while until do begin rescue ensure raise return yield lambda proc require include extend attr_accessor attr_reader attr_writer puts print p gets self nil true false super private protected public initialize new each for in case when then break next redo retry loop and or not alias undef"),
+      caps: true,
+      patterns: [
+        tkPattern("tk-v", String.raw`@{1,2}\w+|\$\w+`),
+        tkPattern("tk-v", String.raw`:[a-zA-Z_]\w*[!?=]?`),
+      ],
+    }),
+    php: langSpec({
+      line: ["//", "#"], block: [["/*", "*/"]],
+      keywords: tkSet("function echo if else elseif foreach while do for switch case break continue return class extends implements interface trait use namespace new public private protected static const var global fn try catch finally throw instanceof clone yield from match readonly enum abstract final print include require list unset isset empty array or and xor as declare"),
+      constants: tkSet("true false null TRUE FALSE NULL"),
+      call: true, caps: true,
+      patterns: [
+        tkPattern("tk-k", String.raw`<\?(?:php|=)?|\?>`),
+        tkPattern("tk-v", String.raw`\$\w+`),
+      ],
+    }),
+    c: cLang("auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while bool true false"),
+    cpp: cLang("alignas alignof and asm auto bool break case catch char char8_t char16_t char32_t class compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline int long mutable namespace new noexcept nullptr operator or private protected public register reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor override final"),
+    java: cLang("abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public record return sealed short static strictfp super switch synchronized this throw throws transient try void volatile while yield permits var true false null"),
+    kotlin: cLang("as break class continue do else false for fun if in interface is null object package return super this throw true try typealias val var when while by catch companion constructor data delegate enum external finally get import init inline inner internal lateinit noinline open operator out override private protected public reified sealed suspend tailrec vararg where crossinline actual expect const abstract annotation"),
+    swift: cLang("associatedtype associativity async await actor break case catch class continue convenience default defer deinit didSet do dynamic else enum extension fallthrough fileprivate final for func get guard if import in indirect infix init inout internal is isolated lazy let mutating nil nonisolated open operator optional override postfix precedencegroup prefix private protocol public repeat required rethrows return self Self set some static struct subscript super switch throw throws try typealias unowned var weak where while willSet true false"),
+    rust: cLang("as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true try type unsafe use where while abstract become box do final macro override priv typeof unsized virtual yield", {
+      strings: ['"'],
+      patterns: [
+        tkPattern("tk-s", String.raw`'(?:\\.|[^\\'])'`),
+        tkPattern("tk-v", String.raw`'[a-zA-Z_]\w*`),
+        tkPattern("tk-m", String.raw`#!?\[[^\]\n]*\]|#\w+`),
+        tkPattern("tk-b", String.raw`[a-zA-Z_]\w*!`),
+      ],
+    }),
+    go: cLang("break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var true false iota nil", {
+      strings: ["'", '"', "`"], multiline: ["`"],
+      builtins: tkSet("string int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr byte rune float32 float64 complex64 complex128 bool error any comparable append cap close complex copy delete imag len make new panic print println real recover"),
+    }),
+    csharp: cLang("abstract as base bool break byte case catch char checked class const continue decimal default delegate do double else enum event explicit extern false finally fixed float for foreach goto if implicit in int interface internal is lock long namespace new null object operator out override params private protected public readonly record ref required return sbyte sealed short sizeof stackalloc static string struct switch this throw true try typeof uint ulong unchecked unsafe ushort using var virtual void volatile while init file"),
+  };
+
+  /* Fence tags and file extensions onto the language table. Anything not
+   * listed renders plain ("text" is an explicit opt-out). */
+  const LANG_ALIASES = {
+    sh: "bash", shell: "bash", zsh: "bash", fish: "bash", ksh: "bash",
+    bashrc: "bash", zshrc: "bash", shellscript: "bash",
+    py: "python", python3: "python",
+    js: "javascript", jsx: "javascript", node: "javascript", mjs: "javascript", cjs: "javascript",
+    ts: "typescript", tsx: "typescript", mts: "typescript", cts: "typescript",
+    json5: "json", jsonc: "json", jsonl: "json",
+    scss: "css", less: "css",
+    htm: "html", svg: "html", xhtml: "html", xsl: "html", plist: "html", vue: "html", svelte: "html",
+    yml: "yaml",
+    rb: "ruby", rake: "ruby", gemfile: "ruby",
+    "c++": "cpp", cplusplus: "cpp", cc: "cpp", cxx: "cpp", hpp: "cpp", hh: "cpp", h: "cpp",
+    "c#": "csharp", cs: "csharp",
+    kt: "kotlin", kts: "kotlin",
+    rs: "rust",
+    golang: "go",
+    diff: "diff", patch: "diff",
+    containerfile: "dockerfile",
+    makefile: "bash", gnumakefile: "bash", mk: "bash",
+    ini: "bash", env: "bash", cfg: "bash", conf: "bash",
+    md: "text", markdown: "text", plaintext: "text", txt: "text", log: "text",
+  };
+
+  /* Basenames that carry a language without an extension. */
+  const PATH_LANGS = {
+    dockerfile: "dockerfile", containerfile: "dockerfile",
+    makefile: "bash", gnumakefile: "bash", rakefile: "ruby", gemfile: "ruby",
+    ".bashrc": "bash", ".zshrc": "bash", ".bash_profile": "bash", ".zprofile": "bash",
+    ".profile": "bash", ".env": "bash", ".gitignore": "bash", ".dockerignore": "bash",
+  };
+
+  function langName(tag) {
+    const t = String(tag || "").trim().toLowerCase().replace(/^\./, "").split(/[ \t]/)[0];
+    if (!t) return "";
+    if (Object.hasOwn(LANG_ALIASES, t)) return LANG_ALIASES[t];
+    return Object.hasOwn(LANGS, t) ? t : "";
+  }
+
+  function langFromPath(path) {
+    const base = String(path || "").split("/").pop().toLowerCase();
+    if (Object.hasOwn(PATH_LANGS, base)) return PATH_LANGS[base];
+    const dot = base.lastIndexOf(".");
+    if (dot < 0) return "";
+    return langName(base.slice(dot + 1)) || "";
+  }
+
+  /* Read/View output carries the file's own line numbers (`  12→code`,
+   * or cat -n's `12<TAB>code`): when nearly every line starts with one,
+   * each number becomes a meta token and the rest is the file's code. */
+  const NUMBERED_LINE = /^[ \t]*\d+[→|\t]/;
+  function isNumbered(code) {
+    const lines = code.split("\n").filter((l) => l.trim());
+    if (lines.length < 3) return false;
+    return lines.filter((l) => NUMBERED_LINE.test(l)).length / lines.length >= 0.8;
+  }
+
+  /* The end index of the string starting at i (its prefix included),
+   * or 0. A 1-char delimiter unclosed by end of line stops before the
+   * newline unless the language lets it wrap (bash's, js's backtick). */
+  function stringEnd(s, i, sp) {
+    let d = "", pre = "";
+    for (const q of sp.strings) {
+      if (s.startsWith(q, i)) { d = q; break; }
+    }
+    if (!d && sp.strPrefix) {
+      sp.strPrefix.lastIndex = i;
+      const m = sp.strPrefix.exec(s);
+      if (m && m[0]) {
+        for (const q of sp.strings) {
+          if (s.startsWith(q, i + m[0].length)) { d = q; pre = m[0]; break; }
+        }
+      }
+    }
+    if (!d) return 0;
+    const multi = !!(sp.multiline && sp.multiline.includes(d));
+    const escapable = !sp.noEscape || !sp.noEscape.includes(d);
+    let j = i + pre.length + d.length;
+    while (j < s.length) {
+      const c = s[j];
+      if (escapable && c === "\\") { j += 2; continue; }
+      if (s.startsWith(d, j)) return j + d.length;
+      if (c === "\n" && !multi) return j;
+      j += 1;
+    }
+    return s.length;
+  }
+
+  /* [tokenClass, text] pairs covering `code` end to end; "" class = plain. */
+  function scanCode(code, sp, numbered) {
+    const toks = [];
+    const n = code.length;
+    let i = 0, plain = "";
+    const emit = (k, j) => {
+      if (k === "") { plain += code.slice(i, j); }
+      else {
+        if (plain) { toks.push(["", plain]); plain = ""; }
+        toks.push([k, code.slice(i, j)]);
+      }
+      i = j;
+    };
+    /* A pattern flagged `b` only fires after whitespace or punctuation,
+     * so `foo-bar` is not a flag and `input:hover` not a YAML key. */
+    const atBreak = () => i === 0 || " \t\n;|&(){}<>=,".includes(code[i - 1]);
+    while (i < n) {
+      if (numbered && (i === 0 || code[i - 1] === "\n")) {
+        const m = NUMBERED_LINE.exec(code.slice(i, i + 16));
+        if (m) { emit("tk-m", i + m[0].length); continue; }
+      }
+      let hit = false;
+      for (const c of sp.line) {
+        if (code.startsWith(c, i)) {
+          const e = code.indexOf("\n", i);
+          emit("tk-c", e < 0 ? n : e); hit = true; break;
+        }
+      }
+      if (hit) continue;
+      for (const pair of sp.block) {
+        if (code.startsWith(pair[0], i)) {
+          const e = code.indexOf(pair[1], i + pair[0].length);
+          emit("tk-c", e < 0 ? n : e + pair[1].length); hit = true; break;
+        }
+      }
+      if (hit) continue;
+      const send = stringEnd(code, i, sp);
+      if (send) {
+        let k = "tk-s";
+        if (sp.keyAfter) {
+          let j = send;
+          while (j < n && " \t".includes(code[j])) j++;
+          if (code[j] === ":") k = "tk-b";
+        }
+        emit(k, send); continue;
+      }
+      for (const p of sp.patterns) {
+        if (p.b && !atBreak()) continue;
+        p.r.lastIndex = i;
+        const m = p.r.exec(code);
+        if (m && m.index === i && m[0]) { emit(p.k, i + m[0].length); hit = true; break; }
+      }
+      if (hit) continue;
+      if (sp.number) {
+        sp.number.lastIndex = i;
+        const m = sp.number.exec(code);
+        if (m && m[0]) { emit("tk-n", i + m[0].length); continue; }
+      }
+      if (/[A-Za-z_$]/.test(code[i])) {
+        let j = i + 1;
+        while (j < n && /[\w$]/.test(code[j])) j++;
+        const w = code.slice(i, j);
+        let k = "";
+        if (sp.keywords && sp.keywords.has(w)) k = "tk-k";
+        else if (sp.constants && sp.constants.has(w)) k = "tk-n";
+        else if (sp.variables && sp.variables.has(w)) k = "tk-v";
+        else if (sp.builtins && sp.builtins.has(w)) k = "tk-b";
+        else if (sp.call && code[j] === "(") k = "tk-b";
+        else if (sp.caps && w[0] >= "A" && w[0] <= "Z") k = "tk-b";
+        emit(k, j); continue;
+      }
+      plain += code[i]; i++;
+    }
+    if (plain) toks.push(["", plain]);
+    return toks;
+  }
+
+  /* Escaped, span-wrapped HTML for `code` in `lang` (a fence tag or a
+   * language id); unknown and empty langs stay plain. `diff` colours by
+   * line sigil the way the patch view does. */
+  function hl(code, lang) {
+    const name = langName(lang);
+    if (!name || name === "text") return esc(code);
+    if (name === "diff") {
+      return code.split("\n").map((ln) => {
+        const k = ln.startsWith("+") && !ln.startsWith("+++") ? "diff-add"
+          : ln.startsWith("-") && !ln.startsWith("---") ? "diff-del"
+          : /^(@@|\*\*\*|diff |index |--- |\+\+\+ )/.test(ln) ? "tk-m" : "";
+        return k ? `<span class="${k}">${esc(ln)}</span>` : esc(ln);
+      }).join("\n");
+    }
+    return scanCode(code, LANGS[name], isNumbered(code))
+      .map(([k, t]) => (k ? `<span class="${k}">${esc(t)}</span>` : esc(t)))
+      .join("");
+  }
+
+  /* ----------------------------------------------------------- tool args */
+
+  const filePathOf = (obj) =>
+    obj.file_path || obj.path || obj.filename || obj.notebook_path || obj.filePath || "";
+
+  /* The tool's args as readable text plus a language: a shell command
+   * leaves its JSON wrapper, a file's contents go under their own
+   * language, and everything else becomes pretty-printed JSON (the card
+   * used to show the raw one-line blob). Mirrors ToolDisplay.readable in
+   * the Mac app; keep them in step. */
+  function readableArgs(tool) {
+    const full = String(tool.args_full || "");
+    if (!full) return null;
+    let obj;
+    try { obj = JSON.parse(full); } catch { return { text: full, lang: "" }; }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return { text: full, lang: "json" };
+    for (const key of ["command", "cmd", "script"]) {
+      const v = obj[key];
+      if (typeof v === "string") return { text: v, lang: "bash" };
+      if (Array.isArray(v)) return { text: v.join(" "), lang: "bash" };
+    }
+    const file = filePathOf(obj);
+    for (const key of ["content", "new_source", "code", "source"]) {
+      if (typeof obj[key] === "string" && obj[key]) {
+        return { text: obj[key], lang: file ? langFromPath(file) : "" };
+      }
+    }
+    let pretty = full;
+    try { pretty = JSON.stringify(obj, null, 2); } catch { /* keep raw */ }
+    return { text: pretty, lang: "json" };
+  }
+
+  /* A tool card's output language, stored on the card so its result can
+   * colour as the file it came from. Only read-ish calls claim one —
+   * Edit's "file updated" note is prose, not the file. */
+  const READISH = /read|view|cat/i;
+  const PATH_ARG_KEYS = new Set([
+    "file_path", "path", "filename", "notebook_path", "filePath",
+    "offset", "limit", "start_line", "end_line", "view_range",
+  ]);
+  function toolOutLang(tool) {
+    let obj;
+    try { obj = JSON.parse(tool.args_full); } catch { return ""; }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return "";
+    const path = filePathOf(obj);
+    if (!path) return "";
+    const name = String(tool.name || "");
+    if (READISH.test(name)) return langFromPath(path);
+    if (Object.keys(obj).every((k) => PATH_ARG_KEYS.has(k))) return langFromPath(path);
+    return "";
+  }
+
+  function looksJson(text) {
+    const t = String(text || "").trim();
+    if (!t || (t[0] !== "{" && t[0] !== "[")) return false;
+    try { const v = JSON.parse(t); return v !== null && typeof v === "object"; }
+    catch { return false; }
+  }
+
   /* ---------------------------------------------------------------- diffs
      Edit/Write tool calls carry parseable file args in args_full: they
      render as a unified diff instead of raw JSON. */
@@ -510,28 +944,36 @@ const SessionChat = (() => {
   }
 
   const diffFile = (path) => (path ? `<div class="diff-file">${esc(path)}</div>` : "");
-  const diffRow = (cls, text) => `<div class="diff-line ${cls}">${esc(text)}</div>`;
+
+  /* A diff row: the sigil unstyled, the line's own code highlighted in
+   * the file's language; the add/del tint stays on the row's background
+   * (meta rows are prose, not code). */
+  const diffRow = (cls, text, lang) =>
+    `<div class="diff-line ${cls}">${cls === "diff-meta" ? esc(text) : hl(text, lang)}</div>`;
 
   function renderDiff(filePath, oldText, newText) {
+    const lang = langFromPath(filePath);
     const d = diffLines(oldText, newText);
     const rows = [];
-    const emit = (lines, cls, sign) => { for (const ln of lines) rows.push(diffRow(cls, `${sign} ${ln}`)); };
-    if (d.ctxTop.length > 3) rows.push(diffRow("diff-meta", `${d.ctxTop.length - 3} unchanged lines`));
+    const emit = (lines, cls, sign) => { for (const ln of lines) rows.push(diffRow(cls, `${sign} ${ln}`, lang)); };
+    if (d.ctxTop.length > 3) rows.push(diffRow("diff-meta", `${d.ctxTop.length - 3} unchanged lines`, lang));
     emit(d.ctxTop.slice(-3), "diff-ctx", " ");
     emit(d.del, "diff-del", "-");
     emit(d.add, "diff-add", "+");
     if (d.ctxBot.length) {
       emit(d.ctxBot.slice(0, 2), "diff-ctx", " ");
-      if (d.ctxBot.length > 2) rows.push(diffRow("diff-meta", `${d.ctxBot.length - 2} more lines`));
+      if (d.ctxBot.length > 2) rows.push(diffRow("diff-meta", `${d.ctxBot.length - 2} more lines`, lang));
     }
     return `<div class="diff">${diffFile(filePath)}${rows.join("")}</div>`;
   }
 
-  /* Raw patch text (codex apply_patch): colour by line sigil. */
+  /* Raw patch text (codex apply_patch): colour by line sigil, with the
+   * file's language inside the changed lines. */
   function renderPatch(filePath, patch) {
+    const lang = langFromPath(filePath);
     const rows = String(patch || "").split("\n").slice(0, 400).map((ln) => diffRow(
       ln.startsWith("+") ? "diff-add" : ln.startsWith("-") ? "diff-del"
-        : ln.startsWith("@@") || ln.startsWith("***") ? "diff-meta" : "diff-ctx", ln));
+        : ln.startsWith("@@") || ln.startsWith("***") ? "diff-meta" : "diff-ctx", ln, lang));
     return `<div class="diff">${diffFile(filePath)}${rows.join("")}</div>`;
   }
 
@@ -1073,8 +1515,10 @@ const SessionChat = (() => {
     if (loading) loading.remove();
     const kind = msg.kind || "assistant";
     if (kind === "tool_result" && msg.result_ref && chat.toolCards.has(msg.result_ref)) {
-      const body = chat.toolCards.get(msg.result_ref).querySelector(".tool-body");
-      if (body && msg.text) body.insertAdjacentHTML("beforeend", `<div class="caption">Output</div><pre>${esc(msg.text.slice(0, 8000))}</pre>`);
+      const card = chat.toolCards.get(msg.result_ref);
+      const body = card.querySelector(".tool-body");
+      const outLang = card.dataset.lang || (looksJson(msg.text) ? "json" : "");
+      if (body && msg.text) body.insertAdjacentHTML("beforeend", `<div class="caption">Output</div><pre>${hl(msg.text.slice(0, 8000), outLang)}</pre>`);
       return;
     }
     if (kind === "tool_use" && msg.tool) {
@@ -1086,9 +1530,11 @@ const SessionChat = (() => {
       if (diff) {
         card.classList.add("has-diff");
         body.innerHTML = diff;
-      } else if (msg.tool.args_full) {
-        body.innerHTML = `<pre>${esc(msg.tool.args_full.slice(0, 8000))}</pre>`;
+      } else {
+        const readable = readableArgs(msg.tool);
+        if (readable) body.innerHTML = `<pre>${hl(readable.text.slice(0, 8000), readable.lang)}</pre>`;
       }
+      card.dataset.lang = toolOutLang(msg.tool);
       if (msg.tool.call_id) chat.toolCards.set(msg.tool.call_id, card);
       if (live) { card.classList.add("arrive"); chat.awaitingReply = false; }
       put(card);
@@ -2199,6 +2645,7 @@ const SessionChat = (() => {
     // Pure helpers, for tests.
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
       inlineImagesAsText, inline, taskBox, tableHtml,
+      hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
       diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
       cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat },

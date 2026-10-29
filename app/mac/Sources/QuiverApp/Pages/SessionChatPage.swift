@@ -731,6 +731,7 @@ private struct ToolCard: View {
     var result: String?
 
     var body: some View {
+        let diff = ToolDiff.from(call)
         Fold(title: HStack(spacing: 8) {
             Image(systemName: Self.icon(call.name))
                 .font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -743,12 +744,23 @@ private struct ToolCard: View {
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1).truncationMode(.middle)
             }
+            if let diff {
+                Text("+\(diff.added)").font(Theme.font(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.success)
+                Text("−\(diff.removed)").font(Theme.font(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.dangerText)
+            }
         }) {
             VStack(alignment: .leading, spacing: 8) {
-                if let full = call.argsFull, !full.isEmpty { CodeBlock(text: String(full.prefix(8000))) }
+                if let diff {
+                    ToolDiffView(diff: diff)
+                } else if let readable = ToolDisplay.readable(call), !readable.text.isEmpty {
+                    CodeBlock(text: String(readable.text.prefix(8000)), language: readable.language)
+                }
                 if let result {
                     Text("Output").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    CodeBlock(text: result.isEmpty ? "(no output)" : result)
+                    CodeBlock(text: result.isEmpty ? "(no output)" : String(result.prefix(8000)),
+                              language: result.isEmpty ? nil : ToolDisplay.outputLanguage(call, result: result))
                 }
             }
         }
@@ -790,11 +802,64 @@ extension ToolCard {
     }
 }
 
-private struct CodeBlock: View {
-    var text: String
+/// An edit call's changes: the file on top, then sign-column rows tinted
+/// added/removed with the file's own language inside (the web app's
+/// `.diff` panel).
+private struct ToolDiffView: View {
+    var diff: ToolDiff
 
     var body: some View {
-        Text(text)
+        VStack(alignment: .leading, spacing: 0) {
+            if !diff.file.isEmpty {
+                Text(diff.file)
+                    .font(Theme.font(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .bottom) { Divider().overlay(Theme.border) }
+            }
+            ForEach(Array(diff.sections.enumerated()), id: \.offset) { _, lines in
+                ForEach(Array(lines.prefix(200).enumerated()), id: \.offset) { _, line in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(sign(line.kind))
+                            .foregroundStyle(tint(line.kind))
+                            .frame(width: 8)
+                        if line.kind == .meta {
+                            Text(line.text.isEmpty ? " " : line.text)
+                                .foregroundStyle(Theme.textMuted)
+                        } else {
+                            Text(AttributedString(highlighting: line.text.isEmpty ? " " : line.text,
+                                                  language: diff.language))
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .font(Theme.font(size: 11, design: .monospaced))
+                    .padding(.horizontal, 10).padding(.vertical, 1)
+                    .background(background(line.kind))
+                }
+            }
+            .padding(.vertical, 6)
+        }
+        .background(Theme.code, in: .rect(cornerRadius: 6))
+    }
+
+    private func sign(_ kind: DiffLine.Kind) -> String {
+        switch kind { case .added: "+"; case .removed: "−"; default: " " }
+    }
+    private func tint(_ kind: DiffLine.Kind) -> Color {
+        switch kind { case .added: Theme.success; case .removed: Theme.dangerText; default: Theme.textMuted }
+    }
+    private func background(_ kind: DiffLine.Kind) -> Color {
+        switch kind { case .added: Theme.diffAdded; case .removed: Theme.diffRemoved; default: .clear }
+    }
+}
+
+private struct CodeBlock: View {
+    var text: String
+    var language: String? = nil
+
+    var body: some View {
+        Text(AttributedString(highlighting: text, language: language))
             .font(Theme.font(size: 11, design: .monospaced))
             .foregroundStyle(Theme.textPrimary)
             .padding(8)
