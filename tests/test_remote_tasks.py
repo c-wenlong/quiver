@@ -825,4 +825,6 @@ class StatusWordsTest(unittest.TestCase):
         self.assertEqual(tasks_mod._status(row, "In Review"), "In Review")
         # A stored row with no fresh read has no name: the ladder's word.
         self.assertEqual(tasks_mod._status(row, ""), "Started")
+        self.assertEqual(tasks_mod._status({**row, "agent_running": True}, ""),
+                         "Agent running")
 
