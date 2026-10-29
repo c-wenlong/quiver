@@ -2394,6 +2394,23 @@ class TestPairRoutes(unittest.TestCase):
             r["code"], r["request_id"], node=_MAC, auth=auth)
         self.assertEqual(status, 200, d)
 
+    def test_satellite_bearer_cannot_list_or_approve(self):
+        """A satellite credential is a machine's, not an approver's: it
+        neither lists pending requests nor mints a phone by approving."""
+        cred = self.srv.pair(role="satellite")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        _, data = self._req()
+        r = json.loads(data)
+        self.srv.state.owner_login = "other@github"  # no owner identity
+        status, _ = self.srv.request("GET", "/v1/pair/requests",
+                                     headers=auth)
+        self.assertEqual(status, 401)
+        status, _ = self._approve(
+            r["code"], r["request_id"], node=_MAC, auth=auth)
+        self.assertEqual(status, 401)
+        status, pdata = self._poll(r["request_id"], r["poll_secret"])
+        self.assertEqual(json.loads(pdata)["status"], "pending")
+
     def test_approve_unauthenticated_401(self):
         _, data = self._req()
         r = json.loads(data)
