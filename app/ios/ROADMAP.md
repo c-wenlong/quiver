@@ -71,7 +71,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Groups: machine, then project folder; finished sessions fold into an "Earlier" group
 - [x] Session row: status dot, title, harness, status and age; an eye icon for observed and a link icon for attached
 - [x] Pull to refresh
-- [ ] Swipe to attach or open
+- [x] Swipe to attach or open (Open sits beside attach/detach on a half swipe and is the only right-swipe action on a row that cannot attach)
 - [x] Empty state: "No sessions on this machine yet"
 - [ ] More than one machine: a machine switcher in the hub chip
 - [x] New-session sheet: machine, folder, harness, first prompt
@@ -104,24 +104,24 @@ are server changes in `src/quiver/remote/`.
 - [ ] Hub: `@` file completion proxied from the machine
 
 ### P7. Inbox
-- [x] Groups: Waiting on you (approvals and follow-ups), Errors, Finished today
+- [x] Groups: Waiting on you (approvals and follow-ups), Errors, unread GitHub notifications, Finished today
 - [ ] Approval rows show the prompt itself and a Review button
-- [x] Clear a row (long press) and "Clear" in the header, kept on the phone until the hub has a dismiss route
-- [ ] Swipe to dismiss a row
+- [x] Clear a row (swipe or long press) and "Clear" in the header, through `POST /v1/inbox/dismiss`
+- [x] Swipe to dismiss a row
 - [x] Tab badge counts only Waiting on you, not every row
 - [x] Empty state: "Nothing needs you"
 - [x] Hub: an age cutoff on `catalog.inbox()`: follow-ups, errors and interrupts older than 3 days drop out (it used to return every one ever seen, which is how the badge reached 278). Approvals never age out.
 - [x] Hub: a dismiss route, stored per device, so a cleared item stays cleared (`POST /v1/inbox/dismiss`; new activity brings it back)
 - [x] Hub: include finished sessions from today, marked as finished (`GET /v1/inbox?done=1`)
-- [ ] App: use the hub's cutoff, dismiss route and `?done=1` in place of `Staleness` and the on-phone `InboxDismissals`
+- [x] App: use the hub's cutoff, dismiss route and `?done=1` in place of `Staleness` and the on-phone `InboxDismissals`
 
 ### P8. Pair requests and devices
 - [x] Pending requests: device, Tailscale node, login, age, a code field, Approve and Deny
-- [ ] Paired devices list: name, "This device", last seen, Remove
+- [x] Paired devices list: name, "This device", last seen, Remove
 - [x] Reached from the hub chip menu
 - [ ] Opened straight from a "new pair request" push
 - [x] Hub: `GET /v1/devices` and `POST /v1/devices/revoke` (the phone-facing twin of `swe remote devices` / `--revoke`)
-- [ ] Show `last_seen_at`, which the hub already updates on each authenticated request and `GET /v1/devices` returns
+- [x] Show `last_seen_at`, which the hub already updates on each authenticated request and `GET /v1/devices` returns
 
 ### P9. Machine
 - [ ] Per-machine strip: name, online state, satellite version

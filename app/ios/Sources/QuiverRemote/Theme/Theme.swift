@@ -45,17 +45,21 @@ enum Theme {
     // MARK: Row swipe actions (solid fills behind a white glyph and label)
     static let swipeAttach = accentFill
     static let swipeDetach = Color(light: "#64748b", dark: "#475569")
+    static let swipeOpen = Color(light: "#0891b2", dark: "#0e7490")
     static let swipePin = Color(light: "#d97706", dark: "#b45309")
     static let swipeRename = Color(light: "#2563eb", dark: "#1d4ed8")
     static let swipeFork = Color(light: "#4f46e5", dark: "#4338ca")
+    static let swipeClear = Color(light: "#64748b", dark: "#475569")
 
     static func swipe(_ action: SessionAction) -> Color {
         switch action {
         case .attach, .resolve, .newSession: swipeAttach
         case .detach: swipeDetach
+        case .open: swipeOpen
         case .pin, .unpin: swipePin
         case .rename: swipeRename
         case .fork: swipeFork
+        case .clear: swipeClear
         }
     }
 

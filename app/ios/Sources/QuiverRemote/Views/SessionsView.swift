@@ -202,13 +202,15 @@ struct SessionsView: View {
                 }
                 if let note { show(note) }
             }
+        case .open:
+            path.append(.chat(row.key))
         case .rename:
             renaming = row
         case .fork:
             forking = row
-        case .resolve, .newSession:
-            // Issue and task rows wire their own swipes; no session row
-            // offers either.
+        case .resolve, .newSession, .clear:
+            // Issue, task and inbox rows wire their own swipes; no
+            // session row offers any of these.
             break
         }
     }

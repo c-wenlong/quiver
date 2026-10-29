@@ -142,6 +142,8 @@ struct HubClient: Sendable {
         case "resolve_pending": "An agent for this issue is still starting in its worktree."
         case "needs_pairing": "Pair this phone with the hub to use the console."
         case "bad_key": "The hub didn't accept this phone's SSH key. Update the hub."
+        case "unknown_device": "The hub doesn't know this device any more."
+        case "bad_dismiss": "The hub couldn't clear that row. Update the app or the hub."
         default: fallback ?? "The hub answered with an error (\(status))."
         }
     }
@@ -152,7 +154,20 @@ struct HubClient: Sendable {
 
     func sessions() async throws -> SessionsResponse { try await send(request("GET", "/v1/sessions")) }
 
-    func inbox() async throws -> InboxResponse { try await send(request("GET", "/v1/inbox")) }
+    /// `GET /v1/inbox`: this device's undismissed pending rows — the
+    /// hub already cut stale follow-ups/errors and applied dismissals.
+    /// `done` adds the sessions finished since the hub's midnight.
+    func inbox(done: Bool = false) async throws -> InboxResponse {
+        try await send(request("GET", "/v1/inbox", query: done ? ["done": "1"] : [:]))
+    }
+
+    /// `POST /v1/inbox/dismiss {key, last_active_at}`: hides the row for
+    /// this device until the session (or GitHub thread) moves past the
+    /// stamp sent, which is what brings a cleared row back.
+    func dismissInbox(_ key: String, lastActiveAt: Double) async throws {
+        _ = try await raw(request("POST", "/v1/inbox/dismiss",
+                                  body: ["key": key, "last_active_at": lastActiveAt]))
+    }
 
     // MARK: Pull requests
 
@@ -406,5 +421,23 @@ struct HubClient: Sendable {
     func decidePairRequest(id: String, code: String, approve: Bool) async throws {
         _ = try await raw(request("POST", approve ? "/v1/pair/requests/approve" : "/v1/pair/requests/deny",
                                   body: ["request_id": id, "code": code]))
+    }
+
+    // MARK: Devices
+
+    /// `GET /v1/devices`: every device the hub has paired, each as its
+    /// `device_view` row (name, kind, last_seen_at, revoked flag).
+    func devices() async throws -> [PairedDevice] {
+        try await send(request("GET", "/v1/devices"), as: DevicesResponse.self).devices
+    }
+
+    /// `POST /v1/devices/revoke {device_id}`: the device can't use its
+    /// credential again and would have to pair fresh. Removing the caller's
+    /// own row takes `confirm_this_device: true`, or the hub refuses with
+    /// 409 `confirm_this_device`; the Remove dialog is that confirmation.
+    func revokeDevice(id: String, confirmThisDevice: Bool = false) async throws {
+        var body: [String: Any] = ["device_id": id]
+        if confirmThisDevice { body["confirm_this_device"] = true }
+        _ = try await raw(request("POST", "/v1/devices/revoke", body: body))
     }
 }
