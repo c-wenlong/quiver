@@ -710,6 +710,170 @@ class TestChatScript(unittest.TestCase):
         self.assertIsNone(out["junk"])
         self.assertEqual(out["lines"], {"ctxTop": ["a"], "del": ["b"], "add": ["B"], "ctxBot": ["c"]})
 
+    def test_page_preview_targets(self):
+        """Which tool calls get Preview and the route path each asks for:
+        the cases PagePreviewTests.swift pins for the phone."""
+        out = self.run_js(r"""
+          const call = (name, args) => ({ name, args_full: typeof args === "string" ? args : JSON.stringify(args) });
+          const files = (c) => T.pageFiles(c);
+          const targets = (c, cwd) => T.pageTargets(T.pageFiles(c), cwd);
+          const patch = ["*** Begin Patch", "*** Add File: site/index.html", "+<h1>hi</h1>",
+            "*** Update File: src/app.py", "@@", "-a", "+b", "*** Update File: site/old.htm",
+            "*** Move to: site/new.htm", "*** Delete File: site/gone.html",
+            "*** Add File: site/index.html", "*** End Patch"].join("\n");
+          return {
+            rel: [T.relativePath("/Users/k/proj/out/mock.html", "/Users/k/proj"),
+                  T.relativePath("/Users/k/proj/mock.html", "/Users/k/proj/"),
+                  T.relativePath("/Users/k//proj/./out/mock.html", "/Users/k/proj"),
+                  T.relativePath("./out/a.html", "/w"), T.relativePath("a.svg", null),
+                  T.relativePath("/private/tmp/w/a.html", "/tmp/w"),
+                  T.relativePath("/var/folders/x/a.html", "/private/var/folders/x")],
+            refused: [T.relativePath("/Users/k/other/mock.html", "/Users/k/proj"),
+                      T.relativePath("/Users/k/project2/mock.html", "/Users/k/proj"),
+                      T.relativePath("/Users/k/proj", "/Users/k/proj"),
+                      T.relativePath("/Users/k/proj/../secret.html", "/Users/k/proj"),
+                      T.relativePath("/Users/k/proj/a.html", null),
+                      T.relativePath("/Users/k/proj/a.html", "proj"),
+                      T.relativePath("../a.html", "/w"), T.relativePath("out/../../a.html", "/w"),
+                      T.relativePath("~/proj/a.html", "/Users/k"), T.relativePath("", "/w"),
+                      T.relativePath("a\0.html", "/w")],
+            isPage: ["out/Mock.HTML", "a.htm", "/x/logo.svg", "a.html.bak", ".html", "html", "notes.md"].map(T.isPage),
+            write: targets(call("Write", { file_path: "/w/out/mock.html", content: "<h1>hi</h1>" }), "/w"),
+            edit: targets(call("Edit", { file_path: "/w/logo.SVG", old_string: "a", new_string: "b" }), "/w"),
+            multi: targets(call("MultiEdit", { file_path: "/w/a.htm", edits: [] }), "/w"),
+            others: [files(call("write", { filePath: "/w/a.html", content: "x" })),
+                     files(call("write_file", { file_path: "/w/a.html", content: "x" })),
+                     files(call("str_replace_based_edit_tool", { command: "create", path: "/w/a.html", file_text: "x" }))],
+            none: [files(call("str_replace_based_edit_tool", { command: "view", path: "/w/a.html" })),
+                   files(call("Write", { file_path: "/w/notes.md", content: "see a.html" })),
+                   files(call("Read", { file_path: "/w/a.html" })),
+                   files(call("Bash", { command: "open a.html" })),
+                   files({ name: "Write", args_summary: "Write · a.html" }),
+                   files(call("Write", '{"file_path":"/w/a.html"'))],
+            patch: targets(call("apply_patch", JSON.stringify(patch)), "/w"),
+            wrapped: targets(call("apply_patch", { input: patch }), "/w").length,
+            outside: targets(call("Write", { file_path: "/tmp/elsewhere/a.html", content: "x" }), "/w"),
+            url: T.previewUrl("claude:s1@mac", "out/a+b c&d.html"),
+          };""")
+        self.assertEqual(out["rel"], ["out/mock.html", "mock.html", "out/mock.html", "out/a.html",
+                                      "a.svg", "a.html", "a.html"])
+        self.assertEqual(out["refused"], [None] * 11)
+        self.assertEqual(out["isPage"], [True, True, True, False, False, False, False])
+        self.assertEqual(out["write"], ["out/mock.html"])
+        self.assertEqual(out["edit"], ["logo.SVG"])
+        self.assertEqual(out["multi"], ["a.htm"])
+        self.assertEqual(out["others"], [["/w/a.html"]] * 3)
+        self.assertEqual(out["none"], [[]] * 6)
+        # The moved file previews where it landed; the repeated add once.
+        self.assertEqual(out["patch"], ["site/index.html", "site/new.htm"])
+        self.assertEqual(out["wrapped"], 2)
+        self.assertEqual(out["outside"], [])
+        # "+" goes as %2B: the hub's parse_qs reads a raw "+" as a space.
+        self.assertEqual(out["url"], "/v1/sessions/claude%3As1%40mac/preview?path=out%2Fa%2Bb%20c%26d.html")
+
+    def test_page_preview_is_locked(self):
+        """The frame runs no script and loads nothing: an empty sandbox
+        and the hub's CSP as the document's first element, ahead of any
+        tag that could load, wherever the page's own text starts; the
+        page's frame sits in a wrapper of our own whose policy stops it
+        navigating itself."""
+        out = self.run_js(r"""
+          const enc = (s) => new TextEncoder().encode(s);
+          const doc = (kind, s) => T.pageDocument(kind, enc(s));
+          const page = '<!doctype html><a target="_self" href="https://x.test/">go</a>';
+          const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><image href="http://x.test/a.png"/></svg>';
+          return {
+            csp: T.PREVIEW_CSP,
+            attrs: T.previewFrameAttrs("<p>x</p>", "Preview of a.html"),
+            doctype: doc("html", '<!DOCTYPE html>\n<html><head><link rel="stylesheet" href="http://x.test/a.css"></head></html>'),
+            bare: doc("html", '<img src="http://x.test/a.png"><script>alert(1)</script>'),
+            bom: doc("html", '﻿<!doctype html><p>x</p>'),
+            lead: doc("html", '  \n<!doctype html><p>x</p>'),
+            comment: doc("html", '<!--><img src="http://x.test/a.png">--><!doctype html>'),
+            nbsp: doc("html", ' <!doctype html><img src="http://x.test/a.png">'),
+            quoted: doc("html", '<!doctype html PUBLIC "x>y"><img src="https://x.test/a.png">'),
+            svg: doc("svg", svg),
+            svgB64: Buffer.from(svg).toString("base64"),
+            wrapper: T.previewDocument("html", enc(page)),
+            inner: esc(T.pageDocument("html", enc(page))),
+            kinds: [T.previewKind("text/html; charset=utf-8", "a.svg"), T.previewKind("image/svg+xml", "a.html"),
+                    T.previewKind(null, "a.SVG"), T.previewKind("", "a.htm")],
+          };""")
+        meta = f'<meta http-equiv="Content-Security-Policy" content="{out["csp"]}">'
+        self.assertEqual(out["csp"], "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
+                                     "font-src data:; media-src data:; base-uri 'none'; form-action 'none'")
+        # No token at all: no allow-scripts, allow-same-origin, allow-forms,
+        # allow-popups or allow-top-navigation. Sandbox comes before srcdoc.
+        self.assertEqual(out["attrs"], {"sandbox": "", "referrerpolicy": "no-referrer",
+                                        "title": "Preview of a.html", "srcdoc": "<p>x</p>"})
+        self.assertEqual(list(out["attrs"])[0], "sandbox")
+        # Straight after a doctype (standards mode kept), else first of all.
+        self.assertTrue(out["doctype"].startswith("<!DOCTYPE html>" + meta + '<base target="_blank">\n<html>'))
+        self.assertTrue(out["bare"].startswith(meta + '<base target="_blank"><img '))
+        self.assertTrue(out["bom"].startswith("<!doctype html>" + meta))
+        self.assertTrue(out["lead"].startswith("  \n<!doctype html>" + meta))
+        # `<!-->` is a whole comment to the parser, and NBSP is not HTML
+        # whitespace: either would put the policy after the <img>.
+        self.assertTrue(out["comment"].startswith(meta))
+        self.assertTrue(out["nbsp"].startswith(meta))
+        # A doctype ends at its first ">", quotes or not (the tokenizer's
+        # abrupt-doctype-public-identifier rule): the policy is a real
+        # element after it, ahead of the <img>.
+        self.assertTrue(out["quoted"].startswith('<!doctype html PUBLIC "x>' + meta + '<base target="_blank">y"><img'))
+        # The wrapper is ours alone: its policy first, then one frame with
+        # the same empty sandbox holding the page, escaped as srcdoc.
+        self.assertTrue(out["wrapper"].startswith('<!doctype html><html><head><meta charset="utf-8">' + meta))
+        self.assertIn('<iframe sandbox="" referrerpolicy="no-referrer" title="Page" srcdoc="'
+                      + out["inner"] + '"></iframe></body></html>', out["wrapper"])
+        self.assertEqual(out["wrapper"].count("<iframe"), 1)
+        self.assertNotIn("x.test", out["wrapper"].replace(out["inner"], ""))
+        # An SVG is an <img> of a data: URL: its script and link never run.
+        self.assertIn(meta, out["svg"])
+        self.assertIn(f'<img alt="" src="data:image/svg+xml;base64,{out["svgB64"]}">', out["svg"])
+        self.assertNotIn("<script", out["svg"])
+        self.assertNotIn("x.test", out["svg"])
+        self.assertEqual(out["kinds"], ["html", "svg", "svg", "html"])
+
+    def test_preview_messages(self):
+        out = self.run_js("""
+          const m = (status, code, message) => T.previewMessage(status, code ? { error: { code, message } } : null);
+          return [m(404, "not_found", "unknown route"), m(404, "not_found", "no such file"),
+                  m(413, "too_large", ""), m(422, "preview_unavailable", ""), m(0), m(500, "boom", "it broke"),
+                  m(415)];""")
+        self.assertEqual(out, [
+            "Update the hub to preview pages here.", "That file isn't on disk any more.",
+            "This file is too big to preview (the hub's limit is 2 MB).",
+            "Preview works only for sessions on the hub's own machine for now.",
+            "Couldn't reach the hub. Check the connection, then try again.", "it broke",
+            "Only .html, .htm and .svg files preview."])
+
+    def test_link_cards(self):
+        """Web links in a reply get cards: http(s) only, distinct, at
+        most three, none from code; the card opens a new tab with no
+        opener or referrer."""
+        out = self.run_js(r"""
+          const urls = (t) => T.linkUrls(t).map((u) => u.href);
+          return {
+            mixed: urls("See [the page](https://www.claude.ai/code/artifact/abc?x=1&y=2) and "
+              + "https://example.com, again https://example.com, mailto:a@b.c, `https://code.test/x`\n"
+              + "```\nhttps://fence.test\n```\n[file](src/a.py)"),
+            many: urls("https://a.test/1 https://b.test/2 https://c.test/3 https://d.test/4"),
+            none: urls("no links here"),
+            host: [T.linkHost(new URL("https://www.claude.ai/x")), T.linkHost(new URL("http://example.com"))],
+            path: [T.linkPath(new URL("https://claude.ai/code/x?y=1")), T.linkPath(new URL("https://claude.ai/"))],
+            html: T.linkCardsHtml('Go to https://example.com/a?q="x"'),
+            empty: T.linkCardsHtml("plain"),
+          };""")
+        self.assertEqual(out["mixed"], ["https://www.claude.ai/code/artifact/abc?x=1&y=2", "https://example.com/"])
+        self.assertEqual(out["many"], ["https://a.test/1", "https://b.test/2", "https://c.test/3"])
+        self.assertEqual(out["none"], [])
+        self.assertEqual(out["host"], ["claude.ai", "example.com"])
+        self.assertEqual(out["path"], ["/code/x?y=1", ""])
+        self.assertIn('target="_blank" rel="noopener noreferrer"', out["html"])
+        self.assertIn('<span class="link-card-host">example.com</span>', out["html"])
+        self.assertNotIn('"x"', out["html"])
+        self.assertEqual(out["empty"], "")
+
     def test_frames_pacing_and_routes(self):
         out = self.run_js("""
           return {
