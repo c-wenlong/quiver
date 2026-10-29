@@ -1,17 +1,17 @@
 import XCTest
 
-/// Live UI verification for the launch Model field (#914): the same
-/// behaviour the Mac sheets and the web sheets were checked for — the
-/// field shows on a machine row that reports `model_at_launch`, prefills
-/// the harness's last-used model, re-prefills on a harness change while
-/// untouched, keeps a typed value (a deliberate clear included), and
-/// disables with a note for a harness that can't take a pick.
+/// Live UI verification for the launch Model menu (#914): the menu shows
+/// on a machine row that reports `model_at_launch`, starts on the
+/// harness's newest recent model, re-defaults on a harness change while
+/// untouched, keeps a picked Harness default and a typed Other value
+/// across switches, and disables with a note for a harness that can't
+/// take a pick.
 ///
 /// Needs a paired hub in the simulator's store (pair once with
 /// `simctl openurl <device> 'quiver://pair?…'` before running); the
 /// assertions wait rather than assume, so a slow hub still passes.
-/// The prefill cases also need real ledger data on that hub — a harness
-/// that has never launched has no last-used model to fill — and the
+/// The default cases also need real ledger data on that hub — a harness
+/// that has never launched has no recent model to start on — and the
 /// resolve-sheet case needs the hub to see c-wenlong/quiver issues.
 final class LaunchSheetsUITests: XCTestCase {
 
@@ -33,21 +33,22 @@ final class LaunchSheetsUITests: XCTestCase {
         newSession.tap()
     }
 
-    private var modelField: XCUIElement {
-        // The ModelField's TextField carries the "Harness default"
-        // placeholder as its accessibility label.
-        app.textFields["Harness default"]
+    /// The Model menu's button; its accessibility value is the label of
+    /// the current choice.
+    private var modelMenu: XCUIElement {
+        app.buttons["model-menu"]
+    }
+
+    private var otherField: XCUIElement {
+        app.textFields["model-other"]
+    }
+
+    private func menuValue() -> String {
+        modelMenu.value as? String ?? ""
     }
 
     private func chip(_ name: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label == %@", name)).firstMatch
-    }
-
-    /// An empty TextField reports its placeholder through `value`; both
-    /// mean "no model picked".
-    private func isEmptyOrPlaceholder(_ field: XCUIElement) -> Bool {
-        let value = field.value as? String ?? ""
-        return value.isEmpty || value == field.placeholderValue as? String
     }
 
     /// A harness chip that is not the current selection, so tapping it
@@ -56,67 +57,75 @@ final class LaunchSheetsUITests: XCTestCase {
         names.map(chip).first { $0.exists && !$0.isSelected }
     }
 
-    func testModelFieldPrefillsRefillsAndKeepsAnEdit() throws {
+    /// Opens the menu and taps the entry labelled `label`.
+    private func pick(_ label: String) {
+        modelMenu.tap()
+        let item = app.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "no \(label) entry in the Model menu")
+        item.tap()
+    }
+
+    func testModelMenuDefaultsFollowsAndKeepsAPick() throws {
         try openNewSessionSheet()
 
-        let field = modelField
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "Model field missing on the New session sheet")
+        XCTAssertTrue(modelMenu.waitForExistence(timeout: 10), "Model menu missing on the New session sheet")
         let harnesses = ["Codex", "Claude Code", "Claude", "Gemini"]
 
-        // Prefill: whatever the harness's last-used model is, the field
-        // starts non-empty for a model-capable default harness.
-        XCTAssertFalse(isEmptyOrPlaceholder(field), "Model field was not prefilled")
-        let initial = field.value as? String ?? ""
+        // Default: the harness's newest recent model, not Harness default.
+        let initial = menuValue()
+        XCTAssertNotEqual(initial, "Harness default", "Model menu did not start on a recent model")
 
-        // A harness switch re-prefills while the field is untouched: tap
-        // whichever offered chip is not the current selection.
+        // The menu lists Harness default, the recents, then Other.
+        modelMenu.tap()
+        for label in ["Harness default", initial, "Other…"] {
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch.waitForExistence(timeout: 5),
+                          "Model menu has no \(label) entry")
+        }
+        // Close it without a pick: a tap on the navigation title.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+
+        // An untouched menu follows a harness switch to the new
+        // harness's newest model.
         guard let first = otherChip(than: harnesses) else {
             XCTFail("no alternate harness chip to switch to"); return
         }
         first.tap()
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
-        let refilled = field.value as? String ?? ""
-        XCTAssertFalse(isEmptyOrPlaceholder(field), "Model field did not re-prefill after the switch")
-        XCTAssertNotEqual(initial, refilled, "Model field kept the old suggestion across a harness switch")
+        XCTAssertNotEqual(menuValue(), initial, "Model menu kept another harness's model across a switch")
 
-        // A typed value survives the next harness switch.
-        field.tap()
-        field.typeText("-typed")
-        let typed = field.value as? String ?? ""
+        // An explicit Harness default survives the next switch.
+        pick("Harness default")
+        XCTAssertEqual(menuValue(), "Harness default")
         guard let second = otherChip(than: harnesses) else {
             XCTFail("no second harness chip to switch to"); return
         }
         second.tap()
-        XCTAssertEqual(field.value as? String, typed, "typed model was overwritten by a harness switch")
+        XCTAssertEqual(menuValue(), "Harness default", "a picked Harness default was re-defaulted by a switch")
 
-        // A deliberate clear is an edit too: it stays cleared. Delete
-        // once per character present (plus margin), then compare
-        // against the placeholder, which empty fields report.
-        field.tap()
-        let chars = (field.value as? String ?? "").count
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: chars + 8))
-        XCTAssertTrue(isEmptyOrPlaceholder(field), "field did not clear: \(field.value ?? "")")
+        // Other opens a field; what is typed there survives a switch.
+        pick("Other…")
+        XCTAssertTrue(otherField.waitForExistence(timeout: 5), "Other did not open the model field")
+        otherField.tap()
+        otherField.typeText("my-model")
         first.tap()
-        XCTAssertTrue(isEmptyOrPlaceholder(field),
-                      "cleared model was resurrected by a harness switch: \(field.value ?? "")")
+        XCTAssertEqual(menuValue(), "Other…", "Other was re-defaulted by a switch")
+        XCTAssertEqual(otherField.value as? String, "my-model", "typed model was lost on a switch")
     }
 
-    func testAnUnsupportedHarnessDisablesTheField() throws {
+    func testAnUnsupportedHarnessDisablesTheMenu() throws {
         try openNewSessionSheet()
 
         let kilo = chip("Kilo")
         XCTAssertTrue(kilo.waitForExistence(timeout: 10), "no Kilo harness chip")
         kilo.tap()
 
-        let field = modelField
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "Model row missing entirely — the disabled variant should still show")
-        XCTAssertFalse(field.isEnabled, "Model field stayed editable for a harness that can't take a pick")
+        XCTAssertTrue(modelMenu.waitForExistence(timeout: 5), "Model row missing entirely — the disabled variant should still show")
+        XCTAssertFalse(modelMenu.isEnabled, "Model menu stayed usable for a harness that can't take a pick")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "can't take a model")).firstMatch.waitForExistence(timeout: 3),
                       "the disabled note did not render")
     }
 
-    /// The resolve sheet on a GitHub issue gets the same Model field.
-    func testIssueResolveSheetShowsTheField() throws {
+    /// The resolve sheet on a GitHub issue gets the same Model menu.
+    func testIssueResolveSheetShowsTheMenu() throws {
         // Deep links need a paired app on screen first.
         try XCTSkipUnless(app.buttons["New session"].waitForExistence(timeout: 15),
                           "no paired hub on this simulator — pair once with a quiver://pair link")
@@ -124,7 +133,7 @@ final class LaunchSheetsUITests: XCTestCase {
         let resolve = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Resolve with agent")).firstMatch
         XCTAssertTrue(resolve.waitForExistence(timeout: 15), "no Resolve with agent button on the issue")
         resolve.tap()
-        XCTAssertTrue(modelField.waitForExistence(timeout: 10), "Model field missing on the resolve sheet")
-        XCTAssertFalse(isEmptyOrPlaceholder(modelField), "resolve-sheet Model field was not prefilled")
+        XCTAssertTrue(modelMenu.waitForExistence(timeout: 10), "Model menu missing on the resolve sheet")
+        XCTAssertNotEqual(menuValue(), "Harness default", "resolve-sheet Model menu did not start on a recent model")
     }
 }

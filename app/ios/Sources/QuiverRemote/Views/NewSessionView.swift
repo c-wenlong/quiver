@@ -14,11 +14,8 @@ struct NewSessionView: View {
     @State private var harness: String?
     @State private var harnessPicked = false
     @State private var prompt = ""
-    @State private var model = ""
-    /// The field's own binding sets this on any keystroke, so even a
-    /// clear back to the prefill counts: a harness or machine change
-    /// must not overwrite what the user left.
-    @State private var modelEdited = false
+    /// The Model menu; `follow` re-defaults it on a harness change.
+    @State private var model = ModelSelection()
     @State private var showAllFolders = false
     @State private var folderQuery = ""
     @State private var browsePath: [FolderBrowse] = []
@@ -62,7 +59,7 @@ struct NewSessionView: View {
                 if let machine {
                     harnessSection(machine)
                     ModelField(machine: machine, harness: harness,
-                               text: Binding(get: { model }, set: { model = $0; modelEdited = true }),
+                               selection: $model,
                                sessions: rows, disabled: flow.busy)
                     promptSection
                     startSection(machine)
@@ -89,8 +86,8 @@ struct NewSessionView: View {
         .onChange(of: harness) { _, _ in
             if let machine { refillModel(on: machine) }
         }
-        // A machine switch can keep the same harness while last_models
-        // changes, so the refill listens to the machine too.
+        // A machine switch can keep the same harness while its
+        // recent_models change, so the menu follows the machine too.
         .onChange(of: machineId) { _, _ in
             if let machine { refillModel(on: machine) }
         }
@@ -297,18 +294,16 @@ struct NewSessionView: View {
         }
     }
 
-    /// The Model field's prefill after a harness or machine change: an
-    /// unedited field takes the machine's last-used model for the new
-    /// harness, an edited one keeps what the user left.
+    /// The Model menu after a harness or machine change;
+    /// `ModelSelection.follow` says which picks survive it.
     private func refillModel(on machine: Machine) {
-        guard let next = NewSessionOptions.modelText(edited: modelEdited, for: harness, on: machine) else { return }
-        model = next
+        model.follow(harness, on: machine)
     }
 
     private func start(_ machine: Machine) async {
         guard let client = app.client, let folder, let harness else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pick = NewSessionOptions.modelPick(model, for: harness, on: machine)
+        let pick = model.model(for: harness, on: machine)
         let key = await flow.run(
             post: { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text, model: pick) },
             fetch: { try await client.launch($0) })
@@ -433,30 +428,39 @@ private struct FolderChoice: Identifiable {
 }
 
 /// The Model row every launch sheet shows under its harness picker: a
-/// free-text field for the model the agent starts with, prefilled by
-/// the sheet from the machine's last-used ledger. It hides on a machine
-/// row too old to name the harnesses that honour a pick (an old
-/// satellite would refuse one anyway), and disables for a harness that
-/// can't — the hub would answer that pick with a 409.
+/// menu of Harness default, the machine's recent models for the harness
+/// (newest first) and Other, which opens a field for a typed model id.
+/// The sheet owns the `ModelSelection` and calls `follow` on a harness
+/// or machine change. The row hides on a machine row too old to name
+/// the harnesses that honour a pick (an old satellite would refuse one
+/// anyway), and disables for a harness that can't — the hub would
+/// answer that pick with a 409.
 struct ModelField: View {
     let machine: Machine
     let harness: String?
-    @Binding var text: String
+    @Binding var selection: ModelSelection
     /// The sheet's session rows, for the harness's display name.
     var sessions: [SessionRow] = []
-    /// A launch in flight locks the field with the sheet's other inputs.
+    /// A launch in flight locks the menu with the sheet's other inputs.
     var disabled = false
+
+    @FocusState private var otherFocused: Bool
 
     private var accepts: Bool { NewSessionOptions.acceptsModel(harness, on: machine) }
 
     var body: some View {
-        if machine.modelAtLaunch != nil {
+        if NewSessionOptions.showsModelField(on: machine) {
             GroupLabel(text: "Model")
-            TextField("Harness default", text: $text)
-                .quiverField()
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .disabled(disabled || !accepts)
+            menu
+            if selection.choice == .other {
+                TextField("Type a model id", text: $selection.otherText)
+                    .quiverField(monospaced: true)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($otherFocused)
+                    .disabled(disabled || !accepts)
+                    .accessibilityIdentifier("model-other")
+            }
             if !accepts, let harness {
                 Text("\(NewSessionOptions.name(harness, on: machine, sessions: sessions)) can't take a model at launch: it starts with its own default.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -464,6 +468,43 @@ struct ModelField: View {
                     .padding(.horizontal, 4)
             }
         }
+    }
+
+    private var menu: some View {
+        let choice = selection.choice
+        let isModel = if case .recent = choice { true } else { false }
+        return Menu {
+            Picker("Model", selection: Binding(
+                get: { selection.choice },
+                set: { selection.choose($0) })) {
+                ForEach(selection.choices(for: harness, on: machine), id: \.self) { c in
+                    Text(c.label).tag(c)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            HStack(spacing: 8) {
+                Text(choice.label)
+                    .font(isModel ? Theme.monoBody : Theme.body)
+                    .foregroundStyle(accepts ? Theme.textPrimary : Theme.textMuted)
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: Theme.fieldHeight)
+            .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+            .contentShape(.rect)
+        }
+        .disabled(disabled || !accepts)
+        // Picking Other opens its field ready to type.
+        .onChange(of: choice) { _, now in if now == .other { otherFocused = true } }
+        .accessibilityLabel("Model")
+        .accessibilityValue(choice.label)
+        .accessibilityIdentifier("model-menu")
     }
 }
 

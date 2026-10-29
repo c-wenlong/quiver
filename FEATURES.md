@@ -79,7 +79,7 @@ hosts the hub; the web app and the iOS app are its clients.
 | --- | --- | --- | --- | --- |
 | Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval |
 | Devices list and revoke | yes | yes | yes | Mac and Web: Settings. iOS: under the hub chip menu |
-| Launch a new session | yes | yes | yes | All three: machine, folder and harness pickers, first prompt, launch poll, then the chat opens. All sheets carry the model picker prefilled with the last-used model (`last_models`/`last_model`, #914); on the Mac and the web it is a menu of the harness's `recent_models` plus Other… (web: Harness default first, `static/model-menu.js`) |
+| Launch a new session | yes | yes | yes | All three: machine, folder and harness pickers, first prompt, launch poll, then the chat opens. All sheets carry the model picker prefilled with the last-used model (`last_models`/`last_model`, #914); on all three it is a menu of Harness default, the harness's `recent_models` newest first, then Other… (web: `static/model-menu.js`; iOS: `ModelSelection`) |
 | Machine switcher | - | - | planned | iOS P4: one machine today |
 | Machine vitals | yes | yes | planned | Compute page on Mac and Web; iOS P9 carries the samples over the hub |
 | Push notifications | - | - | part | ntfy today; APNs planned |
