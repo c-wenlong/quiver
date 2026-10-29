@@ -1223,21 +1223,28 @@ const SessionChat = (() => {
    * sent "a+b.html" as "a b.html". */
   const previewUrl = (key, path) => `${sessionPath(key, "preview")}?path=${encodeURIComponent(path)}`;
 
-  /* The frame's lockdown, two layers:
+  /* The frame's lockdown:
    *
    * - sandbox with no tokens: no scripts (no allow-scripts), an opaque
    *   origin that can't read the app's storage or credential (no
    *   allow-same-origin), no forms, popups, modals or top navigation.
    *   Plugins and autoplay are off with it.
-   * - PREVIEW_CSP as the document's first element: sandbox alone still
-   *   lets <img>, <link> and CSS url()s load. This is the hub's own
-   *   preview header (remote/preview.py CSP) minus `sandbox`, which a
-   *   <meta> policy can't carry: nothing loads but inline styles and
-   *   data: images, fonts and media, and <base>/<form> can't point
-   *   anywhere.
+   * - PREVIEW_CSP: sandbox alone still lets <img>, <link> and CSS
+   *   url()s load. This is the hub's own preview header
+   *   (remote/preview.py CSP) minus `sandbox`, which a <meta> policy
+   *   can't carry: nothing loads but inline styles and data: images,
+   *   fonts and media, and <base>/<form> can't point anywhere.
+   * - Two frames, both sandboxed: a wrapper of our own whose only
+   *   content is the page's frame. A frame may still navigate itself
+   *   (a `target="_self"` link click), and neither its sandbox nor its
+   *   own policy stops that; the browser checks such a navigation
+   *   against the parent's frame-src, which the wrapper's policy sets to
+   *   'none' (via default-src). The page's frame also inherits the
+   *   wrapper's policy, so it holds even if the page's own copy were
+   *   placed wrong.
    *
-   * <base target="_blank"> sends a link click to a new window, which
-   * the sandbox refuses (no allow-popups), so a click goes nowhere. */
+   * <base target="_blank"> sends a plain link click to a new window,
+   * which the sandbox refuses (no allow-popups). */
   const PREVIEW_SANDBOX = "";
   const PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
     + "font-src data:; media-src data:; base-uri 'none'; form-action 'none'";
@@ -1259,18 +1266,20 @@ const SessionChat = (() => {
     return btoa(bin);
   }
 
-  /* The frame's srcdoc. The policy has to come before anything that
-   * loads, and a <meta> policy counts only inside <head>, so it goes
-   * first: straight after a leading doctype (keeping the page out of
-   * quirks mode), else at the very start, where the parser opens <head>
-   * for it. Only HTML whitespace may precede the doctype: a comment
-   * (`<!-->` closes at once) or any other character could open <body>
-   * first, where the policy would be ignored.
+  /* The page's own frame's srcdoc. The policy has to come before
+   * anything that loads, and a <meta> policy counts only inside <head>,
+   * so it goes first: straight after a leading doctype (keeping the page
+   * out of quirks mode), else at the very start, where the parser opens
+   * <head> for it. Only HTML whitespace may precede the doctype: a
+   * comment (`<!-->` closes at once) or any other character could open
+   * <body> first, where the policy would be ignored. A doctype ends at
+   * its first ">", even inside a quoted identifier (the tokenizer's
+   * abrupt-doctype-public-identifier rule), as [^>]* does.
    *
    * An SVG is drawn as an image (a data: URL in an <img>), where the
    * browser runs none of its scripts and loads none of its links, as on
    * the phone. */
-  function previewDocument(kind, bytes) {
+  function pageDocument(kind, bytes) {
     if (kind === "svg") {
       return `<!doctype html><html><head><meta charset="utf-8">${PREVIEW_HEAD}`
         // Scaled down to fit the frame either way; an SVG with only a
@@ -1281,6 +1290,14 @@ const SessionChat = (() => {
     const text = new TextDecoder("utf-8").decode(bytes); // drops a BOM
     const lead = text.match(/^[\t\n\f\r ]*<!doctype[^>]*>/i);
     return lead ? lead[0] + PREVIEW_HEAD + text.slice(lead[0].length) : PREVIEW_HEAD + text;
+  }
+
+  /* The outer frame's srcdoc: our wrapper, holding the page's frame
+   * (same sandbox, the page as an escaped srcdoc attribute). */
+  function previewDocument(kind, bytes) {
+    return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}">`
+      + "<style>html,body{margin:0;height:100%;background:#fff}iframe{display:block;border:0;width:100%;height:100%}</style>"
+      + `</head><body><iframe sandbox="${PREVIEW_SANDBOX}" referrerpolicy="no-referrer" title="Page" srcdoc="${esc(pageDocument(kind, bytes))}"></iframe></body></html>`;
   }
 
   /* The frame's attributes; sandbox is set before srcdoc, so the very
@@ -3152,7 +3169,7 @@ const SessionChat = (() => {
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
       diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
-      previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
+      pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
       cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat },
   };

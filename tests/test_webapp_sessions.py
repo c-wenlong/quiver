@@ -774,10 +774,13 @@ class TestChatScript(unittest.TestCase):
     def test_page_preview_is_locked(self):
         """The frame runs no script and loads nothing: an empty sandbox
         and the hub's CSP as the document's first element, ahead of any
-        tag that could load, wherever the page's own text starts."""
+        tag that could load, wherever the page's own text starts; the
+        page's frame sits in a wrapper of our own whose policy stops it
+        navigating itself."""
         out = self.run_js(r"""
           const enc = (s) => new TextEncoder().encode(s);
-          const doc = (kind, s) => T.previewDocument(kind, enc(s));
+          const doc = (kind, s) => T.pageDocument(kind, enc(s));
+          const page = '<!doctype html><a target="_self" href="https://x.test/">go</a>';
           const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><image href="http://x.test/a.png"/></svg>';
           return {
             csp: T.PREVIEW_CSP,
@@ -788,8 +791,11 @@ class TestChatScript(unittest.TestCase):
             lead: doc("html", '  \n<!doctype html><p>x</p>'),
             comment: doc("html", '<!--><img src="http://x.test/a.png">--><!doctype html>'),
             nbsp: doc("html", ' <!doctype html><img src="http://x.test/a.png">'),
+            quoted: doc("html", '<!doctype html PUBLIC "x>y"><img src="https://x.test/a.png">'),
             svg: doc("svg", svg),
             svgB64: Buffer.from(svg).toString("base64"),
+            wrapper: T.previewDocument("html", enc(page)),
+            inner: esc(T.pageDocument("html", enc(page))),
             kinds: [T.previewKind("text/html; charset=utf-8", "a.svg"), T.previewKind("image/svg+xml", "a.html"),
                     T.previewKind(null, "a.SVG"), T.previewKind("", "a.htm")],
           };""")
@@ -810,6 +816,17 @@ class TestChatScript(unittest.TestCase):
         # whitespace: either would put the policy after the <img>.
         self.assertTrue(out["comment"].startswith(meta))
         self.assertTrue(out["nbsp"].startswith(meta))
+        # A doctype ends at its first ">", quotes or not (the tokenizer's
+        # abrupt-doctype-public-identifier rule): the policy is a real
+        # element after it, ahead of the <img>.
+        self.assertTrue(out["quoted"].startswith('<!doctype html PUBLIC "x>' + meta + '<base target="_blank">y"><img'))
+        # The wrapper is ours alone: its policy first, then one frame with
+        # the same empty sandbox holding the page, escaped as srcdoc.
+        self.assertTrue(out["wrapper"].startswith('<!doctype html><html><head><meta charset="utf-8">' + meta))
+        self.assertIn('<iframe sandbox="" referrerpolicy="no-referrer" title="Page" srcdoc="'
+                      + out["inner"] + '"></iframe></body></html>', out["wrapper"])
+        self.assertEqual(out["wrapper"].count("<iframe"), 1)
+        self.assertNotIn("x.test", out["wrapper"].replace(out["inner"], ""))
         # An SVG is an <img> of a data: URL: its script and link never run.
         self.assertIn(meta, out["svg"])
         self.assertIn(f'<img alt="" src="data:image/svg+xml;base64,{out["svgB64"]}">', out["svg"])

@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<iframe sandbox>` with no permissions at all (no scripts, forms,
   popups or navigation out, and an opaque origin) and a
   `default-src 'none'` policy at the top of the page, so nothing loads
-  from the network; an SVG is drawn as an image. Source shows the
+  from the network. That frame sits inside a second locked frame of the
+  app's own, whose policy also stops the page navigating itself (a
+  `target="_self"` link). An SVG is drawn as an image. Source shows the
   file's text, Reload fetches it again, and a refused file says why in
   plain words. A reply that links to web pages gets a card per page
   (host, path, Open in a new tab), up to three. File names with `+` are
