@@ -1443,6 +1443,22 @@ class ReviewFixesTest(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertFalse(_shared.runtime_file(home).exists())
 
+    def test_enable_and_disable_refuse_an_unreadable_linkignore(self):
+        """The re-plan after the marker reloaded .linkignore unguarded, so
+        an unreadable one escaped as a LinkIgnoreError traceback (after the
+        marker was already written)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            src = hooks_dir(home) / "claude/gate.py"
+            src.parent.mkdir(parents=True)
+            src.write_text("x")
+            (home / ".quiver/.linkignore").mkdir()
+            for verb in ("disable", "enable"):
+                code, out = _run(home, verb, "gate")
+                self.assertEqual(code, 1, out)
+                self.assertIn("linkignore", out.lower())
+                self.assertEqual(_shared.disabled_names(src.parent), set())
+
     # --- failed deletes report themselves (commands.py #8) -------------
 
     def test_a_failed_delete_is_reported_and_exits_nonzero(self):

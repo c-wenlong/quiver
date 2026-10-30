@@ -170,9 +170,13 @@ const GhUI = (() => {
   /* app.js's failText, its offline line ending "then refresh". */
   const failMessage = (status, data) => failText(status, data, "then refresh");
 
-  /* Keep a search box's focus and caret across a repaint. */
+  /* Keep a search box's focus and caret across a repaint. While the box
+   * is mid-composition (bindSearch) the repaint would end the IME's
+   * unfinished word, so it is skipped: the box's compositionend repaints
+   * with whatever landed meanwhile (a poll's spinner or its reply). */
   function keepFocus(id, paint) {
     const el = document.getElementById(id);
+    if (el && el.composing) return;
     const had = el && document.activeElement === el;
     const at = had ? el.selectionStart : 0;
     paint();

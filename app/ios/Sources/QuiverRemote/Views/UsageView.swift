@@ -37,7 +37,7 @@ struct UsageSections: View {
             SectionTitle(text: "Limits")
             if let usage = model.usage {
                 if let error = model.usageError {
-                    Text(inlineCode: "Couldn't refresh: \(error)").font(Theme.caption).foregroundStyle(Theme.textMuted).padding(.horizontal, 4)
+                    StaleNotice(error: error).padding(.horizontal, 4)
                 }
                 LimitsSection(usage: usage, now: now)
             } else if let error = model.usageError {

@@ -104,14 +104,13 @@ function paintHarnesses() {
   const scope = document.getElementById("harness-scope");
   scope.onchange = () => { p.scope = scope.value; paintHarnesses(); };
   const search = document.getElementById("harness-search");
-  search.oninput = () => {
-    p.query = search.value;
+  bindSearch(search, (text) => { p.query = text; }, () => {
     const at = search.selectionStart;
     paintHarnesses();
     const again = document.getElementById("harness-search");
     again.focus();
     again.setSelectionRange(at, at);
-  };
+  });
   const fold = document.getElementById("harness-fold");
   if (fold) fold.onclick = () => { p.expanded = !p.expanded; paintHarnesses(); };
   bindHarnessActions();
@@ -846,6 +845,18 @@ function accountCard(h, machine) {
 }
 
 /* ---------------------------------------------------------------- shared */
+
+/* A filter box whose page repaints, and so replaces it, as you type.
+ * ``onText`` keeps every keystroke, but the repaint waits while an IME
+ * composition is open (it would end the composition mid-word) and runs
+ * once the composition ends. ``repaint`` puts the focus and caret back.
+ * ``input.composing`` says a composition is open, so a background repaint
+ * (GhUI.keepFocus) can wait for that same compositionend repaint. */
+function bindSearch(input, onText, repaint) {
+  input.oncompositionstart = () => { input.composing = true; };
+  input.oninput = (e) => { onText(input.value); if (!e.isComposing) repaint(); };
+  input.oncompositionend = () => { input.composing = false; onText(input.value); repaint(); };
+}
 
 function bindRefresh(render, before) {
   const btn = document.getElementById("page-refresh");

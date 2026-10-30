@@ -1284,5 +1284,61 @@ class TestPrFilter(unittest.TestCase):
         self.assertEqual(out["failedRows"], 4)
 
 
+# The focus page's filter under the minute poll and an IME: the poll's
+# repaint puts the focus back in the (new) filter box, and keystrokes
+# inside a composition update the filter without replacing the box.
+FOCUS_FILTER_FLOW = r"""
+let pollTick = null;
+globalThis.setInterval = (fn) => { pollTick = fn; return 1; };
+const pr = (number, title) => ({ number, title, state: "open", draft: false, author: "me",
+  branch: "b" + number, base: "main", labels: [], mergeable: "mergeable", review_decision: "none",
+  checks: "none", updated_at: null, url: "" });
+apiAnswers.push(["/v1/app/repositories", { status: 200, data: { machine: "hub", github: { status: "ok" },
+  limits: {}, surfaces: { pull_requests: { status: "ok", pull_requests: [pr(1, "alpha"), pr(2, "beta")] },
+    issues: { status: "ok", issues: [] }, runs: { status: "ok", runs: [] } } } }]);
+const out = {};
+const box = () => document.getElementById("gh-search");
+const rows = () => [...panel.innerHTML.matchAll(/>(alpha|beta)</g)].map((m) => m[1]);
+(async () => {
+  location.hash = "#/repositories?repo=o/a";
+  PAGES.repositories();
+  await tick();
+  box().focus();
+  pollTick(); // the minute poll: renderFocus paints its spinner first
+  out.focusedWhileLoading = document.activeElement === box();
+  await tick();
+  out.focusedAfter = document.activeElement === box();
+  const typing = box();
+  typing.oncompositionstart();
+  typing.value = "be";
+  typing.oninput({ isComposing: true });
+  pollTick(); // the poll starts, and its reply lands, mid-composition
+  await tick();
+  out.keptDuringComposition = box() === typing;
+  out.rowsDuringComposition = rows();
+  typing.value = "beta";
+  typing.oncompositionend();
+  out.repaintedAfter = box() !== typing && document.activeElement === box();
+  out.rowsAfter = rows();
+  process.stdout.write(JSON.stringify(out));
+  process.exit(0);
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFocusFilter(unittest.TestCase):
+    def test_the_poll_keeps_focus_and_a_composition_is_not_cut(self):
+        from tests.test_webapp_launch_sheets import PAGES, STUB
+        script = (STUB + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "repositories.js").read_text(encoding="utf-8") + "\n" + FOCUS_FILTER_FLOW)
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {
+            "focusedWhileLoading": True, "focusedAfter": True,
+            "keptDuringComposition": True, "rowsDuringComposition": ["alpha", "beta"],
+            "repaintedAfter": True, "rowsAfter": ["beta"]})
+
+
 if __name__ == "__main__":
     unittest.main()
