@@ -552,11 +552,15 @@ async function cloneHub() {
   }
   if (status === 200 && data && data.hub) {
     page.data.hub = data.hub;
+    // A small or local repo can be cloned before the reply leaves the
+    // hub: that job is done already and needs the same reload.
+    if (hubJob().state === "done") page.hubStale = true;
   } else {
     page.hubError = (data && data.error && data.error.message)
       || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
   }
-  paint();
+  // A stale preview is never painted: pollHub reloads it first.
+  if (!page.hubStale) paint();
   pollHub();
 }
 
