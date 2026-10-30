@@ -779,6 +779,22 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(
             len([e for e in replay if e["data"]["op"] == "tail"]), 1)
 
+    def test_queue_tail_backlog_full_records_nothing(self):
+        # A refused queue (backlog full) must not mark a tail pending,
+        # or the next open would never ask again.
+        state = self.srv.state
+        with patch.object(state, "queue_command", return_value=None):
+            state.queue_tail("sat-m1", "claude:r3@sat-m1", "idle")
+        self.assertNotIn(("sat-m1", "claude:r3@sat-m1"), state._sat_tail_cmds)
+
+    def test_queue_tail_map_stays_bounded(self):
+        state = self.srv.state
+        state._sat_tail_cmds.update(
+            {("sat-m1", f"k{i}"): "c0" for i in range(4097)})
+        state.queue_tail("sat-m1", "claude:r4@sat-m1", "idle")
+        self.assertEqual(list(state._sat_tail_cmds),
+                         [("sat-m1", "claude:r4@sat-m1")])
+
     def test_launch_to_named_machine_queues(self):
         status, data = self.srv.request(
             "POST", "/v1/sessions",
