@@ -37,6 +37,7 @@ import json
 import os
 import sqlite3
 import threading
+from pathlib import Path
 
 from quiver.ledger.models import json_str
 from quiver.ledger.parsers import opencode_model
@@ -230,8 +231,10 @@ def _open_ro(path: str) -> sqlite3.Connection | None:
     if not os.path.exists(path):
         return None
     try:
-        return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
-    except sqlite3.Error:
+        # as_uri() percent-encodes "?", "#" and "%" in the path.
+        return sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro",
+                               uri=True, timeout=2)
+    except (sqlite3.Error, ValueError):
         return None
 
 
