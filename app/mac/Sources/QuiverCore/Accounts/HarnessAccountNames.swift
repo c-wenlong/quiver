@@ -60,8 +60,6 @@ public final class HarnessAccountNameStore: @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(Document(schema: 1, names: names))
-        try FileManager.default.createDirectory(
-            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: file, options: .atomic)
+        try PrivateFile.write(data, to: file)
     }
 }
