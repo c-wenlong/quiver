@@ -17,6 +17,21 @@ final class SSEParserTests: XCTestCase {
     }
 }
 
+final class EventStreamTests: XCTestCase {
+    func testOnlyARefusalNoRetryCanChangeEndsTheStream() {
+        XCTAssertTrue(EventStream.ends(status: 403, notFoundInARow: 0))
+        // A restarted hub answers 404 until its catalog scan lands.
+        for n in 1..<EventStream.notFoundLimit {
+            XCTAssertFalse(EventStream.ends(status: 404, notFoundInARow: n), "404 number \(n) may be a restart")
+        }
+        XCTAssertTrue(EventStream.ends(status: 404, notFoundInARow: EventStream.notFoundLimit),
+                      "unknown_session that long: the hub dropped it")
+        for status in [0, 500, 502, 503, 504] {
+            XCTAssertFalse(EventStream.ends(status: status, notFoundInARow: 99), "\(status) is worth reconnecting for")
+        }
+    }
+}
+
 final class PairLinkTests: XCTestCase {
     func testQuiverScheme() {
         let link = PairLink(URL(string: "quiver://pair?host=100.64.0.5&port=9000&token=abc&name=phone")!)

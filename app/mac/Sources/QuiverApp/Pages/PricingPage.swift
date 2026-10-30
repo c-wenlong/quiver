@@ -245,7 +245,10 @@ private struct PricingRow: View {
         Button(action: edit) { rowBody }
             .plainButton(cornerRadius: 0)
             .modifier(RowHover())
-            .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+            // SwiftUI sets and resets the cursor itself: a push on hover
+            // with no pop when the row went away (a filter, a page switch)
+            // left the hand stuck over the whole window.
+            .pointerStyle(.link)
     }
 
     private var sourceColor: some ShapeStyle {
