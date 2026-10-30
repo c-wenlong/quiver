@@ -64,9 +64,10 @@ function computeStore(key, value) {
 
 const CFmt = {
   /* ByteCountFormatter's .memory style: binary units, whole KB, one
-   * decimal for MB, two for GB and up, trailing zeros dropped. */
+   * decimal for MB, two for GB and up, trailing zeros dropped; nothing
+   * is "0 KB", as in ComputeSummary.bytes. */
   bytes(count) {
-    if (!count) return "Zero KB";
+    if (!count) return "0 KB";
     if (count < 1024) return `${count} bytes`;
     const units = [["KB", 0], ["MB", 1], ["GB", 2], ["TB", 2]];
     let value = count / 1024, i = 0;
@@ -217,7 +218,8 @@ function paintCompute(busy) {
 function computeTop(d) {
   const t = d.totals;
   const machine = machineLine(d);
-  return `<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${t.process_count} processes · CPU ${CFmt.percent(t.cpu_percent)}% · ${t.threads} threads</p>${
+  const n = t.process_count;
+  return `<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${n} ${n === 1 ? "process" : "processes"} · CPU ${CFmt.percent(t.cpu_percent)}% · ${t.threads} threads</p>${
     machine ? `<p class="caption num compute-machine">${machine}</p>` : ""}`;
 }
 
