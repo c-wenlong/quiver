@@ -367,11 +367,13 @@ struct MultiSelectMenu<Value: Hashable>: View {
             .contentShape(.rect)
         }
         .plainButton(cornerRadius: 0)
-        .modifier(MultiSelectRowHover())
+        .modifier(RowHover())
     }
 }
 
-private struct MultiSelectRowHover: ViewModifier {
+/// `Theme.rowHover` under the pointer: the one row-hover fill for list
+/// rows, menus and pickers.
+struct RowHover: ViewModifier {
     @State private var hovering = false
 
     func body(content: Content) -> some View {

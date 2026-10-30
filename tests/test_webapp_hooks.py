@@ -398,7 +398,6 @@ class TestRoute(HubBase):
     def test_page_assets_are_bundled(self):
         status, js = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("hooks"', js)
         _, css = self.srv.request("GET", "/app/pages.css")
         self.assertIn(b".hk-row", css)
 

@@ -82,6 +82,8 @@ MAX_LINKS = 100
 # two, and the store's history can run to MAX_TASKS. The most recently
 # active win; the rest keep their last-known state this round.
 MAX_REFRESH = 24
+# PRs read when looking for the one an issue branch produced.
+LINKED_PR_PAGE = 20
 
 # The hub is the only writer; this covers its concurrent handlers.
 _lock = threading.Lock()
@@ -517,6 +519,10 @@ def list_view(state, args) -> tuple[int, dict]:
                     pr_read.add(tid)
             if listed.get("fetched_at") is not None:
                 fetched.append(listed["fetched_at"])
+            if listed.get("truncated"):
+                # More open issues than one list reads: say so rather
+                # than pass the first pages off as all of them.
+                body["linear"] = {**body["linear"], "truncated": True}
         else:
             # The probe passed but the fetch failed anyway: say so on
             # the linear block and keep the stored rows' last state.
@@ -869,11 +875,16 @@ class GitHubTasks:
         """``(answered, pr)``: the PR ``quiver/issue-<n>`` produced, in
         any state — the open list only sees open ones, and a resolved
         issue's PR is usually merged. ``answered`` is False when ``gh``
-        failed, so "no PR" and "couldn't tell" stay apart."""
+        failed, so "no PR" and "couldn't tell" stay apart.
+
+        ``--head`` matches the branch name only (gh takes no
+        ``owner:branch``), so forks' PRs from a same-named branch come
+        back too: read a page and keep the first the repo owns, since a
+        limit of 1 could return just a fork's."""
         result = gh.run_json([
             "pr", "list", "--repo", repo, "--head",
             manage.issue_branch(number), "--state", "all",
-            "--limit", "1", "--json", ghcli._PR_FIELDS])
+            "--limit", str(LINKED_PR_PAGE), "--json", ghcli._PR_FIELDS])
         if result.status != "ok" or not isinstance(result.data, list):
             return False, None
         for raw in result.data:

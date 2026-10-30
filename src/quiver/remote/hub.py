@@ -135,6 +135,9 @@ FOLDER_LIST_CAP = 500
 # owner-identity path of /v1/pair/requests*) allow this many attempts
 # per source IP per window.
 _PAIR_ATTEMPT_MAX = 5
+# The catalog loop drops expired pair requests (and any uncollected
+# credential on them) at most this often.
+_PAIR_PRUNE_S = 60.0
 _PAIR_ATTEMPT_S = 600
 
 # A launch the phone started stays answerable at /v1/launches/<id> this
@@ -281,6 +284,7 @@ class HubState:
         self._pair_ex_times: dict[str, list[float]] = {}
         self._pair_dec_times: dict[str, list[float]] = {}
         self._pair_req_lock = threading.Lock()
+        self._pair_pruned_at = 0.0
         # Host values this hub answers to — the owner-identity approval
         # path requires one, and the unauthenticated routes answer only
         # these (filled by serve() from the bind host + whois); empty
@@ -294,19 +298,22 @@ class HubState:
         # with the real tailnet client, so loopback requests carrying
         # them are read as that client. Off, the headers are ignored.
         self.trust_proxy = False
-        # session key -> request_id for every approval.requested that has
-        # not yet been answered — local panes and satellites both flow
-        # through emit(), so the inbox sees them uniformly.
+        # session key -> request_id of its newest approval.requested
+        # that has not yet been answered — local panes and satellites
+        # both flow through emit(), so the inbox sees them uniformly.
+        # Derived from ``_approval_at`` by ``_sync_pending_approval``.
         self.pending_approvals: dict[str, str] = {}
         # One-shot, minutes-lived bearer tokens the ntfy action buttons
         # send instead of a device credential (notify.ApprovalTokens).
         self.approval_tokens = notify.ApprovalTokens()
-        # When each pending approval was requested: entries expire on
+        # session key -> {request_id: requested_at} for every open
+        # approval. A Codex app-server holds overlapping approvals, so
+        # resolving one must leave the others pending. Entries expire on
         # APPROVAL_TTL_S, since a dead satellite or killed pane can
         # never emit the approval.resolved that would clear them.
         # ``_approval_lock`` covers both dicts — the expiry sweep and
         # emit's updates run on different request threads.
-        self._approval_at: dict[str, float] = {}
+        self._approval_at: dict[str, dict[str, float]] = {}
         self._approval_lock = threading.Lock()
         # launch_id -> {machine, harness, cwd, state, key, note,
         # created_at} for every POST /v1/sessions. ``state`` goes pending
@@ -429,16 +436,20 @@ class HubState:
             rid = str((event.get("data") or {}).get("request_id") or "")
             if rid:
                 with self._approval_lock:
-                    self.pending_approvals[key] = rid
-                    self._approval_at[key] = time.time()
+                    self._approval_at.setdefault(key, {})[rid] = time.time()
+                    self._sync_pending_approval(key)
         elif etype == "approval.resolved":
-            with self._approval_lock:
-                self.pending_approvals.pop(key, None)
-                self._approval_at.pop(key, None)
-            # Retire only the resolved request's token — a different
-            # still-pending request on the session (a Codex app-server
-            # holds approvals independently) keeps its buttons live.
+            # Retire only the resolved request — a different still-
+            # pending request on the session (a Codex app-server holds
+            # approvals independently) stays in the inbox and keeps its
+            # buttons live. A resolve naming no request clears them all.
             rid = str((event.get("data") or {}).get("request_id") or "")
+            with self._approval_lock:
+                if rid:
+                    (self._approval_at.get(key) or {}).pop(rid, None)
+                else:
+                    self._approval_at.pop(key, None)
+                self._sync_pending_approval(key)
             self.approval_tokens.drop(key, rid)
         elif etype in {"session.launched", "command.result"}:
             data = event.get("data") or {}
@@ -490,10 +501,22 @@ class HubState:
         """
         with self._approval_lock:
             cutoff = time.time() - APPROVAL_TTL_S
-            for key, at in list(self._approval_at.items()):
-                if at <= cutoff:
-                    self._approval_at.pop(key, None)
-                    self.pending_approvals.pop(key, None)
+            for key, open_ in list(self._approval_at.items()):
+                for rid, at in list(open_.items()):
+                    if at <= cutoff:
+                        del open_[rid]
+                self._sync_pending_approval(key)
+
+    def _sync_pending_approval(self, key: str) -> None:
+        """Point ``pending_approvals[key]`` at the session's newest open
+        request, or drop both entries when none is left. Caller holds
+        ``_approval_lock``."""
+        open_ = self._approval_at.get(key)
+        if open_:
+            self.pending_approvals[key] = max(open_, key=open_.__getitem__)
+        else:
+            self._approval_at.pop(key, None)
+            self.pending_approvals.pop(key, None)
 
     # -- GitHub notifications ---------------------------------------------
     # The catalog polls ``fetch_github`` on its refresh cadence and feeds
@@ -721,6 +744,16 @@ class HubState:
             )
         return written
 
+    def _prune_pair_requests(self) -> None:
+        now = time.time()
+        if now - self._pair_pruned_at < _PAIR_PRUNE_S:
+            return
+        self._pair_pruned_at = now
+        try:
+            pairing.prune_requests(self.home)
+        except Exception:
+            pass
+
     def _catalog_loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -758,6 +791,7 @@ class HubState:
                 rows, as_of = self.catalog.tail_snapshot()
                 self.tail_manager.sync(rows, as_of=as_of)
                 supervise.reap_kept(self.home, self.catalog.session_for)
+                self._prune_pair_requests()
                 # GitHub last: a slow ``gh`` must never hold up adoption
                 # or tail sync, which don't need it.
                 self.catalog.poll_github()

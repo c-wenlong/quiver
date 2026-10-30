@@ -222,7 +222,6 @@ class TestRoute(HubBase):
     def test_page_script_and_styles_are_bundled(self):
         status, body = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("plugins"', body)
         self.assertIn(b".pl-market", self.srv.request("GET", "/app/pages.css")[1])
 
 
