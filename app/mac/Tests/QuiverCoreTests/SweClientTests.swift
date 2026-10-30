@@ -358,6 +358,27 @@ func fixture(_ name: String) throws -> Data {
     @Test func secretNameDerivesAShellNameScopedToTheServer() {
         #expect(mcpSecretName(server: "my-srv", key: "X-Api-Key") == "MY_SRV_X_API_KEY")
         #expect(mcpSecretName(server: "1password", key: "Authorization") == "MCP_1PASSWORD_AUTHORIZATION")
+        // set_secret takes ASCII names only: accents collapse like any
+        // other non-alphanumeric run.
+        #expect(mcpSecretName(server: "café", key: "clé") == "CAF_CL")
+        #expect(mcpSecretName(server: "é", key: "ü") == "MCP_SECRET")
+    }
+
+    /// The app hides what swe hides (src/quiver/mcp/secrets.py's
+    /// _SECRET_FLAG_RE): cookies, signatures, bearer values, any passw-,
+    /// and the British spelling of authorization, plus a --headers value.
+    @Test func secretNamesMatchSwesRule() {
+        for name in ["--session-cookie", "--signature", "--bearer", "--passwd", "--passwords",
+                     "--authorisation", "--authorization", "--keyfile", "--api_key", "--auth",
+                     "X_SESSION_COOKIE", "--headers"] {
+            #expect(mcpIsSecretName(name), "\(name)")
+        }
+        for name in ["--port", "--verbose", "--url", "--name"] {
+            #expect(!mcpIsSecretName(name), "\(name)")
+        }
+        let shown = McpRedaction.args(["--cookie", "sid=abc", "--signature=xyz",
+                                       "--headers", "X-Token: t0k", "--port", "8080"])
+        #expect(shown == ["--cookie", "…", "--signature=…", "--headers", "X-Token:…", "--port", "8080"])
     }
 
     @Test func addToSummaryCountsPicksStillListed() {

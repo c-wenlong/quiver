@@ -83,7 +83,6 @@ extension AALanguageModel: Decodable {
         case ttfat = "median_time_to_first_answer_token"
     }
 
-    private enum CreatorKeys: String, CodingKey { case id, name, slug }
     private enum PricingKeys: String, CodingKey {
         case blended = "price_1m_blended_3_to_1"
         case input = "price_1m_input_tokens"

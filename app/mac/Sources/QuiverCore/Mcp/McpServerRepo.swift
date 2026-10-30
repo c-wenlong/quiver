@@ -288,7 +288,7 @@ public enum McpServerRepo {
     /// stall the pipe, with five seconds before the process is let go.
     /// Anything off (not a repo, git missing, a timeout) is `isRepo: false`.
     public static func gitState(of url: URL) async -> GitState {
-        await runOffPool { Self.gitStateSync(of: url) }
+        await offMain { Self.gitStateSync(of: url) }
     }
 
     private static func gitStateSync(of url: URL) -> GitState {
@@ -352,7 +352,7 @@ public final class McpServerRepoModel {
         isLoading = true
         error = nil
         let root = self.root
-        let outcome = await runOffPool { Result { try McpServerRepo.scan(root: root) } }
+        let outcome = await offMain { Result { try McpServerRepo.scan(root: root) } }
         let found: [McpRepoServer]
         do {
             found = try outcome.get()

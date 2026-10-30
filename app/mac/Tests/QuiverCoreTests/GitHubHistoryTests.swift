@@ -7,9 +7,13 @@ import Testing
 /// to the cap, and drop with the repo — plus the v1 table and
 /// JSON-snapshot migrations that move old state in once.
 @Suite struct GitHubHistoryTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
 
     private func tempURL() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appending(path: "gh-history-\(UUID().uuidString).db")
     }
 

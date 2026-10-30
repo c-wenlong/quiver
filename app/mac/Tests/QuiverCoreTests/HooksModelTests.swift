@@ -137,6 +137,24 @@ import Testing
         #expect(inventory.checkError != nil)
     }
 
+    @Test func aFindingSaysEachFactOnceWithHomePaths() {
+        let managed = HookFinding(kind: "managed", harness: "claude",
+                                  message: "/Users/k/.claude/settings.json — declaration managed elsewhere")
+        #expect(managed.kindTitle == "Managed elsewhere")
+        #expect(managed.displayMessage(home: "/Users/k") == "~/.claude/settings.json")
+        let unlinked = HookFinding(kind: "unlinked", harness: "claude",
+                                   message: "guard.py is not linked into /Users/k/.claude/hooks (swe init will link it)")
+        #expect(unlinked.displayMessage(home: "/Users/k/")
+                == "guard.py is not linked into ~/.claude/hooks (swe init will link it)")
+        // Another user's home is not this one's prefix.
+        let other = HookFinding(kind: "undeclared", harness: "codex", message: "x at /Users/kb/y")
+        #expect(other.displayMessage(home: "/Users/k") == "x at /Users/kb/y")
+        // Home inside a longer path is not home.
+        let outside = HookFinding(kind: "managed", harness: "claude",
+                                  message: "/backup/Users/k/settings.json — declaration managed elsewhere")
+        #expect(outside.displayMessage(home: "/Users/k") == "/backup/Users/k/settings.json")
+    }
+
     @Test func aCheckWithFindingsDecodesThroughItsNonzeroExit() async throws {
         // swe exits 1 while findings remain; the payload is still a report.
         let model = HooksModel()
@@ -224,9 +242,12 @@ import Testing
             })
         let model = HooksModel()
         let swe = SweClient(runner: counting)
-        async let a: Void = model.link(swe: swe, for: "/bin/swe")
-        async let b: Void = model.link(swe: swe, for: "/bin/swe")
-        _ = await (a, b)
+        let first = Task { await model.link(swe: swe, for: "/bin/swe") }
+        #expect(await counting.firstCounted.arrived())
+        // Asked while the first init is held: it must not start another.
+        await model.link(swe: swe, for: "/bin/swe")
+        counting.firstCounted.open()
+        await first.value
         #expect(counting.peak == 1)
         #expect(counting.calls.filter { $0.first == "init" }.count == 1)
     }
@@ -245,7 +266,7 @@ import Testing
         let oldSwe = SweClient(runner: old)
         await model.load(swe: oldSwe, for: "/old/swe")
         let link = Task { await model.link(swe: oldSwe, for: "/old/swe") }
-        while !old.held { await Task.yield() }
+        try #require(await old.held())
         // Settings moves to another swe while init is running.
         await model.loadIfStale(swe: SweClient(runner: new), for: "/new/swe")
         old.release()
@@ -323,28 +344,17 @@ struct SleepingCheckRunner: CommandRunning {
 }
 
 /// Holds `init` until released; everything else answers at once.
-final class HeldInitRunner: CommandRunning, @unchecked Sendable {
+final class HeldInitRunner: CommandRunning, Sendable {
     let inner: ScriptedRunner
-    private let lock = NSLock()
-    private var waiter: CheckedContinuation<Void, Never>?
+    private let gate = HoldGate()
     init(_ inner: ScriptedRunner) { self.inner = inner }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        if arguments.first == "init" {
-            await withCheckedContinuation { continuation in
-                lock.withLock { waiter = continuation }
-            }
-        }
+        if arguments.first == "init" { try await gate.pass() }
         return try await inner.run(arguments)
     }
 
-    var held: Bool { lock.withLock { waiter != nil } }
-
-    func release() {
-        let waiter = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-            defer { self.waiter = nil }
-            return self.waiter
-        }
-        waiter?.resume()
-    }
+    /// True once `init` is parked, false after `gateTimeout`.
+    func held() async -> Bool { await gate.arrived() }
+    func release() { gate.open() }
 }

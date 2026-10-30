@@ -405,8 +405,9 @@ public enum TaskFilter: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .all: true
         case .running: task.agentRunning == true
-        case .prOpen: task.state == "pr_open"
-            || (task.kind == "pull" && task.pr?.state == "open")
+        // A pull task counts until it lands, as the web and the phone
+        // count it: its `pr` block can be missing from a row.
+        case .prOpen: task.state == "pr_open" || (task.kind == "pull" && !task.isDone)
         case .done: task.isDone
         }
     }
@@ -474,9 +475,20 @@ public enum TaskGrouping {
         tasks.filter { filter.includes($0) && (scope == nil || sectionName($0) == scope) }.count
     }
 
-    /// The section a task lists under: its repo or project, else "Other".
+    /// The section a task lists under: its repo or project, else its
+    /// source's name ("Linear", "Notion"), as the web groups them; "Other"
+    /// only when the row names no source either.
     public static func sectionName(_ task: HubTaskRow) -> String {
-        task.scope.isEmpty ? "Other" : task.scope
+        if !task.scope.isEmpty { return task.scope }
+        guard let source = task.source, !source.isEmpty else { return "Other" }
+        return sourceName(source)
+    }
+
+    /// A source as the pages spell it: GitHub, Linear, Notion; anything
+    /// else capitalized.
+    static func sourceName(_ source: String) -> String {
+        ["github": "GitHub", "linear": "Linear", "notion": "Notion"][source]
+            ?? source.prefix(1).uppercased() + source.dropFirst()
     }
 
     /// The page's rail: every scope, `filter` or not, so one with nothing
@@ -528,7 +540,7 @@ public enum TaskGrouping {
             return String(repo.split(separator: "/", maxSplits: 1)[0])
         }
         guard let source = task.source, !source.isEmpty else { return "Other" }
-        return source.prefix(1).uppercased() + source.dropFirst()
+        return sourceName(source)
     }
 }
 
@@ -794,6 +806,22 @@ public enum NewSessionOptions {
     /// harness it detected; the hub still refuses any it can't start.
     public static func harnesses(on machine: HubMachine) -> [String] {
         machine.launchable ?? machine.harnesses ?? []
+    }
+
+    /// What the sheet says when no machine can start a session, from the
+    /// rows the hub listed. A row with `launchable` answered: nothing is
+    /// installed there or every harness is switched off, so updating swe
+    /// would change nothing. Only rows without the field (a hub older
+    /// than the new-session route), or none at all, mean swe is too old.
+    /// The iPhone's twin says "Quiver's Settings"; here Settings is the
+    /// app's own.
+    public static func noMachineMessage(_ listed: [HubMachine]) -> String {
+        guard listed.contains(where: { $0.launchable != nil }) else {
+            return "No machine can start a session. Update swe on the hub."
+        }
+        return listed.count > 1
+            ? "No harness can start on any machine: install one, or turn it on in Settings › Providers."
+            : "No harness can start on the hub: install one there, or turn it on in Settings › Providers."
     }
 
     /// Online machines first, then by name; a machine that can launch

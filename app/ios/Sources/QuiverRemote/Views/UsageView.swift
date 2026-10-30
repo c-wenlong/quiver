@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// The Usage tab: how close each harness is to its limits, then what the
-/// hub machine's agents spent today and over the last 7 and 30 days.
+/// hub machine's agents spent over one of the overview's seven periods,
+/// with the Mac's quick figures, top models, heatmap and daily table.
 struct UsageView: View {
     @Environment(AppModel.self) private var app
     @State private var model = UsageModel()
@@ -36,7 +37,7 @@ struct UsageSections: View {
             SectionTitle(text: "Limits")
             if let usage = model.usage {
                 if let error = model.usageError {
-                    Text("Couldn't refresh: \(error)").font(Theme.caption).foregroundStyle(Theme.textMuted).padding(.horizontal, 4)
+                    Text(inlineCode: "Couldn't refresh: \(error)").font(Theme.caption).foregroundStyle(Theme.textMuted).padding(.horizontal, 4)
                 }
                 LimitsSection(usage: usage, now: now)
             } else if let error = model.usageError {
@@ -47,7 +48,7 @@ struct UsageSections: View {
             }
 
             SectionTitle(text: "Spend").padding(.top, 20)
-            SegmentPicker(options: UsagePeriod.allCases, title: \.title, selection: $model.period)
+            PeriodChips(selection: $model.period)
                 .padding(.bottom, 4)
             if let overview = model.overviews[model.period] {
                 SpendSection(overview: overview, period: model.period, harnessName: model.harnessName)

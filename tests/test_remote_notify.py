@@ -284,7 +284,7 @@ class TestHandle(unittest.TestCase):
             ("needs_you", "Needs you", 4, "bell"),
             ("finished", "Finished", 3, "bell"),
             ("error", "Errored", 4, "rotating_light"),
-            ("limit", "Limit hit", 3, "bell"),
+            ("limit", "Limit hit", 4, "hourglass"),
         ]
         for kind, label, prio, tag in cases:
             self.posts.clear()
@@ -295,6 +295,21 @@ class TestHandle(unittest.TestCase):
             self.assertIn(label.lower(), post["title"])
             self.assertEqual(post["priority"], prio)
             self.assertEqual(post["tags"], [tag])
+
+    def test_limit_carries_harness_line_redacted(self):
+        self.n._handle({"type": "notify", "session": "k1", "data": {
+            "kind": "limit",
+            "message": "You've hit your session limit · resets 9:30am "
+                       "sk-abcdefghijklmnop " + "x " * 200}}, self.cfg)
+        msg = self.posts[0]["message"]
+        self.assertTrue(msg.startswith("You've hit your session limit"))
+        self.assertNotIn("sk-abcdefghijklmnop", msg)
+        self.assertEqual(len(msg), 280)
+        # Other kinds still post an empty body.
+        self.posts.clear()
+        self.n._handle({"type": "notify", "session": "k1", "data": {
+            "kind": "finished", "message": "ignored"}}, self.cfg)
+        self.assertEqual(self.posts[0]["message"], "")
 
     def test_unknown_notify_kind_skipped(self):
         self.n._handle({"type": "notify", "session": "k1",

@@ -192,12 +192,16 @@ private let oldInstallJSON = #"""
         let runner = OrderedRunner()
         let model = InstallCatalogModel(swe: SweClient(runner: runner))
         await model.load()
-        async let first = model.register(.init(name: "one", command: "one", installed: true))
-        async let second = model.register(.init(name: "two", command: "two", installed: true))
-        _ = await (first, second)
+        let first = Task { await model.register(.init(name: "one", command: "one", installed: true)) }
+        #expect(await runner.firstAdd.arrived())
+        let second = Task { await model.register(.init(name: "two", command: "two", installed: true)) }
+        // The second registration has asked while the first is still
+        // held inside swe.
+        #expect(await observe(until: { model.registering.count == 2 }))
+        runner.firstAdd.open()
+        _ = await (first.value, second.value)
         let adds = runner.events.filter { $0 != "list" }
-        #expect(adds == ["start:one", "end:one", "start:two", "end:two"]
-                || adds == ["start:two", "end:two", "start:one", "end:one"])
+        #expect(adds == ["start:one", "end:one", "start:two", "end:two"])
     }
 
     /// A load cancelled while a second load is already in flight must not
@@ -291,19 +295,25 @@ private let oldInstallJSON = #"""
     }
 
     /// Records when each `swe add` starts and ends, so a test can see the
-    /// calls never overlap; other commands answer an empty catalog.
+    /// calls never overlap, and holds the first add at `firstAdd` until the
+    /// test opens it; other commands answer an empty catalog.
     private final class OrderedRunner: CommandRunning, @unchecked Sendable {
         private let lock = NSLock()
-        private(set) var events: [String] = []
+        private var log: [String] = []
+        let firstAdd = HoldGate()
+        var events: [String] { lock.withLock { log } }
 
         func run(_ arguments: [String]) async throws -> CommandResult {
             guard arguments.first == "add" else {
-                lock.withLock { events.append("list") }
+                lock.withLock { log.append("list") }
                 return ok(#"{"harnesses":[]}"#)
             }
-            lock.withLock { events.append("start:\(arguments[1])") }
-            try? await Task.sleep(for: .milliseconds(50))
-            lock.withLock { events.append("end:\(arguments[1])") }
+            let isFirst = lock.withLock { () -> Bool in
+                defer { log.append("start:\(arguments[1])") }
+                return !log.contains { $0.hasPrefix("start:") }
+            }
+            if isFirst { try await firstAdd.pass() }
+            lock.withLock { log.append("end:\(arguments[1])") }
             return CommandResult(status: 0, stdout: Data(), stderr: "")
         }
     }

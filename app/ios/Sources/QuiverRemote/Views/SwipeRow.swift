@@ -133,8 +133,8 @@ struct SwipeRow<Content: View>: View {
                     run(action)
                 } label: {
                     VStack(spacing: 4) {
-                        Image(systemName: action.symbol).font(.system(size: 17, weight: .semibold))
-                        Text(action.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        Image(systemName: action.symbol).font(Theme.font(size: 17, weight: .semibold))
+                        Text(action.title).font(Theme.badge).lineLimit(1)
                     }
                     .foregroundStyle(.white)
                     .frame(width: SwipeMath.buttonWidth)

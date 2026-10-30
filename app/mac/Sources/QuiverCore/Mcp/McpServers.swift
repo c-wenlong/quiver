@@ -251,18 +251,28 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
 
 /// Hides the parts of an MCP command line or URL that may hold a secret.
 enum McpRedaction {
-    /// Flags whose value is a secret, compared without dashes, underscores
-    /// or case, so `--api-key`, `--api_key` and `--apiKey` all match, as do
-    /// longer names ending in one (`--access-token`, `--client-secret`).
-    static let secretFlagEndings = ["token", "key", "secret", "password", "passwd", "credential", "credentials",
-                                    "auth", "authorization", "header"]
+    /// Words that mark a secret anywhere in a flag or key name, compared
+    /// without dashes, underscores or case: `--api-key`, `--apiKey`,
+    /// `--keyfile`, `SESSION_COOKIE`. The same words as swe's
+    /// `_SECRET_FLAG_RE` (src/quiver/mcp/secrets.py), so the app hides
+    /// whatever `swe mcp` hides.
+    static let secretNameParts = ["key", "token", "secret", "passw", "bearer", "credential", "cookie",
+                                  "signature", "authorization", "authorisation"]
+    /// Endings that mark one too: `--auth`, and a header flag's value
+    /// (`--header`, `--headers`, `--proxy-header`).
+    static let secretNameEndings = ["auth", "header", "headers"]
+
+    static func isSecretName(_ name: String) -> Bool {
+        let name = name.filter { $0 != "-" && $0 != "_" }.lowercased()
+        return !name.isEmpty && (secretNameParts.contains { name.contains($0) }
+                                 || secretNameEndings.contains { name.hasSuffix($0) })
+    }
 
     static func isSecretFlag(_ flag: Substring) -> Bool {
         let flag = bare(flag)
         guard flag.hasPrefix("-") else { return false }
         if flag == "-H" { return true }
-        let name = flag.filter { $0 != "-" && $0 != "_" }.lowercased()
-        return !name.isEmpty && secretFlagEndings.contains { name.hasSuffix($0) }
+        return isSecretName(flag)
     }
 
     /// The flag as the shell reads it: `--"token"` and `--\token` are `--token`.
@@ -387,6 +397,7 @@ enum McpRedaction {
     private static func secretValue(_ value: Substring, after flag: Substring) -> String {
         let flag = bare(flag)
         let header = flag == "-H" || flag.lowercased().hasSuffix("header")
+            || flag.lowercased().hasSuffix("headers")
         if header, let colon = value.firstIndex(of: ":") { return value[...colon] + "…" }
         return "…"
     }
@@ -666,19 +677,21 @@ public func mcpCommandWords(_ line: String) -> [String]? {
 
 /// Whether a flag or key name looks like it holds a credential.
 public func mcpIsSecretName(_ name: String) -> Bool {
-    let bare = name.filter { $0 != "-" && $0 != "_" }.lowercased()
-    return !bare.isEmpty && McpRedaction.secretFlagEndings.contains { bare.hasSuffix($0) }
+    McpRedaction.isSecretName(name)
 }
 
 /// The ${NAME} an env var or header stores its value under:
-/// SERVER_KEY in caps, non-alphanumeric runs collapsed to one `_`, and
-/// `MCP_` prepended when it would start with a digit (set_secret refuses
-/// those names). Server-scoped, so two servers can't collide.
+/// SERVER_KEY in caps, runs of anything but ASCII letters and digits
+/// collapsed to one `_`, and `MCP_` prepended when it would start with a
+/// digit. set_secret takes only `[A-Za-z_][A-Za-z0-9_]*`, so an accented
+/// server name (`café`) must not reach it as `CAFÉ_KEY`. Server-scoped,
+/// so two servers can't collide.
 public func mcpSecretName(server: String, key: String) -> String {
     var name = (server + "_" + key)
-        .map { $0.isLetter || $0.isNumber ? Character($0.uppercased()) : "_" }
+        .map { $0.isASCII && ($0.isLetter || $0.isNumber) ? Character($0.uppercased()) : "_" }
         .reduce(into: "") { out, ch in if ch != "_" || out.last != "_" { out.append(ch) } }
         .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+    if name.isEmpty { return "MCP_SECRET" }
     if name.first?.isNumber == true { name = "MCP_" + name }
     return name
 }

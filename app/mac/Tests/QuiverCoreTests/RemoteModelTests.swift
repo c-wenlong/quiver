@@ -105,6 +105,72 @@ import Testing
         #expect(ticket.expiresInS == 300)
     }
 
+    /// A slower mint can't land over a newer one, and a mint answering
+    /// after the sheet closed shows nothing.
+    @Test func onlyTheNewestMintLands() async throws {
+        func pair(_ token: String) -> CommandResult {
+            .init(status: 0, stdout: Data(#"""
+            {"schema": 1, "data": {"host": "h", "port": 1, "token": "\#(token)", "name": null,
+             "url": "http://h:1/app/#pair=\#(token)", "deep_link": "quiver://pair?token=\#(token)",
+             "expires_in_s": 300}}
+            """#.utf8), stderr: "")
+        }
+        // Each reply waits at its own gate, so the test picks the order.
+        let runner = GatedReplies([pair("old"), pair("new")])
+        let model = RemoteModel(swe: SweClient(runner: runner))
+        let first = Task { await model.mintTicket() }
+        #expect(await runner.gates[0].arrived())
+        model.dismissTicket()
+        let second = Task { await model.mintTicket() }
+        #expect(await runner.gates[1].arrived())
+        // The newer mint answers first; the older one lands after it.
+        runner.gates[1].open()
+        await second.value
+        runner.gates[0].open()
+        await first.value
+        #expect(model.ticket?.token == "new")
+        #expect(!model.pairing)
+
+        let late = GatedReplies([pair("late")])
+        let closed = RemoteModel(swe: SweClient(runner: late))
+        let mint = Task { await closed.mintTicket() }
+        #expect(await late.gates[0].arrived())
+        closed.dismissTicket()
+        late.gates[0].open()
+        await mint.value
+        #expect(closed.ticket == nil)
+
+        // An older mint failing while the newer one runs leaves the
+        // spinner on and no error up.
+        let failing = GatedReplies([.init(status: 1, stdout: Data(), stderr: "boom"), pair("fresh")])
+        let racing = RemoteModel(swe: SweClient(runner: failing))
+        let older = Task { await racing.mintTicket() }
+        #expect(await failing.gates[0].arrived())
+        let newer = Task { await racing.mintTicket() }
+        #expect(await failing.gates[1].arrived())
+        failing.gates[0].open()
+        await older.value
+        #expect(racing.pairing)
+        #expect(racing.pairError == nil)
+        failing.gates[1].open()
+        await newer.value
+        #expect(!racing.pairing)
+        #expect(racing.ticket?.token == "fresh")
+    }
+
+    /// A load cancelled with its page puts the previous status back
+    /// instead of spinning for good.
+    @Test func aCancelledLoadDoesNotSpinForever() async throws {
+        // No replies: the one call hangs until the load is cancelled.
+        let runner = GatedReplies([])
+        let model = RemoteModel(swe: SweClient(runner: runner))
+        let task = Task { await model.load() }
+        #expect(await runner.hanging())
+        task.cancel()
+        await task.value
+        #expect(model.status == .idle)
+    }
+
     @Test func theCountdownCountsDownFromMinting() async throws {
         let pair = Data(#"""
         {"schema": 1, "data": {"host": "h", "port": 1, "token": "t", "name": null,

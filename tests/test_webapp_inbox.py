@@ -2,6 +2,8 @@
 and its write, marking read, against a fake ``gh`` on PATH."""
 
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -212,6 +214,149 @@ class TestReadRoute(HubBase):
         self.assertEqual(fake.writes(), [["api", "--method", "PATCH", "notifications/threads/1"]])
         status, _ = self.srv.request("POST", "/v1/app/inbox/read", body={"ids": ["7"]}, headers=auth)
         self.assertEqual(status, 404)
+
+
+
+NEEDS_FLOW = r"""
+document.querySelector = (sel) => panel.querySelector(sel);
+// ``bound(attr)``: the controls carrying ``data-<attr>`` the last paint bound.
+const lastQ = {};
+const qsa = document.querySelectorAll;
+document.querySelectorAll = (sel) => (lastQ[sel] = qsa(sel));
+const bound = (attr) => lastQ[`#panel [data-${attr}]`];
+const out = {};
+const html = () => document.getElementById("panel").innerHTML;
+const heads = () => [...html().matchAll(/class="gh-need-section[^"]*">([^<]*)</g)].map((m) => m[1]);
+const rowKeys = () => [...html().matchAll(/href="#\/sessions\?chat=([^"]*)"/g)].map((m) => decodeURIComponent(unesc(m[1])));
+const clears = () => [...html().matchAll(/data-need-clear="([^"]*)"/g)].map((m) => unesc(m[1]));
+const dismissed = () => fetchCalls.filter((c) => c.path === "/v1/inbox/dismiss").map((c) => c.body);
+const ITEMS = [
+  { key: "m:w1", harness: "claude", title: "Ask", status: "followup", last_active_at: 100 },
+  { key: "m:a1", harness: "codex", title: "Run rm?", status: "approval", last_active_at: 90, request_id: "r1" },
+  { key: "gh:7", kind: "github", status: "github", title: "PR", last_active_at: 300 },
+  { key: "m:d1", harness: "claude", title: "Shipped", status: "done", last_active_at: 50 },
+  { key: "m:e1", harness: "claude", title: "Broke", status: "error", last_active_at: 80 },
+  { key: "m:i1", harness: "claude", title: "Stopped", status: "interrupted", last_active_at: 70 },
+  { key: "m:x1", harness: "claude", title: "Odd", status: "mystery", last_active_at: 60 },
+];
+let items = ITEMS;
+apiAnswers.push(["/v1/app/inbox", { status: 200, data: { github: { status: "ok" }, status: "ok", notifications: [] } }]);
+apiAnswers.push(["/v1/inbox", { get status() { return 200; }, get data() { return { items }; } }]);
+fetchRoutes.push(["/v1/inbox/dismiss", { status: 200, body: { ok: true } }]);
+(async () => {
+  location.hash = "#/inbox";
+  PAGES.inbox("inbox");
+  await tick();
+  out.heads = heads();
+  out.rows = rowKeys();
+  out.clears = clears();
+  out.review = (html().match(/gh-need-review/g) || []).length;
+  out.githubHeading = /<h2 class="gh-inbox-heading">GitHub<\/h2>/.test(html());
+  // One row's Clear: gone at once, one dismiss with its stamp.
+  bound("need-clear")
+    .find((b) => b.dataset.needClear === "m:e1").onclick({ preventDefault() {} });
+  await tick();
+  out.afterRow = rowKeys();
+  out.rowPost = dismissed();
+  // A poll whose answer predates the dismiss still lists it: the ledger hides it.
+  PAGES.inbox("inbox");
+  await tick();
+  out.stillHidden = !rowKeys().includes("m:e1");
+  // An approval on a cleared session shows at once, before its stamp moves.
+  items = ITEMS.map((i) => (i.key === "m:e1" ? { ...i, status: "approval", request_id: "r2" } : i));
+  PAGES.inbox("inbox");
+  await tick();
+  out.approvalShows = rowKeys().includes("m:e1");
+  items = ITEMS;
+  PAGES.inbox("inbox");
+  await tick();
+  out.hiddenAgain = !rowKeys().includes("m:e1");
+  // Two reads answering out of order: the older one, still listing the
+  // cleared row at its old stamp, must not land after the newer one.
+  const realApi = api;
+  const held = [];
+  globalThis.api = (path) => (path.startsWith("/v1/inbox")
+    ? new Promise((resolve) => held.push(resolve)) : realApi(path));
+  PAGES.inbox("inbox");
+  PAGES.inbox("inbox");
+  await tick();
+  globalThis.api = realApi;
+  // The newer read has the session waiting again (new activity, so the
+  // clear retires); the older still has it in Errors.
+  held[1]({ status: 200, data: { items: ITEMS.map((i) => (i.key === "m:e1" ? { ...i, status: "followup", last_active_at: 81 } : i)) } });
+  await tick();
+  held[0]({ status: 200, data: { items: ITEMS } });
+  await tick();
+  out.newestWins = rowKeys().indexOf("m:e1") === 2 && heads().length === 3;
+  // New activity past the stamp brings it back.
+  items = ITEMS.map((i) => (i.key === "m:e1" ? { ...i, last_active_at: 81 } : i));
+  PAGES.inbox("inbox");
+  await tick();
+  out.back = rowKeys().includes("m:e1");
+  // Waiting on you's Clear sweeps the follow-up and the odd one, never the approval.
+  fetchCalls.length = 0;
+  bound("need-section")
+    .find((b) => b.dataset.needSection === "waiting").onclick();
+  await tick();
+  out.sectionPost = dismissed().map((b) => b.key);
+  out.afterSection = rowKeys();
+  // A refused clear says so and the next read restores the row.
+  fetchCalls.length = 0;
+  fetchRoutes.unshift(["/v1/inbox/dismiss", { status: 500, body: { error: { message: "disk full" } } }]);
+  bound("need-clear")
+    .find((b) => b.dataset.needClear === "m:d1").onclick({ preventDefault() {} });
+  await tick();
+  out.failText = /Couldn&#39;t clear &quot;Shipped&quot;: disk full/.test(html());
+  out.restored = rowKeys().includes("m:d1");
+  // Nothing left: the empty card.
+  items = [];
+  PAGES.inbox("inbox");
+  await tick();
+  out.empty = html().includes("Nothing needs you.");
+  process.stdout.write(JSON.stringify(out));
+  process.exit(0);
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestNeedsYou(unittest.TestCase):
+    """inbox.js's Needs you sections under node: the iOS Inbox's groups
+    from GET /v1/inbox?done=1, a row opening its chat, and Clear posting
+    POST /v1/inbox/dismiss per row or per section."""
+
+    def test_sections_rows_and_clear(self):
+        from tests.test_webapp_launch_sheets import PAGES, STUB
+        script = (STUB + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "inbox.js").read_text(encoding="utf-8") + "\n" + NEEDS_FLOW)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run.js"
+            path.write_text(script)
+            done = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        # iOS order; the GitHub row stays in the list below, not here;
+        # an unknown status lands in Waiting on you.
+        self.assertEqual(out["heads"], ["Waiting on you", "Errors", "Finished today"])
+        self.assertEqual(out["rows"], ["m:w1", "m:a1", "m:x1", "m:e1", "m:i1", "m:d1"])
+        self.assertTrue(out["githubHeading"])
+        # The approval has Review and no Clear.
+        self.assertEqual(out["review"], 1)
+        self.assertNotIn("m:a1", out["clears"])
+        self.assertEqual(len(out["clears"]), 5)
+        self.assertNotIn("m:e1", out["afterRow"])
+        self.assertEqual(out["rowPost"], [{"key": "m:e1", "last_active_at": 80}])
+        self.assertTrue(out["stillHidden"])
+        self.assertTrue(out["approvalShows"])
+        self.assertTrue(out["hiddenAgain"])
+        self.assertTrue(out["newestWins"])
+        self.assertTrue(out["back"])
+        self.assertEqual(sorted(out["sectionPost"]), ["m:w1", "m:x1"])
+        self.assertIn("m:a1", out["afterSection"])
+        self.assertNotIn("m:w1", out["afterSection"])
+        self.assertTrue(out["failText"])
+        self.assertTrue(out["restored"])
+        self.assertTrue(out["empty"])
 
 
 if __name__ == "__main__":

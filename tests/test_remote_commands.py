@@ -832,6 +832,58 @@ class TestDeviceRequests(unittest.TestCase):
         rc, out, _ = _run(["devices", "--approve=000000"])
         self.assertEqual(rc, 1)
 
+    def test_request_id_holds_the_code_to_its_row(self):
+        """The Mac app's per-row code field: a code typed against one
+        request must not approve a different one, and wrong codes count
+        toward that row's lockout."""
+        a = pairing.request_pair(None, dict(_PEER), name="a")
+        b = pairing.request_pair(
+            None, dict({**_PEER, "node_id": "nOTHER"}), name="b")
+        rc, out, _ = _run([
+            "devices", f"--approve={b['code']}",
+            f"--request-id={a['request_id']}", "--json"])
+        self.assertEqual(rc, 1)
+        self.assertFalse(json.loads(out)["data"]["ok"])
+        # Neither row was approved by the mismatched code.
+        pending = {r["request_id"] for r in pairing.list_requests()}
+        self.assertEqual(pending, {a["request_id"], b["request_id"]})
+        rc, out, _ = _run([
+            "devices", f"--approve={a['code']}",
+            f"--request-id={a['request_id']}", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(out)["data"]["device_id"])
+        rc, out, _ = _run([
+            "devices", f"--deny={b['code']}",
+            f"--request-id={b['request_id']}", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(out)["data"]["ok"])
+        self.assertEqual(pairing.list_requests(), [])
+
+    def test_request_id_wrong_codes_lock_the_row(self):
+        r = pairing.request_pair(None, dict(_PEER))
+        wrong = "000000" if r["code"] != "000000" else "111111"
+        for _ in range(pairing.MAX_CODE_ATTEMPTS):
+            _run(["devices", f"--approve={wrong}",
+                  f"--request-id={r['request_id']}"])
+        rc, _, _ = _run(["devices", f"--approve={r['code']}",
+                         f"--request-id={r['request_id']}"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(pairing.list_requests(), [])
+
+    def test_request_id_alone_or_empty_is_refused(self):
+        # Under --json the refusal goes to stderr, so stdout stays a
+        # document the app can decode.
+        rc, out, err = _run(["devices", "--request-id=abc", "--json"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "")
+        self.assertIn("--approve", err)
+        r = pairing.request_pair(None, dict(_PEER))
+        rc, err, _ = _run(["devices", f"--approve={r['code']}",
+                           "--request-id="])
+        self.assertEqual(rc, 1)
+        self.assertIn("--request-id", err)
+        self.assertEqual(len(pairing.list_requests()), 1)
+
 
 class TestUnwritableHome(unittest.TestCase):
     """#523: an unset, empty or read-only HOME is a one-line error and

@@ -72,11 +72,11 @@
   const onTasks = () => currentRoute() === "tasks";
 
   /* A github task groups under its repo; another source's task under its
-   * project or the source's name. */
+   * project or the source's name, "Other" only for a row with no source,
+   * as the Mac and iOS group them. */
   const SOURCE_NAMES = { github: "GitHub", linear: "Linear", notion: "Notion" };
   const sourceName = (s) => SOURCE_NAMES[s] || (s ? s[0].toUpperCase() + s.slice(1) : "Other");
-  const groupName = (t) => t.repo || t.project
-    || { linear: "Linear", notion: "Notion" }[t.source] || t.source;
+  const groupName = (t) => t.repo || t.project || sourceName(t.source);
   const PREVIEW = 5; // rows a group shows before its Show more fold
   /* ``#42`` for a github issue/pull; the ref as it is anywhere else. */
   const refLabel = (t) => (t.source === "github" ? `#${t.ref}` : `${t.ref}`);
@@ -505,7 +505,7 @@
     if (x.harnesses === null) {
       picker = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading what the hub can start…</div>`;
     } else if (!x.harnesses.length) {
-      picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Provider visibility.</div>`;
+      picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Providers.</div>`;
     } else {
       picker = `<select class="field" id="tk-harness" aria-label="Harness"${busy || x.started ? " disabled" : ""}>${
         x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;

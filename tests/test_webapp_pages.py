@@ -212,7 +212,7 @@ process.stdout.write(JSON.stringify({ errors, pages: Object.keys(PAGES).sort() }
         if node is None:
             self.skipTest("node not installed")
         html = (self.STATIC / "index.html").read_text(encoding="utf-8")
-        order = [str(self.STATIC / name) for name in re.findall(r'<script src="/app/([\w.-]+\.js)"', html)
+        order = [str(self.STATIC / name) for name in re.findall(r'<script src="/([\w.-]+\.js)"', html)
                  if name != "pages.js"]
         with tempfile.NamedTemporaryFile("wb", suffix=".js", delete=False) as f:
             f.write(pages.bundle(".js"))
@@ -241,13 +241,13 @@ class TestBundleRoute(HubBase):
         for name in ("pages.js", "pages.css"):
             conn = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
             try:
-                conn.request("GET", f"/app/{name}")
+                conn.request("GET", f"/{name}")
                 resp = conn.getresponse()
                 resp.read()
                 etag = resp.getheader("ETag")
                 self.assertEqual(resp.status, 200)
                 self.assertTrue(etag)
-                conn.request("GET", f"/app/{name}", headers={"If-None-Match": etag})
+                conn.request("GET", f"/{name}", headers={"If-None-Match": etag})
                 again = conn.getresponse()
                 self.assertEqual((again.status, again.read()), (304, b""))
                 self.assertEqual(again.getheader("ETag"), etag)
@@ -347,11 +347,11 @@ class TestDispatch(HubBase):
         self.assertEqual(status, 404)
 
     def test_bundles_are_served(self):
-        for path, ctype in (("/app/pages.js", "javascript"), ("/app/pages.css", "css")):
+        for path, ctype in (("/pages.js", "javascript"), ("/pages.css", "css")):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 200, path)
-        status, body = self.srv.request("GET", "/app/")
-        self.assertIn(b"/app/pages.js", body)
+        status, body = self.srv.request("GET", "/")
+        self.assertIn(b"/pages.js", body)
 
 
 if __name__ == "__main__":

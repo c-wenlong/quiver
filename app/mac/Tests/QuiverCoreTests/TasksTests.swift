@@ -172,7 +172,10 @@ import Testing
         #expect(TaskFilter.prOpen.includes(prOpen))
         // A pull task with an open PR is its own PR-open row.
         #expect(TaskFilter.prOpen.includes(pull))
-        #expect(!TaskFilter.prOpen.includes(row("g", kind: "pull", state: "open")))
+        // A pull task counts until it lands even when its pr block is
+        // missing, as the web and the phone count it.
+        #expect(TaskFilter.prOpen.includes(row("g", kind: "pull", state: "open")))
+        #expect(!TaskFilter.prOpen.includes(row("g2", kind: "pull", state: "merged")))
         #expect(!TaskFilter.prOpen.includes(open))
         #expect(!TaskFilter.prOpen.includes(merged))
 
@@ -191,7 +194,7 @@ import Testing
             row("e", source: "notion", kind: "page", ref: "x", repo: nil),
         ]
         let sections = TaskGrouping.sections(of: tasks, filter: .all)
-        #expect(sections.map(\.name) == ["o/s", "o/r", "QUI", "Other"])
+        #expect(sections.map(\.name) == ["o/s", "o/r", "QUI", "Notion"])
         #expect(sections[1].rows?.map(\.id) == ["a", "c"])
         // Only a GitHub row's section can link out to the repo.
         #expect(sections[0].repo == "o/s")
@@ -202,6 +205,17 @@ import Testing
         // A scope whose rows all filter out drops its section.
         let none = TaskGrouping.sections(of: [row("a", running: false)], filter: .running)
         #expect(none.isEmpty)
+    }
+
+    /// GitHub is spelled GitHub, and a row naming no source at all is
+    /// the only one under "Other".
+    @Test func sourcesAreSpelledAsThePagesSpellThem() {
+        let tasks = [
+            row("a", repo: nil),
+            row("b", source: nil, kind: "page", ref: "x", repo: nil),
+        ]
+        #expect(TaskGrouping.sections(of: tasks, filter: .all).map(\.name) == ["GitHub", "Other"])
+        #expect(TaskGrouping.rail(of: tasks, filter: .all).map(\.title) == ["GitHub", "Other"])
     }
 
     @Test func railGroupsScopesBySourceAndCountsUnderTheFilter() {
@@ -224,7 +238,7 @@ import Testing
         #expect(rail[1].scopes.map(\.name) == ["p/a", "p/x"])
         #expect(rail[1].scopes.map(\.count) == [0, 0])
         #expect(rail[2].scopes.map(\.label) == ["QUI"])
-        #expect(rail[3].scopes.map(\.name) == ["Other"])
+        #expect(rail[3].scopes.map(\.name) == ["Notion"])
         // Every scope keeps its row; the count is what the chip leaves,
         // so a scope with none still lists (the rail folds it as quiet).
         #expect(rail[0].scopes.map(\.count) == [0, 1])
@@ -383,6 +397,20 @@ import Testing
         #expect(NewSessionOptions.folders(on: "m1", sessions: rows) == ["/p/old", "/p/new"])
         #expect(NewSessionOptions.folders(on: "m2", sessions: rows) == ["/p/other"])
         #expect(NewSessionOptions.folders(on: "m3", sessions: rows).isEmpty)
+    }
+
+    /// A hub that answers `launchable: []` is current: updating swe would
+    /// change nothing, so the sheet says to install or turn one on. Only
+    /// a row without the field, or no rows, means swe is too old.
+    @Test func theNoMachineMessageFollowsWhatTheHubReported() {
+        let hub = HubMachine(id: "m1", harnesses: ["claude"], launchable: [])
+        #expect(NewSessionOptions.noMachineMessage([hub])
+                == "No harness can start on the hub: install one there, or turn it on in Settings › Providers.")
+        let satellite = HubMachine(id: "s1", harnesses: [], launchable: [])
+        #expect(NewSessionOptions.noMachineMessage([hub, satellite]).hasPrefix("No harness can start on any machine"))
+        let old = HubMachine(id: "m1", harnesses: [])
+        #expect(NewSessionOptions.noMachineMessage([old]).hasSuffix("Update swe on the hub."))
+        #expect(NewSessionOptions.noMachineMessage([]).hasSuffix("Update swe on the hub."))
     }
 
     @Test func harnessesPreferLaunchable() {
@@ -848,7 +876,10 @@ extension HubStubbed {
 /// keeping the rows it had, and link/unlink writing the store.
 @MainActor
 @Suite struct TasksModelTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// Each test gets its own instance, so its folder goes when the test ends.
+    private let scratch: TempDir
+    private var dir: URL { scratch.url }
+    init() throws { scratch = try TempDir() }
 
     /// The page payload the stub answers — `nonisolated` so the
     /// Sendable request handler can read it.

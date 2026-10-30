@@ -132,9 +132,7 @@ import Testing
     }
 
     private func freshDefaults() -> UserDefaults {
-        let name = "CalendarMonthTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarMonthTests")
         return defaults
     }
 
@@ -210,18 +208,20 @@ import Testing
     @Test func neighbourPrefetchLandsOnTheNextMonthAndNextNdaySpan() async throws {
         actor Calls: ActivityProviding {
             private(set) var ranges: [DateInterval] = []
+            /// Counts every call, prefetches included, which run as tasks
+            /// of their own after `load` returns.
+            private let calls = CountGate()
             func activityBlocks(in range: DateInterval, gap: TimeInterval,
                                 force: Bool) throws -> [ActivityBlock] {
                 ranges.append(range)
+                let calls = self.calls
+                Task { await calls.bump() }
                 return []
             }
-            /// The recorded ranges once at least `count` calls have run,
-            /// polling briefly so prefetch tasks have time to land.
+            /// The recorded ranges once at least `count` calls have run
+            /// in all, or what has run by `gateTimeout`.
             func wait(for count: Int) async -> [DateInterval] {
-                for _ in 0..<500 {
-                    if ranges.count >= count { return ranges }
-                    try? await Task.sleep(for: .milliseconds(10))
-                }
+                _ = await calls.reach(count)
                 return ranges
             }
             func reset() { ranges = [] }
@@ -301,9 +301,7 @@ private struct CalendarMonthFake: ActivityProviding {
 
 extension CalendarMonthModelTests {
     @Test func theModePersistsAcrossModels() {
-        let name = "CalendarModePersist.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarModePersist")
         var model = CalendarModel(providers: [], defaults: defaults,
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         model.mode = .days(3)
@@ -324,9 +322,7 @@ extension CalendarMonthModelTests {
     }
 
     @Test func thePanelCollapsePersistsAcrossModels() {
-        let name = "CalendarPanelPersist.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarPanelPersist")
         var model = CalendarModel(providers: [], defaults: defaults,
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         #expect(!model.panelCollapsed)

@@ -545,8 +545,12 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
 }
 
 @Suite struct APIKeysStoreTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     func temp() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keys-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keys-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -721,7 +725,7 @@ actor GatedShell: ShellEnvironmentReading {
         return reply
     }
 
-    /// True once a read is parked, false after ten seconds. Checking
+    /// True once a read is parked, false after `gateTimeout`. Checking
     /// the park and parking the caller happen in one actor step, so
     /// the park can never be missed and the caller stranded until the
     /// timeout.
@@ -741,7 +745,7 @@ actor GatedShell: ShellEnvironmentReading {
     /// The timeout resumes only its own waiter, and only if a read has
     /// not already parked.
     private func expire(_ id: Int) async {
-        try? await Task.sleep(for: .seconds(10))
+        try? await Task.sleep(for: gateTimeout)
         parkers.removeValue(forKey: id)?.resume(returning: false)
     }
 
@@ -765,11 +769,15 @@ struct FakeShell: ShellEnvironmentReading {
 
 @MainActor
 @Suite struct APIKeysSourcingTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     /// A model against a temp home: keys file and backup dir inside it,
     /// shell name and environment fixed.
     private func model(shell: String, environment: [String: String] = [:]) throws
         -> (APIKeysModel, URL, URL) {
-        let home = FileManager.default.temporaryDirectory
+        let home = scratch.url
             .appending(path: "keysource-\(UUID().uuidString)")
         let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
@@ -778,7 +786,7 @@ struct FakeShell: ShellEnvironmentReading {
         let store = APIKeysStore(url: keys, backupDirectory: home.appending(path: "backups"))
         let model = APIKeysModel(store: store, shell: FakeShell(environment: [:]),
                                  checkCache: APIKeyCheckStore(url: home.appending(path: "checks.json")),
-                                 defaults: UserDefaults(suiteName: "keysource-\(UUID().uuidString)")!,
+                                 defaults: TestDefaults("keysource"),
                                  shellName: shell, home: home, environment: environment)
         return (model, home, home.appending(path: ".zshrc"))
     }
@@ -807,7 +815,7 @@ struct FakeShell: ShellEnvironmentReading {
     }
 
     @Test func zdotdirWinsForTheRcPath() async throws {
-        let home = FileManager.default.temporaryDirectory
+        let home = scratch.url
             .appending(path: "keysource-\(UUID().uuidString)")
         let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
@@ -819,7 +827,7 @@ struct FakeShell: ShellEnvironmentReading {
             // process's, as it will on a Finder-launched app.
             shell: FakeShell(environment: ["ZDOTDIR": home.appending(path: "dots").path]),
             checkCache: APIKeyCheckStore(url: home.appending(path: "checks.json")),
-            defaults: UserDefaults(suiteName: "keysource-\(UUID().uuidString)")!,
+            defaults: TestDefaults("keysource"),
             shellName: "/bin/zsh", home: home, environment: [:])
         await model.load()
         #expect(model.sourcing == .notSourced(file: home.appending(path: "dots/.zshrc")))
@@ -834,7 +842,7 @@ struct FakeShell: ShellEnvironmentReading {
     /// save's own read lands with ZDOTDIR in it, the check reruns
     /// against the file that environment actually names.
     @Test func sourcingFollowsTheLandingReadsEnvironment() async throws {
-        let home = FileManager.default.temporaryDirectory
+        let home = scratch.url
             .appending(path: "keysource-\(UUID().uuidString)")
         let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
@@ -853,7 +861,7 @@ struct FakeShell: ShellEnvironmentReading {
             store: APIKeysStore(url: keys, backupDirectory: home.appending(path: "backups")),
             shell: shell,
             checkCache: APIKeyCheckStore(url: home.appending(path: "checks.json")),
-            defaults: UserDefaults(suiteName: "keysource-\(UUID().uuidString)")!,
+            defaults: TestDefaults("keysource"),
             shellName: "/bin/zsh", home: home, environment: [:])
         let load = Task { await model.load() }
         #expect(await shell.waitForPark())
@@ -874,15 +882,19 @@ struct FakeShell: ShellEnvironmentReading {
 
 @MainActor
 @Suite struct APIKeysModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     func model(text: String, shell: [String: String]? = [:]) throws -> (APIKeysModel, URL) {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keysmodel-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keysmodel-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
         let store = APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups"))
-        return (APIKeysModel(store: store, shell: FakeShell(environment: shell),
+        return (APIKeysModel.isolated(store: store, shell: FakeShell(environment: shell),
                              checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
-                             defaults: UserDefaults(suiteName: "keysmodel-\(UUID().uuidString)")!), url)
+                             home: dir), url)
     }
 
     @Test func rowsCarryTheirShellStatus() async throws {
@@ -897,14 +909,14 @@ struct FakeShell: ShellEnvironmentReading {
     }
 
     @Test func rowsShowBeforeTheShellAnswers() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keysgate-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keysgate-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try sampleKeysFile.write(to: url, atomically: true, encoding: .utf8)
         let shell = GatedShell()
-        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
+        let model = APIKeysModel.isolated(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
                                  checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
-                                 defaults: UserDefaults(suiteName: "keysgate-\(UUID().uuidString)")!)
+                                 home: dir)
         let load = Task { await model.load() }
         #expect(await shell.waitForPark())
         #expect(model.rows.count == 3)
@@ -918,15 +930,15 @@ struct FakeShell: ShellEnvironmentReading {
     /// read again: the row shows the stale verdict first, then settles
     /// on what a new terminal would now get.
     @Test func aSaveRereadsTheShell() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keysreread-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keysreread-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try "export A_KEY=v1\n".write(to: url, atomically: true, encoding: .utf8)
         let shell = GatedShell()
         await shell.reply(["A_KEY": "v1"])
-        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
+        let model = APIKeysModel.isolated(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
                                  checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
-                                 defaults: UserDefaults(suiteName: "keysreread-\(UUID().uuidString)")!)
+                                 home: dir)
         let load = Task { await model.load() }
         #expect(await shell.waitForPark())
         await shell.release()
@@ -947,15 +959,15 @@ struct FakeShell: ShellEnvironmentReading {
     /// its own: the load's answer predates the write and is dropped, so
     /// the saved key doesn't stay Not loaded on the stale answer.
     @Test func aSaveDuringLoadGetsItsOwnShellRead() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keysoverlap-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keysoverlap-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try "export A_KEY=v1\n".write(to: url, atomically: true, encoding: .utf8)
         let shell = GatedShell()
         await shell.reply(["A_KEY": "v1"])
-        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
+        let model = APIKeysModel.isolated(store: APIKeysStore(url: url, backupDirectory: dir), shell: shell,
                                  checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
-                                 defaults: UserDefaults(suiteName: "keysoverlap-\(UUID().uuidString)")!)
+                                 home: dir)
         let load = Task { await model.load() }
         #expect(await shell.waitForPark())
 
@@ -1051,18 +1063,18 @@ struct FakeShell: ShellEnvironmentReading {
     }
 
     @Test func aRenamedKeyKeepsItsCheckResult() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keyscheck-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keyscheck-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try "# FIRST\nexport OLD_KEY=\"v1\"\n".write(to: url, atomically: true, encoding: .utf8)
-        let defaults = UserDefaults(suiteName: "keyscheck-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keyscheck")
         let salt = APIKeyCheckStore.salt(from: defaults)
         let cache = APIKeyCheckStore(url: dir.appending(path: "checks.json"))
         let check = APIKeyCheck(result: .noCheck("no probe for this key"),
                                 checkedAt: Date(), value: "v1", salt: salt)
         cache.save(["OLD_KEY": check], for: url, currentNames: ["OLD_KEY"])
-        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
-                                 shell: FakeShell(environment: [:]), checkCache: cache, defaults: defaults)
+        let model = APIKeysModel.isolated(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
+                                 shell: FakeShell(environment: [:]), checkCache: cache, defaults: defaults, home: dir)
         await model.load()
         #expect(model.checks["OLD_KEY"] == check)
         try await model.update(name: "OLD_KEY", newName: "NEW_KEY", provider: "FIRST", value: "v1")
@@ -1074,15 +1086,15 @@ struct FakeShell: ShellEnvironmentReading {
 
     /// A model whose checks go to `transport`, so a verdict is chosen.
     private func model(text: String, transport: FakeTransport) throws -> (APIKeysModel, URL) {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keystest-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keystest-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
-        return (APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
+        return (APIKeysModel.isolated(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
                              shell: FakeShell(environment: [:]),
                              checker: APIKeyChecker(transport: transport),
                              checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
-                             defaults: UserDefaults(suiteName: "keystest-\(UUID().uuidString)")!), url)
+                             home: dir), url)
     }
 
     @Test func aTestReturnsTheVerdictAndPersistsNothing() async throws {
@@ -1197,16 +1209,20 @@ struct FakeShell: ShellEnvironmentReading {
 /// the picker's model fetch.
 @MainActor
 @Suite struct APIKeysCustomProviderTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func model(text: String, transport: FakeTransport) throws -> (APIKeysModel, URL) {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keyscustom-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keyscustom-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
-        return (APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
+        return (APIKeysModel.isolated(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
                              shell: FakeShell(environment: [:]),
                              checker: APIKeyChecker(transport: transport),
                              checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
-                             defaults: UserDefaults(suiteName: "keyscustom-\(UUID().uuidString)")!), url)
+                             home: dir), url)
     }
 
     @Test func setAllWritesEveryVariableUnderOneHeading() async throws {

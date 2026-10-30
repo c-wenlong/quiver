@@ -272,7 +272,7 @@ import Testing
         await model.loadIfStale(for: "/old/swe")
         let hermes = try #require(model.roots.first { $0.name == "hermes" })
         let link = Task { await model.link(hermes) }
-        while !old.held { await Task.yield() }
+        try #require(await old.held())
         // Settings moves to another swe while the link is running.
         model.use(SweClient(runner: new), for: "/new/swe")
         await model.loadIfStale(for: "/new/swe")
@@ -293,7 +293,7 @@ import Testing
         await model.loadIfStale(for: "/old/swe")
         let hermes = try #require(model.roots.first { $0.name == "hermes" })
         let link = Task { await model.link(hermes) }
-        while !old.held { await Task.yield() }
+        try #require(await old.held())
         // Settings moves on while Skills is closed: nothing lists the new swe yet.
         model.use(SweClient(runner: ScriptedRunner([])), for: "/new/swe")
         old.release()
@@ -356,19 +356,17 @@ import Testing
 }
 
 /// Holds a link until released; everything else answers at once.
-final class HeldLinkRunner: CommandRunning, @unchecked Sendable {
+final class HeldLinkRunner: CommandRunning, Sendable {
     let inner: ScriptedRunner
-    private let lock = NSLock()
-    private var waiter: CheckedContinuation<Void, Never>?
+    private let gate = HoldGate()
     init(_ inner: ScriptedRunner) { self.inner = inner }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        if arguments.contains("link") {
-            await withCheckedContinuation { continuation in lock.withLock { waiter = continuation } }
-        }
+        if arguments.contains("link") { try await gate.pass() }
         return try await inner.run(arguments)
     }
 
-    var held: Bool { lock.withLock { waiter != nil } }
-    func release() { lock.withLock { () -> CheckedContinuation<Void, Never>? in defer { waiter = nil }; return waiter }?.resume() }
+    /// True once a link is parked, false after `gateTimeout`.
+    func held() async -> Bool { await gate.arrived() }
+    func release() { gate.open() }
 }

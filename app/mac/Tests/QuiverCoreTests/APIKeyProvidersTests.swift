@@ -37,7 +37,13 @@ import Testing
     @Test func theTableMatchesDefaultsPy() throws {
         let python = try Self.pythonProviders()
         #expect(python.count > 20, "defaults.py parsed almost empty; the sync regex broke")
-        #expect(APIKeyProviders.all.map(\.id) == python.map(\.slug))
+        let swiftIDs = APIKeyProviders.all.map(\.id), pythonIDs = python.map(\.slug)
+        #expect(swiftIDs == pythonIDs, """
+            The Swift table and defaults.py list different providers. Only in Swift: \
+            \(Set(swiftIDs).subtracting(pythonIDs).sorted()); only in defaults.py: \
+            \(Set(pythonIDs).subtracting(swiftIDs).sorted()). If both look the same, \
+            defaults.py was likely reformatted and pythonProviders() needs its new layout.
+            """)
         for (provider, expected) in zip(APIKeyProviders.all, python) {
             #expect(provider.keyURL.absoluteString == expected.url,
                     "\(provider.id) url differs from defaults.py")
@@ -46,16 +52,13 @@ import Testing
         }
     }
 
+    /// Hand-picked answers: a loop comparing `canCheck` with the probe
+    /// lookup would only restate `canCheck`'s own body.
     @Test func canCheckFollowsTheProbeTable() {
-        let openai = APIKeyProviders.provider(forID: "openai")
-        #expect(openai?.canCheck == true)
+        #expect(APIKeyProviders.provider(forID: "openai")?.canCheck == true)
+        #expect(APIKeyProviders.provider(forID: "anthropic")?.canCheck == true)
         // Cohere has no probe, so no check.
-        let cohere = APIKeyProviders.provider(forID: "cohere")
-        #expect(cohere?.canCheck == false)
-        for provider in APIKeyProviders.all {
-            #expect(provider.canCheck == (APIKeyProbe.probe(forName: provider.envVars[0]) != nil),
-                    "\(provider.id) canCheck disagrees with the probe table")
-        }
+        #expect(APIKeyProviders.provider(forID: "cohere")?.canCheck == false)
     }
 
     @Test func aVariableFindsItsProviderByAnyEnvVar() {

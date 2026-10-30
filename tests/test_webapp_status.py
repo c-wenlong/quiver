@@ -11,6 +11,7 @@ import copy
 import datetime
 import http.client
 import json
+import re
 import shutil
 import ssl
 import subprocess
@@ -201,10 +202,13 @@ class TestCatalog(unittest.TestCase):
         for service in catalog.SERVICES:
             self.assertTrue(service.feed_url.startswith("https://"), service.id)
             self.assertTrue(service.page_url.startswith("https://"), service.id)
-        self.assertEqual([s.name for s in catalog.SERVICES if s.group == "providers"],
-                         ["Claude", "OpenAI / Codex", "GitHub / Copilot", "Cursor", "Gemini", "Devin"])
-        self.assertEqual([s.name for s in catalog.SERVICES if s.group == "infrastructure"],
-                         ["npm", "Vercel", "Cloudflare"])
+        self.assertEqual([s.name for s in catalog.SERVICES if s.group == "modelProviders"],
+                         ["Claude", "OpenAI / Codex", "Gemini"])
+        self.assertEqual([s.name for s in catalog.SERVICES if s.group == "agentPlatforms"],
+                         ["GitHub / Copilot", "Cursor", "Devin"])
+        self.assertEqual([s.name for s in catalog.SERVICES if s.group == "registries"], ["npm"])
+        self.assertEqual([s.name for s in catalog.SERVICES if s.group == "cloud"],
+                         ["Vercel", "Cloudflare"])
 
     def test_the_app_catalog(self):
         self.assertEqual(catalog.service("claude").feed_url, "https://status.claude.com/api/v2/summary.json")
@@ -581,8 +585,8 @@ class TestPayload(PollerBase):
                                    machine="hub")
         self.assertEqual(body["machine"], "hub")
         self.assertEqual(body["checked_at"], EPOCH)
-        self.assertEqual([g["id"] for g in body["groups"]], ["providers", "infrastructure"])
-        self.assertEqual(body["groups"][0]["title"], "AI providers")
+        self.assertEqual([g["id"] for g in body["groups"]], ["modelProviders", "registries"])
+        self.assertEqual(body["groups"][0]["title"], "Model providers")
         claude = body["groups"][0]["services"][0]
         self.assertEqual((claude["health"], claude["health_title"]), ("minor", "Minor incident"))
         self.assertEqual(claude["logo"], "claude")
@@ -640,36 +644,38 @@ class TestRoute(HubBase):
         self.assertEqual(len(self.transport.requests), len(catalog.SERVICES))
 
     def test_page_assets_are_served(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
+        status, data = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b".status-grid", self.srv.request("GET", "/app/pages.css")[1])
+        self.assertIn(b".status-grid", self.srv.request("GET", "/pages.css")[1])
         for logo in ("harness-openai.svg", "harness-copilot.svg", "harness-npm.svg",
                      "harness-vercel.svg", "harness-cloudflare-color.svg"):
-            self.assertEqual(self.srv.request("GET", f"/app/{logo}")[0], 200, logo)
+            self.assertEqual(self.srv.request("GET", f"/{logo}")[0], 200, logo)
 
 
 # -------------------------------------------------- catalogue and tracking
 
 class TestCatalogue(unittest.TestCase):
     def test_mirrors_the_mac_catalogue(self):
-        self.assertEqual(len(catalogue.CATALOGUE), 23)
-        self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "providers"],
-                         ["groq", "perplexity", "fireworks", "cerebras", "cohere", "baseten",
-                          "minimax", "elevenlabs", "lambda", "assemblyai"])
-        self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "infrastructure"],
-                         ["docker", "tailscale", "sentry", "datadog", "supabase", "digitalocean",
-                          "render", "upstash", "convex", "linear", "notion", "twilio", "clerk"])
+        # The mirror is literal: the rows the Mac's StatusCatalogue.swift
+        # declares, in order, are this catalogue.
+        swift = (Path(__file__).resolve().parents[1]
+                 / "app/mac/Sources/QuiverCore/Status/StatusCatalogue.swift")
+        if not swift.exists():
+            self.skipTest("no app/mac/ in this checkout")
+        rows = re.findall(r'statuspage\("([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*\.(\w+)\)',
+                          swift.read_text(encoding="utf-8"))
+        self.assertEqual([(e.id, e.name, e.page_url, e.group) for e in catalogue.CATALOGUE], rows)
         for e in catalogue.CATALOGUE:
             self.assertTrue(e.page_url.startswith("https://"), e.id)
             self.assertEqual(e.feed_url, f"{e.page_url}/api/v2/summary.json", e.id)
-            self.assertEqual(e.group in ("providers", "infrastructure"), True, e.id)
+            self.assertEqual(e.group in dict(catalog.GROUPS), True, e.id)
             self.assertIsNotNone(e.logo, e.id)
 
     def test_filter_matches_name_and_host(self):
         self.assertEqual([e.id for e in catalogue.filter_(query=" docker ")], ["docker"])
         self.assertEqual([e.id for e in catalogue.filter_(query="notion-status")], ["notion"])
-        self.assertEqual(catalogue.filter_(group="providers")[0].id, "groq")
-        self.assertEqual([e.id for e in catalogue.filter_(group="infrastructure", query="api")], [])
+        self.assertEqual(catalogue.filter_(group="modelProviders")[0].id, "groq")
+        self.assertEqual([e.id for e in catalogue.filter_(group="registries", query="api")], [])
         self.assertEqual(catalogue.filter_(query="zzz"), [])
         # A catalogue id is never a built-in's, so tracking is one id space.
         self.assertFalse({e.id for e in catalogue.CATALOGUE} & {s.id for s in catalog.SERVICES})
@@ -688,7 +694,7 @@ class TestTracked(unittest.TestCase):
         service = tracked.add(self.home, entry)
         self.assertTrue(service.custom)
         self.assertEqual((service.id, service.name, service.group, service.host),
-                         ("groq", "Groq", "providers", "groqstatus.com"))
+                         ("groq", "Groq", "modelProviders", "groqstatus.com"))
         services = tracked.load(self.home)
         self.assertEqual([s.id for s in services], ["groq"])
         self.assertTrue(all(s.custom for s in services))
@@ -703,6 +709,27 @@ class TestTracked(unittest.TestCase):
         tracked.add(self.home, catalogue.entry("docker"))
         tracked.add(self.home, catalogue.entry("docker"))
         self.assertEqual([s.id for s in tracked.load(self.home)], ["docker"])
+
+    def test_old_groups_and_catalogue_entries_load_forward(self):
+        # Records written before the group split: a catalogue page takes
+        # the catalogue's new group, an unknown custom's old group maps.
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps({"version": 1, "services": [
+            {"id": "groq", "name": "Groq", "page_url": "https://groqstatus.com",
+             "feed_url": "https://groqstatus.com/api/v2/summary.json", "group": "providers"},
+            {"id": "mine", "name": "Mine", "page_url": "https://status.example.com",
+             "feed_url": "https://status.example.com/api/v2/summary.json",
+             "group": "infrastructure"}]}))
+        services = tracked.load(self.home)
+        self.assertEqual([(s.id, s.group) for s in services],
+                         [("groq", "modelProviders"), ("mine", "services")])
+
+    def test_a_chosen_group_survives_a_reload(self):
+        # Only a pre-split group migrates: a group the user picked under
+        # the new layout wins over the catalogue's, even on its own host.
+        tracked.add(self.home, catalogue.entry("groq"))
+        self.path.write_text(self.path.read_text().replace('"modelProviders"', '"services"'))
+        self.assertEqual(tracked.load(self.home)[0].group, "services")
 
     def test_bad_data_reads_as_empty(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -812,10 +839,10 @@ class TestTrackRoute(HubBase):
     def test_catalogue_view(self):
         status, body = self.get("/v1/app/status?view=catalogue")
         self.assertEqual(status, 200, body)
-        self.assertEqual(len(body["entries"]), 23)
+        self.assertEqual(len(body["entries"]), 104)
         groq = next(e for e in body["entries"] if e["id"] == "groq")
         self.assertEqual((groq["name"], groq["host"], groq["group"], groq["logo"]),
-                         ("Groq", "groqstatus.com", "providers", "groq"))
+                         ("Groq", "groqstatus.com", "modelProviders", "groq"))
         self.assertFalse(any(e["added"] for e in body["entries"]))
 
     def test_track_adds_and_persists(self):
@@ -824,7 +851,7 @@ class TestTrackRoute(HubBase):
         groq = self.card(body, "groq")
         self.assertIsNotNone(groq)
         self.assertTrue(groq["custom"])
-        self.assertEqual(groq["group"], "providers")
+        self.assertEqual(groq["group"], "modelProviders")
         saved = json.loads(self.store().read_text())
         self.assertEqual([s["id"] for s in saved["services"]], ["groq"])
         # The catalogue now marks it added and the next poll asks it too.
@@ -886,7 +913,7 @@ class TestTrackRoute(HubBase):
         self.assertEqual(status, 200, body)
         linear = self.card(body, "linear")
         self.assertIsNotNone(linear)
-        self.assertEqual(linear["group"], "infrastructure")
+        self.assertEqual(linear["group"], "services")
         self.assertTrue(linear["custom"])
 
 

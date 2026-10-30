@@ -513,6 +513,28 @@ final class PrimitiveHome {
         let md = try t.write("bin/readme.md", "# ok\n")
         #expect(PrimitiveTree.isTextFile(md))
     }
+
+    /// The 8 KB sniff can cut a multi-byte character in two; the text is
+    /// still text. A real bad byte before the cut still isn't.
+    @Test func aCharacterSplitAtTheSniffLimitIsStillText() throws {
+        let t = try PrimitiveHome()
+        for (pad, character) in [(8191, "é"), (8190, "€"), (8191, "€"), (8189, "😀"), (8190, "😀"), (8191, "😀")] {
+            let text = String(repeating: "a", count: pad) + character + " more text after the cut\n"
+            let file = try t.write("notes/split-\(pad)-\(character.utf8.count).md", text)
+            #expect(PrimitiveTree.isTextFile(file), "\(pad) + \(character)")
+        }
+        let bad = t.home.appending(path: "notes/bad.md")
+        try (Data(repeating: 0x61, count: 8000) + Data([0xFF]) + Data(repeating: 0x61, count: 500)).write(to: bad)
+        #expect(!PrimitiveTree.isTextFile(bad))
+        // Bytes no character can start with, right at the cut, aren't
+        // mistaken for a split character.
+        for tail in [[0xFF], [0xC0], [0xF5], [0xE0, 0x80], [0xF4, 0x90], [0xED, 0xA0]] as [[UInt8]] {
+            let file = t.home.appending(path: "notes/bad-\(tail.map { String($0, radix: 16) }.joined()).md")
+            try (Data(repeating: 0x61, count: 8192 - tail.count) + Data(tail)
+                 + Data(repeating: 0x61, count: 100)).write(to: file)
+            #expect(!PrimitiveTree.isTextFile(file), "\(tail)")
+        }
+    }
 }
 
 

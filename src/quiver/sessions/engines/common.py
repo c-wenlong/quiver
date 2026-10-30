@@ -26,7 +26,7 @@ def parse_iso_ts(value: Any) -> float:
     if isinstance(value, (int, float)):
         v = float(value)
         # NaN/±Inf pass every magnitude comparison below and then kill the
-        # listing (int(nan) raises in _relative_time, json writes them back
+        # listing (int(nan) raises in relative_time, json writes them back
         # into the session cache). Reject non-finite up front.
         if not math.isfinite(v):
             return 0.0

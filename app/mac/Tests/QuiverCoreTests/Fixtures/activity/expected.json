@@ -1,0 +1,57 @@
+{
+  "note": "Made-up session logs read by both ActivityParityTests.swift and tests/test_webapp_calendar_sources.py: each source's per-session blocks (ActivityBlocks.make, before project grouping) over the range, sorted by session then start. A Pi session id is its file path, given here relative to the source's root. Cursor's root is the SQL that builds its state.vscdb, and its account is the user-data dir that database sits under.",
+  "range": [1786320000, 1786406400],
+  "gap": 1800,
+  "sources": {
+    "pi": {
+      "root": "pi/agent/sessions",
+      "account": "/made-up/.pi",
+      "blocks": [
+        {"session": "--work-b--/1786276800_bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl", "cwd": "/work/b",
+         "start": 1786319400, "end": 1786320600, "responses": 2},
+        {"session": "--work-pi--/1786350600_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl", "cwd": "/work/pi",
+         "start": 1786350720, "end": 1786350840, "responses": 2},
+        {"session": "--work-pi--/1786350600_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl", "cwd": "/work/pi",
+         "start": 1786354800.5, "end": 1786356300, "responses": 2}
+      ]
+    },
+    "droid": {
+      "root": "droid/sessions",
+      "account": "/made-up/.factory",
+      "blocks": [
+        {"session": "11111111-2222-3333-4444-555555555555", "cwd": "/work/app",
+         "start": 1786351036.298, "end": 1786351200, "responses": 2},
+        {"session": "22222222-2222-3333-4444-555555555555", "cwd": null,
+         "start": 1786362300, "end": 1786365000, "responses": 3}
+      ]
+    },
+    "freebuff": {
+      "root": "freebuff/projects",
+      "account": "/made-up/.config/manicode",
+      "blocks": [
+        {"session": "2026-08-10T08-00-00.000Z", "cwd": "/work/fb",
+         "start": 1786349100.123, "end": 1786350000, "responses": 2},
+        {"session": "2026-08-10T08-00-00.000Z", "cwd": "/work/fb",
+         "start": 1786352400, "end": 1786352400, "responses": 1},
+        {"session": "2026-08-10T14-00-00.000Z", "cwd": "/work/root-fallback",
+         "start": 1786370400, "end": 1786370400, "responses": 1},
+        {"session": "2026-08-10T16-00-00.000Z", "cwd": "/work/agent-initial",
+         "start": 1786377600, "end": 1786377600, "responses": 1}
+      ]
+    },
+    "cursor": {
+      "root": "cursor/state.sql",
+      "account": "the user-data dir the database is built under",
+      "blocks": [
+        {"session": "composer-1", "cwd": null,
+         "start": 1786351036.298, "end": 1786351200, "responses": 2},
+        {"session": "composer-1", "cwd": null,
+         "start": 1786354200, "end": 1786354200, "responses": 1},
+        {"session": "composer-2", "cwd": null,
+         "start": 1786352400, "end": 1786352520, "responses": 3},
+        {"session": "composer-3", "cwd": null,
+         "start": 1786374000, "end": 1786374000, "responses": 1}
+      ]
+    }
+  }
+}

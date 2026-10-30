@@ -1,4 +1,4 @@
-/* Quiver web app: the Mac app's pages, served by the hub under /app/.
+/* Quiver web app: the Mac app's pages, served by the hub at its root.
  * No build step, no deps. Data comes from /v1/app/*. The hub owner's own
  * tailnet devices need no pairing (the hub knows them from Tailscale);
  * any other browser uses the device credential its #pair= link minted,
@@ -62,11 +62,12 @@ async function apiSend(method, path, body) {
 }
 const apiPost = (path, body) => apiSend("POST", path, body);
 
-/* status 0 means the hub didn't answer at all (offline, connection lost). */
-async function api(path) {
+/* status 0 means the hub didn't answer at all (offline, connection lost,
+ * or the request was aborted through `opts.signal`). */
+async function api(path, opts = {}) {
   let resp;
   try {
-    resp = await fetch(path, { headers: authHeaders() });
+    resp = await fetch(path, { headers: authHeaders(), signal: opts.signal });
   } catch {
     return { status: 0, data: null };
   }
@@ -118,7 +119,7 @@ const PAGES = { overview: renderOverview, sessions: renderSessions, harnesses: r
 const MAC_ONLY = new Set(["menubar", "widgets"]);
 const MAC_ONLY_BADGE = '<span class="badge mac-only">Mac app only</span>';
 
-/* Page plugins (static/pages/*.js, served as /app/pages.js) register here:
+/* Page plugins (static/pages/*.js, served as /pages.js) register here:
  * registerPage("skills", render). render(id) paints #panel; a page that
  * awaits a request compares routeGen before and after, so a reply that
  * lands after the user moved on is dropped. */
@@ -400,9 +401,9 @@ function pairRequestFailed(msg) {
   if (err) err.textContent = msg;
 }
 
-/* Bare fragments the old PWA routes carried. ``/`` redirects here with
- * the fragment intact, so ``/#pair=<token>`` and ``/#approve`` still
- * land. Returns true when the hash was claimed. */
+/* Bare fragments pair and approve links carry: ``/#pair=<token>``, the
+ * older ``/app/#pair=`` (the hub redirects it here, fragment intact) and
+ * ``/#approve``. Returns true when the hash was claimed. */
 function pairHash() {
   const hash = location.hash || "";
   if (hash === "#approve") {
@@ -471,7 +472,7 @@ const overview = { period: "month", data: null, gen: 0, focus: null };
 
 /* First run (no shared AGENTS.md on the hub machine): the Mac app opens
  * its setup sheet once at launch, then remembers it was offered. Here a
- * bare /app/ opens #/setup once per browser; after that Overview keeps a
+ * bare / opens #/setup once per browser; after that Overview keeps a
  * card linking it until setup runs. */
 const SETUP_OFFERED_KEY = "quiver.setup.offered";
 let landedBare = !location.hash.replace(/^#\/?/, "");

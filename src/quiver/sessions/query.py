@@ -174,12 +174,6 @@ class SessionQuery:
         return True
 
 
-def filter_sessions(sessions: Iterable[Session], query: SessionQuery) -> list[Session]:
-    """Functional wrapper for callers that do not want to call ``apply``."""
-
-    return query.apply(sessions)
-
-
 def _matches_agent(session: Session, agent: str) -> bool:
     needle = agent.casefold()
     if needle in {(session.agent or "").casefold(), (session.tool_name or "").casefold()}:

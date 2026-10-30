@@ -271,6 +271,8 @@ private struct SessionsContent: View {
                                                     expanded: openedDays.contains(group.day))
                         ForEach(shown) { row in
                             SessionRow(row: row, project: model.project(for: row.session),
+                                       hubModel: app.hub.model(for: HubSessionRow.key(
+                                           harness: row.session.harness, id: row.session.id)),
                                        match: model.searchHit(for: row.session.id),
                                        open: { open(row) }, showDetails: { detail = row },
                                        resume: { resume(row) })
@@ -539,6 +541,9 @@ private struct SessionRow: View {
     var row: SessionsModel.Row
     /// The session's project resolved to its main repository.
     var project: String?
+    /// The model of the session's newest reply, from the hub's row; nil
+    /// when the hub doesn't list it or doesn't know the model.
+    var hubModel: String?
     /// The transcript hit this row surfaced on, for the snippet line; nil
     /// when it matched on metadata or content search is off.
     var match: SearchHit?
@@ -647,7 +652,8 @@ private struct SessionRow: View {
         if let project { parts.append(project) }
         parts.append(row.account ?? HarnessMark(s.harness).name)
         parts.append(row.location.title)
-        if let models = row.usage?.models, !models.isEmpty { parts.append(models.joined(separator: ", ")) }
+        let models = ModelLabel.rowModels(current: hubModel, used: row.usage?.models ?? [])
+        if !models.isEmpty { parts.append(models.joined(separator: ", ")) }
         parts.append(s.lastActiveAt.formatted(date: .omitted, time: .shortened))
         if let duration = row.duration, duration >= 60 { parts.append(Self.duration(duration)) }
         return parts.joined(separator: " · ")

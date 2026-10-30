@@ -368,6 +368,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe mcp edit <tool> <name>')}          Edit one server's config in one tool
   {c('cyan', 'swe mcp validate [tool...]')}          Validate MCP config shape for one/all tools
   {c('cyan', 'swe mcp doctor')}                      Deep diagnostics
+  {c('cyan', 'swe mcp gateway [share|install]')}     Run shared servers once for every session
 
 {c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for details on each — flags, examples, the exact
         model each command uses.
@@ -725,7 +726,9 @@ to use their own login state and environment."""
   {c('cyan', 'swe remote devices [--revoke=<id>]')}     List or revoke paired devices.
                                             {c('cyan', '--requests')} lists pending
                                             pair requests; {c('cyan', '--approve=<code>')}
-                                            and {c('cyan', '--deny=<code>')} decide one.
+                                            and {c('cyan', '--deny=<code>')} decide one;
+                                            {c('cyan', '--request-id=<id>')} holds the
+                                            code to that one request.
   {c('cyan', 'swe remote attach <session>')}            Take an observed session
                                             under supervision. Default
                                             {c('cyan', '--mode=auto')} picks the

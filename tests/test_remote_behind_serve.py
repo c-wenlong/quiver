@@ -32,6 +32,8 @@ class _Proxied(unittest.TestCase):
         self.srv = _Server(sessions=[])
         self.addCleanup(self.srv.stop)
         self.srv.state.trust_proxy = self.trust
+        # The test client stands in for tailscale serve's connection.
+        self.srv.state.proxy_peer = lambda server, peer: True
         self.seen: list[str] = []
 
         def whois(ip):
@@ -311,7 +313,7 @@ class TestPairLinks(unittest.TestCase):
     def test_https_scheme(self):
         self.assertEqual(
             pairing.pair_url("box.ts.net", 8477, "t", "ph", "https"),
-            "https://box.ts.net:8477/app/#pair=t&name=ph",
+            "https://box.ts.net:8477/#pair=t&name=ph",
         )
         self.assertEqual(
             pairing.pair_payload("box.ts.net", 8477, "t", "", "https"),
@@ -322,7 +324,7 @@ class TestPairLinks(unittest.TestCase):
         self.assertEqual(pairing.pair_payload("h", 1, "t"),
                          "quiver://pair?host=h&port=1&token=t")
         self.assertEqual(pairing.pair_url("h", 1, "t"),
-                         "http://h:1/app/#pair=t")
+                         "http://h:1/#pair=t")
 
 
 class TestCommands(unittest.TestCase):
@@ -337,7 +339,7 @@ class TestCommands(unittest.TestCase):
             rc, out, _ = _run(["pair", "--json"])
         self.assertEqual(rc, 0)
         body = json.loads(out)["data"]
-        self.assertEqual(body["url"], "https://box.ts.net:8477/app/#pair=tok")
+        self.assertEqual(body["url"], "https://box.ts.net:8477/#pair=tok")
         self.assertIn("scheme=https", body["deep_link"])
 
     def test_pair_default_https_port(self):
@@ -351,7 +353,7 @@ class TestCommands(unittest.TestCase):
                 patch.object(pairing, "mint_pair_token", return_value="tok"):
             _, out, _ = _run(["pair", "--host=100.1.2.3", "--json"])
         self.assertEqual(json.loads(out)["data"]["url"],
-                         "http://100.1.2.3:8477/app/#pair=tok")
+                         "http://100.1.2.3:8477/#pair=tok")
         load.assert_not_called()
 
     def test_status_probes_saved_bind(self):

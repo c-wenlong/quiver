@@ -305,9 +305,6 @@ def load_resolved_config(
     return resolve_config(load_config(path), overrides)
 
 
-merge_overrides = resolve_config
-
-
 def _looks_like_secret_key(key: object) -> bool:
     normalized = str(key).lower().replace("-", "_")
     return normalized in _SECRET_KEY_PARTS or normalized.endswith(
