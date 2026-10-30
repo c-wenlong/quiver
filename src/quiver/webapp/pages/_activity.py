@@ -17,6 +17,7 @@ import json
 import os
 import stat
 import threading
+import time
 from pathlib import Path
 
 from quiver.ledger.models import parse_timestamp
@@ -26,19 +27,34 @@ from quiver.ledger.parsers import iter_lines
 # ones the way the block query judges the rest
 # (``Ledger.filterTrivialActivitySessions``).
 TRIVIAL_FILTERED = ("droid", "pi")
+# How often a source lists its files again; a rescan skips the wait
+# (``ActivityFileIndex.refreshInterval``).
+REFRESH_S = 30.0
 
 
 class FileIndex:
     """``ActivityFileIndex``: path to its stamp and the sessions parsed
     out of it. Files whose stamp is unchanged keep their sessions; a
-    file that fails to parse stays out, so the next read tries again."""
+    file that fails to parse stays out, so the next read tries again.
+    The Mac logs that failure at debug level and shows nothing; the hub
+    has no log, so it only retries."""
 
-    def __init__(self):
+    def __init__(self, now=time.monotonic):
         self._entries: dict[str, tuple[tuple, list[dict]]] = {}
         self._lock = threading.Lock()
+        self._now = now
+        self._refreshed: float | None = None
 
-    def sessions(self, files: dict[str, tuple], parse) -> list[dict]:
+    def sessions(self, files, parse, force: bool = False) -> list[dict]:
+        """Every session every file holds. Within ``REFRESH_S`` of the last
+        refresh, without ``force``, the cached sessions come back and
+        ``files`` (the source's listing, a callable) is never called."""
         with self._lock:
+            if not force and self._refreshed is not None \
+                    and self._now() - self._refreshed < REFRESH_S:
+                return [s for entry in self._entries.values() for s in entry[1]]
+            files = files()
+            self._refreshed = self._now()
             for path in [p for p in self._entries if p not in files]:
                 del self._entries[path]
             for path, stamp in files.items():
@@ -186,11 +202,11 @@ class Source:
         self.harness, self.account, self.root = harness, account, root
         self._files, self._parse = files, parse
 
-    def sessions(self, home: Path) -> list[dict]:
+    def sessions(self, home: Path, force: bool = False) -> list[dict]:
         account = str(home / self.account)
         root = str(home / self.root)
         return _index(self.harness, root).sessions(
-            self._files(root), lambda path: self._parse(path, account))
+            lambda: self._files(root), lambda path: self._parse(path, account), force)
 
 
 # AppModel's file providers, with the same homes and roots.
@@ -200,18 +216,19 @@ SOURCES = (
 )
 
 
-def read(home: Path | None, stats: dict[str, dict], trivial) -> list[tuple[str, dict]]:
+def read(home: Path | None, stats: dict[str, dict], trivial,
+         force: bool = False) -> list[tuple[str, dict]]:
     """``(harness, session)`` for every file source's sessions, the
     accidental Pi and Droid ones dropped. ``stats`` maps a filtered
     harness to ``LedgerStore.activity_session_stats``, keyed by account
     and session; ``trivial`` is ``sessions.is_trivial``. A session the
     ledger has no rows for stays: absent rows prove nothing about a
-    file's responses."""
+    file's responses. ``force`` (a rescan) lists the files again now."""
     user = Path(home) if home is not None else Path.home()
     out = []
     for source in SOURCES:
         usage = stats.get(source.harness)
-        for session in source.sessions(user):
+        for session in source.sessions(user, force):
             totals = (usage or {}).get((session["account"], session["session"]))
             if totals is not None and trivial(source.harness, totals, True):
                 continue

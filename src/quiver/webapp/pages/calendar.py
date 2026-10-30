@@ -566,11 +566,11 @@ def get(ctx, args: dict) -> dict:
         rows = store.activity_events(render_start - LOOKOUT_S, render_end + LOOKOUT_S,
                                      list(CALENDAR_HARNESSES))
         usage = ctx.state.webapp.session_usage()
-        file_stats = {h: store.activity_session_stats(h) for h in _activity.TRIVIAL_FILTERED}
+        file_stats = ctx.state.webapp.activity_session_stats(_activity.TRIVIAL_FILTERED)
         scanned_at = store.meta("scanned_at")
     pieces = [p for p in session_pieces(rows, priced)
               if is_real(p["harness"], usage.get((p["harness"], p["session"])))]
-    pieces += file_pieces(_activity.read(ctx.home, file_stats, sessions_mod.is_trivial),
+    pieces += file_pieces(_activity.read(ctx.home, file_stats, sessions_mod.is_trivial, rescan),
                           render_start - LOOKOUT_S, render_end + LOOKOUT_S, tz)
     blocks = [b for b in group_by_project(pieces, Projects())
               if b["end"] >= render_start and b["start"] < render_end]

@@ -74,8 +74,9 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
    history is read, so a block keeps its real ends, and the step 2 rule
    makes the blocks. A session whose ledger history (under its own
    account) is accidental draws nothing; one the ledger has never seen
-   stays. The account is `~/.pi` or `~/.factory`. Files are parsed again
-   only when their mtime or size changes.
+   stays. The account is `~/.pi` or `~/.factory`. The files are listed
+   again at most every 30 seconds (refresh does it at once), and parsed
+   again only when their mtime or size changes.
 5. Blocks regroup by harness, account and project, the key being the
    repository root, so worktrees of one repository merge and same-named
    folders of different ones stay apart, and merge while the next
@@ -138,8 +139,8 @@ listing gets a stand-in row from the ledger, as the app's
   files, on the hub machine. The Mac app also reads Freebuff session
   files, the Cursor editor's own state and Devin cloud sessions, which
   the web doesn't read yet; a satellite's activity is not shown either.
-  The hub keeps its file index in memory and checks the files on every
-  read; the Mac's copy in `~/.quiver/cache/calendar` is its own.
+  The hub keeps its file index in memory; the Mac's copy in
+  `~/.quiver/cache/calendar` is its own.
 - **Grok Bot titles** come from the names the Mac app remembered in
   `~/.quiver/data/grok-bot-names.json` (read only); the hub has no Bot
   roster, so a deleted Bot reads as its short id, not "Deleted Bot".
