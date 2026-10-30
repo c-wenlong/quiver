@@ -198,7 +198,9 @@ def detail(ctx, home: Path, args: dict) -> dict:
         "is_dir": source.is_dir(),
         # HookScript.editable: the source resolves inside the hooks root.
         "editable": exists and _inside(source, _paths.hooks_dir_for(home)),
-        "text": read_text(source),
+        # A foreign hook's command can name any file on disk; a paired
+        # device reads the text only of one under the hub's home.
+        "text": read_text(source) if _inside(source, home) else None,
     }
 
 
