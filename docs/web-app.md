@@ -38,7 +38,9 @@ whose login is the hub owner's, as long as the request carries
 `X-Quiver-Pair: 1`, names a Host the hub answers to, and has no foreign
 `Origin`. That is the gate the app's tailnet-identity calls use: a page
 on another site can't send the header, so it can't borrow the owner's
-network identity. Tagged nodes and other people's logins still pair
+network identity. The hub machine's own node doesn't count (any local
+process reaches the hub as that node), so a browser on the hub machine
+pairs like anyone else. Tagged nodes and other people's logins still pair
 from the gate itself: "Pair with Tailscale" posts
 `POST /v1/pair/request` and polls for the owner's yes, the token field
 below trades a pair token through the app's own `#pair=` fragment, and

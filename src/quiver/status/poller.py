@@ -31,14 +31,10 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from quiver.paths import cache_dir_for
+from quiver.paths import cache_dir_for, locked_beside
 from quiver.status.catalog import SERVICES, StatusService
 from quiver.status.parsers import Report, google_cloud, statuspage
 
-try:  # flock keeps two hubs on one home from losing each other's entries
-    import fcntl
-except ImportError:  # pragma: no cover - Windows has no flock
-    fcntl = None  # type: ignore[assignment]
 
 CACHE_NAME = "web-service-status.json"
 INTERVAL = 300.0       # the least time between two requests to a page
@@ -376,9 +372,7 @@ class StatusPoller:
             tombstone = Entry(removed_at=self._now())
             try:
                 self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(str(self.cache_path) + ".lock", "a+") as lock:
-                    if fcntl is not None:
-                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                with locked_beside(self.cache_path):
                     entries = self._load()
                     entries[service_id] = newer(tombstone, entries.get(service_id))
                     self._write(entries)
@@ -469,9 +463,7 @@ class StatusPoller:
             self._memory[id] = newer(entry, self._memory.get(id))  # type: ignore[assignment]
         try:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(str(self.cache_path) + ".lock", "a+") as lock:
-                if fcntl is not None:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            with locked_beside(self.cache_path):
                 entries = self._load()
                 for id, entry in updated.items():
                     entries[id] = newer(entry, entries.get(id))  # type: ignore[assignment]
