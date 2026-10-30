@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from quiver import paths
+from quiver.paths import home_relative as _short
 from quiver.console import sanitize
 from quiver.find.entries import Entry
 from quiver.find.plugins import Plugin, discover_plugins, filter_plugins
@@ -210,14 +211,6 @@ def _normalise(scope: str) -> str:
     would surface as a KeyError from deep inside a discovery call.
     """
     return scope if scope in SCOPES else SCOPE_DEFAULT
-
-
-def _short(path: Path, home: Path) -> str:
-    """The ~/ form of a path, which is how every other view names one."""
-    try:
-        return "~/" + str(path.relative_to(home))
-    except ValueError:
-        return str(path)
 
 
 def _is_dir(path: Path | None) -> bool:
