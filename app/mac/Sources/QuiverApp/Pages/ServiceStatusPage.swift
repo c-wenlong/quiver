@@ -142,7 +142,7 @@ private struct ServiceEditorSheet: View {
                 Text("This service reads a fixed status feed; only its name and group can change.")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
-            Tabs(options: StatusService.Group.allCases.map { ($0, $0.title) },
+            Tabs(options: StatusService.Group.allCases.map { ($0, $0.shortTitle) },
                  selection: $group, columns: 4)
             Text("Model providers and agent platforms also show in the menu bar when they have an incident.")
                 .font(Theme.font(size: 10)).foregroundStyle(.secondary)
@@ -237,7 +237,7 @@ private struct StatusCatalogueSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Service catalogue").font(Theme.sectionTitle).tracking(-0.5)
             SearchField(prompt: "Search status pages", text: $query)
-            Tabs(options: [(nil, "All")] + StatusService.Group.allCases.map { (.some($0), $0.title) },
+            Tabs(options: [(nil, "All")] + StatusService.Group.allCases.map { (.some($0), $0.shortTitle) },
                  selection: $group, style: .segmented, columns: 5)
             ScrollView {
                 if shown.isEmpty {

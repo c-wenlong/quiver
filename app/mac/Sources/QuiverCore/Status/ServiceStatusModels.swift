@@ -172,6 +172,20 @@ public struct StatusService: Sendable, Hashable, Identifiable {
             case .services: "Services & productivity"
             }
         }
+
+        /// The group's name in a picker chip, where `title` won't fit.
+        public var shortTitle: String {
+            switch self {
+            case .modelProviders: "Models"
+            case .agentPlatforms: "Agents"
+            case .cloud: "Cloud"
+            case .data: "Data"
+            case .devtools: "Dev tools"
+            case .registries: "Registries"
+            case .observability: "Monitoring"
+            case .services: "Services"
+            }
+        }
     }
 
     public enum Feed: Sendable, Hashable {

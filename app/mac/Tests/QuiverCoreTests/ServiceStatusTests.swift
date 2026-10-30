@@ -618,6 +618,20 @@ private func openGeminiIncident() throws -> Data {
         #expect(loaded.map(\.group) == [.modelProviders, .services, .services, .registries])
     }
 
+    /// Only a pre-split group migrates: one the user picked under the
+    /// new layout survives a restart even when the page is a catalogue
+    /// host the catalogue groups elsewhere.
+    @Test func aChosenGroupSurvivesAReload() throws {
+        let defaults = TestDefaults("quiver-test")
+        let store = CustomStatusServices(defaults: defaults)
+        let groq = StatusService(id: "custom-g", name: "Groq",
+                                 pageURL: URL(string: "https://groqstatus.com")!,
+                                 feed: .statuspage(URL(string: "https://groqstatus.com/api/v2/summary.json")!),
+                                 group: .services, isCustom: true)
+        store.save(StatusServicePrefs(custom: [groq]))
+        #expect(store.load().custom.first?.group == .services)
+    }
+
     /// Adding puts the card in its group as unknown until the load fills
     /// it in, persists it, and lets the poll floors fetch it right away.
     @MainActor @Test func addStoresFetchesAndGroupsTheService() async throws {

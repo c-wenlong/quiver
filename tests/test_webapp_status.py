@@ -724,6 +724,13 @@ class TestTracked(unittest.TestCase):
         self.assertEqual([(s.id, s.group) for s in services],
                          [("groq", "modelProviders"), ("mine", "services")])
 
+    def test_a_chosen_group_survives_a_reload(self):
+        # Only a pre-split group migrates: a group the user picked under
+        # the new layout wins over the catalogue's, even on its own host.
+        tracked.add(self.home, catalogue.entry("groq"))
+        self.path.write_text(self.path.read_text().replace('"modelProviders"', '"services"'))
+        self.assertEqual(tracked.load(self.home)[0].group, "services")
+
     def test_bad_data_reads_as_empty(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text("{not json")

@@ -63,16 +63,17 @@ def _service(raw: Any) -> StatusService | None:
 def _group(id: str, feed_url: str, stored: str) -> str:
     """The group a stored record renders under.
 
-    A page added from the catalogue follows the catalogue's group when
-    the groups change (the store's copy was written at add time); a page
-    stored under a pre-split group name maps forward, so an old record
-    never lands under a heading the page no longer shows."""
+    A record still carrying a pre-split group was last saved under the
+    old layout, so a catalogue page it names follows the catalogue's
+    group and anything else maps forward. A record saved since keeps
+    its own group — a group the user picked is never rewritten on
+    load."""
+    if stored not in LEGACY_GROUPS:
+        return stored
     from quiver.status import catalogue
     host = feed_url.split("://", 1)[-1].split("/", 1)[0]
     found = catalogue.entry(id) or next((e for e in catalogue.CATALOGUE if e.host == host), None)
-    if found is not None:
-        return found.group
-    return LEGACY_GROUPS.get(stored, stored)
+    return found.group if found is not None else LEGACY_GROUPS[stored]
 
 
 def _load(path: Path) -> list[StatusService]:
