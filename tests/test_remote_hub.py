@@ -3169,6 +3169,29 @@ class TestServeEntry(unittest.TestCase):
         self.assertEqual(out.count("tail tick failed"), 1, out)
         self.assertIn("RuntimeError: tick broke", out)
 
+    def test_loop_error_log_throttles_per_step_and_window(self):
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+
+        def fail(step):
+            try:
+                raise RuntimeError(step)
+            except RuntimeError:
+                state._log_loop_error(step)
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            fail("tail tick")
+            fail("tail tick")          # same window: quiet
+            fail("catalog refresh")    # another step logs in that window
+            # The window passes: the same step logs again.
+            state._loop_error_at["tail tick"] -= hub_mod._LOOP_ERROR_LOG_S + 1
+            fail("tail tick")
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 2, out)
+        self.assertEqual(out.count("catalog refresh failed"), 1, out)
+
     def test_tail_manager_probes_through_state_status_of(self):
         state = HubState(Path(tempfile.mkdtemp()))
         state.status_of = lambda sessions: ["active"] * len(sessions)
