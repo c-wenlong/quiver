@@ -2,12 +2,16 @@
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-import fcntl
 import hashlib
 import os
 from pathlib import Path
 import stat
 import tempfile
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 from quiver.paths import (
     agents_file_for, cache_dir_for, instructions_dir_for, instructions_index_for,
@@ -17,6 +21,15 @@ from quiver.paths import (
 
 class InstructionError(ValueError):
     """The instruction sources or destination cannot safely be compiled."""
+
+
+def require_supported_platform() -> None:
+    """Fail clearly when safe instruction builds are unavailable on this OS."""
+    if fcntl is None or any(getattr(os, flag, None) is None
+                            for flag in ("O_NOFOLLOW", "O_NONBLOCK")):
+        raise InstructionError(
+            "Instruction chapters require POSIX file locking and no-follow "
+            "file opens (macOS/Linux)")
 
 
 class _SourcesChanged(Exception):
@@ -106,6 +119,27 @@ def _unchanged(sources: tuple[_Source, ...], root: Path) -> bool:
                for source in sources)
 
 
+def source_fingerprint(home: Path | None = None) -> bytes:
+    """Fingerprint the index and its listed sources, including invalid states.
+
+    Missing or invalid sources have a stable error fingerprint. Polling retries
+    validation, so fixing an index, chapter or symlink changes that fingerprint
+    without requiring a recursive scan of unrelated files.
+    """
+    digest = hashlib.sha256()
+    try:
+        require_supported_platform()
+        sources, _ = _snapshot(home)
+    except (InstructionError, OSError, RuntimeError, _SourcesChanged) as exc:
+        digest.update(repr((type(exc).__name__, str(exc))).encode("utf-8"))
+    else:
+        for source in sources:
+            digest.update(repr((str(source.path), str(source.resolved),
+                                source.signature)).encode("utf-8"))
+            digest.update(hashlib.sha256(source.data).digest())
+    return digest.digest()
+
+
 def _output(path: Path) -> tuple[bytes | None, int]:
     try:
         info = path.lstat()
@@ -175,6 +209,7 @@ def build(home: Path | None = None, *, check: bool = False) -> bool:
     replacement; a source edited during compilation causes a fresh attempt.
     Identical output keeps its inode, timestamps and permissions unchanged.
     """
+    require_supported_platform()
     try:
         if check:
             return _build(home, check=True)

@@ -7,44 +7,33 @@ from pathlib import Path
 import stat
 import time
 
-from quiver.paths import agents_file_for, instructions_dir_for
-from .compiler import InstructionError, build
+from quiver.paths import agents_file_for
+from .compiler import (
+    InstructionError, build, require_supported_platform, source_fingerprint,
+)
 
 POLL_INTERVAL = 0.5
 SETTLE_INTERVAL = 0.5
 
 
-def _fingerprint(path: Path, *, tree: bool = False) -> bytes:
-    """Hash bytes as well as metadata, including broken or retargeted links."""
+def _fingerprint(path: Path) -> bytes:
+    """Hash the output without following aliases or opening special files."""
     digest = hashlib.sha256()
-
-    def add(candidate: Path) -> None:
-        digest.update(os.fsencode(str(candidate)))
-        try:
-            info = candidate.lstat()
-            digest.update(str((info.st_mode, info.st_mtime_ns, info.st_ctime_ns,
-                               info.st_ino, info.st_size)).encode())
-            if stat.S_ISLNK(info.st_mode):
-                digest.update(os.fsencode(os.readlink(candidate)))
-            elif stat.S_ISREG(info.st_mode):
-                digest.update(candidate.read_bytes())
-        except OSError as exc:
-            digest.update(str((type(exc).__name__, exc.errno)).encode())
-
-    add(path)
-    # A supported root symlink can point elsewhere inside the hub. Walk its
-    # physical tree, without following any nested directory symlinks: their
-    # accepted targets also live in this tree and are visited directly.
+    digest.update(os.fsencode(str(path)))
     try:
-        root = path.resolve()
-    except (OSError, RuntimeError) as exc:
-        digest.update(str(exc).encode())
-        return digest.digest()
-    if tree and path.is_dir() and root.is_relative_to(path.parent.resolve()):
-        for directory, folders, files in os.walk(root, followlinks=False):
-            folders.sort()
-            for name in sorted(folders + files):
-                add(Path(directory) / name)
+        info = path.lstat()
+        digest.update(str((info.st_mode, info.st_mtime_ns, info.st_ctime_ns,
+                           info.st_ino, info.st_size)).encode())
+        if stat.S_ISLNK(info.st_mode):
+            digest.update(os.fsencode(os.readlink(path)))
+        elif stat.S_ISREG(info.st_mode):
+            descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+            with os.fdopen(descriptor, "rb") as handle:
+                # A regular file can become a FIFO between lstat and open.
+                if stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                    digest.update(handle.read())
+    except OSError as exc:
+        digest.update(str((type(exc).__name__, exc.errno)).encode())
     return digest.digest()
 
 
@@ -57,12 +46,13 @@ def watch(home: Path | None = None, *,
     reported once until a successful build resets it. Callbacks own all output;
     KeyboardInterrupt and callback exceptions propagate to the caller.
     """
-    directory, output = instructions_dir_for(home), agents_file_for(home)
+    require_supported_platform()
+    output = agents_file_for(home)
     last_error: tuple[type[Exception], str] | None = None
 
     def attempt() -> tuple[bytes, bytes]:
         nonlocal last_error
-        source_state = _fingerprint(directory, tree=True)
+        source_state = source_fingerprint(home)
         try:
             changed = build(home)
         except InstructionError as exc:
@@ -81,7 +71,7 @@ def watch(home: Path | None = None, *,
     changed_at = 0.0
     while True:
         time.sleep(POLL_INTERVAL)
-        current = _fingerprint(directory, tree=True), _fingerprint(output)
+        current = source_fingerprint(home), _fingerprint(output)
         if current == observed:
             pending = None
         elif current != pending:

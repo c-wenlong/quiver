@@ -4,7 +4,10 @@ import fcntl
 import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -238,6 +241,76 @@ class CompilerTests(unittest.TestCase):
         self.assertTrue(self.output.is_symlink())
         self.assertEqual(target.read_text(), "keep target")
         self.assertEqual(list(self.output.parent.glob(".AGENTS.md.*.tmp")), [])
+
+    def test_missing_locking_support_rejects_build_and_check_before_io(self):
+        missing_home = self.home / "unsupported-home"
+        with patch.object(compiler, "fcntl", None):
+            for check in (False, True):
+                with self.subTest(check=check):
+                    with self.assertRaisesRegex(InstructionError, "macOS/Linux"):
+                        build(missing_home, check=check)
+        self.assertFalse(missing_home.exists())
+
+    def test_missing_no_follow_support_reports_instruction_error(self):
+        with patch.object(compiler, "os", SimpleNamespace(O_NONBLOCK=1)):
+            for check in (False, True):
+                with self.subTest(check=check):
+                    with self.assertRaisesRegex(InstructionError, "no-follow"):
+                        build(self.home, check=check)
+
+    def test_cli_help_and_version_work_when_fcntl_and_no_follow_are_unavailable(self):
+        environment = dict(os.environ, HOME=str(self.home))
+        environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+        script = """
+import os
+import sys
+sys.modules["fcntl"] = None
+if hasattr(os, "O_NOFOLLOW"):
+    del os.O_NOFOLLOW
+from quiver.cli import main
+sys.argv = ["swe", sys.argv[1]]
+raise SystemExit(main())
+"""
+        for command, expected in (("--help", "instructions"), ("--version", "swe ")):
+            with self.subTest(command=command):
+                result = subprocess.run(
+                    [sys.executable, "-c", script, command], env=environment,
+                    capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected, result.stdout)
+                self.assertEqual(result.stderr, "")
+
+    def test_source_fingerprint_ignores_unlisted_files(self):
+        before = compiler.source_fingerprint(self.home)
+        (self.directory / "unused.md").write_text("not included")
+        (self.directory / "extra").mkdir()
+        (self.directory / "extra/unrelated.bin").write_bytes(b"unrelated")
+        self.assertEqual(compiler.source_fingerprint(self.home), before)
+        (self.directory / "one.md").write_text("changed")
+        self.assertNotEqual(compiler.source_fingerprint(self.home), before)
+
+    def test_source_fingerprint_has_stable_error_and_recovers(self):
+        self.index.write_text("missing.md\n")
+        invalid = compiler.source_fingerprint(self.home)
+        self.assertEqual(compiler.source_fingerprint(self.home), invalid)
+        (self.directory / "missing.md").write_text("recovered")
+        self.assertNotEqual(compiler.source_fingerprint(self.home), invalid)
+
+    def test_source_fingerprint_does_not_read_escaped_target(self):
+        outside = self.home / "outside.md"
+        outside.write_text("private")
+        (self.directory / "linked.md").symlink_to(outside)
+        self.index.write_text("linked.md\n")
+        original = compiler.os.open
+
+        def deny_external(path, *args, **kwargs):
+            if Path(path).resolve() == outside.resolve():
+                raise AssertionError("escaped target was opened")
+            return original(path, *args, **kwargs)
+
+        with patch.object(compiler.os, "open", side_effect=deny_external):
+            invalid = compiler.source_fingerprint(self.home)
+        self.assertEqual(compiler.source_fingerprint(self.home), invalid)
 
 
 if __name__ == "__main__":

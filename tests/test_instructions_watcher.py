@@ -149,6 +149,112 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(results, [True, True])
         self.assertIn("changed", self.output.read_text())
 
+    def test_unlisted_large_file_is_never_opened_or_watched(self):
+        backup = self.directory / "backup.bin"
+        with backup.open("wb") as handle:
+            handle.seek(8 * 1024 * 1024)
+            handle.write(b"x")
+        original_open = Path.open
+        original_os_open = os.open
+
+        def guarded_open(path, *args, **kwargs):
+            self.assertNotEqual(path, backup, "opened an unlisted backup")
+            return original_open(path, *args, **kwargs)
+
+        def guarded_os_open(path, *args, **kwargs):
+            self.assertNotEqual(Path(path), backup, "opened an unlisted backup")
+            return original_os_open(path, *args, **kwargs)
+
+        results = []
+        with patch.object(Path, "open", guarded_open), \
+                patch.object(watcher.os, "open", side_effect=guarded_os_open):
+            self.run_watch([
+                lambda: os.utime(backup, None), None, None,
+            ], results=results.append)
+        self.assertEqual(results, [True])
+
+    def test_symlink_chapter_content_and_retargeting_are_detected(self):
+        other = self.directory / "other.md"
+        other.write_text("first")
+        link = self.directory / "linked.md"
+        link.symlink_to(self.chapter)
+        self.index.write_text("linked.md\n")
+
+        def retarget():
+            link.unlink()
+            link.symlink_to(other)
+
+        def edit():
+            before = other.stat()
+            other.write_text("other")
+            os.utime(other, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+        results = []
+        self.run_watch([retarget, None, edit, None, None], results=results.append)
+        self.assertEqual(results, [True, False, True])
+        self.assertIn("other", self.output.read_text())
+
+    def test_missing_symlink_target_and_invalid_encoding_recover(self):
+        link = self.directory / "linked.md"
+        target = self.directory / "missing.md"
+        link.symlink_to(target)
+        self.index.write_text("linked.md\n")
+        results, errors = [], []
+        self.run_watch([
+            lambda: target.write_bytes(b"\xff"), None,
+            lambda: target.write_text("recovered"), None, None,
+        ], results=results.append, errors=errors.append)
+        self.assertEqual(results, [True])
+        self.assertEqual(len(errors), 2)
+        self.assertIn("recovered", self.output.read_text())
+
+    def test_escaped_and_nonregular_sources_are_not_opened(self):
+        outside = self.home / "outside.md"
+        outside.write_text("outside")
+        escaped = self.directory / "escaped.md"
+        escaped.symlink_to(outside)
+        fifo = self.directory / "fifo.md"
+        os.mkfifo(fifo)
+        original = os.open
+
+        def guarded_open(path, *args, **kwargs):
+            self.assertNotIn(Path(path), (outside, fifo))
+            return original(path, *args, **kwargs)
+
+        with patch.object(watcher.os, "open", side_effect=guarded_open):
+            for name in ("escaped.md", "fifo.md"):
+                with self.subTest(name=name):
+                    self.index.write_text(name + "\n")
+                    errors = []
+                    self.run_watch([None, None], errors=errors.append)
+                    self.assertEqual(len(errors), 1)
+
+    def test_output_replaced_with_fifo_does_not_block_fingerprint(self):
+        self.output.write_text("old")
+        original = os.open
+
+        def replace_before_open(path, flags):
+            self.output.unlink()
+            os.mkfifo(self.output)
+            self.assertTrue(flags & os.O_NONBLOCK)
+            return original(path, flags)
+
+        with patch.object(watcher.os, "open", side_effect=replace_before_open):
+            self.assertIsInstance(watcher._fingerprint(self.output), bytes)
+
+    def test_output_symlink_target_is_not_opened(self):
+        self.output.symlink_to(self.chapter)
+        with patch.object(watcher.os, "open", side_effect=AssertionError("opened alias")):
+            self.assertIsInstance(watcher._fingerprint(self.output), bytes)
+
+    def test_unsupported_platform_fails_before_polling(self):
+        from quiver.instructions import compiler
+
+        with patch.object(compiler, "fcntl", None), \
+                patch.object(watcher.time, "sleep", side_effect=AssertionError("polled")):
+            with self.assertRaisesRegex(compiler.InstructionError, "macOS/Linux"):
+                watcher.watch(self.home)
+
 
 if __name__ == "__main__":
     unittest.main()

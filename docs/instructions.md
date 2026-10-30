@@ -54,6 +54,9 @@ invalid source without replacing the previous valid output, and continues
 watching so a corrected source can build. Press Ctrl-C to stop.
 
 The watcher uses the Python standard library, with no extra package needed.
+It polls the index, listed chapter files and generated output; unlisted
+backups, images and repository files are not read. Instruction chapters
+require macOS or Linux for file locking and safe no-follow file opens.
 Keep it running in a terminal while editing chapters. It does not install
 a background service or change harness configuration.
 
