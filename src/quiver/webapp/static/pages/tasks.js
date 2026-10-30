@@ -54,7 +54,7 @@
   const LAUNCH_POLLS = 60;
 
   const page = {
-    data: null, status: 0, error: null, loading: false,
+    data: null, error: null, loading: false,
     filter: "all", busy: new Set(), actionError: null,
     seq: 0, forTask: null,
     // The list: the rail's chosen group (null is every task), the groups
@@ -823,7 +823,6 @@
       return paint();
     }
     page.data = data;
-    page.status = status;
     page.error = null;
     // The rail's group went away (all closed out, unpinned): back to All.
     if (page.shown && !tasks().some((t) => groupName(t) === page.shown)
