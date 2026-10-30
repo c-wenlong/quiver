@@ -16,6 +16,9 @@ struct AccountsPage: View {
         Page(title: "Accounts",
              subtitle: "Each account keeps its own sign-in. Open it in its app or a terminal without logging out.") {
             Button("Refresh", systemImage: "arrow.clockwise") {
+                // A refresh is a fresh look: the last action's failure goes.
+                // Other reloads keep it, such as the one after a failed Remove.
+                actionError = nil
                 Task { await reloadAll(force: true, renewExpired: true) }
             }
             .iconButton()
@@ -645,13 +648,16 @@ private struct HarnessAccountCard: View {
         }
         .background { installSheet }
         .background {
-            if row.issue != nil {
+            if let issue = row.issue {
                 // Drawn like installSheet: over the window, no row space.
                 Color.clear.quiverSheet(isPresented: $fixing) {
-                    IssueFixSheet(title: name, issue: row.issue!, perform: perform)
+                    IssueFixSheet(title: name, issue: issue, perform: perform)
                 }
             }
         }
+        // The sheet goes with its issue; left set, `fixing` would open it
+        // again, unasked, the next time this account has one.
+        .onChange(of: row.issue == nil) { _, gone in if gone { fixing = false } }
         .alert("Rename \(row.profile?.name ?? ownName)", isPresented: $renaming) {
             TextField("Name", text: $newName)
             if let profile = row.profile {

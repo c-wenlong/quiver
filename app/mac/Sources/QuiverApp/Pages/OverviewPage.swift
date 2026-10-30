@@ -345,13 +345,15 @@ private struct TotalCard: View {
             RollingText(text: cost, font: Self.figureFont, color: NSColor(Theme.accent), up: up)
                 .overlay {
                     if totals.unpricedTokens > 0 {
+                        // The tip goes on the button, as CopyButton's
+                        // does: on the label its tap pinned the tip and
+                        // the button never opened Pricing.
                         Button { app.selection = .pricing } label: {
                             Image(systemName: "info.circle")
                                 .foregroundStyle(Theme.textSecondary)
-                                .hoverTip("\(UsageFormat.tokens(totals.unpricedTokens)) tokens from models with no list price aren't in this total: \(totals.unpricedModels.sorted().joined(separator: ", "))")
                         }
                         .buttonStyle(.plain)
-                        .help("See unpriced models on the Pricing page")
+                        .hoverTip("\(UsageFormat.tokens(totals.unpricedTokens)) tokens from models with no list price aren't in this total: \(totals.unpricedModels.sorted().joined(separator: ", ")). Click to see them on the Pricing page.")
                         .offset(x: RollingText.width(of: cost, font: Self.figureFont) / 2 + 14)
                     }
                 }
