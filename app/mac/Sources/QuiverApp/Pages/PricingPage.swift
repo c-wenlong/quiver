@@ -625,6 +625,7 @@ private struct PriceSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             TextField("0.00", text: text).quiverField()
+                .accessibilityLabel(label)
         }
     }
 
