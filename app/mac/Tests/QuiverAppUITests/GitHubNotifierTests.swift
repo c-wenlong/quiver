@@ -70,14 +70,6 @@ struct GitHubNotifierTests {
             contentsOf: quiver.appending(path: "cache/github-notified.json"))).delivered
     }
 
-    /// Wait for a condition with a bound — `invalidate` refreshes the
-    /// selected repo from a spawned Task.
-    private func until(_ condition: @escaping () -> Bool) async {
-        for _ in 0..<200 where !condition() {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
     /// History is not news: the very first poll only seeds the set.
     @Test func firstPollSeedsWithoutBanners() async throws {
         let dir = quiverDir()
@@ -224,15 +216,17 @@ struct GitHubNotifierTests {
             posts.batches.append($0)
         }
         notifier.bannersEnabled = false
-        await notifier.poll(swe: swe)
+        // The seeding poll starts no refresh.
+        #expect(await notifier.poll(swe: swe).isEmpty)
         router.respond(inboxKey, inbox([note("a"), note("b")]))
-        await notifier.poll(swe: swe)
+        let refreshes = await notifier.poll(swe: swe)
         #expect(posts.batches.isEmpty)
         // The notification's repo is selected: its tab refetches now.
-        let fetches = { router.calls.filter {
-            $0.joined(separator: " ").contains("--repo=o/r") }.count }
-        await until { fetches() > boardFetches }
-        #expect(fetches() == boardFetches + 1)
+        #expect(refreshes.count == 1)
+        for refresh in refreshes { await refresh.value }
+        let fetches = router.calls.filter {
+            $0.joined(separator: " ").contains("--repo=o/r") }.count
+        #expect(fetches == boardFetches + 1)
         #expect(try deliveredIds(dir).contains("b"))
     }
 

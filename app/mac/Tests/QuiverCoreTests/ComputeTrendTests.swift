@@ -779,7 +779,7 @@ import Testing
         #expect(model.history.points(for: "claude").last?.gpuPercent == 0)
     }
 
-    @MainActor @Test func refreshDuringATickDropsTheOlderTick() async {
+    @MainActor @Test(.timeLimit(.minutes(1))) func refreshDuringATickDropsTheOlderTick() async {
         // The popup's Refresh restarts the loop while the loop's own tick
         // is parked on its GPU read: the parked tick must not write back,
         // or its older counters would reset the GPU baseline.
@@ -787,9 +787,15 @@ import Testing
         let claudeBin = "/opt/homebrew/bin/claude"
         let sampler = CountingSampler([Self.proc(10, 1, path: claudeBin, cpu: 0)])
         let gpu = GateGPU([10: 1_000])
+        // The loop sleeps only after its tick has written, so the first
+        // sleep is the sign the refreshed tick is done.
+        let ticked = GateFlag()
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
                                  gpu: gpu, temperature: FakeThermometer(nil), clock: { clock.now },
-                                 sleep: { _ in throw CancellationError() },
+                                 sleep: { _ in
+                                     await ticked.raise()
+                                     throw CancellationError()
+                                 },
                                  defaults: TestDefaults("trend"),
                                  selfPID: 99)
         await model.loadMatchers()
@@ -800,9 +806,7 @@ import Testing
 
         // Refresh: a new loop ticks at once and finishes.
         model.tickTrendsNow()
-        for _ in 0..<500 where model.history.points(for: "claude").isEmpty {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        #expect(await ticked.wait())
         #expect(model.history.points(for: "claude").last?.gpuPercent == 0)
 
         clock.now = Self.now.addingTimeInterval(20)

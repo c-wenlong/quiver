@@ -392,8 +392,9 @@ import Testing
         #expect(!FanHelperStatus(state: .ready).answers(request))
     }
 
-    @Test func aToolThatHangsIsKilledAndCountsAsNoAnswer() async {
-        let started = Date()
+    /// The time limit catches a kill that never comes; the 60 s sleep
+    /// would outlast it.
+    @Test(.timeLimit(.minutes(1))) func aToolThatHangsIsKilledAndCountsAsNoAnswer() async {
         let (yes, no, hung, missing) = await offMain {
             (FanControl.exitStatus(of: "/usr/bin/true", [], within: 5),
              FanControl.exitStatus(of: "/usr/bin/false", [], within: 5),
@@ -404,9 +405,6 @@ import Testing
         #expect(no == 1)
         #expect(hung == nil)
         #expect(missing == nil)
-        // Well before the 60 s hang would end; loose, since a busy CI
-        // runner can take seconds just to start the processes.
-        #expect(Date().timeIntervalSince(started) < 30)
     }
 
     // MARK: The helper's arguments and install

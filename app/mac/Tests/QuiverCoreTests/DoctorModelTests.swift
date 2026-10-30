@@ -98,13 +98,18 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         .init(status: 1, stdout: Data(#"{"schema":1,"data":{"ok":false,"findings":[{"check":"\#(check)","severity":"warning","message":"m","fix":null}]}}"#.utf8), stderr: "")
     }
 
-    @Test func aSlowerEarlierRefreshCannotOverwriteANewerOne() async {
-        let runner = SequencedRunner([(.milliseconds(400), report("old")), (.milliseconds(10), report("new"))])
+    @Test(.timeLimit(.minutes(1))) func aSlowerEarlierRefreshCannotOverwriteANewerOne() async {
+        let runner = GatedReplies([report("old"), report("new")])
         let model = DoctorModel(swe: SweClient(runner: runner))
-        async let first: Void = model.load()
-        try? await Task.sleep(for: .milliseconds(50))
-        async let second: Void = model.load()
-        _ = await (first, second)
+        let first = Task { await model.load() }
+        #expect(await runner.gates[0].arrived())
+        let second = Task { await model.load() }
+        #expect(await runner.gates[1].arrived())
+        // The newer refresh answers first; the older one lands after it.
+        runner.gates[1].open()
+        await second.value
+        runner.gates[0].open()
+        await first.value
         guard case .loaded(let report) = model.state else {
             Issue.record("expected loaded, got \(model.state)")
             return
@@ -114,11 +119,12 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
 
     /// A load cancelled with its page puts the previous state back: left
     /// at .loading, the spinner and isBusy stayed on for good.
-    @Test func aCancelledLoadDoesNotSpinForever() async throws {
-        let runner = StuckRunner()
+    @Test(.timeLimit(.minutes(1))) func aCancelledLoadDoesNotSpinForever() async throws {
+        // No replies: the one call hangs until the load is cancelled.
+        let runner = GatedReplies([])
         let model = DoctorModel(swe: SweClient(runner: runner))
         let task = Task { await model.load() }
-        while runner.started == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(await runner.hanging())
         task.cancel()
         await task.value
         #expect(model.state == .idle)

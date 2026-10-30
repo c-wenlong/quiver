@@ -11,18 +11,18 @@ struct PourBarTests {
     /// Three logos' row: 3 × 30pt circles, 6pt apart.
     let row = CGFloat(3) * PourBarView.circle + 2 * PourBarView.gap
 
+    /// The fold's end-of-split timer goes to `timers`, which the test
+    /// fires by hand.
+    let timers = ManualTimers()
+
     func hosted() -> (NSWindow, PourBarView) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
                               styleMask: [.titled], backing: .buffered, defer: false)
         let view = PourBarView(frame: NSRect(x: 0, y: 0, width: row, height: PourBarView.circle))
+        view.schedule = timers.timer
         window.contentView?.addSubview(view)
         view.layoutSubtreeIfNeeded()
         return (window, view)
-    }
-
-    func spin(_ seconds: TimeInterval) {
-        let end = Date().addingTimeInterval(seconds)
-        while Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
     }
 
     @Test func fillsLeftToRightInTheLogosOrder() {
@@ -61,7 +61,9 @@ struct PourBarTests {
                                           width: PourBarView.circle, height: PourBarView.circle))
         }
         #expect(handedOver == 0)
-        spin(PourBarView.splitDuration + 3 * PourBarView.splitStagger + 0.3)
+        // The hand-over waits out the fold: every circle's stagger and spring.
+        #expect(timers.longest == PourBarView.splitDuration + 3 * PourBarView.splitStagger)
+        timers.fireAll()
         #expect(handedOver == 1)
         _ = window
     }
@@ -86,7 +88,9 @@ extension PourBarTests {
         view.split { handedOver += 1 }
         view.begin(order: ["claude", "codex", "devin"])
         view.fill(order: ["claude", "codex", "devin"], landed: ["claude": 2], total: 8)
-        spin(PourBarView.splitDuration + 3 * PourBarView.splitStagger + 0.3)
+        // The old fold's timer comes due and finds a newer pour.
+        #expect(timers.count == 1)
+        timers.fireAll()
         #expect(handedOver == 0)
         #expect(view.layer?.opacity == 1)
         #expect(view.segmentFrames.first?.frame.height == PourBarView.barHeight)
