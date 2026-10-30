@@ -291,6 +291,38 @@ extension HubStubbed {
         #expect(!local.opensChat("claude:gone"))
     }
 
+    @Test func theHubsRowsCarryEachSessionsModelAndNothingWhenUnknown() async throws {
+        let local = hub(FakeLocator(address: "127.0.0.1:8477"))
+        await local.refreshKeys()
+        #expect(local.models.isEmpty, "not paired: nothing to show")
+
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        HubStub.handler = { _ in
+            (200, Data(#"""
+            {"sessions": [{"key": "claude:a", "model": "claude-opus-4-5-20251101"},
+                          {"key": "codex:b"}, {"key": "pi:c", "model": ""}]}
+            """#.utf8))
+        }
+        await local.refreshKeys()
+        #expect(local.model(for: "claude:a") == "claude-opus-4-5-20251101")
+        #expect(local.model(for: "codex:b") == nil, "an older hub, or an unknown model")
+        #expect(local.keys == .known(["claude:a", "codex:b", "pi:c"]))
+
+        HubStub.handler = { _ in (401, Data()) }
+        await local.refreshKeys()
+        #expect(local.models.isEmpty, "a hub that stops answering shows no stale model")
+    }
+
+    @Test func aSessionRowDecodesAnOptionalModel() throws {
+        let with = try HubWire.decoder.decode(HubSessionRow.self,
+            from: Data(#"{"key": "claude:a", "model": "anthropic/claude-opus-4-5"}"#.utf8))
+        #expect(with.model == "anthropic/claude-opus-4-5")
+        #expect(with.modelLabel == "claude-opus-4-5")
+        let without = try HubWire.decoder.decode(HubSessionRow.self, from: Data(#"{"key": "claude:a"}"#.utf8))
+        #expect(without.model == nil)
+        #expect(without.modelLabel == nil)
+    }
+
     @Test func aRevokedCredentialPairsAgain() async throws {
         try store.save(HubCredential(deviceId: "old", credential: "revoked"), for: "127.0.0.1:8477")
         HubStub.handler = { req in
@@ -417,6 +449,34 @@ extension HubStubbed {
                     data: try! HubWire.decoder.decode(HubJSON.self, from: Data(data.utf8)))
     }
 
+    /// The header's model comes from the row read at open, and no event
+    /// carries it: a finished turn reads the row again.
+    @Test func theModelIsReadAgainAfterAReply() async throws {
+        let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:s1"}]}"#)
+        chat.modelRetryDelays = []
+        #expect(chat.row?.model == nil)
+        func answer(_ body: String, status: Int = 200) {
+            HubStub.handler = { req in
+                req.url?.path == "/v1/sessions" ? (status, Data(body.utf8)) : (404, Data())
+            }
+        }
+        // A hub that fails, or still doesn't know it, leaves the header.
+        answer("{}", status: 503)
+        await chat.refreshModel().value
+        #expect(chat.row?.model == nil)
+        answer(#"{"sessions": [{"key": "claude:s1"}]}"#)
+        await chat.refreshModel().value
+        #expect(chat.row?.model == nil)
+        // The first reply names one, a later switch changes it.
+        answer(#"{"sessions": [{"key": "claude:s1", "model": "claude-opus-4-5-20251101", "status": "done"}]}"#)
+        await chat.refreshModel().value
+        #expect(chat.row?.model == "claude-opus-4-5-20251101")
+        #expect(chat.row?.status != "done", "only the model is taken from the new row")
+        answer(#"{"sessions": [{"key": "claude:s1", "model": "claude-sonnet-4-5"}]}"#)
+        await chat.refreshModel().value
+        #expect(chat.row?.modelLabel == "claude-sonnet-4-5")
+    }
+
     /// A hub page whose cursor doesn't move back (nothing new on it, and
     /// next_before where it was) ends the history instead of being asked
     /// for again forever.
@@ -452,6 +512,39 @@ extension HubStubbed {
         await chat.loadEarlier()
         #expect(earlierAsks.withLock { $0 } == 1)
         #expect(!chat.hasEarlier)
+    }
+
+    /// The turn's end can reach the stream before the hub's catalog
+    /// refresh (every 10 s) holds the new model, so one read may be stale:
+    /// the read repeats after each wait until the model differs.
+    @Test func aStaleReadIsRepeatedUntilTheCatalogCatchesUp() async throws {
+        let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:s1", "model": "claude-sonnet-4-5"}]}"#)
+        let reads = Mutex(0)
+        let waits = Mutex<[Duration]>([])
+        HubStub.handler = { req in
+            guard req.url?.path == "/v1/sessions" else { return (404, Data()) }
+            // The catalog is behind for the first two reads.
+            let n = reads.withLock { $0 += 1; return $0 }
+            let model = n < 3 ? "claude-sonnet-4-5" : "claude-opus-4-5"
+            return (200, Data(#"{"sessions": [{"key": "claude:s1", "model": "\#(model)"}]}"#.utf8))
+        }
+        chat.modelRetryDelays = [.seconds(6), .seconds(6), .seconds(6)]
+        chat.modelSleep = { delay in waits.withLock { $0.append(delay) } }
+        await chat.refreshModel().value
+        #expect(chat.row?.model == "claude-opus-4-5")
+        #expect(reads.withLock { $0 } == 3, "stops as soon as the model differs")
+        #expect(waits.withLock { $0 } == [.seconds(6), .seconds(6)])
+
+        // A model that really didn't change reads once per wait, then gives up.
+        reads.withLock { $0 = 0 }
+        waits.withLock { $0 = [] }
+        HubStub.handler = { req in
+            reads.withLock { $0 += 1 }
+            return (200, Data(#"{"sessions": [{"key": "claude:s1", "model": "claude-opus-4-5"}]}"#.utf8))
+        }
+        await chat.refreshModel().value
+        #expect(reads.withLock { $0 } == 4)
+        #expect(waits.withLock { $0.count } == 3)
     }
 
     @Test func aSessionTheHubDoesntListIsMissing() async throws {
