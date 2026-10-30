@@ -209,6 +209,16 @@ final class PrimitiveHome {
 }
 
 @Suite struct JSONTextEditTests {
+    /// A URL keeps its slashes bare, in a string and inside an object.
+    @Test func slashesStayBare() throws {
+        let text = "{\n  \"name\": \"eng\"\n}\n"
+        var edited = try JSONTextEdit.set("https://example.com/a/b", at: ["homepage"], in: text)
+        edited = try JSONTextEdit.set(["url": "https://github.com/o/r"], at: ["repository"], in: edited)
+        #expect(edited.contains(#""homepage": "https://example.com/a/b""#))
+        #expect(edited.contains(#""url" : "https://github.com/o/r""#) || edited.contains(#""url": "https://github.com/o/r""#))
+        #expect(!edited.contains(#"\/"#))
+    }
+
     @Test func replacesAValueKeepingOrderAndUnknownKeys() throws {
         let text = """
         {
