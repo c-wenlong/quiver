@@ -88,6 +88,18 @@ class ArchiveStoreTest(unittest.TestCase):
             {"kiro": {"state": "archived", "archived": "typed by hand"}}))
         self.assertEqual(self.mod.load_archive()["kiro"]["reason"], "typed by hand")
 
+    def test_a_bare_string_survives_re_archiving_and_restoring(self):
+        """load_archive tolerated the hand-typed string, but archive() and
+        unarchive() called .get on it and raised AttributeError."""
+        self.file.write_text(json.dumps(
+            {"kiro": {"state": "archived", "archived": "typed by hand"}}))
+        self.assertEqual(self.mod.archive("kiro", usage="trial")["reason"], "typed by hand")
+        self.file.write_text(json.dumps(
+            {"kiro": {"state": "archived", "archived": "typed by hand"}}))
+        self.assertEqual(self.mod.unarchive("kiro")["reason"], "typed by hand")
+        self.file.write_text(json.dumps({"kiro": {"state": "archived", "archived": 7}}))
+        self.assertEqual(self.mod.unarchive("kiro")["reason"], "")
+
     def test_a_non_dict_file_reads_as_empty(self):
         self.file.write_text(json.dumps(["kiro"]))
         self.assertEqual(self.mod.load_archive(), {})

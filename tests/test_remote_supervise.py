@@ -399,7 +399,8 @@ class TestPrimePane(unittest.TestCase):
 
     def test_prompt_send_failure_propagates_false(self):
         with patch.object(supervise, "capture_pane", return_value="❯"), \
-             patch.object(supervise, "send_text", return_value=False):
+             patch.object(supervise, "send_text", return_value=False), \
+             patch.object(time, "sleep"):
             self.assertFalse(supervise.prime_pane("qv-x", "hello"))
 
 
@@ -1230,6 +1231,13 @@ class TestAttachMtime(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
         self.key = "claude:abc-123"
         self.session = _session(sid="abc-123", path="/tmp/proj")
+        # Neither pgrep/ps over this machine's processes nor tmux on its
+        # default server; tests that need either patch it themselves.
+        for p in (patch.object(supervise, "_local_writer_pids",
+                               return_value=[]),
+                  patch.object(supervise, "tmux_alive", return_value=False)):
+            p.start()
+            self.addCleanup(p.stop)
 
     def test_fresh_transcript_refused(self):
         fresh = Path(tempfile.mkdtemp()) / "live.jsonl"
