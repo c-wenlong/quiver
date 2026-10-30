@@ -58,7 +58,7 @@ def post(ctx, action: str, body: dict) -> dict:
     if action == "replace":
         home = _home(ctx)
         error = run_init_now(home, force=True)
-        return {"ran": "replace", "error": error, "blocked": _blocked_now(home), "report": _report(ctx)}
+        return {"ran": "replace", "error": error, "blocked": blocked_now(home), "report": _report(ctx)}
     if action != "run":
         raise PageError(404, "unknown_action", f"unknown doctor action: {action}")
     check, message = body.get("check"), body.get("message")
@@ -80,7 +80,7 @@ def post(ctx, action: str, body: dict) -> dict:
         home = _home(ctx)
         error = _guarded(run, home)
         # Setup and init link files, and leave a real one in the way alone.
-        blocked = _blocked_now(home) if finding["action"] in ("setup", "init") else []
+        blocked = blocked_now(home) if finding["action"] in ("setup", "init") else []
         return {"ran": finding["action"], "error": error, "blocked": blocked, "report": _report(ctx)}
 
 
@@ -168,7 +168,10 @@ def blocked_paths(run, home: Path) -> list[str]:
             if result in ("blocked", "protected", "would-conflict", "keep")]
 
 
-def _blocked_now(home: Path) -> list[str]:
+def blocked_now(home: Path) -> list[str]:
+    """The paths ``swe init --force`` would replace, as the Doctor,
+    Hooks and AGENTS.md pages list them; a check read that fails offers
+    nothing."""
     from quiver.init.commands import run_init
 
     try:
