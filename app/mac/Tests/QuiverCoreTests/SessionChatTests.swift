@@ -203,7 +203,10 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
 extension HubStubbed {
 @MainActor
 @Suite struct LocalHubTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+    var dir: URL { scratch.url }
     var store: HubDeviceStore { HubDeviceStore(url: dir.appending(path: "remote/app-device.json")) }
 
     func hub(_ locator: FakeLocator) -> LocalHub {
@@ -378,7 +381,10 @@ extension HubStubbed {
 extension HubStubbed {
 @MainActor
 @Suite struct SessionChatOpenTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+    var dir: URL { scratch.url }
 
     func opened(sessions: String, inbox: String = #"{"items": []}"#) async throws -> SessionChatModel {
         let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
@@ -641,7 +647,10 @@ extension HubStubbed {
 extension HubStubbed {
 @MainActor
 @Suite struct SessionChatSendTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+    var dir: URL { scratch.url }
 
     /// A chat opened on an attached (or observed) session whose `POST
     /// .../message` answers `send`.
