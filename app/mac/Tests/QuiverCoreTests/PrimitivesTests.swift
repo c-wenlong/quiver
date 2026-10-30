@@ -4,17 +4,15 @@ import Testing
 
 /// A home laid out like the real one: `~/.quiver/plugins` for the hub.
 final class PrimitiveHome {
+    private let temp: TempDir
     let home: URL
 
     init() throws {
-        home = FileManager.default.temporaryDirectory
-            .appending(path: "quiver-prim-\(UUID().uuidString)")
-            .resolvingSymlinksInPath()
+        temp = try TempDir()
+        home = temp.url.resolvingSymlinksInPath()
         try FileManager.default.createDirectory(
             at: home.appending(path: ".quiver/plugins"), withIntermediateDirectories: true)
     }
-
-    deinit { try? FileManager.default.removeItem(at: home) }
 
     @discardableResult
     func dir(_ path: String) throws -> URL {

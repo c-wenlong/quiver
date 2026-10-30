@@ -297,10 +297,9 @@ import Testing
         // reads the real JSON: findings, checkError, the newer swe's
         // fields and a link state this app has never heard of all need
         // to come back.
-        let folder = FileManager.default.temporaryDirectory
-            .appending(path: "quiver-hooks-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let file = SnapshotFile<Snapshot<HookInventory>>(url: folder.appending(path: "cache/hooks.json"))
+        let folder = try TempDir()
+        defer { withExtendedLifetime(folder) {} }
+        let file = SnapshotFile<Snapshot<HookInventory>>(url: folder.path("cache/hooks.json"))
         let inventory = HookInventory(
             hooks: [
                 Hook(script: "prose-guard.py", harness: "shared",

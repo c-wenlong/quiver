@@ -25,6 +25,27 @@ final class TempDir: @unchecked Sendable {
     }
 
     func path(_ relative: String) -> URL { url.appendingPathComponent(relative) }
+
+    /// Writes `text` to `name` in this directory and returns the file.
+    func write(_ name: String, _ text: String) throws -> URL {
+        let file = url.appending(path: name)
+        try Data(text.utf8).write(to: file)
+        return file
+    }
+
+    func read(_ name: String) throws -> String {
+        try String(contentsOf: url.appending(path: name), encoding: .utf8)
+    }
+
+    /// Makes `name` a symlink to `destination`, spelled as given.
+    func link(_ name: String, to destination: String) throws {
+        try FileManager.default.createSymbolicLink(atPath: url.appending(path: name).path,
+                                                   withDestinationPath: destination)
+    }
+
+    func isLink(_ name: String) -> Bool {
+        (try? FileManager.default.destinationOfSymbolicLink(atPath: url.appending(path: name).path)) != nil
+    }
 }
 
 func utc(_ text: String) -> Date {

@@ -129,8 +129,9 @@ import Testing
     }
 
     @Test func onlyAMarketplaceInTheHubCanBeRenamed() throws {
-        let home = FileManager.default.temporaryDirectory.appending(path: "explore-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: home) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let home = temp.url
         let hubFolder = home.appending(path: ".quiver/plugins/mine")
         try FileManager.default.createDirectory(at: hubFolder, withIntermediateDirectories: true)
         let catalog = PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
