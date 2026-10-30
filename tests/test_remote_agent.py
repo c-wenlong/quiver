@@ -1859,6 +1859,21 @@ class TestCatalogEdge(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
 
+    def test_lookups_use_the_index_built_with_the_rows(self):
+        sessions = [_session(f"s{i}") for i in range(300)]
+        cat = catalog_mod.Catalog(self.home, "m1",
+                                  fetch_sessions=lambda: sessions,
+                                  status_of=lambda ss: [""] * len(ss),
+                                  model_of=lambda ss: [""] * len(ss))
+        cat.refresh()
+        self.assertIs(cat.session_for("claude:s299"), sessions[299])
+        self.assertEqual(cat.row_for("claude:s7")["key"], "claude:s7")
+        self.assertIsNone(cat.row_for("claude:nope"))
+        cat.note_status("claude:s5", "active", time.time() + 60)
+        self.assertEqual(cat.row_for("claude:s5")["status"], "active")
+        self.assertEqual(catalog_mod._index_of([("a", 0), ("b", 1), ("a", 2)]),
+                         {"a": 0, "b": 1})
+
     def test_merge_skips_non_dict_rows(self):
         out = catalog_mod.merge_remote_rows(
             self.home, "m1", ["bad", {"key": "claude:r1"}])

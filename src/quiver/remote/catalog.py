@@ -30,10 +30,6 @@ from quiver.sessions.resume import resume_json
 # keeps each refresh cheap even with every parser in the registry.
 REFRESH_INTERVAL_S = 10.0
 
-# Cap on rows served at once: a well-used machine lists thousands, and the
-# phone wants the live end.
-MAX_ROWS = 500
-
 # Follow-ups, errors and interrupts leave the inbox this long after the
 # session's last activity; pending approvals never do.
 INBOX_MAX_AGE_S = 3 * 86_400
@@ -498,6 +494,14 @@ def session_to_row(
     return key, row
 
 
+def _index_of(rows: list[tuple]) -> dict[str, int]:
+    """key -> position of its first row, as a scan would find it."""
+    index: dict[str, int] = {}
+    for i, entry in enumerate(rows):
+        index.setdefault(entry[0], i)
+    return index
+
+
 class Catalog:
     """The hub-side session list: refresh on a timer, serve instantly."""
 
@@ -508,7 +512,6 @@ class Catalog:
         fetch_sessions: Callable[[], list[Session]] | None = None,
         status_of: Callable[[list[Session]], list[str]] | None = None,
         fetch_github: Callable[[], list[dict] | None] | None = None,
-        max_rows: int = MAX_ROWS,
         model_of: Callable[[list[Session]], list[str]] | None = None,
     ) -> None:
         self.home = Path(home) if home is not None else None
@@ -551,8 +554,12 @@ class Catalog:
         # until the first successful poll, which is a silent baseline —
         # a hub start must not re-push the whole unread backlog.
         self._github_seen: dict[str, str] | None = None
-        self.max_rows = max_rows
-        self._rows: list[tuple[str, Session | None, dict, str]] = []
+        # The rows and a key -> position index built with them, swapped
+        # as one value so a lookup never pairs one list with the other's
+        # index. ``row_for``/``session_for`` run per request: a scan of
+        # thousands of rows each time was the hub's hottest loop.
+        self._table: tuple[list[tuple[str, Session | None, dict, str]],
+                           dict[str, int]] = ([], {})
         # One lock for every write to the rows after they are built:
         # refresh's overlay-and-swap, reapply_meta (pins and titles) and
         # note_status (tail probes). Each takes it for its whole
@@ -619,7 +626,7 @@ class Catalog:
                 if fresh is not None and session is not None:
                     row["status"] = fresh[0] or None
                     rows[i] = (key, session, row, fresh[0])
-            self._rows = rows
+            self._table = (rows, _index_of(rows))
             self._status_as_of = started
         return [row for _key, _s, row, _st in rows]
 
@@ -634,11 +641,12 @@ class Catalog:
             if at <= self._status_as_of:
                 return
             self._fresh[key] = (status, at)
-            for i, (k, session, row, _st) in enumerate(self._rows):
-                if k == key and session is not None:
-                    row["status"] = status or None
-                    self._rows[i] = (k, session, row, status)
-                    break
+            rows, index = self._table
+            i = index.get(key)
+            if i is not None and rows[i][1] is not None:
+                k, session, row, _st = rows[i]
+                row["status"] = status or None
+                rows[i] = (k, session, row, status)
 
     def tail_snapshot(self) -> tuple[list[tuple[str, Session, str]], float]:
         """``tail_rows()`` plus when their statuses were read, together."""
@@ -664,17 +672,19 @@ class Catalog:
             if session is not None
         ]
 
+    @property
+    def _rows(self) -> list[tuple[str, Session | None, dict, str]]:
+        return self._table[0]
+
     def row_for(self, key: str) -> dict | None:
-        for k, _s, row, _st in self._rows:
-            if k == key:
-                return row
-        return None
+        rows, index = self._table
+        i = index.get(key)
+        return rows[i][2] if i is not None else None
 
     def session_for(self, key: str) -> Session | None:
-        for k, session, _row, _st in self._rows:
-            if k == key:
-                return session
-        return None
+        rows, index = self._table
+        i = index.get(key)
+        return rows[i][1] if i is not None else None
 
     def poll_github(self) -> None:
         """Fetch the unread GitHub listing, store its rows, and fire
