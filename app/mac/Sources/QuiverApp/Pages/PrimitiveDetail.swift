@@ -229,7 +229,7 @@ struct FrontmatterCard: View {
                         ForEach(RowFold.visible(Array(fields.indices), limit: Self.foldLimit,
                                                 expanded: showsAll), id: \.self) { i in
                             GridRow {
-                                FieldRow(label: fields[i].key, value: $fields[i].value,
+                                FieldRow(label: fields[i].key, value: Self.value($fields, at: i),
                                          disabled: !editable || fields[i].key == "name")
                             }
                         }
@@ -270,6 +270,15 @@ struct FrontmatterCard: View {
             document = doc
             read()
         }
+    }
+
+    /// Field `i`'s value for a row that can outlive it: a reload or revert
+    /// shrinks `fields` while a row built for the old list still reads its
+    /// binding, and `$fields[i]` traps out of range there. Past the end it
+    /// reads empty and drops writes; the row goes with the next update.
+    static func value(_ fields: Binding<[(key: String, value: String)]>, at i: Int) -> Binding<String> {
+        Binding(get: { fields.wrappedValue.indices.contains(i) ? fields.wrappedValue[i].value : "" },
+                set: { if fields.wrappedValue.indices.contains(i) { fields.wrappedValue[i].value = $0 } })
     }
 
     private func read() {
