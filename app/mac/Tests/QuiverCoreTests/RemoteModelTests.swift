@@ -132,6 +132,21 @@ import Testing
         closed.dismissTicket()
         _ = await mint
         #expect(closed.ticket == nil)
+
+        // An older mint failing while the newer one runs leaves the
+        // spinner on and no error up.
+        let failing = SequencedRunner([(.milliseconds(50), .init(status: 1, stdout: Data(), stderr: "boom")),
+                                       (.milliseconds(1500), pair("fresh"))])
+        let racing = RemoteModel(swe: SweClient(runner: failing))
+        async let older: Void = racing.mintTicket()
+        try? await Task.sleep(for: .milliseconds(10))
+        async let newer: Void = racing.mintTicket()
+        await older
+        #expect(racing.pairing)
+        #expect(racing.pairError == nil)
+        await newer
+        #expect(!racing.pairing)
+        #expect(racing.ticket?.token == "fresh")
     }
 
     /// A load cancelled with its page puts the previous status back
