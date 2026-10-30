@@ -1,18 +1,21 @@
 # Code Coverage Audit
 
-Audit date: 2026-09-12
+Audit date: 2026-10-31 (main at `8431e96f`)
 
 ## Baseline
 
 The full `unittest` suite was measured with branch and subprocess tracking
 enabled against the `quiver` package, using an empty temporary `$HOME`. All
-1,695 tests passed (2 skipped).
+6,767 tests passed (5 skipped).
 
 | Metric | Covered | Total | Coverage |
 | --- | ---: | ---: | ---: |
-| Lines | 11,636 | 14,587 | 79.8% |
-| Branches | 4,024 | 5,706 | 70.5% |
-| Combined coverage.py score | 15,660 | 20,293 | 77.2% |
+| Lines | 44,974 | 48,539 | 92.7% |
+| Branches | 16,337 | 18,586 | 87.9% |
+| Combined coverage.py score | 61,311 | 67,125 | 91.3% |
+
+The previous audit (2026-09-12) measured 77.2% combined over 14,587 lines;
+the package has more than tripled since, and coverage rose with it.
 
 Run the same audit locally with:
 
@@ -24,15 +27,13 @@ python3 -m coverage combine
 python3 -m coverage report
 ```
 
-`coverage report` prints only the combined figure — the 77.2% in the table.
+`coverage report` prints only the combined figure, the 91.3% in the table.
 The line and branch rows above come from `coverage json -o cov.json`, whose
 `totals` object carries `covered_lines` / `num_statements` and
 `covered_branches` / `num_branches` separately.
 
-CI enforces an 84% combined regression floor (`fail_under` in `.coveragerc`,
-raised after the audit-4 test pass; this audit was measured when it was 69%)
-and
-uploads a report from Python 3.13 to Codecov. Codecov also reports
+CI enforces an 84% combined regression floor (`fail_under` in `.coveragerc`)
+and uploads a report from Python 3.13 to Codecov. Codecov also reports
 project movement and patch coverage. The floor is a backstop; it is not the
 target.
 
@@ -41,45 +42,36 @@ fresh interpreter, and omitting those child measurements made command modules
 look artificially untested. The temporary `$HOME` is equally important because
 otherwise local coding-session archives change the result between machines.
 
-## Priority Gaps
+## Untested modules
 
-| Priority | Area | Combined coverage | Why it matters |
-| --- | --- | ---: | --- |
-| P1 | `mcp/discover_commands.py` | 0% | An entire user-facing command adapter with no test reaching it; `swe mcp discover --apply` writes to `mcp.json`. |
-| P1 | `harness/discover_commands.py` | 8% | Same shape — the discovery logic underneath is tested, the CLI validation and apply paths are not. |
-| P1 | `skills/layout_commands.py` | 9% | Link, unlink and move perform filesystem surgery on harness skill roots; success, refusal and failure paths all need command-level tests. |
-| P1 | `skills/catalog_commands.py` | 19% | The largest untested command surface in the tree (192 units). |
-| P1 | `setup/commands.py` | 36% | Legacy setup/check routing, still well behind the 77% step-by-step wizard it wraps. |
-| P2 | `config_commands.py` | 56% | `swe config set/unset` writes `config/config.json`; type coercion and rejection branches are thin. |
-| P2 | `mcp/cli.py` | 66% | Large read/write surface; validation, edit and refusal branches remain uncovered. |
-| P2 | `reports/commands.py` | 66% | Approval, cancellation, writer failure, warnings and follow-up lifecycle are covered; argument/error variants are not. |
-| P2 | `prompt.py` | 53% | TTY handling is awkward to test, but `read_line()` sits under `swe edit` and `swe setup`. |
-| P2 | `harness/commands.py` | 78% | Improved from 70%; editing and rarer diagnostic branches still mix subprocess and filesystem behaviour. |
-| P3 | `help_text.py` | 10% | Mostly literal help strings. `swe doctor`'s drift check already enforces the part that can go wrong. |
+No module with logic is left without a test. The only files at 0% are
+`mcp_formats.py` and `history/__init__.py`, compatibility shims that
+re-export another module and hold no logic; nothing in the tree imports
+either any more. `mcp/server.py` (89%) is tested against a stand-in
+`FastMCP`, since the optional `server` extra is not installed in the test
+environment.
 
-`mcp_formats.py` and `history/__init__.py` both read 0% and should stay that
-way — they are compatibility shims that re-export another module and hold no
-logic. `mcp/server.py` (0%) is behind the optional `server` extra and is not
-installed in the test environment.
+## Lowest coverage
 
-## Strong Areas
+| Module | Combined coverage | What is not reached |
+| --- | ---: | --- |
+| `providers/cli.py` | 65% | The `swe providers` dispatcher's help, unknown-subcommand and `ConfigurationError` branches. |
+| `skills/catalog_discover.py` | 73% | `OSError` while resolving known roots, and the Desktop/Documents source labels for a catalog path. |
+| `skills/catalogs.py` | 76% | A `catalogs` value that is not a list, replacing an existing catalog by label or path, and pruning nested catalogs. |
+| `reports/batching.py` | 77% | The `_trim_text` / `_trim_both` compaction paths, where a transcript exceeds the batch budget. |
+| `mcp/discover_commands.py` | 77% | `--help`, unknown-argument refusal and the versioned-path warning in `swe mcp discover`. |
+| `harness/archive.py` | 77% | `save_archive`, which replaces the archived set wholesale. |
+| `setup/wizard.py` | 79% | The report-runner stage's save and its refused-configuration path, among other prompt branches. |
 
-Provider key and registry handling (97-98%), report triage (99%), report
-models (95%), follow-up state (92%), the report pipeline (89%), table rendering
-(94%), `init/commands.py` (95%), `completion.py` (94%) and `keys.py` (100%)
-are all in good shape. Model analytics sits at 83%, the setup wizard at 77%.
-The session engines improved to 73% (JSON) and 75% (JSONL), and
-`skills/catalog_discover.py` rose out of the old 0-8% discovery band to 66%.
-An earlier pass of this audit found and fixed an OpenCode SQLite handle leak
-on failed queries.
+The earlier P1 list (the discovery command adapters, skills layout and
+catalog commands, legacy setup) is closed: `skills/layout_commands.py` is
+at 100%, `setup/commands.py` at 95%, `skills/catalog_commands.py` at 88%
+and `harness/discover_commands.py` at 84%.
 
-## Recommended Order
+## Recommended order
 
-1. Cover the three discovery command adapters — MCP, harness, skills — around
-   their validation and `--apply` paths.
-2. Add command-level success, refusal and failure tests for skills layout and
-   catalog operations.
-3. Exercise legacy setup/check orchestration around the now-covered wizard
-   stages.
-4. Expand `swe config` type coercion and rejection branches.
-5. Expand report command argument/error variants and transcript source readers.
+1. Cover `mcp/discover_commands.py`'s argument refusal, the one
+   user-facing command adapter still under 80%.
+2. Test `harness/archive.save_archive` and catalog replacement and pruning
+   in `skills/catalogs.py`, both of which rewrite config files.
+3. Exercise the compaction paths in `reports/batching.py`.

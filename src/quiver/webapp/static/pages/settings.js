@@ -1143,10 +1143,6 @@ function settingsCloseKey() {
   settingsKeyRepaint(name ? `[data-key-open="${CSS.escape(name)}"]` : "#set-key-add");
 }
 
-function settingsFailure(status, data) {
-  return failText(status, data);
-}
-
 function settingsSignedOut(status) {
   if (status !== 401) return false;
   if (onSettingsPage()) renderGate();
@@ -1165,7 +1161,7 @@ async function settingsReloadKeys(focus) {
   p.keysBusy = false;
   if (gen !== routeGen || mine !== p.gen) return;
   if (settingsSignedOut(status)) return;
-  if (status === 200 && data) { p.data = data; p.keyError = null; } else p.keyError = settingsFailure(status, data);
+  if (status === 200 && data) { p.data = data; p.keyError = null; } else p.keyError = failText(status, data);
   settingsKeyRepaint(focus);
 }
 
@@ -1173,7 +1169,7 @@ async function settingsReloadKeys(focus) {
 async function settingsKeyValue(name) {
   const { status, data } = await apiPost("/v1/app/settings/key_value", { name });
   if (status === 200 && data && typeof data.value === "string") return data.value;
-  if (!settingsSignedOut(status)) settingsPage.keyError = settingsFailure(status, data);
+  if (!settingsSignedOut(status)) settingsPage.keyError = failText(status, data);
   return null;
 }
 
@@ -1230,7 +1226,7 @@ function settingsKeyDone(e, name, status, data, focus) {
     else settingsKeyRepaint();
     return;
   }
-  e.error = settingsFailure(status, data);
+  e.error = failText(status, data);
   e.confirmingDelete = false;
   if (p.keyEditor !== e) return;
   // The file moved under the page: read it again so a retry carries the

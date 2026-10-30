@@ -68,11 +68,16 @@ private struct SidebarRow: View {
                 }
             }
             Spacer()
-            Toggle(row.section.title, isOn: Binding(get: { row.isEnabled }, set: { toggle($0) }))
+            let onOff = Toggle(row.section.title, isOn: Binding(get: { row.isEnabled }, set: { toggle($0) }))
                 .toggleStyle(AccentSwitchStyle())
                 .labelsHidden()
                 .disabled(row.isCore)
-                .help(row.isCore ? "Core pages always show" : "")
+            // A plain tooltip, and only on a core page's locked switch.
+            if row.isCore {
+                onOff.help("Core pages always show")
+            } else {
+                onOff
+            }
         }
         .padding(.horizontal, 8)
         .frame(height: 44)

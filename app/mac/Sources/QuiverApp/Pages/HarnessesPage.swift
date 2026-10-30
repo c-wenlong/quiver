@@ -196,7 +196,8 @@ private struct HarnessRow: View {
                     Task { await model.toggleStar(harness); await app.others.load() }
                 }
                 .iconButton()
-                .help(harness.state == .starred ? "Unstar: stop pinning it to the top" : "Star: pin it to the top and track its limits")
+                .hoverTip(harness.state == .starred ? "Unstar: stop pinning it to the top" : "Star: pin it to the top and track its limits",
+                          replacesLabel: false)
             }
         }
     }

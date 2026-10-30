@@ -85,6 +85,18 @@ class SessionQueryTest(unittest.TestCase):
 
         self.assertEqual([session.session_id for session in query.apply(sessions)], ["abc"])
 
+    def test_cwd_never_matches_a_session_with_no_absolute_path(self):
+        # realpath("") is the process cwd, so `--here` matched every
+        # session without a recorded path (FTS hits, `swe report --here`).
+        here = os.getcwd()
+        sessions = [
+            Session(300, "Freebuff", "", session_id="empty"),
+            Session(200, "Codex", "123", session_id="relative"),
+            Session(100, "Claude", here, session_id="real"),
+        ]
+        got = SessionQuery(cwd=here).apply(sessions)
+        self.assertEqual([s.session_id for s in got], ["real"])
+
     def test_search_matches_all_current_metadata_fields(self):
         session = Session(100, "Claude", "/repo", "Implement parser", "session-42", "cc")
         for term in ("CLAUDE", "CC", "/REPO", "PARSER", "SESSION-42"):

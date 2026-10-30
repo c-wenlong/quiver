@@ -94,7 +94,7 @@ private struct FanPopover: View {
                         .plainButton()
                         .font(Theme.caption)
                         .disabled(fans.busy)
-                        .help("Hands the fans back to macOS and uninstalls the helper. Asks for your password.")
+                        .hoverTip("Hands the fans back to macOS and uninstalls the helper. Asks for your password.", replacesLabel: false)
                 }
             }
         }

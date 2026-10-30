@@ -1,25 +1,21 @@
 # quiver tests
 
-Run all tests (from the repo root, with the package installed — e.g. `pip install -e .`):
+Run the whole suite from the repo root, with the package installed
+(`pip install -e ".[test]"`), against a throwaway `HOME`:
 
 ```bash
-python -m unittest discover -s tests -p 'test_*.py' -v
+HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-## Coverage by package
+`swe` resolves `~/.quiver` at import time, so a run without the fresh
+`HOME` reads and writes your real registry and caches. In a git worktree
+add `PYTHONPATH=src`, or the editable install imports the main checkout's
+code instead.
 
-| Test file | Package | What it covers |
-| --- | --- | --- |
-| `test_harness_registry.py` | `quiver.harness` | Registry load/save, alias resolution, default seeding |
-| `test_harness_discover.py` | `quiver.harness` | PATH scan for AI coding CLIs |
-| `test_sessions_aggregator.py` | `quiver.sessions` | Parser registry, sort/filter by time, agent, cwd |
-| `test_models_analytics.py` | `quiver.sessions` | Model provider classification |
-| `test_skills_discovery.py` | `quiver.skills` | SKILL.md parsing, root dedup, discovery |
-| `test_skills_catalogs.py` | `quiver.skills` | Catalog add/list/remove, Desktop/Documents discover |
-| `test_skills_layout.py` | `quiver.skills` | Tree layout, link/unlink/move, skill_links.json |
-| `test_skills_symlinks.py` | `quiver.skills` | Symlink dedup and visible-via resolution |
-| `test_mcp_formats.py` | `quiver.mcp` | MCP format handler parse/emit/conversion |
-| `test_mcp_discover.py` | `quiver.mcp` | MCP server discovery vs mcp.json |
-| `test_mcp_sync_integration.py` | `quiver.mcp` | End-to-end `python -m quiver.mcp` sync/validate/doctor |
-
-Integration tests run against a throwaway `$HOME` and never touch your real config.
+Files are named after the package they test: `test_harness_*.py` covers
+`quiver.harness`, `test_remote_*.py` the hub and satellite in
+`quiver.remote`, `test_webapp_*.py` the web app's pages, and so on.
+[docs/testing.md](../docs/testing.md) has the conventions (mocking
+harness homes, node-run web app scripts, width-asserting tests) and the
+coverage commands; [docs/COVERAGE.md](../docs/COVERAGE.md) has the latest
+coverage audit.

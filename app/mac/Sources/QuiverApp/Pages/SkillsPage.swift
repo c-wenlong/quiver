@@ -247,7 +247,7 @@ private struct PluginSkillsNote: View {
         }
         .plainButton(cornerRadius: Theme.smallRadius)
         .onHover { hovering = $0 }
-        .help("Open Plugins > Explore, where each plugin lists the skills it ships")
+        .hoverTip("Open Plugins > Explore, where each plugin lists the skills it ships", replacesLabel: false)
     }
 }
 
@@ -330,7 +330,7 @@ private struct HarnessLinksPanel: View {
                                 LinkChipLabel(name: root.name, link: root.link, busy: model.busy.contains(root.path))
                             }
                             .plainButton(cornerRadius: 999)
-                            .help("\(HarnessMark(root.name).name): \(root.link.title.lowercased())")
+                            .hoverTip("\(HarnessMark(root.name).name): \(root.link.title.lowercased())")
                         }
                     }
                     LinkLegend()
@@ -528,7 +528,7 @@ private struct SkillLinksBlock: View {
                 FlowLayout(spacing: 6, lineSpacing: 6) {
                     ForEach(chips, id: \.root.id) { chip in
                         LinkChipLabel(name: chip.root.name, link: chip.link, compact: true)
-                            .help("\(HarnessMark(chip.root.name).name): \(chip.link.title.lowercased())")
+                            .hoverTip("\(HarnessMark(chip.root.name).name): \(chip.link.title.lowercased())")
                     }
                 }
             }

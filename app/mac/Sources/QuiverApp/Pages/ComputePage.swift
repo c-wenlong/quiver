@@ -345,7 +345,7 @@ private struct HarnessCard: View {
                                 Spacer(minLength: 8)
                                 Button("Quit all") { confirmingQuitAll = true }
                                     .secondaryButton()
-                                    .help("Quit every process \(UsageFormat.harness(usage.harness)) runs")
+                                    .hoverTip("Quit every process \(UsageFormat.harness(usage.harness)) runs", replacesLabel: false)
                             }
                             .padding(.top, 10)
                         }
