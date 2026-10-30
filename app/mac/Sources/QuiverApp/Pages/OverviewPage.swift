@@ -41,7 +41,7 @@ private struct OverviewContent: View {
                 .iconButton()
                 .disabled(model.isLoading)
                 .keyboardShortcut("r", modifiers: .command)
-                .hoverTip("Read new usage from the harness logs (⌘R)")
+                .hoverTip("Read new usage from the harness logs (⌘R)", replacesLabel: false)
         } content: {
             if let error = model.error {
                 ErrorCard(message: error)
@@ -532,7 +532,7 @@ private struct BreakdownCard: View {
                         HarnessIcon(harness: row.harness ?? "", size: 16)
                             .hoverTip(row.harness.map { HarnessMark($0).name } ?? row.label)
                     }
-                    Text(row.label).lineLimit(1).truncationMode(.middle).hoverTip(row.home)
+                    Text(row.label).lineLimit(1).truncationMode(.middle).hoverTip(row.home, replacesLabel: false)
                     Spacer()
                     Text(UsageFormat.tokens(row.totals.totalTokens)).foregroundStyle(Theme.textSecondary)
                     Text(UsageFormat.dollars(row.totals.costUSD)).foregroundStyle(Theme.accent)

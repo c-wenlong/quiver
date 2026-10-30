@@ -815,7 +815,7 @@ private struct ListPriceCell: View {
             Text([price.input, price.output, price.cacheRead].map(ModelCard.price).joined(separator: " · "))
                 .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
-                .hoverTip(Self.help(price))
+                .hoverTip(Self.help(price), replacesLabel: false)
         } else {
             Text("—").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
                 .help("No LiteLLM price for this model")

@@ -633,7 +633,7 @@ private struct StatusLabel: View {
             .font(Theme.caption)
         }
         .buttonStyle(.plain)
-        .hoverTip(tooltip)
+        .hoverTip(tooltip, replacesLabel: false)
     }
 
     private var style: APIKeyCheckStyle { APIKeyCheckStyle(check?.result) }

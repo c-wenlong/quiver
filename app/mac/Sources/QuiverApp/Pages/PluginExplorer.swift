@@ -433,7 +433,7 @@ private struct DriftBadge: View {
         }
         .plainButton(cornerRadius: 999)
         .fixedSize()
-        .hoverTip("\(harnessNames(harnesses)): \(state.title.lowercased()). Open Health to fix it.")
+        .hoverTip("\(harnessNames(harnesses)): \(state.title.lowercased()). Open Health to fix it.", replacesLabel: false)
     }
 }
 
@@ -450,7 +450,7 @@ private struct HarnessChip: View {
 
     var body: some View {
         if actions.isEmpty {
-            label.hoverTip(help)
+            label.hoverTip(help, replacesLabel: false)
         } else {
             Menu {
                 ForEach(actions) { action in
