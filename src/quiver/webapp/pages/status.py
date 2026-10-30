@@ -32,7 +32,7 @@ from pathlib import Path
 from quiver.status import catalogue, tracked
 from quiver.status.catalog import GROUPS, SERVICES
 from quiver.status.poller import ServiceStatus, poller_for
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, web_url
 
 # One track/untrack at a time in this process; the store's own flock
 # covers a second hub on the same home.
@@ -153,7 +153,7 @@ def _service(status: ServiceStatus) -> dict:
             {
                 "id": i.id, "name": i.name, "impact": i.impact.key, "stage": i.stage,
                 "started_at": i.started_at, "updated_at": i.updated_at,
-                "latest_update": i.latest_update, "url": _link(i.url), "maintenance": i.maintenance,
+                "latest_update": i.latest_update, "url": web_url(i.url), "maintenance": i.maintenance,
             }
             for i in (report.incidents if report else [])
         ],
@@ -162,11 +162,3 @@ def _service(status: ServiceStatus) -> dict:
         "problem_until": status.problem_until,
         "stale": status.stale,
     }
-
-
-def _link(url: str | None) -> str | None:
-    """A feed's incident link, only when it is a web address: the page puts
-    it in an href, and a feed is someone else's text."""
-    if url and url.lower().startswith(("https://", "http://")):
-        return url
-    return None

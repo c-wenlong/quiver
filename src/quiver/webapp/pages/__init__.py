@@ -160,3 +160,12 @@ def bundle(suffix: str) -> bytes:
             ).encode("utf-8")
         parts.append(f"/* {path.name} */\n".encode() + body)
     return b"\n".join(parts)
+
+
+def web_url(value) -> str | None:
+    """``value`` when it is an http(s) address, else None: pages put it
+    in an href, and it comes from someone else's text (a provider entry,
+    a status feed)."""
+    if isinstance(value, str) and value.lower().startswith(("https://", "http://")):
+        return value
+    return None
