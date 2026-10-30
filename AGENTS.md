@@ -124,7 +124,7 @@ Domain packages under `src/quiver/`:
 | `ledger/` | the web app's usage ledger: a Python port of the Mac app's `QuiverCore/Ledger` (log parsers, dedup store, LiteLLM pricing, Overview figures). Keep its rules in step with the Swift ones |
 | `webapp/` | the web app the hub serves at `/` (`static/`; old `/app/` links redirect there) and its page data at `/v1/app/*` (`api.py`, `pages/`); see [docs/web-app.md](docs/web-app.md) |
 | `remote/` | `swe remote`: the hub (`hub.py`, every `/v1/*` route), the satellite agent, pairing, devices and the session tailers; see [docs/remote-control.md](docs/remote-control.md) |
-| `github/` | `swe gh` and the hub's GitHub routes; `gh.py` is the only module that spawns `gh` |
+| `github/` | `swe gh` and the hub's GitHub routes; within the package only `gh.py` spawns `gh` (the Copilot rate-limit fetcher in `harness/rate_limits.py` runs `gh auth token` itself) |
 | `status/` | service status pages for the web app, a port of the Mac app's `QuiverCore/Status` |
 
 Six modules form the bottom layer and never import a domain package: `paths.py` (every path under `~/.quiver`, use `*_for(home)` helpers in tests), `console.py`, `table.py`, `configuration.py`, `keys.py` (the shared terminal key reader), `flags.py` (the shared `--name=value` argv normaliser). They are ordered among themselves — `console.py`, `keys.py` and `flags.py` import nothing from the project at all, `paths.py` takes only the constants in `quiver/__init__.py`, `table.py` imports `console`, `configuration.py` imports `paths`. Command modules own presentation; logic modules should not print. One intentional cycle, `harness <-> sessions`, uses function-local imports.
