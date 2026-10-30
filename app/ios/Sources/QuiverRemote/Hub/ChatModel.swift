@@ -444,14 +444,17 @@ final class ChatModel {
             }
             // A backfill (stream truncated) replaced the history meanwhile.
             guard nextBefore == before else { return false }
-            if prepend(body) { return true }
+            if prepend(body, askedBefore: before) { return true }
         }
         return false
     }
 
     /// Puts an older page in front of what's loaded; returns whether it
-    /// added anything to show.
-    func prepend(_ body: MessagesResponse) -> Bool {
+    /// added anything to show. `askedBefore` is the cursor the page was
+    /// asked with: a page that claims more history but whose cursor
+    /// didn't move back past it would be asked for again forever, so
+    /// history counts as ended there (the Mac's twin, #1177).
+    func prepend(_ body: MessagesResponse, askedBefore: Int? = nil) -> Bool {
         var older: [ChatItem] = []
         var cards: [String: String] = [:]
         for env in body.messages where env.type == "message.appended" {
@@ -465,6 +468,7 @@ final class ChatModel {
         items.insert(contentsOf: older, at: 0)
         hasEarlier = body.hasMore ?? false
         nextBefore = body.nextBefore ?? body.messages.first?.seq
+        if let askedBefore, hasEarlier, (nextBefore ?? askedBefore) >= askedBefore { hasEarlier = false }
         return !older.isEmpty
     }
 
