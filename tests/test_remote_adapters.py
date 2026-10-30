@@ -258,6 +258,41 @@ class TestOpencodeServe(unittest.TestCase):
         self.assertEqual(set(serve.subs), {"ses_a", "ses_b"})
 
 
+    def test_release_after_respawn_keeps_the_new_serve(self):
+        # A and B share serve 1; it dies and B's next send spawns
+        # serve 2. A never subscribed to serve 2, so A detaching must
+        # not drop B's hold and kill it.
+        procs = [_FakeServeProc(), _FakeServeProc()]
+        spawned = iter(procs)
+        supervise.mark(self.home, "k1", _meta("serve", "opencode"))
+        supervise.mark(self.home, "k2", _meta("serve", "opencode"))
+        a, b = _session(sid="ses_a"), _session(sid="ses_b")
+        inj_a = inject.OpencodeServeInjector(self.home, "k1")
+        inj_b = inject.OpencodeServeInjector(self.home, "k2")
+        with patch.object(inject.OpencodeServeInjector, "_spawn",
+                          staticmethod(lambda *a_, **k: next(spawned))):
+            inj_a.send(a, {"text": "a", "mode": "queue"}, "idle")
+            inj_b.send(b, {"text": "b", "mode": "queue"}, "idle")
+            procs[0].killed = True  # serve 1 exits on its own
+            inj_b.send(b, {"text": "b2", "mode": "queue"}, "idle")
+        inj_a._release(a)
+        self.assertFalse(procs[1].killed)
+        serve = next(iter(inject.OpencodeServeInjector._serves.values()))
+        self.assertIs(serve.proc, procs[1])
+        self.assertEqual(serve.refs, 1)
+        inj_b._release(b)
+        self.assertTrue(procs[1].killed)
+
+    def test_serve_that_never_gets_ready_is_killed(self):
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+        self.routes = {"session": (0, b"")}  # never answers
+        with patch.object(inject, "_SERVE_READY_S", 0.3):
+            res = self._injector().send(
+                _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+        self.assertTrue(self.proc.killed)
+        self.assertEqual(inject.OpencodeServeInjector._serves, {})
+
 # -- codex app-server ---------------------------------------------------
 
 
