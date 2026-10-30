@@ -493,9 +493,18 @@ final class AppModel {
         } catch {
             guard gen == pairingGen else { return false }
             pairing.busy = false
-            pairing.error = error.localizedDescription
+            pairFailed(error, link: link)
             return false
         }
+    }
+
+    /// A pair with `link` failed with `error`. The code counts as spent
+    /// only for the link still on offer (or a scanned one, with no
+    /// offer): a pair that was out when a fresh link replaced the offer
+    /// must not take Pair away from the new token, which was never sent.
+    func pairFailed(_ error: Error, link: PairLink) {
+        pairing.error = error.localizedDescription
+        pairing.codeSpent = PairingFlow.spendsCode(error) && (pairOffer == nil || pairOffer == link)
     }
 
     func pair(token: String) async {
@@ -590,8 +599,9 @@ final class AppModel {
 
 struct PairingFlow {
     var host: String = KeychainHubStore.lastHost ?? ""
-    /// The hub accepted the pair code but this phone couldn't keep the
-    /// credential: that code is used up, so pairing needs a new one.
+    /// The pair code can't pair again, so pairing needs a new one: the
+    /// hub accepted it but this phone couldn't keep the credential, or
+    /// the hub turned it down as expired or already used.
     var codeSpent = false
     var deviceName: String = PairingFlow.defaultDeviceName
     var busy = false
@@ -599,6 +609,14 @@ struct PairingFlow {
     var pending: PendingPairing?
 
     static var defaultDeviceName: String { "iPhone" }
+
+    /// Whether a failed pair used the code up: the hub answers
+    /// `pair_failed` for a token it doesn't know or that expired, and
+    /// sending it again gets the same answer. Anything else (the hub
+    /// unreachable, rate limited) can work on a retry.
+    static func spendsCode(_ error: Error) -> Bool {
+        (error as? HubError)?.code == "pair_failed"
+    }
 }
 
 struct PendingPairing {
