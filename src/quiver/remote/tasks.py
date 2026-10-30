@@ -61,7 +61,7 @@ from quiver.paths import (atomic_write_text, remote_dir_for,
                           task_states_cache_for)
 from quiver.remote import linear as linear_mod
 from quiver.remote import protocol
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 _BASENAME = "tasks.json"
 

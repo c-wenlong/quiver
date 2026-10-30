@@ -385,6 +385,21 @@ final class ChatModelTests: XCTestCase {
         XCTAssertTrue(chat.hasEarlier)
     }
 
+    func testAPageWhoseCursorDidntMoveBackEndsHistory() {
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
+        // Asked before 7, answered "more before 7": asking again would
+        // get the same page forever.
+        let added = chat.prepend(page(#"{"type":"message.appended","seq":7,"data":{"kind":"tool_result","text":"x","result_ref":"t9"}}"#,
+                                      nextBefore: 7, hasMore: true), askedBefore: 7)
+        XCTAssertFalse(added)
+        XCTAssertFalse(chat.hasEarlier, "loadEarlier's loop stops here")
+        // A cursor that moved back keeps paging.
+        let next = ChatModel(key: "claude:1", app: AppModel(hub: nil))
+        _ = next.prepend(page(#"{"type":"message.appended","seq":7,"data":{"kind":"tool_result","text":"x","result_ref":"t9"}}"#,
+                              nextBefore: 7, hasMore: true), askedBefore: 20)
+        XCTAssertTrue(next.hasEarlier)
+    }
+
     private func say(_ seq: Int) -> Envelope {
         env(#"{"type":"message.appended","seq":"# + String(seq) + #","data":{"kind":"assistant","text":"m"# + String(seq) + #""}}"#)
     }

@@ -366,6 +366,43 @@ extension HubStubbed {
                     data: try! HubWire.decoder.decode(HubJSON.self, from: Data(data.utf8)))
     }
 
+    /// A hub page whose cursor doesn't move back (nothing new on it, and
+    /// next_before where it was) ends the history instead of being asked
+    /// for again forever.
+    @Test(.timeLimit(.minutes(1))) func aCursorThatDoesNotMoveEndsLoadEarlier() async throws {
+        let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let earlierAsks = Mutex(0)
+        HubStub.handler = { req in
+            switch req.url?.path {
+            case "/v1/sessions": return (200, Data(#"{"sessions": [{"key": "claude:s1"}]}"#.utf8))
+            case "/v1/inbox": return (200, Data(#"{"items": []}"#.utf8))
+            case "/v1/sessions/claude:s1/messages":
+                if req.url?.query?.contains("before=") == true {
+                    let asks = earlierAsks.withLock { $0 += 1; return $0 }
+                    // Stop a looping caller well before the time limit.
+                    if asks > 20 { return (500, Data()) }
+                }
+                return (200, Data(#"""
+                {"messages": [
+                  {"type": "message.appended", "seq": 5, "data": {"kind": "user", "text": "go"}}
+                ], "has_more": true, "next_before": 5}
+                """#.utf8))
+            default: return (404, Data())
+            }
+        }
+        let hub = LocalHub(locator: FakeLocator(address: "127.0.0.1:8477"), store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session(), streamSession: HubStub.session())
+        }
+        let chat = SessionChatModel(key: "claude:s1", hub: hub)
+        await chat.start()
+        chat.stop()
+        #expect(chat.hasEarlier)
+        await chat.loadEarlier()
+        #expect(earlierAsks.withLock { $0 } == 1)
+        #expect(!chat.hasEarlier)
+    }
+
     @Test func aSessionTheHubDoesntListIsMissing() async throws {
         let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:other"}]}"#)
         #expect(chat.missing)
