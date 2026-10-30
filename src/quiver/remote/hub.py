@@ -87,6 +87,8 @@ _DRAIN_S = 2.0
 _MAX_WORKERS = 64
 # How often an open SSE stream re-checks that its device wasn't revoked.
 _REVOCATION_CHECK_S = 5.0
+# The web app's generated bundles, served beside its static files.
+_BUNDLES = frozenset({"pages.js", "pages.css"})
 # Sent on every response that doesn't set its own. The policy leaves
 # script sources alone: the page bundle evaluates each page script.
 _SECURITY_HEADERS = (
@@ -3408,13 +3410,19 @@ class _Handler(BaseHTTPRequestHandler):
         # and a page cached with ``/app/…`` asset paths, to the same name
         # at the root. The fragment survives the redirect.
         if path == "/app" or path.startswith("/app/"):
-            self._redirect("/" + path[len("/app/"):])
+            rest = path[len("/app/"):]
+            # Only a name this handler would serve: anything else (say
+            # ``/app//evil.example``) would make ``Location`` another host.
+            if rest and not self._is_webapp_name(rest):
+                self._send_error(404, "not_found", "unknown route")
+                return
+            self._redirect("/" + rest)
             return
         if path == "/index.html":
             self._redirect("/")
             return
         name = path[1:] or "index.html"
-        if name in {"pages.js", "pages.css"}:
+        if name in _BUNDLES:
             body, etag = webapp_pages.bundled(name[len("pages"):])
             if webapp_pages.etag_matches(
                     self.headers.get("If-None-Match"), etag):
@@ -3434,6 +3442,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(404, "not_found", "unknown route")
             return
         self._send_asset(webapp_static.STATIC_DIR / name)
+
+    @staticmethod
+    def _is_webapp_name(name: str) -> bool:
+        return name in _BUNDLES or webapp_static.is_asset_name(name)
 
     def _redirect(self, location: str) -> None:
         self.send_response(301)

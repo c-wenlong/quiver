@@ -1280,6 +1280,20 @@ class TestHubWriteRoutes(unittest.TestCase):
                 self.assertEqual(resp.getheader("Location"), where, path)
             finally:
                 conn.close()
+        # A legacy path redirects only to a name the root serves: one that
+        # would put another host in Location is a 404, not a redirect.
+        for path in ("/app//evil.example/", "/app//evil.example", "/app/x/y.js",
+                     "/app/nope.js", "/app/%2e%2e/hub.py"):
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", self.srv.port, timeout=5)
+            try:
+                conn.request("GET", path)
+                resp = conn.getresponse()
+                resp.read()
+                self.assertEqual(resp.status, 404, path)
+                self.assertIsNone(resp.getheader("Location"), path)
+            finally:
+                conn.close()
         # The remote PWA's paths are gone, and nothing but a known asset
         # is served at the root.
         for path in ("/manifest.webmanifest", "/pair", "/nope.js",
