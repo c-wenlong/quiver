@@ -191,4 +191,15 @@ final class HubListTests: XCTestCase {
         XCTAssertEqual(app.connection, .connecting, "a cancel isn't the hub being unreachable")
         XCTAssertNil(app.loadError)
     }
+
+    @MainActor
+    func testAHubWhoseCredentialWontSaveIsntListed() {
+        let store = MemoryHubStore()
+        store.refusesSaves = true
+        let app = AppModel(store: store)
+        XCTAssertFalse(app.adopt(hub("mac")))
+        XCTAssertNil(app.hub, "listed without its credential, it would be gone at the next launch")
+        XCTAssertTrue(store.list.hubs.isEmpty)
+        XCTAssertNotNil(app.pairing.error)
+    }
 }
