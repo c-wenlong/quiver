@@ -355,10 +355,12 @@ POST /v1/ssh/key                     {public_key} ("" clears) → stored on the 
 
 Events: `message.appended`, `message.delta` (tier A only),
 `session.status`, `session.meta` (title, harness_title, pinned,
-pinned_at after a pin or rename), `approval.requested|resolved`, `compaction`,
+pinned_at after a pin or rename), `approval.requested|resolved`,
 `machine.online|offline`, `notify` (needs_you|finished|error|limit;
 `github` for a notification thread that just turned unread — hub-local,
-not a satellite kind).
+not a satellite kind). A compaction has no event of its own: it is a
+`message.appended` with `kind: "compaction"`. The hub still accepts a
+bare `compaction` event from an older satellite.
 
 `limit` comes from the transcript, not the status probe. The tailer
 marks Claude Code's 429 record (`isApiErrorMessage` with `error:

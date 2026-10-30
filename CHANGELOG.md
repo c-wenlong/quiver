@@ -348,6 +348,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Remote: the unused `compaction` event type is gone from the
+  protocol.** Compactions have always reached clients as
+  `message.appended` with `kind: "compaction"`; the separate
+  `compaction` event in `EVENT_TYPES`, docs/json-contracts.md and
+  docs/remote-control.md was never emitted. The hub still accepts one
+  from an older satellite
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
 - **`--hub` clones around the state a machine already has.** `swe init
   --hub` and `swe setup --hub` used to refuse any `~/.quiver` with files
   in it, and the app, the remote hub and plain `swe` runs all write
