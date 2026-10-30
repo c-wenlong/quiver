@@ -1846,7 +1846,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/pulls":
             # pulls.py: every pinned repo's open PRs, behind the gh cache.
-            self._send_json(*pulls_mod.list(self._state, args))
+            self._send_json(*pulls_mod.list_view(self._state, args))
             return
 
         if path.startswith("/v1/pulls/"):
@@ -1862,7 +1862,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/issues":
             # issues.py: every pinned repo's open issues, behind the cache.
-            self._send_json(*issues_mod.list(self._state, args))
+            self._send_json(*issues_mod.list_view(self._state, args))
             return
 
         if path.startswith("/v1/issues/"):
@@ -3396,10 +3396,19 @@ class _Handler(BaseHTTPRequestHandler):
             return
         name = path[len("/app/"):] or "index.html"
         if name in {"pages.js", "pages.css"}:
+            body, etag = webapp_pages.bundled(name[len("pages"):])
+            if webapp_pages.etag_matches(
+                    self.headers.get("If-None-Match"), etag):
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                return
             self._send_body(
-                webapp_pages.bundle(name[len("pages"):]),
+                body,
                 "text/javascript; charset=utf-8" if name.endswith(".js")
                 else "text/css; charset=utf-8",
+                etag=etag,
             )
             return
         if not webapp_static.is_asset_name(name):
@@ -3547,11 +3556,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._page_call(page.post, self._page_context(device_id), action, body)
 
-    def _send_body(self, body: bytes, ctype: str) -> None:
+    def _send_body(self, body: bytes, ctype: str,
+                   etag: str | None = None) -> None:
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-cache")
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         try:
             self.wfile.write(body)

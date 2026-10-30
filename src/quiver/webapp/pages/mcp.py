@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from quiver.mcp.secrets import _SECRET_FLAG_RE
-from quiver.webapp.pages import CONFIG_LOCK, PageError
+from quiver.webapp.pages import CONFIG_LOCK, PageError, tilde
 
 # A health probe HEADs each URL with its own five-second timeout; the whole
 # check gets this long before a server still being probed reads "unknown".
@@ -85,7 +85,8 @@ def get(ctx, args: dict) -> dict:
     if health and pairs:
         for (row, _), (state, detail) in zip(pairs, probe_all(pairs)):
             row["health"], row["detail"] = state, detail
-    folders = folder_scan(_servers_root(ctx), [row for row, _ in pairs])
+    folders = folder_scan(_servers_root(ctx), [row for row, _ in pairs],
+                          home=ctx.home)
     servers = [page_row(row) for row, _ in pairs]
     _add_secrets(servers)
     return {
@@ -1052,12 +1053,11 @@ def _servers_root(ctx) -> Path:
     return mcp_servers_dir_for(getattr(ctx, "home", None))
 
 
-def _display_path(path: Path) -> str:
-    home = str(Path.home())
-    text = str(path)
-    if text == home or text.startswith(home + os.sep):
-        return "~" + text[len(home):]
-    return text
+def _display_path(path: Path, home: Path | None = None) -> str:
+    """``path`` with ``home`` as ``~``. Harness configs live in the
+    process's home (``mcp_cli`` expands ``~``), so that is the default;
+    the servers folder lives in the hub's own."""
+    return tilde(path, home)
 
 
 def _child_folders(path: Path) -> list[Path]:
@@ -1220,12 +1220,13 @@ def read_git(path: Path) -> dict:
     return parse_git(done.stdout)
 
 
-def folder_scan(root: Path, servers: list[dict]) -> dict:
+def folder_scan(root: Path, servers: list[dict],
+                home: Path | None = None) -> dict:
     """The servers folder as the page shows it: each checkout with its git
     state and the servers that run from it (``used_by``), or why it could
     not be read. ``servers`` is the whole inventory, so a server the page
     filters out still marks its folder as used."""
-    out = {"root": _display_path(root), "exists": root.exists(), "error": None,
+    out = {"root": _display_path(root, home), "exists": root.exists(), "error": None,
            "items": []}
     try:
         found = scan(root)
@@ -1240,7 +1241,7 @@ def folder_scan(root: Path, servers: list[dict]) -> dict:
         out["items"].append({
             "name": folder["name"],
             "group": folder["group"],
-            "path": _display_path(Path(path)),
+            "path": _display_path(Path(path), home),
             "git": git,
             "used_by": usage.get(path, []),
         })

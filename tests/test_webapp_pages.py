@@ -28,6 +28,16 @@ class TestLoad(unittest.TestCase):
         for bad in ("", "_private", "Upper", "a-b", "../x", "nope", "__init__"):
             self.assertIsNone(pages.load(bad), bad)
 
+    def test_tilde_writes_the_home_as_a_tilde(self):
+        self.assertEqual(pages.tilde("/h/u", "/h/u/"), "~")
+        self.assertEqual(pages.tilde("/h/u/a/b", "/h/u"), "~/a/b")
+        self.assertEqual(pages.tilde("/h/user2/a", "/h/u"), "/h/user2/a")
+        self.assertEqual(pages.tilde("/elsewhere", "/h/u"), "/elsewhere")
+        with patch.object(pages.os, "sep", "\\"):
+            self.assertEqual(pages.tilde("C:\\Users\\a\\.quiver", "C:\\Users\\a"),
+                             "~\\.quiver")
+            self.assertEqual(pages.tilde("C:\\Users\\a", "C:\\Users\\a\\"), "~")
+
     def test_bundle_concatenates_in_name_order(self):
         folder = Path(tempfile.mkdtemp())
         (folder / "b.js").write_text("B")
@@ -39,6 +49,58 @@ class TestLoad(unittest.TestCase):
             self.assertNotIn("CSS", body)
             self.assertIn("/* a.js */", body)
             self.assertEqual(pages.bundle(".none"), b"")
+
+    def test_bundled_rebuilds_only_when_a_file_changes(self):
+        import os
+        folder = Path(tempfile.mkdtemp())
+        page = folder / "a.js"
+        page.write_text("A")
+        real = pages.bundle
+        with patch.object(pages, "STATIC", folder), \
+                patch.dict(pages._BUNDLES, clear=True), \
+                patch.object(pages, "bundle", side_effect=real) as build:
+            body, etag = pages.bundled(".js")
+            self.assertEqual(pages.bundled(".js"), (body, etag))
+            self.assertEqual(build.call_count, 1)
+            page.write_text("AB")
+            os.utime(page, ns=(1, 1))  # a changed mtime and size
+            body2, etag2 = pages.bundled(".js")
+        self.assertEqual(build.call_count, 2)
+        self.assertNotEqual(etag, etag2)
+        self.assertIn(b"AB", body2)
+
+    def test_etag_matches_by_weak_comparison(self):
+        tag = '"abc"'
+        for header in ('"abc"', 'W/"abc"', '"x", "abc"', "*", ' W/"abc" ,"y"'):
+            self.assertTrue(pages.etag_matches(header, tag), header)
+        for header in (None, "", '"abd"', 'W/"x"'):
+            self.assertFalse(pages.etag_matches(header, tag), header)
+
+    def test_concurrent_requests_build_once(self):
+        import threading
+        folder = Path(tempfile.mkdtemp())
+        (folder / "a.js").write_text("A")
+        gate, built = threading.Event(), []
+        real = pages.bundle
+
+        def slow(suffix):
+            built.append(suffix)
+            gate.wait(5)
+            return real(suffix)
+
+        with patch.object(pages, "STATIC", folder), \
+                patch.dict(pages._BUNDLES, clear=True), \
+                patch.object(pages, "bundle", side_effect=slow):
+            threads = [threading.Thread(target=pages.bundled, args=(".js",))
+                       for _ in range(3)]
+            for t in threads:
+                t.start()
+            import time
+            time.sleep(0.3)  # every request is in before the build ends
+            gate.set()
+            for t in threads:
+                t.join(5)
+        self.assertEqual(built, [".js"])
 
     def test_a_broken_page_does_not_stop_the_others(self):
         """One page that won't parse and one that throws are logged and
@@ -158,6 +220,26 @@ process.stdout.write(JSON.stringify({ errors, pages: Object.keys(PAGES).sort() }
         for path in (self.STATIC / "pages").glob("*.js"):
             declared |= set(re.findall(r'registerPage\("(\w+)"', path.read_text(encoding="utf-8")))
         self.assertLessEqual(declared, set(out["pages"]))
+
+
+class TestBundleRoute(HubBase):
+    def test_an_unchanged_bundle_answers_304(self):
+        import http.client
+        for name in ("pages.js", "pages.css"):
+            conn = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
+            try:
+                conn.request("GET", f"/app/{name}")
+                resp = conn.getresponse()
+                resp.read()
+                etag = resp.getheader("ETag")
+                self.assertEqual(resp.status, 200)
+                self.assertTrue(etag)
+                conn.request("GET", f"/app/{name}", headers={"If-None-Match": etag})
+                again = conn.getresponse()
+                self.assertEqual((again.status, again.read()), (304, b""))
+                self.assertEqual(again.getheader("ETag"), etag)
+            finally:
+                conn.close()
 
 
 class TestStylesheets(unittest.TestCase):

@@ -349,7 +349,8 @@ def pr_worktree(repo: str, number: str, home: Path | None = None) -> gh.GhResult
     The repo's bare mirror lives under ``data/github/mirrors``; the PR
     head is fetched via ``refs/pull/N/head``, GitHub's own ref, so fork
     PRs need no fork remote. Asking again fetches the head and returns
-    the existing checkout. ``data`` is ``{"path", "head", "created"}``;
+    the existing checkout, left where it is. ``data`` is ``{"path",
+    "head", "pr_head", "created"}``, ``head`` the checkout's own;
     a failure's ``error`` names the step ("Clone failed: …").
 
     The whole call holds the mirror's lock: two PRs of one repo share
@@ -384,8 +385,15 @@ def _pr_worktree_locked(repo: str, number: str,
         if result.status != "ok":
             return _fail("Worktree failed", result)
         created = True
+    pr_head = head
+    if not created:
+        # A reused checkout stays where it was (it may hold work), so
+        # ``head`` is what it has checked out, and ``pr_head`` the PR's
+        # head just fetched: they differ when the PR moved on.
+        here = run_git(["-C", path, "rev-parse", "--short=12", "HEAD"])
+        head = (here.data or "").strip() if here.status == "ok" else None
     return gh.GhResult("ok", data={"path": path, "head": head,
-                                   "created": created})
+                                   "pr_head": pr_head, "created": created})
 
 
 # ------------------------------------------------------------------ issue worktree
