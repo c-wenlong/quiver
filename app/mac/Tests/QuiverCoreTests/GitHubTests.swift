@@ -1665,7 +1665,9 @@ import Testing
         runner.hold()
         let first = Task { await model.loadInbox(swe: swe, force: true) }
         while !runner.isParked { try await Task.sleep(for: .milliseconds(10)) }
-        await model.loadInbox(swe: swe, force: true)
+        // A second forced read waits for the first instead of racing it.
+        let second = Task { await model.loadInbox(swe: swe, force: true) }
+        await Task.yield()
         #expect(runner.lists == 2)
         #expect(await model.markInboxRead(["1"], swe: swe) == nil)
         #expect(model.unreadCount == 0)
@@ -1675,10 +1677,20 @@ import Testing
         runner.open()
         await first.value
         #expect(model.unreadCount == 0)
-        // The forced read asked for meanwhile runs once the first lands.
-        let deadline = Date().addingTimeInterval(10)
-        while runner.lists < 3, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        // The waiting forced caller reads again, and returns with its rows.
+        await second.value
         #expect(runner.lists == 3)
+        #expect(model.unreadCount == 0)
+        // A plain poll that overlaps a read returns once that read landed.
+        runner.hold()
+        let third = Task { await model.loadInbox(swe: swe, force: true) }
+        while !runner.isParked { try await Task.sleep(for: .milliseconds(10)) }
+        let poll = Task { await model.loadInbox(swe: swe) }
+        await Task.yield()
+        runner.open()
+        await third.value
+        await poll.value
+        #expect(runner.lists == 4)
     }
 
     @Test func markAllReadClearsTheInbox() async {

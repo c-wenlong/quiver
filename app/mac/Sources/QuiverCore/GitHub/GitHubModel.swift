@@ -170,10 +170,14 @@ public final class GitHubModel {
     private var storeOwnsBoards = false
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
-    /// An inbox read is in flight; a second waits rather than racing it.
-    private var inboxInFlight = false
-    /// A forced refresh asked for while a read ran.
-    private var inboxQueued = false
+    /// An inbox read is in flight; a second caller waits for it rather
+    /// than racing it.
+    private var inboxReading = false
+    /// Callers waiting for the read in flight to land.
+    private var inboxWaiters: [CheckedContinuation<Void, Never>] = []
+    /// How many reads have started, so a forced caller can tell a read
+    /// begun after it asked (which answers it) from an older one.
+    private var inboxReadsStarted = 0
     /// Bumped by each read and by marking threads read: only the newest
     /// read's reply, from after the last mark, lands.
     private var inboxGeneration = 0
@@ -811,23 +815,28 @@ public final class GitHubModel {
     /// The GitHub notifications inbox; refetches when stale or forced.
     public func loadInbox(swe: SweClient, force: Bool = false) async {
         // One read at a time, polls included: two in flight could land out
-        // of order and an older list overwrite a newer one. A forced
-        // refresh asked meanwhile runs once the current read lands.
-        if inboxInFlight {
-            if force { inboxQueued = true }
-            return
+        // of order and an older list overwrite a newer one. A caller that
+        // finds a read running waits for it, so it returns with fresh rows
+        // (the notifier reads them right after). A forced caller then reads
+        // again with its own client, unless a read begun after it asked
+        // already answered.
+        let askedAt = inboxReadsStarted
+        while inboxReading {
+            let running = inboxReadsStarted
+            await withCheckedContinuation { inboxWaiters.append($0) }
+            if !force || running > askedAt { return }
         }
         if !force, case .loaded = inbox,
            let at = inboxFetchedAt, now().timeIntervalSince(at) < staleAfter { return }
-        inboxInFlight = true
+        inboxReading = true
+        inboxReadsStarted += 1
         inboxGeneration += 1
         let mine = inboxGeneration
         defer {
-            inboxInFlight = false
-            if inboxQueued {
-                inboxQueued = false
-                Task { await loadInbox(swe: swe, force: true) }
-            }
+            inboxReading = false
+            let waiting = inboxWaiters
+            inboxWaiters = []
+            waiting.forEach { $0.resume() }
         }
         // First read shows the spinner; later polls keep the rows.
         if case .idle = inbox { inbox = .loading }
