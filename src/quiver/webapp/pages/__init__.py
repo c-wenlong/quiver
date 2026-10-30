@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import os
 import re
 import threading
 from dataclasses import dataclass
@@ -63,6 +64,22 @@ class PageContext:
     @property
     def machine(self) -> dict:
         return self.state.machine
+
+
+def tilde(path: Path | str, home: Path | str | None = None) -> str:
+    """``path`` with ``home`` (the process's own when None) written as
+    ``~``, as the pages show hub paths: ``~`` for the home itself,
+    ``~/…`` inside it, anything else as is."""
+    text = str(path)
+    seps = {"/", os.sep}  # the native one too, as Windows writes paths
+    root = str(home if home is not None else Path.home()).rstrip("".join(seps))
+    if not root:
+        return text
+    if text == root:
+        return "~"
+    if any(text.startswith(root + sep) for sep in seps):
+        return "~" + text[len(root):]
+    return text
 
 
 def load(name: str) -> ModuleType | None:
