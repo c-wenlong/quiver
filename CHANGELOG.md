@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac app: the session's model in the chat header and Sessions
+  list.** A session's chat header reads `harness · folder · model`, and
+  each Sessions row names the model of the newest reply first in its
+  details line, ahead of the ledger's other models (the ledger's own
+  spelling of the same model isn't repeated). The provider path and the
+  8-digit date stamp are dropped, as on the phone:
+  `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
+  `claude-opus-4-5`. The app reads it from this Mac's hub rows
+  (`model`, optional), on the same read that tells which rows open a
+  chat; nothing shows when the hub doesn't know it. Display only: the
+  Mac doesn't switch models. Part of
+  [#643](https://github.com/c-wenlong/quiver/issues/643).
+
 - **Remote iPhone app: switch a session's model from the chat.** On a
   session attached through tmux whose harness takes `/model <id>`
   (Claude Code and Codex; the row's `model_modes` says so), the chat's

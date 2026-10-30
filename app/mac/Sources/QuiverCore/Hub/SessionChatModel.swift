@@ -239,6 +239,23 @@ public final class SessionChatModel {
         commands.reset()
     }
 
+    /// Reads the hub's row again for the model alone. The chat reads its
+    /// row once on `start()` and no event carries the model, so a model
+    /// that first appears with the opening reply, or changes from another
+    /// client or the terminal, would stay as it was until a reopen. A
+    /// failed read leaves the header as it is.
+    @discardableResult
+    func refreshModel() -> Task<Void, Never> {
+        let gen = generation
+        return Task { [weak self, key] in
+            guard let self,
+                  let rows = try? await hub.withClient({ try await $0.sessions() }),
+                  gen == generation, let model = rows.first(where: { $0.key == key })?.model,
+                  row?.model != model else { return }
+            row?.model = model
+        }
+    }
+
     private func follow(_ gen: Int, from last: Int) {
         streamTask?.cancel()
         streamTask = Task { [weak self, key] in
@@ -380,7 +397,11 @@ public final class SessionChatModel {
             let status = env.decode(HubStatusData.self)?.status ?? ""
             row?.status = status
             // The turn ended (or stopped to ask) without a message to show.
-            if !replaying, !status.isEmpty, status != "active" { awaiting.removeAll() }
+            if !replaying, !status.isEmpty, status != "active" {
+                awaiting.removeAll()
+                // A reply just finished: the header's model may be new.
+                refreshModel()
+            }
         case "command.result":
             if let result = env.decode(HubCommandResult.self) { settle(result) }
         case "session.ownership":
