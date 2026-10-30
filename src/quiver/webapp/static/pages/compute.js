@@ -779,8 +779,7 @@ function openComputeLimits() {
           return;
         }
       } else {
-        p.acError = (data && data.error && data.error.message)
-          || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+        p.acError = failText(status, data, "");
       }
       drawAutoclean(refocus);
     });

@@ -48,8 +48,7 @@ function agentName(id) {
 }
 
 function tilde(path) {
-  const home = page.data && page.data.home;
-  return home && path.startsWith(home + "/") ? "~" + path.slice(home.length) : path;
+  return Fmt.tilde(path, page.data && page.data.home);
 }
 
 function machineName() {
@@ -556,8 +555,7 @@ async function cloneHub() {
     // hub: that job is done already and needs the same reload.
     if (hubJob().state === "done") page.hubStale = true;
   } else {
-    page.hubError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    page.hubError = failText(status, data);
   }
   // A stale preview is never painted: pollHub reloads it first.
   if (!page.hubStale) paint();

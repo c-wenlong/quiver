@@ -52,10 +52,9 @@ function rootExplanation(root) {
   }
 }
 
-/* `~/…` for a path under the hub's home. */
+/* `~/…` for a path under the hub's home (the list's, when not given). */
 function skillsPath(path, home) {
-  const h = home || (skillsPage.data && skillsPage.data.home) || "";
-  return h && path.startsWith(h + "/") ? "~" + path.slice(h.length) : path;
+  return Fmt.tilde(path, home || (skillsPage.data && skillsPage.data.home));
 }
 
 /* Too long for a row: keep both ends, as .truncationMode(.middle) does. */
@@ -65,22 +64,8 @@ function skillsMiddle(text, max) {
   return `${text.slice(0, head)}…${text.slice(text.length - tail)}`;
 }
 
-/* HarnessMarkView: the logo, a word after it when the logo is shared,
- * or the name alone when there is no logo. */
-function skillsMark(h, cls = "logo") {
-  const name = Fmt.harnessName(h);
-  const has = (id) => Fmt.logo(id).startsWith("<img");
-  let inner;
-  if (h === "claude") inner = `${Fmt.logo("claude", cls)}<span>CLI</span>`;
-  else if (h === "claude-desktop") inner = `${Fmt.logo("claude", cls)}<span>Desktop</span>`;
-  else if (has(h)) inner = Fmt.logo(h, cls);
-  else {
-    const dash = h.lastIndexOf("-");
-    const base = dash > 0 ? h.slice(0, dash) : "", suffix = dash > 0 ? h.slice(dash + 1) : "";
-    inner = base && suffix && has(base) ? `${Fmt.logo(base, cls)}<span>${esc(suffix)}</span>` : `<span>${esc(name)}</span>`;
-  }
-  return `<span class="sk-mark" title="${esc(name)}" aria-label="${esc(name)}">${inner}</span>`;
-}
+/* HarnessMarkView (Fmt.markView). */
+const skillsMark = (h, cls = "logo") => Fmt.markView(h, "sk-mark", cls);
 
 /* SeenBy: one harness as its mark, several as up to three logos and the count. */
 function skillsSeenBy(harnesses) {

@@ -608,6 +608,7 @@ class TestFileSheetReplies(unittest.TestCase):
     def test_a_late_reply_for_another_opening_is_dropped(self):
         script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/skills.js"
         prelude = (
+            (script.parents[1] / "format.js").read_text(encoding="utf-8") + "\n"
             "const esc = (s) => String(s); function registerPage() {}\n"
             "const sheet = { innerHTML: '', dataset: {}, open: false, showModal() { this.open = true; }, close() { this.open = false; } };\n"
             "const bodySheet = () => sheet;\n"

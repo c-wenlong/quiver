@@ -574,6 +574,26 @@ class TestHarnessMark(unittest.TestCase):
         self.assertEqual(logos[3], '<span class="logo" aria-hidden="true"></span>')
         self.assertEqual(self.fmt("Fmt.harnessName('codex-acc2')"), "Codex (acc2)")
 
+    def test_mark_view_is_the_macs_harness_mark_view(self):
+        """Skills, AGENTS.md and Hooks each had a copy that drew a second
+        account's or Devin cloud's logo without its word."""
+        out = self.fmt("['claude', 'claude-desktop', 'codex-acc2', 'devin-cloud', 'grok-bot', 'zed', 'a<b']"
+                       ".map((id) => Fmt.markView(id, 'sk-mark'))")
+        self.assertEqual(out[0], '<span class="sk-mark" title="Claude Code" aria-label="Claude Code">'
+                                 '<img class="logo" src="/harness-claude-color.svg" alt="Claude Code"><span>CLI</span></span>')
+        self.assertIn('alt="Claude Desktop"><span>Desktop</span></span>', out[1])
+        self.assertIn('alt="Codex (acc2)"><span>acc2</span></span>', out[2])
+        self.assertIn('src="/harness-devin.svg" alt="Devin cloud"><span>Cloud</span></span>', out[3])
+        self.assertIn('src="/harness-grok.svg" alt="Grok Bot"></span>', out[4])
+        self.assertEqual(out[5], '<span class="sk-mark" title="Zed" aria-label="Zed"><span>Zed</span></span>')
+        self.assertEqual(out[6], '<span class="sk-mark" title="A&lt;b" aria-label="A&lt;b"><span>A&lt;b</span></span>')
+        self.assertIn('class="logo logo-sm mono"', self.fmt("Fmt.markView('cursor', 'hk-mark', 'logo logo-sm')"))
+
+    def test_tilde_shortens_only_paths_under_home(self):
+        out = self.fmt("[Fmt.tilde('/h/u/a/b', '/h/u'), Fmt.tilde('/h/user2/a', '/h/u'),"
+                       " Fmt.tilde('/h/u', '/h/u'), Fmt.tilde('/h/u/a', ''), Fmt.tilde('/h/u/a', undefined)]")
+        self.assertEqual(out, ["~/a/b", "/h/user2/a", "/h/u", "/h/u/a", "/h/u/a"])
+
 
 if __name__ == "__main__":
     unittest.main()
