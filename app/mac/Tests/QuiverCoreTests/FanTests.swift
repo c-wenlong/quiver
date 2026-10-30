@@ -798,6 +798,19 @@ import Testing
         #expect(await later.shouldOfferHelperUpdate())
     }
 
+    /// The offer reads the job itself: a refresh that already took the
+    /// one-shot install check (another launch-time refresh) can't hide it.
+    @MainActor @Test func theOfferLooksEvenWhenARefreshAlreadyChecked() async {
+        let smc = FakeSMC.twoFans()
+        let installer = FakeInstaller()
+        let (fans, _) = control(smc, installer: installer)
+        await fans.refresh()
+        #expect(!fans.helperOutdated)
+        installer.outdated.value = true
+        #expect(await fans.shouldOfferHelperUpdate())
+        #expect(fans.helperOutdated)
+    }
+
     @MainActor @Test func updatingReplacesTheHelperWithOnePrompt() async {
         let smc = FakeSMC.twoFans()
         let installer = FakeInstaller()

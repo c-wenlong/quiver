@@ -448,16 +448,21 @@ public final class FanControl {
         // (a timeout, a removal) isn't wiped by the answer.
         if installUnchecked {
             installUnchecked = false
-            let inspect = self.inspect, control = self.control
-            let state = await offMain { inspect(control) }
-            helperInstalled = state == .current
-            helperOutdated = if case .outdated = state { true } else { false }
+            await inspectHelper()
         }
         loaded = true
         settle()
     }
 
     private var installUnchecked = true
+
+    /// Read the installed job (it spawns launchctl, so off the main actor).
+    private func inspectHelper() async {
+        let inspect = self.inspect, control = self.control
+        let state = await offMain { inspect(control) }
+        helperInstalled = state == .current
+        helperOutdated = if case .outdated = state { true } else { false }
+    }
 
     private var fansManual: Bool { !fans.isEmpty && fans.allSatisfy(\.isManual) }
 
@@ -683,8 +688,12 @@ public final class FanControl {
     /// The launch check: whether to offer the helper update now. Yes once
     /// an older helper shows up, unless the user already said Not now to
     /// this version's update; the popover still offers it after that.
+    /// It reads the job itself rather than through `refresh`, whose
+    /// one-shot check a refresh already under way at launch (the
+    /// temperature rule's, the Compute page's) may have taken and not yet
+    /// answered.
     public func shouldOfferHelperUpdate() async -> Bool {
-        await refresh()
+        await inspectHelper()
         return helperOutdated && defaults.integer(forKey: Self.updateDeclinedKey) < FanHelper.version
     }
 
