@@ -91,7 +91,7 @@
   };
 
   // The unlink route is a DELETE with the same JSON shape as a POST.
-  const del_ = (path, body) => send("DELETE", path, body);
+  const del_ = (path, body) => apiSend("DELETE", path, body);
 
   /* ----------------------------------------------------------- marks */
 

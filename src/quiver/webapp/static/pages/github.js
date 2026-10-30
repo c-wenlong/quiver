@@ -163,9 +163,9 @@ const GhUI = (() => {
     return new URLSearchParams(location.hash.split("?")[1] || "");
   }
 
-  /* A JSON POST through app.js's send(): never throws, { status: 0 } when
+  /* A JSON POST through app.js's apiSend(): never throws, { status: 0 } when
    * the hub is unreachable. */
-  const post = (path, body) => send("POST", path, body);
+  const post = (path, body) => apiPost(path, body);
 
   function failMessage(status, data) {
     return (data && data.error && (data.error.message || data.error))

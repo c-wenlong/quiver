@@ -47,11 +47,11 @@ const SessionChat = (() => {
 
   /* ------------------------------------------------------------ requests */
 
-  /* Through app.js's send(), with its authHeaders: the paired bearer when
+  /* app.js's apiPost, with its authHeaders: the paired bearer when
    * there is one, and X-Quiver-Pair, which lets the hub owner's own
    * tailnet devices in without pairing. status 0 means the hub never
    * answered (offline, connection lost). */
-  const post = (path, body) => send("POST", path, body);
+  const post = (path, body) => apiPost(path, body);
 
   const sessionPath = (key, action) => `/v1/sessions/${encodeURIComponent(key)}/${action}`;
   const errorText = (data) => (data && data.error && data.error.message) || "";
@@ -3155,7 +3155,7 @@ const SessionChat = (() => {
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
       inlineImagesAsText, inline, taskBox, tableHtml,
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
-      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
+      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, post,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,

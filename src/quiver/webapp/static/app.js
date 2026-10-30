@@ -35,8 +35,8 @@ const safeHref = (url) => {
 
 /* A write: ``body`` as JSON with api()'s headers. Never throws; status 0
  * means the hub didn't answer at all. Every page's POST and DELETE goes
- * through it (apiPost, GhUI.post). */
-async function send(method, path, body) {
+ * through it (apiPost, GhUI.post). Not plain send(): chat.js has its own. */
+async function apiSend(method, path, body) {
   let resp;
   try {
     resp = await fetch(path, {
@@ -51,7 +51,7 @@ async function send(method, path, body) {
   try { data = await resp.json(); } catch { /* empty body */ }
   return { status: resp.status, data };
 }
-const apiPost = (path, body) => send("POST", path, body);
+const apiPost = (path, body) => apiSend("POST", path, body);
 
 /* status 0 means the hub didn't answer at all (offline, connection lost). */
 async function api(path) {
