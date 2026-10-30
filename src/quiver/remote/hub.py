@@ -1107,6 +1107,10 @@ class _Handler(BaseHTTPRequestHandler):
         presentation — a mismatched ``request_id`` is a failed spend,
         not a free probe — so a topic reader holding it can answer
         exactly the one prompt it was minted for and nothing else.
+
+        The buttons only ever send allow, deny or always, so that is
+        all the token can answer with: a menu row number (which could
+        pick any option of a digit menu) burns it and is refused.
         """
         prefix = "/v1/sessions/"
         suffix = "/approval"
@@ -1120,6 +1124,11 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._read_body() or {}
         rid = str(body.get("request_id") or "")
         if not self._state.approval_tokens.consume(token, key, rid):
+            return None
+        decision = body.get("decision")
+        # A list is unhashable: check the type before ``in``.
+        if not isinstance(decision, str) or (
+                decision not in notify.ACTION_DECISIONS):
             return None
         # The approval route never reads the device id back; non-None
         # is the whole grant.
@@ -2326,7 +2335,13 @@ class _Handler(BaseHTTPRequestHandler):
         machine = cmd["machine"] or state.machine_id
         harness, cwd = cmd["harness"], cmd["cwd"]
         if machine != state.machine_id:
-            row = catalog_mod.load_machines(state.home).get(machine) or {}
+            row = catalog_mod.load_machines(state.home).get(machine)
+            if row is None:
+                # No satellite by that id would ever drain the queue:
+                # the launch would sit pending in a fresh journal.
+                self._send_error(404, "unknown_machine",
+                                 f"no machine {machine} on this hub")
+                return
             # A satellite older than the launchable field reports none;
             # it checks its own registry when the command arrives.
             offered = row.get("launchable")
@@ -3360,7 +3375,7 @@ class _Handler(BaseHTTPRequestHandler):
         if body is None:
             self._send_error(400, "bad_body", "unreadable JSON body")
             return
-        name = str(body.get("name") or "").strip()[:80]
+        name = pairing.clean_name(body.get("name"))
         if not pairing.update_device(
             self._state.home, device_id, display_name=name or None
         ):
