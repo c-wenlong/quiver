@@ -197,6 +197,8 @@ class RemoteAgent:
         # Last "/" menu payload the hub accepted; see _push_catalog.
         self._slash_digest: str | None = None
         self._slash_skipped: str | None = None
+        # Row count last trimmed to fit a push, so the note prints once.
+        self._rows_trimmed: int | None = None
         # Set after a printed 403 register refusal, so the loop retries
         # without re-printing; cleared on the next accepted register.
         self._register_denied: str | None = None
@@ -419,7 +421,8 @@ class RemoteAgent:
                     "session.launched", key, self.machine_id,
                     {"launch_id": lid},
                 ))
-        body = {"machine_id": self.machine_id, "rows": rows}
+        body = {"machine_id": self.machine_id,
+                "rows": self._fit_rows(rows)}
         # The "/" menu's custom commands live on this machine's disk; send
         # them only when they changed, so the 10 s push stays small.
         try:
@@ -448,6 +451,31 @@ class RemoteAgent:
         if self._refresh_launchable():
             self._register()
         return status == 200
+
+    def _fit_rows(self, rows: list[dict]) -> list[dict]:
+        """The newest rows whose push fits under ``CATALOG_BODY_MAX``.
+
+        A machine with thousands of sessions can list more than the hub
+        takes in one body; refused whole, the push failed every 10 s
+        and the hub never heard of a new session. Rows come newest
+        first, so the oldest are the ones left out.
+        """
+        base = len(json.dumps({"machine_id": self.machine_id, "rows": []},
+                              ensure_ascii=False).encode("utf-8"))
+        total = base
+        for n, row in enumerate(rows):
+            # _post's json.dumps puts ", " between rows.
+            total += len(json.dumps(row, ensure_ascii=False)
+                         .encode("utf-8")) + (2 if n else 0)
+            if total > CATALOG_BODY_MAX:
+                if self._rows_trimmed != len(rows):
+                    self._rows_trimmed = len(rows)
+                    print(f"swe remote agent: {len(rows)} sessions are too "
+                          f"many for one catalog push; sending the newest "
+                          f"{n}", file=sys.stderr)
+                return rows[:n]
+        self._rows_trimmed = None
+        return rows
 
     def _push_usage(self) -> bool:
         body = usage_mod.snapshot()

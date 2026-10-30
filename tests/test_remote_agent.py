@@ -1305,6 +1305,41 @@ class TestAgentEdges(unittest.TestCase):
         self.assertEqual(calls[0][1], "/v1/agent/catalog")
         self.assertEqual(calls[0][3]["machine_id"], ag.machine_id)
 
+    def test_push_catalog_trims_oldest_rows_to_fit(self):
+        # Rows over the hub's 4 MiB body cap were refused whole, every
+        # push; the newest that fit go instead.
+        ag = self._agent()
+        rows = [{"key": f"k{i}", "title": "t" * 100_000}
+                for i in range(60)]
+        ag.catalog.refresh = lambda: rows
+        ag._refresh_launchable = lambda: False
+        sent = []
+
+        def post(hub, path, cred, body, timeout=10.0):
+            sent.append(body)
+            return 200, {}
+
+        with patch.object(agent_mod, "_post", side_effect=post), \
+                patch("sys.stderr"):
+            self.assertTrue(ag._push_catalog())
+        body = sent[0]
+        self.assertLessEqual(len(json.dumps(body).encode()),
+                             agent_mod.CATALOG_BODY_MAX)
+        self.assertGreater(len(body["rows"]), 0)
+        self.assertLess(len(body["rows"]), 60)
+        self.assertEqual(body["rows"][0]["key"], "k0")
+
+    def test_fit_rows_is_exact_at_the_cap(self):
+        ag = self._agent()
+        rows = [{"key": f"k{i}"} for i in range(3)]
+        exact = len(json.dumps({"machine_id": ag.machine_id, "rows": rows},
+                               ensure_ascii=False).encode())
+        with patch.object(agent_mod, "CATALOG_BODY_MAX", exact):
+            self.assertEqual(ag._fit_rows(rows), rows)
+        with patch.object(agent_mod, "CATALOG_BODY_MAX", exact - 1), \
+                patch("sys.stderr"):
+            self.assertEqual(ag._fit_rows(rows), rows[:2])
+
     def test_handle_frame_malformed_and_noncommand(self):
         ag = self._agent()
         ag._handle_frame(b"{nope")                       # bad json
