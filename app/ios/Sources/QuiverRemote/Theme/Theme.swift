@@ -30,6 +30,14 @@ enum Theme {
     // MARK: Accent and status (green only for "on" and "active")
     static let accent = Color(light: "#059669", dark: "#059669")
     static let accentFill = Color(light: "#10b981", dark: "#10b981")
+    /// The activity heatmap's five levels, none to busiest: the Mac's.
+    static let heatmap: [Color] = [
+        Color(light: "#ebedf0", dark: "#121212"),
+        Color(light: "#a7f3d0", dark: "#065f46"),
+        Color(light: "#6ee7b7", dark: "#059669"),
+        Color(light: "#34d399", dark: "#10b981"),
+        Color(light: "#10b981", dark: "#34d399"),
+    ]
     static let success = Color(light: "#10b981", dark: "#34d399")
     static let warning = Color(light: "#f59e0b", dark: "#fbbf24")
     static let warningText = Color(light: "#b45309", dark: "#fbbf24")
