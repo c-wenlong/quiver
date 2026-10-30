@@ -28,6 +28,7 @@ from quiver.status.parsers import Component
 from quiver.webapp.pages import status as status_page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "status"
 EPOCH = 1_791_720_000.0  # the Swift tests' usageEpoch, 2026-10-11
@@ -901,8 +902,8 @@ class TestLateWriteGate(unittest.TestCase):
         page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/status.js"
         prelude = ("globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
                    "const gates = []; function renderGate(m) { gates.push(m); }\n"
-                   "function registerPage() {}\n"
-                   "const apiPost = async () => ({ status: 401, data: null });\n")
+                   "function registerPage() {}\n" + app_js_function("currentRoute")
+                   + "const apiPost = async () => ({ status: 401, data: null });\n")
         body = "statusUntrack('x').then(() => process.stdout.write(String(gates.length)));\n"
         done = subprocess.run(["node", "-e", prelude + page.read_text(encoding="utf-8") + "\n" + body],
                               capture_output=True, text=True, timeout=30)

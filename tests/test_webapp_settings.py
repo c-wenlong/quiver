@@ -22,6 +22,7 @@ from quiver.webapp.pages import PageContext, PageError, _qr
 from quiver.webapp.pages import settings as settings_page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 # ---------------------------------------------------------------- QR helpers
 
@@ -1146,7 +1147,7 @@ class TestRevokeThisBrowserScript(unittest.TestCase):
             "const routeGen = 0;\n"
             "function registerPage() {}\n"
             "function renderGate(msg) { gates.push(msg); }\n"
-            "function renderSettings() {}\n"
+            "function renderSettings() {}\n" + app_js_function("currentRoute") +
             "const api = async () => ({ status: " + str(api_status) + ", data: null });\n"
             "const apiPost = async () => ({ status: 200, data: " + post_data + " });\n"
             + forget + "\n")
