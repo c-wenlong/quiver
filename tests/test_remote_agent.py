@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import socket
 import struct
 import tempfile
@@ -12,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from quiver.remote import agent as agent_mod
+from quiver.remote import usage as usage_mod
 from quiver.remote import attachments, catalog as catalog_mod
 from quiver.remote import inject, journal, pairing, protocol, supervise
 from quiver.remote import hub
@@ -1834,6 +1836,37 @@ class TestAgentLoopEdges(unittest.TestCase):
 class TestCatalogEdge(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
+
+    def test_machine_ids_that_map_alike_get_their_own_files(self):
+        # "m.1" and "m_1" both became m_1.json: one satellite's rows
+        # overwrote the other's.
+        self.assertNotEqual(catalog_mod._safe_mid("m.1"),
+                            catalog_mod._safe_mid("m_1"))
+        self.assertEqual(catalog_mod._safe_mid("c92d6398"), "c92d6398")
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        catalog_mod.merge_remote_rows(self.home, "m_1", [{"key": "claude:b"}])
+        keys = sorted(r["key"] for r in catalog_mod.load_remote_rows(self.home))
+        self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
+
+    def test_the_pre_suffix_file_is_dropped_on_write(self):
+        folder = catalog_mod._satellite_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "m_1.json").write_text(json.dumps(
+            {"rows": [{"key": "claude:old@m.1"}]}))
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        keys = [r["key"] for r in catalog_mod.load_remote_rows(self.home)]
+        self.assertEqual(keys, ["claude:a@m.1"])
+
+    def test_stale_satellite_files_are_deleted(self):
+        catalog_mod.merge_remote_rows(self.home, "m1", [{"key": "claude:a"}])
+        usage_mod.save_satellite(self.home, "m1", {"harnesses": []})
+        old = time.time() - catalog_mod.SATELLITE_FILE_MAX_AGE_S - 60
+        for f in (catalog_mod._satellite_dir(self.home) / "m1.json",
+                  usage_mod._satellite_file(self.home, "m1")):
+            os.utime(f, (old, old))
+        self.assertEqual(catalog_mod.load_remote_rows(self.home), [])
+        self.assertEqual(usage_mod.load_satellites(self.home), [])
+        self.assertFalse((catalog_mod._satellite_dir(self.home) / "m1.json").exists())
 
     def test_merge_skips_non_dict_rows(self):
         out = catalog_mod.merge_remote_rows(

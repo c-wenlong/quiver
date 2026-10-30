@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from quiver.paths import atomic_write_text, remote_dir_for
-from quiver.remote.catalog import _safe_mid
+from quiver.remote.catalog import _safe_mid, drop_legacy_file, satellite_files
 
 # A cold fetch takes seconds per provider; two phones opening the page at
 # once would otherwise both miss the cache and call every endpoint twice.
@@ -119,18 +119,14 @@ def save_satellite(home: Path | None, machine_id: str, body: dict) -> dict:
     path = _satellite_file(home, machine_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(record))
+    drop_legacy_file(path.parent, machine_id)
     return record
 
 
 def load_satellites(home: Path | None) -> list[dict]:
     """Every stored satellite report, newest first."""
-    base = remote_dir_for(home) / "satellite-usage"
     out: list[dict] = []
-    try:
-        files = list(base.glob("*.json"))
-    except OSError:
-        return out
-    for f in files:
+    for f in satellite_files(remote_dir_for(home) / "satellite-usage"):
         try:
             record = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):

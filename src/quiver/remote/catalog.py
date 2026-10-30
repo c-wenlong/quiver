@@ -10,6 +10,7 @@ time, satellites upsert theirs over the agent channel.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -362,13 +363,60 @@ def _satellite_dir(home: Path | None) -> Path:
     return remote_dir_for(home) / "satellite"
 
 
-def _safe_mid(machine_id: str) -> str:
-    """``machine_id`` as a filename: alphanumeric run, else its slug."""
+def _legacy_safe_mid(machine_id: str) -> str:
+    """The file stem before ids that map lossily got a hash suffix."""
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", machine_id)
     # "..", ".", "" escape the satellite dir — collapse to a slug.
     if not safe or set(safe) <= {".", "_", "-"}:
         safe = protocol.key_slug(machine_id)
     return safe
+
+
+def _safe_mid(machine_id: str) -> str:
+    """``machine_id`` as a filename. An id that is already a safe name
+    is used as is; any other gets a hash of the real id appended, since
+    "m.1" and "m_1" would otherwise share one file and overwrite each
+    other's rows, commands and usage."""
+    safe = _legacy_safe_mid(machine_id)
+    if safe == machine_id:
+        return safe
+    return f"{safe}-{hashlib.sha256(machine_id.encode()).hexdigest()[:8]}"
+
+
+def drop_legacy_file(folder: Path, machine_id: str) -> None:
+    """Remove a satellite file under its pre-suffix name once it has been
+    written under the new one, so the folder walks don't read it twice."""
+    legacy = _legacy_safe_mid(machine_id)
+    if legacy != _safe_mid(machine_id):
+        try:
+            (folder / f"{legacy}.json").unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+# A satellite file no push has refreshed for this long belongs to a
+# machine that is gone (or re-paired under a new id): it is deleted. A
+# machine that wakes later pushes it again.
+SATELLITE_FILE_MAX_AGE_S = 30 * 86_400
+
+
+def satellite_files(folder: Path, now: float | None = None) -> list[Path]:
+    """The ``*.json`` under ``folder``, deleting the stale ones."""
+    now = time.time() if now is None else now
+    out = []
+    try:
+        files = list(folder.glob("*.json"))
+    except OSError:
+        return out
+    for f in files:
+        try:
+            if now - f.stat().st_mtime > SATELLITE_FILE_MAX_AGE_S:
+                f.unlink(missing_ok=True)
+                continue
+        except OSError:
+            continue
+        out.append(f)
+    return out
 
 
 # supervise.tmux_name: "qv-" and a hex slug of the session key.
@@ -405,6 +453,7 @@ def merge_remote_rows(
             path / f"{_safe_mid(machine_id)}.json",
             json.dumps({"rows": out}, indent=1),
         )
+        drop_legacy_file(path, machine_id)
     except OSError:
         pass
     return out
@@ -412,13 +461,10 @@ def merge_remote_rows(
 
 def load_remote_rows(home: Path | None) -> list[dict]:
     """All persisted satellite rows (``(key, row)``-ready dicts)."""
-    base = _satellite_dir(home)
     out: list[dict] = []
-    try:
-        files = list(base.glob("*.json"))
-    except OSError:
-        return out
-    for f in files:
+    # The "/" menus pushed beside the rows age out on the same walk.
+    satellite_files(remote_dir_for(home) / "slash")
+    for f in satellite_files(_satellite_dir(home)):
         try:
             rows = json.loads(f.read_text()).get("rows") or []
         except (OSError, ValueError):

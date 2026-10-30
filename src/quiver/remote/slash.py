@@ -827,12 +827,15 @@ def save_satellite(home: Path | None, machine_id: str, payload) -> bool:
     if not isinstance(payload, dict) or \
             not isinstance(payload.get("harnesses"), dict):
         return False
+    from quiver.remote.catalog import drop_legacy_file
+
     path = _sat_file(home, machine_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, json.dumps(payload))
     except OSError:
         return False
+    drop_legacy_file(path.parent, machine_id)
     return True
 
 
