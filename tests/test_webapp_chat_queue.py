@@ -310,6 +310,66 @@ class TestQueuedTray(unittest.TestCase):
                      unmatched: T.chat.tray.unmatched.length };""")
         self.assertEqual(out, {"before": 0, "tray": ["x10"], "settled": True, "unmatched": 0})
 
+    def test_a_queue_read_during_an_action_keeps_its_answer(self):
+        out = self.run_js("""
+            const out = {};
+            await T.sendText("a", "queue");
+            await T.sendText("b", "queue");
+            let release;
+            answer = () => new Promise((r) => { release = r; });
+            const steer = T.sendNow("c1");
+            // A read lands while Send now is out: new row objects.
+            queueList = { status: 200, data: { sends: [{ client_id: "c1", text: "a" }, { client_id: "c2", text: "b" }] } };
+            await T.loadQueue(1);
+            release({ status: 409, data: { error: { code: "backlog_full", message: "full" } } });
+            await steer;
+            out.steer = tray()[0];
+            // The same for a saved edit.
+            T.beginEdit("c2");
+            ids["chat-text"].value = "b2";
+            const save = T.saveEdit();
+            await T.loadQueue(1);
+            release({ status: 200, data: { ok: true } });
+            await save;
+            out.edit = tray()[1];
+            return out;""")
+        self.assertEqual(out["steer"], ["c1", "a", "waiting", "Too many waiting. Try again shortly"])
+        self.assertEqual(out["edit"], ["c2", "b2", "waiting", ""])
+
+    def test_a_send_staged_after_a_read_began_survives_its_answer(self):
+        out = self.run_js("""
+            let releaseList;
+            globalThis.api = () => new Promise((r) => { releaseList = r; });
+            const reading = T.loadQueue(1);
+            await T.sendText("new one", "queue");
+            // The read was answered before the hub took the send.
+            releaseList({ status: 200, data: { sends: [] } });
+            await reading;
+            return { tray: tray(), departed: T.chat.tray.departed.length };""")
+        self.assertEqual(out, {"tray": [["c1", "new one", "waiting", ""]], "departed": 0})
+
+    def test_requeue_keeps_the_draft_when_the_cancel_result_lands_first(self):
+        out = self.run_js("""
+            const input = ids["chat-text"];
+            await T.sendText("queued", "queue");
+            input.value = "my draft";
+            T.beginEdit("c1");
+            input.value = "edited";
+            answer = (path, body) => {
+              if (body.op === "edit") return { status: 422, data: { error: { code: "bad_command" } } };
+              if (body.op === "cancel") {
+                // The hub emits the cancelled result before answering.
+                T.commandResult({ op: "message", client_id: "c1", ok: false, cancelled: true });
+                return { status: 200, data: { ok: true } };
+              }
+              return { status: 202, data: { waiting: true } };
+            };
+            await T.saveEdit();
+            await tick();
+            return { input: input.value, tray: tray(), editing: T.chat.tray.editingId, note: T.chat.tray.editNote };""")
+        self.assertEqual(out, {"input": "my draft", "tray": [["c2", "edited", "waiting", ""]],
+                               "editing": None, "note": ""})
+
 
 if __name__ == "__main__":
     unittest.main()

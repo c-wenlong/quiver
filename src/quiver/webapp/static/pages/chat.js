@@ -2940,7 +2940,7 @@ const SessionChat = (() => {
     const gen = chat.gen, key = chat.key;
     let bubble = null;
     if (sendsToTray(mode, chat.row)) {
-      chat.tray.queued.push({ cid: clientId, text, phase: "posting", note: "" });
+      chat.tray.queued.push({ cid: clientId, text, phase: "posting", note: "", since: ++chat.tray.clock });
       paintTray();
     } else {
       bubble = appendOptimistic(text, clientId);
@@ -3032,6 +3032,10 @@ const SessionChat = (() => {
       // Live echoes that matched no row while a queue list was on its way
       // (`listing`).
       unmatched: [], listing: false,
+      // Ticks when a queue read starts and when a row is staged: a row
+      // newer than the read (`since` above its mark) isn't in its answer
+      // yet, so the answer can't move it out.
+      clock: 0,
       editingId: null, draftBeforeEdit: "", savingEdit: false,
       editNote: "", note: "", confirmAll: null,
     };
@@ -3058,9 +3062,10 @@ const SessionChat = (() => {
    * may have edited), and what it no longer holds leaves for `departed`,
    * except a send whose POST hasn't been answered yet. `known` are sends
    * shown elsewhere or gone, which a list can't bring back; a send whose
-   * echo arrived while the list was on its way (`unmatched`) is gone too.
+   * echo arrived while the list was on its way (`unmatched`) is gone too,
+   * and a row staged after the read began (`since` above `mark`) stays.
    * Pure: answers {queued, departed, gone} for the caller to apply. */
-  function mergeQueue(local, departedBefore, sends, known, unmatched) {
+  function mergeQueue(local, departedBefore, sends, known, unmatched, mark = Infinity) {
     const queued = [], gone = [];
     const echoed = unmatched.slice();
     for (const send of sends) {
@@ -3078,7 +3083,7 @@ const SessionChat = (() => {
     const departed = departedBefore.slice();
     for (const mine of local) {
       if (queued.some((q) => q.cid === mine.cid)) continue;
-      if (mine.phase === "posting") queued.push(mine);
+      if (mine.phase === "posting" || (mine.since || 0) > mark) queued.push(mine);
       else if (!known.has(mine.cid) && !departed.some((d) => d.cid === mine.cid)) departed.push(mine);
     }
     return { queued, departed, gone };
@@ -3110,6 +3115,7 @@ const SessionChat = (() => {
     // missing from it.
     t.unmatched = [];
     t.listing = true;
+    const mark = ++t.clock;
     const { status, data } = await api(sessionPath(chat.key, "queue"));
     if (gen !== chat.gen) return;
     t.listing = false;
@@ -3117,7 +3123,7 @@ const SessionChat = (() => {
     if (status === 200 && data) {
       const known = new Set(t.settled);
       for (const b of $("chat-log").querySelectorAll(".msg.user[data-client-id]")) known.add(b.dataset.clientId);
-      const merged = mergeQueue(t.queued, t.departed, data.sends || [], known, t.unmatched);
+      const merged = mergeQueue(t.queued, t.departed, data.sends || [], known, t.unmatched, mark);
       t.queued = merged.queued;
       t.departed = merged.departed;
       for (const cid of merged.gone) t.settled.add(cid);
@@ -3189,7 +3195,7 @@ const SessionChat = (() => {
     if (waiting && !t.settled.has(cid)) {
       // The agent was busy after all: it waits in the tray.
       bubble.remove();
-      t.queued.push({ cid, text: bubble.dataset.text, phase: "waiting", note: "" });
+      t.queued.push({ cid, text: bubble.dataset.text, phase: "waiting", note: "", since: ++t.clock });
       chat.awaitingReply = false;
       updateWorking();
       paintTray();
@@ -3212,6 +3218,10 @@ const SessionChat = (() => {
     return true;
   }
 
+  /* The tray's row for `cid` now: a queue read replaces the row objects,
+   * so an action re-finds its row after its request. */
+  const trayRow = (cid) => chat.tray.queued.find((q) => q.cid === cid) || null;
+
   async function queueAction(cid, op, text) {
     const body = text === undefined ? { client_id: cid, op } : { client_id: cid, op, text };
     const { status, data } = await post(sessionPath(chat.key, "queue"), body);
@@ -3233,10 +3243,11 @@ const SessionChat = (() => {
     const err = await queueAction(cid, "steer");
     if (!err || gen !== chat.gen) return;
     if (err.status === 401) return renderGate();
-    if (entry.phase !== "sendingNow" || !chat.tray.queued.includes(entry)) return;
     noteRefusal(err.data);
-    entry.phase = err.code === "not_waiting" ? "left" : "waiting";
-    entry.note = queueNote(err.status, err.data);
+    const row = trayRow(cid);
+    if (!row || row.phase !== "sendingNow") return;
+    row.phase = err.code === "not_waiting" ? "left" : "waiting";
+    row.note = queueNote(err.status, err.data);
     paintTray();
   }
 
@@ -3258,11 +3269,12 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     if (!err) { dropQueued(cid); return; }
     if (err.status === 401) return renderGate();
-    if (entry.phase !== "removing" || !chat.tray.queued.includes(entry)) return;
+    const row = trayRow(cid);
+    if (!row || row.phase !== "removing") return;
     // The hub never held it, or forgot it: there's nothing to remove.
     if (err.code === "unknown_send") { dropQueued(cid); return; }
-    entry.phase = err.code === "not_waiting" ? "left" : "waiting";
-    entry.note = queueNote(err.status, err.data);
+    row.phase = err.code === "not_waiting" ? "left" : "waiting";
+    row.note = queueNote(err.status, err.data);
     paintTray();
   }
 
@@ -3335,8 +3347,8 @@ const SessionChat = (() => {
     t.savingEdit = false;
     if (!err) {
       // The row keeps its place with the new text.
-      entry.text = text;
-      entry.note = "";
+      const row = trayRow(cid);
+      if (row) { row.text = text; row.note = ""; }
       if (t.editingId === cid) cancelEdit();
       paintTray();
       return;
@@ -3369,6 +3381,9 @@ const SessionChat = (() => {
 
   async function requeueEdit(cid, text, gen) {
     const t = chat.tray;
+    // The cancel's own command.result can land first and end the edit
+    // (takeQueued), so the draft from before Edit is kept here.
+    const draft = t.draftBeforeEdit;
     const err = await queueAction(cid, "cancel");
     if (gen !== chat.gen) return;
     if (err) {
@@ -3378,11 +3393,12 @@ const SessionChat = (() => {
       return;
     }
     dropQueued(cid);
-    if (t.editingId === cid) {
+    if (t.editingId === cid || t.editingId === null) {
       t.editingId = null;
       const input = $("chat-text");
-      if (input) input.value = t.draftBeforeEdit;
+      if (input) { input.value = draft; growComposer(); }
       t.draftBeforeEdit = "";
+      t.editNote = "";
     }
     t.note = "Edited. It moved to the end of the queue";
     sendText(text, "queue");
