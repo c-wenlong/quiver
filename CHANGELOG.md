@@ -450,6 +450,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its flag is unknown instead of guessing
   ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 
+- **Mac app: the Queued tray in the session chat.** A Queue-mode
+  send the hub holds until the agent's turn ends now waits in a tray
+  above the prompt box instead of the transcript, as on the web and the
+  iPhone: Edit puts its text in the box and Save writes it back in
+  place, Remove drops it, Send now steers it into the running turn, and
+  Remove all clears the tray after a confirm. It moves to the
+  transcript once it goes out, and reopening the chat shows what the
+  hub still holds (`GET`/`POST /v1/sessions/{key}/queue`). Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 ### Changed
 
 - **Mac app: less CPU while idle.** The trend sampler no longer reads
@@ -598,6 +608,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `detail` for it.
 
 ### Fixed
+
+- **`swe mcp sync` writes remote servers Claude Code can see.** Claude
+  Code skips an `mcpServers` entry that has a `url` and no `type`
+  (`claude mcp get` says there is no such server), and sync wrote
+  exactly that: a new remote server had no `type`, and overwriting one
+  dropped its `type: http`. Claude Code now has its own format, like
+  Droid's, that stamps `type: http` (or keeps `sse`) on every remote
+  server.
 
 - **Mac app: notarized builds keep Terminal automation.** Open in
   Terminal, account sign-in and session resume drive Terminal and iTerm

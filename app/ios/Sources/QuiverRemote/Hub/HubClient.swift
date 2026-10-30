@@ -25,9 +25,18 @@ struct HubError: LocalizedError, Equatable {
     var errorDescription: String? { message }
     var isUnauthorized: Bool { status == 401 }
 
+    static let networkMessage = "Can't reach the hub. Check that Tailscale is on."
+
     static func network(_ error: Error) -> HubError {
-        HubError(status: 0, code: "network",
-                 message: "Can't reach the hub. Check that Tailscale is on.")
+        HubError(status: 0, code: "network", message: networkMessage)
+    }
+
+    /// The message under a "Can't reach the hub" title. The network
+    /// error's first sentence is that title, so only the next step stays
+    /// (the web app's "Check the connection, then try again", worded for
+    /// the tailnet). Any other failure keeps its own words.
+    static func detail(underUnreachableTitle message: String) -> String {
+        message == networkMessage ? "Check that Tailscale is on, then try again." : message
     }
 }
 

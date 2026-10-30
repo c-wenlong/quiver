@@ -31,8 +31,7 @@ struct PullsView: View {
             if !model.loaded {
                 LoadingRow(text: "Loading pull requests")
             } else if let error = model.error, model.repos.isEmpty {
-                StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") { Task { await model.load(client: app.client, refresh: true) } }
+                StateCard.unreachable(error) { Task { await model.load(client: app.client, refresh: true) } }
             } else if let blocked = model.envBlocked {
                 StateCard(icon: "exclamationmark.lock", title: "Can't reach GitHub",
                           message: "On \(model.machine ?? app.hubName): \(blocked)")

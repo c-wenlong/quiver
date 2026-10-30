@@ -229,20 +229,12 @@ struct DailyTable: View {
         let more = OverviewFormat.dailyMore(total: days.count, shown: shown)
         Card(padding: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        row(Self.headers)
-                            .font(Theme.caption.weight(.medium)).foregroundStyle(Theme.textSecondary)
-                            .padding(.vertical, 8)
-                        ForEach(rows) { day in
-                            Rectangle().fill(Theme.border).frame(height: 1)
-                            row(OverviewFormat.dailyCells(day), moneyLast: true)
-                                .font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.textPrimary)
-                                .padding(.vertical, 8)
-                                .accessibilityElement(children: .combine)
-                        }
-                    }
-                    .padding(.horizontal, Theme.rowHorizontal)
+                // Columns size to their widest cell, so "2026-10-29" and
+                // "Output" never cut off. When that fits, the date takes
+                // the slack as on the Mac; when not, the table scrolls.
+                ViewThatFits(in: .horizontal) {
+                    grid(rows, dateFills: true)
+                    ScrollView(.horizontal, showsIndicators: false) { grid(rows, dateFills: false) }
                 }
                 if days.count > OverviewFormat.dailyPreview {
                     Rectangle().fill(Theme.border).frame(height: 1)
@@ -262,16 +254,34 @@ struct DailyTable: View {
         }
     }
 
-    private func row(_ cells: [String], moneyLast: Bool = false) -> some View {
-        HStack(spacing: 6) {
-            Text(cells[0]).lineLimit(1).frame(width: 74, alignment: .leading)
-            ForEach(1..<cells.count, id: \.self) { index in
-                Text(cells[index])
-                    .foregroundStyle(moneyLast && index == cells.count - 1 ? AnyShapeStyle(Theme.accentFill)
-                                     : AnyShapeStyle(.foreground))
-                    .lineLimit(1)
-                    .frame(width: index == cells.count - 1 ? 58 : 42, alignment: .trailing)
+    // Each cell carries its own font and padding: a modifier on a
+    // GridRow turns it into one view spanning the whole grid.
+    private func grid(_ rows: [OverviewResponse.Day], dateFills: Bool) -> some View {
+        Grid(alignment: .trailing, horizontalSpacing: 10, verticalSpacing: 0) {
+            GridRow { cells(Self.headers, dateFills: dateFills, header: true) }
+            ForEach(rows) { day in
+                Rectangle().fill(Theme.border).frame(height: 1)
+                GridRow { cells(OverviewFormat.dailyCells(day), dateFills: dateFills, header: false) }
             }
+        }
+        .padding(.horizontal, Theme.rowHorizontal)
+    }
+
+    /// One row's cells. A day row reads as one line to VoiceOver.
+    @ViewBuilder private func cells(_ cells: [String], dateFills: Bool, header: Bool) -> some View {
+        let font = header ? Theme.caption.weight(.medium) : Theme.caption.monospacedDigit()
+        let ink = header ? Theme.textSecondary : Theme.textPrimary
+        Text(cells[0]).font(font).foregroundStyle(ink).lineLimit(1).fixedSize()
+            .frame(maxWidth: dateFills ? .infinity : nil, alignment: .leading)
+            .padding(.vertical, 8)
+            .gridColumnAlignment(.leading)
+            .accessibilityLabel(header ? cells[0] : cells.joined(separator: ", "))
+        ForEach(1..<cells.count, id: \.self) { index in
+            Text(cells[index]).font(font)
+                .foregroundStyle(!header && index == cells.count - 1 ? Theme.accentFill : ink)
+                .lineLimit(1).fixedSize()
+                .padding(.vertical, 8)
+                .accessibilityHidden(!header)
         }
     }
 }

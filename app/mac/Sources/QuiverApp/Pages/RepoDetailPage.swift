@@ -95,8 +95,11 @@ struct RepoDetailPage: View {
                         ProgressView().controlSize(.small)
                             .padding(.bottom, 4)
                     }
+                    // The tabs take their room first, so the field sits at
+                    // its minimum: wide enough for the whole prompt, which
+                    // at 100pt read "Filter by t".
                     SearchField(prompt: "Filter by title, branch, tag…", text: $filter)
-                        .frame(minWidth: 100, maxWidth: 280)
+                        .frame(minWidth: 220, maxWidth: 280)
                         .padding(.bottom, 4)
                 }
                 if model.focusTab == .pulls, !pullFilters.isEmpty {

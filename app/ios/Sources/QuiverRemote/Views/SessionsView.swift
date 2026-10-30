@@ -34,8 +34,7 @@ struct SessionsView: View {
             } else if !app.loadedOnce {
                 LoadingRow(text: "Loading sessions")
             } else if let error = app.loadError, app.sessions.isEmpty {
-                StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") { Task { await app.refresh() } }
+                StateCard.unreachable(error) { Task { await app.refresh() } }
             } else if groups.isEmpty {
                 StateCard(icon: "tray", title: filter == .all ? "No sessions yet" : "Nothing here",
                           message: filter == .all ? "Sessions on this machine show up here as soon as an agent starts." : "No session matches this filter right now.")

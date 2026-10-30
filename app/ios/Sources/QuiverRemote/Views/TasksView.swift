@@ -35,8 +35,7 @@ struct TasksView: View {
             if !model.loaded {
                 LoadingRow(text: "Loading tasks")
             } else if let error = model.error, model.tasks.isEmpty, model.failedRepos.isEmpty {
-                StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") { Task { await model.load(client: app.client, refresh: true) } }
+                StateCard.unreachable(error) { Task { await model.load(client: app.client, refresh: true) } }
             } else {
                 // A blocked source leaves its stored rows on last-known
                 // state: the banner says why, each of its rows is marked.

@@ -70,6 +70,7 @@ MCP_CONFIG_MAP = {
         "path": Path.home() / ".claude.json",
         "key": "mcpServers",
         "label": "Claude Code",
+        "format": "claude",
     },
     "claude-desktop": {
         "path": Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
