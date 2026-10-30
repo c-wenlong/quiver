@@ -511,6 +511,54 @@ return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
 """)
         self.assertEqual(out, {"fetches": 3, "hiddenFetches": 1, "delays": [2000, 2000, 4000]})
 
+    RESYNC = r"""
+let answer; const asked = [];
+globalThis.api = (path) => {
+  asked.push(path);
+  if (path === "/v1/sessions") return Promise.resolve({ status: 200, data: { sessions: [] } });
+  return new Promise((r) => { answer = r; });
+};
+const card = { kind: "open approval card" }, appended = [];
+const log = { innerHTML: "old history", querySelectorAll: () => [card], appendChild: (el) => appended.push(el) };
+document.getElementById = (id) => (id === "chat-log" ? log : null);
+globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
+const frame = (ev) => "data: " + JSON.stringify(ev);
+Object.assign(T.chat, { key: "k", gen: 1, seq: 500 });
+T.handleFrame("k", frame({ type: "journal.truncated", seq: 3 }));
+const during = { seq: T.chat.seq, asked: asked.slice(), log: log.innerHTML };
+T.handleFrame("k", frame({ type: "journal.caught-up", seq: 3 }));
+T.handleFrame("k", frame({ type: "session.status", seq: 1, data: {} }));
+T.handleFrame("k", frame({ type: "message.appended", seq: 2, data: {} }));
+T.handleFrame("k", frame({ type: "approval.requested", seq: 1, data: { request_id: "r" } }));
+T.handleFrame("k", frame({ type: "message.appended", seq: 4, data: {} }));
+const heldWhileReading = T.chat.held.length;
+T.chat.revealTimer = 1;  // keep what is queued in chat.pending, unrevealed
+answer(ANSWER);
+await new Promise((r) => setImmediate(r));
+return { during, heldWhileReading, held: T.chat.held, seq: T.chat.seq, log: log.innerHTML,
+         kept: appended.length, asked, queued: T.chat.pending.map((e) => e.type + ":" + e.seq) };
+"""
+
+    def test_a_truncated_journal_takes_its_lower_seq_and_refetches(self):
+        """A hub whose journal was wiped sends journal.truncated with its
+        head below this view's cursor: the view adopts it, reads
+        /messages again, holds what streams meanwhile, then applies all
+        but the messages the redraw shows; an unanswered approval card
+        survives the redraw and the session row is read again."""
+        out = self.run_js(self.RESYNC.replace("ANSWER", "{ status: 200, data: { messages: [] } }"))
+        self.assertEqual(out["during"], {"seq": 3, "asked": ["/v1/sessions/k/messages?limit=500"], "log": "old history"})
+        self.assertEqual(out["heldWhileReading"], 4)
+        self.assertIsNone(out["held"])
+        self.assertEqual(out["seq"], 3)
+        self.assertEqual((out["log"], out["kept"]), ("", 1))
+        self.assertEqual(out["queued"], ["session.status:1", "approval.requested:1", "message.appended:4"])
+        self.assertEqual(out["asked"][-1], "/v1/sessions")
+
+    def test_a_failed_refetch_keeps_the_history(self):
+        out = self.run_js(self.RESYNC.replace("ANSWER", "{ status: 0, data: null }"))
+        self.assertEqual((out["log"], out["kept"], out["seq"]), ("old history", 0, 3))
+        self.assertEqual(out["queued"], ["session.status:1", "approval.requested:1", "message.appended:4"])
+
     def test_bare_urls_keep_their_underscores(self):
         """A bare URL goes back after emphasis runs, so `__init__` in a
         path stays in the href and the text, never <strong>."""
