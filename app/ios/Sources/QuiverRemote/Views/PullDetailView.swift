@@ -470,7 +470,7 @@ struct OpenPullSheet: View {
                     startSection(machine)
                 } else {
                     StateCard(icon: "terminal", title: "No machine can start a session",
-                              message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                              message: NewSessionOptions.noMachineMessage(app.machines))
                 }
             }
             .navigationTitle("Open in session")
