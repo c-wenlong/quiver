@@ -1107,6 +1107,10 @@ class _Handler(BaseHTTPRequestHandler):
         presentation — a mismatched ``request_id`` is a failed spend,
         not a free probe — so a topic reader holding it can answer
         exactly the one prompt it was minted for and nothing else.
+
+        The buttons only ever send allow, deny or always, so that is
+        all the token can answer with: a menu row number (which could
+        pick any option of a digit menu) burns it and is refused.
         """
         prefix = "/v1/sessions/"
         suffix = "/approval"
@@ -1120,6 +1124,11 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._read_body() or {}
         rid = str(body.get("request_id") or "")
         if not self._state.approval_tokens.consume(token, key, rid):
+            return None
+        decision = body.get("decision")
+        # A list is unhashable: check the type before ``in``.
+        if not isinstance(decision, str) or (
+                decision not in notify.ACTION_DECISIONS):
             return None
         # The approval route never reads the device id back; non-None
         # is the whole grant.

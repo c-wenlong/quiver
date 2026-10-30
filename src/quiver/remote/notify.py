@@ -64,6 +64,9 @@ _POST_TIMEOUT_S = 5.0
 # The approval prompt is a convenience, not a record — enough to decide,
 # short enough that a lock screen shows it whole.
 _PROMPT_CAP = 280
+# The decisions the push's action buttons send — all an action token
+# may answer with (the hub refuses anything else under one).
+ACTION_DECISIONS = frozenset({"allow", "deny", "always"})
 
 
 def _config_path(home: Path | None) -> Path:
