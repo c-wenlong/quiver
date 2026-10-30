@@ -183,6 +183,10 @@ public final class DoctorModel {
         do {
             switch action {
             case .setup:
+                // setup and discover rewrite harness.json: they wait behind
+                // the Harnesses page's gate so no edit there is lost.
+                await HarnessesModel.registryWrites.acquire()
+                defer { HarnessesModel.registryWrites.release() }
                 let outcome = try await swe.applySetup(starred: nil, adopt: nil)
                 // A linking pass that stops early still counts as a
                 // repair for the report, but its reason shows on the row.
@@ -192,6 +196,8 @@ public final class DoctorModel {
             case .`init`:
                 try await swe.runInit()
             case .discover:
+                await HarnessesModel.registryWrites.acquire()
+                defer { HarnessesModel.registryWrites.release() }
                 _ = try await swe.applyDiscovery()
             case .install:
                 guard let harness = finding.harness, let via = finding.via else { break }

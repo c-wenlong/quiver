@@ -74,12 +74,16 @@ class TestWebAppRoutes(HubBase):
 APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
 
 
-def app_js_function(name: str) -> str:
-    """The source of a top-level ``function name(...)`` in app.js, for node
-    tests that run one page script with app.js's globals stubbed: a page
-    calls the real helper, not a copy that could drift."""
+MANAGE_JS = APP_JS.with_name("manage.js")
+
+
+def app_js_function(name: str, js: Path = APP_JS) -> str:
+    """The source of a top-level ``function name(...)`` in app.js (or
+    ``js``, e.g. ``MANAGE_JS``), for node tests that run one page script
+    with app.js's globals stubbed: a page calls the real helper, not a copy
+    that could drift."""
     import re
-    found = re.search(r"^(?:async )?function %s\(.*?^\}\n" % re.escape(name), APP_JS.read_text(encoding="utf-8"),
+    found = re.search(r"^(?:async )?function %s\(.*?^\}\n" % re.escape(name), js.read_text(encoding="utf-8"),
                       re.S | re.M)
     assert found, name
     return found.group(0)
