@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.paths import atomic_write_text, read_json_dict, remote_dir_for
 from quiver.remote import launchd, pairing
 from quiver.remote.tsid import tailscale_exe
 
@@ -401,11 +401,7 @@ def _state_file(home: Path | None) -> Path:
 
 
 def load_state(home: Path | None = None) -> dict:
-    try:
-        data = json.loads(_state_file(home).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return read_json_dict(_state_file(home))
 
 
 def record_move(home: Path | None, url: str, now: float | None = None) -> None:
