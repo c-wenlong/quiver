@@ -111,6 +111,19 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         }
         #expect(report.findings.map(\.check) == ["new"])
     }
+
+    /// A load cancelled with its page puts the previous state back: left
+    /// at .loading, the spinner and isBusy stayed on for good.
+    @Test func aCancelledLoadDoesNotSpinForever() async throws {
+        let runner = StuckRunner()
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let task = Task { await model.load() }
+        while runner.started == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        task.cancel()
+        await task.value
+        #expect(model.state == .idle)
+        #expect(!model.isBusy)
+    }
 }
 
 /// `action` on a doctor finding: decode, unknown → nil, and `run` argv.
