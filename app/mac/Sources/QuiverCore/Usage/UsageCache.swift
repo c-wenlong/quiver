@@ -90,20 +90,11 @@ struct UsageCacheStore {
         try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
-    /// Runs `body` holding an exclusive `flock` on a lock file beside the
-    /// cache. If the lock cannot be taken the write still happens, unlocked,
-    /// rather than dropping a cooldown.
+    /// Runs `body` holding the lock file beside the cache. If the lock
+    /// cannot be taken the write still happens, unlocked, rather than
+    /// dropping a cooldown.
     private func withFileLock(_ body: () -> Void) {
-        let lockURL = url.appendingPathExtension("lock")
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        let fd = open(lockURL.path, O_RDWR | O_CREAT, 0o600)
-        guard fd >= 0 else { return body() }
-        defer { close(fd) }
-        guard flock(fd, LOCK_EX) == 0 else { return body() }
-        defer { flock(fd, LOCK_UN) }
-        body()
+        FileLock.whileHeld(beside: url, body)
     }
 
     /// Everything on disk, or nothing when the file is missing or unreadable.
