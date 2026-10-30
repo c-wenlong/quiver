@@ -377,8 +377,11 @@ class TestGraphQL(unittest.TestCase):
              patch("quiver.harness.rate_limits._verified_context",
                    return_value=sentinel):
             out = linear._graphql("k", "query { viewer { id } }")
-        self.assertEqual(out.status, "ok")
-        self.assertEqual(calls, [None, sentinel])
+            again = linear._graphql("k", "query { viewer { id } }")
+        self.assertEqual((out.status, again.status), ("ok", "ok"))
+        # The second request goes straight to the bundle, no failed
+        # handshake first (the removed copy retried every time).
+        self.assertEqual(calls, [None, sentinel, sentinel])
 
     def test_500_is_upstream_error(self):
         import urllib.error
