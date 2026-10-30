@@ -355,10 +355,26 @@ POST /v1/ssh/key                     {public_key} ("" clears) → stored on the 
 
 Events: `message.appended`, `message.delta` (tier A only),
 `session.status`, `session.meta` (title, harness_title, pinned,
-pinned_at after a pin or rename), `approval.requested|resolved`, `compaction`,
+pinned_at after a pin or rename), `approval.requested|resolved`,
 `machine.online|offline`, `notify` (needs_you|finished|error|limit;
 `github` for a notification thread that just turned unread — hub-local,
-not a satellite kind).
+not a satellite kind). A compaction has no event of its own: it is a
+`message.appended` with `kind: "compaction"`. The hub still accepts a
+bare `compaction` event from an older satellite.
+
+`limit` comes from the transcript, not the status probe. The tailer
+marks Claude Code's 429 record (`isApiErrorMessage` with `error:
+"rate_limit"`, "You've hit your session limit · resets 9:30am") and a
+Codex `task_complete` whose `error.codex_error_info` is
+`usage_limit_exceeded`; the record still shows in the chat as an
+`error` message. Its notify adds `message` (the harness's line, at most
+280 characters) and, for Claude Code, `resets_at` (epoch seconds) and
+`window` (`five_hour`, `seven_day`, ...) from `quotaLimits`. It rings
+once per limit: a record read more than 10 minutes after it was written
+(backfill) is quiet, and the same limit again in that session (a retry
+into it) stays quiet until its reset time, or for an hour when the
+harness gave none. The ntfy push puts the harness's line in the body.
+Other harnesses don't raise `limit` yet.
 
 `queue|steer` is the OpenAI Remote distinction: queue waits for idle;
 steer injects mid-turn where the channel allows (codex turn input, tmux
@@ -453,10 +469,18 @@ cancel racing the job's start either wins, and nothing is sent, or
 loses with `409 not_waiting` ("that message already went out"); there is
 never both a send and a removal. An unknown `client_id` is `404
 unknown_send`; one that already left (sent, steered, removed, failed) is
-`409 not_waiting` while the hub remembers it (the last 256). Satellite
-sessions never park a queue-mode send on the hub (the satellite delivers
-on arrival or refuses a busy session), so their list is empty and every
-op answers `409 queue_unsupported`.
+`409 not_waiting` while the hub remembers it (the last 256). A
+satellite session's queue-mode send waits on the satellite, not the hub:
+`swe remote agent` runs `message` commands through the same per-session
+`SendQueue`, polls the session's status every 2 s and delivers once the
+turn ends, failing it after 30 min of busy with "session stayed busy for
+30 min; message not sent". Steers go on their own queue and never wait
+behind it. A send the agent is stopped before delivering is not marked
+done, so the hub replays it when the agent comes back. The hub holds
+nothing for those sends, so their list is empty and every op answers
+`409 queue_unsupported`. The `202` for such a send keeps `waiting:
+false`, so a client never parks it in a tray whose actions would act on
+the hub's queue.
 
 `edit` takes a `text` (checked like a message's: a string with more
 than spaces in it, else `422 bad_command`) and replaces the waiting

@@ -1391,6 +1391,140 @@ class TestTailManager(unittest.TestCase):
         self.assertIsNotNone(mgr.last_append_at("claude:y"))
 
 
+def _claude_limit(text, resets_at=1793323800, window="five_hour",
+                  ts="2026-10-29T22:55:25.053Z"):
+    """The 429 record Claude Code writes on a usage limit (real shape)."""
+    rec = _claude_assistant([{"type": "text", "text": text}])
+    rec.update({"isApiErrorMessage": True, "error": "rate_limit",
+                "apiErrorStatus": 429, "timestamp": ts})
+    if resets_at is not None:
+        rec["quotaLimits"] = {
+            "status": "rejected", "resetsAt": resets_at,
+            "rateLimitType": window, "overageStatus": "rejected",
+            "isUsingOverage": False}
+    return rec
+
+
+def _codex_limit(ts="2026-10-20T02:55:34.068Z"):
+    """A codex turn that ended on a usage limit (real shape)."""
+    return {"timestamp": ts, "type": "event_msg", "payload": {
+        "type": "task_complete", "turn_id": "t1", "last_agent_message": None,
+        "error": {"message": "You hit your spend cap set by the owner of "
+                             "your workspace.",
+                  "codex_error_info": "usage_limit_exceeded"}}}
+
+
+def _iso_ts(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(epoch))
+
+
+class TestLimitNotify(unittest.TestCase):
+    """notify kind ``limit`` from Claude Code and Codex limit records."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.events = []
+        self.path = self.tmp / "t.jsonl"
+        self.path.write_text("")
+
+    def _manager(self, tool="claude"):
+        mgr = tail.TailManager(
+            lambda k, ev: self.events.append((k, ev)), "mbp", home=self.tmp)
+        sess = Session(timestamp=0, agent="x", path="/tmp",
+                       session_id="", tool_name=tool)
+        src = tail.JsonlTailSource(self.path, tool)
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([(f"{tool}:s", sess, "active")])
+        return mgr
+
+    def _append(self, *recs):
+        with open(self.path, "a") as fh:
+            for rec in recs:
+                fh.write(json.dumps(rec) + "\n")
+
+    def _limits(self):
+        return [ev["data"] for _k, ev in self.events
+                if ev["type"] == "notify" and ev["data"]["kind"] == "limit"]
+
+    def test_claude_decode_marks_rate_limit_only(self):
+        out = tail.decode_record("claude", _claude_limit(
+            "You've hit your session limit · resets 9:30am"))
+        self.assertEqual(out[0]["kind"], "error")
+        self.assertEqual(out[0][tail.LIMIT_MARK],
+                         {"resets_at": 1793323800.0, "window": "five_hour"})
+        # Older records without quotaLimits still count.
+        out = tail.decode_record("claude", _claude_limit("limit", None))
+        self.assertEqual(out[0][tail.LIMIT_MARK], {})
+        # Another API error is just an error.
+        rec = _claude_limit("Internal server error", None)
+        rec["error"] = "server_error"
+        self.assertNotIn(tail.LIMIT_MARK, tail.decode_record("claude", rec)[0])
+
+    def test_codex_decode_marks_usage_limit_only(self):
+        out = tail.decode_record("codex", _codex_limit())
+        self.assertEqual(out[0]["kind"], "error")
+        self.assertIn("spend cap", out[0]["text"])
+        self.assertEqual(out[0][tail.LIMIT_MARK], {})
+        plain = {"type": "event_msg", "payload": {
+            "type": "task_complete", "last_agent_message": "done"}}
+        self.assertEqual(tail.decode_record("codex", plain), [])
+
+    def test_claude_limit_rings_once_with_reset(self):
+        mgr = self._manager()
+        now = time.time()
+        text = "You've hit your session limit · resets 9:30am"
+        self._append(_claude_limit(text, resets_at=now + 3600,
+                                   ts=_iso_ts(now)))
+        mgr.tick(now)
+        [data] = self._limits()
+        self.assertEqual(data["message"], text)
+        self.assertAlmostEqual(data["resets_at"], now + 3600)
+        self.assertEqual(data["window"], "five_hour")
+        self.assertEqual(data["status"], "active")
+        # The marker never reaches the wire.
+        appended = [ev for _k, ev in self.events
+                    if ev["type"] == "message.appended"]
+        self.assertNotIn(tail.LIMIT_MARK, appended[0]["data"])
+        # A retry into the same limit is quiet; nothing repeats per poll.
+        self._append(_claude_limit(text, resets_at=now + 3600,
+                                   ts=_iso_ts(now + 60)))
+        mgr.tick(now + 60)
+        mgr.tick(now + 120)
+        self.assertEqual(len(self._limits()), 1)
+        # The next window's limit rings again.
+        self._append(_claude_limit(text, resets_at=now + 9000,
+                                   ts=_iso_ts(now + 4000)))
+        mgr.tick(now + 4000)
+        self.assertEqual(len(self._limits()), 2)
+
+    def test_codex_limit_repeats_only_after_window(self):
+        mgr = self._manager("codex")
+        now = time.time()
+        self._append(_codex_limit(_iso_ts(now)))
+        mgr.tick(now)
+        self.assertEqual(len(self._limits()), 1)
+        self.assertNotIn("resets_at", self._limits()[0])
+        self._append(_codex_limit(_iso_ts(now + 30)))
+        mgr.tick(now + 30)
+        self.assertEqual(len(self._limits()), 1)
+        later = now + tail.LIMIT_REPEAT_S + 10
+        self._append(_codex_limit(_iso_ts(later)))
+        mgr.tick(later)
+        self.assertEqual(len(self._limits()), 2)
+
+    def test_stale_limit_record_is_quiet(self):
+        mgr = self._manager()
+        now = time.time()
+        self._append(_claude_limit(
+            "old limit", ts=_iso_ts(now - tail.LIMIT_FRESH_S - 60)))
+        mgr.tick(now)
+        self.assertEqual(self._limits(), [])
+        # Still shown in the chat.
+        appended = [ev["data"]["text"] for _k, ev in self.events
+                    if ev["type"] == "message.appended"]
+        self.assertEqual(appended, ["old limit"])
+
+
 class TestSweepStale(unittest.TestCase):
     """``sweep_stale``: old journal + cursor pairs go, live ones stay."""
 
@@ -2103,3 +2237,27 @@ class TestStatusProbe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFreshSession(unittest.TestCase):
+    """``fresh_session`` brings a catalog copy's activity time up to date."""
+
+    def test_fresh_session_uses_tailer_activity(self):
+        tmp = Path(tempfile.mkdtemp())
+        path = tmp / "t.jsonl"
+        path.write_text("")
+        mgr = tail.TailManager(lambda k, ev: None, "mbp", home=tmp)
+        stale = Session(timestamp=0, agent="x", path="/tmp",
+                        session_id="", tool_name="claude")
+        # Nothing tails the key: unchanged.
+        self.assertIs(mgr.fresh_session("claude:s", stale), stale)
+        src = tail.JsonlTailSource(path, "claude")
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:s", stale, "done")])
+        fresh = mgr.fresh_session("claude:s", stale)
+        self.assertGreater(fresh.timestamp, 0)  # the file's mtime
+        self.assertEqual(stale.timestamp, 0)    # the copy is untouched
+        mgr.last_append["claude:s"] = time.time() + 100
+        self.assertAlmostEqual(
+            mgr.fresh_session("claude:s", stale).timestamp,
+            mgr.last_append["claude:s"] * 1000)

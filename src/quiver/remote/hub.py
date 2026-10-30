@@ -157,8 +157,12 @@ APPROVAL_TTL_S = 86400
 # Event types a satellite may journal via /v1/agent/events:
 # protocol.EVENT_TYPES plus the two agent→hub bookkeeping types the
 # phone never sends. Anything else is dropped, not journaled.
+# ``compaction`` left EVENT_TYPES (nothing ever emitted it; compactions
+# are ``message.appended`` with that kind) but an older satellite's
+# build still lists it, so the hub keeps taking it rather than start
+# refusing a type it used to accept.
 _SAT_EVENT_TYPES = protocol.EVENT_TYPES | {
-    "session.launched", "command.result",
+    "session.launched", "command.result", "compaction",
 }
 
 # Per-type ``data.kind`` vocabularies for the events that carry one.
@@ -700,7 +704,8 @@ class HubState:
         A result acks only its own seq: the floor mirrors the agent's
         contiguous done floor, so it climbs ``_sat_done`` one
         consecutive seq at a time — a control finishing while an
-        earlier message still runs in ``_work_q`` leaves it put, and
+        earlier message still runs on the agent's send queue leaves it
+        put, and
         the pending count keeps covering the commands a restart still
         owes the satellite. ``?last=`` resets it on connect; an id the
         map doesn't know (a hub-local result, or a command queued
@@ -2554,13 +2559,13 @@ class _Handler(BaseHTTPRequestHandler):
         asleep — results arrive later as ``command.result`` events.
         """
         if action == "queue":
-            # A satellite never parks a queue-mode send: it delivers on
-            # arrival or refuses a busy session, so there is nothing
-            # waiting here to steer or remove.
+            # A satellite parks a queue-mode send on its own machine
+            # until the session is idle; the hub holds nothing to list,
+            # steer or remove.
             self._send_error(
                 409, "queue_unsupported",
-                "sends to another machine's session don't wait on the "
-                "hub; there is nothing queued to steer or remove",
+                "sends to another machine's session wait on that "
+                "machine; they can't be steered or removed from here",
             )
             return
         if action != "attach" and action != "control":
@@ -2614,8 +2619,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(429, "backlog_full",
                                  "machine is too far behind")
                 return
-            # Same shape as the local 202; waiting is always false —
-            # the satellite re-reads status and decides for itself.
+            # Same shape as the local 202. ``waiting`` stays false: the
+            # satellite waits for idle itself, and a client that saw
+            # ``waiting`` would park the send in its tray, whose Edit /
+            # Send now / Remove act on the hub's queue, which holds
+            # nothing for another machine's session.
             self._send_json(202, {
                 "ok": True, "queued": True,
                 "client_id": cmd["client_id"], "waiting": False,
@@ -2750,7 +2758,8 @@ class _Handler(BaseHTTPRequestHandler):
         session = self._state.catalog.session_for(key)
         # The row's status can lag a just-finished turn — reclassify now
         # so ``waiting`` and the first poll don't trust a stale read.
-        status = self._fresh_status(session, str(row.get("status") or ""))
+        status = self._fresh_status(
+            session, str(row.get("status") or ""), key)
         client_id = cmd["client_id"]
         state = self._state
         waiting = cmd["mode"] == "queue" and status == "active"
@@ -2823,7 +2832,7 @@ class _Handler(BaseHTTPRequestHandler):
             # object itself can go stale mid-wait (the status classifier
             # times out against session.timestamp), so re-fetch it too.
             current = state.catalog.session_for(key) or session
-            live = self._fresh_status(current, status)
+            live = self._fresh_status(current, status, key)
             deadline = time.monotonic() + QUEUE_WAIT_MAX_S
             while live == "active" and time.monotonic() < deadline:
                 send.wake.wait(QUEUE_POLL_S)
@@ -2833,7 +2842,7 @@ class _Handler(BaseHTTPRequestHandler):
                     fail("hub restarted; message not sent")
                     return
                 current = state.catalog.session_for(key) or session
-                live = self._fresh_status(current, status)
+                live = self._fresh_status(current, status, key)
             if live == "active":
                 fail("session stayed busy for 30 min; message not sent")
                 return
@@ -2852,7 +2861,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         def job() -> None:
             current = state.catalog.session_for(key) or session
-            live = self._fresh_status(current, status)
+            live = self._fresh_status(current, status, key)
             self._deliver(key, cmd["client_id"], current, cmd, live)
 
         def cancel() -> None:
@@ -2965,9 +2974,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(409, "not_waiting", self._GONE_NOTES.get(
                 gone, "that message is no longer queued"))
 
-    def _fresh_status(self, session, fallback: str) -> str:
-        """Reclassify one session now; the catalog row can be stale."""
+    def _fresh_status(self, session, fallback: str, key: str = "") -> str:
+        """Reclassify one session now; the catalog row can be stale.
+
+        The catalog's session can carry an activity time minutes old
+        for a turn that just started, which the probe reads as
+        "interrupted"; the tailer knows the transcript moved since.
+        """
         try:
+            if key:
+                session = self._state.tail_manager.fresh_session(
+                    key, session)
             got = self._state.status_of([session])
         except Exception:
             return fallback
@@ -3098,7 +3115,7 @@ class _Handler(BaseHTTPRequestHandler):
             row = state.catalog.row_for(key) or {}
             session = state.catalog.session_for(key)
             fallback = str(row.get("status") or "")
-            return self._fresh_status(session, fallback) \
+            return self._fresh_status(session, fallback, key) \
                 if session is not None else fallback
 
         def fire() -> tuple[bool, str]:

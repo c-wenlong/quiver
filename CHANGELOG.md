@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or shown without its credentials
   ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
+- **Remote: a `limit` notification when a session hits its usage
+  limit.** The hub and satellites now raise `notify` kind `limit` when
+  a Claude Code session writes its rate-limit record ("You've hit your
+  session limit · resets 9:30am") or a Codex turn ends with
+  `usage_limit_exceeded`. The ntfy push carries the harness's own line,
+  so the lock screen says when work can resume, and Claude Code's carry
+  `resets_at` and `window`. It rings once per limit: old records read
+  during backfill and retries into the same limit stay quiet. Other
+  harnesses don't raise it yet
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
 - **Web app: the session's model in the chat header and Sessions
   list.** The chat's header shows the model of the transcript's newest
   reply after the folder, and each Sessions row names it first in its
@@ -350,6 +361,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Remote: the unused `compaction` event type is gone from the
+  protocol.** Compactions have always reached clients as
+  `message.appended` with `kind: "compaction"`; the separate
+  `compaction` event in `EVENT_TYPES`, docs/json-contracts.md and
+  docs/remote-control.md was never emitted. The hub still accepts one
+  from an older satellite
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
 - **`--hub` clones around the state a machine already has.** `swe init
   --hub` and `swe setup --hub` used to refuse any `~/.quiver` with files
   in it, and the app, the remote hub and plain `swe` runs all write
@@ -477,6 +496,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `detail` for it.
 
 ### Fixed
+
+- **Remote: queue-mode sends wait for idle on satellites too.** A
+  `queue`-mode message to a session on another machine used to fail
+  with "session is mid-turn; steer to write anyway" whenever that
+  session was busy. `swe remote agent` now parks it on a lane of its
+  own, as the hub does: it waits until the turn ends (up to 30 min,
+  then fails honestly) and for the attachment pulls it names, while
+  steers and their pulls go ahead. A send the agent stops before
+  delivering replays on restart.
+  The hub's and the satellite's idle wait both probe with the tailer's
+  activity time, so a turn that started since the last catalog refresh
+  no longer reads as "interrupted" and gets a queued send typed into it
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
 
 - **The Mac app's Model menu keeps your pick across a harness round
   trip.** On New session, Resolve issue and a task's New agent session,
@@ -619,6 +651,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   /api/compat/summary.json; the app's transport follows no redirects, so
   its card read "answered 301". Both catalogs (the app's and the web
   app's Python port) point at the final URL.
+- **A failed Rebuild explains itself.** The Local code row used to show
+  the build log's last six lines, which for a Swift build are progress
+  counters like `[167/172]` and say nothing. The row now shows the
+  lines that name the failure — compiler and tool `error:`/`fatal:`
+  diagnostics, the build scripts' own `build-app:`/`bundle-swe:`
+  messages, and shell complaints — with styling escapes stripped and
+  overlong lines cut; a flooded log shows the first few errors and the
+  last. The whole log is written to
+  `~/.quiver/cache/rebuild/last-build.log`, which the message links to,
+  and the warning text can be selected to copy either out.
 
 ### Security
 
