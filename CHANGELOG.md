@@ -20,6 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harnesses don't raise it yet
   ([#516](https://github.com/c-wenlong/quiver/issues/516)).
 
+- **Web app: the session's model in the chat header and Sessions
+  list.** The chat's header shows the model of the transcript's newest
+  reply after the folder, and each Sessions row names it first in its
+  details line, ahead of the ledger's other models (the ledger's own
+  spelling of the same model isn't repeated). The provider path and the
+  8-digit date stamp are dropped, as on the phone:
+  `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
+  `claude-opus-4-5`. Nothing shows when the hub doesn't know it. An
+  open chat reads the hub's row again when a turn ends and when the
+  tab becomes visible, so the header follows a model that first
+  appears with the opening reply or changes elsewhere. The
+  page's rows (`/v1/app/sessions`) now carry the hub's `model` as the
+  catalog read it, so the page has no second transcript reader. Display
+  only: the web app doesn't switch models. Part of
+  [#643](https://github.com/c-wenlong/quiver/issues/643).
+
 - **Mac app: approve pair requests in Settings › Remote.** A "Pending
   requests" group under Paired devices lists the phones asking to pair
   over Tailscale, with each one's name, tailnet node, login and how long
