@@ -327,7 +327,7 @@ struct FolderBrowserView: View {
         do {
             listing = try await client.folders(machine: machineId, path: current ?? path)
         } catch {
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            self.error = error.localizedDescription
         }
     }
 }

@@ -69,11 +69,7 @@ KINDS = ("issue", "pull", "card", "page")
 # Kinds the GitHub adapter carries; "card" and "page" are valid
 # task_refs, just not GitHub ones.
 _GITHUB_KINDS = ("issue", "pull")
-# The derived state every task row reports, in issue #844's order.
-STATES = ("open", "in_progress", "pr_open", "merged", "closed")
 
-# ``swe gh``'s list cap: open items per pinned repo in one answer.
-LIST_LIMIT = 50
 # Bounds on the file: a client that links in a loop, and a session that
 # gets linked to (or a launch recorded against) everything it touches.
 MAX_TASKS = 2000
