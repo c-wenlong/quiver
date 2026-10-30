@@ -1060,6 +1060,19 @@ import Testing
         #expect(defaults.integer(forKey: ComputeLimits.orphanAgeKey) == 365 * 24 * 60)
     }
 
+    // MARK: Figures
+
+    @Test func noMemoryReadsAsZeroKB() {
+        #expect(ComputeSummary.bytes(0) == "0 KB")
+        #expect(ComputeSummary.bytes(5 << 20) == "5 MB")
+    }
+
+    @Test func theTotalsLineCountsProcessesInWords() {
+        #expect(ComputeSummary.totalsLine(.init()) == "0 KB across 0 processes · CPU 0.0% · 0 threads")
+        let one = ComputeModel.Totals(memoryBytes: 5 << 20, cpuPercent: 12.4, threads: 9, processCount: 1)
+        #expect(ComputeSummary.totalsLine(one) == "5 MB across 1 process · CPU 12% · 9 threads")
+    }
+
     // MARK: Sampler smoke test
 
     @Test func theSamplerSeesThisProcess() {
