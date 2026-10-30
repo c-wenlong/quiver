@@ -36,6 +36,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -57,6 +58,8 @@ INIT_TIMEOUT_S = 180.0
 # A tool call can run for minutes; the harness's own timeout is usually
 # shorter, so this only frees a request nobody is waiting for any more.
 REQUEST_TIMEOUT_S = 1800.0
+# How long one write to a server's stdin may take, lock wait included.
+WRITE_TIMEOUT_S = 30.0
 MAX_BODY = 32 * 1024 * 1024
 # A server's stderr log starts over once it would pass this size.
 MAX_LOG = 5 * 1024 * 1024
@@ -148,14 +151,36 @@ class _Child:
         self.pending: dict[int, _Waiter] = {}
         self.pending_lock = threading.Lock()
         self.alive = True
+        # Written with os.write and select, so a server that stops reading
+        # its stdin times a write out instead of blocking it forever.
+        os.set_blocking(proc.stdin.fileno(), False)
 
-    def send(self, message: dict) -> None:
-        data = (json.dumps(message, separators=(",", ":")) + "\n").encode("utf-8")
-        with self.write_lock:
+    def send(self, message: dict, timeout: float | None = None) -> None:
+        """Write one message, within ``timeout`` (WRITE_TIMEOUT_S) all told.
+
+        Raises TimeoutError when the lock or the pipe stays busy that long:
+        the server has stopped reading, and every session's requests would
+        otherwise queue behind this one.
+        """
+        timeout = WRITE_TIMEOUT_S if timeout is None else timeout
+        data = memoryview((json.dumps(message, separators=(",", ":")) + "\n").encode("utf-8"))
+        deadline = time.monotonic() + timeout
+        if not self.write_lock.acquire(timeout=timeout):
+            raise TimeoutError("another write to the server is stuck")
+        try:
             if self.proc.stdin.closed:
                 raise BrokenPipeError("server exited")
-            self.proc.stdin.write(data)
-            self.proc.stdin.flush()
+            fd = self.proc.stdin.fileno()
+            while data:
+                left = deadline - time.monotonic()
+                if left <= 0 or not select.select([], [fd], [], left)[1]:
+                    raise TimeoutError("the server stopped reading its input")
+                try:
+                    data = data[os.write(fd, data):]
+                except BlockingIOError:
+                    continue
+        finally:
+            self.write_lock.release()
 
     def close(self) -> None:
         """Close the pipes once the process is gone."""
@@ -397,6 +422,14 @@ class Backend:
                 return
             time.sleep(0.05)
 
+    def _stuck(self, child: _Child, why: str) -> None:
+        """Stop a server that no longer reads; the next request restarts it."""
+        self.last_error = why
+        child.fail_all(f"{self.name}: {why}")
+        # The reader thread sees it exit and clears it with the usual backoff.
+        threading.Thread(target=self._kill, args=(child,), daemon=True,
+                         name=f"mcp-gateway-{self.name}-stop").start()
+
     def stop(self) -> None:
         with self._start_lock:
             self._stopped = True
@@ -418,6 +451,11 @@ class Backend:
         try:
             waiter = child.expect(gid)
             child.send({**message, "id": gid})
+        except TimeoutError as exc:
+            child.forget(gid)
+            self._stuck(child, str(exc))
+            return _error(message.get("id"), INTERNAL_ERROR,
+                          f"{self.name}: {exc}; restarting it")
         except OSError:
             child.forget(gid)
             return _error(message.get("id"), INTERNAL_ERROR, f"{self.name} exited")

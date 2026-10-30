@@ -278,16 +278,18 @@ class GatewayHardeningTest(GatewayServerTest):
     def test_a_pipe_error_in_the_handshake_is_a_json_rpc_error(self):
         import io
 
+        read_end, write_end = os.pipe()
+        os.close(read_end)  # a server that is gone: writes get EPIPE
+
         class Pipe:
             closed = False
 
-            def write(self, data):
-                raise BrokenPipeError("gone")
-
-            def flush(self):
-                pass
+            def fileno(self):
+                return write_end
 
             def close(self):
+                if not self.closed:
+                    os.close(write_end)
                 self.closed = True
 
         class Proc:
@@ -312,6 +314,29 @@ class GatewayHardeningTest(GatewayServerTest):
         body = backend.call({"jsonrpc": "2.0", "id": 4, "method": "tools/list"}, "2025-06-18")
         self.assertEqual(body["id"], 4)
         self.assertIn("exited before initialize", body["error"]["message"])
+        Proc.stdin.close()
+
+    def test_a_server_that_stops_reading_times_the_write_out(self):
+        # Initialized, then it never reads stdin again.
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        backend = gateway_server.Backend("stuck", {"command": "x"}, pathlib.Path(self.tmp.name))
+        child = gateway_server._Child(proc)
+        backend._child, backend._init_result = child, {"capabilities": {}}
+        big = {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+               "params": {"name": "echo", "arguments": {"blob": "x" * 1_000_000}}}
+        with patch.object(gateway_server, "WRITE_TIMEOUT_S", 0.5), \
+                patch.object(gateway_server, "KILL_GRACE_S", 0.5):
+            started = time.monotonic()
+            body = backend.call(big, "2025-06-18")
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertIn("stopped reading", body["error"]["message"])
+            # The lock is free again and the stuck server is being stopped.
+            self.assertTrue(child.write_lock.acquire(timeout=1))
+            child.write_lock.release()
+            proc.wait(timeout=5)
+        child.close()
 
     def test_stopping_reaches_the_whole_process_group(self):
         # The leader (a wrapper) exits at once; one member ignores SIGTERM.
