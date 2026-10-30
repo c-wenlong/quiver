@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -151,16 +152,15 @@ import Testing
           {"name": "pi", "command": "pi", "description": "", "version": null, "aliases": [], "tags": [], "state": "starred", "sessions_100d": 1, "rate_limit": null}
         ]}}
         """#
-        // The first call parks at its gate; the second answers at once.
-        let runner = GatedReplies([
-            .init(status: 0, stdout: Data(json.utf8), stderr: ""),
-            .init(status: 0, stdout: Data(json.replacingOccurrences(of: "starred", with: "active").utf8), stderr: "")])
-        runner.gates[1].open()
+        let runner = GatedRunner(
+            first: .init(status: 0, stdout: Data(json.utf8), stderr: ""),
+            later: .init(status: 0, stdout: Data(json.replacingOccurrences(of: "starred", with: "active").utf8), stderr: ""))
         let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
         let outdated = Task { await model.load() }
-        try #require(await runner.gates[0].arrived())
+        defer { outdated.cancel() }
+        try #require(await runner.gate.arrived())
         await model.load()
-        runner.gates[0].open()
+        runner.gate.open()
         await outdated.value
         // The newer load is the truth: unstarred pi keeps no star, no card.
         #expect(model.starred == [])
@@ -190,6 +190,30 @@ import Testing
         await model.load()
         #expect(model.rows.isEmpty)
         #expect(model.note?.contains("older") == true)
+    }
+}
+
+/// The first `run` parks at `gate` until the test opens it; every call
+/// after answers `later` at once, so an extra read cannot hang the test.
+private final class GatedRunner: CommandRunning, Sendable {
+    let gate = HoldGate()
+    private let calls = Mutex(0)
+    let first: CommandResult
+    let later: CommandResult
+
+    init(first: CommandResult, later: CommandResult) {
+        self.first = first
+        self.later = later
+    }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        let isFirst = calls.withLock { n -> Bool in
+            n += 1
+            return n == 1
+        }
+        guard isFirst else { return later }
+        try await gate.pass()
+        return first
     }
 }
 

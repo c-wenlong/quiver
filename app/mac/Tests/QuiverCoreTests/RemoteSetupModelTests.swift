@@ -273,6 +273,8 @@ final class Ticker: @unchecked Sendable {
         let runner = SetupScriptRunner([.held(held, try reply("swe-remote-setup-ready"))])
         let setup = model(runner)
         let first = Task { await setup.apply() }
+        // A failed wait below ends the test early: don't leave this parked.
+        defer { first.cancel() }
         try #require(await held.arrived())
         #expect(setup.applying)
         await setup.apply()
@@ -300,6 +302,7 @@ final class Ticker: @unchecked Sendable {
                                      .now(try reply("swe-remote-setup-ready"))])
         let setup = model(runner, ticker: ticker)
         let watching = Task { await setup.watch() }
+        defer { watching.cancel() }
         try #require(await ticker.untilSleeping(1))
         #expect(runner.calls.count == 1)
         #expect(setup.report?.current?.id == "tailscale.cert")
@@ -319,6 +322,7 @@ final class Ticker: @unchecked Sendable {
         let runner = SetupScriptRunner([.now(try reply("swe-remote-setup-todo"))])
         let setup = model(runner, ticker: ticker)
         let watching = Task { await setup.watch() }
+        defer { watching.cancel() }
         try #require(await ticker.untilSleeping(1))
         watching.cancel()
         await watching.value
@@ -333,8 +337,10 @@ final class Ticker: @unchecked Sendable {
                                         .held(applying, try reply("swe-remote-setup-ready"))])
         let setup = model(runner, ticker: ticker)
         let watching = Task { await setup.watch() }
+        defer { watching.cancel() }
         try #require(await ticker.untilSleeping(1))
         let apply = Task { await setup.apply() }
+        defer { apply.cancel() }
         try #require(await applying.arrived())
         // This tick falls while --apply runs: no look of its own.
         ticker.tick()
@@ -356,6 +362,7 @@ final class Ticker: @unchecked Sendable {
                                         .now(try reply("swe-remote-setup-ready"))])
         let setup = model(runner)
         let older = Task { await setup.load() }
+        defer { older.cancel() }
         try #require(await slow.arrived())
         await setup.load()
         #expect(setup.isReady)
@@ -372,8 +379,10 @@ final class Ticker: @unchecked Sendable {
                                         .held(apply, try reply("swe-remote-setup-ready"))])
         let setup = model(runner)
         let looking = Task { await setup.load() }
+        defer { looking.cancel() }
         try #require(await look.arrived())
         let applying = Task { await setup.apply() }
+        defer { applying.cancel() }
         try #require(await apply.arrived())
         #expect(setup.loading == false)
         apply.open()
@@ -389,6 +398,7 @@ final class Ticker: @unchecked Sendable {
                                         .now(try reply("swe-remote-setup-pair"))])
         let setup = model(runner)
         let older = Task { await setup.load() }
+        defer { older.cancel() }
         try #require(await slow.arrived())
         await setup.load()
         slow.open()
