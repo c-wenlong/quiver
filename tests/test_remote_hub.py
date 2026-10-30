@@ -3154,7 +3154,12 @@ class TestServeEntry(unittest.TestCase):
         import sys
         state = HubState(Path(tempfile.mkdtemp()))
         writes = []
-        state.emit = lambda *a, **k: None
+        events = []
+
+        def emit(_key, event):
+            events.append(event["type"] == "machine.online")
+
+        state.emit = emit
 
         def upsert(_home, row):
             writes.append(row["online"])
@@ -3168,16 +3173,23 @@ class TestServeEntry(unittest.TestCase):
         sys.setswitchinterval(1e-6)
         try:
             with patch.object(hub_mod.catalog_mod, "upsert_machine", upsert):
-                threads = [threading.Thread(target=stream) for _ in range(8)]
+                # Daemon threads and a bounded join: a locking bug must
+                # fail the test, not hang the run.
+                threads = [threading.Thread(target=stream, daemon=True)
+                           for _ in range(8)]
                 for t in threads:
                     t.start()
                 for t in threads:
-                    t.join()
+                    t.join(timeout=30)
         finally:
             sys.setswitchinterval(prev)
+        self.assertFalse(any(t.is_alive() for t in threads),
+                         "a presence worker never finished")
         self.assertEqual(state._sat_subs["m1"], 0)
         self.assertFalse(state.machine_online("m1"))
-        # Flags alternate online/offline and end offline.
+        # Flags and events match one for one, alternate online/offline,
+        # and end offline.
+        self.assertEqual(events, writes)
         self.assertEqual(writes[-1], False)
         self.assertTrue(all(a != b for a, b in zip(writes, writes[1:])))
 
