@@ -240,7 +240,7 @@ struct StateCard: View {
                     .font(Theme.rowTitle)
                     .foregroundStyle(tone == .error ? Theme.dangerText : Theme.textPrimary)
                 if let message {
-                    Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    Text(inlineCode: message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let actionTitle, let action {
@@ -249,6 +249,11 @@ struct StateCard: View {
             }
         }
     }
+}
+
+extension Text {
+    /// A hub or app message, its backtick spans drawn as inline code.
+    init(inlineCode message: String) { self.init(Markdown.inlineCode(message)) }
 }
 
 struct LoadingRow: View {
