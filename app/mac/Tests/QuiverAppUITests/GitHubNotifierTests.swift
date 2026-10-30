@@ -130,6 +130,8 @@ struct GitHubNotifierTests {
         await notifier.poll(swe: swe)
         await notifier.poll(swe: swe)
         #expect(posts.batches.map { $0.map(\.id) } == [["a"], ["a"]])
+        // One key per thread: the older update's key is gone.
+        #expect(try deliveredKeys(dir).count == 1)
     }
 
     /// A state file from before keys carried `updated_at` holds bare ids.
@@ -154,6 +156,33 @@ struct GitHubNotifierTests {
         router.respond(inboxKey, inbox([note("a", updated: "2026-10-22T00:00:00Z")]))
         await notifier.poll(swe: swe)
         #expect(posts.batches.map { $0.map(\.id) } == [["a"]])
+    }
+
+    /// An older file's thread that is read at the upgrade still migrates,
+    /// and a bare id the inbox no longer shows is dropped: either one's
+    /// next update banners.
+    @Test func bareIdsMigrateWhenReadAndLeftoversAreDropped() async throws {
+        let dir = quiverDir()
+        let file = dir.appending(path: "cache/github-notified.json")
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(["delivered": ["a", "gone"]]).write(to: file)
+        let posts = Posts()
+        let router = Router([inboxKey: inbox([note("a", unread: false)])])
+        let swe = SweClient(runner: router)
+        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+            posts.batches.append($0)
+        }
+        notifier.bannersEnabled = true
+        await notifier.poll(swe: swe)
+        #expect(posts.batches.isEmpty)
+        #expect(try deliveredIds(dir) == ["a"])
+        router.respond(inboxKey, inbox([
+            note("a", updated: "2026-10-22T00:00:00Z"),
+            note("gone", updated: "2026-10-22T00:00:00Z"),
+        ]))
+        await notifier.poll(swe: swe)
+        #expect(posts.batches.map { $0.map(\.id).sorted() } == [["a", "gone"]])
     }
 
     private func decodedNote(_ id: String) throws -> GhNotification {
@@ -211,7 +240,7 @@ struct GitHubNotifierTests {
         let file = dir.appending(path: "cache/github-notified.json")
         try FileManager.default.createDirectory(
             at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let seeded = (0..<600).map { "n\($0)" }
+        let seeded = (0..<600).map { "n\($0)@0" }
         try JSONEncoder().encode(["delivered": seeded]).write(to: file)
         let posts = Posts()
         let swe = SweClient(runner: Router([inboxKey: inbox([note("fresh")])]))

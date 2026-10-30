@@ -34,6 +34,8 @@ final class GitHubNotifier {
     /// Persisted, not derived: the first completed poll seeds the set,
     /// so anything that arrived while the app was closed still banners.
     @ObservationIgnored private var primed: Bool
+    /// The state file predates `id@updated_at` keys; the next poll migrates.
+    @ObservationIgnored private var hasBareIds: Bool
     /// Sends the batch; `postToSystem` in the app, a capture in tests.
     @ObservationIgnored private let post: ([GhNotification]) async -> Void
 
@@ -57,6 +59,7 @@ final class GitHubNotifier {
         // Pre-primed files (v0.1 wrote ids only): non-empty means a seed
         // already ran.
         primed = saved?.primed ?? !delivered.isEmpty
+        hasBareIds = deliveredOrder.contains { !$0.contains("@") }
     }
 
     /// The AppModel watcher loop: poll, sleep, repeat until the app
@@ -81,30 +84,29 @@ final class GitHubNotifier {
 
         if !primed {
             primed = true
-            for note in notes { record(Self.key(note)) }
+            for note in notes { record(note) }
             save()
             return []
         }
 
-        var fresh: [GhNotification] = []
+        // Files written before keys carried `updated_at` hold bare ids. A
+        // thread still in the inbox, read or not, counts as seen at its
+        // current update, so upgrading doesn't banner every unread thread
+        // again; the bare ids left over are threads the inbox no longer
+        // shows, dropped so their next update banners rather than migrates.
         var migrated = false
-        for note in notes where note.unread {
-            let key = Self.key(note)
-            if delivered.contains(key) { continue }
-            // Files written before keys carried `updated_at` hold bare ids:
-            // count that thread as seen at its current update, so upgrading
-            // doesn't banner every unread thread again, and drop the bare id
-            // so its next update banners.
-            if forget(note.id) {
-                record(key)
-                migrated = true
-                continue
-            }
-            fresh.append(note)
+        if hasBareIds {
+            for note in notes where delivered.contains(note.id) { record(note) }
+            deliveredOrder.removeAll { !$0.contains("@") }
+            delivered = Set(deliveredOrder)
+            hasBareIds = false
+            migrated = true
         }
+
+        let fresh = notes.filter { $0.unread && !delivered.contains(Self.key($0)) }
         var refreshes: [Task<Void, Never>] = []
         for note in fresh {
-            record(Self.key(note))
+            record(note)
             refreshes += model.invalidate(repo: note.repo, swe: swe)
         }
         if !fresh.isEmpty, bannersEnabled { await post(fresh) }
@@ -122,17 +124,20 @@ final class GitHubNotifier {
         "\(note.id)@\(Int(note.updatedAt.date?.timeIntervalSince1970 ?? 0))"
     }
 
-    /// Removes `entry` from the delivered set; true when it was there.
-    private func forget(_ entry: String) -> Bool {
-        guard delivered.remove(entry) != nil else { return false }
-        deliveredOrder.removeAll { $0 == entry }
-        return true
-    }
-
-    /// Newest keys go last; eviction drops from the front, so a key a
-    /// re-poll could still surface is never the first out.
-    private func record(_ id: String) {
-        if delivered.insert(id).inserted { deliveredOrder.append(id) }
+    /// Keeps `note`'s key as its thread's only one: a busy thread's old
+    /// updates must not fill the cap and evict a quiet thread's key, which
+    /// would banner that thread again on the next unchanged poll. Newest
+    /// keys go last; eviction drops from the front.
+    private func record(_ note: GhNotification) {
+        let key = Self.key(note)
+        guard delivered.insert(key).inserted else { return }
+        let thread = note.id + "@"
+        deliveredOrder.removeAll { entry in
+            let older = entry.hasPrefix(thread)
+            if older { delivered.remove(entry) }
+            return older
+        }
+        deliveredOrder.append(key)
     }
 
     private func trim() {
