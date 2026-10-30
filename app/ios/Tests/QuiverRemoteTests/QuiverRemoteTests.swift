@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import QuiverRemote
 
@@ -1379,5 +1380,18 @@ final class LaunchFlowTests: XCTestCase {
         """
         XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString),
                        ["https://one.example.com", "https://two.example.com/x"])
+    }
+}
+
+final class ChatStreamGateTests: XCTestCase {
+    func testOnlyTheBackgroundStopsAndRestartsTheStream() {
+        var gate = ChatStreamGate()
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none, "Control Center leaves it running")
+        XCTAssertEqual(gate.phase(.active), ChatStreamGate.Action.none, "and coming back restarts nothing")
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none)
+        XCTAssertEqual(gate.phase(.background), .stop)
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none)
+        XCTAssertEqual(gate.phase(.active), .start, "back from the background: started once")
+        XCTAssertEqual(gate.phase(.active), ChatStreamGate.Action.none)
     }
 }
