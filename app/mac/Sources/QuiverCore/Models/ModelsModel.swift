@@ -466,7 +466,9 @@ public final class ModelsModel {
 
     /// Saves a manual link for an unmatched logged model, then rebuilds.
     public func link(logged: String, to aaID: String) throws {
-        var next = links
+        // On top of the file as it is now, so a link added by hand since
+        // the last load isn't written away.
+        var next = ModelMatcher.loadLinks(from: linksURL)
         next[ModelMatcher.parse(logged).base] = aaID
         try ModelMatcher.saveLinks(next, to: linksURL)
         links = next

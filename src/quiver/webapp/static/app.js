@@ -33,6 +33,15 @@ const safeHref = (url) => {
   return /^(https?:\/\/|mailto:)/i.test(s) ? esc(s) : "";
 };
 
+/* What a failed read or write says: the hub's own message, else its
+ * status, else that it didn't answer. ``next`` ends the offline sentence
+ * ("then refresh"); null leaves just "Couldn't reach the hub." */
+function failText(status, data, next = "then try again") {
+  return (data && data.error && data.error.message)
+    || (status ? `The hub answered ${status}.`
+      : next ? `Couldn't reach the hub. Check the connection, ${next}.` : "Couldn't reach the hub.");
+}
+
 /* A write: ``body`` as JSON with api()'s headers. Never throws; status 0
  * means the hub didn't answer at all. Every page's POST and DELETE goes
  * through it (apiPost, GhUI.post). Not plain send(): chat.js has its own. */
@@ -145,6 +154,10 @@ function pageHeader(title, subtitle, actions = "") {
     <div class="page-actions">${actions}</div></div>`;
 }
 
+/* The gate's line for a credential the hub refused (a 401), and the
+ * error pages show when a write answers 401. */
+const CREDENTIAL_REFUSED = "The hub doesn't know this browser's credential. It may have been revoked.";
+
 /* A page's sheet, made once on document.body so a repaint of #panel
  * behind it (a reply landing, a poll) can't take it away. It belongs to
  * the view that opened it: route() closes it on every navigation, which
@@ -171,7 +184,7 @@ function closeRouteSheets() {
  * paste a token a ``swe remote pair`` or Settings' QR minted. ``message``
  * explains a credential the hub refused; with none stored the card says
  * the device needs pairing, unless ``always`` keeps the message. */
-function renderGate(message, always = false) {
+function renderGate(message = CREDENTIAL_REFUSED, always = false) {
   // A page's open sheet would stay modal above the gate.
   closeRouteSheets();
   const lead = credential() || always ? message
@@ -494,10 +507,9 @@ async function renderOverview(_id, rescan = false) {
   if (rescan) q.set("rescan", "1");
   const { status, data } = await api(`/v1/app/overview?${q}`);
   if (gen !== overview.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
-    const msg = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then rescan.");
+    const msg = failText(status, data, "then rescan");
     panel.innerHTML = `<div class="page">${overviewHeader(false)}<div class="card"><p class="error">${esc(msg)}</p></div></div>`;
     bindOverviewHeader();
     return;

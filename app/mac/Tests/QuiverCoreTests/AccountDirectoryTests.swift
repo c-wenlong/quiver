@@ -80,6 +80,11 @@ import Testing
         #expect(UsageFormat.tokens(4_200_000) == "4.2M")
         #expect(UsageFormat.tokens(11_600_000_000) == "11.6B")
         #expect(UsageFormat.tokens(1_000_000) == "1M")
+        // The unit is picked after rounding, never "1000K".
+        #expect(UsageFormat.tokens(999_949) == "999.9K")
+        #expect(UsageFormat.tokens(999_950) == "1M")
+        #expect(UsageFormat.tokens(999_950_000) == "1B")
+        #expect(UsageFormat.tokens(999_999_999_999) == "1000B")
     }
 
     @Test func dollarsKeepCentsOnlyWhenSmall() {

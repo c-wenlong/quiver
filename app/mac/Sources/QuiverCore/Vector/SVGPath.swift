@@ -32,12 +32,15 @@ private struct Parser {
         while true {
             sep()
             guard i < s.endIndex else { return }
+            let start = i
             var cmd = lastCmd
             if s[i].isASCII, s[i].isLetter {
                 cmd = s[i]; i = s.index(after: i)
             } else if lastCmd == "M" { cmd = "L" }   // implicit lineto
             else if lastCmd == "m" { cmd = "l" }
-            guard exec(cmd) else { return }
+            // A command that read nothing would run again forever: a number
+            // after Z repeats Z, which takes no arguments, so stop there.
+            guard exec(cmd), i > start else { return }
             lastCmd = cmd
         }
     }
@@ -144,8 +147,11 @@ private struct Parser {
         let num = rx * rx * ry * ry - rx * rx * y1p * y1p
                   - ry * ry * x1p * x1p
         let den = rx * rx * y1p * y1p + ry * ry * x1p * x1p
+        // Radii scaled up to just reach the end make `num` 0, which
+        // rounding can leave a hair below: its root would be NaN, and
+        // every point after it too.
         let coef = (largeArc == sweep ? -1.0 : 1.0)
-            * (num / den).squareRoot()
+            * max(0, num / den).squareRoot()
         let cxp = coef * rx * y1p / ry
         let cyp = -coef * ry * x1p / rx
         let cx = cosP * cxp - sinP * cyp + (cur.x + end.x) / 2
