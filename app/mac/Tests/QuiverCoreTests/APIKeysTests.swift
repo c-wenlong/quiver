@@ -346,6 +346,29 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         #expect(APIKeysFile.unquote("'$OTHER'") == "$OTHER")
     }
 
+    /// A name an unsafe line also sets can't be edited into a second
+    /// assignment, and a later unsafe line is the one that wins.
+    @Test func anUnsafeLineStillCountsAsAnAssignment() throws {
+        let later = "export A=\"old\"\nexport A=\"$OTHER\"\n"
+        var file = APIKeysFile(text: later)
+        #expect(file.keys.isEmpty)
+        #expect(file.problems.contains { $0.line == 1 && $0.reason.contains("exported again on line 2") })
+        #expect(throws: APIKeysError.unsafeLine("A")) { try file.set(name: "A", value: "new", provider: "") }
+        #expect(throws: APIKeysError.unsafeLine("A")) { try file.remove(name: "A") }
+        #expect(throws: APIKeysError.unsafeLine("A")) { try file.rename(name: "A", to: "B") }
+        #expect(throws: APIKeysError.unsafeLine("A")) { try file.move(name: "A", toProvider: "P") }
+        #expect(file.text == later)
+        // Only the unsafe line: a new one would be a second assignment.
+        var only = APIKeysFile(text: "export A=\"$OTHER\"\nexport B=\"b\"\n")
+        #expect(throws: APIKeysError.unsafeLine("A")) { try only.set(name: "A", value: "new", provider: "") }
+        #expect(throws: APIKeysError.nameTaken("A")) { try only.rename(name: "B", to: "A") }
+        // An editable line after the unsafe one wins, and sets in place.
+        var earlier = APIKeysFile(text: "export A=\"$OTHER\"\nexport A=\"old\"\n")
+        #expect(earlier.keys.map(\.value) == ["old"])
+        try earlier.set(name: "A", value: "new", provider: "")
+        #expect(earlier.text == "export A=\"$OTHER\"\nexport A=\"new\"\n")
+    }
+
     @Test func aMoveLandsAtTheEndOfTheTargetGroup() throws {
         var file = APIKeysFile(text: Self.moveFile)
         try file.move(name: "ALPHA_KEY", toProvider: "SECOND")

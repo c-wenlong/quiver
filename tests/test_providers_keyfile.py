@@ -32,6 +32,24 @@ class TestParse(unittest.TestCase):
         self.assertEqual(keyfile.unquote('"a\\$b\\`c"'), "a$b`c")
         self.assertEqual(keyfile.unquote("'$OTHER'"), "$OTHER")
 
+    def test_an_unsafe_line_still_counts_as_an_assignment(self):
+        later = 'export A="old"\nexport A="$OTHER"\n'
+        keys = KeysFile(later)
+        self.assertEqual(keys.keys, [])
+        for call in (lambda: keys.set("A", "new", ""), lambda: keys.remove("A")):
+            with self.assertRaises(KeyFileError) as caught:
+                call()
+            self.assertEqual(caught.exception.code, "duplicate")
+            self.assertIn("can't edit safely", str(caught.exception.message))
+        self.assertEqual(keys.text, later)
+        only = KeysFile('export A="$OTHER"\n')
+        with self.assertRaises(KeyFileError):
+            only.set("A", "new", "")
+        earlier = KeysFile('export A="$OTHER"\nexport A="old"\n')
+        self.assertEqual([e.value for e in earlier.keys], ["old"])
+        earlier.set("A", "new", "")
+        self.assertEqual(earlier.text, 'export A="$OTHER"\nexport A="new"\n')
+
     def test_keys_holds_the_later_value_in_first_place(self):
         keys = KeysFile("export A=1\nexport B=2\nexport A=3\n").keys
         self.assertEqual([(e.name, e.value) for e in keys], [("A", "3"), ("B", "2")])
