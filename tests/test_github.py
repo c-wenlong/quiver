@@ -599,6 +599,17 @@ class TestCommands(unittest.TestCase):
         issue = json.loads(out)["data"]["results"][0]["issues"][0]
         self.assertEqual(issue["comments"], 3)
 
+    def test_fan_handles_no_names_and_one(self):
+        # The hub's surfaces fan out through the same helper
+        # (shared.fan): an empty pin list must not build an empty pool.
+        from quiver.github import shared
+
+        self.assertIs(shared.fan, ghcli._fan)
+        self.assertEqual(ghcli._fan([], lambda n: n), [])
+        self.assertEqual(ghcli._fan(["a"], str.upper), ["A"])
+        self.assertEqual(ghcli._fan(["a", "b", "c"], str.upper),
+                         ["A", "B", "C"])
+
     def test_comma_repo_fans_out(self):
         run = _gh_run({"issue list": _Proc(stdout="[]")})
         rc, out, _ = self._run_cli(
