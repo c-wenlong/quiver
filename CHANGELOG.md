@@ -432,6 +432,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also tries `/api/compat/summary.json`, the path Cursor's new host
   serves.
 
+- **Mac app: Mine and Review requested pull request filters.** The
+  Repositories dashboard's and a repo focus page's Pull requests tab
+  now offer All, Mine and Review requested with counts, as the iOS and
+  web apps do. Mine compares the `gh` login with each PR's author, so
+  it covers the focus page's merged and closed PRs too; Review
+  requested reads `swe gh pr status` per repo. A filter hides while
+  its flag is unknown instead of guessing
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 ### Changed
 
 - **Remote: the web app lives at the hub's root.** `https://<hub>/`
