@@ -321,7 +321,7 @@ POST /v1/sessions/{id}/attachments   multipart upload → staged file, returns r
 POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/pin           {pinned: bool} → pin or unpin on the hub
 POST /v1/sessions/{id}/title         {title: string} → display name, "" clears it
-POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}; attach also takes {mode: auto|tmux|headless|serve|appserver, model?, effort?}
+POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}; attach also takes {mode: auto|tmux|headless|serve|appserver, model?, effort?}; {value?} for model|effort; {client_id?}, echoed on a satellite's command.result
 POST /v1/sessions                    new session {machine, harness, cwd, prompt, model?, effort?} → launch_id
 POST /v1/sessions/{id}/fork          {prompt?, model?, effort?} new session from this one's history → launch_id
 GET  /v1/issues                      every pinned repo's issues, each row plus `mine` (`?state=open|closed|all`, open default)
@@ -462,8 +462,9 @@ turn ends, failing it after 30 min of busy with "session stayed busy for
 behind it. A send the agent is stopped before delivering is not marked
 done, so the hub replays it when the agent comes back. The hub holds
 nothing for those sends, so their list is empty and every op answers
-`409 queue_unsupported`; the `202` for the send says `waiting: true`
-when the hub's row shows the session mid-turn.
+`409 queue_unsupported`. The `202` for such a send keeps `waiting:
+false`, so a client never parks it in a tray whose actions would act on
+the hub's queue.
 
 `edit` takes a `text` (checked like a message's: a string with more
 than spaces in it, else `422 bad_command`) and replaces the waiting

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: switch a session's model from the chat.** On a
+  session attached through tmux whose harness takes `/model <id>`
+  (Claude Code and Codex; the row's `model_modes` says so), the chat's
+  menu gains a Model submenu: the machine's recent models for that
+  harness, newest first, the running one checked, then Other… for a
+  typed id. A pick sends the `model` control op, which types
+  `/model <id>` into the pane. A typed id must be one token of letters,
+  digits and `._:/+@-`, so it can't carry a second command. The header
+  shows the request as "→ id" until the transcript catches up: it
+  settles when the row's model changes, or once a reply has come in and
+  the list has refreshed after the hub's next read, so a switch the
+  harness refused shows the model that actually ran. Elsewhere (watching
+  only, headless, app-server, opencode) the submenu is hidden. Part of
+  [#643](https://github.com/c-wenlong/quiver/issues/643).
+
 - **Web app: Preview on tool cards that write a page, and link cards
   under replies.** In a session's chat, a tool call that writes or
   edits an `.html`, `.htm` or `.svg` file inside the session's folder
@@ -26,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (host, path, Open in a new tab), up to three. File names with `+` are
   sent as `%2B`
   ([#634](https://github.com/c-wenlong/quiver/issues/634)).
+
+- **Remote iPhone app: the chat header and the session list show the
+  model.** A session's chat header adds the model after its folder, and
+  each session row adds it after the last-active time, both from the
+  hub row's `model` (the newest reply's model). The provider path and a
+  date stamp are dropped, so `anthropic/claude-opus-4-5` and
+  `claude-opus-4-5-20251101` both read `claude-opus-4-5`. Nothing shows
+  when the hub doesn't know the model or is older than the field. Part
+  of [#643](https://github.com/c-wenlong/quiver/issues/643).
 
 - **Remote hub: session rows say which model each session runs.**
   `/v1/sessions` rows, the hub's own and a satellite's, carry `model`,
@@ -254,6 +278,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`--hub` clones around the state a machine already has.** `swe init
+  --hub` and `swe setup --hub` used to refuse any `~/.quiver` with files
+  in it, and the app, the remote hub and plain `swe` runs all write
+  there on their own (caches, usage ledgers, pairing state). Now
+  `~/.quiver` takes a clone while it has no hub yet: no `AGENTS.md` and
+  no `.git`. The clone is moved in around what is there without
+  overwriting anything; a path on both sides stops it before anything
+  moves, naming the path ("~/.quiver/<path> is on this machine and in
+  the hub"), and a move that fails puts back what it moved. A symlink or
+  a file at `~/.quiver` is still refused; if putting something back
+  fails too, the message names what stayed and the rest of the clone is
+  kept for you. The hub `.gitignore` seed now also leaves out
+  `data/web-ledger/`, the web app's ledger, and a clone whose own
+  `.gitignore` is older gets the missing patterns in its
+  `.git/info/exclude`, so this machine's state never reaches the hub's
+  git ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+
 - **Usage problems say what to do, graded by how much they need you.**
   A stale login or a credentials file macOS won't let Quiver read puts
   an account card in its amber "Action needed" state with a Fix sheet,
@@ -372,9 +413,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the same per-session send queue as the hub: a queued send
   waits until the turn ends (up to 30 min, then fails honestly), steers
   skip the wait, and a busy session no longer holds sends to another
-  one. A send the agent stops before delivering replays on restart
+  one. A send the agent stops before delivering replays on restart.
+  The hub's and the satellite's idle wait both probe with the tailer's
+  activity time, so a turn that started since the last catalog refresh
+  no longer reads as "interrupted" and gets a queued send typed into it
   ([#516](https://github.com/c-wenlong/quiver/issues/516)).
 
+- **The Mac app's Model menu keeps your pick across a harness round
+  trip.** On New session, Resolve issue and a task's New agent session,
+  picking `claude-opus`, switching to Codex and back used to land on
+  Claude's newest model instead, and the launch sent that if you missed
+  it. The menu now remembers a picked recent model until you pick
+  something else. A harness that lists it shows it; one that doesn't
+  (Codex, or Kilo, which takes no model) shows and sends its own
+  default, and the next harness that lists it gets it back. What the
+  menu shows is still what gets sent. Follows
+  [#914](https://github.com/c-wenlong/quiver/issues/914).
 - **The fan rule comes back on its own after the helper stops
   answering.** A fan request the root helper never took used to switch
   the rule off until someone toggled it or set a speed by hand, and a

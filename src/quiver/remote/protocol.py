@@ -304,6 +304,10 @@ def parse_control_command(body: dict) -> dict:
     value = body.get("value")
     if value is not None and not isinstance(value, str):
         raise ValueError("control.value must be a string when given")
+    if op in {"model", "effort"}:
+        # Typed into the pane as ``/model <value>``: held to the launch
+        # rule, so a newline can't send a second line to the TUI.
+        value = _launch_value(body, "value")
     cmd = {"op": op, "value": value}
     if op == "detach":
         mode = body.get("mode")

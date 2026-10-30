@@ -881,6 +881,25 @@ class NewSharedCommandTest(unittest.TestCase):
             self.assertEqual(data["deploys_to"], [])
             self.assertTrue(data["path"].endswith("solo.py"))
 
+    def test_project_dotdirs_in_cwd_are_not_an_install(self):
+        # A repo with .claude/ and .cursor/ is not a harness install; the
+        # contract roots are home-relative and must not resolve on cwd.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as project:
+            home = _home(tmp)
+            for dotdir in (".claude", ".cursor"):
+                (Path(project) / dotdir / "hooks").mkdir(parents=True)
+            cwd = os.getcwd()
+            os.chdir(project)
+            try:
+                with mock.patch("shutil.which", return_value=None):
+                    code, out = _run(
+                        home, "new", "shared", "solo", "--json")
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(json.loads(out)["data"]["deploys_to"], [])
+
 
 class ShimRuntimeUnitTest(unittest.TestCase):
     """main()/_split/edges the subprocess e2e can't reach for coverage."""

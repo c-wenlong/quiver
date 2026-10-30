@@ -78,6 +78,15 @@ COMPONENTS = ("cpu", "gpu", "memory", "ssd", "battery", "airflow", "display")
 FAN_UP_MARGIN = 0.15
 
 
+def _shown(words: list[str]) -> str:
+    """A process's arguments as the browser may see them: an MCP server
+    or helper started with ``--token=…`` or a key in its URL would put
+    that secret on every paired device's screen, so the MCP page's
+    redaction runs over them first."""
+    from quiver.webapp.pages import mcp
+    return " ".join(mcp.redact_args(list(words))) if words else ""
+
+
 def supported() -> bool:
     """Whether this hub has the Linux sources the page reads."""
     return platform.system() == "Linux" and Path("/proc/stat").is_file()
@@ -775,7 +784,7 @@ class ComputeModel:
         return {
             "pid": p.pid,
             "name": p.name,
-            "command_line": p.command_line,
+            "command_line": _shown(p.arguments) or p.path,
             "threads": p.threads,
             "memory_bytes": p.memory_bytes,
             "cpu_percent": self.cpu.get(p.pid),
@@ -806,8 +815,8 @@ class ComputeModel:
             words = [os.path.basename(root.arguments[0])] + root.arguments[1:3] if root.arguments else [root.name]
             orphans.append({
                 "pid": root.pid,
-                "command": " ".join(words),
-                "command_line": root.command_line,
+                "command": _shown(words),
+                "command_line": _shown(root.arguments) or root.path,
                 "cwd": root.cwd,
                 "started_at": root.started_at,
                 "memory_bytes": root.memory_bytes + sum(d.memory_bytes for d in descendants),

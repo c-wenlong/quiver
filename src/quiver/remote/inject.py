@@ -216,7 +216,9 @@ class ClaudeHeadlessInjector:
         # own mechanism for the launch ``model`` field.
         if model:
             args += ["--model", model]
-        return [*args, text]
+        # "--" ends the flags: a message that starts with "-" (a pasted
+        # list, "--help") is the prompt, not an option.
+        return [*args, "--", text]
 
     def _run(self, session: Session, argv: list[str]) -> tuple[bool, str]:
         env = account_env(session)

@@ -909,11 +909,16 @@ public struct ModelPick: Equatable, Sendable {
     public var otherText: String
     /// Set by `pick(_:)`, the menu's own binding; cleared by a re-default.
     public private(set) var picked: Bool
+    /// The recent model the user last picked from the menu. A switch to
+    /// a harness that doesn't list it hides it but keeps it, so the next
+    /// harness that lists it gets it back; picking anything else drops it.
+    public private(set) var remembered: String?
 
     public init(recent: [String] = []) {
         choice = Self.defaultChoice(recent)
         otherText = ""
         picked = false
+        remembered = nil
     }
 
     /// The menu's entries in order: "Harness default", each recent model
@@ -932,16 +937,24 @@ public struct ModelPick: Equatable, Sendable {
     public mutating func pick(_ choice: ModelChoice) {
         self.choice = choice
         picked = true
+        if case .recent(let model) = choice { remembered = model } else { remembered = nil }
     }
 
     /// Re-reads the menu after a harness or machine change, `recent`
-    /// being the new pair's list.
+    /// being the new pair's list. A picked "Harness default" or Other
+    /// stays. A remembered recent model shows wherever the list has it;
+    /// elsewhere the menu shows the list's default, as if untouched, and
+    /// keeps the model for a later list that has it. The choice is always
+    /// one the list offers, so another harness's model never travels.
     public mutating func refit(_ recent: [String]) {
-        // A picked default or Other stays; a picked recent model stays only if the new list has it; else re-default.
         switch choice {
         case .harnessDefault where picked, .other where picked: return
-        case .recent(let model) where picked && recent.contains(model): return
-        default:
+        default: break
+        }
+        if let remembered, recent.contains(remembered) {
+            choice = .recent(remembered)
+            picked = true
+        } else {
             choice = Self.defaultChoice(recent)
             picked = false
         }

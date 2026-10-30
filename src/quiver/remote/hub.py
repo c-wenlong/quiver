@@ -85,6 +85,15 @@ _DRAIN_S = 2.0
 _MAX_WORKERS = 64
 # How often an open SSE stream re-checks that its device wasn't revoked.
 _REVOCATION_CHECK_S = 5.0
+# Sent on every response that doesn't set its own. The policy leaves
+# script sources alone: the page bundle evaluates each page script.
+_SECURITY_HEADERS = (
+    ("Content-Security-Policy",
+     "frame-ancestors 'self'; object-src 'none'; base-uri 'none'"),
+    ("X-Frame-Options", "SAMEORIGIN"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+)
 
 # Peers that count as "this machine". Behind ``tailscale serve`` every
 # request arrives from one of these, with the real client in headers.
@@ -942,19 +951,40 @@ class _Handler(BaseHTTPRequestHandler):
             except OSError:
                 pass
 
+    def version_string(self) -> str:
+        # The default appends the Python version, which tells any peer
+        # what to try before it has authenticated.
+        return self.server_version
+
     def send_response(self, code, message=None) -> None:
         # 100 Continue goes out through send_response_only, so a client
         # waiting for it is never drained here.
         self._settle_body()
+        self._sent_headers: set[str] = set()
         super().send_response(code, message)
         if self._must_close:
             self.send_header("Connection", "close")
+
+    def send_header(self, keyword, value) -> None:
+        sent = getattr(self, "_sent_headers", None)
+        if sent is not None:
+            sent.add(keyword.lower())
+        super().send_header(keyword, value)
 
     def end_headers(self) -> None:
         # A handler's own "Connection: keep-alive" must not reopen a
         # connection whose request body was left on the socket.
         if self._must_close:
             self.close_connection = True
+        # The web app keeps its bearer in this origin's storage and the
+        # owner's own devices get in on their tailnet identity alone, so
+        # no other site may frame a hub page, sniff a body into a script
+        # or learn the hub's URL from a referrer. A route that sets its
+        # own policy (page previews) keeps it.
+        sent = getattr(self, "_sent_headers", set())
+        for name, value in _SECURITY_HEADERS:
+            if name.lower() not in sent:
+                self.send_header(name, value)
         super().end_headers()
 
     def _read_body(self) -> dict | None:
@@ -2437,14 +2467,14 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(429, "backlog_full",
                                  "machine is too far behind")
                 return
-            # Same shape as the local 202. ``waiting`` is the hub's
-            # best guess from the row; the satellite re-reads status
-            # and waits for idle itself.
+            # Same shape as the local 202. ``waiting`` stays false: the
+            # satellite waits for idle itself, and a client that saw
+            # ``waiting`` would park the send in its tray, whose Edit /
+            # Send now / Remove act on the hub's queue, which holds
+            # nothing for another machine's session.
             self._send_json(202, {
                 "ok": True, "queued": True,
-                "client_id": cmd["client_id"],
-                "waiting": (cmd["mode"] == "queue"
-                            and row.get("status") == "active"),
+                "client_id": cmd["client_id"], "waiting": False,
             })
             return
         elif action == "approval":
@@ -2501,6 +2531,12 @@ class _Handler(BaseHTTPRequestHandler):
                 fields = {"ctl": op, "value": cmd.get("value") or ""}
                 if "mode" in cmd:
                     fields["mode"] = cmd["mode"]
+                # The agent echoes it on the command.result, so the phone
+                # can tell its own model switch's failure from another
+                # control's.
+                cid = body.get("client_id")
+                if isinstance(cid, str) and cid:
+                    fields["client_id"] = cid[:64]
                 queued = self._state.queue_command(
                     mid, "control", key, fields)
             if queued is None:
@@ -2570,7 +2606,8 @@ class _Handler(BaseHTTPRequestHandler):
         session = self._state.catalog.session_for(key)
         # The row's status can lag a just-finished turn — reclassify now
         # so ``waiting`` and the first poll don't trust a stale read.
-        status = self._fresh_status(session, str(row.get("status") or ""))
+        status = self._fresh_status(
+            session, str(row.get("status") or ""), key)
         client_id = cmd["client_id"]
         state = self._state
         waiting = cmd["mode"] == "queue" and status == "active"
@@ -2643,7 +2680,7 @@ class _Handler(BaseHTTPRequestHandler):
             # object itself can go stale mid-wait (the status classifier
             # times out against session.timestamp), so re-fetch it too.
             current = state.catalog.session_for(key) or session
-            live = self._fresh_status(current, status)
+            live = self._fresh_status(current, status, key)
             deadline = time.monotonic() + QUEUE_WAIT_MAX_S
             while live == "active" and time.monotonic() < deadline:
                 send.wake.wait(QUEUE_POLL_S)
@@ -2653,7 +2690,7 @@ class _Handler(BaseHTTPRequestHandler):
                     fail("hub restarted; message not sent")
                     return
                 current = state.catalog.session_for(key) or session
-                live = self._fresh_status(current, status)
+                live = self._fresh_status(current, status, key)
             if live == "active":
                 fail("session stayed busy for 30 min; message not sent")
                 return
@@ -2672,7 +2709,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         def job() -> None:
             current = state.catalog.session_for(key) or session
-            live = self._fresh_status(current, status)
+            live = self._fresh_status(current, status, key)
             self._deliver(key, cmd["client_id"], current, cmd, live)
 
         def cancel() -> None:
@@ -2785,9 +2822,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(409, "not_waiting", self._GONE_NOTES.get(
                 gone, "that message is no longer queued"))
 
-    def _fresh_status(self, session, fallback: str) -> str:
-        """Reclassify one session now; the catalog row can be stale."""
+    def _fresh_status(self, session, fallback: str, key: str = "") -> str:
+        """Reclassify one session now; the catalog row can be stale.
+
+        The catalog's session can carry an activity time minutes old
+        for a turn that just started, which the probe reads as
+        "interrupted"; the tailer knows the transcript moved since.
+        """
         try:
+            if key:
+                session = self._state.tail_manager.fresh_session(
+                    key, session)
             got = self._state.status_of([session])
         except Exception:
             return fallback
@@ -2918,7 +2963,7 @@ class _Handler(BaseHTTPRequestHandler):
             row = state.catalog.row_for(key) or {}
             session = state.catalog.session_for(key)
             fallback = str(row.get("status") or "")
-            return self._fresh_status(session, fallback) \
+            return self._fresh_status(session, fallback, key) \
                 if session is not None else fallback
 
         def fire() -> tuple[bool, str]:
