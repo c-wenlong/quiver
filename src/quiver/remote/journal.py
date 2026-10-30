@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import weakref
 from pathlib import Path
 
 from quiver.paths import remote_dir_for
@@ -34,14 +35,19 @@ RING_KEEP_BYTES = 8 << 20
 
 # One lock per journal file, shared by every Journal on it: sessions
 # append and replay side by side instead of queueing on one lock. RLock:
-# append -> last_seq re-enters it.
-_LOCKS: dict[str, threading.RLock] = {}
+# append -> last_seq re-enters it. Held weakly: a lock lives while some
+# caller holds it, so sessions the hub touched once don't pile up.
+_LOCKS: "weakref.WeakValueDictionary[str, threading.RLock]" = \
+    weakref.WeakValueDictionary()
 _LOCKS_GUARD = threading.Lock()
 
 
 def _lock_for(path: Path) -> threading.RLock:
     with _LOCKS_GUARD:
-        return _LOCKS.setdefault(str(path), threading.RLock())
+        lock = _LOCKS.get(str(path))
+        if lock is None:
+            lock = _LOCKS[str(path)] = threading.RLock()
+        return lock
 
 
 class Journal:

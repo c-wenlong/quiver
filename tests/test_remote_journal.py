@@ -155,6 +155,15 @@ class TestJournal(unittest.TestCase):
             t.join(timeout=5)
         self.assertEqual(len(done), 1)
 
+    def test_locks_are_not_kept_once_released(self):
+        import gc
+        for i in range(50):
+            self._append(f"a:s{i}", 1)
+        gc.collect()
+        mine = [k for k in journal_mod._LOCKS.keys()
+                if k.startswith(str(self.journal.dir))]
+        self.assertEqual(mine, [])
+
     def test_ring_is_bounded_by_bytes(self):
         # A few hundred large tool events stay under RING_MAX lines but
         # grew the file without bound.
