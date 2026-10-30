@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from quiver.remote import agent as agent_mod
+from quiver.remote import usage as usage_mod
 from quiver.remote import attachments, catalog as catalog_mod
 from quiver.remote import inject, journal, pairing, protocol, supervise
 from quiver.remote import hub
@@ -1875,6 +1876,41 @@ class TestCatalogEdge(unittest.TestCase):
         self.assertEqual(catalog_mod._index_of([("a", 0), ("b", 1), ("a", 2)]),
                          {"a": 0, "b": 1})
 
+
+    def test_machine_ids_that_map_alike_get_their_own_files(self):
+        # "m.1" and "m_1" both became m_1.json: one satellite's rows
+        # overwrote the other's.
+        self.assertNotEqual(catalog_mod._safe_mid("m.1"),
+                            catalog_mod._safe_mid("m_1"))
+        self.assertEqual(catalog_mod._safe_mid("c92d6398"), "c92d6398")
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        catalog_mod.merge_remote_rows(self.home, "m_1", [{"key": "claude:b"}])
+        keys = sorted(r["key"] for r in catalog_mod.load_remote_rows(self.home))
+        self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
+
+    def test_a_pre_suffix_file_is_read_until_superseded_and_never_deleted(self):
+        folder = catalog_mod._satellite_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "m_1.json").write_text(json.dumps(
+            {"rows": [{"key": "claude:old@m.1", "machine_id": "m.1"}]}))
+        self.assertEqual([r["key"] for r in catalog_mod.load_remote_rows(self.home)],
+                         ["claude:old@m.1"])
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        self.assertEqual([r["key"] for r in catalog_mod.load_remote_rows(self.home)],
+                         ["claude:a@m.1"])
+        # Either write order: "m_1"'s own file is its own, never removed.
+        catalog_mod.merge_remote_rows(self.home, "m_1", [{"key": "claude:b"}])
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        keys = sorted(r["key"] for r in catalog_mod.load_remote_rows(self.home))
+        self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
+
+    def test_a_menu_saved_under_the_old_name_still_loads(self):
+        from quiver.remote import slash
+        path = slash._sat_file(self.home, "m.1").with_name("m_1.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"harnesses": {}}))
+        self.assertEqual(slash.load_satellite(self.home, "m.1"), {"harnesses": {}})
+
     def test_merge_skips_non_dict_rows(self):
         out = catalog_mod.merge_remote_rows(
             self.home, "m1", ["bad", {"key": "claude:r1"}])
@@ -2005,6 +2041,21 @@ class TestR3FinalEdges(unittest.TestCase):
         ag._command_stream = boom
         with patch.object(agent_mod, "RECONNECT_S", 0):
             ag._downlink_loop()
+
+    def test_tail_loop_sweeps_keeping_the_outbox(self):
+        ag = agent_mod.RemoteAgent("http://h:1", "c", self.home)
+        calls = []
+
+        def sweep(journal, keep=(), now=None):
+            calls.append((journal, tuple(keep)))
+            ag._stop.set()
+            return 0
+
+        ag.tail_manager.tick = lambda: None
+        ag.tail_manager.wait = lambda _t: None
+        with patch.object(ag.tail_manager, "sweep_stale", sweep):
+            ag._tail_loop()
+        self.assertEqual(calls, [(ag._outbox, (agent_mod.OUTBOX_KEY,))])
 
     def test_load_remote_rows_glob_failure(self):
         with patch.object(Path, "glob", side_effect=OSError):

@@ -20,6 +20,34 @@ import Testing
         #expect(GitHubMarkdown.segments("<b>a</b> < <i>c</i>") == [.markdown("**a** < *c*")])
     }
 
+    /// Entities decode once, left to right: `&amp;lt;` is the text
+    /// `&lt;`, and one bad entity doesn't stop the rest decoding.
+    @Test func entitiesDecodeOnceAndABadOneStaysLiteral() {
+        let c = GitHubMarkdown.Converter("")
+        #expect(c.decodeEntities("&amp;lt;b&amp;gt;") == "&lt;b&gt;")
+        #expect(c.decodeEntities("&amp;#65;") == "&#65;")
+        #expect(c.decodeEntities("&#38;lt;") == "&lt;")
+        #expect(c.decodeEntities("&#99999999; then &#65;&#x42;&#X43;") == "&#99999999; then ABC")
+        #expect(c.decodeEntities("&bogus; &lt; a & b &#x200b;x") == "&bogus; < a & b x")
+        #expect(c.decodeEntities("&hellip;&mdash;&nbsp;&#39;") == "…— '")
+        #expect(c.decodeEntities("&#00000000065;&#x0000000042;") == "AB")
+        #expect(c.decodeEntities("&#; &#x; &amp &#65 x") == "&#; &#x; &amp &#65 x")
+    }
+
+    /// `href` matches only the attribute named `href`, not `data-href` or
+    /// text inside another attribute's value.
+    @Test func attrMatchesTheWholeName() {
+        let c = GitHubMarkdown.Converter("")
+        #expect(c.attr(#" data-href="/wrong" href="/right""#, "href") == "/right")
+        #expect(c.attr(#" title="see href=/wrong" href='/right'"#, "href") == "/right")
+        #expect(c.attr(#" HREF=/right target=_blank"#, "href") == "/right")
+        #expect(c.attr(#" data-href="/wrong""#, "href") == nil)
+        #expect(c.attr(#" disabled src="a.png"/"#, "src") == "a.png")
+        #expect(c.attr(#" href="a&amp;lt;b""#, "href") == "a&lt;b")
+        let segs = GitHubMarkdown.segments(#"<a data-href="/x" href="https://y.dev">go</a>"#)
+        #expect(segs == [.markdown("[go](https://y.dev)")])
+    }
+
     @Test func inlineHtmlBecomesMarkdown() {
         let segs = GitHubMarkdown.segments(
             "Fixes <a href=\"https://x.dev\">the thing</a> in <code>foo.swift</code>.")
