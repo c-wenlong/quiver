@@ -326,6 +326,22 @@ class TestHandle(unittest.TestCase):
             self.assertEqual(self.n._session_title("k1"), "Quiver")
 
 
+    def test_session_title_redacted_in_every_post(self):
+        secret = "sk-ant-abcdefghijklmnopqrstuvwxyz0123"
+        row = {"title": f"deploy with ANTHROPIC_API_KEY={secret} now"}
+        with patch.object(self.state.catalog, "row_for",
+                          return_value=row):
+            self.n._handle({"type": "notify", "session": "k1",
+                            "data": {"kind": "finished"}}, self.cfg)
+            self.n._handle({"type": "approval.requested", "session": "k1",
+                            "data": {"request_id": "r1",
+                                     "prompt": "Allow Bash"}}, self.cfg)
+        self.assertEqual(len(self.posts), 2)
+        for post in self.posts:
+            self.assertNotIn(secret, post["title"])
+            self.assertNotIn(secret[:20], post["title"])
+            self.assertIn("[REDACTED]", post["title"])
+
 class TestPost(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
