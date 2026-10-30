@@ -44,7 +44,7 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
         let ledger = try Ledger(directory: temp.path("data/ledger"))
         let overview = OverviewModel(
             ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 })
-        let defaults = UserDefaults(suiteName: "search-index-\(UUID().uuidString)")!
+        let defaults = TestDefaults("search-index")
         defaults.set(enabled, forKey: SearchIndexModel.defaultsKey)
         let model = SearchIndexModel(
             quiver: temp.url, ledger: ledger, overview: overview,
@@ -184,7 +184,7 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
 
     @Test func aMissingLedgerReportsWhy() async throws {
         let temp = try TempDir()
-        let defaults = UserDefaults(suiteName: "search-index-\(UUID().uuidString)")!
+        let defaults = TestDefaults("search-index")
         let model = SearchIndexModel(
             quiver: temp.url, ledger: nil, overview: nil, defaults: defaults)
 

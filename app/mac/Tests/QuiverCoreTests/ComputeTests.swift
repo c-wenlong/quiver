@@ -365,9 +365,7 @@ import Testing
     // MARK: Limits persistence
 
     @Test func limitsRoundTripThroughDefaults() {
-        let suite = "compute-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         var limits = ComputeLimits(defaults: defaults)
         #expect(limits.orphanAge == 24 * 3600)
         #expect(limits.memoryBytes == UInt64(2) << 30)
@@ -401,11 +399,10 @@ import Testing
     private func autoCleanModel(_ fake: Fake,
                                 clock: @escaping @Sendable () -> Date = { .now },
                                 defaults: UserDefaults? = nil) async -> ComputeModel {
-        let suite = "compute-test-\(UUID().uuidString)"
         let model = ComputeModel(sampler: fake, matchers: { [] },
                                  signaller: fake,
                                  clock: clock,
-                                 defaults: defaults ?? UserDefaults(suiteName: suite)!,
+                                 defaults: defaults ?? TestDefaults("compute-test"),
                                  selfPID: 99)
         await model.loadMatchers()
         return model
@@ -555,9 +552,7 @@ import Testing
             Self.proc(20, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "studio"],
                       cwd: "/Users/test/proj", started: .now.addingTimeInterval(-30 * 3600)),
         ])
-        let suite = "compute-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         let model = await ComputeModel(sampler: fake, matchers: { [Self.claude] },
                                        signaller: fake, defaults: defaults, selfPID: 99)
         await model.loadMatchers()
@@ -996,9 +991,7 @@ import Testing
         let sharedChild = Self.proc(11, 10, path: "/opt/homebrew/bin/node")
         let other = Self.proc(12, 1, path: "/x/worker")
         let fake = Counting([root, sharedChild, other])
-        let suite = "compute-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         let model = await ComputeModel(sampler: fake, matchers: { [Self.claude] },
                                        signaller: fake, defaults: defaults, selfPID: 99)
         await model.loadMatchers()
@@ -1035,29 +1028,21 @@ import Testing
         #expect(OrphanAgeUnit.resolve(value: 400, unit: .day) == ComputeLimits.orphanAgeRange.upperBound)
     }
 
-    private static func defaultsSuite() -> (UserDefaults, String) {
-        let suite = "compute-test-\(UUID().uuidString)"
-        return (UserDefaults(suiteName: suite)!, suite)
-    }
-
     @Test func theLegacyHoursKeyStillLoads() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
         #expect(ComputeLimits(defaults: defaults).orphanAge == 6 * 3600)
     }
 
     @Test func theMinutesKeyWinsOverTheLegacyHoursKey() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         defaults.set(90, forKey: ComputeLimits.orphanAgeKey)
         defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
         #expect(ComputeLimits(defaults: defaults).orphanAge == 5400)
     }
 
     @Test func savingRemovesTheLegacyHoursKey() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
         ComputeLimits(defaults: defaults).save(to: defaults)
         #expect(defaults.object(forKey: ComputeLimits.legacyOrphanAgeKey) == nil)
@@ -1065,8 +1050,7 @@ import Testing
     }
 
     @Test func theOrphanAgeClampsToAMinuteAndAYear() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         var limits = ComputeLimits()
         limits.orphanAge = 5
         limits.save(to: defaults)

@@ -379,7 +379,7 @@ import Testing
         ComputeModel(sampler: sampler, matchers: { [Self.claude] },
                      gpu: gpu, temperature: temperature, clock: { clock.now },
                      sleep: sleep ?? { _ in },
-                     defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                     defaults: TestDefaults("trend"),
                      selfPID: 99)
     }
 
@@ -482,7 +482,7 @@ import Testing
     }
 
     @MainActor @Test func temperatureLinesDefaultToFourAndPersist() {
-        let defaults = UserDefaults(suiteName: "trend-\(UUID().uuidString)")!
+        let defaults = TestDefaults("trend")
         let model = ComputeModel(sampler: CountingSampler([]), matchers: { [] }, gpu: FakeGPU([:]),
                                  temperature: FakeThermometer(nil), defaults: defaults, selfPID: 99)
         #expect(model.temperatureLines == [.cpu, .gpu, .ssd, .battery])
@@ -554,9 +554,7 @@ import Testing
     }
 
     @MainActor @Test func changingTheIntervalKeepsThePointsAndSaves() async {
-        let suite = "trend-interval-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("trend-interval")
         let clock = Clock(Self.now)
         let sampler = CountingSampler([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
@@ -579,7 +577,7 @@ import Testing
         let sampler = CountingSampler([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
         let model = ComputeModel(sampler: sampler, matchers: { empty.calls += 1; return [] },
                                  gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: { clock.now },
-                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 defaults: TestDefaults("trend"),
                                  selfPID: 99)
         for _ in 0..<5 { await model.trendTick(at: clock.now) }
         #expect(empty.calls == 1)
@@ -593,7 +591,7 @@ import Testing
         let model = ComputeModel(sampler: CountingSampler([]),
                                  matchers: { failing.calls += 1; throw LoaderError() },
                                  gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: { clock.now },
-                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 defaults: TestDefaults("trend"),
                                  selfPID: 99)
         await model.trendTick(at: clock.now)
         #expect(failing.calls == 1)
@@ -631,7 +629,7 @@ import Testing
         let sampler = GateSampler([Self.proc(10, 1, path: claudeBin, cpu: 0)])
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
                                  gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: { clock.now },
-                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 defaults: TestDefaults("trend"),
                                  selfPID: 99)
         await model.loadMatchers()
 
@@ -677,17 +675,28 @@ import Testing
 
     @MainActor @Test func changingTheIntervalWakesTheLoopRightAway() async {
         // A sleep that records each requested duration, then parks until
-        // the task is cancelled; Task.sleep observes the cancellation.
+        // the task is cancelled (Task.sleep observes the cancellation) or
+        // the test ends it, so no loop outlives the test.
         actor Parked {
             var durations: [Duration] = []
             private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+            private var sleepers: [CheckedContinuation<Void, Never>] = []
+            private var finished = false
             func call(_ duration: Duration) async throws {
                 durations.append(duration)
                 let n = durations.count
                 let ready = waiters.filter { n >= $0.0 }
                 waiters.removeAll { n >= $0.0 }
                 for (_, cont) in ready { cont.resume() }
-                try await Task.sleep(for: .seconds(3_600))
+                // A restart cancels this sleep's task; the loop it belongs
+                // to then returns on its own once woken.
+                if !finished { await withCheckedContinuation { sleepers.append($0) } }
+                throw CancellationError()
+            }
+            func finish() {
+                finished = true
+                for sleeper in sleepers { sleeper.resume() }
+                sleepers = []
             }
             func waitForParks(_ n: Int) async {
                 if durations.count >= n { return }
@@ -702,7 +711,7 @@ import Testing
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
                                  gpu: FakeGPU([:]), temperature: FakeThermometer(nil), clock: { clock.now },
                                  sleep: { d in try await parked.call(d) },
-                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 defaults: TestDefaults("trend"),
                                  selfPID: 99)
         await model.loadMatchers()
         model.startTrends()
@@ -715,6 +724,8 @@ import Testing
         // Both ticks describe the same sample moment, so the second
         // replaces the first point rather than sharing its x.
         #expect(model.history.points(for: "claude").count == 1)
+        // The parked sleep throws, which ends the loop.
+        await parked.finish()
     }
 
     // MARK: Harness decoding
@@ -742,7 +753,7 @@ import Testing
         let gpu = GateGPU([10: 1_000])
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
                                  gpu: gpu, temperature: FakeThermometer(nil), clock: { clock.now },
-                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 defaults: TestDefaults("trend"),
                                  selfPID: 99)
         await model.loadMatchers()
 
@@ -779,7 +790,7 @@ import Testing
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
                                  gpu: gpu, temperature: FakeThermometer(nil), clock: { clock.now },
                                  sleep: { _ in throw CancellationError() },
-                                 defaults: UserDefaults(suiteName: "trend-\(UUID().uuidString)")!,
+                                 defaults: TestDefaults("trend"),
                                  selfPID: 99)
         await model.loadMatchers()
 

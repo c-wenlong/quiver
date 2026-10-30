@@ -132,9 +132,7 @@ import Testing
     }
 
     private func freshDefaults() -> UserDefaults {
-        let name = "CalendarMonthTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarMonthTests")
         return defaults
     }
 
@@ -301,9 +299,7 @@ private struct CalendarMonthFake: ActivityProviding {
 
 extension CalendarMonthModelTests {
     @Test func theModePersistsAcrossModels() {
-        let name = "CalendarModePersist.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarModePersist")
         var model = CalendarModel(providers: [], defaults: defaults,
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         model.mode = .days(3)
@@ -324,9 +320,7 @@ extension CalendarMonthModelTests {
     }
 
     @Test func thePanelCollapsePersistsAcrossModels() {
-        let name = "CalendarPanelPersist.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarPanelPersist")
         var model = CalendarModel(providers: [], defaults: defaults,
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         #expect(!model.panelCollapsed)
