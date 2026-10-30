@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -1312,6 +1313,47 @@ class TestSweepStale(unittest.TestCase):
             0)
         for path in (j1, c1, j2):
             self.assertTrue(path.exists(), path)
+
+
+    def test_a_tailer_starting_mid_sweep_keeps_its_files(self):
+        # A phone opening an idle session while the sweep runs: the
+        # tailer either starts before the sweep (and its key is held)
+        # or after it (with neither file); never on files then deleted.
+        # As the hub wires it: a journal on disk means skip backfill.
+        self.mgr = tail.TailManager(
+            lambda k, e: None, "mbp", home=self.tmp,
+            journal_has=lambda k: self.journal.last_seq(k) > 0)
+        _j, c = self._files("claude:back", self.old, self.old)
+        sess_path = self.tmp / "back.jsonl"
+        sess_path.write_text(json.dumps(_claude_user("hi")) + "\n")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(sess_path), tool_name="claude")
+        started = threading.Event()
+        real = self.journal.sweep
+
+        def slow_sweep(cutoff, keep):
+            started.set()
+            time.sleep(0.2)  # the ensure below runs meanwhile
+            return real(cutoff, keep)
+
+        with patch.object(self.journal, "sweep", side_effect=slow_sweep):
+            t = threading.Thread(
+                target=self.mgr.sweep_stale, args=(self.journal,),
+                kwargs={"now": self.now})
+            t.start()
+            started.wait(2)
+            self.mgr.ensure("claude:back", sess, "")
+            t.join()
+        # The ensure waited for the sweep: both files went first, and
+        # the tailer started fresh, so recent history backfills (one
+        # started on the doomed journal would skip to the end).
+        self.assertFalse(c.exists())
+        self.assertIn("claude:back", self.mgr.tailers)
+        sent = []
+        self.mgr.emit = lambda k, e: sent.append(e)
+        self.mgr.tick(time.time())
+        self.assertEqual([e["data"]["text"] for e in sent
+                          if e["type"] == "message.appended"], ["hi"])
 
 
 class TestApprovalWatcher(unittest.TestCase):

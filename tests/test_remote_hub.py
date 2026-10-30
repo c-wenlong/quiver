@@ -3264,6 +3264,12 @@ class TestServeEntry(unittest.TestCase):
         # sparing the global stream and each satellite's command queue.
         state = HubState(Path(tempfile.mkdtemp()))
         catalog_mod.upsert_machine(state.home, {"id": "sat1", "name": "s"})
+        # A satellite session has no tailer or cursor on the hub: its
+        # journal must stay while the catalog lists it.
+        state.catalog.rows = lambda: [
+            {"key": "claude:x@sat1", "remote": True},
+            {"key": "claude:local"},
+        ]
         calls = []
 
         def sweep(journal, keep=(), now=None):
@@ -3281,6 +3287,8 @@ class TestServeEntry(unittest.TestCase):
         self.assertIs(journal, state.journal)
         self.assertIn(hub_mod.GLOBAL_KEY, keep)
         self.assertIn(state.sat_journal_key("sat1"), keep)
+        self.assertIn("claude:x@sat1", keep)
+        self.assertNotIn("claude:local", keep)
 
     def test_loop_error_log_throttles_per_step_and_window(self):
         import io

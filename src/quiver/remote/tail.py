@@ -1350,6 +1350,10 @@ class TailManager:
         self._status_at: dict[str, float] = {}
         self._probe_due: set[str] = set()
         self._probed_at: dict[str, float] = {}
+        # Orders tailer creation (which reads a key's cursor and asks
+        # whether it has a journal) against ``sweep_stale`` deleting
+        # them; see ``_add_tailer``.
+        self._files_lock = threading.Lock()
 
     def last_append_at(self, key: str) -> float | None:
         return self.last_append.get(key)
@@ -1415,15 +1419,18 @@ class TailManager:
     def _add_tailer(self, key: str, session: Session, source) -> bool:
         """Register a tailer for ``key`` unless another thread got there
         first; two tailers on one session would journal it twice."""
-        tailer = Tailer(
-            key, session, source, self.cursors_dir,
-            self._journal_has(key),
-        )
-        with self._status_lock:
-            if key in self.tailers:
-                return False
-            self.tailers[key] = tailer
-            return True
+        # Under ``_files_lock``: a sweep can't delete this key's journal
+        # and cursor between the tailer reading them and registering.
+        with self._files_lock:
+            tailer = Tailer(
+                key, session, source, self.cursors_dir,
+                self._journal_has(key),
+            )
+            with self._status_lock:
+                if key in self.tailers:
+                    return False
+                self.tailers[key] = tailer
+                return True
 
     def _tailer_items(self) -> list[tuple[str, "Tailer"]]:
         """A snapshot of the tailers, safe to walk while ``ensure``
@@ -1529,8 +1536,14 @@ class TailManager:
         would skip backfill). Keys being tailed and ``keep`` (the
         caller's own journals, like the global stream) are never swept.
         A session that comes back is tailed like a new one: recent
-        history only.
+        history only. Holds ``_files_lock``, so no tailer starts on a
+        key's files while they are being judged and deleted.
         """
+        with self._files_lock:
+            return self._sweep_stale(journal, keep, now)
+
+    def _sweep_stale(self, journal, keep: Iterable[str],
+                     now: float | None) -> int:
         now = time.time() if now is None else now
         cutoff = now - STALE_FILE_AGE_S
         held = {protocol.key_slug(k) for k in keep}

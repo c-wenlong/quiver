@@ -625,13 +625,20 @@ class HubState:
         return f"_sat_{machine_id}"
 
     def _own_journal_keys(self) -> list[str]:
-        """Journals the hub keeps for itself, never swept: the global
-        stream and each paired satellite's command queue (its agent's
-        cursor counts on that queue's seqs)."""
-        return [GLOBAL_KEY] + [
+        """Journals the sweep must leave: the global stream, each paired
+        satellite's command queue (its agent's cursor counts on that
+        queue's seqs), and every satellite session still listed. Those
+        have no tailer or cursor here, and the agent that tails them
+        doesn't know to backfill a journal the hub dropped."""
+        keys = [GLOBAL_KEY] + [
             self.sat_journal_key(mid)
             for mid in catalog_mod.load_machines(self.home)
         ]
+        keys += [
+            str(row.get("key") or "") for row in self.catalog.rows()
+            if row.get("remote")
+        ]
+        return keys
 
     def machine_online(self, mid: str) -> bool:
         return self._sat_subs.get(mid, 0) > 0 or mid == self.machine_id
