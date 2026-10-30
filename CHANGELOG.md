@@ -968,6 +968,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is asked for their password again
   ([#967](https://github.com/c-wenlong/quiver/issues/967)).
 
+- **Mac app: the fan helper only takes requests from Quiver itself,
+  checked by its code signature.** The running root helper held the fans
+  for any request whose owner was a live process named `Quiver`, so a
+  program called `/tmp/Quiver` qualified. The install now pins the
+  installing app's signature in the launchd job (`--owner-team <team>
+  --owner-identifier <id>` for a team-signed build, since the team also
+  signs the Python bundled for swe; `--owner-cdhash <hash>` for an
+  ad-hoc one), and the helper checks each request's owner against it through its
+  audit token and `SecCodeCheckValidity`, keeping the answer per process
+  (pid and pid version) so a reused pid is checked afresh. A job without
+  a valid pin starts nothing. The helper is now version 4 and writes its
+  `version` into `/var/run/com.cwenlong.quiver.fan.json`. On launch,
+  Quiver finds a helper older than that, says why it needs replacing,
+  and offers "Update helper" (one administrator password prompt) or "Not
+  now". Not now is remembered for this version: the old helper is left
+  unused, the fans stay with macOS, and both fan popovers show the
+  reason with an "Update fan helper" button; Set speed or the
+  temperature rule's switch also updates it
+  ([#967](https://github.com/c-wenlong/quiver/issues/967)).
+
 - **Remote: a local process can no longer claim the owner's tailnet
   identity.** Behind `tailscale serve` the hub read the client from
   `X-Forwarded-For` on every loopback connection, so any process on the
