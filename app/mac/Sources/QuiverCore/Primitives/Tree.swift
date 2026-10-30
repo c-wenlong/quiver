@@ -143,8 +143,27 @@ public struct PrimitiveTree: Sendable, Equatable {
               let handle = try? FileHandle(forReadingFrom: url)
         else { return false }
         defer { try? handle.close() }
-        let head = (try? handle.read(upToCount: 8192)) ?? Data()
+        var head = (try? handle.read(upToCount: 8192)) ?? Data()
         if head.contains(0) { return false }
+        // The cut at 8192 can land inside a multi-byte character, which
+        // alone would fail the decode; the file goes on past it.
+        if size > head.count { head = trimmingPartialCharacter(head) }
         return String(data: head, encoding: .utf8) != nil
+    }
+
+    /// `data` without a UTF-8 sequence its end cut short, so a prefix of
+    /// valid text decodes.
+    static func trimmingPartialCharacter(_ data: Data) -> Data {
+        let tail = [UInt8](data.suffix(4))
+        var lead = tail.count - 1
+        var continuation = 0
+        while lead >= 0, tail[lead] & 0xC0 == 0x80, continuation < 3 {
+            lead -= 1
+            continuation += 1
+        }
+        guard lead >= 0 else { return data }
+        let byte = tail[lead]
+        let length = byte >= 0xF0 ? 4 : byte >= 0xE0 ? 3 : byte >= 0xC0 ? 2 : 1
+        return length > continuation + 1 ? data.dropLast(continuation + 1) : data
     }
 }

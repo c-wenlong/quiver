@@ -513,6 +513,20 @@ final class PrimitiveHome {
         let md = try t.write("bin/readme.md", "# ok\n")
         #expect(PrimitiveTree.isTextFile(md))
     }
+
+    /// The 8 KB sniff can cut a multi-byte character in two; the text is
+    /// still text. A real bad byte before the cut still isn't.
+    @Test func aCharacterSplitAtTheSniffLimitIsStillText() throws {
+        let t = try PrimitiveHome()
+        for (pad, character) in [(8191, "é"), (8190, "€"), (8191, "€"), (8189, "😀"), (8191, "😀")] {
+            let text = String(repeating: "a", count: pad) + character + " more text after the cut\n"
+            let file = try t.write("notes/split-\(pad)-\(character.utf8.count).md", text)
+            #expect(PrimitiveTree.isTextFile(file), "\(pad) + \(character)")
+        }
+        let bad = t.home.appending(path: "notes/bad.md")
+        try (Data(repeating: 0x61, count: 8000) + Data([0xFF]) + Data(repeating: 0x61, count: 500)).write(to: bad)
+        #expect(!PrimitiveTree.isTextFile(bad))
+    }
 }
 
 
