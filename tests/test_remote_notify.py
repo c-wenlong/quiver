@@ -119,11 +119,6 @@ class TestApprovalTokens(unittest.TestCase):
         self.assertFalse(self.tokens.consume(a, "k1", "r1"))
         self.assertTrue(self.tokens.consume(b, "k1", "r2"))
 
-    def test_drop_session_retires_tokens(self):
-        tok = self.tokens.mint("k1", "r1")
-        self.tokens.drop_session("k1")
-        self.assertFalse(self.tokens.consume(tok, "k1", "r1"))
-
     def test_burn_on_mismatch(self):
         # A mismatched request_id is a failed spend, not a free probe:
         # the token is gone for its real binding too.

@@ -241,21 +241,10 @@ class ApprovalTokens:
         with self._lock:
             self._drop(key, request_id)
 
-    def drop_session(self, key: str) -> None:
-        """Retire every token minted for ``key`` — e.g. the session
-        detached, so none of its approval buttons can act."""
-        with self._lock:
-            self._drop_key(key)
-
     def _drop(self, key: str, request_id: str) -> None:
         self._tokens = {
             t: e for t, e in self._tokens.items()
             if not (e["key"] == key and e["request_id"] == request_id)
-        }
-
-    def _drop_key(self, key: str) -> None:
-        self._tokens = {
-            t: e for t, e in self._tokens.items() if e["key"] != key
         }
 
     def _prune(self, now: float) -> None:

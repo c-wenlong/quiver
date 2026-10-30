@@ -216,10 +216,6 @@ def supervised(home: Path | str | None) -> dict[str, dict]:
     return entries
 
 
-def supervised_keys(home: Path | str | None) -> set[str]:
-    return set(supervised(Path(home) if home is not None else None))
-
-
 def mark(home: Path | None, session_key: str, meta: dict) -> dict:
     with _registry_lock(home):
         _mark_locked(home, session_key, meta)
