@@ -358,9 +358,16 @@ function renderSoon(id) {
     <div class="card"><p class="empty">${esc(`Coming to the web app. Ready now: ${ready.join(", ")}.`)}</p></div></div>`;
 }
 
+/* The page the hash names: "#/skills?x=1" is "skills", a bare one
+ * "overview". Pages compare it to their own id to tell whether they are
+ * still the one showing before a late reply paints. */
+function currentRoute() {
+  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+}
+
 function route() {
   if (pairHash()) return;
-  let id = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+  let id = currentRoute();
   // A Mac-only page has nothing to show here, so an old link or a typed
   // #/menubar lands on Overview instead.
   if (MAC_ONLY.has(id)) {

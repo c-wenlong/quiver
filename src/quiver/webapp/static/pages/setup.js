@@ -186,7 +186,7 @@ function finish() {
 }
 
 function onPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "setup";
+  return currentRoute() === "setup";
 }
 
 /* --------------------------------------------------------------- render */

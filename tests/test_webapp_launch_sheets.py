@@ -19,6 +19,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.test_webapp import app_js_function
+
 PAGES = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages"
 
 # The shared prelude: DOM stub, the globals app.js/manage.js/format.js
@@ -164,6 +166,8 @@ const labels = (sel) => sel ? optionsOf(sel).map((o) => o[1]) : null;
 const picked = (sel) => { const o = sel && optionsOf(sel).find((x) => x[0] === sel.value); return o ? o[1] : null; };
 const choose = (sel, label) => { sel.value = optionsOf(sel).find((x) => x[1] === label)[0]; sel.onchange(); };
 """
+
+STUB += app_js_function("currentRoute")
 
 MENU_JS = (Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/model-menu.js")
 

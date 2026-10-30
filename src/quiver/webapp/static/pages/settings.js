@@ -158,7 +158,7 @@ function settingsSection() {
 }
 
 function onSettingsPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "settings";
+  return currentRoute() === "settings";
 }
 
 async function renderSettings() {
