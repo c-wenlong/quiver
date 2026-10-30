@@ -57,10 +57,10 @@ struct InferenceSection: View {
                 Button("Check keys", systemImage: "checkmark.shield") { Task { await model.checkAll() } }
                     .secondaryButton()
                     .disabled(model.isChecking)
-                    .help("Send each key to its own provider or plan to see if it still works")
+                    .hoverTip("Send each key to its own provider or plan to see if it still works", replacesLabel: false)
                 Button("Catalogue", systemImage: "square.grid.2x2") { cataloguing = true }
                     .secondaryButton()
-                    .help("Every plan and provider Quiver knows; pick one to add its key")
+                    .hoverTip("Every plan and provider Quiver knows; pick one to add its key", replacesLabel: false)
                 Button("Add key", systemImage: "plus") { editing = KeyDraft(provider: "", name: "", value: "", isNew: true) }
                     .primaryButton()
             }

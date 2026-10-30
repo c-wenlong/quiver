@@ -128,7 +128,7 @@ private struct Content: View {
             Button("Skip setup") { app.closeFirstRunSetup(reload: model.outcome != nil) }
                 .buttonStyle(.plain)
                 .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                .help("Close this and set things up later from Settings › General")
+                .hoverTip("Close this and set things up later from Settings › General", replacesLabel: false)
                 .disabled(model.applying || model.cloning)
             Spacer()
             if model.step != .agents {
