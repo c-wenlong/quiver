@@ -80,7 +80,7 @@ public struct AdministratorInstaller: FanHelperInstalling {
         guard !control.path.contains(where: \.isNewline), !executable.contains(where: \.isNewline) else {
             throw FanHelperInstallError.failed("Quiver's paths can't hold a line break for the fan helper.")
         }
-        guard let hash = await runOffPool({ Self.sha256(of: executable) }) else {
+        guard let hash = await offMain({ Self.sha256(of: executable) }) else {
             throw FanHelperInstallError.failed("Couldn't read \(executable).")
         }
         try await run(Self.script(Self.installCommand(executable: executable, sha256: hash, control: control),
@@ -93,7 +93,7 @@ public struct AdministratorInstaller: FanHelperInstalling {
     }
 
     private func run(_ script: String) async throws {
-        let (status, error) = await runOffPool { () -> (Int32, String) in
+        let (status, error) = await offMain { () -> (Int32, String) in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             process.arguments = ["-e", script]
@@ -340,7 +340,7 @@ public final class FanControl {
     /// every fan manual means the helper holds them.
     public func refresh() async {
         let reader = self.reader, status = self.status
-        (fans, helperStatus) = await runOffPool { (reader(), status()) }
+        (fans, helperStatus) = await offMain { (reader(), status()) }
         // The install check spawns launchctl, so it runs on the first read
         // and after a request the helper never took, not every tick.
         // Cleared before the wait, so overlapping refreshes don't each
@@ -349,7 +349,7 @@ public final class FanControl {
         if installUnchecked {
             installUnchecked = false
             let isInstalled = self.isInstalled, control = self.control
-            helperInstalled = await runOffPool { isInstalled(control) }
+            helperInstalled = await offMain { isInstalled(control) }
         }
         loaded = true
         settle()

@@ -394,7 +394,7 @@ import Testing
 
     @Test func aToolThatHangsIsKilledAndCountsAsNoAnswer() async {
         let started = Date()
-        let (yes, no, hung, missing) = await runOffPool {
+        let (yes, no, hung, missing) = await offMain {
             (FanControl.exitStatus(of: "/usr/bin/true", [], within: 5),
              FanControl.exitStatus(of: "/usr/bin/false", [], within: 5),
              FanControl.exitStatus(of: "/bin/sleep", ["60"], within: 0.2),
@@ -785,7 +785,7 @@ import Testing
         fans.thresholdEnabled = true
         gate.armed = true
         let takeover = Task { await fans.checkTemperature(90) }
-        await runOffPool { gate.parked.wait() }
+        await offMain { gate.parked.wait() }
         // The takeover is waiting on its fan read: switch the rule off now.
         fans.thresholdEnabled = false
         gate.armed = false
@@ -888,7 +888,7 @@ import Testing
         await fans.refresh()
         gate.armed = true
         let takeover = Task { await fans.applyManual() }
-        await runOffPool { gate.parked.wait() }
+        await offMain { gate.parked.wait() }
         #expect(fans.phase == .starting)
         // The read never comes back, and no refresh settles anything: the
         // deadline set when Starting began ends it anyway.

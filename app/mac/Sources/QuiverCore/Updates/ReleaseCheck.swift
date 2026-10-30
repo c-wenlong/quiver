@@ -59,14 +59,6 @@ public struct ReleaseCheck: Sendable {
         var release: Release
     }
 
-    /// The last saved answer without touching the network.
-    public func cached() -> Release? {
-        guard let data = try? Data(contentsOf: cacheURL),
-              let entry = try? JSONDecoder().decode(Cached.self, from: data)
-        else { return nil }
-        return entry.release
-    }
-
     /// Latest release state. A fresh-enough cache answers unless `force`;
     /// a failed fetch keeps reporting the cached release.
     public func check(current version: String, force: Bool) async -> ReleaseReport {
