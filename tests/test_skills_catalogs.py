@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from quiver.skills.catalog_discover import apply_skill_catalog_findings, discover_skill_catalogs
 from quiver.skills.catalogs import (
+    _same_path,
     add_skill_catalog,
     discover_catalog_dirs,
     load_skill_catalogs,
@@ -144,6 +145,25 @@ class SkillsCatalogTest(unittest.TestCase):
                 self.assertFalse(remove_skill_catalog("design"))
                 self.assertTrue(remove_skill_catalog(str(engines)))
                 self.assertEqual(load_skill_catalogs(), [])
+
+    def test_remove_by_a_path_that_cannot_resolve_removes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config_dir = home / ".config" / "swe"
+            catalogs_file = config_dir / "skill_catalogs.json"
+            root = home / "team" / "skills"
+            self._write_skill(root, "one", name="one")
+
+            p1, p2, p3, p4 = _catalog_patches(config_dir, catalogs_file)
+            with p1, p2, p3, p4:
+                add_skill_catalog(root, "team")
+                with patch("quiver.skills.catalogs.resolve_catalog_path",
+                           side_effect=RuntimeError("symlink loop")):
+                    self.assertFalse(remove_skill_catalog("/loop"))
+                with patch("quiver.skills.catalogs.expand_user",
+                           side_effect=OSError("unreadable")):
+                    self.assertFalse(_same_path("~/team/skills", root))
+                self.assertEqual([c["label"] for c in load_skill_catalogs()], ["team"])
 
 class SkillsCatalogCommandTest(unittest.TestCase):
     def _run(self, args):
