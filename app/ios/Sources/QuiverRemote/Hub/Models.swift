@@ -774,8 +774,9 @@ struct TaskRow: Decodable, Identifiable, Hashable, Sendable {
     /// leave it out; decoding still reads it.
     var status: String? = nil
 
-    /// The list's group key: the repo for GitHub, the project elsewhere.
-    var scope: String { repo ?? project ?? "" }
+    /// The list's group key: the repo for GitHub, the project elsewhere;
+    /// empty when the row names neither.
+    var scope: String { [repo, project].compactMap { $0 }.first { !$0.isEmpty } ?? "" }
     /// "o/r#5" for GitHub, "QUI-123" elsewhere.
     var refLabel: String {
         guard let ref, !ref.isEmpty else { return "" }

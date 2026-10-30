@@ -141,7 +141,8 @@ final class TaskRowTests: XCTestCase {
             row("e", source: "notion", kind: "page", ref: "x", repo: nil),
         ]
         let sections = TaskGrouping.sections(of: tasks, filter: .all)
-        XCTAssertEqual(sections.map(\.name), ["o/s", "o/r", "QUI", "Other"])
+        // A row with no repo or project lists under its source's name.
+        XCTAssertEqual(sections.map(\.name), ["o/s", "o/r", "QUI", "Notion"])
         XCTAssertEqual(sections[1].rows?.map(\.id), ["a", "c"])
         XCTAssertEqual(TaskGrouping.count(tasks, filter: .all), 5)
 
@@ -149,6 +150,21 @@ final class TaskRowTests: XCTestCase {
         let none = TaskGrouping.sections(
             of: [row("a", running: false)], filter: .running)
         XCTAssertTrue(none.isEmpty)
+    }
+
+    /// Scope-less rows group as the web and the Mac group them: GitHub
+    /// spelled GitHub, Linear under "Linear", and "Other" only for a row
+    /// that names no source at all. An empty repo counts as none.
+    func testScopelessRowsGroupUnderTheirSourceName() {
+        let tasks = [
+            row("a", source: "linear", ref: "QUI-1", repo: nil, project: nil),
+            row("b", repo: nil),
+            row("c", source: "jira", ref: "J-1", repo: "", project: nil),
+            row("d", source: nil, kind: "page", ref: "x", repo: nil),
+            row("e", source: "linear", ref: "QUI-2", repo: "", project: "QUI"),
+        ]
+        XCTAssertEqual(TaskGrouping.sections(of: tasks, filter: .all).map(\.name),
+                       ["Linear", "GitHub", "Jira", "Other", "QUI"])
     }
 
     func testSourceLineAndLabels() {
