@@ -162,25 +162,9 @@ const GhUI = (() => {
     return new URLSearchParams(location.hash.split("?")[1] || "");
   }
 
-  /* app.js's api() only reads; a write sends JSON with the same headers
-   * (authHeaders: the bearer when one is stored, and X-Quiver-Pair so an
-   * owner's tailnet device is admitted without one). Never throws:
-   * { status: 0 } when the hub is unreachable. */
-  async function post(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  /* A JSON POST through app.js's apiSend(): never throws, { status: 0 } when
+   * the hub is unreachable. */
+  const post = (path, body) => apiPost(path, body);
 
   function failMessage(status, data) {
     return (data && data.error && (data.error.message || data.error))

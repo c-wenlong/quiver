@@ -401,7 +401,7 @@ struct LinkSessionSheet: View {
             do {
                 try await client.linkTask(row.key, task: task)
             } catch {
-                self.error = (error as? HubError)?.message ?? error.localizedDescription
+                self.error = error.localizedDescription
                 busy = nil
                 return
             }
