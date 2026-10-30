@@ -655,6 +655,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP gateway: a session's burst of connections is queued, not
+  reset.** A Claude Code session connects to every shared server at
+  once, and the Python 3.13 that Quiver.app bundles queues only 5
+  connections on a listening socket. With 18 shared servers, 13 of 18
+  probes at once got "connection reset" and those servers would fail to
+  connect for that session. The gateway now queues 128.
+
 - **`swe mcp sync` writes remote servers Claude Code can see.** Claude
   Code skips an `mcpServers` entry that has a `url` and no `type`
   (`claude mcp get` says there is no such server), and sync wrote
