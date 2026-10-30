@@ -1082,23 +1082,31 @@ harness supports it, an inlined path otherwise. Caps: 20 MB per file,
 image/pdf/text only, swept after 7 days or at session end, whichever
 comes first.
 
-`GET /v1/devices` answers `{devices, requests}` for the phone's
+`GET /v1/devices` answers `{devices, requests, signins}` for the phone's
 pair-requests-and-devices screen: every `devices.json` row as
 `pairing.device_view` serves it (everything but the credential, plus
 `id` and `revoked`), each with `paired_via` and `this_device` marking
-the caller — the owner's tailnet sign-in (`tailnet:<node>`) marks
-nothing, having no row — and `requests` is the same pending-request list
-`GET /v1/pair/requests` serves, codes and secrets never in it. `POST
+the caller; `requests` is the same pending-request list
+`GET /v1/pair/requests` serves, codes and secrets never in it; and
+`signins` lists the owner's tailnet devices the hub let in without
+pairing (`tailnet_signins.json`, 0600, written at most every five
+minutes per node): `{id: "tailnet:<node>", node_name, first_seen_at,
+last_seen_at, revoked, revoked_at, this_device}`, newest first. `POST
 /v1/devices/revoke {device_id}` signs one paired device out
 (`swe remote devices --revoke`'s hub-side twin, shared with the web
 Settings page's `revoke` action in `devices.py`) and answers `{revoked,
-this_device, devices}` with the list refreshed. Refusals: `400
-bad_device`, `400 not_paired` for a `tailnet:` id — a sign-in, not a
-pairing — `404 unknown_device`, `409 already_revoked`, `409
-confirm_this_device` for the caller's own row without
-`confirm_this_device: true` (a stray tap can't lock the phone out), and
-`500 ssh_key_left` when the device is out but its `authorized_keys`
-line stayed.
+this_device, devices, signins}` with the lists refreshed. A
+`tailnet:<node>` id revokes that sign-in: the node gets no owner
+identity (no unpaired access, no owner approval of pair requests) until
+a pair request from it is approved again, and devices paired from it are
+signed out with it. Revoking a device paired through a tailnet request
+revokes its node the same way, so a lost phone on the owner's login
+can't walk back in through Safari. The owner's other nodes are
+untouched. Refusals: `400 bad_device`, `404 unknown_device`, `409
+already_revoked`, `409 confirm_this_device` for the caller's own row or
+sign-in without `confirm_this_device: true` (a stray tap can't lock the
+phone out), and `500 ssh_key_left` when the device is out but its
+`authorized_keys` line stayed.
 
 ## Keeping the hub up — `launchd.py`, `systemd.py`
 
@@ -1291,7 +1299,9 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
 - Threat model for the README: the hub executes on your machines by
   design; the credential gates the app layer on top of the tailnet —
   per-device revocation is what "revoke my lost phone" means without
-  touching the tailnet.
+  touching the tailnet. That covers a phone on the owner's own tailnet
+  login too: revoking its sign-in (or a device paired from it) refuses
+  the node until it pairs again.
 
 ## Milestones
 

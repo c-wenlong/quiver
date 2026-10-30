@@ -43,6 +43,11 @@ PAIR_ROLES = frozenset({"phone", "satellite"})
 _DEVICES_BASENAME = "devices.json"
 _TOKENS_BASENAME = "pair_tokens.json"
 _REQUESTS_BASENAME = "pair_requests.json"
+# The hub owner's tailnet devices that got in without pairing, by node:
+# when each was seen, and whether the owner revoked it.
+_SIGNINS_BASENAME = "tailnet_signins.json"
+# How stale a sign-in's last_seen_at may get before a request rewrites it.
+SIGNIN_TOUCH_S = 300
 
 # Tailscale-identity pairing: a phone POSTs /v1/pair/request, shows a
 # code, and a second device (or the hub shell) approves it. Codes die
@@ -92,6 +97,10 @@ def tokens_file(home: Path | str | None = None) -> Path:
 
 def requests_file(home: Path | str | None = None) -> Path:
     return remote_dir_for(home) / _REQUESTS_BASENAME
+
+
+def signins_file(home: Path | str | None = None) -> Path:
+    return remote_dir_for(home) / _SIGNINS_BASENAME
 
 
 def _hash_credential(credential: str) -> str:
@@ -514,14 +523,26 @@ def bind_machine(
 
 
 def revoke_device(home: Path | str | None, device_id: str) -> bool:
+    """Sign one paired device out. A device paired through a tailnet
+    request also loses its node's tailnet sign-in: a lost phone on the
+    owner's login would otherwise walk back in without a credential."""
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         devices = load_devices(home_path)
         row = devices.get(device_id)
         if row is None:
             return False
-        row["revoked_at"] = time.time()
+        now = time.time()
+        row["revoked_at"] = now
         _save_devices(home_path, devices)
+        node = str(row.get("tailscale_node") or "")
+        if node:
+            signins = load_signins(home_path)
+            entry = signins.setdefault(node, {})
+            if not entry.get("revoked_at"):
+                entry["revoked_at"] = now
+                entry.setdefault("node_name", row.get("node_name") or "")
+                _save_signins(home_path, signins)
     # A lost phone loses its SSH login too. After the lock, since sync
     # takes its own. The revoke is saved by now, so a failed rewrite is
     # KeysNotSynced, never the OSError a failed save raises: the person
@@ -532,6 +553,91 @@ def revoke_device(home: Path | str | None, device_id: str) -> bool:
         sshkeys.sync(home_path)
     except OSError as exc:
         raise sshkeys.KeysNotSynced(str(exc)) from exc
+    return True
+
+
+# -- tailnet sign-ins --------------------------------------------------------
+#
+# The hub owner's own tailnet devices use the hub without pairing (the
+# hub's ``_owner_device``). Nothing about them lives in devices.json, so
+# this file is what lets the owner see them and revoke a lost one: a
+# revoked node gets no owner identity until a pairing from it is approved
+# again. Keyed by Tailscale's StableID, which survives renames and IP
+# changes but not removing the node from the tailnet.
+
+
+def load_signins(home: Path | str | None = None) -> dict[str, dict]:
+    data = _read_json(signins_file(home), {"signins": {}})
+    rows = data.get("signins")
+    return {k: v for k, v in rows.items() if isinstance(v, dict)} if isinstance(rows, dict) else {}
+
+
+def _save_signins(home_path: Path | None, rows: dict[str, dict]) -> None:
+    path = signins_file(home_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps({"signins": rows}, indent=1), private=True)
+
+
+def signin_revoked(home: Path | str | None, node_id: str) -> bool:
+    """True when the owner revoked this tailnet node's sign-in."""
+    return bool((load_signins(home).get(node_id) or {}).get("revoked_at"))
+
+
+def note_signin(
+    home: Path | str | None, node_id: str, node_name: str = "",
+    now: float | None = None,
+) -> None:
+    """Record that ``node_id`` got in as the owner: first sight, then a
+    ``last_seen_at`` refreshed at most every ``SIGNIN_TOUCH_S``. A revoked
+    node is left alone; it shouldn't have got this far."""
+    if not node_id:
+        return
+    now = time.time() if now is None else now
+    row = load_signins(home).get(node_id) or {}
+    seen = row.get("last_seen_at")
+    if row.get("revoked_at") or (seen is not None and now - float(seen) < SIGNIN_TOUCH_S):
+        return
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        rows = load_signins(home_path)
+        row = rows.setdefault(node_id, {})
+        if row.get("revoked_at"):
+            return
+        row.setdefault("first_seen_at", now)
+        row["last_seen_at"] = now
+        if node_name:
+            row["node_name"] = node_name
+        _save_signins(home_path, rows)
+
+
+def revoke_signin(home: Path | str | None, node_id: str) -> bool:
+    """Revoke a tailnet node's sign-in, and every paired device that
+    pairing from that node minted: the owner is signing out a device,
+    not one of its credentials. False when the node was never seen."""
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        rows = load_signins(home_path)
+        row = rows.get(node_id)
+        if row is None:
+            return False
+        now = time.time()
+        row["revoked_at"] = now
+        _save_signins(home_path, rows)
+        devices = load_devices(home_path)
+        hit = False
+        for drow in devices.values():
+            if drow.get("tailscale_node") == node_id and not drow.get("revoked_at"):
+                drow["revoked_at"] = now
+                hit = True
+        if hit:
+            _save_devices(home_path, devices)
+    if hit:
+        from quiver.remote import sshkeys
+
+        try:
+            sshkeys.sync(home_path)
+        except OSError as exc:
+            raise sshkeys.KeysNotSynced(str(exc)) from exc
     return True
 
 
@@ -717,6 +823,13 @@ def approve_request(
             )
             row["status"] = "approved"
             row["device_id"] = device_id
+            # The owner just approved a device on this node, so a sign-in
+            # revoked earlier (the phone was found) works again.
+            node = str(row.get("node_id") or "")
+            signins = load_signins(home_path) if node else {}
+            if signins.get(node, {}).get("revoked_at"):
+                signins[node]["revoked_at"] = None
+                _save_signins(home_path, signins)
             # Fresh window: a phone mid-poll at the old deadline must
             # still collect its credential.
             row["expires_at"] = now + REQUEST_TTL_S

@@ -608,9 +608,9 @@ function remoteCards() {
       ${p.pairError ? `<span class="caption set-danger">${esc(p.pairError)}</span>` : ""}
     </div>`;
   // The hub owner's own tailnet device gets in without pairing, so it
-  // has no row here and nothing of its own to revoke.
+  // has no row here: it is listed under "Signed in through Tailscale".
   const viaTailnet = r.caller && r.caller.kind === "tailnet"
-    ? `<p class="caption set-caller">This browser is signed in through Tailscale as the hub's owner, so it isn't a paired device: it isn't listed here and has nothing to revoke.</p>`
+    ? `<p class="caption set-caller">This browser is signed in through Tailscale as the hub's owner, so it isn't a paired device. It's listed under Signed in through Tailscale.</p>`
     : "";
   // The Mac folds the list after two rows; the Pair row sits under it.
   const shown = p.showsAllDevices ? live : live.slice(0, 2);
@@ -624,7 +624,12 @@ function remoteCards() {
   // show: the old /#approve page's rows, now inline here.
   const requests = (r.requests || []).length ? setCard(
     r.requests.map(requestRow), "Waiting for approval") : "";
-  return `<div class="set-stack">${setupCard()}${hub}${devices}${requests}</div>${pairSheet()}`;
+  // The owner's own tailnet devices, let in without pairing: revoking a
+  // lost one here is the only way to stop it short of the Tailscale
+  // admin console.
+  const signins = (r.signins || []).filter((x) => !x.revoked);
+  const tailnet = signins.length ? setCard(signins.map(signinRow), "Signed in through Tailscale") : "";
+  return `<div class="set-stack">${setupCard()}${hub}${devices}${tailnet}${requests}</div>${pairSheet()}`;
 }
 
 /* `swe remote setup`'s steps, while any is left: each with its state and
@@ -743,6 +748,31 @@ function deviceRow(dev) {
   return setRow(name, bits.join(" · "),
     `<button class="set-button" data-act="revoke" title="Sign this device out of the hub"${busy ? " disabled" : ""}>Revoke</button>`,
     { titleHtml: title, warning: p.revokeErrors[dev.id] || null, danger: true, attrs });
+}
+
+function signinRow(s) {
+  const p = settingsPage;
+  const name = s.node_name || "Tailscale device";
+  const bits = ["your Tailscale login"];
+  if (s.last_seen_at) bits.push(`seen ${Fmt.relative(s.last_seen_at)}`);
+  bits.push(s.id);
+  const title = `${esc(name)}${s.this_device ? ' <span class="badge set-this">This device</span>' : ""}`;
+  const busy = p.revoking.has(s.id);
+  const attrs = ` data-device="${esc(s.id)}"`;
+  if (p.confirming === s.id) {
+    const what = s.this_device
+      ? "This is the browser you're using. Revoking stops this device getting in through Tailscale, so every page here stops working until you pair it with a new code."
+      : `Sign ${name} out of the hub? It stops getting in through Tailscale at once, and any device paired from it is signed out too. Pairing it again brings it back.`;
+    return `<div class="set-row set-confirm"${attrs}>
+      <div class="set-text"><div class="set-title">${title}</div><div class="set-detail">${esc(what)}</div></div>
+      <div class="set-control">
+        <button class="set-button" data-act="cancel"${busy ? " disabled" : ""}>Cancel</button>
+        <button class="set-button danger" data-act="revoke-confirm"${busy ? " disabled" : ""}>${busy ? "Revoking…" : s.this_device ? "Revoke this browser" : "Revoke"}</button>
+      </div></div>`;
+  }
+  return setRow(name, bits.join(" · "),
+    `<button class="set-button" data-act="revoke" title="Stop this device getting in through Tailscale"${busy ? " disabled" : ""}>Revoke</button>`,
+    { titleHtml: title, warning: p.revokeErrors[s.id] || null, danger: true, attrs });
 }
 
 function pairSheet() {
@@ -1450,7 +1480,8 @@ function settingsStopPoll() {
 
 async function settingsRevoke(id) {
   const p = settingsPage;
-  const dev = p.data && p.data.remote.devices.find((d) => d.id === id);
+  const r = p.data && p.data.remote;
+  const dev = r && (r.devices.find((d) => d.id === id) || (r.signins || []).find((d) => d.id === id));
   if (!dev || p.revoking.has(id)) return;
   p.revoking.add(id);
   delete p.revokeErrors[id];
@@ -1476,6 +1507,7 @@ async function settingsRevoke(id) {
   if (status === 200 && data) {
     p.confirming = null;
     p.data.remote.devices = data.devices;
+    if (data.signins) p.data.remote.signins = data.signins;
     settingsRepaintRemote("#set-pair");
     // Revoking the last phone undoes "Pair a phone".
     if (!p.setupBusy) settingsLoadSetup();
