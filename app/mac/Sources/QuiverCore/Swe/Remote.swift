@@ -76,7 +76,7 @@ public struct PairTicket: Decodable, Sendable, Equatable {
     public let port: Int
     public let token: String
     public let name: String?
-    /// `http://host:port/app/#pair=token` — opens the web app in a phone browser.
+    /// `http://host:port/#pair=token` — opens the web app in a phone browser.
     public let url: String
     /// `quiver://pair?…` — opens the iOS app.
     public let deepLink: String
@@ -113,13 +113,6 @@ extension SweClient {
     /// `name` is what the device is called once it trades the token.
     public func remotePair(name: String? = nil) async throws -> PairTicket {
         try await call(["remote", "pair"] + (name.map { ["--name=\($0)"] } ?? []) + ["--json"])
-    }
-
-    public func remoteDevices() async throws -> [RemoteStatus.Device] {
-        struct DeviceList: Decodable { let devices: [RemoteStatus.Device] }
-        let list: DeviceList = try await call(
-            ["remote", "devices", "--json"], allowFailure: true)
-        return list.devices
     }
 
     @discardableResult

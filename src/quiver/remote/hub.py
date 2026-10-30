@@ -34,7 +34,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 from quiver.github import cli as ghcli
-from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.paths import atomic_write_text, read_json_dict, remote_dir_for
 from quiver.remote import (
     attachments,
     catalog as catalog_mod,
@@ -45,6 +45,7 @@ from quiver.remote import (
     inject,
     notify,
     pairing,
+    peer as peer_mod,
     preview as preview_mod,
     protocol,
     search as search_mod,
@@ -87,6 +88,8 @@ _DRAIN_S = 2.0
 _MAX_WORKERS = 64
 # How often an open SSE stream re-checks that its device wasn't revoked.
 _REVOCATION_CHECK_S = 5.0
+# The web app's generated bundles, served beside its static files.
+_BUNDLES = frozenset({"pages.js", "pages.css"})
 # Sent on every response that doesn't set its own. The policy leaves
 # script sources alone: the page bundle evaluates each page script.
 _SECURITY_HEADERS = (
@@ -289,6 +292,12 @@ class HubState:
         # The hub owner's tailnet login — set by serve() from whois of
         # the bind address; "" means owner-identity approval is off.
         self.owner_login = ""
+        # This machine's own tailnet node, set with owner_login. A
+        # request that whois names as this node came from a process on
+        # this machine (serve's local listener, or a direct dial of the
+        # tailnet IP), whichever user runs it, so it never counts as
+        # the owner's device.
+        self.own_node_id = ""
         # Set by configure() when that lookup could not run yet; owner()
         # calls it again, at most every _OWNER_RETRY_S.
         self.owner_retry = None
@@ -315,6 +324,11 @@ class HubState:
         # with the real tailnet client, so loopback requests carrying
         # them are read as that client. Off, the headers are ignored.
         self.trust_proxy = False
+        # Whether the loopback peer ``(server, peer)`` is the Tailscale
+        # daemon itself (peer.is_proxy). With trust_proxy on, only its
+        # X-Forwarded-For names the client: any other local process
+        # could write one. Tests stub it.
+        self.proxy_peer = peer_mod.is_proxy
         # session key -> request_id of its newest approval.requested
         # that has not yet been answered — local panes and satellites
         # both flow through emit(), so the inbox sees them uniformly.
@@ -981,6 +995,19 @@ class _Handler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, code: str, message: str) -> None:
         self._send_json(status, protocol.error(code, message))
 
+    def _refuse_unless_attached(self, row: dict) -> bool:
+        """Answer 409 not_attached for a session the hub only observes.
+
+        Returns True when it refused, so the caller returns at once.
+        """
+        if row.get("ownership") == protocol.OWNERSHIP_ATTACHED:
+            return False
+        self._send_error(
+            409, "not_attached",
+            "session is observed: read-only until attached",
+        )
+        return True
+
     # -- request body bookkeeping -------------------------------------
     #
     # ``_unread`` is how many body bytes of the current request are still
@@ -995,6 +1022,9 @@ class _Handler(BaseHTTPRequestHandler):
     _must_close = False
     _body_cache: object = _UNSET
     _device_row: dict | None = None
+    # Whether this connection's loopback peer is the Tailscale daemon;
+    # None until a forwarded header first needs the answer.
+    _peer_is_proxy: bool | None = None
 
     def handle_one_request(self) -> None:
         self._unread = 0
@@ -1167,12 +1197,22 @@ class _Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _device_revoked(home: Path | None, device_id: str) -> bool:
+        """Whether the caller's access is gone: its paired row, or for
+        the owner's ``tailnet:<node>`` identity, that node's sign-in.
+        Open SSE streams ask this every few seconds."""
+        if device_id.startswith(devices_mod.TAILNET_PREFIX):
+            return pairing.signin_revoked(
+                home, device_id[len(devices_mod.TAILNET_PREFIX):])
         row = pairing.load_devices(home).get(device_id) or {}
         return bool(row.get("revoked_at"))
 
     def _approver_node(self, peer: dict | None) -> str | None:
         """The peer's node id when it shares the hub owner's login —
-        else None. Tagged nodes never qualify."""
+        else None. Tagged nodes never qualify; nor does this machine's
+        own node (any local user's process reaches the hub as that node
+        through serve's local listener, so it proves nothing), nor a node
+        whose sign-in the owner revoked (a lost phone still on their
+        login)."""
         owner = self._state.owner()
         if (
             peer is None or peer.get("tagged")
@@ -1180,7 +1220,12 @@ class _Handler(BaseHTTPRequestHandler):
             or peer.get("login") != owner
         ):
             return None
-        return str(peer.get("node_id") or "") or None
+        node = str(peer.get("node_id") or "")
+        if not node or node == self._state.own_node_id:
+            return None
+        if pairing.signin_revoked(self._state.home, node):
+            return None
+        return node
 
     def _owner_device(self) -> str | None:
         """A device id for the hub owner's own tailnet device, which needs
@@ -1191,8 +1236,18 @@ class _Handler(BaseHTTPRequestHandler):
         logins still pair."""
         if not self._identity_ok() or self._bad_origin():
             return None
-        node = self._approver_node(self._state.whois_cached(self._client_ip()))
-        return f"tailnet:{node}" if node else None
+        peer = self._state.whois_cached(self._client_ip())
+        node = self._approver_node(peer)
+        if not node:
+            return None
+        # Listed in Settings so the owner can revoke it if it goes
+        # missing; throttled, and a failed write never refuses the caller.
+        try:
+            pairing.note_signin(self._state.home, node,
+                                str((peer or {}).get("node_name") or ""))
+        except Exception:
+            pass
+        return f"tailnet:{node}"
 
     def _client_device(self) -> str | None:
         """The paired device behind the bearer, unless it is a satellite.
@@ -1310,20 +1365,42 @@ class _Handler(BaseHTTPRequestHandler):
         return bound == mid
 
     def _proxied(self) -> bool:
-        """True when ``tailscale serve`` relayed this request: the hub
-        trusts its proxy and the TCP peer is this machine."""
+        """True when the request may have come through ``tailscale
+        serve``: the hub runs behind it and the TCP peer is this
+        machine. Enough for X-Forwarded-Proto, which only feeds the
+        Origin check a local process can satisfy anyway; the client's
+        identity needs ``_from_proxy``."""
         return (self._state.trust_proxy
                 and self.client_address[0] in _LOOPBACK)
+
+    def _from_proxy(self) -> bool:
+        """True when the loopback peer is the Tailscale daemon, so its
+        X-Forwarded-For can name the client. Asked once per connection:
+        serve keeps its connections open across requests."""
+        if not self._proxied():
+            return False
+        cached = self._peer_is_proxy
+        if cached is None:
+            try:
+                server = self.connection.getsockname()[:2]
+                cached = bool(self._state.proxy_peer(
+                    (server[0], server[1]),
+                    (self.client_address[0], self.client_address[1])))
+            except Exception:  # noqa: BLE001 - doubt means not the proxy
+                cached = False
+            self._peer_is_proxy = cached
+        return cached
 
     def _client_ip(self) -> str:
         """The requester's address: the tailnet client serve forwarded
         for, else the TCP peer. Serve replaces any X-Forwarded-For the
-        client sent, so the last hop is the one it added."""
-        if self._proxied():
-            forwarded = self.headers.get("X-Forwarded-For") or ""
-            hop = forwarded.split(",")[-1].strip()
-            if hop:
-                return hop
+        client sent, so the last hop is the one it added. Only serve's
+        own connection is believed: another local process sending the
+        header is read as the loopback peer it is."""
+        forwarded = self.headers.get("X-Forwarded-For") or ""
+        hop = forwarded.split(",")[-1].strip()
+        if hop and self._from_proxy():
+            return hop
         return self.client_address[0]
 
     def _scheme(self) -> str:
@@ -2228,6 +2305,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._state, self._read_body()))
             return
 
+        if path == "/v1/issues/comment":  # issues.py: gh issue comment
+            self._send_json(*issues_mod.comment(
+                self._state, self._read_body()))
+            return
+
         if path.startswith("/v1/pulls/"):
             parts = path[len("/v1/pulls/"):].split("/")
             if len(parts) != 4 or parts[3] != "open":
@@ -2273,11 +2355,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._queue_action(key, row)
                 return
             if action in {"message", "approval"}:
-                if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-                    self._send_error(
-                        409, "not_attached",
-                        "session is observed: read-only until attached",
-                    )
+                if self._refuse_unless_attached(row):
                     return
                 if action == "message":
                     self._send_message(key, row)
@@ -2569,11 +2647,7 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
         if action != "attach" and action != "control":
-            if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-                self._send_error(
-                    409, "not_attached",
-                    "session is observed: read-only until attached",
-                )
+            if self._refuse_unless_attached(row):
                 return
         if action == "attachments":
             upload = self._read_upload()
@@ -2674,11 +2748,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "model": a_model or "", "effort": a_effort or "",
                 })
             else:
-                if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-                    self._send_error(
-                        409, "not_attached",
-                        "session is observed: read-only until attached",
-                    )
+                if self._refuse_unless_attached(row):
                     return
                 fields = {"ctl": op, "value": cmd.get("value") or ""}
                 if "mode" in cmd:
@@ -2932,11 +3002,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if op == "steer":
             # Sending now is a write: the same rules as a steer message.
-            if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-                self._send_error(
-                    409, "not_attached",
-                    "session is observed: read-only until attached",
-                )
+            if self._refuse_unless_attached(row):
                 return
             if state.sendq.pending(steer_key) >= MAX_SEND_BACKLOG:
                 self._send_error(
@@ -3070,11 +3136,7 @@ class _Handler(BaseHTTPRequestHandler):
         if op == "kill" or (op == "detach" and mode != "when_idle"):
             # A later detach or kill replaces a pending when_idle one.
             self._state.detaches.cancel(key, f"replaced by {op} {mode}")
-        if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-            self._send_error(
-                409, "not_attached",
-                "session is observed: read-only until attached",
-            )
+        if self._refuse_unless_attached(row):
             return
         if op == "detach" and mode == "when_idle":
             self._detach_when_idle(key)
@@ -3395,42 +3457,32 @@ class _Handler(BaseHTTPRequestHandler):
     # -- static ------------------------------------------------------------
 
     def _serve_static(self, path: str) -> None:
-        if path == "/app" or path.startswith("/app/"):
-            self._serve_webapp(path)
-            return
-        # The web app is the only page now: ``/`` (and a bookmarked
-        # ``/index.html``) lands on it. The fragment survives the
-        # redirect, so an old ``/#pair=<token>`` or ``/#approve`` link
-        # still reaches the app's handlers.
-        if path in {"/", "/index.html"}:
-            self.send_response(301)
-            self.send_header("Location", "/app/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-        # The icons live with the web app's assets; its pages (and the
-        # manifest it may grow) reference them at the root.
-        if path in {"/icon-192.png", "/icon-512.png"}:
-            self._send_asset(webapp_static.STATIC_DIR / path[1:])
-            return
-        self._send_error(404, "not_found", "unknown route")
-
-    def _serve_webapp(self, path: str) -> None:
-        """The web app (``quiver/webapp/static``) under ``/app/``.
-
-        Only a flat file name of a known type is served, so no request
-        can climb out of the folder. The pages fetch ``/v1/app/*`` with
-        the device credential the app's ``#pair=`` handler pairs, which
-        this origin shares.
+        """The web app (``quiver/webapp/static``) at the root: ``/`` is its
+        page and each asset a flat name beside it (``/app.js``,
+        ``/harness-claude.svg``). Every non-API path lands here, and only
+        a flat name of a known type is served, so no request can climb
+        out of the folder or shadow a ``/v1/`` route. The pages fetch
+        ``/v1/app/*`` with the device credential the app's ``#pair=``
+        handler pairs, which this origin shares.
         """
-        if path == "/app":
-            self.send_response(301)
-            self.send_header("Location", "/app/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+        # The app lived under ``/app/`` until #944, and pair links minted
+        # then (``/app/#pair=<token>``) are still out there: send them,
+        # and a page cached with ``/app/…`` asset paths, to the same name
+        # at the root. The fragment survives the redirect.
+        if path == "/app" or path.startswith("/app/"):
+            rest = path[len("/app/"):]
+            # Only a name this handler would serve: anything else (say
+            # ``/app//evil.example``) would make ``Location`` another host.
+            if rest and not self._is_webapp_name(rest):
+                self._send_error(404, "not_found", "unknown route")
+                return
+            self._redirect("/" + rest)
             return
-        name = path[len("/app/"):] or "index.html"
-        if name in {"pages.js", "pages.css"}:
+        if path == "/index.html":
+            self._redirect("/")
+            return
+        name = path[1:] or "index.html"
+        if name in _BUNDLES:
             body, etag = webapp_pages.bundled(name[len("pages"):])
             if webapp_pages.etag_matches(
                     self.headers.get("If-None-Match"), etag):
@@ -3450,6 +3502,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(404, "not_found", "unknown route")
             return
         self._send_asset(webapp_static.STATIC_DIR / name)
+
+    @staticmethod
+    def _is_webapp_name(name: str) -> bool:
+        return name in _BUNDLES or webapp_static.is_asset_name(name)
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(301)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     # -- paired device self-service --------------------------------------
 
@@ -3807,11 +3869,7 @@ def save_hub_config(home: Path | None, host: str, port: int,
 
 def load_hub_config(home: Path | None = None) -> dict:
     """``{"host", "port", "public_url"}`` from the last ``serve``, or {}."""
-    try:
-        data = json.loads(_hub_file(home).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return read_json_dict(_hub_file(home))
 
 
 def configure(state: HubState, host: str, port: int,
@@ -3849,6 +3907,7 @@ def configure(state: HubState, host: str, port: int,
                 peer = state.whois(ip) if ip else None
                 if peer is None:
                     return False
+                state.own_node_id = str(peer.get("node_id") or "")
                 if not peer.get("tagged"):
                     state.owner_login = str(peer.get("login") or "")
                 return True
@@ -3884,6 +3943,8 @@ def configure(state: HubState, host: str, port: int,
                              peer.get("node_short")):
                     if name:
                         state.allowed_hosts.add(_hostport(name, port))
+        if peer:
+            state.own_node_id = str(peer.get("node_id") or "")
         if peer and not peer.get("tagged"):
             state.owner_login = str(peer.get("login") or "")
 

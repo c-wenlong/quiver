@@ -23,11 +23,13 @@ import Testing
             // path data), so the mark has to cover a fair share of its box.
             #expect(coverage(bitmap) > 0.08, "\(id) draws almost nothing")
             // A leftover background plate paints all four corners; a mark
-            // may reach one or two (goose's wings do). npm and uv are
-            // exempt: each mark is the square itself, letters cut out.
+            // may reach one or two (goose's wings do). npm, uv, arcade,
+            // browserbase, cartesia and zapier are exempt: each mark is the
+            // square itself, the glyph drawn on or cut out of the tile.
             let corners = [(2, 2), (61, 2), (2, 61), (61, 61)]
                 .filter { (bitmap.colorAt(x: $0.0, y: $0.1)?.alphaComponent ?? 0) > 0.5 }
-            #expect(corners.count < 4 || ["npm", "uv"].contains(id), "\(id) sits on a background plate")
+            #expect(corners.count < 4 || ["npm", "uv", "arcade", "browserbase", "cartesia", "zapier"].contains(id),
+                    "\(id) sits on a background plate")
         }
         #expect(Set(fromTokenTracker).isSubset(of: Set(HarnessIcons.available)))
     }

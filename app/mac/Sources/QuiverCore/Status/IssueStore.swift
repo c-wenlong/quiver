@@ -396,16 +396,7 @@ public struct IssueStore: Sendable {
     /// copies, like UsageCacheStore: an atomic rename alone would let a
     /// second app write back the file it read before this save.
     private func withFileLock(_ body: () -> Void) {
-        let lockURL = url.appendingPathExtension("lock")
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        let fd = Darwin.open(lockURL.path, O_RDWR | O_CREAT, 0o600)
-        guard fd >= 0 else { return body() }
-        defer { close(fd) }
-        guard flock(fd, LOCK_EX) == 0 else { return body() }
-        defer { flock(fd, LOCK_UN) }
-        body()
+        FileLock.whileHeld(beside: url, body)
     }
 }
 

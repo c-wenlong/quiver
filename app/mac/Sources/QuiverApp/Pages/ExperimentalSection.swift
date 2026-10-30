@@ -191,5 +191,7 @@ private struct SessionSearchRow: View {
             }
         }
         .padding(.vertical, 14)
+        .onAppear { model.statusVisible = true }
+        .onDisappear { model.statusVisible = false }
     }
 }

@@ -14,7 +14,7 @@
    * so names stay aligned. */
   function brandLogo(brand, cls = "logo") {
     if (!brand || !brand.logo) return `<span class="${cls}" aria-hidden="true"></span>`;
-    return `<img class="${cls}${brand.mono ? " mono" : ""}" src="/app/${esc(brand.logo)}" alt="${esc(brand.name)}" title="${esc(brand.name)}">`;
+    return `<img class="${cls}${brand.mono ? " mono" : ""}" src="/${esc(brand.logo)}" alt="${esc(brand.name)}" title="${esc(brand.name)}">`;
   }
 
   /* A per-1M rate in plain dollars, as Overview's spend figures. */
@@ -265,7 +265,7 @@
   function sourceMark(r) {
     switch (r.spend_source) {
       case "billed": return r.billed_by.slice(0, 2).map((h) => Fmt.logo(h)).join("");
-      case "litellm": return '<img class="logo mono" src="/app/source-litellm.svg" alt="LiteLLM">';
+      case "litellm": return '<img class="logo mono" src="/source-litellm.svg" alt="LiteLLM">';
       case "quiver": return '<img class="logo qp-quiver" src="/icon-192.png" alt="Quiver">';
       case "yours": return `<span class="qp-symbol">${PERSON}</span>`;
       case "free": return `<span class="qp-symbol">${GIFT}</span>`;

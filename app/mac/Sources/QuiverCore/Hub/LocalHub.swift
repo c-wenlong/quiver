@@ -98,6 +98,11 @@ public final class LocalHub {
 
     public private(set) var keys: Keys = .unknown
 
+    /// The model of each listed session's newest reply, by hub key, from
+    /// the same read as `keys`. A session whose model the hub doesn't know
+    /// has no entry; an unknown or down hub leaves it empty.
+    public private(set) var models: [String: String] = [:]
+
     /// The hub's base once a client exists — scopes kept command lists,
     /// so a repointed hub never shows the last hub's answers.
     public var connectedHub: String? { current?.baseURL.absoluteString }
@@ -216,30 +221,42 @@ public final class LocalHub {
         } else {
             guard let address = try? await locator.hubAddress(), let base = Self.baseURL(address) else {
                 keys = .unavailable
+                models = [:]
                 return
             }
             guard let saved = store.credential(for: address) else {
                 keys = .unknown
+                models = [:]
                 return
             }
             client = current ?? makeClient(base, saved)
             current = client
         }
         do {
-            keys = .known(Set(try await client.sessions().map(\.key)))
+            let rows = try await client.sessions()
+            keys = .known(Set(rows.map(\.key)))
+            models = Dictionary(rows.compactMap { row in row.model.map { (row.key, $0) } },
+                                uniquingKeysWith: { _, newest in newest })
         } catch let error as HubError where error.isUnauthorized {
             // Only this client's credential: another call may have paired
             // again meanwhile.
             refused(client)
             keys = .unknown
+            models = [:]
         } catch let error as HubError where error.code == "network" {
             // A hub that stopped since: forget the address with the client.
             if current?.credential == client.credential { current = nil }
             keys = .unavailable
+            models = [:]
         } catch {
             keys = .unknown
+            models = [:]
         }
     }
+
+    /// The model of session `key`'s newest reply, as the hub reported it
+    /// on the last `refreshKeys`; nil when it didn't.
+    public func model(for key: String) -> String? { models[key] }
 
     /// Whether a click on this session opens the chat: always while the
     /// hub's list is unknown, never while the hub is down.

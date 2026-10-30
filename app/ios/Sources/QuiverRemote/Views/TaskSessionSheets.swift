@@ -85,7 +85,7 @@ struct TaskSessionSheet: View {
                     startSection(machine)
                 } else {
                     StateCard(icon: "terminal", title: "No machine can start a session",
-                              message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                              message: NewSessionOptions.noMachineMessage(app.machines))
                 }
             }
             .navigationTitle("New agent session")
@@ -354,7 +354,7 @@ struct LinkSessionSheet: View {
                 }
                 .font(Theme.body)
                 .padding(.horizontal, 12)
-                .frame(height: Theme.controlHeight + 4)
+                .scaledMinHeight(Theme.controlHeight + 4)
                 .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
                 .padding(.top, 4)

@@ -52,7 +52,7 @@ struct NewSessionView: View {
         return PageScroll {
             if machines.isEmpty {
                 StateCard(icon: "terminal", title: "No machine can start a session",
-                          message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                          message: NewSessionOptions.noMachineMessage(app.machines))
             } else {
                 GroupLabel(text: "Machine")
                 machinePicker(machines)
@@ -108,7 +108,7 @@ struct NewSessionView: View {
                         .font(Theme.control)
                         .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
                         .padding(.horizontal, 12)
-                        .frame(height: Theme.controlHeight)
+                        .scaledMinHeight(Theme.controlHeight)
                         .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
                         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
                             .strokeBorder(selected ? Theme.borderStrong : Theme.border, lineWidth: 1))
@@ -259,7 +259,7 @@ struct FolderBrowserView: View {
                     CardList(data: [FolderChoice(path: parent)]) { up in
                         NavigationLink(value: FolderBrowse(machineId: machineId, path: up.path)) {
                             HStack(spacing: 12) {
-                                Image(systemName: "arrow.up").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                                Image(systemName: "arrow.up").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
                                 Text("Up to \(FolderRow.name(up.path))").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                                 Spacer(minLength: 8)
                             }
@@ -278,10 +278,10 @@ struct FolderBrowserView: View {
                     CardList(data: listing.folders.filter { shown.contains($0.path) }) { entry in
                         NavigationLink(value: FolderBrowse(machineId: machineId, path: entry.path)) {
                             HStack(spacing: 12) {
-                                Image(systemName: "folder").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                                Image(systemName: "folder").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
                                 Text(entry.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                                 Spacer(minLength: 8)
-                                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                                Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
                             }
                             .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
                             .contentShape(.rect)
@@ -326,6 +326,8 @@ struct FolderBrowserView: View {
         error = nil
         do {
             listing = try await client.folders(machine: machineId, path: current ?? path)
+        } catch is CancellationError {
+            // The picker closed mid-fetch: nothing failed.
         } catch {
             self.error = error.localizedDescription
         }
@@ -400,11 +402,11 @@ struct ModelField: View {
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(Theme.font(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textMuted)
             }
             .padding(.horizontal, 12)
-            .frame(height: Theme.fieldHeight)
+            .scaledMinHeight(Theme.fieldHeight)
             .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
             .contentShape(.rect)
@@ -427,7 +429,7 @@ struct FolderRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "folder").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+            Image(systemName: "folder").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(Self.name(path)).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(SessionGrouping.abbreviateHome(Self.parent(path))).font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -435,7 +437,7 @@ struct FolderRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if selected {
-                Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                Image(systemName: "checkmark").font(Theme.font(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
             }
         }
         .padding(.vertical, Theme.rowVertical)

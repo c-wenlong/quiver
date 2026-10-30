@@ -11,10 +11,10 @@ struct MarbleScaleTests {
     }
 
     @Test func aHeavyMonthGetsALargeUnit() {
-        // October's real figures: $16,442 across six harnesses.
+        // A made-up heavy month: about $16,400 across six harnesses.
         let scale = MarbleScale(shares: [
-            share("claude", cost: 8102), share("codex", cost: 1973), share("devin", cost: 3725),
-            share("cursor", cost: 1225), share("opencode", cost: 0.05), share("grok-bot", cost: 1417),
+            share("claude", cost: 8150), share("codex", cost: 1950), share("devin", cost: 3750),
+            share("cursor", cost: 1250), share("opencode", cost: 0.05), share("grok-bot", cost: 1400),
         ], capacity: 150)
         #expect(scale.unit == .dollars(200))
         #expect(scale.counts.map(\.count) == [41, 10, 19, 6, 1, 7])

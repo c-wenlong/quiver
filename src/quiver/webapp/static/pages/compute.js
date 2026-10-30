@@ -64,15 +64,18 @@ function computeStore(key, value) {
 
 const CFmt = {
   /* ByteCountFormatter's .memory style: binary units, whole KB, one
-   * decimal for MB, two for GB and up, trailing zeros dropped. */
+   * decimal for MB, two for GB and up, trailing zeros dropped; nothing
+   * is "0 KB", as in ComputeSummary.bytes. */
   bytes(count) {
-    if (!count) return "Zero KB";
+    if (!count) return "0 KB";
     if (count < 1024) return `${count} bytes`;
     const units = [["KB", 0], ["MB", 1], ["GB", 2], ["TB", 2]];
     let value = count / 1024, i = 0;
     while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
     return `${value.toLocaleString("en-US", { maximumFractionDigits: units[i][1] })} ${units[i][0]}`;
   },
+  /* "1 thread", "28 threads", as in ComputeSummary.threads. */
+  threads(n) { return `${n} ${n === 1 ? "thread" : "threads"}`; },
   /* Whole percent once it is two digits, one decimal below it. */
   percent(p) {
     const digits = p >= 10 ? 0 : 1;
@@ -217,7 +220,8 @@ function paintCompute(busy) {
 function computeTop(d) {
   const t = d.totals;
   const machine = machineLine(d);
-  return `<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${t.process_count} processes · CPU ${CFmt.percent(t.cpu_percent)}% · ${t.threads} threads</p>${
+  const n = t.process_count;
+  return `<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${n} ${n === 1 ? "process" : "processes"} · CPU ${CFmt.percent(t.cpu_percent)}% · ${CFmt.threads(t.threads)}</p>${
     machine ? `<p class="caption num compute-machine">${machine}</p>` : ""}`;
 }
 
@@ -289,7 +293,7 @@ function harnessCard(usage) {
   const flagged = (r) => r.memory_bytes > limit || r.busy;
   const hiddenFlagged = all ? 0 : rows.slice(COMPUTE_VISIBLE_ROWS).filter(flagged).length;
   const n = usage.process_count;
-  const figures = `${CFmt.bytes(usage.memory_bytes)} · CPU ${CFmt.percent(usage.cpu_percent)}% · ${n} ${n === 1 ? "process" : "processes"} · ${usage.threads} threads · running for ${CFmt.duration(nowS() - usage.running_since)}`;
+  const figures = `${CFmt.bytes(usage.memory_bytes)} · CPU ${CFmt.percent(usage.cpu_percent)}% · ${n} ${n === 1 ? "process" : "processes"} · ${CFmt.threads(usage.threads)} · running for ${CFmt.duration(nowS() - usage.running_since)}`;
   let body = "";
   if (expanded) {
     body = `<div class="compute-rows">${shown.map((r) => processRow(r, limit)).join("")}${hidden ? `
@@ -309,7 +313,7 @@ function processRow(r, limit) {
   const badges = (r.memory_bytes > limit ? badge(`Over ${CFmt.bytes(limit)}`) : "") + (r.busy ? badge("Busy") : "");
   return `<div class="compute-row" title="${esc(r.command_line)}">
     <div class="compute-main"><div class="compute-name"><span class="ellipsis">${esc(r.name)}</span>${badges}</div>
-      <div class="caption num">PID ${r.pid} · ${r.threads} threads · running for ${CFmt.duration(nowS() - r.started_at)}</div></div>
+      <div class="caption num">PID ${r.pid} · ${CFmt.threads(r.threads)} · running for ${CFmt.duration(nowS() - r.started_at)}</div></div>
     <span class="caption num compute-mem">${CFmt.bytes(r.memory_bytes)}</span>
     <span class="caption num compute-cpu">${r.cpu_percent == null ? "–" : `${CFmt.percent(r.cpu_percent)}%`}</span>
   </div>`;
@@ -660,26 +664,6 @@ function splitAge(seconds) {
   return [minutes, "minute"];
 }
 
-/* app.js's api() only reads; the settings write sends JSON with the same
- * headers (authHeaders: the bearer when one is stored, and X-Quiver-Pair
- * so an owner's tailnet device is admitted without one). Never throws:
- * { status: 0 } when the hub is unreachable. */
-async function computePost(path, body) {
-  let resp;
-  try {
-    resp = await fetch(path, {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return { status: 0, data: null };
-  }
-  let data = null;
-  try { data = await resp.json(); } catch { /* empty body */ }
-  return { status: resp.status, data };
-}
-
 /* The settings page's set-switch as a button: the same markup so the
  * shared stylesheet draws the Mac's switch. `type="button"` matters —
  * the sheet is a form, and a bare button would submit and close it. */
@@ -781,7 +765,7 @@ function openComputeLimits() {
     p.acBusy = true;
     p.acError = null;
     drawAutoclean();
-    computePost("/v1/app/compute/settings", body).then(({ status, data }) => {
+    apiPost("/v1/app/compute/settings", body).then(({ status, data }) => {
       p.acBusy = false;
       if (status === 200 && data && data.autoclean) {
         if (p.data) p.data.autoclean = data.autoclean;

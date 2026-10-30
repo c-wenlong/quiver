@@ -319,11 +319,11 @@ class TestSessionsRoute(HubBase):
         self.assertEqual(len(body["notes"]), 1)
 
     def test_page_script_is_served(self):
-        self.assertEqual(self.srv.request("GET", "/app/sessions.js")[0], 200)
-        status, body = self.srv.request("GET", "/app/pages.js")
+        self.assertEqual(self.srv.request("GET", "/sessions.js")[0], 200)
+        status, body = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
         self.assertIn(b"globalThis.SessionChat", body)
-        status, body = self.srv.request("GET", "/app/pages.css")
+        status, body = self.srv.request("GET", "/pages.css")
         self.assertIn(b".chat-composer", body)
 
 
@@ -1512,6 +1512,7 @@ class TestSessionModelShown(unittest.TestCase):
         out = self.run_js("""
           const T = SessionChat._test;
           const out = {};
+          globalThis.setTimeout = (f) => { f(); return 0; };
           T.chat.key = "s1"; T.chat.gen = 3;
           T.chat.row = { harness: "claude", status: "active" };
           const answer = (status, sessions) => { globalThis.api = async () => ({ status, data: { sessions } }); };
@@ -1546,6 +1547,54 @@ class TestSessionModelShown(unittest.TestCase):
         self.assertEqual(out["status"], "active")
         self.assertEqual(out["switched"], "claude-sonnet-4-5")
         self.assertEqual(out["late"], "claude-sonnet-4-5")
+
+    def test_a_stale_read_is_repeated_until_the_catalog_catches_up(self):
+        """The turn's end can reach the stream before the hub's catalog
+        refresh (every 10 s) holds the new model, so one read may be stale:
+        it repeats after each wait until the model differs."""
+        out = self.run_js("""
+          const T = SessionChat._test;
+          const out = {};
+          const waits = [];
+          globalThis.setTimeout = (f, ms) => { waits.push(ms); f(); return 0; };
+          T.chat.key = "s1"; T.chat.gen = 3;
+          T.chat.row = { harness: "claude", model: "claude-sonnet-4-5" };
+          let reads = 0;
+          // The catalog is behind for the first two reads.
+          globalThis.api = async () => {
+            reads++;
+            const model = reads < 3 ? "claude-sonnet-4-5" : "claude-opus-4-5";
+            return { status: 200, data: { sessions: [{ key: "s1", model }] } };
+          };
+          out.shown = await T.refreshModel();
+          out.reads = reads; out.waits = waits.slice();
+          // A model that really didn't change reads once per wait, then stops.
+          reads = 0; waits.length = 0;
+          globalThis.api = async () => { reads++; return { status: 200, data: { sessions: [{ key: "s1", model: "claude-opus-4-5" }] } }; };
+          out.same = await T.refreshModel();
+          out.sameReads = reads; out.sameWaits = waits.slice();
+          // A newer turn end takes over from a read still waiting.
+          reads = 0;
+          const timers = [];
+          globalThis.setTimeout = (f) => { timers.push(f); return 0; };
+          const first = T.refreshModel();
+          await new Promise((r) => setImmediate(r));
+          const second = T.refreshModel();
+          await new Promise((r) => setImmediate(r));
+          out.readsBeforeWake = reads;
+          globalThis.setTimeout = (f) => { f(); return 0; };
+          timers.splice(0).forEach((f) => f());
+          await Promise.all([first, second]);
+          out.readsAfterWake = reads;
+          return out;""", with_sessions=False)
+        self.assertEqual(out["shown"], "claude-opus-4-5")
+        self.assertEqual((out["reads"], out["waits"]), (3, [6000, 6000]))
+        self.assertEqual(out["same"], "claude-opus-4-5")
+        self.assertEqual((out["sameReads"], out["sameWaits"]), (3, [6000, 6000]))
+        # Two reads were made and both are waiting; waking them, the first
+        # stops (superseded) and the second goes on through its two retries.
+        self.assertEqual(out["readsBeforeWake"], 2)
+        self.assertEqual(out["readsAfterWake"], 4)
 
 
 if __name__ == "__main__":

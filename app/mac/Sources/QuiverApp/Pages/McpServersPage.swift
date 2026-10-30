@@ -189,6 +189,9 @@ private struct ServerGrid: View {
     /// The name column takes whatever the cells leave, but never less than this.
     static let nameMinWidth: CGFloat = 180
     static let cellWidth: CGFloat = 88
+    /// The gap between a Local row's folder buttons and the first harness
+    /// cell, the same on a server's row and an unused folder's.
+    static let actionsGap: CGFloat = 8
     /// Rows a section shows before folding behind a Show more row.
     private static let foldLimit = 10
     /// Section titles the user has unfolded.
@@ -328,7 +331,7 @@ private struct ServerRow: View {
         .overlay(alignment: .trailing) {
             if !folders.isEmpty {
                 FolderActions(folders: folders, editor: editor)
-                    .padding(.trailing, cellsWidth + 8)
+                    .padding(.trailing, cellsWidth + ServerGrid.actionsGap)
             }
         }
     }
@@ -777,6 +780,8 @@ private struct FolderRow: View {
     var body: some View {
         HStack(spacing: 0) {
             RepoFolderRow(folder: folder, usedBy: hubKnown ? [] : nil, editor: editor)
+                // Its buttons end where a server row's do, not 8pt further right.
+                .padding(.trailing, ServerGrid.actionsGap)
                 .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
             ForEach(harnesses, id: \.self) { harness in
                 Spacer().frame(width: ServerGrid.columnWidth(harness))

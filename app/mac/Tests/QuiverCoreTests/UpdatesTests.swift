@@ -68,9 +68,7 @@ struct BuildInfoTests {
 @Suite("Update preferences")
 struct UpdatePreferencesTests {
     private func freshDefaults() throws -> UserDefaults {
-        let defaults = try #require(UserDefaults(suiteName: "UpdatePreferencesTests.\(UUID().uuidString)"))
-        defaults.removePersistentDomain(forName: defaults.description)
-        return defaults
+        TestDefaults("UpdatePreferencesTests")
     }
 
     @Test func storedChannelWins() {
@@ -225,6 +223,10 @@ struct LocalBuildCheckTests {
 
 @Suite("Release check")
 struct ReleaseCheckTests {
+    /// Every temp folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private static let payload = """
         {"tag_name": "v1.1.0",
          "html_url": "https://github.com/c-wenlong/quiver/releases/tag/v1.1.0",
@@ -245,7 +247,7 @@ struct ReleaseCheckTests {
     }
 
     private func tempCache() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appending(path: UUID().uuidString)
             .appending(path: "latest-release.json")
     }
@@ -388,8 +390,12 @@ private struct DeadTransport: HTTPTransport {
 @Suite("Updates model")
 @MainActor
 struct UpdatesModelTests {
+    /// Every temp folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func tempDir(_ name: String = UUID().uuidString) -> URL {
-        let url = FileManager.default.temporaryDirectory.appending(path: name)
+        let url = scratch.url.appending(path: name)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -397,7 +403,7 @@ struct UpdatesModelTests {
     private func makeModel(checkout: String,
                            rebuildRunner: any CommandRunning,
                            rebuildDir: URL) -> UpdatesModel {
-        let defaults = UserDefaults(suiteName: "UpdatesModelTests.\(UUID().uuidString)")!
+        let defaults = TestDefaults("UpdatesModelTests")
         let prefs = UpdatePreferences(defaults: defaults)
         prefs.checkoutOverride = checkout
         return UpdatesModel(
@@ -419,7 +425,7 @@ struct UpdatesModelTests {
     /// The dev controls (channel picker, Source checkout, Rebuild) are a
     /// dev build's; a prod build hides them even with a dev override saved.
     @Test func aProdBuildHasNoDevControls() {
-        let defaults = UserDefaults(suiteName: "UpdatesModelTests.\(UUID().uuidString)")!
+        let defaults = TestDefaults("UpdatesModelTests")
         let prefs = UpdatePreferences(defaults: defaults)
         prefs.channelOverride = "dev"
         let model = UpdatesModel(
@@ -436,7 +442,7 @@ struct UpdatesModelTests {
     }
 
     @Test func aDevBuildShowsDevControls() {
-        let defaults = UserDefaults(suiteName: "UpdatesModelTests.\(UUID().uuidString)")!
+        let defaults = TestDefaults("UpdatesModelTests")
         let model = UpdatesModel(
             build: BuildInfo(channel: .dev, commit: built),
             preferences: UpdatePreferences(defaults: defaults),

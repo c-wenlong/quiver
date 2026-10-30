@@ -231,14 +231,6 @@ def deploy_targets(
     return targets
 
 
-def covered_events(contract: HookContract, declared: list[str]) -> list[str]:
-    """The native events of ``contract`` covered by ``declared``."""
-    want = set(declared)
-    return [native for native, normalized
-            in zip(contract.events, contract.normalized_events())
-            if normalized in want]
-
-
 # --- generation ------------------------------------------------------------
 
 

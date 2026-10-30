@@ -80,7 +80,7 @@ struct InboxView: View {
         HStack(spacing: 12) {
             if item.isGitHub {
                 Image(systemName: "bell.badge")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    .font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
                     .frame(width: Theme.statusDot + 4)
             } else {
                 StatusDot(status: item.sessionStatus)
@@ -100,10 +100,10 @@ struct InboxView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if item.sessionStatus == .approval {
                 Text("Review").font(Theme.control).foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 10).frame(height: 28)
+                    .padding(.horizontal, 10).scaledMinHeight(28)
                     .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.borderStrong, lineWidth: 1))
             } else {
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
             }
         }
         .padding(.vertical, Theme.rowVertical)

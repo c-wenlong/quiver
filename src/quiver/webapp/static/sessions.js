@@ -8,6 +8,12 @@
  * the hub's /v1/search, which matches what was said in each transcript
  * when the hub has a search index. A transcript hit keeps its row and
  * shows the matching snippet under it.
+ *
+ * A row's "More actions" button (or a right-click on it) offers the
+ * iPhone's swipe-left actions: Pin or Unpin, Rename, and Fork where the
+ * hub says the harness can. Pinned rows sit in a Pinned group above the
+ * days. The hub keeps pins and names (POST .../pin, .../title), so every
+ * device agrees.
  */
 "use strict";
 
@@ -56,6 +62,7 @@ async function renderSessions(_id, rescan = false) {
     scheduleTranscriptSearch();
   }
   sessionsPage.scrollY = null;
+  const mark = pinLedger.clock;
   const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
   if (gen !== sessionsPage.gen) return;
   if (status === 401) return renderGate();
@@ -65,6 +72,7 @@ async function renderSessions(_id, rescan = false) {
     bindSessionsHeader();
     return;
   }
+  pinOverlay(data.sessions || [], mark);
   sessionsPage.data = data;
   paintSessions();
   scheduleTranscriptSearch();
@@ -176,7 +184,9 @@ function filteredSessions() {
   const kept = [];
   let trivial = 0;
   for (const r of s.data.sessions) {
-    if (start != null && r.last_active_at < start) continue;
+    // A pinned row stays listed whatever the time window says, as the
+    // phone's Pinned section has no window at all.
+    if (!r.pinned && start != null && r.last_active_at < start) continue;
     if (s.tool && r.harness !== s.tool) continue;
     if (s.project && r.project_key !== s.project) continue;
     if (s.model && !(r.usage && r.usage.models.some((m) => m.model === s.model))) continue;
@@ -185,7 +195,7 @@ function filteredSessions() {
         ...(r.usage ? r.usage.models.map((m) => m.model) : [])].join(" ").toLowerCase();
       if (!hay.includes(q) && !transcriptHit(r.key)) continue;
     }
-    if (r.trivial && !s.showTrivial) { trivial++; continue; }
+    if (r.trivial && !r.pinned && !s.showTrivial) { trivial++; continue; }
     kept.push(r);
   }
   return { kept, trivial };
@@ -277,7 +287,17 @@ function localDay(epoch) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function sessionsTable(rows) {
+/* The phone's groupsWithPins: pinned rows first, in the order they were
+ * pinned, and out of their day groups. */
+function splitPinned(rows) {
+  const pinned = rows.filter((r) => r.pinned).sort((a, b) =>
+    (a.pinned_at ?? Infinity) - (b.pinned_at ?? Infinity)
+      || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return { pinned, rest: rows.filter((r) => !r.pinned) };
+}
+
+function sessionsTable(all) {
+  const { pinned, rest: rows } = splitPinned(all);
   const days = [];
   for (const r of rows) {
     const day = localDay(r.last_active_at);
@@ -295,9 +315,11 @@ function sessionsTable(rows) {
     const label = new Date(y, m - 1, dd).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
     return `<div class="day"><div class="day-label">${label}</div>${shown.map(sessionRow).join("")}${fold}</div>`;
   }).join("");
+  const pins = pinned.length
+    ? `<div class="day pinned"><div class="day-label">Pinned</div>${pinned.map(sessionRow).join("")}</div>` : "";
   return `<div class="card sessions">
     <div class="session-head"><span>Session / project</span><span class="num-col">Tokens</span><span class="num-col">Spend</span></div>
-    ${groups}</div>`;
+    ${pins}${groups}</div>`;
 }
 
 function duration(seconds) {
@@ -350,7 +372,8 @@ function sessionRow(r) {
     <span class="session-logo" title="${esc(Fmt.harnessName(r.harness))}">${Fmt.logo(r.harness)}</span>
     <span class="session-main"><span class="session-title"><span class="ellipsis">${esc(r.title || r.id || "Untitled")}</span>${badge}</span>
       <span class="session-sub">${second}</span>${snippet}</span>
-    <span class="session-acts">${actHtml}</span>
+    <span class="session-acts">${actHtml}<button type="button" class="row-more" data-key="${esc(r.key)}"
+      aria-label="More actions" aria-haspopup="menu" title="Pin, rename or fork">${MORE_ICON}</button></span>
     <span class="num-col num">${r.usage ? Fmt.tokens(r.usage.tokens) : "–"}</span>
     <span class="num-col num spend">${r.usage ? Fmt.dollars(r.usage.cost_usd) : "–"}</span>
   </div>`;
@@ -588,6 +611,13 @@ function bindSessionControls() {
       location.hash = `#/sessions?chat=${encodeURIComponent(r.key)}`;
     };
     row.onclick = open;
+    // A right-click is the phone's long press: the row's menu.
+    row.oncontextmenu = (e) => {
+      const r = byKey.get(row.dataset.key);
+      if (!r) return;
+      e.preventDefault();
+      openSessionMenu(r, row, { x: e.clientX, y: e.clientY });
+    };
     row.onkeydown = (e) => {
       if (e.target !== row || (e.key !== "Enter" && e.key !== " ")) return;
       e.preventDefault();
@@ -600,6 +630,13 @@ function bindSessionControls() {
       const r = byKey.get(btn.dataset.key);
       if (!r) return;
       if (btn.dataset.act === "attach") attachRow(r); else detachClick(r);
+    };
+  }
+  for (const btn of document.querySelectorAll(".row-more")) {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const r = byKey.get(btn.dataset.key);
+      if (r) openSessionMenu(r, btn);
     };
   }
 }
@@ -626,8 +663,10 @@ function sessionRowFor(key) {
 async function sessionDetails(key) {
   let r = sessionRowFor(key);
   if (!r) {
+    const mark = pinLedger.clock;
     const { status, data } = await api("/v1/app/sessions");
     if (status === 200 && data) {
+      pinOverlay(data.sessions || [], mark);
       sessionsPage.data = data;
       r = sessionRowFor(key);
     }
@@ -645,6 +684,414 @@ async function sessionDetails(key) {
   }
   openSheet(r);
   return true;
+}
+
+/* -------------------------------------------- pin, rename and fork */
+
+/* The iPhone's SessionAction.trailing: the row menu's actions. Fork only
+ * where the hub says the harness's CLI can fork this session. */
+function rowMenuActions(r) {
+  const out = [r.pinned ? "unpin" : "pin", "rename"];
+  if (r.can_fork === true) out.push("fork");
+  return out;
+}
+const MENU_LABEL = { pin: "Pin", unpin: "Unpin", rename: "Rename", fork: "Fork" };
+const MORE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
+
+/* The iPhone's RenameRules, matching sessionmeta.parse_title on the hub:
+ * one line, spaces collapsed, at most 120 characters. The hub counts
+ * code points, and so does [...text]. */
+const TITLE_MAX = 120;
+function titleLength(text) { return [...text].length; }
+function clampTitle(text) {
+  const oneLine = text.replace(/[\r\n]/g, " ");
+  const points = [...oneLine];
+  return points.length > TITLE_MAX ? points.slice(0, TITLE_MAX).join("") : oneLine;
+}
+function normalTitle(text) {
+  return [...text.split(/\s+/).filter(Boolean).join(" ")].slice(0, TITLE_MAX).join("").trimEnd();
+}
+/* Save is on once the name is non-empty and differs from the current
+ * one; clearing it goes through "Use the original name". */
+function canSaveTitle(text, current) {
+  const name = normalTitle(text);
+  return !!name && name !== (current || "");
+}
+/* A name set on the hub replaces the harness's title. */
+function hasCustomTitle(r) {
+  return r.harness_title != null && !!r.title && r.title !== r.harness_title;
+}
+
+/* The iPhone's PinLedger: pins chosen here that the hub may not reflect
+ * yet. Each choice gets a version; a reply counts only for the latest
+ * choice on its key, and a list fetched before the latest choice was
+ * answered keeps the choice instead of the hub's older answer. */
+const pinLedger = { clock: 0, choices: new Map() };
+
+/* `base` is the row's state the hub last confirmed, which a refusal of
+ * this choice goes back to; a choice made over one still unanswered
+ * keeps that one's base, not its optimistic state. */
+function pinChoose(key, pinned, now, base) {
+  const prior = pinLedger.choices.get(key);
+  pinLedger.clock += 1;
+  pinLedger.choices.set(key, { pinned, pinnedAt: pinned ? now : null, version: pinLedger.clock, answeredAt: null,
+    base: prior && prior.answeredAt === null ? prior.base : base });
+  return pinLedger.clock;
+}
+/* The hub took `version`: false when a newer choice replaced it. */
+function pinAnswered(key, version, meta) {
+  const c = pinLedger.choices.get(key);
+  if (c && c.version !== version && c.answeredAt === null && meta) {
+    // An older choice reached the hub: that is the state to go back to
+    // if the newer one is refused.
+    c.base = { pinned: !!meta.pinned, pinned_at: meta.pinned ? meta.pinned_at ?? null : null };
+  }
+  if (!c || c.version !== version) return false;
+  pinLedger.clock += 1;
+  c.answeredAt = pinLedger.clock;
+  return true;
+}
+/* The hub refused `version`: the state to put the row back to when it
+ * was still the latest choice, else null. */
+function pinRefused(key, version) {
+  const c = pinLedger.choices.get(key);
+  if (!c || c.version !== version) return null;
+  pinLedger.choices.delete(key);
+  return c.base;
+}
+/* Rows fetched from `mark` (the clock when the fetch started) keep each
+ * choice not yet answered by then; choices the fetch reflects go. */
+function pinOverlay(rows, mark) {
+  for (const [key, c] of [...pinLedger.choices]) {
+    if (c.answeredAt !== null && c.answeredAt <= mark) { pinLedger.choices.delete(key); continue; }
+    const r = rows.find((x) => x.key === key);
+    if (!r) continue;
+    r.pinned = c.pinned;
+    r.pinned_at = c.pinned ? (c.pinnedAt ?? r.pinned_at) : null;
+  }
+  return rows;
+}
+
+/* A pin or rename the hub answered (`sessionmeta.fields`), with the pin
+ * a still-unanswered choice holds, onto the list's row and the open
+ * chat's header. */
+function patchMeta(key, meta) {
+  const c = pinLedger.choices.get(key);
+  const held = c && c.answeredAt === null;
+  const pinned = held ? c.pinned : !!meta.pinned;
+  const fields = {
+    title: meta.title || meta.harness_title || "",
+    harness_title: meta.harness_title || "",
+    pinned,
+    pinned_at: pinned ? (held ? c.pinnedAt : meta.pinned_at ?? null) : null,
+  };
+  const r = sessionRowFor(key);
+  if (r) Object.assign(r, fields);
+  const chat = sessionChat();
+  if (chat && chat.key === key && chat.applyMeta) chat.applyMeta(fields);
+}
+
+function repaintList() {
+  if (sessionsListVisible()) paintSessions();
+}
+
+/* Pins or unpins at once, then tells the hub; a refusal puts the row
+ * back with a note above the filters. */
+async function setPinned(row, pinned) {
+  const key = row.key;
+  const r = sessionRowFor(key) || row;
+  const before = { pinned: !!r.pinned, pinned_at: r.pinned_at ?? null };
+  const version = pinChoose(key, pinned, Date.now() / 1000, before);
+  patchMeta(key, { title: r.title, harness_title: r.harness_title, pinned, pinned_at: pinLedger.choices.get(key).pinnedAt });
+  repaintList();
+  const { status, data } = await apiPost(`/v1/sessions/${encodeURIComponent(key)}/pin`, { pinned });
+  if (status === 200 && data) {
+    if (pinAnswered(key, version, data)) { patchMeta(key, data); repaintList(); }
+    return;
+  }
+  const base = pinRefused(key, version);
+  if (!base) return;
+  patchMeta(key, { title: r.title, harness_title: r.harness_title, ...base });
+  if (status === 401) {
+    if (sessionsListVisible()) renderGate();
+    return;
+  }
+  sessionsPage.actionNote = `${pinned ? "Couldn't pin it" : "Couldn't unpin it"}. ${
+    controlErrorText(status, data, "Check the connection, then try again.")}`;
+  repaintList();
+}
+
+/* ------------------------------------------------------- row menu */
+
+// The open menu's close function and the button it hangs from.
+let rowMenuClose = null, rowMenuOwner = null;
+
+function closeSessionMenu() {
+  if (rowMenuClose) rowMenuClose();
+}
+
+/* The row's menu, under its More button or at the pointer for a
+ * right-click. Escape, a click elsewhere, a scroll or leaving the page
+ * closes it; its button clicked again closes it too. */
+function openSessionMenu(r, anchor, point) {
+  const again = !point && rowMenuOwner === anchor;
+  closeSessionMenu();
+  if (again) return;
+  const menu = document.createElement("div");
+  menu.className = "row-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = rowMenuActions(r).map((a) =>
+    `<button type="button" class="row-menu-item" role="menuitem" data-act="${a}">${MENU_LABEL[a]}</button>`).join("");
+  document.body.appendChild(menu);
+  const box = point ? { left: point.x, right: point.x, bottom: point.y, top: point.y } : anchor.getBoundingClientRect();
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  const left = point ? box.left : box.right - w;
+  const below = box.bottom + 4;
+  menu.style.left = `${Math.max(8, Math.min(left, window.innerWidth - w - 8))}px`;
+  menu.style.top = `${below + h > window.innerHeight - 8 ? Math.max(8, box.top - h - 4) : below}px`;
+  const items = [...menu.querySelectorAll(".row-menu-item")];
+  // The button's own press is left to its click, which toggles.
+  const owner = point ? null : anchor;
+  const outside = (e) => {
+    if (!menu.contains(e.target) && !(owner && owner.contains(e.target))) close();
+  };
+  const close = (refocus) => {
+    rowMenuClose = null;
+    rowMenuOwner = null;
+    if (owner) owner.setAttribute("aria-expanded", "false");
+    menu.remove();
+    document.removeEventListener("pointerdown", outside, true);
+    window.removeEventListener("scroll", onScroll, true);
+    window.removeEventListener("resize", onScroll);
+    window.removeEventListener("hashchange", onScroll);
+    if (refocus && anchor && document.contains(anchor)) anchor.focus();
+  };
+  const onScroll = () => close();
+  rowMenuClose = close;
+  rowMenuOwner = owner;
+  if (owner) owner.setAttribute("aria-expanded", "true");
+  for (const item of items) {
+    item.onclick = (e) => {
+      e.stopPropagation();
+      close();
+      runSessionAction(item.dataset.act, r);
+    };
+  }
+  menu.onkeydown = (e) => {
+    const i = items.indexOf(document.activeElement);
+    if (e.key === "Escape") { e.preventDefault(); close(true); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus();
+    } else if (e.key === "Tab") close();
+  };
+  document.addEventListener("pointerdown", outside, true);
+  window.addEventListener("scroll", onScroll, true);
+  window.addEventListener("resize", onScroll);
+  window.addEventListener("hashchange", onScroll);
+  if (items[0]) items[0].focus();
+}
+
+function runSessionAction(action, r) {
+  if (action === "pin" || action === "unpin") return setPinned(r, action === "pin");
+  if (action === "rename") return openRenameSheet(r);
+  if (action === "fork") return openForkSheet(r);
+}
+
+/* A route sheet (app.js bodySheet): leaving the page closes it. Any
+ * close (Esc, Cancel, navigation) stops the sheet trusting replies, so a
+ * fork's polls can't open its chat from another page. */
+function actionSheetEl() {
+  const sheet = bodySheet("session-action-sheet", "sheet");
+  sheet.onclose = () => { actionSheet.seq++; };
+  return sheet;
+}
+const actionSheet = { seq: 0 };
+
+/* --------------------------------------------------------- rename */
+
+/* The iPhone's RenameSheet. The name is kept on the hub, so every paired
+ * device and the web app show it. */
+function openRenameSheet(r) {
+  const key = r.key;
+  const current = r.title || "";
+  const custom = hasCustomTitle(r);
+  const mine = ++actionSheet.seq;
+  const sheet = actionSheetEl();
+  sheet.innerHTML = `<form class="sheet-body action-sheet" id="rename-form">
+    <div class="sheet-title">Rename</div>
+    <div class="rename-label"><span class="caption">Name</span><span class="caption" id="rename-count"></span></div>
+    <input class="field" id="rename-input" type="text" autocomplete="off" spellcheck="false" aria-label="Name"
+      placeholder="${esc(r.harness_title || "Name this session")}" value="${esc(clampTitle(current))}">
+    <p class="caption">Every device paired with this hub shows this name.</p>
+    ${custom ? `<div><button type="button" class="tab" id="rename-reset">Use the original name</button></div>
+      ${r.harness_title ? `<p class="caption">Original: ${esc(r.harness_title)}</p>` : ""}` : ""}
+    <p class="error" id="rename-error" hidden></p>
+    <div class="sheet-actions">
+      <button type="button" class="tab" id="rename-cancel">Cancel</button>
+      <button type="submit" class="tab selected" id="rename-save">Save</button>
+    </div></form>`;
+  const input = sheet.querySelector("#rename-input");
+  const count = sheet.querySelector("#rename-count");
+  const save = sheet.querySelector("#rename-save");
+  const reset = sheet.querySelector("#rename-reset");
+  const cancel = sheet.querySelector("#rename-cancel");
+  const error = sheet.querySelector("#rename-error");
+  const sync = () => {
+    count.textContent = `${titleLength(input.value)}/${TITLE_MAX}`;
+    save.disabled = !canSaveTitle(input.value, current);
+  };
+  const submit = async (title) => {
+    for (const b of [input, save, reset, cancel]) if (b) b.disabled = true;
+    save.textContent = "Saving…";
+    error.hidden = true;
+    const { status, data } = await apiPost(`/v1/sessions/${encodeURIComponent(key)}/title`, { title });
+    if (status === 200 && data) {
+      // Saved, even when the sheet was closed meanwhile.
+      patchMeta(key, data);
+      repaintList();
+      if (mine === actionSheet.seq) sheet.close();
+      return;
+    }
+    if (mine !== actionSheet.seq) return;
+    if (status === 401) {
+      sheet.close();
+      if (sessionsListVisible()) renderGate();
+      return;
+    }
+    for (const b of [input, reset, cancel]) if (b) b.disabled = false;
+    save.textContent = "Save";
+    sync();
+    error.textContent = controlErrorText(status, data, "Couldn't rename it. Check the connection, then try again.");
+    error.hidden = false;
+  };
+  input.oninput = () => {
+    const clamped = clampTitle(input.value);
+    if (clamped !== input.value) input.value = clamped;
+    sync();
+  };
+  sheet.querySelector("#rename-form").onsubmit = (e) => {
+    e.preventDefault();
+    if (canSaveTitle(input.value, current)) submit(normalTitle(input.value));
+  };
+  if (reset) reset.onclick = () => submit("");
+  cancel.onclick = () => { actionSheet.seq++; sheet.close(); };
+  sync();
+  if (!sheet.open) sheet.showModal();
+  input.focus();
+  input.select();
+}
+
+/* ----------------------------------------------------------- fork */
+
+/* Where a launch landed, polling GET /v1/launches/<id> once a second like
+ * the phone's LaunchFlow: the hub's `started` (with its key),
+ * `untracked` or `failed` view, `lost` when the hub forgot it, `waiting`
+ * once the 90 attempts run out; null as soon as `alive()` is false. */
+async function followLaunch(first, alive) {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const settled = (l) => (l.state === "started" && l.key) || l.state === "untracked" || l.state === "failed";
+  let launch = first;
+  for (let i = 0; i < 90; i++) {
+    if (settled(launch)) return launch;
+    await sleep(1000);
+    if (!alive()) return null;
+    const { status, data } = await api(`/v1/launches/${encodeURIComponent(first.launch_id)}`);
+    if (!alive()) return null;
+    if (status === 200 && data) launch = data;
+    else if (status === 404) {
+      return { state: "lost", note: (data && data.error && data.error.message) || "The hub lost track of this launch." };
+    }
+    // A dropped poll is retried until the attempts run out.
+  }
+  return settled(launch) ? launch : { state: "waiting" };
+}
+
+/* The note a launch that opened no chat leaves: [text, failed]. */
+function launchNote(launch, queued) {
+  if (launch.state === "untracked") {
+    return ["Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.", false];
+  }
+  if (launch.state === "failed") return [launch.note ? `The session didn't start: ${launch.note}` : "The session didn't start.", true];
+  if (launch.state === "lost") return [launch.note, true];
+  return [queued
+    ? "Queued. It starts when that machine is online, then shows up in Sessions."
+    : "It started but hasn't shown up yet. It'll appear in Sessions when it does.", false];
+}
+
+/* The iPhone's ForkSheet: a new session that continues from this one's
+ * history, with a first message, tracked like a new-session launch; its
+ * chat opens once the hub names it. Cancel stops the polling, not the
+ * fork. */
+function openForkSheet(r) {
+  const key = r.key;
+  const mine = ++actionSheet.seq;
+  const sheet = actionSheetEl();
+  const alive = () => mine === actionSheet.seq && sheet.open;
+  const folder = (r.cwd || "").replace(/\/+$/, "").split("/").pop() || r.cwd || "its folder";
+  sheet.innerHTML = `<form class="sheet-body action-sheet" id="fork-form">
+    <div class="sheet-title">${Fmt.logo(r.harness)}<span class="ellipsis">Fork ${esc(r.title || r.id || "Untitled session")}</span></div>
+    <div class="caption">What should the fork do?</div>
+    <textarea class="field ns-prompt" id="fork-prompt" rows="4" placeholder="Its first message" aria-label="What should the fork do?"></textarea>
+    <p class="caption">The fork starts from this session's history and leaves the original as it is. It needs a first message: the harness writes nothing until it gets one.</p>
+    <p class="note" id="fork-note" hidden></p>
+    <div class="sheet-actions">
+      <button type="button" class="tab" id="fork-cancel">Cancel</button>
+      <button type="submit" class="tab selected" id="fork-start" disabled>Start</button>
+    </div>
+    <p class="caption">Runs under tmux in ${esc(folder)}. The chat opens once the fork shows up.</p></form>`;
+  const prompt = sheet.querySelector("#fork-prompt");
+  const start = sheet.querySelector("#fork-start");
+  const cancel = sheet.querySelector("#fork-cancel");
+  const note = sheet.querySelector("#fork-note");
+  // done: the fork is running or settled, so Start stays off.
+  let busy = false, done = false;
+  const phase = (label) => {
+    busy = !!label;
+    prompt.disabled = busy || done;
+    start.disabled = busy || done || !prompt.value.trim();
+    start.textContent = label || "Start";
+    cancel.textContent = busy || done ? "Close" : "Cancel";
+  };
+  const stop = ([text, failed]) => {
+    note.className = failed ? "error" : "note";
+    note.textContent = text;
+    note.hidden = false;
+    if (!failed) done = true;
+    phase(null);
+  };
+  prompt.oninput = () => { if (!busy) phase(null); };
+  cancel.onclick = () => { actionSheet.seq++; sheet.close(); };
+  sheet.querySelector("#fork-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const text = prompt.value.trim();
+    if (!text || busy || done) return;
+    note.hidden = true;
+    phase("Starting…");
+    const { status, data } = await apiPost(`/v1/sessions/${encodeURIComponent(key)}/fork`, { prompt: text });
+    if (!alive()) return;
+    if (status === 401) {
+      sheet.close();
+      return renderGate();
+    }
+    if (!((status === 200 || status === 202) && data && data.launch_id)) {
+      return stop([controlErrorText(status, data, "Couldn't start the fork. Check the connection, then try again."), true]);
+    }
+    phase("Waiting for the fork…");
+    const launch = await followLaunch(data, alive);
+    if (!launch) return;
+    if (launch.state === "started") {
+      phase("Opening the chat…");
+      actionSheet.seq++;
+      sheet.close();
+      location.hash = `#/sessions?chat=${encodeURIComponent(launch.key)}`;
+      return;
+    }
+    stop(launchNote(launch, data.queued === true));
+  };
+  phase(null);
+  if (!sheet.open) sheet.showModal();
+  prompt.focus();
 }
 
 /* ------------------------------------------------------- new session */
@@ -685,6 +1132,22 @@ function nsMachines() {
     .filter((m) => (m.launchable || m.harnesses || []).length)
     .sort((a, b) => ((b.online === true) - (a.online === true))
       || String(a.name || a.id).localeCompare(String(b.name || b.id)));
+}
+
+/* What the sheet says when no machine can start a session, from every
+ * row the hub listed (NewSessionOptions.noMachineMessage on the Mac). A
+ * row with `launchable` answered: nothing is installed there or every
+ * harness is switched off, so updating swe would change nothing. Only
+ * rows without the field (an older hub), or none at all, mean swe is
+ * too old. */
+function nsNoMachineNote(rows) {
+  if (!rows.some((m) => Array.isArray(m.launchable))) {
+    return "No machine can start a session. Update swe on the hub: a machine offers the harnesses "
+      + "swe lists there, minus the ones switched off in Provider visibility.";
+  }
+  return rows.length > 1
+    ? "No harness can start on any machine: install one, or turn it on in Settings › Providers."
+    : "No harness can start on the hub: install one there, or turn it on in Settings › Providers.";
 }
 
 function nsMachine() {
@@ -790,8 +1253,7 @@ function nsPaint() {
     <div class="sheet-title">New session</div>
     ${machineChips}
     ${machines.length && !machine ? '<p class="note">Pick a machine.</p>' : ""}
-    ${!machines.length ? `<p class="note">No machine can start a session. Update swe on the hub: a machine
-      offers the harnesses swe lists there, minus the ones switched off in Provider visibility.</p>` : ""}
+    ${!machines.length ? `<p class="note">${esc(nsNoMachineNote(ns.machines || []))}</p>` : ""}
     <div class="caption">Harness</div>
     ${harnessChips}
     ${untracked ? `<p class="note">Quiver can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
@@ -1005,55 +1467,21 @@ async function nsStart() {
   }
   ns.phase = "waiting";
   nsPaint();
-  const queued = data.queued === true;   // a satellite carries the launch
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  let launch = data;
-  // Every reply gets this check — the 90th one included.
-  const settled = (l) => {
-    if (l.state === "started" && l.key) {
-      ns.phase = "started";
-      nsPaint();
-      const key = l.key;
-      const sheet = nsSheetEl();
-      ns.phase = "idle";
-      sheet.close();
-      // The list refetches behind the chat that is about to open.
-      renderSessions("sessions");
-      location.hash = `#/sessions?chat=${encodeURIComponent(key)}`;
-      return true;
-    }
-    if (l.state === "untracked") {
-      ns.phase = "unconfirmed";
-      ns.message = "Started. Quiver can't read this harness's sessions yet, so there's no chat to open. It keeps running under tmux on the machine.";
-      nsPaint();
-      return true;
-    }
-    if (l.state === "failed") {
-      ns.phase = "failed";
-      ns.message = l.note ? `The session didn't start: ${l.note}` : "The session didn't start.";
-      nsPaint();
-      return true;
-    }
-    return false;
-  };
-  for (let i = 0; i < 90; i++) {
-    if (settled(launch)) return;
-    await sleep(1000);
-    if (mine !== ns.seq) return;
-    const { status: s, data: d } = await api(`/v1/launches/${encodeURIComponent(data.launch_id)}`);
-    if (mine !== ns.seq) return;
-    if (s === 200 && d) launch = d;
-    else if (s === 404) {
-      ns.phase = "failed";
-      ns.message = (d && d.error && d.error.message) || "The hub lost track of this launch.";
-      return nsPaint();
-    }
-    // A dropped poll is retried until the attempts run out.
+  const launch = await followLaunch(data, () => mine === ns.seq);
+  if (!launch) return;
+  if (launch.state === "started") {
+    ns.phase = "started";
+    nsPaint();
+    const sheet = nsSheetEl();
+    ns.phase = "idle";
+    sheet.close();
+    // The list refetches behind the chat that is about to open.
+    renderSessions("sessions");
+    location.hash = `#/sessions?chat=${encodeURIComponent(launch.key)}`;
+    return;
   }
-  if (settled(launch)) return;
-  ns.phase = "unconfirmed";
-  ns.message = queued
-    ? "Queued. It starts when that machine is online, then shows up in Sessions."
-    : "It started but hasn't shown up yet. It'll appear in Sessions when it does.";
+  const [message, failed] = launchNote(launch, data.queued === true);
+  ns.phase = failed ? "failed" : "unconfirmed";
+  ns.message = message;
   nsPaint();
 }

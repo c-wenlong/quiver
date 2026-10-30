@@ -1030,7 +1030,7 @@ class TestMarkdown(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestBundle(unittest.TestCase):
     def test_both_pages_register_from_the_served_bundle(self):
-        """Each script runs in its own scope in /app/pages.js: GhUI has to
+        """Each script runs in its own scope in /pages.js: GhUI has to
         reach inbox.js and repositories.js as a global."""
         from quiver.webapp import pages
         stubs = (
@@ -1130,10 +1130,138 @@ class TestRoute(HubBase):
         self.assertEqual([r["name"] for r in G.pinned(self.srv.home)], ["o/b"])
 
     def test_page_scripts_are_bundled(self):
-        _, js = self.srv.request("GET", "/app/pages.js")
+        _, js = self.srv.request("GET", "/pages.js")
         self.assertIn(b"const GhUI", js)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".gh-row", css)
+
+
+
+PR_FILTER_FLOW = r"""
+const out = {};
+const lastQ = {};
+const qsa = panel.querySelectorAll.bind(panel);
+panel.querySelectorAll = (sel) => (lastQ[sel] = qsa(sel));
+document.querySelector = (sel) => null;
+const html = () => panel.innerHTML;
+const prRows = () => [...html().matchAll(/data-pr="(\d+)" data-repo="([^"]*)"/g)].map((m) => `${m[2]}#${m[1]}`);
+const chips = () => [...html().matchAll(/data-pr-filter="(\w+)">([^<]*)<span class="num">(\d+)/g)]
+  .map((m) => [m[1], m[2].trim(), Number(m[3])]);
+const selected = () => (html().match(/aria-checked="true"[^>]*\s+data-pr-filter="(\w+)"/) || [])[1] || null;
+const click = (attr, value) => lastQ[`[data-${attr}]`].find((e) => e.attrs[`data-${attr}`] === value).onclick();
+const pr = (number, author) => ({ number, title: "PR " + number, state: "open", draft: false, author,
+  branch: "b" + number, base: "main", labels: [], mergeable: "mergeable", review_decision: "none",
+  checks: "none", updated_at: null, url: "" });
+const board = (prs) => ({ surfaces: { pull_requests: { status: "ok", pull_requests: prs },
+  issues: { status: "ok", issues: [] }, runs: { status: "ok", runs: [] } } });
+apiAnswers.push(["/v1/app/repositories", { status: 200, data: { machine: "hub", github: { status: "ok" },
+  repos: [{ name: "o/a" }, { name: "o/b" }],
+  boards: { "o/a": board([pr(1, "me"), pr(2, "bob"), pr(3, "bob")]), "o/b": board([pr(4, "me")]) } } }]);
+let pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+  { name: "o/a", status: "ok", pulls: [
+    { number: 1, mine: true, review_requested: false },
+    { number: 2, mine: false, review_requested: true },
+    { number: 3, mine: false, review_requested: false }] },
+  { name: "O/B", status: "ok", pulls: [{ number: 4, mine: true, review_requested: false }] }] } };
+apiAnswers.push(["/v1/pulls", { get status() { return pulls.status; }, get data() { return pulls.data; } }]);
+(async () => {
+  location.hash = "#/repositories";
+  PAGES.repositories();
+  await tick();
+  out.chips = chips();
+  out.allRows = prRows();
+  click("pr-filter", "mine");
+  out.mineSelected = selected();
+  out.mineRows = prRows();
+  click("pr-filter", "review");
+  out.reviewRows = prRows();
+  // o/b has nothing asking for review: it goes quiet in the rail.
+  out.quiet = /1 quiet/.test(html());
+  // Another tab: no filter bar, every row of that tab.
+  click("tab", "issues");
+  out.issuesBar = /data-pr-filter/.test(html());
+  click("tab", "pulls");
+  await tick();
+  out.backSelected = selected();
+  // gh pr status failed: review_requested is null, so that filter goes
+  // and the pick falls back to All; Mine stays.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [
+      { number: 1, mine: true, review_requested: null },
+      { number: 2, mine: false, review_requested: null },
+      { number: 3, mine: false, review_requested: null }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: null }] }] } };
+  PAGES.repositories();
+  await tick();
+  out.nullChips = chips().map((c) => c[0]);
+  out.nullSelected = selected();
+  out.nullRows = prRows().length;
+  // o/b's review flags unknown, o/a's known: narrowing the list to o/a
+  // still hides Review requested, or o/b would read as quiet in the rail.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [
+      { number: 1, mine: true, review_requested: false },
+      { number: 2, mine: false, review_requested: true },
+      { number: 3, mine: false, review_requested: false }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: null }] }] } };
+  PAGES.repositories();
+  await tick();
+  click("shown", "o/a");
+  out.scopedChips = chips().map((c) => c[0]);
+  out.scopedMineCount = (chips().find((c) => c[0] === "mine") || [])[2];
+  click("shown", "");
+  // A PR the flags don't cover yet (newer than /v1/pulls' cache): no guess, no bar.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [{ number: 1, mine: true, review_requested: false }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: false }] }] } };
+  PAGES.repositories();
+  await tick();
+  out.partialBar = /data-pr-filter/.test(html());
+  // gh blocked on the hub, or the read failing: no bar at all.
+  pulls = { status: 200, data: { env_blocked: "gh is not signed in", repos: [] } };
+  PAGES.repositories();
+  await tick();
+  out.blockedBar = /data-pr-filter/.test(html());
+  pulls = { status: 503, data: null };
+  PAGES.repositories();
+  await tick();
+  out.failedBar = /data-pr-filter/.test(html());
+  out.failedRows = prRows().length;
+  process.stdout.write(JSON.stringify(out));
+  process.exit(0);
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestPrFilter(unittest.TestCase):
+    """The dashboard's Mine / Review requested filters under node, from
+    the flags GET /v1/pulls carries; offered only while they're known."""
+
+    def test_filters_and_null_flags(self):
+        from tests.test_webapp_launch_sheets import PAGES, STUB
+        script = (STUB + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "repositories.js").read_text(encoding="utf-8") + "\n" + PR_FILTER_FLOW)
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        self.assertEqual(out["chips"], [["all", "All", 4], ["mine", "Mine", 2], ["review", "Review requested", 1]])
+        self.assertEqual(out["allRows"], ["o/a#1", "o/a#2", "o/a#3", "o/b#4"])
+        self.assertEqual(out["mineSelected"], "mine")
+        self.assertEqual(out["mineRows"], ["o/a#1", "o/b#4"])
+        self.assertEqual(out["reviewRows"], ["o/a#2"])
+        self.assertTrue(out["quiet"])
+        self.assertFalse(out["issuesBar"])
+        self.assertEqual(out["backSelected"], "review")
+        self.assertEqual(out["nullChips"], ["all", "mine"])
+        self.assertEqual(out["nullSelected"], "all")
+        self.assertEqual(out["nullRows"], 4)
+        self.assertEqual(out["scopedChips"], ["all", "mine"])
+        self.assertEqual(out["scopedMineCount"], 1)
+        self.assertFalse(out["partialBar"])
+        self.assertFalse(out["blockedBar"])
+        self.assertFalse(out["failedBar"])
+        self.assertEqual(out["failedRows"], 4)
 
 
 if __name__ == "__main__":

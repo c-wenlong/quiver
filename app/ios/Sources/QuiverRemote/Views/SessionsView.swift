@@ -34,8 +34,7 @@ struct SessionsView: View {
             } else if !app.loadedOnce {
                 LoadingRow(text: "Loading sessions")
             } else if let error = app.loadError, app.sessions.isEmpty {
-                StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") { Task { await app.refresh() } }
+                StateCard.unreachable(error) { Task { await app.refresh() } }
             } else if groups.isEmpty {
                 StateCard(icon: "tray", title: filter == .all ? "No sessions yet" : "Nothing here",
                           message: filter == .all ? "Sessions on this machine show up here as soon as an agent starts." : "No session matches this filter right now.")
@@ -82,7 +81,7 @@ struct SessionsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showNewSession = true } label: {
-                    Image(systemName: "plus").font(.system(size: 15, weight: .medium))
+                    Image(systemName: "plus").font(Theme.button)
                 }
                 .accessibilityLabel("New session")
             }
@@ -314,10 +313,10 @@ struct SessionRowView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: row.isAttached ? "link" : "eye")
-                .font(.system(size: 13))
+                .font(Theme.font(size: 13))
                 .foregroundStyle(row.isAttached ? Theme.accent : Theme.textMuted)
                 .accessibilityLabel(row.isAttached ? "Attached" : "Watching only")
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
         }
         .padding(.vertical, Theme.rowVertical)
         .padding(.horizontal, Theme.rowHorizontal)
@@ -355,13 +354,12 @@ struct HubChip: View {
         HStack(spacing: 6) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(name).font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(1)
-            Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "chevron.down").font(Theme.disclosure).foregroundStyle(Theme.textMuted)
         }
         .padding(.horizontal, 10)
-        .frame(height: 30)
+        .scaledMinHeight(30)
         .frame(maxWidth: 190)
-        .background(Theme.card, in: .capsule)
-        .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+        .modifier(ChipCapsule())
         .accessibilityLabel("\(name), \(connection == .online ? "connected" : connection == .offline ? "offline" : "connecting")")
     }
 
@@ -370,6 +368,22 @@ struct HubChip: View {
         case .online: Theme.accentFill
         case .offline: Theme.danger
         case .connecting: Theme.borderStrong
+        }
+    }
+}
+
+/// The chip's own hairline capsule, before iOS 26. From iOS 26 the
+/// toolbar sets every item on its own glass capsule, so a second capsule
+/// inside it read as a dark pill in a grey one; there the glass is the
+/// chip's shape, as it is for the + button beside it.
+private struct ChipCapsule: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+        } else {
+            content
+                .background(Theme.card, in: .capsule)
+                .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
         }
     }
 }
@@ -408,7 +422,7 @@ struct SearchResultRow: View {
         for run in SessionSearch.snippetRuns(marked) {
             var piece = AttributedString(run.text.replacingOccurrences(of: "\n", with: " "))
             piece.foregroundColor = run.hit ? Theme.textPrimary : Theme.textSecondary
-            if run.hit { piece.font = .system(size: 13, weight: .semibold) }
+            if run.hit { piece.font = Theme.font(size: 13, weight: .semibold) }
             out += piece
         }
         return out

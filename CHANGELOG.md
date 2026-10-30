@@ -22,6 +22,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or shown without its credentials
   ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
+- **Mac app: the session's model in the chat header and Sessions
+  list.** A session's chat header reads `harness · folder · model`, and
+  each Sessions row names the model of the newest reply first in its
+  details line, ahead of the ledger's other models (the ledger's own
+  spelling of the same model isn't repeated). The provider path and the
+  8-digit date stamp are dropped, as on the phone and the web app:
+  `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
+  `claude-opus-4-5`. The app reads it from this Mac's hub rows
+  (`model`, optional), on the same read that tells which rows open a
+  chat, and the open chat reads its row again when a turn ends (twice
+  more, six seconds apart, while the hub's catalog still holds the old
+  model), so the header follows a model that first appears with the opening reply or
+  changes elsewhere. Nothing shows when the hub doesn't know it. Display
+  only: the Mac doesn't switch models. Part of
+  [#643](https://github.com/c-wenlong/quiver/issues/643).
+
+
+- **iOS app: comment on an issue, and post your Resolve context as a
+  comment.** The issue page has the Mac's comment box under the thread,
+  and the Resolve sheet gains "Your context (optional)", now sent with
+  the resolve, and "Also post as a comment on #<n>", on by default.
+  Both post through the hub's `gh` login with `POST /v1/issues/comment`.
+  A context comment that fails is a warning; the launch still goes
+  ahead. Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+- **Web app: the Cursor app on the Calendar.** The hub reads each Cursor
+  account's `state.vscdb` (the app's own folder and every extra Cursor
+  profile's) as the Mac app does, so editor chats show as blocks with
+  time and responses, one legend row per account. Devin cloud stays
+  Mac-only, since its sessions live in the Mac app's own store. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+- **Web app: comment on an issue, and post your Resolve context as a
+  comment.** The issue sheet in Repositories now has the Mac's comment
+  box under the thread (Cmd or Ctrl+Return posts), and the Resolve
+  panel has "Also post as a comment on #<n>", ticked by default. Both
+  post through the hub's `gh` login with `POST /v1/issues/comment`. A
+  context comment that fails is a warning; the launch still goes ahead.
+  Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+- **Web app: Freebuff on the Calendar.** The hub reads Freebuff's
+  `run-state.json` chats under `~/.config/manicode/projects` as the Mac
+  app does, so its work shows as blocks with time and responses. Part
+  of [#970](https://github.com/c-wenlong/quiver/issues/970).
+- **Web app: Pi and Factory Droid on the Calendar.** The hub now reads
+  their session files the way the Mac app does (`~/.pi/agent/sessions`
+  and `~/.factory/sessions`), so their work shows as blocks beside the
+  ledger harnesses, with time and responses. Accidental sessions stay
+  off, judged on the ledger's history as on the Mac. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+- **Hub: `POST /v1/issues/comment` posts an issue comment.** The body
+  `{repo, number, body}` goes through the hub's own `gh` login, the way
+  the Mac's composer posts through `swe gh issue comment`, with the text
+  on `gh`'s stdin rather than its command line. Only a paired phone or
+  the owner's device can call it, only for a pinned repo, and only up
+  to GitHub's 65,536 characters. The web and iPhone issue detail build
+  their comment composer and Resolve's "Also post as a comment" on it.
+  Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **`swe mcp gateway`: one copy of each shared MCP server for every
+  session.** Each harness session started its own copy of every stdio
+  server: with 17 servers, one Claude Code session held 26 processes and
+  about 1.3 GB. `swe mcp gateway share <server...>` marks hub servers
+  that keep no per-session state, `swe mcp gateway install` runs a
+  LaunchAgent that starts each of them once and serves it on
+  `http://127.0.0.1:8478/mcp/<server>`, and `swe mcp sync quiver ...`
+  then writes that URL instead of the command. Measured with 18 shared
+  servers and playwright left per session: one session's MCP processes
+  went from 26 (1,375 MB) to 1 (63 to 85 MB), and the gateway held the
+  shared servers once (25 processes, about 1.3 GB) with one session or
+  four. Browser and REPL servers are refused without `--force`; Claude
+  Desktop keeps the command, since it takes no URL server.
+
+- **Web app: a tray for queued messages in the chat.** A Queue-mode
+  send made while the agent works now waits in a tray above the
+  composer, as on the iPhone, instead of a "Queued until the agent is
+  idle" bubble. Each row can be edited (its text goes into the box and
+  Send becomes Save), removed, or sent now into the running turn;
+  Remove all asks first. The hub holds the sends, so the tray comes
+  back when the chat reopens, with sends queued, edited or removed on
+  another device ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+- **Web app: issue detail and Resolve from Repositories.** An issue row
+  now opens a sheet with the issue's body and comments (read only, from
+  the hub's `GET /v1/issues/<owner>/<repo>/<n>`), Open on GitHub, and
+  Resolve with agent: harness, model, your context and the first prompt,
+  posted to `POST /v1/issues/resolve`, then the chat opens. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **iOS app: the overview's top models, quick figures, heatmap and
+  daily table, over all seven periods.** The Usage tab's Spend half
+  now offers This month, 90 days, 365 days and All time beside Today,
+  7 and 30 days, in a chip row that scrolls sideways. Under the
+  harness split it shows the Mac's active days, tokens a day and
+  busiest day, the top five models with the harnesses that ran them
+  and their share, an activity heatmap with as many recent weeks as
+  the phone fits (tap a day for its tokens and cost), and the daily
+  table (date, total, input, output, cached, spend), newest ten days
+  first, then 30 more a tap. All of it comes from the `GET /v1/app/overview`
+  payload the tab already read. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **iOS app: answer an approval with the pane's own menu rows.** When
+  the hub reads the agent's numbered menu ("1. Approve once", "2.
+  Always allow in this project", ...), the chat's approval card lists
+  those rows as its answers, as the web app does, so a row the Allow,
+  Always and Deny buttons can't name is still reachable. The row's
+  number goes to the hub as the decision, and the answered card names
+  the row it picked. Approvals without menu rows (older hubs,
+  non-tmux sessions) keep Allow, Always and Deny. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **Web app: pin, rename and fork sessions.** Each Sessions row has a
+  More actions button (and a right-click menu) with the iPhone's
+  swipe-left actions: Pin or Unpin, Rename, and Fork where the harness
+  can fork. Pinned rows lead the list in a Pinned group, in the order
+  they were pinned, whatever the time filter. Rename follows the hub's
+  rules (one line, 120 characters) and offers the harness's own name
+  back; Fork takes a first message and opens the new chat once the hub
+  names it. The chat's header has the same menu, and a rename made on
+  another device shows there live
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+- **Mac app: Needs you on the Inbox page.** Above the GitHub
+  notifications, the Inbox now lists the sessions this Mac's hub says
+  wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the
+  iPhone's sections: Waiting on you, Errors and Finished today. A row
+  opens that session's chat; Clear, per row or per section, hides it
+  for this Mac until the session moves again (`POST /v1/inbox/dismiss`),
+  and never offers a pending approval. Nothing extra shows while the
+  hub isn't running
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
+- **iOS app: merge, auto-merge and re-run on the pull request
+  page.** The detail page has the Mac and web merge controls: a
+  strategy menu (Squash and merge, Rebase and merge, Create a merge
+  commit), Merge and Auto-merge. Both ask first, naming the PR, the
+  base branch and the strategy, as the web's inline confirm does. Why a
+  button is off ("Draft PRs can't merge", "Resolve the conflicts
+  first", "Auto-merge is already armed") shows under the buttons, and
+  an armed auto-merge shows as a badge. A check row from a GitHub
+  Actions run has a menu with Re-run failed jobs (when a check in that
+  run failed) and Re-run all jobs. The phone calls the web app's
+  routes the hub already serves to paired devices,
+  `POST /v1/app/repositories/merge` and `…/rerun`. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **Web app: Mine and Review requested pull request filters.** The
+  Repositories dashboard's Pull requests tab now offers All, Mine and
+  Review requested with counts, as the iOS app does, from the flags the
+  hub's `GET /v1/pulls` puts on each open PR. A filter hides while the
+  hub can't say (a failed `gh pr status`) instead of guessing. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **Web app: Needs you in the Inbox.** The Inbox page now opens with
+  the iOS Inbox's Waiting on you, Errors and Finished today sections
+  from the hub's `GET /v1/inbox`, above the GitHub notifications. A row
+  opens its session's chat, and Clear (a row or a whole section) posts
+  `POST /v1/inbox/dismiss`; a pending approval can't be cleared. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **Remote: a `limit` notification when a session hits its usage
   limit.** The hub and satellites now raise `notify` kind `limit` when
   a Claude Code session writes its rate-limit record ("You've hit your
@@ -41,8 +197,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   8-digit date stamp are dropped, as on the phone:
   `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
   `claude-opus-4-5`. Nothing shows when the hub doesn't know it. An
-  open chat reads the hub's row again when a turn ends and when the
-  tab becomes visible, so the header follows a model that first
+  open chat reads the hub's row again when a turn ends (twice more, six
+  seconds apart, while the hub's catalog still holds the old model) and
+  when the tab becomes visible, so the header follows a model that first
   appears with the opening reply or changes elsewhere. The
   page's rows (`/v1/app/sessions`) now carry the hub's `model` as the
   catalog read it, so the page has no second transcript reader. Display
@@ -359,8 +516,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also tries `/api/compat/summary.json`, the path Cursor's new host
   serves.
 
+- **Mac app: the `@` file menu in the session chat.** Typing `@` in the
+  chat's prompt box lists files under the session's folder, as the web
+  app and the iPhone app do: the arrows move the highlight, Return or
+  Tab picks, Escape closes. A file goes in as `@path `, a folder as
+  `@path/` with the menu still open to pick inside it, and a path with
+  spaces is quoted. Sessions on a satellite say file search isn't
+  available there. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **Mac app: Mine and Review requested pull request filters.** The
+  Repositories dashboard's and a repo focus page's Pull requests tab
+  now offer All, Mine and Review requested with counts, as the iOS and
+  web apps do. Mine compares the `gh` login with each PR's author, so
+  it covers the focus page's merged and closed PRs too; Review
+  requested reads `swe gh pr status` per repo. A filter hides while
+  its flag is unknown instead of guessing
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
+- **Mac app: the Queued tray in the session chat.** A Queue-mode
+  send the hub holds until the agent's turn ends now waits in a tray
+  above the prompt box instead of the transcript, as on the web and the
+  iPhone: Edit puts its text in the box and Save writes it back in
+  place, Remove drops it, Send now steers it into the running turn, and
+  Remove all clears the tray after a confirm. It moves to the
+  transcript once it goes out, and reopening the chat shows what the
+  hub still holds (`GET`/`POST /v1/sessions/{key}/queue`). Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 ### Changed
 
+- **Mac app: less CPU while idle.** The trend sampler no longer reads
+  every HID temperature sensor each tick when the SMC already gave the
+  CPU, SSD and battery temperatures, and the session search status line
+  reads its index counts only while Settings shows it. On one Mac the
+  app's idle CPU went from 4.2% to 2.9% of a core.
+
+- **Remote: the web app lives at the hub's root.** `https://<hub>/`
+  is the app and its assets sit beside it (`/app.js`, `/styles.css`),
+  so there is no redirect on the way in. The `/app/…` paths earlier
+  releases served redirect to the same name at the root, fragment
+  intact, so bookmarks and `/app/#pair=` links keep working (#944).
 - **Remote: the unused `compaction` event type is gone from the
   protocol.** Compactions have always reached clients as
   `message.appended` with `kind: "compaction"`; the separate
@@ -407,15 +603,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the popover reads as controls alone.
 
 - **The remote PWA folded into the web app.** The standalone remote
-  client at `/` is gone: `/` now redirects to `/app/` with the fragment
-  intact, so old `/#pair=<token>` and `/#approve` links still land.
+  client at `/` is gone: `/` is now the web app itself, so old
+  `/#pair=<token>` and `/#approve` links land on it directly.
   Browser pairing moved to the web app's gate — "Pair with Tailscale"
   asks for approval like the iPhone app does, and the `#pair=` handler
   trades a token — while Tailscale pair requests are approved inline
   in Settings › Integrations › Remote, which polls for new ones, and
   sessions waiting on an approval are badged "Approval" in the
   Sessions list. `swe remote pair` and the pair QR now hand out
-  `…/app/#pair=<token>` links; the `quiver://pair` deep link, the
+  `…/#pair=<token>` links; the `quiver://pair` deep link, the
   pairing APIs and stored device credentials are unchanged.
 
 - **Flatter Mac app window.** The page now fills the window to its edges
@@ -496,6 +692,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `detail` for it.
 
 ### Fixed
+
+- **MCP gateway: a session's burst of connections is queued, not
+  reset.** A Claude Code session connects to every shared server at
+  once, and the Python 3.13 that Quiver.app bundles queues only 5
+  connections on a listening socket. With 18 shared servers, 13 of 18
+  probes at once got "connection reset" and those servers would fail to
+  connect for that session. The gateway now queues 128.
+
+- **`swe mcp sync` writes remote servers Claude Code can see.** Claude
+  Code skips an `mcpServers` entry that has a `url` and no `type`
+  (`claude mcp get` says there is no such server), and sync wrote
+  exactly that: a new remote server had no `type`, and overwriting one
+  dropped its `type: http`. Claude Code now has its own format, like
+  Droid's, that stamps `type: http` (or keeps `sse`) on every remote
+  server.
+
+- **Mac app: notarized builds keep Terminal automation.** Open in
+  Terminal, account sign-in and session resume drive Terminal and iTerm
+  through an `osascript` child, and macOS charges that Apple Event to
+  Quiver. Under the hardened runtime that prod and notarized builds use,
+  an app without the `com.apple.security.automation.apple-events`
+  entitlement is refused (`-1743`) before any prompt appears. Prod builds
+  now sign the app, and the bundled Python that runs the hub, with
+  `app/mac/script/Quiver.entitlements`, which grants it; the existing
+  `NSAppleEventsUsageDescription` gives the prompt its text
+  ([#968](https://github.com/c-wenlong/quiver/issues/968)).
 
 - **Remote: queue-mode sends wait for idle on satellites too.** A
   `queue`-mode message to a session on another machine used to fail
@@ -663,6 +885,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the warning text can be selected to copy either out.
 
 ### Security
+
+- **Remote: revoking a lost phone works when it shares the owner's
+  tailnet login.** The owner's own tailnet devices get in without
+  pairing, and Revoke refused their `tailnet:<node>` ids, so a lost
+  phone signed in to the owner's Tailscale account walked straight back
+  in through Safari. The hub now records those sign-ins
+  (`tailnet_signins.json`), lists them in `GET /v1/devices`, web
+  Settings ("Signed in through Tailscale") and `swe remote devices`, and
+  `POST /v1/devices/revoke` / `swe remote devices --revoke=tailnet:<node>`
+  revoke one: that node gets no owner identity, and devices paired from
+  it are signed out, until a pair request from it is approved again.
+  Revoking a device paired through a tailnet request revokes its node
+  too. The owner's other devices keep working
+  ([#966](https://github.com/c-wenlong/quiver/issues/966)).
+
+- **Mac app: the fan helper is checked against Quiver's own signature
+  before it runs as root.** The one-time install copied
+  `Quiver.app/Contents/MacOS/QuiverFanHelper` to
+  `/Library/PrivilegedHelperTools` and only checked that the copy
+  matched a hash taken before the password prompt. The bundle is
+  user-writable, so anything running as the user could patch the helper
+  beforehand and have it run as root once the user typed their password.
+  A build signed by a team (Developer ID, or the Apple Development
+  identity dev builds pick up) now has the root script verify the
+  root-owned copy with `codesign --verify --strict` against
+  `identifier "QuiverFanHelper"` and that team, and deletes it and stops
+  otherwise. Ad-hoc builds have no signature to check against and keep
+  the hash check alone. Installed helpers are not reinstalled, so nobody
+  is asked for their password again
+  ([#967](https://github.com/c-wenlong/quiver/issues/967)).
+
+- **Remote: a local process can no longer claim the owner's tailnet
+  identity.** Behind `tailscale serve` the hub read the client from
+  `X-Forwarded-For` on every loopback connection, so any process on the
+  hub machine, another user's included, could name the owner's phone
+  and get owner powers (launch agents, approve pair requests, read API
+  keys). It now believes the header only when the OS places the
+  connection's far end in the Tailscale daemon: a root-owned socket in
+  `/proc/net/tcp` on Linux, a root process or a binary in a root-owned
+  `/Applications/Tailscale.app` per `netstat -anv` on macOS. Anyone else
+  is read as a loopback client with no tailnet identity. The hub
+  machine's own tailnet node also stops counting as the owner's device:
+  serve's local listener forwards any local process as that node. The
+  owner's phones and other computers get in as before, and paired
+  devices are unaffected; a browser on the hub machine now pairs
+  ([#965](https://github.com/c-wenlong/quiver/issues/965)).
 
 - **The remote hub refuses wildcard and non-tailnet binds.** `swe
   remote serve --host=0.0.0.0` — or a LAN address, a link-local
