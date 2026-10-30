@@ -28,13 +28,18 @@ def _in_home(home: Path):
     """Run ``swe find`` as if ``home`` were both the home and the cwd.
 
     Without the cwd patch, every call without ``--root`` scans whatever
-    directory the suite runs from (the repo itself, usually), and the
-    real registry would decide which rows show.
+    directory the suite runs from (the repo itself, usually). Both registry
+    files (current and legacy) and the MCP hub are stubbed too, so neither
+    this machine's harnesses nor its servers decide which rows show, and
+    no registry migration is ever attempted.
     """
     with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
             mock.patch.object(Path, "cwd", staticmethod(lambda: home)), \
             mock.patch.object(registry, "HARNESS_FILE",
-                              Path("/nonexistent/harness.json")):
+                              Path("/nonexistent/harness.json")), \
+            mock.patch.object(registry, "TOOLS_FILE",
+                              Path("/nonexistent/tools.json")), \
+            mock.patch("quiver.mcp.cli.get_hub_servers", return_value={}):
         yield
 
 
