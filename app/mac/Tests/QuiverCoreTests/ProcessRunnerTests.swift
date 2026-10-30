@@ -196,6 +196,31 @@ import Testing
         #expect(env["PATH"] == "/usr/bin:/bin")
     }
 
+    @Test func aShellThatIgnoresSIGTERMIsKilledAtTheTimeout() async throws {
+        // An interactive zsh ignores SIGTERM. A terminate alone left the
+        // shell and its startup file's child running after the fallback.
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pidFile = dir.appending(path: "pids")
+        let shell = dir.appending(path: "stubborn-shell")
+        try "#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $$ $! > '\(pidFile.path)'\nwait\n"
+            .write(to: shell, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+
+        let env = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"], timeout: .milliseconds(500))
+        #expect(env["PATH"] == "/usr/bin:/bin")
+        let pids = ((try? String(contentsOf: pidFile, encoding: .utf8)) ?? "")
+            .split(whereSeparator: \.isWhitespace).compactMap { pid_t($0) }
+        try #require(pids.count == 2)
+        // The shell and the child its startup file was waiting on.
+        let reapDeadline = Date().addingTimeInterval(10)
+        while pids.contains(where: { kill($0, 0) == 0 }), Date() < reapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(pids.allSatisfy { kill($0, 0) != 0 })
+    }
+
     @Test func aWorkingShellSuppliesItsPATH() async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -235,5 +260,69 @@ import Testing
         #expect(env["PATH"] == "/fake/answered/bin")
         #expect(env["SWE_RATE_LIMITS_TTL"] == nil)
         #expect(env["HOME"] == "/tmp")
+    }
+}
+
+/// A login shell that didn't answer in time must not leave the whole
+/// launch on launchd's bare PATH, and must not stall every call either.
+@Suite struct ShellEnvironmentCacheTests {
+    final class Reads: @unchecked Sendable {
+        private let lock = NSLock()
+        private var answers: [[String: String]?]
+        private(set) var count = 0
+        init(_ answers: [[String: String]?]) { self.answers = answers }
+        func next() -> [String: String]? {
+            lock.withLock {
+                count += 1
+                return answers.isEmpty ? nil : answers.removeFirst()
+            }
+        }
+        var calls: Int { lock.withLock { count } }
+    }
+
+    @Test func aFailedReadIsRetriedAndASuccessIsKept() async throws {
+        let reads = Reads([nil, ["PATH": "/login/bin"]])
+        let cache = ShellEnvironmentCache(retryAfter: .zero) {
+            reads.next()
+        } fallback: {
+            ["PATH": "/usr/bin"]
+        }
+        // The first call waits for the first read, which failed.
+        #expect(await cache.environment() == ["PATH": "/usr/bin"])
+        #expect(reads.calls == 1)
+        // The next call answers at once and starts a retry behind it.
+        #expect(await cache.environment() == ["PATH": "/usr/bin"])
+        let deadline = Date().addingTimeInterval(10)
+        while await cache.environment() != ["PATH": "/login/bin"], Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await cache.environment() == ["PATH": "/login/bin"])
+        #expect(reads.calls == 2)
+    }
+
+    @Test func noRetryInsideTheWindow() async {
+        let reads = Reads([nil, ["PATH": "/login/bin"]])
+        let cache = ShellEnvironmentCache(retryAfter: .seconds(3600)) {
+            reads.next()
+        } fallback: {
+            ["PATH": "/usr/bin"]
+        }
+        for _ in 0..<5 { _ = await cache.environment() }
+        #expect(reads.calls == 1)
+    }
+
+    @Test func earlyCallersShareTheFirstRead() async {
+        let reads = Reads([["PATH": "/login/bin"]])
+        let cache = ShellEnvironmentCache(retryAfter: .zero) {
+            try? await Task.sleep(for: .milliseconds(100))
+            return reads.next()
+        } fallback: {
+            ["PATH": "/usr/bin"]
+        }
+        async let a = cache.environment()
+        async let b = cache.environment()
+        let results = await [a, b]
+        #expect(results == [["PATH": "/login/bin"], ["PATH": "/login/bin"]])
+        #expect(reads.calls == 1)
     }
 }

@@ -236,7 +236,7 @@ public struct ProcessRunner: CommandRunning {
     /// descendants too. Never call this on a child that has already
     /// exited: its pid may belong to another process by then.
     @discardableResult
-    private static func stopDescendants(of pid: pid_t, signal: Int32) -> [TaggedPid] {
+    fileprivate static func stopDescendants(of pid: pid_t, signal: Int32) -> [TaggedPid] {
         var found: [TaggedPid] = []
         var seen: Set<pid_t> = [pid]
         var queue = [pid]
@@ -356,14 +356,18 @@ public enum LoginShell {
             .map { String($0.dropFirst("PATH=".count)) }
     }
 
-    /// The login shell's environment, resolved once per launch.
+    /// The login shell's environment, resolved once per launch. A shell
+    /// that didn't answer in time is asked again later, in the background,
+    /// rather than leaving the whole launch on launchd's bare PATH.
     public static func cachedEnvironment() async -> [String: String] {
-        await cache.value
+        await cache.environment()
     }
 
-    private static let cache = Task.detached(priority: .userInitiated) {
+    private static let cache = ShellEnvironmentCache(retryAfter: .seconds(60)) {
         let base = ProcessInfo.processInfo.environment
-        return await resolve(shell: base["SHELL"] ?? "/bin/zsh", base: base, timeout: .seconds(5))
+        return await resolveIfAnswered(shell: base["SHELL"] ?? "/bin/zsh", base: base, timeout: .seconds(5))
+    } fallback: {
+        scrubbed(ProcessInfo.processInfo.environment)
     }
 
     /// `base` with PATH replaced by what `shell -ilc env` reports.
@@ -371,11 +375,20 @@ public enum LoginShell {
     /// A slow or hanging shell startup file must not freeze the app: after
     /// `timeout` the shell is stopped and `base` comes back unchanged.
     public static func resolve(shell: String, base: [String: String], timeout: Duration) async -> [String: String] {
+        await resolveIfAnswered(shell: shell, base: base, timeout: timeout) ?? scrubbed(base)
+    }
+
+    /// `resolve`, or nil when the shell gave no PATH in time.
+    static func resolveIfAnswered(shell: String, base: [String: String], timeout: Duration) async -> [String: String]? {
+        guard let output = await envOutput(shell: shell, base: base, timeout: timeout),
+              let path = path(fromEnvOutput: output) else { return nil }
         var env = base
-        if let output = await envOutput(shell: shell, base: base, timeout: timeout),
-           let path = path(fromEnvOutput: output) {
-            env["PATH"] = path
-        }
+        env["PATH"] = path
+        return scrubbed(env)
+    }
+
+    private static func scrubbed(_ base: [String: String]) -> [String: String] {
+        var env = base
         for key in ignoredVariables { env.removeValue(forKey: key) }
         return env
     }
@@ -420,11 +433,69 @@ public enum LoginShell {
                 once.resume(String(decoding: data, as: UTF8.self))
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) {
-                if process.isRunning { process.terminate() }
+                // SIGKILL, children first: an interactive zsh ignores
+                // SIGTERM, so a terminate left the shell (and whatever its
+                // startup file was waiting on) running for good.
+                if process.isRunning {
+                    let pid = process.processIdentifier
+                    ProcessRunner.stopDescendants(of: pid, signal: SIGKILL)
+                    if process.isRunning { kill(pid, SIGKILL) }
+                }
                 once.resume(nil)
             }
         }
         return output
+    }
+}
+
+/// The login shell's environment once a read succeeded. Until then each
+/// caller gets `fallback`: the first call waits for the first read, and
+/// after a failed read another starts in the background once `retryAfter`
+/// has passed, so a slow shell neither sticks for the whole launch nor
+/// stalls every call.
+actor ShellEnvironmentCache {
+    private let read: @Sendable () async -> [String: String]?
+    private let fallback: @Sendable () -> [String: String]
+    private let retryAfter: Duration
+    private var value: [String: String]?
+    private var inFlight: Task<Void, Never>?
+    private var failedAt: ContinuousClock.Instant?
+
+    init(retryAfter: Duration,
+         read: @escaping @Sendable () async -> [String: String]?,
+         fallback: @escaping @Sendable () -> [String: String]) {
+        self.retryAfter = retryAfter
+        self.read = read
+        self.fallback = fallback
+    }
+
+    func environment() async -> [String: String] {
+        if let value { return value }
+        if failedAt == nil {
+            // The first read: every early caller waits on the same one.
+            let task = inFlight ?? start()
+            await task.value
+            return value ?? fallback()
+        }
+        if inFlight == nil, let failedAt, ContinuousClock.now - failedAt >= retryAfter {
+            _ = start()
+        }
+        return fallback()
+    }
+
+    private func start() -> Task<Void, Never> {
+        let read = self.read
+        let task = Task.detached(priority: .userInitiated) { [weak self] in
+            let result = await read()
+            await self?.record(result)
+        }
+        inFlight = task
+        return task
+    }
+
+    private func record(_ result: [String: String]?) {
+        inFlight = nil
+        if let result { value = result } else { failedAt = .now }
     }
 }
 
