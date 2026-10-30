@@ -413,7 +413,7 @@ final class ChatModel {
             }
             loadError = nil
         } catch {
-            loadError = (error as? HubError)?.message ?? error.localizedDescription
+            loadError = error.localizedDescription
         }
         // The newest page held nothing to show (only results of older
         // calls): fetch back until something does, rather than "No
