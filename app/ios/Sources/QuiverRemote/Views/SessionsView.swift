@@ -81,7 +81,7 @@ struct SessionsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showNewSession = true } label: {
-                    Image(systemName: "plus").font(.system(size: 15, weight: .medium))
+                    Image(systemName: "plus").font(Theme.button)
                 }
                 .accessibilityLabel("New session")
             }
@@ -313,10 +313,10 @@ struct SessionRowView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: row.isAttached ? "link" : "eye")
-                .font(.system(size: 13))
+                .font(Theme.font(size: 13))
                 .foregroundStyle(row.isAttached ? Theme.accent : Theme.textMuted)
                 .accessibilityLabel(row.isAttached ? "Attached" : "Watching only")
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
         }
         .padding(.vertical, Theme.rowVertical)
         .padding(.horizontal, Theme.rowHorizontal)
@@ -354,10 +354,10 @@ struct HubChip: View {
         HStack(spacing: 6) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(name).font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(1)
-            Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "chevron.down").font(Theme.disclosure).foregroundStyle(Theme.textMuted)
         }
         .padding(.horizontal, 10)
-        .frame(height: 30)
+        .scaledMinHeight(30)
         .frame(maxWidth: 190)
         .modifier(ChipCapsule())
         .accessibilityLabel("\(name), \(connection == .online ? "connected" : connection == .offline ? "offline" : "connecting")")
@@ -422,7 +422,7 @@ struct SearchResultRow: View {
         for run in SessionSearch.snippetRuns(marked) {
             var piece = AttributedString(run.text.replacingOccurrences(of: "\n", with: " "))
             piece.foregroundColor = run.hit ? Theme.textPrimary : Theme.textSecondary
-            if run.hit { piece.font = .system(size: 13, weight: .semibold) }
+            if run.hit { piece.font = Theme.font(size: 13, weight: .semibold) }
             out += piece
         }
         return out

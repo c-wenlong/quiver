@@ -354,7 +354,7 @@ struct LinkSessionSheet: View {
                 }
                 .font(Theme.body)
                 .padding(.horizontal, 12)
-                .frame(height: Theme.controlHeight + 4)
+                .scaledMinHeight(Theme.controlHeight + 4)
                 .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
                 .padding(.top, 4)

@@ -78,7 +78,7 @@ struct PromptMenuCard<Rows: View>: View {
                 Rectangle().fill(Theme.border).frame(height: 1).padding(.top, 4)
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(footnotes, id: \.self) {
-                        Text($0).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Text($0).font(Theme.font(size: 12)).foregroundStyle(Theme.textMuted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -111,7 +111,7 @@ struct PromptMenuNote: View {
     var body: some View {
         HStack(spacing: 10) {
             if let icon {
-                Image(systemName: icon).font(.system(size: 13)).foregroundStyle(Theme.textMuted).frame(width: 18)
+                Image(systemName: icon).font(Theme.font(size: 13)).foregroundStyle(Theme.textMuted).iconColumn(18)
             }
             Text(text).font(Theme.caption).foregroundStyle(Theme.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -158,8 +158,8 @@ private struct MentionRow: View {
         let (name, parent) = Mention.split(entry.path)
         HStack(spacing: 10) {
             Image(systemName: entry.isDir ? "folder" : "doc")
-                .font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
-                .frame(width: 18)
+                .font(Theme.font(size: 14)).foregroundStyle(Theme.textSecondary)
+                .iconColumn(18)
             Text(name).font(Theme.body).foregroundStyle(Theme.textPrimary)
                 .lineLimit(1).truncationMode(.middle)
                 .layoutPriority(1)
@@ -248,8 +248,8 @@ private struct CommandRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let tag = command.sourceLabel {
-                Text(tag).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 7).frame(height: 20)
+                Text(tag).font(Theme.font(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 7).scaledMinHeight(20)
                     .background(Theme.subtle, in: .capsule)
                     .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
                     .fixedSize()

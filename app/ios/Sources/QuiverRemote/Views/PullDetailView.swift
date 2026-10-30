@@ -255,10 +255,10 @@ struct PullDetailView: View {
             } label: {
                 HStack(spacing: 4) {
                     Text(method.title)
-                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 11))
+                    Image(systemName: "chevron.up.chevron.down").font(Theme.small)
                 }
                 .font(Theme.control).foregroundStyle(Theme.textPrimary)
-                .frame(height: Theme.controlHeight)
+                .scaledMinHeight(Theme.controlHeight)
             }
             .disabled(merging)
             .accessibilityLabel("Merge strategy, \(method.title)")
@@ -308,7 +308,7 @@ struct PullDetailView: View {
                 if busy {
                     ProgressView().controlSize(.small)
                 } else {
-                    Image(systemName: "ellipsis.circle").font(.system(size: 16))
+                    Image(systemName: "ellipsis.circle").font(Theme.font(size: 16))
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
@@ -339,7 +339,7 @@ struct PullDetailView: View {
                     }
                     Spacer(minLength: 8)
                     if run.url != nil {
-                        Image(systemName: "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Image(systemName: "arrow.up.right").font(Theme.font(size: 12)).foregroundStyle(Theme.textMuted)
                     }
                 }
                 .padding(.vertical, Theme.rowVertical - 2)
