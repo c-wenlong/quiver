@@ -648,18 +648,95 @@ struct UpdatesModelTests {
         }
     }
 
-    @Test func aFailedRebuildKeepsTheLastLines() async throws {
+    @Test func aFailedRebuildKeepsTheLastLinesAndWritesTheLog() async throws {
         let dir = tempDir()
+        let rebuildDir = tempDir()
         let runner = RecordingRunner(CommandResult(
             status: 1,
             stdout: Data("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\n".utf8), stderr: ""))
         let model = makeModel(checkout: dir.path, rebuildRunner: runner,
-                              rebuildDir: tempDir())
+                              rebuildDir: rebuildDir)
         await model.rebuild()
         guard case .failed(let message) = model.rebuildState else {
             Issue.record("expected a failed rebuild, got \(model.rebuildState)")
             return
         }
-        #expect(message == "l3\nl4\nl5\nl6\nl7\nl8")
+        #expect(message.hasPrefix("l3\nl4\nl5\nl6\nl7\nl8\nFull log: "))
+        let log = rebuildDir.appending(path: "last-build.log")
+        let text = try String(contentsOf: log, encoding: .utf8)
+        #expect(text.contains("=== stdout ==="))
+        #expect(text.contains("l8"))
+    }
+}
+
+@Suite("Build failure summary")
+struct FailureSummaryTests {
+    private func summary(stderr: String = "", stdout: String = "",
+                         log: URL? = nil, limit: Int = 6) -> String {
+        UpdatesModel.failureSummary(stderr: stderr, stdout: Data(stdout.utf8),
+                                    log: log, limit: limit)
+    }
+
+    /// A log that names no errors keeps showing its own tail.
+    @Test func noErrorLinesKeepsTheTail() {
+        let out = (1...8).map { "l\($0)" }.joined(separator: "\n")
+        #expect(summary(stdout: out) == "l3\nl4\nl5\nl6\nl7\nl8")
+    }
+
+    /// A build's last lines are progress counters; the error named
+    /// earlier must surface instead.
+    @Test func errorLinesBeatTheProgressTail() {
+        let msg = summary(
+            stderr: "app.swift:1:5: error: cannot assign to property\n",
+            stdout: "[161/172]\n[163/172]\n[167/172]\n")
+        #expect(msg.contains("error: cannot assign to property"))
+        #expect(!msg.contains("[167/172]"))
+    }
+
+    /// More errors than the row takes: the first few, the count left
+    /// out, and the last one.
+    @Test func manyErrorsShowFirstAndLast() {
+        let errors = (1...8).map { "f\($0).swift:1:1: error: problem \($0)" }
+        let msg = summary(stderr: errors.joined(separator: "\n"))
+        #expect(msg.contains("problem 1"))
+        #expect(msg.contains("problem 5"))
+        #expect(!msg.contains("problem 6"))
+        #expect(msg.contains("… 2 more error lines"))
+        #expect(msg.contains("problem 8"))
+    }
+
+    /// The build scripts' own messages name the failure even without
+    /// an "error:" marker.
+    @Test func scriptMessagesCountAsFailures() {
+        #expect(summary(stderr: "step done\nbuild-app: Sparkle.framework missing\n")
+            == "build-app: Sparkle.framework missing")
+    }
+
+    /// Styling and hyperlinks a log may carry must not paint literal
+    /// escapes in the row.
+    @Test func ansiStylingIsStripped() {
+        #expect(summary(stderr: "\u{1B}[1;31merror: boom\u{1B}[0m\n")
+            == "error: boom")
+    }
+
+    /// A failed command echoes every file it was given: the line is cut
+    /// rather than eating the row.
+    @Test func aGiantLineIsCut() {
+        let msg = summary(stderr: "error: " + String(repeating: "x", count: 500))
+        #expect(msg.count == 201)
+        #expect(msg.hasPrefix("error: "))
+        #expect(msg.hasSuffix("…"))
+    }
+
+    /// A build that died silently still tells the user something.
+    @Test func silenceStillSaysSomething() {
+        #expect(summary(stderr: "  \n\n") == "The build failed without saying why.")
+    }
+
+    /// The log the row points at is named in the message.
+    @Test func theLogIsNamed() {
+        let log = URL(fileURLWithPath: "/tmp/x/last-build.log")
+        #expect(summary(stderr: "error: x", log: log)
+            .hasSuffix("\nFull log: /tmp/x/last-build.log"))
     }
 }
