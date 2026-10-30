@@ -265,6 +265,31 @@ class TestDatabaseSources(unittest.TestCase):
             self.store.db.execute("SELECT SUM(input) FROM events").fetchone()[0],
             2 * MAX_TOKENS)
 
+    def test_a_huge_count_an_older_build_saved_is_clamped_once(self):
+        # A row saved uncapped before the readers capped: an unchanged
+        # source is never re-read and an upsert keeps the larger total,
+        # so the store itself clamps such rows when it opens.
+        from quiver.ledger.models import MAX_TOKENS
+
+        path = ledger_path_for(self.home)
+        self.store.db.execute(
+            "INSERT INTO events (key, harness, account, session, model, ts, input,"
+            " output, cache_read, cache_write, cache_write_1h, reasoning)"
+            " VALUES ('opencode:m1', 'opencode', '/h', 's', 'gpt-x', 1, ?, ?, 3, 0, 0, -1)",
+            (9223372036854775000, 9223372036854775000))
+        self.store.db.execute("DELETE FROM meta WHERE k = 'tokens_capped'")
+        self.store.db.commit()
+        self.store.close()
+        self.store = LedgerStore(path)
+        self.addCleanup(self.store.close)
+        self.assertEqual(
+            self.store.db.execute(
+                "SELECT input, output, cache_read, reasoning FROM events").fetchone(),
+            (MAX_TOKENS, MAX_TOKENS, 3, 0))
+        self.assertEqual(
+            self.store.db.execute("SELECT SUM(input + output) FROM events").fetchone()[0],
+            2 * MAX_TOKENS)
+
     def test_a_corrupt_huge_devin_count_is_capped(self):
         from quiver.ledger.models import MAX_TOKENS
 
