@@ -205,7 +205,10 @@
     </button>`;
   }
 
-  const link = (url, body, cls = "") => `<a class="gh-row ${cls}" href="${esc(url)}" target="_blank" rel="noopener">${body}</a>`;
+  const link = (url, body, cls = "") => {
+    const href = safeHref(url);
+    return `<a class="gh-row ${cls}"${href ? ` href="${href}" target="_blank" rel="noopener"` : ""}>${body}</a>`;
+  };
 
   function issueRow(issue) {
     const open = issue.state === "open";
@@ -292,7 +295,7 @@
     const when = build && GhUI.ago(build.updated_at) ? `<span class="caption gh-muted">${GhUI.ago(build.updated_at)}</span>` : "";
     return `<div class="gh-pages">
       <div class="gh-pages-name">${esc(site.cname || site.url || "GitHub Pages")}</div>
-      ${site.url ? `<a class="gh-pages-link" href="${esc(site.url)}" target="_blank" rel="noopener">${ico("external")}<span>${esc(site.url)}</span></a>` : ""}
+      ${safeHref(site.url) ? `<a class="gh-pages-link" href="${safeHref(site.url)}" target="_blank" rel="noopener">${ico("external")}<span>${esc(site.url)}</span></a>` : ""}
       ${site.source_branch ? `<div class="caption gh-inline">${ico("branch")}<span>Built from ${esc(site.source_branch)}</span></div>` : ""}
       ${build ? `<div class="gh-inline">${buildMark(build.status)}<span class="caption">Last build ${esc(build.status)}</span>${commit}${when}</div>
         ${build.error ? `<div class="caption gh-danger-text gh-clamp3">${esc(build.error)}</div>` : ""}` : ""}
@@ -715,7 +718,7 @@
     menu.innerHTML = `${page.runMenu.failed ? `<button type="button" role="menuitem" data-rerun="failed"${busy ? " disabled" : ""}>${ico("rerun")}<span>Re-run failed jobs</span></button>` : ""}
       <button type="button" role="menuitem" data-rerun="all"${busy ? " disabled" : ""}>${ico("rerun")}<span>Re-run all jobs</span></button>
       <div class="gh-menu-divider" role="separator"></div>
-      <a role="menuitem" href="${esc(page.runMenu.url)}" target="_blank" rel="noopener">${ico("external")}<span>Open on GitHub</span></a>`;
+      ${safeHref(page.runMenu.url) ? `<a role="menuitem" href="${safeHref(page.runMenu.url)}" target="_blank" rel="noopener">${ico("external")}<span>Open on GitHub</span></a>` : ""}`;
     menu.hidden = false;
     placeRunMenu();
     const m = page.runMenu;
@@ -1066,7 +1069,7 @@
         ${open ? `<div class="gh-settings-card">${runs.map((c) => `<div class="gh-check-row">${checkGlyph(c.state)}
             <span class="gh-check-name">${esc(c.name)}</span>${c.workflow ? `<span class="caption gh-muted gh-ellipsis">${esc(c.workflow)}</span>` : ""}
             <span class="gh-spacer"></span><span class="caption">${esc(c.conclusion || c.status)}</span>
-            ${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener" title="Open the check" class="gh-muted">${ico("external", "gh-small")}</a>` : ""}
+            ${safeHref(c.url) ? `<a href="${safeHref(c.url)}" target="_blank" rel="noopener" title="Open the check" class="gh-muted">${ico("external", "gh-small")}</a>` : ""}
           </div>`).join("")}</div>` : ""}
       </div>`;
     }
@@ -1218,7 +1221,7 @@
       <div class="gh-sheet-actions">${mergeControls(s, pr)}<span class="gh-spacer"></span>
         ${pr && !s.session ? `<button type="button" class="icon-button" id="gh-session-open" title="Open in session: check the PR out on the hub and start an agent there"
           aria-label="Open in session">${ico("terminal")}</button>` : ""}
-        <a class="icon-button" href="${esc(url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>
+        ${safeHref(url) ? `<a class="icon-button" href="${safeHref(url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>` : ""}
         <button type="button" class="icon-button${s.busy && d ? " spinning" : ""}" data-sheet-refresh title="Fetch again" aria-label="Fetch again">${icon("rescan")}</button>
         <button type="button" class="gh-button" id="gh-sheet-done">Done</button>
       </div></div>`;

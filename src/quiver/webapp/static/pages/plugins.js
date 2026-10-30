@@ -618,7 +618,7 @@ function openPlugin(ref) {
   const field = (label, value) => (value ? `<div class="field-row"><span class="caption">${label}</span><span>${value}</span></div>` : "");
   const comps = COMPONENTS.filter(([k]) => p.components[k]).map(([k, one, many]) => count(p.components[k], one, many)).join(" · ");
   const home = /^https?:\/\//i.test(p.homepage || "")
-    ? `<a href="${esc(p.homepage)}" target="_blank" rel="noopener noreferrer">${esc(p.homepage)}</a>` : esc(p.homepage || "");
+    ? `<a href="${safeHref(p.homepage)}" target="_blank" rel="noopener noreferrer">${esc(p.homepage)}</a>` : esc(p.homepage || "");
   const harnesses = Object.keys(p.harnesses).filter((h) => p.harnesses[h].status !== "absent");
   const pills = harnesses.map((h) => `<span class="badge pl-pill">${Fmt.logo(h, "logo logo-sm")}${esc(Fmt.harnessName(h))} · ${esc(STATUS_TITLE[p.harnesses[h].status])}</span>`).join("");
   const copies = harnesses.filter((h) => p.harnesses[h].path)
