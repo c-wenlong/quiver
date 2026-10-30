@@ -821,6 +821,10 @@ class RemoteAgent:
                 result = injector.control(
                     session, ctl, str(data.get("value") or ""),
                 )
+                if result.ok and ctl in {"kill", "detach"}:
+                    # As on the hub: the session is no longer ours, so
+                    # its staged files go (a kept one returned above).
+                    attachments.drop_session(self.home, key)
                 return result.ok, result.note, result.degraded
             return False, f"unknown op {op}", False
         except Exception as exc:
@@ -851,6 +855,8 @@ class RemoteAgent:
                 self.home, key, supervise.meta_for(self.home, key),
                 emit=self._capture, machine=self.machine_id,
             ).control(current, "detach", "")
+            if result.ok:
+                attachments.drop_session(self.home, key)
             return result.ok, result.note
 
         def report(ok: bool, note: str, cancelled: bool) -> None:
@@ -914,10 +920,15 @@ class RemoteAgent:
 
     def _sweep(self) -> None:
         """Delete files this satellite stopped needing: cursors of
-        sessions idle past ``tail.STALE_FILE_AGE_S``. The uplink outbox
-        is its own and stays."""
+        sessions idle past ``tail.STALE_FILE_AGE_S`` (the uplink outbox
+        is its own and stays), and staged attachments past
+        ``attachments.MAX_AGE_S``, as the hub's loop does."""
         try:
             self.tail_manager.sweep_stale(self._outbox, keep=(OUTBOX_KEY,))
+        except Exception:
+            pass
+        try:
+            attachments.sweep(self.home)
         except Exception:
             pass
 

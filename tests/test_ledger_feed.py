@@ -189,6 +189,24 @@ class TestFeedPoll(unittest.TestCase):
         count = self.store.db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
         self.assertEqual(count, 1)
 
+    def test_no_write_is_held_across_the_next_accounts_fetch(self):
+        accounts_dir = self.home / ".quiver" / "accounts"
+        accounts_dir.mkdir(parents=True)
+        (accounts_dir / "profiles.json").write_text(json.dumps({"profiles": [
+            {"id": "p1", "vendor": "cursor", "isDefault": False}]}))
+        open_during_fetch = []
+
+        def fetch(state_db, since, now):
+            open_during_fetch.append(self.store.db.in_transaction)
+            n = len(open_during_fetch)
+            return "ok", [_event(conv=f"conv-{n}")], f"acct-{n}"
+
+        feed.poll(self.store, self.home, now=T0, fetch=fetch)
+        # The first account's rows were written before the later fetches.
+        self.assertGreater(len(open_during_fetch), 1)
+        self.assertEqual(open_during_fetch, [False] * len(open_during_fetch))
+        self.assertFalse(self.store.db.in_transaction)
+
     def test_switched_account_reads_its_own_window(self):
         home = str(self.default_home)
         self.store.set_meta(feed._PROGRESS_KEY, json.dumps({
