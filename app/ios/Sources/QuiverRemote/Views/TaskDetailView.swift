@@ -129,7 +129,8 @@ struct TaskDetailView: View {
                     Text(step.title)
                         .font(Theme.small)
                         .foregroundStyle(step.current ? Theme.textPrimary : Theme.textMuted)
-                        .lineLimit(1)
+                        .lineLimit(1, larger: 2)
+                        .centredWhenWrapped()
                         .minimumScaleFactor(0.8)
                 }
                 .frame(maxWidth: .infinity)

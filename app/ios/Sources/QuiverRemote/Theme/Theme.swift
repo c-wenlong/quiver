@@ -197,9 +197,16 @@ enum Theme {
 struct IconColumn: ViewModifier {
     @ScaledMetric private var width: CGFloat
 
-    init(width: CGFloat) { _width = ScaledMetric(wrappedValue: width, relativeTo: .subheadline) }
+    @ScaledMetric private var height: CGFloat
+    private let square: Bool
 
-    func body(content: Content) -> some View { content.frame(width: width) }
+    init(width: CGFloat, height: CGFloat?) {
+        _width = ScaledMetric(wrappedValue: width, relativeTo: .subheadline)
+        _height = ScaledMetric(wrappedValue: height ?? 0, relativeTo: .subheadline)
+        square = height != nil
+    }
+
+    func body(content: Content) -> some View { content.frame(width: width, height: square ? height : nil) }
 }
 
 /// See `View.scaledMinHeight`.
@@ -235,7 +242,10 @@ extension View {
     /// A fixed-width column for a row's icon, so the titles beside it
     /// line up. It widens with the text size, so a symbol that grew with
     /// its font stays inside it instead of running into the title.
-    func iconColumn(_ width: CGFloat) -> some View { modifier(IconColumn(width: width)) }
+    /// With a `height`, the box is that tall too, as a numbered circle's.
+    func iconColumn(_ width: CGFloat, height: CGFloat? = nil) -> some View {
+        modifier(IconColumn(width: width, height: height))
+    }
 }
 
 extension Color {

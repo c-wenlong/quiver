@@ -955,17 +955,32 @@ private struct MenuRowButtonStyle: ButtonStyle {
 private struct AttachCard: View {
     let model: ChatModel
     let row: SessionRow?
+    @Environment(\.dynamicTypeSize) private var size
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                Image(systemName: "eye").font(Theme.font(size: 16)).foregroundStyle(Theme.textSecondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Watching only").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            // At accessibility sizes the button goes under the words (beside
+            // them it left the words a column a few letters wide), and the
+            // bar sheds what the button already says, so the transcript
+            // keeps most of the screen.
+            let large = size.isAccessibilitySize
+            let layout = large
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                : AnyLayout(HStackLayout(spacing: 12))
+            layout {
+                HStack(spacing: 12) {
+                    if !large {
+                        Image(systemName: "eye").font(Theme.font(size: 16)).foregroundStyle(Theme.textSecondary)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Watching only").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                        if !(large && row?.canAttach == true && !model.attachQueued) {
+                            Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
                 if model.attachQueued {
                     ProgressView().controlSize(.small)
                 } else if row?.canAttach == true {
@@ -1026,12 +1041,16 @@ struct SendOrStopButton: View {
                 }
             }
             .frame(width: 40, height: 40)
+            // The circle is a fixed 40pt, so its arrow stops growing at
+            // xxxLarge; a long press shows it large instead.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .opacity(action == .disabled ? 0.4 : 1)
             .animation(.easeOut(duration: 0.15), value: action)
         }
         .buttonStyle(.plain)
         .disabled(action == .disabled)
         .accessibilityLabel(action == .stop ? "Stop the agent" : "Send")
+        .accessibilityShowsLargeContentViewer()
     }
 }
 
@@ -1320,6 +1339,7 @@ private struct TrayIconButton: View {
         Button(action: action) {
             Image(systemName: symbol).font(Theme.rowIcon)
                 .foregroundStyle(Theme.textSecondary)
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 .frame(width: 44, height: 44)
                 .contentShape(.rect)
         }
