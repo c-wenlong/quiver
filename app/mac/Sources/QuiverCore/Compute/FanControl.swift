@@ -31,12 +31,25 @@ public enum FanHelperInstallError: Error, Equatable, LocalizedError {
 /// launchd job and starts it; from then on Quiver steers it through the
 /// control file without asking again.
 public struct AdministratorInstaller: FanHelperInstalling {
-    /// The team that signed the running app (`signingTeam`); tests swap it.
-    private let team: @Sendable () throws -> String?
+    /// The running app's signature (`FanOwnerPin.current`): its team, which
+    /// the bundled helper must carry, and the pin the helper checks every
+    /// request's owner against. Tests swap it.
+    private let owner: @Sendable () throws -> FanOwnerPin
+    /// Whether a helper is installed already, which makes this an update
+    /// and changes what the password prompt says.
+    private let replacing: @Sendable () -> Bool
 
-    public init(team: @escaping @Sendable () throws -> String? = AdministratorInstaller.signingTeam) {
-        self.team = team
+    public init(owner: @escaping @Sendable () throws -> FanOwnerPin = FanOwnerPin.current,
+                replacing: @escaping @Sendable () -> Bool = {
+                    FileManager.default.fileExists(atPath: FanHelper.installedPlist)
+                }) {
+        self.owner = owner
+        self.replacing = replacing
     }
+
+    static let installPrompt = "Quiver wants to install a helper that sets the fan speed. You'll only be asked once."
+    static let updatePrompt = "Quiver wants to update its fan helper. The new one only takes fan requests "
+        + "from Quiver itself, checked by its code signature."
 
     static func shell(_ text: String) -> String {
         "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -83,13 +96,15 @@ public struct AdministratorInstaller: FanHelperInstalling {
     /// root, and start it. Every check runs on the root-owned staged copy,
     /// which nothing running as the user can change, and the live path
     /// only changes once the old job can no longer relaunch it.
-    /// `team` is nil only for an ad-hoc build, which has no signature to
-    /// check against and keeps the hash alone.
-    public static func installCommand(executable: String, sha256: String, team: String?,
+    /// The job pins `owner`, so the helper only takes requests from a
+    /// Quiver signed the same way. Its team is nil only for an ad-hoc
+    /// build, which has no signature to check the helper against and
+    /// keeps the hash alone.
+    public static func installCommand(executable: String, sha256: String, owner: FanOwnerPin,
                                       control: URL) -> String {
         let staged = FanHelper.installedExecutable + ".new"
         let tool = shell(FanHelper.installedExecutable), new = shell(staged), job = shell(FanHelper.installedPlist)
-        let signature = team.map { " && " + signatureCheck(tool: staged, team: $0) } ?? ""
+        let signature = owner.team.map { " && " + signatureCheck(tool: staged, team: $0) } ?? ""
         // Everything is checked on a staged copy beside the live one: an
         // installed KeepAlive job may relaunch its executable at any
         // moment, so the live path only ever changes to a checked file,
@@ -104,7 +119,7 @@ public struct AdministratorInstaller: FanHelperInstalling {
             // before the label can load again.
             + " && { /bin/launchctl bootout system/\(FanHelper.label) 2>/dev/null && /bin/sleep 1; true; }"
             + " && /bin/mv -f \(new) \(tool)"
-            + " && /usr/bin/printf '%s' \(shell(FanHelper.plistLine(control: control))) > \(job)"
+            + " && /usr/bin/printf '%s' \(shell(FanHelper.plistLine(control: control, owner: owner))) > \(job)"
             + " && /usr/sbin/chown root:wheel \(job) && /bin/chmod 644 \(job)"
             + " && /bin/launchctl bootstrap system \(job)"
     }
@@ -120,49 +135,21 @@ public struct AdministratorInstaller: FanHelperInstalling {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// The team that signed the running app, or nil for an ad-hoc build.
-    /// Throws when the signature can't be read or the code on disk no
-    /// longer matches what is running: a bundle re-signed under the app
-    /// must not read as "ad-hoc" and skip the helper's check.
-    public static func signingTeam() throws -> String? {
-        func check(_ status: OSStatus, _ what: String) throws {
-            guard status == errSecSuccess else {
-                throw FanHelperInstallError.failed("Couldn't check Quiver's own signature (\(what): \(status)).")
-            }
-        }
-        var code: SecCode?
-        try check(SecCodeCopySelf([], &code), "self")
-        guard let code else { throw FanHelperInstallError.failed("Couldn't check Quiver's own signature.") }
-        try check(SecCodeCheckValidity(code, [], nil), "validity")
-        var staticCode: SecStaticCode?
-        try check(SecCodeCopyStaticCode(code, [], &staticCode), "static code")
-        guard let staticCode else { throw FanHelperInstallError.failed("Couldn't check Quiver's own signature.") }
-        var info: CFDictionary?
-        try check(SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info),
-                  "signing information")
-        let team = (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
-        guard let team, !team.isEmpty else { return nil }
-        guard isTeamIdentifier(team) else {
-            throw FanHelperInstallError.failed("Quiver's signature names an odd team (\(team)).")
-        }
-        return team
-    }
-
     public func install(executable: String, control: URL) async throws {
         guard !control.path.contains(where: \.isNewline), !executable.contains(where: \.isNewline) else {
             throw FanHelperInstallError.failed("Quiver's paths can't hold a line break for the fan helper.")
         }
-        let team = try self.team()
-        if let team, !Self.isTeamIdentifier(team) {
-            throw FanHelperInstallError.failed("Quiver's signature names an odd team (\(team)).")
+        let owner = try self.owner()
+        guard owner.isValid else {
+            throw FanHelperInstallError.failed("Quiver's signature reads oddly (\(owner.arguments.joined(separator: " "))).")
         }
-        guard let hash = await offMain({ Self.sha256(of: executable) }) else {
+        let replacing = self.replacing
+        guard let (hash, update) = await offMain({ Self.sha256(of: executable).map { ($0, replacing()) } }) else {
             throw FanHelperInstallError.failed("Couldn't read \(executable).")
         }
-        try await run(Self.script(Self.installCommand(executable: executable, sha256: hash, team: team,
+        try await run(Self.script(Self.installCommand(executable: executable, sha256: hash, owner: owner,
                                                       control: control),
-                                  prompt: "Quiver wants to install a helper that sets the fan speed. "
-                                      + "You'll only be asked once."))
+                                  prompt: update ? Self.updatePrompt : Self.installPrompt))
     }
 
     public func uninstall() async throws {
@@ -191,6 +178,20 @@ public struct AdministratorInstaller: FanHelperInstalling {
     }
 }
 
+/// What the installed helper's launchd job says about it.
+public enum FanHelperState: Equatable, Sendable {
+    /// Installed for this control file and this app's signature, at this
+    /// version, and loaded.
+    case current
+    /// Installed for this control file at an older `FanHelper.version`
+    /// (0: from before jobs carried one). It lacks checks the current
+    /// helper makes, so Quiver doesn't steer it and offers to replace it.
+    case outdated(version: Int)
+    /// Nothing Quiver can use: not installed, half-installed, another
+    /// account's job, pinned to another build, or not loaded.
+    case missing
+}
+
 /// The Compute page's fan popover: what the fans are doing, and a manual
 /// speed held by the root helper until the user picks Automatic or quits.
 @MainActor
@@ -212,6 +213,10 @@ public final class FanControl {
     public private(set) var loaded = false
     /// Whether the root helper is installed; the first Set speed installs it.
     public private(set) var helperInstalled: Bool
+    /// Whether an older helper is installed, one from before it checked
+    /// its owner's code signature. Quiver leaves it alone (the fans stay
+    /// with macOS) until the user updates it, which Set speed also does.
+    public private(set) var helperOutdated = false
     /// Whether an install or removal is waiting on the password prompt.
     public private(set) var busy = false
     /// The level the slider shows, 0 (the fans' minimum) to 1 (their
@@ -230,6 +235,9 @@ public final class FanControl {
     }
 
     public static let levelKey = "fanManualLevel"
+    /// The `FanHelper.version` whose update the user turned down at
+    /// launch, so the offer isn't made again for it.
+    public static let updateDeclinedKey = "fanHelperUpdateDeclined"
 
     /// The optional rule: above `threshold` °C on the CPU, hold the fans
     /// at `level` until it falls to `releaseBelow`. Only while Quiver
@@ -316,7 +324,7 @@ public final class FanControl {
     private let reader: @Sendable () -> [FanReading]
     private let status: @Sendable () -> FanHelperStatus?
     private let installer: any FanHelperInstalling
-    private let isInstalled: @Sendable (URL) -> Bool
+    private let inspect: @Sendable (URL) -> FanHelperState
     private let control: URL
     private let executable: String
     private let owner: Int32
@@ -339,7 +347,7 @@ public final class FanControl {
                 reader: @escaping @Sendable () -> [FanReading] = { AppleSMC().map(FanKeys.read) ?? [] },
                 status: @escaping @Sendable () -> FanHelperStatus? = { FanHelperStatus.read() },
                 installer: any FanHelperInstalling = AdministratorInstaller(),
-                isInstalled: @escaping @Sendable (URL) -> Bool = FanControl.helperReady,
+                inspect: @escaping @Sendable (URL) -> FanHelperState = { FanControl.helperState(control: $0) },
                 executable: String = FanHelper.bundledExecutable(appExecutable: Bundle.main.executablePath),
                 owner: Int32 = getpid(),
                 clock: @escaping @Sendable () -> Date = { .now },
@@ -349,7 +357,7 @@ public final class FanControl {
         self.reader = reader
         self.status = status
         self.installer = installer
-        self.isInstalled = isInstalled
+        self.inspect = inspect
         self.executable = executable
         self.owner = owner
         self.clock = clock
@@ -364,21 +372,36 @@ public final class FanControl {
             .map { Self.clampRelease($0, threshold: line) }
     }
 
-    /// The helper is installed, steered by this control file, at this
-    /// version, and loaded: files left by a half-finished install, a job
-    /// another account installed for its own file, or an older helper
-    /// (one from before `FanHelper.version`, which crashed at launch)
-    /// count as not installed, so Set speed reinstalls rather than waits
-    /// on a helper that will never come.
-    public nonisolated static func helperReady(control: URL) -> Bool {
+    /// The installed helper as its job describes it, for this control
+    /// file and the running app's signature. Blocks on launchctl, so it
+    /// never runs on the main thread.
+    public nonisolated static func helperState(control: URL) -> FanHelperState {
         guard FileManager.default.isExecutableFile(atPath: FanHelper.installedExecutable),
               let data = FileManager.default.contents(atPath: FanHelper.installedPlist),
               let job = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let arguments = job["ProgramArguments"] as? [String],
-              arguments == FanHelper.programArguments(control: control)
-        else { return false }
-        return exitStatus(of: "/bin/launchctl", ["print", "system/\(FanHelper.label)"],
-                          within: launchctlTimeout) == 0
+              let arguments = job["ProgramArguments"] as? [String]
+        else { return .missing }
+        return helperState(arguments: arguments, control: control, owner: try? FanOwnerPin.current()) {
+            exitStatus(of: "/bin/launchctl", ["print", "system/\(FanHelper.label)"], within: launchctlTimeout) == 0
+        }
+    }
+
+    /// Current only when the job is exactly what this app would install
+    /// and launchd has it loaded. A job for this control file at an older
+    /// version is outdated, loaded or not. Everything else is missing:
+    /// files left by a half-finished install, a job another account
+    /// installed for its own file, or one pinned to another build (an
+    /// ad-hoc rebuild), so Set speed reinstalls rather than waits on a
+    /// helper that will never take this app's requests.
+    nonisolated static func helperState(arguments: [String], control: URL, owner: FanOwnerPin?,
+                                        loaded: () -> Bool) -> FanHelperState {
+        guard FanHelper.parse(arguments)?.path == control.path,
+              let version = FanHelper.version(in: arguments) else { return .missing }
+        if version < FanHelper.version { return .outdated(version: version) }
+        guard let owner, arguments == FanHelper.programArguments(control: control, owner: owner) else {
+            return .missing
+        }
+        return loaded() ? .current : .missing
     }
 
     /// Runs a tool and answers its exit status, or nil when it couldn't
@@ -425,8 +448,10 @@ public final class FanControl {
         // (a timeout, a removal) isn't wiped by the answer.
         if installUnchecked {
             installUnchecked = false
-            let isInstalled = self.isInstalled, control = self.control
-            helperInstalled = await offMain { isInstalled(control) }
+            let inspect = self.inspect, control = self.control
+            let state = await offMain { inspect(control) }
+            helperInstalled = state == .current
+            helperOutdated = if case .outdated = state { true } else { false }
         }
         loaded = true
         settle()
@@ -561,6 +586,7 @@ public final class FanControl {
         do {
             try await installer.install(executable: executable, control: control)
             helperInstalled = true
+            helperOutdated = false
             // Same as removal: check again once the prompt is done.
             installUnchecked = true
             return .installed
@@ -642,6 +668,48 @@ public final class FanControl {
             return
         }
         heldByThreshold = isHolding
+    }
+
+    /// The launch offer's words, shared by the alert and the popovers'
+    /// notice.
+    public static let updateTitle = "Update the fan helper?"
+    public static let updateMessage = "Quiver's fan helper runs as root to hold the fan speed you set. "
+        + "The one on this Mac takes requests from any app named Quiver. The new one only takes them from "
+        + "Quiver itself, checked by its code signature.\n\n"
+        + "Updating asks for your administrator password once. Until then, Quiver leaves the fans to macOS."
+    public static let outdatedNotice = "The fan helper needs an update before Quiver can set the fan speed. "
+        + "The new one only takes requests from Quiver itself. It asks for your password once."
+
+    /// The launch check: whether to offer the helper update now. Yes once
+    /// an older helper shows up, unless the user already said Not now to
+    /// this version's update; the popover still offers it after that.
+    public func shouldOfferHelperUpdate() async -> Bool {
+        await refresh()
+        return helperOutdated && defaults.integer(forKey: Self.updateDeclinedKey) < FanHelper.version
+    }
+
+    /// Not now: the old helper stays installed but unused, so the fans
+    /// stay with macOS. Set speed, the threshold switch, or the popover's
+    /// Update button still installs the new one.
+    public func declineHelperUpdate() {
+        defaults.set(FanHelper.version, forKey: Self.updateDeclinedKey)
+    }
+
+    /// Replace the older helper through the usual install: one password
+    /// prompt. Nothing is held afterwards; the user sets a speed as usual.
+    /// Answers why it failed, or nil once updated or cancelled.
+    @discardableResult
+    public func updateHelper() async -> String? {
+        switch await installHelper() {
+        case .installed:
+            if case .failed = phase { phase = .automatic }
+            return nil
+        case .cancelled:
+            return nil
+        case .failed(let message):
+            phase = .failed(message)
+            return message
+        }
     }
 
     /// Fans back to automatic, then the helper uninstalled (one password).
