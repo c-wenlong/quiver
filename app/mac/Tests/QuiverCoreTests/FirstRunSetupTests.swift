@@ -293,6 +293,21 @@ private func applied(leftAlone: Bool) -> String {
         #expect(runner.calls.last == ["setup", "--json", "--non-interactive"])
     }
 
+    @Test func aRefusedCloneKeepsTheStartYouPicked() async {
+        let runner = SetupRunner(preview: hubPreviewJSON)
+        runner.cloneRefusal = "can't reach x"
+        let setup = model(runner)
+        await setup.load()
+        setup.start = .seed
+        setup.hubURL = "x"
+        await setup.cloneHub()
+        #expect(setup.start == .seed, "the reload must not switch you back to adopting CLAUDE.md")
+
+        setup.start = .file("/h/.codex/AGENTS.md")
+        await setup.cloneHub()
+        #expect(setup.start == .file("/h/.codex/AGENTS.md"))
+    }
+
     @Test func aCloneWhosePreviewFailedStillShowsTheClone() async {
         // swe cloned, then its preview stopped (exit 1, document on stdout).
         let runner = SetupRunner(preview: hubPreviewJSON)

@@ -297,9 +297,23 @@ public final class FirstRunSetupModel {
             return
         } catch {
             let message = error.localizedDescription
+            let chosen = start
             await load()
+            // The reload resets the start to its default; keep the one the
+            // user picked while the new preview still offers it.
+            if case .loaded(let found) = preview, Self.offers(chosen, found.instructions) {
+                start = chosen
+            }
             hubError = message
         }
+    }
+
+    /// Whether `start` is a choice this preview still offers: the starter
+    /// file always, a file only while it is an adopt candidate.
+    static func offers(_ start: Start, _ instructions: SetupPreview.Instructions?) -> Bool {
+        guard case .file(let path) = start else { return true }
+        guard let instructions, !instructions.agentsFileCustomised else { return false }
+        return instructions.adoptCandidates.contains { $0.path == path }
     }
 
     /// Your own instructions beat the starter file: the first real file
