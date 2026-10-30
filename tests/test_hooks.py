@@ -936,7 +936,16 @@ class CreateEdgeTest(unittest.TestCase):
                                            "root": "~/my hooks"}}}}
             command, _ = mk.command_for("x", "g.py", reg, home)
             # "~" never expands inside quotes, so $HOME carries the space.
-            self.assertEqual(command, '"${HOME}/my hooks/g.py"')
+            self.assertEqual(command, '"${HOME}"/\'my hooks/g.py\'')
+            # Pasted inside double quotes, a $(...) or backtick in a
+            # directory name ran when the hook did; now it stays a name.
+            reg = {"x": {"capabilities": {"hooks":
+                                          {"supported": True,
+                                           "root": '~/it"s $(touch x) `id`'}}}}
+            command, _ = mk.command_for("x", "g.py", reg, home)
+            import shlex
+            self.assertEqual(shlex.split(command),
+                             ['${HOME}/it"s $(touch x) `id`/g.py'])
             reg = {"x": {"capabilities": {"hooks":
                                           {"supported": True,
                                            "root": "/opt/my hooks"}}}}

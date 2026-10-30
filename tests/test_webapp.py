@@ -415,6 +415,16 @@ class TestBodySheets(unittest.TestCase):
             src = (APP_JS.parent / "pages" / f"{page}.js").read_text(encoding="utf-8")
             self.assertNotIn("<dialog", src, page)
 
+    def test_body_sheets_go_through_bodySheet(self):
+        """Compute, Pricing and Service status kept sheets on document.body
+        that route() never closed: Compute's stayed modal over the next
+        page, and the other two each carried their own hashchange copy."""
+        for page in ("compute", "pricing", "status"):
+            src = (APP_JS.parent / "pages" / f"{page}.js").read_text(encoding="utf-8")
+            self.assertIn("bodySheet(", src, page)
+            for made in ("<dialog", 'createElement("dialog")', '"hashchange"'):
+                self.assertNotIn(made, src, page)
+
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
