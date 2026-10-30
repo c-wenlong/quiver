@@ -181,6 +181,10 @@ private struct ProjectInstructions: View {
     /// The selected file's document, opened in a task and never in body:
     /// document(for:) follows symlinks and reads the file on first use.
     @State private var opened: (file: AgentsModel.ProjectFile, document: InstructionDocument)?
+    /// Bumped when a link may have moved under an unchanged file entry
+    /// (the app comes back to the front, a link run ends), so the task
+    /// asks the model again and follows the link to its new target.
+    @State private var reopen = 0
 
     var body: some View {
         let model = app.agentsMd
@@ -215,7 +219,8 @@ private struct ProjectInstructions: View {
         }
         // A new folder, tab or rescan of the file opens its document; the
         // model keeps each one, so a return to a tab keeps its edits.
-        .task(id: model.projectFolder == nil ? nil : model.projectFiles.first { $0.name == selectedFile }) {
+        .task(id: OpenKey(file: model.projectFolder == nil ? nil : model.projectFiles.first { $0.name == selectedFile },
+                          reopen: reopen)) {
             guard model.projectFolder != nil,
                   let file = model.projectFiles.first(where: { $0.name == selectedFile }) else {
                 opened = nil
@@ -223,6 +228,10 @@ private struct ProjectInstructions: View {
             }
             opened = (file, model.document(for: file))
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            reopen += 1
+        }
+        .onChange(of: model.linking) { _, linking in if !linking { reopen += 1 } }
         .task { await restore() }
         .confirmationDialog("Discard unsaved changes?", isPresented: .init(
             get: { pendingFolder != nil }, set: { if !$0 { pendingFolder = nil } })) {
@@ -233,6 +242,11 @@ private struct ProjectInstructions: View {
         } message: {
             Text("The open project has edits that aren't saved.")
         }
+    }
+
+    private struct OpenKey: Equatable {
+        var file: AgentsModel.ProjectFile?
+        var reopen: Int
     }
 
     private func tabTitle(_ file: AgentsModel.ProjectFile) -> String {
