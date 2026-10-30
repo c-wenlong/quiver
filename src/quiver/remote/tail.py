@@ -38,7 +38,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from quiver.paths import expand_user, remote_dir_for
 from quiver.remote import injected, protocol, supervise
@@ -101,6 +101,11 @@ def _approval_prompt_line(pane: str) -> str:
 
 # How many of the most recent sessions get a live tailer.
 TAIL_MAX_SESSIONS = 100
+
+# A session's journal and cursor files, untouched this long and not
+# being tailed, are deleted by ``TailManager.sweep_stale``. Without it
+# every session ever tailed kept up to 16 MB of journal forever.
+STALE_FILE_AGE_S = 30 * 86_400
 
 # Partial-line safety: never decode more than this many bytes of tail at
 # once; the remainder waits for the next poll.
@@ -1507,6 +1512,56 @@ class TailManager:
             tailer.session = session
             self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=False)
+
+    def sweep_stale(
+        self,
+        journal,
+        keep: Iterable[str] = (),
+        now: float | None = None,
+    ) -> int:
+        """Delete the journal and cursor files of sessions nothing has
+        touched for ``STALE_FILE_AGE_S``; returns how many files went.
+
+        A journal goes once no append and no cursor save has reached it
+        for that long; a cursor goes once its journal is gone too, so a
+        session never keeps one without the other (a cursor alone would
+        resume past history the phone no longer has; a journal alone
+        would skip backfill). Keys being tailed and ``keep`` (the
+        caller's own journals, like the global stream) are never swept.
+        A session that comes back is tailed like a new one: recent
+        history only.
+        """
+        now = time.time() if now is None else now
+        cutoff = now - STALE_FILE_AGE_S
+        held = {protocol.key_slug(k) for k in keep}
+        held.update(protocol.key_slug(k) for k, _t in self._tailer_items())
+
+        def fresh(path: Path) -> bool:
+            try:
+                return path.stat().st_mtime >= cutoff
+            except OSError:
+                return False
+
+        def kept(slug: str) -> bool:
+            return slug in held or fresh(self.cursors_dir / f"{slug}.json")
+
+        removed = journal.sweep(cutoff, kept)
+        try:
+            cursors = list(self.cursors_dir.glob("*.json"))
+        except OSError:
+            cursors = []
+        for path in cursors:
+            slug = path.stem
+            if slug in held or fresh(path):
+                continue
+            if (journal.dir / f"{slug}.jsonl").exists():
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed += 1
+        return removed
 
     def _forget(self, key: str) -> None:
         """Drop what the pane watcher and the attach check kept for a

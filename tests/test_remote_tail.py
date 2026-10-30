@@ -1250,6 +1250,70 @@ class TestTailManager(unittest.TestCase):
         self.assertIsNotNone(mgr.last_append_at("claude:y"))
 
 
+class TestSweepStale(unittest.TestCase):
+    """``sweep_stale``: old journal + cursor pairs go, live ones stay."""
+
+    def setUp(self):
+        from quiver.remote.journal import Journal
+
+        self.tmp = Path(tempfile.mkdtemp())
+        self.journal = Journal(self.tmp)
+        self.mgr = tail.TailManager(lambda k, e: None, "mbp", home=self.tmp)
+        self.mgr.cursors_dir.mkdir(parents=True, exist_ok=True)
+        self.now = time.time()
+        self.old = self.now - tail.STALE_FILE_AGE_S - 3600
+
+    def _files(self, key, journal_at=None, cursor_at=None):
+        import os
+
+        slug = tail.protocol.key_slug(key)
+        j = self.journal.dir / f"{slug}.jsonl"
+        c = self.mgr.cursors_dir / f"{slug}.json"
+        if journal_at is not None:
+            self.journal.append(key, {"type": "t"})
+            os.utime(j, (journal_at, journal_at))
+        if cursor_at is not None:
+            c.write_text("{}")
+            os.utime(c, (cursor_at, cursor_at))
+        return j, c
+
+    def test_old_pair_goes(self):
+        j, c = self._files("claude:old", self.old, self.old)
+        self.assertEqual(self.mgr.sweep_stale(self.journal, now=self.now), 2)
+        self.assertFalse(j.exists())
+        self.assertFalse(c.exists())
+        # The journal forgot the key: it starts over, as after a restart.
+        self.assertEqual(self.journal.last_seq("claude:old"), 0)
+
+    def test_fresh_journal_or_cursor_keeps_both(self):
+        j1, c1 = self._files("claude:a", self.now, self.old)
+        j2, c2 = self._files("claude:b", self.old, self.now)
+        self.assertEqual(self.mgr.sweep_stale(self.journal, now=self.now), 0)
+        for path in (j1, c1, j2, c2):
+            self.assertTrue(path.exists(), path)
+
+    def test_lone_old_files_go(self):
+        j, _ = self._files("claude:j", journal_at=self.old)
+        _, c = self._files("claude:c", cursor_at=self.old)
+        self.assertEqual(self.mgr.sweep_stale(self.journal, now=self.now), 2)
+        self.assertFalse(j.exists())
+        self.assertFalse(c.exists())
+
+    def test_tailed_and_kept_keys_stay(self):
+        sess_path = self.tmp / "t.jsonl"
+        sess_path.write_text(json.dumps(_claude_user("hi")) + "\n")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(sess_path), tool_name="claude")
+        self.mgr.ensure("claude:tailed", sess, "")
+        j1, c1 = self._files("claude:tailed", self.old, self.old)
+        j2, _ = self._files("_global", journal_at=self.old)
+        self.assertEqual(
+            self.mgr.sweep_stale(self.journal, keep=["_global"], now=self.now),
+            0)
+        for path in (j1, c1, j2):
+            self.assertTrue(path.exists(), path)
+
+
 class TestApprovalWatcher(unittest.TestCase):
     """TailManager._poll_approvals: pane prompt → requested/resolved."""
 
