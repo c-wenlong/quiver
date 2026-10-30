@@ -1,21 +1,23 @@
 import QuiverCore
 import SwiftUI
 
-/// The GitHub notifications inbox: one stream across every repo, with
-/// the unread state, the subject type's icon and why GitHub notified
-/// you. Polls on a minute timer while the page is open; a row opens
-/// its subject on github.com.
+/// What needs you: the sessions this Mac's hub says wait on you, broke
+/// or finished today (`NeedsYouCards`), then the GitHub notifications
+/// inbox: one stream across every repo, with the unread state, the
+/// subject type's icon and why GitHub notified you. A notification row
+/// opens its subject on github.com.
 struct InboxPage: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
     /// Unread first by default; the All tab widens the list to read rows.
     @State private var unreadOnly = true
+    @State private var needsYou = NeedsYouModel()
 
     private var model: GitHubModel { app.github }
 
     var body: some View {
         Page(title: "Inbox",
-             subtitle: "Your GitHub account's live notifications across every repo, via swe gh inbox.") {
+             subtitle: "Sessions waiting on you, then your GitHub notifications across every repo.") {
             Tabs(options: [(true, "Unread"), (false, "All")], selection: $unreadOnly)
             if model.unreadCount > 0 {
                 Button {
@@ -31,12 +33,19 @@ struct InboxPage: View {
                 .help("Mark every notification read")
             }
             Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await model.loadInbox(swe: app.swe, force: true) }
+                Task {
+                    async let sessions: Void = needsYou.load {
+                        try await app.hub.withClient { try await $0.inbox(done: true) }
+                    }
+                    await model.loadInbox(swe: app.swe, force: true)
+                    await sessions
+                }
             }
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)
             .help("Fetch the inbox again (⌘R)")
         } content: {
+            NeedsYouCards(model: needsYou)
             if let setup = model.envSetup {
                 GhSetupCard(status: setup) {
                     Task { await model.loadInbox(swe: app.swe, force: true) }
@@ -62,7 +71,7 @@ struct InboxPage: View {
                         EmptyCard(text: unreadOnly ? "No unread notifications." : "The inbox is empty.",
                                   icon: "tray")
                     } else {
-                        Card {
+                        Card(title: needsYou.items.isEmpty ? nil : "GitHub") {
                             VStack(spacing: 0) {
                                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, note in
                                     NotificationRow(note: note) {
@@ -99,6 +108,7 @@ struct InboxPage: View {
         // landing out of step with the notifier's, could put back a row
         // marked read meanwhile. The page only catches up when stale.
         .task(id: app.swePath) { await model.loadInbox(swe: app.swe) }
+        .task(id: app.swePath) { await NeedsYouCards.poll(needsYou, hub: app.hub) }
     }
 }
 

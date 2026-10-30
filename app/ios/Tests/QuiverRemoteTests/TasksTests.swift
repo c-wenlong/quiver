@@ -107,6 +107,17 @@ final class TaskRowTests: XCTestCase {
                 updatedAt: nil, pr: nil)
     }
 
+    func testAnEmptyPageSaysGitHubIsOutOnce() {
+        let signedOut = "gh is not authenticated: run `gh auth login`"
+        // Rows on screen: the banner says they're last-known, and why.
+        XCTAssertEqual(TaskGrouping.githubBanner(envBlocked: signedOut, githubFailed: nil, hasRows: true), signedOut)
+        XCTAssertEqual(TaskGrouping.githubBanner(envBlocked: nil, githubFailed: "timed out", hasRows: true), "timed out")
+        // No rows: the empty card says it; a banner would repeat it.
+        XCTAssertNil(TaskGrouping.githubBanner(envBlocked: signedOut, githubFailed: nil, hasRows: false))
+        XCTAssertNil(TaskGrouping.githubBanner(envBlocked: nil, githubFailed: "timed out", hasRows: false))
+        XCTAssertNil(TaskGrouping.githubBanner(envBlocked: nil, githubFailed: nil, hasRows: true))
+    }
+
     func testFiltersPickByStateAndAgent() {
         let running = row("a", state: "in_progress", running: true)
         let prOpen = row("b", state: "pr_open")
