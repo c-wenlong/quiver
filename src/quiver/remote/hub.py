@@ -1197,14 +1197,22 @@ class _Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _device_revoked(home: Path | None, device_id: str) -> bool:
+        """Whether the caller's access is gone: its paired row, or for
+        the owner's ``tailnet:<node>`` identity, that node's sign-in.
+        Open SSE streams ask this every few seconds."""
+        if device_id.startswith(devices_mod.TAILNET_PREFIX):
+            return pairing.signin_revoked(
+                home, device_id[len(devices_mod.TAILNET_PREFIX):])
         row = pairing.load_devices(home).get(device_id) or {}
         return bool(row.get("revoked_at"))
 
     def _approver_node(self, peer: dict | None) -> str | None:
         """The peer's node id when it shares the hub owner's login —
-        else None. Tagged nodes never qualify, nor does this machine's
-        own node: any local user's process reaches the hub as that node
-        through serve's local listener, so it proves nothing."""
+        else None. Tagged nodes never qualify; nor does this machine's
+        own node (any local user's process reaches the hub as that node
+        through serve's local listener, so it proves nothing), nor a node
+        whose sign-in the owner revoked (a lost phone still on their
+        login)."""
         owner = self._state.owner()
         if (
             peer is None or peer.get("tagged")
@@ -1214,6 +1222,8 @@ class _Handler(BaseHTTPRequestHandler):
             return None
         node = str(peer.get("node_id") or "")
         if not node or node == self._state.own_node_id:
+            return None
+        if pairing.signin_revoked(self._state.home, node):
             return None
         return node
 
@@ -1226,8 +1236,18 @@ class _Handler(BaseHTTPRequestHandler):
         logins still pair."""
         if not self._identity_ok() or self._bad_origin():
             return None
-        node = self._approver_node(self._state.whois_cached(self._client_ip()))
-        return f"tailnet:{node}" if node else None
+        peer = self._state.whois_cached(self._client_ip())
+        node = self._approver_node(peer)
+        if not node:
+            return None
+        # Listed in Settings so the owner can revoke it if it goes
+        # missing; throttled, and a failed write never refuses the caller.
+        try:
+            pairing.note_signin(self._state.home, node,
+                                str((peer or {}).get("node_name") or ""))
+        except Exception:
+            pass
+        return f"tailnet:{node}"
 
     def _client_device(self) -> str | None:
         """The paired device behind the bearer, unless it is a satellite.

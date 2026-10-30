@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: a tray for queued messages in the chat.** A Queue-mode
+  send made while the agent works now waits in a tray above the
+  composer, as on the iPhone, instead of a "Queued until the agent is
+  idle" bubble. Each row can be edited (its text goes into the box and
+  Send becomes Save), removed, or sent now into the running turn;
+  Remove all asks first. The hub holds the sends, so the tray comes
+  back when the chat reopens, with sends queued, edited or removed on
+  another device ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 - **Web app: issue detail and Resolve from Repositories.** An issue row
   now opens a sheet with the issue's body and comments (read only, from
   the hub's `GET /v1/issues/<owner>/<repo>/<n>`), Open on GitHub, and
@@ -762,6 +770,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the warning text can be selected to copy either out.
 
 ### Security
+
+- **Remote: revoking a lost phone works when it shares the owner's
+  tailnet login.** The owner's own tailnet devices get in without
+  pairing, and Revoke refused their `tailnet:<node>` ids, so a lost
+  phone signed in to the owner's Tailscale account walked straight back
+  in through Safari. The hub now records those sign-ins
+  (`tailnet_signins.json`), lists them in `GET /v1/devices`, web
+  Settings ("Signed in through Tailscale") and `swe remote devices`, and
+  `POST /v1/devices/revoke` / `swe remote devices --revoke=tailnet:<node>`
+  revoke one: that node gets no owner identity, and devices paired from
+  it are signed out, until a pair request from it is approved again.
+  Revoking a device paired through a tailnet request revokes its node
+  too. The owner's other devices keep working
+  ([#966](https://github.com/c-wenlong/quiver/issues/966)).
 
 - **Mac app: the fan helper is checked against Quiver's own signature
   before it runs as root.** The one-time install copied

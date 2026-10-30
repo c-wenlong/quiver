@@ -127,10 +127,10 @@ struct LaunchStartButton: View {
         .primaryButton()
         .disabled(!ready || flow.busy)
         if case .failed(let message) = flow.phase {
-            Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
+            Text(inlineCode: message).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 .fixedSize(horizontal: false, vertical: true)
         } else if case .unconfirmed(let message) = flow.phase {
-            Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            Text(inlineCode: message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         Text(footnote)
