@@ -71,6 +71,17 @@ def _load_json(path: Path):
         return None
 
 
+def _load_object(path: Path) -> dict:
+    """``_load_json`` for a file that must hold an object, else ``{}``.
+
+    These records belong to other programs: valid JSON of the wrong shape
+    (a list, a string) is as unusable as a parse error, and must cost the
+    rows it would have produced, not the whole command.
+    """
+    data = _load_json(path)
+    return data if isinstance(data, dict) else {}
+
+
 def _split_ref(ref: str) -> tuple[str, str]:
     name, _, market = ref.partition("@")
     return name, market
@@ -110,34 +121,62 @@ def _count_at(root: Path | None) -> dict:
 
 def _marketplace_sources(home: Path, harness: str) -> dict:
     """marketplace name -> its source directory, for local marketplaces."""
-    data = _load_json(home / f".{harness}" / "plugins" / "known_marketplaces.json") or {}
+    data = _load_object(home / f".{harness}" / "plugins" / "known_marketplaces.json")
     out = {}
     for name, entry in data.items():
-        src = (entry or {}).get("source") or {}
-        loc = src.get("path") or src.get("source") if isinstance(src, dict) else None
-        if isinstance(src, dict) and src.get("source") == "directory":
-            loc = src.get("path")
-        if loc and Path(loc).is_dir():
-            out[name] = Path(loc)
+        src = entry.get("source") if isinstance(entry, dict) else None
+        if not isinstance(src, dict) or src.get("source") != "directory":
+            # github, git and url marketplaces have no folder of their own
+            # here. Their "source" word ("github") is not a path, and
+            # reading it as one tested a directory relative to the cwd.
+            continue
+        loc = src.get("path")
+        if isinstance(loc, str) and loc:
+            folder = _expand_root(loc, home)
+            if folder.is_dir():
+                out[name] = folder
     return out
 
 
+def _install_entry(entries) -> dict:
+    """The record that loads, out of one plugin's install records.
+
+    The same choice ``plugin_drift`` makes: a record is one object or a
+    list of them (one per scope), and the user scope, which loads
+    everywhere, wins over a project install when both exist.
+    """
+    if isinstance(entries, dict):
+        entries = [entries]
+    # Only records that say where the install is count, before the scope
+    # is chosen: a malformed user record must not hide a valid project one.
+    rows = [e for e in entries if isinstance(e, dict)
+            and isinstance(e.get("installPath"), str) and e["installPath"]
+            ] if isinstance(entries, list) else []
+    if not rows:
+        return {}
+    return next((e for e in rows if e.get("scope") == "user"), rows[0])
+
+
 def _from_installed_json(harness: str, path: Path, enabled_map: dict,
-                         sources: dict | None = None) -> list[Plugin]:
+                         sources: dict | None = None,
+                         home: Path | None = None) -> list[Plugin]:
     """claude and droid share this shape."""
-    data = _load_json(path) or {}
+    records = _load_object(path).get("plugins")
     sources = sources or {}
+    enabled_map = enabled_map if isinstance(enabled_map, dict) else {}
+    home = home or Path.home()
     found = []
-    for ref, entries in (data.get("plugins") or {}).items():
-        entry = entries[0] if isinstance(entries, list) and entries else {}
+    for ref, entries in (records if isinstance(records, dict) else {}).items():
+        entry = _install_entry(entries)
         name, market = _split_ref(ref)
         install = entry.get("installPath")
-        root = Path(install) if install else None
+        root = _expand_root(install, home) if isinstance(install, str) and install else None
         src = sources.get(market)
+        flag = enabled_map.get(ref)
         found.append(Plugin(
             harness=harness, name=name, marketplace=market,
             version=str(entry.get("version", "")),
-            enabled=enabled_map.get(ref) if enabled_map else None,
+            enabled=flag if isinstance(flag, bool) else None,
             path=root,
             components=count_components(root, (src / name) if src else None),
         ))
@@ -194,19 +233,20 @@ def _from_cache_scan(harness: str, cache: Path) -> list[Plugin]:
             continue
         for mf in sorted(top.rglob(".*-plugin/marketplace.json"))[:1] or \
                 sorted(top.glob("**/marketplace.json"))[:1]:
-            name = (_load_json(mf) or {}).get("name")
-            if name:
+            name = _load_object(mf).get("name")
+            if isinstance(name, str) and name:
                 named[top.name] = name
             break
 
     found = []
     for manifest in sorted(cache.rglob("*-plugin/plugin.json")):
         root = manifest.parent.parent
-        data = _load_json(manifest) or {}
+        data = _load_object(manifest)
         rel = root.relative_to(cache).parts
         market = rel[0] if len(rel) > 1 else ""
+        name = data.get("name")
         found.append(Plugin(
-            harness=harness, name=data.get("name") or root.name,
+            harness=harness, name=name if isinstance(name, str) and name else root.name,
             marketplace=named.get(market, market),
             version=str(data.get("version", "")),
             enabled=None, path=root, components=count_components(root),
@@ -308,15 +348,16 @@ def discover_plugins(home: Path | None = None) -> list[Plugin]:
 
     if _plugin_capable(reg, "claude"):
         root = _plugin_root(reg, "claude", home) or (home / PLUGIN_FALLBACK["claude"])
-        settings = _load_json(home / ".claude" / "settings.json") or {}
+        settings = _load_object(home / ".claude" / "settings.json")
         found += _from_installed_json(
             "claude", root / "installed_plugins.json",
             settings.get("enabledPlugins") or {},
-            _marketplace_sources(home, "claude"))
+            _marketplace_sources(home, "claude"), home)
 
     if _plugin_capable(reg, "droid"):
         root = _plugin_root(reg, "droid", home) or (home / PLUGIN_FALLBACK["droid"])
-        found += _from_installed_json("droid", root / "installed_plugins.json", {})
+        found += _from_installed_json("droid", root / "installed_plugins.json", {},
+                                      home=home)
 
     if _plugin_capable(reg, "codex"):
         found += _from_codex_toml(home)
