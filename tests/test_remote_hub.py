@@ -35,6 +35,9 @@ class _Server:
         )
         # No tailnet in tests; cases that need an identity stub it.
         self.state.whois = lambda ip: None
+        # Nor the network: pages price from the bundled LiteLLM snapshot
+        # instead of downloading the live list on the first ledger read.
+        self.state.webapp.download_prices = False
         self.state.catalog.refresh()
         self.state.tail_manager.sync(self.state.catalog.tail_rows())
         self.server = make_server(self.state, "127.0.0.1", 0)
