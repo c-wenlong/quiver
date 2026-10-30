@@ -106,6 +106,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
         AppUpdater.shared.start()
+        Task { @MainActor in await offerFanHelperUpdate() }
+    }
+
+    /// An older fan helper is installed (one from before it checked its
+    /// owner's code signature): ask once whether to replace it. Not now
+    /// is remembered for this helper version; the fans stay with macOS
+    /// and the fan popovers keep an Update button.
+    @MainActor private func offerFanHelperUpdate() async {
+        let fans = AppModel.shared.fans
+        guard await fans.shouldOfferHelperUpdate() else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = FanControl.updateTitle
+        alert.informativeText = FanControl.updateMessage
+        alert.addButton(withTitle: "Update helper")
+        alert.addButton(withTitle: "Not now")
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn {
+            guard let failure = await fans.updateHelper() else { return }
+            let failed = NSAlert()
+            failed.alertStyle = .warning
+            failed.messageText = "The fan helper didn't update"
+            failed.informativeText = failure
+            failed.runModal()
+        } else {
+            fans.declineHelperUpdate()
+        }
     }
 
     /// Show limit notifications even while Quiver's window is in front.

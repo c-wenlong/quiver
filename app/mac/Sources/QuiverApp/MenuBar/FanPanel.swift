@@ -114,6 +114,7 @@ private struct PanelFanPopover: View {
                 }
                 temperatureChips
                 Divider().overlay(Theme.border)
+                if fans.helperOutdated { FanHelperUpdateNotice() }
                 Tabs(options: [(false, "Automatic"), (true, "Manual")], selection: mode,
                      style: .segmented, fillWidth: true)
                 if manual { manualControls } else { thresholdControls }
