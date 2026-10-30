@@ -741,6 +741,21 @@ class TestAgentRoutes(unittest.TestCase):
         launch_id = json.loads(data)["launch_id"]
         self.assertEqual(replay[0]["data"]["launch_id"], launch_id)
 
+    def test_launch_to_unknown_machine_is_404(self):
+        # Nothing would ever drain a queue for a machine that never
+        # registered: refuse instead of opening a journal for it.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "nope-m9", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 404, data)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "unknown_machine")
+        replay, _ = self.srv.state.journal.read_since("_sat_nope-m9", 0)
+        self.assertEqual(replay, [])
+        self.assertEqual(self.srv.state.launches, {})
+
     def test_launch_to_named_machine_carries_the_pick(self):
         # The satellite advertises launch-option support on its machine
         # row, the same fields its own agent reports.
@@ -1305,6 +1320,41 @@ class TestAgentEdges(unittest.TestCase):
         self.assertEqual(calls[0][1], "/v1/agent/catalog")
         self.assertEqual(calls[0][3]["machine_id"], ag.machine_id)
 
+    def test_push_catalog_trims_oldest_rows_to_fit(self):
+        # Rows over the hub's 4 MiB body cap were refused whole, every
+        # push; the newest that fit go instead.
+        ag = self._agent()
+        rows = [{"key": f"k{i}", "title": "t" * 100_000}
+                for i in range(60)]
+        ag.catalog.refresh = lambda: rows
+        ag._refresh_launchable = lambda: False
+        sent = []
+
+        def post(hub, path, cred, body, timeout=10.0):
+            sent.append(body)
+            return 200, {}
+
+        with patch.object(agent_mod, "_post", side_effect=post), \
+                patch("sys.stderr"):
+            self.assertTrue(ag._push_catalog())
+        body = sent[0]
+        self.assertLessEqual(len(json.dumps(body).encode()),
+                             agent_mod.CATALOG_BODY_MAX)
+        self.assertGreater(len(body["rows"]), 0)
+        self.assertLess(len(body["rows"]), 60)
+        self.assertEqual(body["rows"][0]["key"], "k0")
+
+    def test_fit_rows_is_exact_at_the_cap(self):
+        ag = self._agent()
+        rows = [{"key": f"k{i}"} for i in range(3)]
+        exact = len(json.dumps({"machine_id": ag.machine_id, "rows": rows},
+                               ensure_ascii=False).encode())
+        with patch.object(agent_mod, "CATALOG_BODY_MAX", exact):
+            self.assertEqual(ag._fit_rows(rows), rows)
+        with patch.object(agent_mod, "CATALOG_BODY_MAX", exact - 1), \
+                patch("sys.stderr"):
+            self.assertEqual(ag._fit_rows(rows), rows[:2])
+
     def test_handle_frame_malformed_and_noncommand(self):
         ag = self._agent()
         ag._handle_frame(b"{nope")                       # bad json
@@ -1566,15 +1616,17 @@ class TestAgentRouteValidation(unittest.TestCase):
             {"op": "interrupt"}, headers=self.srv.auth)
         self.assertEqual(status, 409)
 
-    def test_launch_unknown_machine_queues_anyway(self):
-        # An unregistered machine still gets the command: it may simply
-        # not have connected yet — the offline queue is the point.
+    def test_launch_to_offline_registered_machine_queues(self):
+        # A registered machine that is offline still gets the command —
+        # the offline queue is the point. Only a never-registered id
+        # is refused (test_launch_to_unknown_machine_is_404).
+        catalog_mod.upsert_machine(self.srv.home, {"id": "ghost"})
         status, data = self.srv.request(
             "POST", "/v1/sessions",
             {"machine": "ghost", "harness": "claude", "cwd": "/x",
              "prompt": "go"},
             headers=self.srv.auth)
-        self.assertEqual(status, 202)
+        self.assertEqual(status, 202, data)
         replay, _ = self.srv.state.journal.read_since("_sat_ghost", 0)
         self.assertEqual(replay[0]["data"]["op"], "launch")
 
@@ -1923,19 +1975,67 @@ class TestReviewFixes(unittest.TestCase):
     def test_message_op_goes_to_worker(self):
         ag = self._agent()
         ag._dispatch = MagicMock()
+        ag._sendq = MagicMock()
         ag._handle_frame(json.dumps({
-            "type": "command", "seq": 1,
+            "type": "command", "seq": 1, "session": "claude:a",
             "data": {"op": "message", "command_id": "c1"},
         }).encode())
         ag._dispatch.assert_not_called()
-        seq, cmd = ag._work_q.get_nowait()
-        self.assertEqual(seq, 1)
+        key, run, _cancel = ag._sendq.submit.call_args[0]
+        self.assertEqual(key, "claude:a")
+        run()
+        ag._dispatch.assert_called_once()
+        self.assertEqual(ag._done_cmd_seq, 1)
+        ag._dispatch.reset_mock()
         # Control ops still run inline.
         ag._handle_frame(json.dumps({
             "type": "command", "seq": 2,
             "data": {"op": "control", "command_id": "c2"},
         }).encode())
         ag._dispatch.assert_called_once()
+
+    def test_one_sessions_turn_does_not_hold_another(self):
+        # A headless send blocks for its whole turn; a message to a
+        # second session used to wait behind it on the single worker.
+        ag = self._agent()
+        release = threading.Event()
+        ran = []
+        second = threading.Event()
+
+        def dispatch(ev):
+            ran.append(ev["seq"])
+            if ev["seq"] == 1:
+                release.wait(30)  # held until the assertion is done
+            else:
+                second.set()
+
+        ag._dispatch = dispatch
+        try:
+            for seq, key in ((1, "claude:a"), (2, "claude:b")):
+                ag._handle_frame(json.dumps({
+                    "type": "command", "seq": seq, "session": key,
+                    "data": {"op": "message"}}).encode())
+            self.assertTrue(second.wait(5))
+        finally:
+            release.set()
+            ag._sendq.close()
+
+    def test_a_raising_send_does_not_stop_the_queue(self):
+        ag = self._agent()
+        done = threading.Event()
+
+        def dispatch(ev):
+            if ev["seq"] == 1:
+                raise RuntimeError("boom")
+            done.set()
+
+        ag._dispatch = dispatch
+        for seq in (1, 2):
+            ag._handle_frame(json.dumps({
+                "type": "command", "seq": seq, "session": "claude:a",
+                "data": {"op": "message"}}).encode())
+        self.assertTrue(done.wait(5))
+        ag._sendq.close()
 
     def test_done_cursor_contiguous(self):
         ag = self._agent()
@@ -1985,6 +2085,7 @@ class TestReviewFixes(unittest.TestCase):
         ag._mark_done(6)  # seq 5 still running; 6 is done above floor
         b = self._agent()  # restarted: resumes the stream at ?last=4
         b._dispatch = MagicMock()
+        b._sendq = MagicMock()
         # seq 5's message op parks on the work queue — not done yet.
         b._handle_frame(json.dumps({
             "type": "command", "seq": 5,
@@ -1992,8 +2093,8 @@ class TestReviewFixes(unittest.TestCase):
         b._handle_frame(json.dumps({
             "type": "command", "seq": 6,
             "data": {"op": "control", "command_id": "c6"}}).encode())
-        b._dispatch.assert_not_called()   # 5 waits on _work_q, 6 skipped
-        self.assertEqual(b._work_q.get_nowait()[0], 5)
+        b._dispatch.assert_not_called()   # 5 waits on _sendq, 6 skipped
+        b._sendq.submit.assert_called_once()
         self.assertEqual(b._last_cmd_seq, 6)  # wire cursor still moved
         self.assertEqual(b._done_cmd_seq, 4)  # floor waits on seq 5
 
