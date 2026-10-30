@@ -3147,6 +3147,40 @@ class TestServeEntry(unittest.TestCase):
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
         self.assertFalse(state.tail_manager.is_hot("claude:b"))
 
+    def test_satellite_presence_counts_survive_concurrent_streams(self):
+        # Each stream connects/disconnects on its own request thread;
+        # an unlocked read-modify-write lost counts and could leave a
+        # machine flagged online (or offline) for good.
+        import sys
+        state = HubState(Path(tempfile.mkdtemp()))
+        writes = []
+        state.emit = lambda *a, **k: None
+
+        def upsert(_home, row):
+            writes.append(row["online"])
+
+        def stream():
+            for _ in range(300):
+                state.sat_connected("m1")
+                state.sat_disconnected("m1")
+
+        prev = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            with patch.object(hub_mod.catalog_mod, "upsert_machine", upsert):
+                threads = [threading.Thread(target=stream) for _ in range(8)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+        finally:
+            sys.setswitchinterval(prev)
+        self.assertEqual(state._sat_subs["m1"], 0)
+        self.assertFalse(state.machine_online("m1"))
+        # Flags alternate online/offline and end offline.
+        self.assertEqual(writes[-1], False)
+        self.assertTrue(all(a != b for a, b in zip(writes, writes[1:])))
+
     def test_tail_manager_probes_through_state_status_of(self):
         state = HubState(Path(tempfile.mkdtemp()))
         state.status_of = lambda sessions: ["active"] * len(sessions)

@@ -223,6 +223,11 @@ class HubState:
         # Satellite presence: command-stream subscribers are the online
         # signal — a sleeping MacBook just drops offline until it dials in.
         self._sat_subs: dict[str, int] = {}
+        # Each satellite stream connects and disconnects on its own
+        # request thread. The lock also spans the online/offline write
+        # and event, so a disconnect racing a connect can't persist the
+        # flags out of order.
+        self._sat_subs_lock = threading.Lock()
         self._cmd_seq = 0
         # Guards ``_cmd_seq`` and every piece of satellite ack
         # bookkeeping below — command streams, result uploads and
@@ -587,6 +592,10 @@ class HubState:
         return self._sat_subs.get(mid, 0) > 0 or mid == self.machine_id
 
     def sat_connected(self, mid: str) -> None:
+        with self._sat_subs_lock:
+            self._sat_connected(mid)
+
+    def _sat_connected(self, mid: str) -> None:
         first = self._sat_subs.get(mid, 0) == 0
         self._sat_subs[mid] = self._sat_subs.get(mid, 0) + 1
         if first:
@@ -602,6 +611,10 @@ class HubState:
             )
 
     def sat_disconnected(self, mid: str) -> None:
+        with self._sat_subs_lock:
+            self._sat_disconnected(mid)
+
+    def _sat_disconnected(self, mid: str) -> None:
         left = max(0, self._sat_subs.get(mid, 0) - 1)
         self._sat_subs[mid] = left
         if left:
