@@ -38,6 +38,25 @@ class TestLoad(unittest.TestCase):
             self.assertIn("/* a.js */", body)
             self.assertEqual(pages.bundle(".none"), b"")
 
+    def test_bundled_rebuilds_only_when_a_file_changes(self):
+        import os
+        folder = Path(tempfile.mkdtemp())
+        page = folder / "a.js"
+        page.write_text("A")
+        real = pages.bundle
+        with patch.object(pages, "STATIC", folder), \
+                patch.dict(pages._BUNDLES, clear=True), \
+                patch.object(pages, "bundle", side_effect=real) as build:
+            body, etag = pages.bundled(".js")
+            self.assertEqual(pages.bundled(".js"), (body, etag))
+            self.assertEqual(build.call_count, 1)
+            page.write_text("AB")
+            os.utime(page, ns=(1, 1))  # a changed mtime and size
+            body2, etag2 = pages.bundled(".js")
+        self.assertEqual(build.call_count, 2)
+        self.assertNotEqual(etag, etag2)
+        self.assertIn(b"AB", body2)
+
     def test_a_broken_page_does_not_stop_the_others(self):
         """One page that won't parse and one that throws are logged and
         skipped; the pages around them still register."""
@@ -93,6 +112,26 @@ class TestLoad(unittest.TestCase):
                   + "\nprocess.stdout.write(PAGES.one() + ',' + PAGES.two());")
         out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
         self.assertEqual(out.stdout, "one,two", out.stderr)
+
+
+class TestBundleRoute(HubBase):
+    def test_an_unchanged_bundle_answers_304(self):
+        import http.client
+        for name in ("pages.js", "pages.css"):
+            conn = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
+            try:
+                conn.request("GET", f"/app/{name}")
+                resp = conn.getresponse()
+                resp.read()
+                etag = resp.getheader("ETag")
+                self.assertEqual(resp.status, 200)
+                self.assertTrue(etag)
+                conn.request("GET", f"/app/{name}", headers={"If-None-Match": etag})
+                again = conn.getresponse()
+                self.assertEqual((again.status, again.read()), (304, b""))
+                self.assertEqual(again.getheader("ETag"), etag)
+            finally:
+                conn.close()
 
 
 class TestLedgerAccess(HubBase):

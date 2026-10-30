@@ -3314,10 +3314,18 @@ class _Handler(BaseHTTPRequestHandler):
             return
         name = path[len("/app/"):] or "index.html"
         if name in {"pages.js", "pages.css"}:
+            body, etag = webapp_pages.bundled(name[len("pages"):])
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                return
             self._send_body(
-                webapp_pages.bundle(name[len("pages"):]),
+                body,
                 "text/javascript; charset=utf-8" if name.endswith(".js")
                 else "text/css; charset=utf-8",
+                etag=etag,
             )
             return
         if not webapp_static.is_asset_name(name):
@@ -3465,11 +3473,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._page_call(page.post, self._page_context(device_id), action, body)
 
-    def _send_body(self, body: bytes, ctype: str) -> None:
+    def _send_body(self, body: bytes, ctype: str,
+                   etag: str | None = None) -> None:
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-cache")
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         try:
             self.wfile.write(body)
