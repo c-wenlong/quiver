@@ -782,8 +782,19 @@ class OpencodeSource:
         except sqlite3.Error:
             pass
         try:
-            rows = opencode_store.v2_rows(conn, self.session_id, newest=cap + 1)
-            self.seq = rows[0][2] if len(rows) > cap else -1
+            # The boundary comes from the raw rows: v2_rows drops a row
+            # whose JSON won't decode, which would shorten the window
+            # and read as a short session (the whole history again).
+            row = None
+            if opencode_store.has_v2_messages(conn):
+                row = conn.execute(
+                    "SELECT sm.seq FROM session_message sm "
+                    "WHERE sm.session_id = ? "
+                    f"{opencode_store._not_legacy(conn)} "
+                    "ORDER BY sm.seq DESC LIMIT 1 OFFSET ?",
+                    (self.session_id, cap),
+                ).fetchone()
+            self.seq = int(row[0] or 0) if row else -1
         except sqlite3.Error:
             pass
         finally:
