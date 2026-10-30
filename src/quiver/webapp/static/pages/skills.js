@@ -803,9 +803,14 @@ async function openSkillFile(d, name) {
   const { status, data } = await api(`/v1/app/skills?skill=${encodeURIComponent(d.skill.path)}&file=${encodeURIComponent(name)}`);
   // Closed, or another file opened while this one was read.
   if (!sheet.open || sheet.dataset.token !== token) return;
+  if (status === 401) {
+    sheet.close();
+    if (skillsOnRoute()) renderGate();
+    return;
+  }
   let body;
   if (status !== 200 || !data) {
-    body = `<p class="error">${esc((data && data.error && data.error.message) || `The hub answered ${status}.`)}</p>`;
+    body = `<p class="error">${esc(failText(status, data))}</p>`;
   } else if (data.outside) {
     body = '<p class="caption">This file links outside the skill\'s folder, so the web app doesn\'t open it.</p>';
   } else if (data.text == null) {
