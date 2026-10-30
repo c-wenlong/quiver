@@ -1953,18 +1953,20 @@ class TestReviewFixes(unittest.TestCase):
         def dispatch(ev):
             ran.append(ev["seq"])
             if ev["seq"] == 1:
-                release.wait(5)
+                release.wait(30)  # held until the assertion is done
             else:
                 second.set()
 
         ag._dispatch = dispatch
-        for seq, key in ((1, "claude:a"), (2, "claude:b")):
-            ag._handle_frame(json.dumps({
-                "type": "command", "seq": seq, "session": key,
-                "data": {"op": "message"}}).encode())
-        self.assertTrue(second.wait(5))
-        release.set()
-        ag._sendq.close()
+        try:
+            for seq, key in ((1, "claude:a"), (2, "claude:b")):
+                ag._handle_frame(json.dumps({
+                    "type": "command", "seq": seq, "session": key,
+                    "data": {"op": "message"}}).encode())
+            self.assertTrue(second.wait(5))
+        finally:
+            release.set()
+            ag._sendq.close()
 
     def test_a_raising_send_does_not_stop_the_queue(self):
         ag = self._agent()
