@@ -27,7 +27,7 @@ enum NewSessionOptions {
     /// A machine that reports `launchable` but lists none: the Mac and
     /// web launch pickers' wording, with "Quiver's" because a phone has
     /// a Settings of its own.
-    static func noHarnessMessage(machineCount: Int = 1) -> String {
+    static func noHarnessMessage(machineCount: Int) -> String {
         machineCount > 1
             ? "No harness can start on any machine: install one, or turn it on in Quiver's Settings › Providers."
             : "No harness can start on the hub: install one there, or turn it on in Quiver's Settings › Providers."

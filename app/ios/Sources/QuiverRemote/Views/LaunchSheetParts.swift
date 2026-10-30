@@ -41,9 +41,10 @@ struct HarnessPicker: View {
             }
         }
         // The task and GitHub sheets launch on the hub even when it lists
-        // no harness; say why the grid is empty.
+        // no harness; say why the grid is empty (an older hub's row still
+        // gets the update-swe advice).
         if offered.isEmpty {
-            Text(NewSessionOptions.noHarnessMessage())
+            Text(NewSessionOptions.noMachineMessage([machine]))
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 4)
