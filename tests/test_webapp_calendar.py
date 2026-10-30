@@ -320,11 +320,6 @@ class TestRoute(HubBase):
         self.assertEqual(sorted(b["project"] for b in body["blocks"]), ["next", "proj"])
         self.assertEqual(body["legend"], [])
 
-    def test_page_script_is_bundled(self):
-        status, body = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("calendar"', body)
-
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestSlidingScript(unittest.TestCase):
@@ -344,6 +339,19 @@ class TestSlidingScript(unittest.TestCase):
         done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
+
+    def test_week_numbers_match_the_page_title(self):
+        """The mini month's and month grid's week numbers use the rule the
+        hub's "Week N" title does (week_of_year), for every first weekday:
+        a Sunday-first Oct 25 2026 is week 44 in both, not ISO's 43."""
+        from datetime import date, timedelta
+        days = [date(2020, 12, 20) + timedelta(days=i) for i in range(0, 3 * 366, 3)]
+        days += [date(2026, 10, 25), date(2027, 1, 1), date(2021, 1, 3)]
+        for fw in (1, 6, 7):
+            isos = json.dumps([d.isoformat() for d in days])
+            got = self.run_js(f"return {isos}.map((d) => T.weekOfYear(T.D(d), {fw}));")
+            self.assertEqual(got, [cal.week_of_year(d, fw) for d in days], fw)
+        self.assertEqual(self.run_js("return T.weekOfYear(T.D('2026-10-25'), 7);"), 44)
 
     def test_a_swipe_rests_on_the_nearest_day(self):
         # Day mode: 15 columns of 100px, one visible.

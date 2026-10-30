@@ -82,10 +82,6 @@ class _Server:
         return auth
 
 
-class TestHub(_Server, unittest.TestCase):
-    pass  # placeholder so _Server isn't collected as a test
-
-
 class HubBase(unittest.TestCase):
     def setUp(self):
         self.srv = _Server(sessions=[_session()])
@@ -752,12 +748,52 @@ class TestHubWriteRoutes(unittest.TestCase):
         srv.state.emit("claude:a3", protocol.event(
             "approval.requested", "claude:a3", "mbp",
             {"request_id": "req-3", "prompt": "run it?"}))
-        srv.state._approval_at["claude:a3"] = (
-            time.time() - APPROVAL_TTL_S - 1)
+        srv.state._approval_at["claude:a3"] = {
+            "req-3": time.time() - APPROVAL_TTL_S - 1}
         status, data = srv.request("GET", "/v1/inbox", headers=hdr)
         self.assertEqual(json.loads(data)["items"], [])
         self.assertNotIn("claude:a3", srv.state.pending_approvals)
         self.assertNotIn("claude:a3", srv.state._approval_at)
+
+    def test_expiry_drops_only_the_stale_request(self):
+        # One prompt past its TTL, one fresh, same session: the sweep
+        # must keep the fresh one in both maps and in the inbox.
+        srv = _Server(sessions=[_session(sid="a7")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        hdr = {"Authorization": f"Bearer {srv.pair()['credential']}"}
+        key = "claude:a7"
+        for rid in ("req-old", "req-new"):
+            srv.state.emit(key, protocol.event(
+                "approval.requested", key, "mbp",
+                {"request_id": rid, "prompt": "run it?"}))
+        srv.state._approval_at[key]["req-old"] = (
+            time.time() - APPROVAL_TTL_S - 1)
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        items = json.loads(data)["items"]
+        self.assertEqual([i["request_id"] for i in items], ["req-new"])
+        self.assertEqual(srv.state.pending_approvals[key], "req-new")
+        self.assertEqual(set(srv.state._approval_at[key]), {"req-new"})
+
+    def test_overlapping_approvals_resolve_one_at_a_time(self):
+        # A Codex app-server can hold two prompts on one session:
+        # answering A must leave B pending, not clear the session.
+        srv = _Server(sessions=[_session(sid="a6")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        key = "claude:a6"
+        for rid in ("req-A", "req-B"):
+            srv.state.emit(key, protocol.event(
+                "approval.requested", key, "mbp",
+                {"request_id": rid, "prompt": "run it?"}))
+        self.assertEqual(srv.state.pending_approvals[key], "req-B")
+        srv.state.emit(key, protocol.event(
+            "approval.resolved", key, "mbp", {"request_id": "req-B"}))
+        self.assertEqual(srv.state.pending_approvals[key], "req-A")
+        srv.state.emit(key, protocol.event(
+            "approval.resolved", key, "mbp", {"request_id": "req-A"}))
+        self.assertNotIn(key, srv.state.pending_approvals)
+        self.assertNotIn(key, srv.state._approval_at)
 
     def test_inbox_keeps_fresh_approval(self):
         srv = _Server(sessions=[_session(sid="a4")],
@@ -3192,6 +3228,39 @@ class TestServeEntry(unittest.TestCase):
         self.assertEqual(out.count("tail tick failed"), 2, out)
         self.assertEqual(out.count("catalog refresh failed"), 1, out)
 
+    def test_catalog_loop_prunes_pair_requests_at_most_once_a_minute(self):
+        home = Path(tempfile.mkdtemp())
+        state = HubState(home)
+        r = pairing.request_pair(home, {"node_id": "n1"}, "phone")
+        pairing.approve_request(home, r["code"])
+        rows = pairing._load_requests(home)
+        rows[0]["expires_at"] = time.time() - 1
+        pairing._save_requests(home, rows)
+        # Three loop passes: prune on the first, skip the second (same
+        # minute), prune the third once the last prune is backdated
+        # past the interval.
+        passes = iter(range(3))
+        state.catalog.rows = lambda: []
+        state.catalog.refresh = lambda: []
+        state.catalog.poll_github = lambda: None
+        state._adopt_launches = lambda: None
+        state._refresh_launchable = lambda: None
+        state._catalog_wake.wait = lambda _t: None
+
+        def sync(rows, **kw):
+            if next(passes) == 2:
+                state._pair_pruned_at -= hub_mod._PAIR_PRUNE_S + 1
+                state._stop.set()
+
+        state.tail_manager.sync = sync
+        with patch("quiver.remote.supervise.reap_kept"), \
+             patch("quiver.remote.pairing.prune_requests",
+                   wraps=pairing.prune_requests) as prune:
+            state._catalog_loop()
+        self.assertEqual(prune.call_count, 2)
+        # The uncollected credential left with its expired row.
+        self.assertEqual(pairing._load_requests(home), [])
+
     def test_tail_manager_probes_through_state_status_of(self):
         state = HubState(Path(tempfile.mkdtemp()))
         state.status_of = lambda sessions: ["active"] * len(sessions)
@@ -3202,7 +3271,11 @@ class TestServeEntry(unittest.TestCase):
 
     def test_state_start_stop(self):
         state = HubState(Path(tempfile.mkdtemp()))
-        state.start()
+        # No real session scan or notify config: only the thread
+        # lifecycle is under test.
+        state.catalog._fetch = lambda: []
+        with patch.object(hub_mod.notify, "load_config", return_value={}):
+            state.start()
         try:
             self.assertTrue(state._threads)
             self.assertTrue(all(t.is_alive() for t in state._threads))
@@ -3957,9 +4030,12 @@ class TestStartNotify(unittest.TestCase):
         home = Path(tempfile.mkdtemp())
         state = HubState(home)
         state.catalog._fetch = lambda: []
-        cfg = {"enabled": True, "url": "https://ntfy.sh",
+        cfg = {"enabled": True, "url": "https://ntfy.invalid",
                "topic": "t", "ntfy_token": "x"}
-        with patch.object(notify, "load_config", return_value=cfg):
+        # The notifier thread really runs: nothing it does may reach a
+        # network.
+        with patch.object(notify, "load_config", return_value=cfg), \
+             patch.object(notify.Notifier, "_post"):
             state.start()
             try:
                 names = [t.name for t in state._threads]

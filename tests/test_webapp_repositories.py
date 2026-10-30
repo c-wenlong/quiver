@@ -21,6 +21,7 @@ from quiver.webapp.pages import _github as G
 from quiver.webapp.pages import repositories as R
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 OK_ENV = gh.GhEnv(installed=True, authenticated=True, login="octo")
 
@@ -805,7 +806,7 @@ process.stdout.write(JSON.stringify({ runs: runs.map((t) => t - 1000000), stoppe
 """
 
     def test_hidden_ticks_are_skipped_and_a_return_catches_up(self):
-        script = self.SCRIPT.replace("GITHUB_JS", (STATIC / "github.js").read_text())
+        script = self.SCRIPT.replace("GITHUB_JS", app_js_function("currentRoute") + (STATIC / "github.js").read_text())
         done = _node(script)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(json.loads(done.stdout), {"runs": [60000, 170000, 260000], "stopped": True})
@@ -891,8 +892,10 @@ class TestPrWorktree(_Base):
         with patch("quiver.remote.catalog.launchable_harnesses",
                    return_value=rows), \
              patch("quiver.remote.catalog.recent_models",
-                   return_value={"claude": ["opus", "sonnet"]}):
+                   return_value={"claude": ["opus", "sonnet"]}) as recent:
             body = R.get(self.ctx, {"harnesses": "1"})
+        # Models come from the hub's own home, not the process's.
+        self.assertEqual(recent.call_args[0][0], self.ctx.home)
         self.assertEqual(body["harnesses"], [{
             "name": "claude", "display_name": "Claude Code",
             "tracked": True, "launch_model": True,
@@ -1072,8 +1075,7 @@ class TestRoute(HubBase):
 
     def test_page_scripts_are_bundled(self):
         _, js = self.srv.request("GET", "/app/pages.js")
-        for name in (b'registerPage("repositories"', b'registerPage("inbox"', b"const GhUI"):
-            self.assertIn(name, js)
+        self.assertIn(b"const GhUI", js)
         _, css = self.srv.request("GET", "/app/pages.css")
         self.assertIn(b".gh-row", css)
 

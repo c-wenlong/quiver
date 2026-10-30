@@ -58,7 +58,7 @@ const COMPONENTS = [["skills", "skill", "skills"], ["agents", "agent", "agents"]
   ["commands", "command", "commands"], ["hooks", "hook", "hooks"], ["mcp_servers", "MCP server", "MCP servers"]];
 
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-const onPage = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "plugins";
+const onPage = () => currentRoute() === "plugins";
 
 /* ------------------------------------------------------------ loading */
 
@@ -149,8 +149,7 @@ function paint() {
   const active = document.activeElement && document.activeElement.id === "pl-search"
     ? document.activeElement.selectionStart : null;
   document.getElementById("panel").innerHTML = `<div class="page">${header()}
-    <div class="stack">${tabs}${body}</div></div>
-    <dialog class="sheet" id="plugin-sheet"></dialog>`;
+    <div class="stack">${tabs}${body}</div></div>`;
   bindHeader();
   for (const tab of document.querySelectorAll("[data-pl-tab]")) {
     tab.onclick = () => {
@@ -609,8 +608,8 @@ function bindExplore() {
 function openPlugin(ref) {
   const d = page.data.explore;
   const p = d && d.plugins[ref];
-  const sheet = document.getElementById("plugin-sheet");
-  if (!p || !sheet) { page.sheet = null; return; }
+  if (!p) { page.sheet = null; return; }
+  const sheet = bodySheet("plugin-sheet", "sheet");
   page.sheet = ref;
   sheet.onclose = () => { page.sheet = null; };
   let market = null;

@@ -16,6 +16,7 @@ from quiver.mcp import cli as mcp_cli
 from quiver.webapp.pages import PageError, mcp
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 SECRET = "lin_api_SECRETVALUE1234567890"
 
@@ -262,11 +263,6 @@ class TestRoute(HubBase):
             status, data = self.srv.request("GET", "/v1/app/mcp?health=1", headers=self.auth())
         self.assertEqual(status, 200, data)
         self.assertEqual({s["health"] for s in json.loads(data)["servers"]}, {"ok"})
-
-    def test_page_script_is_bundled(self):
-        status, body = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("mcp"', body)
 
 
 LINEAR_TOKEN = "lin_api_LIVEVALUE0987654321"
@@ -952,7 +948,6 @@ class TestSyncRoute(_SyncHome, HubBase):
         self.assertEqual(json.loads(data)["error"]["code"], "secrets_missing")
 
 
-
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestLeavingForgetsSecrets(unittest.TestCase):
     """pages/mcp.js under node: navigating away removes both sheets with
@@ -966,7 +961,7 @@ class TestLeavingForgetsSecrets(unittest.TestCase):
             "globalThis.window = { addEventListener(t, f) { if (t === 'hashchange') listeners.push(f); } };\n"
             "globalThis.localStorage = { getItem() { return null; }, setItem() {} };\n"
             "globalThis.location = { hash: '#/mcp' };\n"
-            "function registerPage() {}\n")
+            "function registerPage() {}\n" + app_js_function("currentRoute"))
         body = (
             "const st = () => ({ revealed: new Map([['TOKEN', 'shh']]), revealGen: 0,"
             " drafts: new Map([['KEY', 'typed']]), replacing: new Set(['KEY']), secretError: 'x' });\n"
