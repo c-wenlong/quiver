@@ -56,6 +56,51 @@ final class HubStub: URLProtocol, @unchecked Sendable {
     }
 }
 
+/// A live events connection: answers 200 with the frame `frame` picks
+/// for the request, then holds the connection open, as the hub does
+/// between events. Only a cancelled reader ever closes one, so `closed`
+/// counting up proves the reader's loop let go of it.
+final class HeldStream: URLProtocol, @unchecked Sendable {
+    struct Watch: Sendable {
+        let frame: @Sendable (URLRequest) -> String
+        let opened = CountGate()
+        let closed = CountGate()
+    }
+    private static let current = Mutex<Watch?>(nil)
+    /// Starts counting afresh, answering each connection with `frame`.
+    static func watch(_ frame: @escaping @Sendable (URLRequest) -> String) -> Watch {
+        let watch = Watch(frame: frame)
+        current.withLock { $0 = watch }
+        return watch
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let watch = Self.current.withLock({ $0 }) else { return }
+        Task { await watch.opened.bump() }
+        // Without a content type URLSession sniffs the first 512 bytes
+        // before handing over the response, and a short frame never gets
+        // there.
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                       headerFields: ["Content-Type": "text/event-stream"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(watch.frame(request).utf8))
+    }
+
+    override func stopLoading() {
+        guard let watch = Self.current.withLock({ $0 }) else { return }
+        Task { await watch.closed.bump() }
+    }
+
+    static func session() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [HeldStream.self]
+        return URLSession(configuration: config)
+    }
+}
+
 final class FakeLocator: HubLocating, @unchecked Sendable {
     var address: String?
     var tokens = 0
@@ -491,12 +536,8 @@ extension HubStubbed {
     }
 
     /// The stream's own reconnect: after journal.truncated at 2 it asks
-    /// from 2 next time, not from the 500 it started at.
-    ///
-    /// A session of its own: a stream an earlier test stopped reading can
-    /// still be reconnecting to claude:s1 (the producer outlives a reader
-    /// that leaves its loop without being cancelled), and its asks would
-    /// land in this test's list.
+    /// from 2 next time, not from the 500 it started at. A session of its
+    /// own, so no other test's asks can land in its list.
     @Test func theStreamReconnectsFromATruncatedFramesSeq() async throws {
         HubStub.requests = []
         HubStub.handler = { req in
@@ -522,6 +563,65 @@ extension HubStubbed {
         #expect(truncated == [2, 2])
         #expect(disconnects == 1)
         #expect(lasts == ["500", "2"])
+    }
+
+    /// A reader that leaves its loop without cancelling its task (a
+    /// `break`, a `return`) ends the stream: its connection closes and no
+    /// reconnect follows. A producer that outlived its reader would hold
+    /// the connection open and reconnect forever.
+    @Test(.timeLimit(.minutes(1))) func aReaderThatLeavesItsLoopClosesTheStream() async throws {
+        let watch = HeldStream.watch { _ in ": ka\n\n" }
+        let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!, credential: "secret",
+                               session: HubStub.session(), streamSession: HeldStream.session())
+        for await event in client.events("claude:held", last: 0) {
+            if case .connected = event { break }
+        }
+        // The counts bump in tasks of their own, so the close can land
+        // before the open: wait for both, then check nothing else opened.
+        #expect(await watch.closed.reach(1))
+        #expect(await watch.opened.reach(1))
+        #expect(await watch.opened.count == 1)
+    }
+
+    /// After journal.truncated the chat reloads and follows again from a
+    /// new stream; the old one closes rather than reconnecting alongside
+    /// it, and stop() closes the new one.
+    @Test(.timeLimit(.minutes(1))) func aFollowAfterTruncatedClosesTheOldStream() async throws {
+        let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let pages = Mutex(0)
+        HubStub.handler = { req in
+            switch req.url?.path {
+            case "/v1/sessions": return (200, Data(#"{"sessions": [{"key": "claude:s1"}]}"#.utf8))
+            case "/v1/sessions/claude:s1/messages":
+                let first = pages.withLock { n in n += 1; return n == 1 }
+                return (200, Data((first
+                    ? #"{"messages": [{"type": "message.appended", "seq": 500, "data": {"kind": "assistant", "text": "before"}}], "has_more": false}"#
+                    : #"{"messages": [{"type": "message.appended", "seq": 2, "data": {"kind": "assistant", "text": "after wipe"}}], "has_more": false}"#).utf8))
+            default: return (404, Data())
+            }
+        }
+        // From 500 the journal says truncated at 2; from 2 it is caught up.
+        let watch = HeldStream.watch { req in
+            let last = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "last" }?.value
+            return last == "500"
+                ? "data: {\"type\": \"journal.truncated\", \"seq\": 2}\n\n"
+                : "data: {\"type\": \"journal.caught-up\", \"seq\": 2}\n\n"
+        }
+        let hub = LocalHub(locator: FakeLocator(address: "127.0.0.1:8477"), store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session(), streamSession: HeldStream.session())
+        }
+        let chat = SessionChatModel(key: "claude:s1", hub: hub)
+        defer { chat.stop() }
+        await chat.start()
+        #expect(await watch.opened.reach(2))
+        #expect(await watch.closed.reach(1))
+        #expect(await observe(until: { chat.items.map(\.id) == ["m2"] }))
+        #expect(await watch.closed.count == 1)
+        chat.stop()
+        #expect(await watch.closed.reach(2))
+        #expect(await watch.opened.count == 2)
     }
 
     /// The placeholder a waiting approval opens with learns the pane's
