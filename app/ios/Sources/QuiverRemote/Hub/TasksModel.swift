@@ -38,17 +38,7 @@ final class TasksModel {
         do {
             let body = try await client.tasks(refresh: refresh)
             guard gen == generation else { return }
-            tasks = body.tasks
-            failedRepos = body.repos ?? []
-            machine = body.machine
-            machineId = body.machineId
-            envBlocked = body.envBlocked
-            githubFailed = body.github?.status == "upstream-error"
-                ? (body.github?.error ?? "gh failed on the hub") : nil
-            fetchedAt = body.fetchedAt
-            error = nil
-            linearBlocked = Self.blocked(body.linear, source: "Linear")
-            notionBlocked = Self.blocked(body.notion, source: "Notion")
+            apply(body)
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message
@@ -57,6 +47,22 @@ final class TasksModel {
             self.error = error.localizedDescription
         }
         loaded = true
+    }
+
+    /// Takes one reply: its rows and each source's env block, so a
+    /// source that recovered stops marking its rows last-known.
+    func apply(_ body: TasksResponse) {
+        tasks = body.tasks
+        failedRepos = body.repos ?? []
+        machine = body.machine
+        machineId = body.machineId
+        envBlocked = body.envBlocked
+        githubFailed = body.github?.status == "upstream-error"
+            ? (body.github?.error ?? "gh failed on the hub") : nil
+        fetchedAt = body.fetchedAt
+        error = nil
+        linearBlocked = Self.blocked(body.linear, source: "Linear")
+        notionBlocked = Self.blocked(body.notion, source: "Notion")
     }
 
     /// The detail page's row, live as the list refreshes under it.

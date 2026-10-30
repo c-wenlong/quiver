@@ -967,6 +967,33 @@ extension HubStubbed {
         #expect(model.stale(model.tasks[0]) == false)
     }
 
+    /// The page reply with one Notion row and the given `notion` block.
+    nonisolated private static func notionReply(_ notion: String) -> Data {
+        Data(#"{"tasks": [{"id": "notion:page:roadmap:p1", "source": "notion", "kind": "page", "project": "Roadmap", "ref": "p1", "title": "Plan Q3", "state": "open"}], "machine": "kai", "machine_id": "m-1", "github": {"status": "ok"}, "notion": "#.utf8)
+            + Data(notion.utf8) + Data("}".utf8)
+    }
+
+    @Test func aNotionRowIsStaleWhileNotionFailsAndFreshOnceItRecovers() async throws {
+        HubStub.handler = { req in
+            req.url?.path == "/v1/app/tasks"
+                ? (200, Self.notionReply(#"{"status": "upstream-error", "error": "Notion answered HTTP 502"}"#))
+                : (404, Data())
+        }
+        let model = TasksModel()
+        let hub = try hub()
+        await model.load(hub: hub)
+        #expect(model.notionBlocked == "Notion answered HTTP 502")
+        #expect(model.stale(model.tasks[0]))
+        HubStub.handler = { req in
+            req.url?.path == "/v1/app/tasks"
+                ? (200, Self.notionReply(#"{"status": "ok", "login": "Kai"}"#))
+                : (404, Data())
+        }
+        await model.load(hub: hub, refresh: true)
+        #expect(model.notionBlocked == nil)
+        #expect(model.stale(model.tasks[0]) == false)
+    }
+
     @Test func aFailedRefreshKeepsTheRowsItHad() async throws {
         HubStub.handler = { _ in (200, Data(Self.listJSON.utf8)) }
         let model = TasksModel()

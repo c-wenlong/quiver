@@ -187,6 +187,22 @@ final class TaskRowTests: XCTestCase {
         XCTAssertEqual(row("a", ref: "QUI-1", repo: nil, project: "QUI").refLabel, "QUI-1")
     }
 
+    @MainActor
+    func testNotionRowsAreStaleWhileNotionFailsAndFreshOnceItRecovers() throws {
+        func reply(_ notion: String) throws -> TasksResponse {
+            let json = #"{"tasks": [{"id": "notion:page:roadmap:p1", "source": "notion", "kind": "page", "project": "Roadmap", "ref": "p1", "title": "Plan Q3", "state": "open", "sessions": [], "launches": [], "agent_running": false, "linked": false, "last_active_at": 1.0}], "machine": "kai", "machine_id": "m-1", "github": {"status": "ok"}, "notion": "#
+                + notion + "}"
+            return try Hub.decoder.decode(TasksResponse.self, from: Data(json.utf8))
+        }
+        let model = TasksModel()
+        model.apply(try reply(#"{"status": "upstream-error", "error": "Notion answered HTTP 502"}"#))
+        XCTAssertEqual(model.notionBlocked, "Notion answered HTTP 502")
+        XCTAssertTrue(model.stale(model.tasks[0]))
+        model.apply(try reply(#"{"status": "ok", "login": "Kai"}"#))
+        XCTAssertNil(model.notionBlocked)
+        XCTAssertFalse(model.stale(model.tasks[0]))
+    }
+
     func testKeyedSourceBlockedReason() throws {
         func env(_ json: String) throws -> GhEnv {
             try Hub.decoder.decode(GhEnv.self, from: Data(json.utf8))
