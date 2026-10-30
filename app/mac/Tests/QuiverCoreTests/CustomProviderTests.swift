@@ -41,6 +41,23 @@ import Testing
         #expect(CustomProvider.modelsURL("host/v1") == nil)
     }
 
+    @Test func plainHTTPOnlyReachesThisMachineOrAPrivateNetwork() {
+        // The key rides every request as a bearer token.
+        for local in ["http://localhost:11434/v1", "http://127.0.0.1:1234/v1",
+                      "http://10.0.0.5/v1", "http://192.168.1.9:8000/v1",
+                      "http://172.20.0.2/v1", "http://100.101.102.103/v1",
+                      "http://box.local:8080/v1", "http://[::1]:8080/v1"] {
+            #expect(CustomProvider.modelsURL(local) != nil, "\(local)")
+        }
+        for remote in ["http://api.example.com/v1", "http://8.8.8.8/v1",
+                       "http://172.32.0.1/v1", "http://100.128.0.1/v1",
+                       "http://10.0.0.1.example.com/v1", "http://192.168.1.1.attacker.net/v1"] {
+            #expect(CustomProvider.modelsURL(remote) == nil, "\(remote)")
+            #expect(CustomProvider.probe(baseURL: remote) == nil, "\(remote)")
+        }
+        #expect(CustomProvider.modelsURL("https://api.example.com/v1") != nil)
+    }
+
     @Test func entriesWritesBaseKeyAndModelInFileOrder() {
         let entries = CustomProvider.entries(prefix: "SOCLAAS", baseURL: "https://h/v1",
                                              key: "k", model: "m1")
