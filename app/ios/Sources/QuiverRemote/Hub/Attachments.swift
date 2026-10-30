@@ -200,37 +200,37 @@ final class ComposerAttachments {
     /// How many more the phone takes for this message.
     var room: Int { max(0, AttachmentRules.maxPerMessage - items.count) }
 
-    /// A file from the Files picker. HEIC and other images models can't
-    /// read are converted to JPEG first.
-    @discardableResult
-    func addFile(name: String, data: Data) -> Task<Void, Never>? {
-        notice = nil
-        guard room > 0 else { return refuse(Self.fullNote) }
-        if AttachmentRules.needsConversion(name) {
-            return addImage(name: AttachmentRules.jpegName(name)) { data }
-        }
-        if let why = AttachmentRules.refusal(name: name, size: data.count) { return refuse(why) }
-        let isImage = AttachmentRules.readableImages.contains(AttachmentRules.ext(name))
-        let item = PendingAttachment(id: UUID(), name: name, size: data.count, isImage: isImage, state: .uploading(0))
-        items.append(item)
-        return start(item.id, data: data)
+    /// What a pick's loader came back with.
+    enum Picked: Sendable {
+        case data(Data)
+        /// Not read, with why, worded for the notice.
+        case refused(String)
     }
 
-    /// A file from the Files picker, read off the main thread. One over
-    /// the cap is refused from its size alone, without reading it; an
-    /// image to convert may be bigger, since the JPEG comes out smaller.
-    func addFile(at url: URL) async {
+    /// A file's bytes already in memory. HEIC and other images models
+    /// can't read are converted to JPEG first.
+    @discardableResult
+    func addFile(name: String, data: Data) -> Task<Void, Never>? {
+        add(name: name) { .data(data) }
+    }
+
+    /// A file from the Files picker. Its chip shows "Preparing" while it's
+    /// read off the main thread, so Send waits for it and a send or clear
+    /// in the meantime drops it. One over the cap is refused from its size
+    /// alone, without reading it; an image to convert may be bigger, since
+    /// the JPEG comes out smaller.
+    @discardableResult
+    func addFile(at url: URL) -> Task<Void, Never>? {
         let name = url.lastPathComponent
-        let read = await Task.detached { Self.read(url, name: name) }.value
-        if let data = read.data {
-            addFile(name: name, data: data)
-        } else {
-            notice = read.size.flatMap { size in
+        return add(name: name) {
+            let read = await Task.detached { Self.read(url, name: name) }.value
+            if let data = read.data { return .data(data) }
+            return .refused(read.size.flatMap { size in
                 // A TIFF's own type isn't the hub's, but it would be
                 // converted: only its size can be the problem.
                 guard AttachmentRules.needsConversion(name) else { return AttachmentRules.refusal(name: name, size: size) }
                 return size > Self.convertibleReadLimit ? AttachmentRules.tooBig(name: name, size: size) : nil
-            } ?? "\(name) couldn't be read."
+            } ?? "\(name) couldn't be read.")
         }
     }
 
@@ -246,41 +246,69 @@ final class ComposerAttachments {
         return (try? Data(contentsOf: url), size)
     }
 
-    /// A photo from the library. `load` fetches its original bytes; the
-    /// chip shows "Preparing" while it loads and converts.
+    /// A photo from the library. `load` fetches its original bytes; it
+    /// always goes up as a JPEG.
     @discardableResult
     func addPhoto(load: @escaping @Sendable () async throws -> Data?) -> Task<Void, Never>? {
-        notice = nil
-        guard room > 0 else { return refuse(Self.fullNote) }
+        guard room > 0 else {
+            notice = Self.fullNote
+            return nil
+        }
         photoCount += 1
-        return addImage(name: "photo-\(photoCount).jpg", load: load)
+        let name = "photo-\(photoCount).jpg"
+        return add(name: name, photo: true) {
+            guard let data = try? await load() else { return .refused("\(name) couldn't be read as an image.") }
+            return .data(data)
+        }
     }
 
-    private func addImage(name: String, load: @escaping @Sendable () async throws -> Data?) -> Task<Void, Never> {
+    /// Every pick goes through here: a "Preparing" chip at once (so it
+    /// counts against the limit and holds Send), then load, convert if
+    /// needed, check the hub's caps, and upload under the same chip. A
+    /// chip removed or cleared meanwhile drops whatever comes back.
+    private func add(name picked: String, photo: Bool = false,
+                     load: @escaping @Sendable () async -> Picked) -> Task<Void, Never>? {
+        notice = nil
+        guard room > 0 else {
+            notice = Self.fullNote
+            return nil
+        }
+        let converts = photo || AttachmentRules.needsConversion(picked)
+        let name = converts ? AttachmentRules.jpegName(picked) : picked
+        // A type the hub won't take is refused from its name, unread.
+        if !converts, let why = AttachmentRules.refusal(name: name, size: 1) {
+            notice = why
+            return nil
+        }
         let id = UUID()
-        items.append(PendingAttachment(id: id, name: name, size: 0, isImage: true, state: .preparing))
+        let isImage = converts || AttachmentRules.readableImages.contains(AttachmentRules.ext(name))
+        items.append(PendingAttachment(id: id, name: name, size: 0, isImage: isImage, state: .preparing))
         let convert = self.convert
         let task = Task { [weak self] in
-            let raw = try? await load()
-            let jpeg = await Task.detached { raw.flatMap(convert) }.value
+            var loaded = await load()
+            if converts, case .data(let raw) = loaded {
+                let jpeg = await Task.detached { convert(raw) }.value
+                loaded = jpeg.map(Picked.data) ?? .refused("\(name) couldn't be read as an image.")
+            }
             guard let self, !Task.isCancelled, self.items.contains(where: { $0.id == id }) else { return }
-            guard let jpeg else {
-                self.items.removeAll { $0.id == id }
-                self.tasks[id] = nil
-                self.notice = "\(name) couldn't be read as an image."
-                return
+            switch loaded {
+            case .refused(let why):
+                self.drop(id, why)
+            case .data(let data):
+                if let why = AttachmentRules.refusal(name: name, size: data.count) { return self.drop(id, why) }
+                self.update(id) { $0.size = data.count; $0.state = .uploading(0) }
+                await self.run(id, data: data)
             }
-            if let why = AttachmentRules.refusal(name: name, size: jpeg.count) {
-                self.items.removeAll { $0.id == id }
-                self.tasks[id] = nil
-                self.notice = why
-                return
-            }
-            self.update(id) { $0.size = jpeg.count; $0.state = .uploading(0) }
-            await self.run(id, data: jpeg)
         }
         tasks[id] = task
         return task
+    }
+
+    /// A pick that turned out unusable: its chip goes, with why.
+    private func drop(_ id: UUID, _ why: String) {
+        items.removeAll { $0.id == id }
+        tasks[id] = nil
+        notice = why
     }
 
     private func start(_ id: UUID, data: Data) -> Task<Void, Never> {
@@ -338,18 +366,15 @@ final class ComposerAttachments {
         items.removeAll { $0.id == id }
     }
 
-    /// The send took the finished files: the composer starts empty.
+    /// The send took the finished files (or a detach dropped them on the
+    /// hub): the composer starts empty.
     func clear() {
+        guard !items.isEmpty || notice != nil || !tasks.isEmpty else { return }
         for task in tasks.values { task.cancel() }
         tasks = [:]
         payloads = [:]
         items = []
         notice = nil
-    }
-
-    private func refuse(_ why: String) -> Task<Void, Never>? {
-        notice = why
-        return nil
     }
 
     nonisolated static var fullNote: String { "Up to \(AttachmentRules.maxPerMessage) files per message." }

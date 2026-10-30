@@ -199,10 +199,11 @@ final class ComposerAttachmentsTests: XCTestCase {
 
     func testTheHubsCapsAreCheckedBeforeUploading() {
         let files = model()
-        XCTAssertNil(files.addFile(name: "report.docx", data: Data("x".utf8)))
+        XCTAssertNil(files.addFile(name: "report.docx", data: Data("x".utf8)), "refused from its name, no chip")
         XCTAssertTrue(files.items.isEmpty)
         XCTAssertTrue(files.notice?.hasPrefix("report.docx can't be attached") == true)
-        XCTAssertNil(files.addFile(name: "huge.pdf", data: Data(count: AttachmentRules.maxBytes + 1)))
+        await files.addFile(name: "huge.pdf", data: Data(count: AttachmentRules.maxBytes + 1))?.value
+        XCTAssertTrue(files.items.isEmpty)
         XCTAssertTrue(files.notice?.hasPrefix("huge.pdf is too big") == true)
         XCTAssertTrue(uploads.isEmpty)
         // The next pick clears the notice.
@@ -259,18 +260,47 @@ final class ComposerAttachmentsTests: XCTestCase {
         XCTAssertNil(ComposerAttachments.read(big, name: "dump.log").data)
 
         let files = model()
-        await files.addFile(at: big)
+        await files.addFile(at: big)?.value
         XCTAssertTrue(files.notice?.hasPrefix("dump.log is too big") == true, files.notice ?? "")
         XCTAssertTrue(uploads.isEmpty)
 
         let small = dir.appendingPathComponent("notes.md")
         try Data("# hi".utf8).write(to: small)
-        await files.addFile(at: small)
+        await files.addFile(at: small)?.value
         XCTAssertNil(files.notice)
         XCTAssertEqual(files.items.map(\.name), ["notes.md"])
 
-        await files.addFile(at: dir.appendingPathComponent("missing.txt"))
+        await files.addFile(at: dir.appendingPathComponent("missing.txt"))?.value
         XCTAssertEqual(files.notice, "missing.txt couldn't be read.")
+    }
+
+    func testAPickStillLoadingHoldsSendAndASendDropsIt() async {
+        let gate = Gate()
+        let files = model()
+        var loaded = false
+        let task = files.addPhoto {
+            await gate.wait()
+            return Data("late".utf8)
+        }
+        XCTAssertEqual(files.items.first?.state, .preparing)
+        XCTAssertTrue(files.blocksSend, "a pick still being read holds Send")
+        XCTAssertEqual(files.room, AttachmentRules.maxPerMessage - 1)
+        files.clear()
+        gate.open()
+        await task?.value
+        loaded = files.items.isEmpty
+        XCTAssertTrue(loaded, "a read that finishes after a send doesn't land in the next draft")
+        XCTAssertTrue(uploads.isEmpty)
+    }
+
+    func testDetachDropsACachedChatsFiles() async {
+        let app = AppModel()
+        let chat = app.chat("claude:1")
+        chat.attachments.upload = { name, _, _ in StagedAttachment(ref: "1730000000-a1b2c3-\(name)") }
+        await chat.attachments.addFile(name: "a.txt", data: Data("a".utf8))?.value
+        XCTAssertEqual(chat.attachments.refs.count, 1)
+        app.patch("claude:1", ownership: "observed")
+        XCTAssertTrue(chat.attachments.isEmpty)
     }
 
     func testClearEmptiesTheComposer() {

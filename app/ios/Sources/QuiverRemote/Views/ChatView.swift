@@ -210,11 +210,6 @@ private struct ChatBody: View {
             }
         }
         .background(Theme.wash)
-        // A detach removes the session's staged files on the hub, so
-        // chips kept for a later attach would name files that are gone.
-        .onChange(of: row?.isAttached == true) { _, attached in
-            if !attached { model.attachments.clear() }
-        }
     }
 }
 

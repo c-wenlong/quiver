@@ -36,7 +36,7 @@ struct AttachButton: View {
         .fileImporter(isPresented: $filesShown, allowedContentTypes: AttachmentRules.pickerTypes,
                       allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
-            Task { for url in urls { await attachments.addFile(at: url) } }
+            for url in urls { attachments.addFile(at: url) }
         }
     }
 }
