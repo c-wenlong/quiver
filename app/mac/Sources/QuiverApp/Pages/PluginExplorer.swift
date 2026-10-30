@@ -93,6 +93,7 @@ struct PluginExplorer: View {
                                             open: model.isOpen(market.id), searching: searching,
                                             openHealth: openHealth, confirm: confirm,
                                             onRename: { renaming = market.name
+                                                renameError = nil
                                                 renameText = app.primitiveNames.name(forMarketplace: market.name) ?? market.name },
                                             openPlugin: { opened = $0 },
                                             toggle: { model.toggle(market.id) })
@@ -101,6 +102,9 @@ struct PluginExplorer: View {
                     .padding(.top, 16)
                 }
             }
+            // A rename's failure goes once the next action has its own
+            // result to show; the card above shows one or the other.
+            .onChange(of: model.lastResult) { renameError = nil }
             .alert("Rename marketplace", isPresented: .init(
                 get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
                 TextField("Display name", text: $renameText)
