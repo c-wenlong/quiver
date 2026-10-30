@@ -289,11 +289,11 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
 .approval-toggle {
   display: flex; align-items: center; gap: 8px; width: 100%;
   background: none; border: 0; padding: 0; margin: 0;
-  font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--text-primary);
   text-align: left; cursor: pointer;
 }
 .approval-toggle[hidden] { display: none; }
-.approval-toggle .chev { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; color: var(--text-subtle); transition: transform .12s; }
+.approval-toggle .chev { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; color: var(--text-muted); transition: transform .12s; }
 .msg.approval.open .approval-toggle .chev { transform: rotate(90deg); }
 .msg.approval.resolved:not(.open) .role,
 .msg.approval.resolved:not(.open) .text,

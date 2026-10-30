@@ -2354,7 +2354,13 @@ class _Handler(BaseHTTPRequestHandler):
         machine = cmd["machine"] or state.machine_id
         harness, cwd = cmd["harness"], cmd["cwd"]
         if machine != state.machine_id:
-            row = catalog_mod.load_machines(state.home).get(machine) or {}
+            row = catalog_mod.load_machines(state.home).get(machine)
+            if row is None:
+                # No satellite by that id would ever drain the queue:
+                # the launch would sit pending in a fresh journal.
+                self._send_error(404, "unknown_machine",
+                                 f"no machine {machine} on this hub")
+                return
             # A satellite older than the launchable field reports none;
             # it checks its own registry when the command arrives.
             offered = row.get("launchable")
