@@ -368,7 +368,7 @@ private struct LinksStep: View {
             Text("Its AGENTS.md, skills, plugins and MCP servers are on this Mac now. Set up links them into each agent.")
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            ForEach(cloned.marketplaces.filter { $0.error != nil }, id: \.marketplace) { row in
+            ForEach(cloned.marketplaces.filter { $0.error != nil }, id: \.self) { row in
                 Text("\(row.marketplace) isn't registered in \(HarnessMark.accountName(row.harness)): \(row.error ?? "")")
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .fixedSize(horizontal: false, vertical: true)

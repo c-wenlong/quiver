@@ -68,7 +68,7 @@ public struct SetupPreview: Decodable, Sendable, Equatable {
     /// `swe setup --json`'s `hub`: whether `~/.quiver` can still take a
     /// clone of the user's hub repo, and what `--hub` just cloned.
     public struct Hub: Decodable, Sendable, Equatable {
-        public struct Marketplace: Decodable, Sendable, Equatable {
+        public struct Marketplace: Decodable, Sendable, Hashable {
             public let harness: String
             public let marketplace: String
             /// Why it couldn't be registered; nil when it was.
@@ -149,10 +149,13 @@ extension SweClient {
     /// `swe setup --hub=<url> --json --non-interactive`: clone the user's
     /// hub repo as `~/.quiver`, then the preview of what setup would do
     /// with it. A refusal (a hub already there, a URL git can't reach, a
-    /// timeout) exits 1 with the reason on stderr, which the error carries.
+    /// timeout) exits 1 with the reason on stderr and no document, which the
+    /// error carries. A clone that worked but whose preview then failed also
+    /// exits 1, with the document (its `hub.cloned` set) still on stdout, so
+    /// that one is read rather than reported as a failed clone.
     public func cloneHub(url: String) async throws -> SetupPreview {
         try await call(["setup", "--hub=" + url, "--json", "--non-interactive"],
-                       timeout: Self.hubCloneTimeout)
+                       allowFailure: true, timeout: Self.hubCloneTimeout)
     }
 
     /// `swe setup --apply --json`: register what was found, import MCP
@@ -272,7 +275,8 @@ public final class FirstRunSetupModel {
     /// Clone the typed hub repo with `swe setup --hub`, then take the
     /// preview it answers with: from then on the step shows the cloned
     /// hub (its AGENTS.md, nothing to adopt). A failure keeps the URL to
-    /// fix and says why.
+    /// fix, says why, and reads the machine again, so the sheet shows
+    /// what is on disk whichever way the run ended.
     public func cloneHub() async {
         let url = hubURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !url.isEmpty, !cloning, !applying else { return }
@@ -292,7 +296,9 @@ public final class FirstRunSetupModel {
         } catch is CancellationError {
             return
         } catch {
-            hubError = error.localizedDescription
+            let message = error.localizedDescription
+            await load()
+            hubError = message
         }
     }
 

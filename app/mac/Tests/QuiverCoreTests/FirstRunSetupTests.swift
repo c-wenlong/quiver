@@ -12,6 +12,7 @@ private final class SetupRunner: CommandRunning, @unchecked Sendable {
     /// `swe setup --hub=…`: the preview it answers with, or the refusal it
     /// exits 1 with on stderr.
     var cloned: String = "{}"
+    var clonedStatus: Int32 = 0
     var cloneRefusal: String?
     private(set) var calls: [[String]] = []
 
@@ -26,7 +27,8 @@ private final class SetupRunner: CommandRunning, @unchecked Sendable {
             if let cloneRefusal {
                 return CommandResult(status: 1, stdout: Data(), stderr: "  \(cloneRefusal)\n")
             }
-            return CommandResult(status: 0, stdout: Data(#"{"schema": 1, "data": \#(cloned)}"#.utf8), stderr: "")
+            return CommandResult(status: clonedStatus, stdout: Data(#"{"schema": 1, "data": \#(cloned)}"#.utf8),
+                                 stderr: clonedStatus == 0 ? "" : "  setup failed: can't read .linkignore\n")
         }
         let apply = arguments.contains("--apply")
         let body = apply ? applied : preview
@@ -287,6 +289,22 @@ private func applied(leftAlone: Bool) -> String {
         #expect(setup.hubURL == "https://github.com/me/nope.git")
         #expect(setup.offersHub, "the field stays to try again")
         #expect(setup.cloned == nil)
+        // A failed run reads the machine again, so the sheet shows what is on disk.
+        #expect(runner.calls.last == ["setup", "--json", "--non-interactive"])
+    }
+
+    @Test func aCloneWhosePreviewFailedStillShowsTheClone() async {
+        // swe cloned, then its preview stopped (exit 1, document on stdout).
+        let runner = SetupRunner(preview: hubPreviewJSON)
+        runner.cloned = clonedPreviewJSON
+        runner.clonedStatus = 1
+        let setup = model(runner)
+        await setup.load()
+        setup.hubURL = "https://github.com/me/hub.git"
+        await setup.cloneHub()
+        #expect(setup.hubError == nil)
+        #expect(setup.cloned?.url == "https://github.com/me/hub.git")
+        #expect(!setup.offersHub, "no second Clone over the hub it just made")
     }
 
     @Test func aBlankURLRunsNothing() async {
