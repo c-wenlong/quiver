@@ -1091,6 +1091,21 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertEqual(NewSessionOptions.machines(ms).map(\.id), ["b", "z", "o"])
     }
 
+    func testNoMachineMessageFollowsWhatTheHubReported() {
+        // The hub answered `launchable` and it's empty: swe is current,
+        // nothing is installed or everything is switched off.
+        let current = NewSessionOptions.noMachineMessage([machine("m", name: "mac", launchable: [])])
+        XCTAssertFalse(current.contains("Update swe"))
+        XCTAssertEqual(current, "No harness can start on the hub: install one there, or turn it on in Quiver's Settings › Providers.")
+        // Satellites too: no single "hub" to name.
+        let fleet = NewSessionOptions.noMachineMessage([machine("m", name: "mac", launchable: []),
+                                                        machine("s", name: "box", launchable: [])])
+        XCTAssertTrue(fleet.hasPrefix("No harness can start on any machine"))
+        // A row older than `launchable`, or no rows: swe is too old.
+        XCTAssertTrue(NewSessionOptions.noMachineMessage([machine("m", name: "mac", harnesses: [])]).hasPrefix("Update swe on the hub."))
+        XCTAssertTrue(NewSessionOptions.noMachineMessage([]).hasPrefix("Update swe on the hub."))
+    }
+
     func testFolderSearchMatchesEveryWordAnyCase() {
         let folders = ["/Users/k/Projects/quiver", "/Users/k/Projects/quiver-render", "/Users/k/Indie/kopifund"]
         XCTAssertEqual(NewSessionOptions.matching(folders, query: "QUIVER rend"), ["/Users/k/Projects/quiver-render"])

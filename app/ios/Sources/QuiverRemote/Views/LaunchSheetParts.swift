@@ -40,6 +40,15 @@ struct HarnessPicker: View {
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
+        // The task and GitHub sheets launch on the hub even when it lists
+        // no harness; say why the grid is empty (an older hub's row still
+        // gets the update-swe advice).
+        if offered.isEmpty {
+            Text(NewSessionOptions.noMachineMessage([machine]))
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
         if let harness, machine.untrackedHarnesses?.contains(harness) == true {
             Text("Quiver can't read \(NewSessionOptions.name(harness, on: machine, sessions: sessions)) sessions yet: it starts, but no chat opens.")
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)

@@ -435,3 +435,12 @@ struct HarnessIcon: View {
         }
     }
 }
+
+extension StateCard {
+    /// A page whose first load failed, with a way to try again.
+    static func unreachable(_ error: String, retry: @escaping () -> Void) -> StateCard {
+        StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub",
+                  message: HubError.detail(underUnreachableTitle: error), tone: .error,
+                  actionTitle: "Try again", action: retry)
+    }
+}
