@@ -3,10 +3,10 @@
 ``ActivityBlocks``, ``ProjectResolver``, ``CalendarFormat``).
 
 When each harness was actually working, read from the ledger's response
-timestamps, and for Pi, Factory Droid and Freebuff from their own
-session files (``_activity``), as the Mac reads them. One session's responses form a
-block until more than
-``GAP_S`` of silence passes; blocks of one harness, account and project
+timestamps, and for Pi, Factory Droid, Freebuff and the Cursor app from
+their own session files and database (``_activity``), as the Mac reads
+them. One session's responses form a block until more than ``GAP_S`` of
+silence passes; blocks of one harness, account and project
 then merge under the same gap, so parallel sessions in a repository read
 as one stretch of work. Every Grok Bot session shares one project, "Grok
 Bot", since its Bots pass one task between them.
@@ -426,29 +426,40 @@ def _profiles(home: Path | None) -> list[dict]:
 
 class Accounts:
     """``AccountDirectory``: what to call an account home, and the homes
-    each harness can have, so a quiet account still lists in the legend."""
+    each harness can have, so a quiet account still lists in the legend.
+    Cursor activity is keyed on the app's user-data dir (the app's own,
+    or an extra profile's ``desktop`` folder), so those are Cursor's
+    homes and carry its profiles' names; its CLI home never is one."""
 
-    def __init__(self, home: Path | None):
+    def __init__(self, home: Path | None, profiles: list[dict] | None = None):
         user = Path(home) if home is not None else Path.home()
         root = quiver_dir_for(home) / "accounts"
+        cursor_app = str(user / "Library/Application Support/Cursor")
         self.user = str(user)
         self.names: dict[str, str] = {}
         self.homes: dict[str, list[str]] = {
             "claude": [str(user / ".claude")],
             "codex": [str(user / ".codex")],
             "devin": [str(user / ".local/share/devin/cli")],
+            "cursor": [cursor_app],
         }
-        for p in _profiles(home):
+        for p in _profiles(home) if profiles is None else profiles:
             vendor = p["vendor"]
+            label = f"{_account_name(vendor)}: {p.get('name') or p['id']}"
+            if vendor == "cursor":
+                desktop = cursor_app if p.get("isDefault") else str(root / vendor / p["id"] / "desktop")
+                self.names[os.path.normpath(desktop)] = label
+                if not p.get("isDefault"):
+                    self.homes["cursor"].append(desktop)
             if p.get("isDefault"):
                 if vendor not in ("claude", "codex"):
                     continue
                 path = str(user / (".codex" if vendor == "codex" else ".claude"))
             else:
                 path = str(root / vendor / p["id"] / "home")
-                if vendor in self.homes:
-                    self.homes[vendor].append(path)
-            self.names[os.path.normpath(path)] = f"{_account_name(vendor)}: {p.get('name') or p['id']}"
+                if vendor != "cursor":
+                    self.homes.setdefault(vendor, []).append(path)
+            self.names[os.path.normpath(path)] = label
         self.owner = {os.path.normpath(h): harness
                       for harness, homes in self.homes.items() for h in reversed(homes)}
 
@@ -570,12 +581,14 @@ def get(ctx, args: dict) -> dict:
         scanned_at = store.meta("scanned_at")
     pieces = [p for p in session_pieces(rows, priced)
               if is_real(p["harness"], usage.get((p["harness"], p["session"])))]
-    pieces += file_pieces(_activity.read(ctx.home, file_stats, sessions_mod.is_trivial, rescan),
+    profiles = _profiles(ctx.home)
+    pieces += file_pieces(_activity.read(ctx.home, file_stats, sessions_mod.is_trivial,
+                                         profiles, rescan),
                           render_start - LOOKOUT_S, render_end + LOOKOUT_S, tz)
     blocks = [b for b in group_by_project(pieces, Projects())
               if b["end"] >= render_start and b["start"] < render_end]
 
-    accounts = Accounts(ctx.home)
+    accounts = Accounts(ctx.home, profiles)
     window = [b for b in blocks if b["start"] < end
               and (b["end"] > start or (b["start"] == b["end"] and b["start"] >= start))]
     lo, hi = totals_range
