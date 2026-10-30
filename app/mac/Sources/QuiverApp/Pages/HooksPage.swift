@@ -253,7 +253,7 @@ private struct FindingsCard: View {
                             HarnessMarkView(harness: finding.harness, size: 14)
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         }
-                        Text(finding.message)
+                        Text(finding.displayMessage(home: FileManager.default.homeDirectoryForCurrentUser.path))
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
