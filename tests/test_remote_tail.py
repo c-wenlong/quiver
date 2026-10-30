@@ -620,6 +620,22 @@ class TestOpencodeSource(unittest.TestCase):
         out = src.poll()
         self.assertEqual([m["text"] for m in out], ["more"])
 
+    def test_start_near_end_reads_only_recent_parts(self):
+        # First sight of a long session used to journal all of it.
+        for i in range(5):
+            self._add_part(f"p{i}", 1000 + i, {"type": "text", "text": f"t{i}"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        src.start_near_end(2)
+        self.assertEqual([m["text"] for m in src.poll()], ["t3", "t4"])
+        self._add_part("p5", 1005, {"type": "text", "text": "t5"})
+        self.assertEqual([m["text"] for m in src.poll()], ["t5"])
+
+    def test_start_near_end_on_a_short_session_reads_it_all(self):
+        self._add_part("p1", 1000, {"type": "text", "text": "a"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        src.start_near_end(2)
+        self.assertEqual([m["text"] for m in src.poll()], ["a"])
+
     def test_cursor_persistence(self):
         self._add_part("p1", 1000, {"type": "text", "text": "a"})
         src = tail.OpencodeSource(self.db, "sess1")

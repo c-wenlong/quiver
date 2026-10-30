@@ -878,10 +878,6 @@ class TestOwnerTailnetCaller(_Settings):
         self.assertTrue(reply["ticket"]["token"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestSessionSearch(_Settings):
     def wait_idle(self):
         from quiver.sessions import search_writer
@@ -1172,3 +1168,7 @@ class TestRevokeThisBrowserScript(unittest.TestCase):
                           "process.stdout.write(JSON.stringify({ gates: gates.length, cleared, after: after === null,"
                           " polling: settingsPage.reqPoll !== null })); })();\n")
         self.assertEqual(out, {"gates": 1, "cleared": 1, "after": True, "polling": False})
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -133,6 +133,30 @@ class TestMarkRead(unittest.TestCase):
         again = inbox.get(self.ctx, {})
         self.assertEqual([n["unread"] for n in again["notifications"]], [False, False, False])
 
+    def test_reads_run_off_the_write_lock_and_writes_under_it(self):
+        # The probe and the two listings are reads; holding WRITE_LOCK
+        # over them stalled every other GitHub write on the hub. The
+        # marks and the cache drop still need it.
+        seen = {}
+
+        def spy(owner, name):
+            real = getattr(owner, name)
+
+            def call(*a, **k):
+                seen.setdefault(name, []).append(G.WRITE_LOCK.locked())
+                return real(*a, **k)
+            return patch.object(owner, name, side_effect=call)
+
+        with spy(G, "probe"), spy(inbox, "_listing"), spy(inbox, "_unread_listing"), \
+                spy(inbox.ghcli, "mark_threads_read"), spy(inbox.ghcli, "mark_all_read"), \
+                spy(inbox, "_drop"):
+            inbox.post(self.ctx, "read", {"ids": ["1"]})
+            inbox.post(self.ctx, "read", {"all": True})
+        for read in ("probe", "_listing", "_unread_listing"):
+            self.assertEqual(set(seen[read]), {False}, read)
+        for write in ("mark_threads_read", "mark_all_read", "_drop"):
+            self.assertEqual(set(seen[write]), {True}, write)
+
     def test_ids_must_be_ones_the_inbox_lists(self):
         err = self.refused(404, "unknown_notification", {"ids": ["1", "999"]})
         self.assertIn("999", err.message)

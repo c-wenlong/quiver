@@ -101,7 +101,7 @@ struct IssueDetailView: View {
             }
         } catch {
             guard gen == generation else { return }
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            self.error = error.localizedDescription
         }
     }
 
@@ -355,7 +355,7 @@ struct ResolveIssueSheet: View {
             // default can match it — unless the user already picked.
             if !harnessTouched { harness = defaultHarness() }
         } catch {
-            detailNote = (error as? HubError)?.message ?? error.localizedDescription
+            detailNote = error.localizedDescription
         }
     }
 
