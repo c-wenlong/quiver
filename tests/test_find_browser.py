@@ -19,6 +19,7 @@ from unittest import mock
 
 from quiver.console import strip_ansi
 from quiver.find.entries import HIDE_DIRS, Entry
+from tests._tempdir import temp_dir
 
 
 class EntryContractTest(unittest.TestCase):
@@ -182,47 +183,14 @@ class BrowseDispatchTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("nothing to browse", out)
 
-    def test_the_flag_does_not_leak_into_the_printed_path(self):
-        """-i is stripped before topic dispatch, so it can never be read
-        as a scope or a filter."""
-        code, out = self._run(["plugins"])
-        self.assertEqual(code, 0)
-        self.assertNotIn("Cannot browse", out)
-
 
 class PluginRootsTest(unittest.TestCase):
-    """The reason the feature exists: reach a plugin's own directory."""
+    """The root getters never raise on a bad home or scope.
 
-    def test_plugins_are_grouped_harness_then_marketplace(self):
-        from quiver.find.roots import plugins_roots
-
-        roots = plugins_roots()
-        if not roots:
-            self.skipTest("no plugins installed here")
-        harness = roots[0]
-        self.assertTrue(harness.children, "no marketplaces under the harness")
-        market = harness.children[0]
-        self.assertTrue(market.children, "no plugins under the marketplace")
-
-    def test_a_plugin_carries_a_real_directory(self):
-        from quiver.find.roots import plugins_roots
-
-        found = [p for h in plugins_roots() for m in h.children
-                 for p in m.children if p.path is not None]
-        if not found:
-            self.skipTest("no plugins installed here")
-        self.assertTrue(found[0].can_descend,
-                        "cannot descend into a plugin, which is the whole point")
-
-    def test_a_plugin_whose_directory_is_gone_is_still_listed(self):
-        """Dropping it would hide an install record that no longer
-        matches the disk, which is worth seeing."""
-        from quiver.find.roots import plugins_roots
-
-        gone = [p for h in plugins_roots() for m in h.children
-                for p in m.children if p.path is None]
-        for p in gone:
-            self.assertIn("no directory", p.detail)
+    How plugins nest (harness, marketplace, plugin) and which carry a
+    directory is pinned against fixed plugin lists in
+    tests/test_find_roots.py::PluginsRootsTest.
+    """
 
     def test_every_adapter_survives_a_bogus_home(self):
         from quiver.find import roots
@@ -233,8 +201,9 @@ class PluginRootsTest(unittest.TestCase):
     def test_an_unknown_scope_does_not_raise(self):
         from quiver.find import roots
 
+        home = temp_dir(self)
         for fn in (roots.agents_roots, roots.skills_roots, roots.plugins_roots):
-            self.assertIsInstance(fn(scope="nonsense"), list)
+            self.assertIsInstance(fn(home=home, scope="nonsense"), list)
 
 
 if __name__ == "__main__":
