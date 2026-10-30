@@ -328,7 +328,6 @@ function onHarnessesPage() {
   return currentRoute() === "harnesses";
 }
 
-/* app.js's api() only reads; writes send JSON with the same headers. */
 /* ------------------------------------------------- Harnesses: the sheets */
 
 /* The Mac app's three sheets as one <dialog>: the row editor (HarnessEditor),
@@ -347,22 +346,16 @@ function bindSheetButtons() {
   }
 }
 
+/* app.js's bodySheet: route() closes it when the page is left. */
 function harnessDialog() {
-  let dlg = document.getElementById("harness-sheet");
-  if (dlg) return dlg;
-  dlg = document.createElement("dialog");
-  dlg.id = "harness-sheet";
-  dlg.className = "sheet harness-sheet";
+  const dlg = bodySheet("harness-sheet", "sheet harness-sheet");
   // Esc closes, except while a save is in flight (the app's sheet can't be
   // dismissed then either).
-  dlg.addEventListener("cancel", (event) => {
+  dlg.oncancel = (event) => {
     event.preventDefault();
     closeHarnessSheet();
-  });
-  dlg.addEventListener("close", () => { harnessesPage.sheet = null; });
-  document.body.appendChild(dlg);
-  // A sheet belongs to the Harnesses page: leaving it closes the sheet.
-  window.addEventListener("hashchange", () => { if (!onHarnessesPage()) closeHarnessSheet(true); });
+  };
+  dlg.onclose = () => { harnessesPage.sheet = null; };
   return dlg;
 }
 
@@ -596,10 +589,6 @@ function bindHarnessSheet() {
   };
 }
 
-function sheetFailure(status, data) {
-  return failText(status, data);
-}
-
 /* The sheet's request: working while it runs, the error in the sheet. A
  * 401 closes it for the pairing card. Returns the reply, or null; a 401
  * also sets ``gated``, and the caller then leaves the page alone so the
@@ -619,7 +608,7 @@ async function sheetPost(s, action, body) {
   // A list read still in flight may predate this write: drop it.
   if (status === 200) harnessesPage.gen++;
   if (status !== 200 || !data) {
-    s.error = sheetFailure(status, data);
+    s.error = failText(status, data);
     if (harnessesPage.sheet === s) paintHarnessSheet();
     return null;
   }
@@ -654,7 +643,7 @@ async function detectScan() {
     return;
   }
   if (status !== 200 || !data) {
-    s.error = sheetFailure(status, data);
+    s.error = failText(status, data);
   } else {
     // HarnessDiscovery.selection: new matches only, the sure ones ticked.
     s.findings = data.findings.filter((f) => f.status === "new");

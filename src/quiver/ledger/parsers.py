@@ -42,7 +42,9 @@ def claude_records(line: bytes, account: str) -> list[LedgerRecord]:
         return []
     try:
         obj = json.loads(line)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        # RecursionError: a line nested too deep to parse. Raised, it
+        # stopped the scan at this line on every run, cursor unmoved.
         return []
     if not isinstance(obj, dict):
         return []
@@ -333,7 +335,7 @@ def codex_file_records(path: Path, account: str) -> list[LedgerRecord]:
             continue
         try:
             obj = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             continue
         if isinstance(obj, dict):
             out.extend(parser.records(obj))
@@ -369,7 +371,11 @@ def iter_lines(path: Path, offset: int = 0, end: list | None = None):
 # ---------------------------------------------------------------- sqlite sources
 
 def _open_ro(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    # as_uri() percent-encodes the path: a raw "#", "?" or "%" in a home
+    # folder's name would end the file: URI early or decode into another
+    # path, as the remote readers' openers already guard against.
+    return sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro",
+                           uri=True, timeout=5)
 
 
 def opencode_records(db: Path) -> list[LedgerRecord]:
@@ -572,7 +578,7 @@ def pi_file_records(path: Path, account: str) -> list[LedgerRecord]:
             continue
         try:
             obj = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             continue
         if isinstance(obj, dict):
             out.extend(parser.records(obj))
@@ -645,7 +651,7 @@ def droid_session_totals(settings: Path, account: str):
                 for line in lines:
                     try:
                         entry = json.loads(line)
-                    except (ValueError, UnicodeDecodeError):
+                    except (ValueError, UnicodeDecodeError, RecursionError):
                         continue
                     if not isinstance(entry, dict):
                         continue

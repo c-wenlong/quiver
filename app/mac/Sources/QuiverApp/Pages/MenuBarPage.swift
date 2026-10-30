@@ -223,9 +223,15 @@ private struct ToggleRow<Icon: View>: View {
             icon
             Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
             Spacer(minLength: 16)
-            SettingSwitch(title: "Show \(title)", isOn: $isOn)
-                .disabled(locked)
-                .help(locked ? "At least one tab stays on" : "")
+            // A plain tooltip, and only when locked: a hover tip's tap
+            // would sit on the switch.
+            if locked {
+                SettingSwitch(title: "Show \(title)", isOn: $isOn)
+                    .disabled(true)
+                    .help("At least one tab stays on")
+            } else {
+                SettingSwitch(title: "Show \(title)", isOn: $isOn)
+            }
         }
         .padding(.vertical, 12)
         .accessibilityHint("Drag to reorder")

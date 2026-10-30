@@ -17,12 +17,10 @@ cannot lose each other's entries.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
-from quiver.paths import data_dir_for, locked_beside
+from quiver.paths import atomic_write_text, data_dir_for, locked_beside
 from quiver.status.catalog import LEGACY_GROUPS, StatusService
 
 STORE_NAME = "web-status-services.json"
@@ -89,19 +87,9 @@ def load(home: Path | None = None) -> list[StatusService]:
 
 def _write(path: Path, services: list[StatusService]) -> None:
     """The whole store, atomically (callers hold the lock file)."""
-    body = json.dumps({"version": 1, "services": [_record(s) for s in services]},
-                      indent=2, sort_keys=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".web-status-services-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(body)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    atomic_write_text(path, json.dumps(
+        {"version": 1, "services": [_record(s) for s in services]},
+        indent=2, sort_keys=True))
 
 
 def _edit(path: Path, change) -> list[StatusService]:

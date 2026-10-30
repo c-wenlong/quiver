@@ -46,7 +46,7 @@ struct McpServersPage: View {
             }
             .secondaryButton()
             .disabled(model.checkingHealth)
-            .help("Run each server's command check and reach each URL")
+            .hoverTip("Run each server's command check and reach each URL", replacesLabel: false)
             Button("Add server", systemImage: "plus") { adding = true }
                 .primaryButton()
                 .hoverTip("Add a server to the Quiver hub, and optionally to harnesses")

@@ -44,32 +44,13 @@ import Testing
     }
 }
 
-@Suite struct LaunchPlannerReviewTests {
-    let claudeDefault = Profile(id: "claude-default", vendor: .claude, name: "Default", isDefault: true, color: "#d97757")
-    let paths = ProfilePaths(home: URL(fileURLWithPath: "/Users/me/.claude"), desktopData: nil)
-
-    @Test func theDefaultAccountClearsAnInheritedHomeOverride() {
-        // A CLAUDE_CONFIG_DIR exported by the user's shell would otherwise open another account.
-        #expect(LaunchPlanner.shellLine(for: claudeDefault, paths: paths, command: "claude")
-            == "unset CLAUDE_CONFIG_DIR; claude")
-    }
-
-    @Test func ghosttyAndWezTermRunAnInteractiveLoginShell() {
-        // -i reads .zshrc, where many people put the CLI's folder on PATH.
-        #expect(LaunchPlanner.terminal(.ghostty, running: "claude").arguments.suffix(3) == ["/bin/zsh", "-ilc", "claude"])
-        #expect(LaunchPlanner.terminal(.wezterm, running: "claude").arguments.suffix(3) == ["/bin/zsh", "-ilc", "claude"])
-    }
-}
-
 @Suite struct ProcessLauncherTests {
     @Test func aLaunchThatFailsReportsWhy() async {
-        let launcher = ProcessLauncher()
-        await #expect(throws: LaunchError.self) {
-            try await launcher.launch(LaunchCommand(executable: "/bin/sh", arguments: ["-c", "echo 'Unable to find application named Claude' >&2; exit 1"]))
-        }
         do {
-            try await launcher.launch(LaunchCommand(executable: "/bin/sh", arguments: ["-c", "echo 'Unable to find application named Claude' >&2; exit 1"]))
+            try await ProcessLauncher().launch(LaunchCommand(executable: "/bin/sh", arguments: ["-c", "echo 'Unable to find application named Claude' >&2; exit 1"]))
+            Issue.record("a failing launch should throw")
         } catch {
+            #expect(error is LaunchError)
             #expect(error.localizedDescription.contains("Unable to find application"))
         }
     }

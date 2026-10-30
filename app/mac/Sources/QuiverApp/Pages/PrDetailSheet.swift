@@ -125,16 +125,18 @@ struct PrDetailSheet: View {
                 .successButton()
                 .fixedSize()
                 .disabled(merging || pr.draft || pr.mergeable == .conflicting)
-                .help(pr.draft ? "Draft PRs can't merge"
-                      : pr.mergeable == .conflicting ? "Resolve the conflicts first"
-                      : "Merge now with the selected strategy")
+                .hoverTip(pr.draft ? "Draft PRs can't merge"
+                          : pr.mergeable == .conflicting ? "Resolve the conflicts first"
+                          : "Merge now with the selected strategy",
+                          replacesLabel: false)
                 Button("Auto-merge") { Task { await merge(auto: true) } }
                     .secondaryButton()
                     .fixedSize()
                     .disabled(merging || pr.draft || pr.autoMerge != nil)
-                    .help(pr.autoMerge != nil
-                          ? "Auto-merge is already armed"
-                          : "Arm auto-merge — merges when checks pass")
+                    .hoverTip(pr.autoMerge != nil
+                              ? "Auto-merge is already armed"
+                              : "Arm auto-merge — merges when checks pass",
+                              replacesLabel: false)
             }
             Spacer()
             Button {
