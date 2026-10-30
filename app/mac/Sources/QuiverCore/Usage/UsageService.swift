@@ -34,6 +34,11 @@ public actor UsageService {
         let task: Task<AccountUsage, Never>
     }
     private var inFlight: [AccountKey: Running] = [:]
+    /// Called when a call finds another in flight for its account, before
+    /// it waits; a test's signal that the two calls really overlapped.
+    private var onFindsInFlight: (@Sendable () -> Void)?
+
+    func setOnFindsInFlight(_ hook: (@Sendable () -> Void)?) { onFindsInFlight = hook }
 
     public init(
         transport: HTTPTransport, secrets: SecretReading, files: FileReading,
@@ -56,6 +61,7 @@ public actor UsageService {
     public func usage(for key: AccountKey, force: Bool,
                       freshFor: TimeInterval = 300) async -> AccountUsage {
         while let running = inFlight[key] {
+            onFindsInFlight?()
             if running.force || !force { return await running.task.value }
             _ = await running.task.value
             if inFlight[key]?.id == running.id { inFlight[key] = nil }

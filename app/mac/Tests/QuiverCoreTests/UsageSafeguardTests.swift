@@ -183,7 +183,7 @@ import Testing
 
     /// A forced refresh that arrives while a non-forced call is still
     /// looking up the credential must not take that call's cached answer.
-    @Test func aForcedCallDoesNotJoinANonForcedOne() async throws {
+    @Test(.timeLimit(.minutes(1))) func aForcedCallDoesNotJoinANonForcedOne() async throws {
         let h = UsageHarness()
         let user = ClaudeKeychain.currentAccount
         h.secrets.set(service: "Claude Code-credentials", account: user, claudeCredentialsJSON())
@@ -200,10 +200,13 @@ import Testing
         let background = Task { await service.usage(for: claudeKey, force: false) }
         let deadline = Date().addingTimeInterval(10)
         while !secrets.isHolding, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try #require(secrets.isHolding)
         h.transport.reply(200, body: try fixture("claude-usage"))
+        // The forced call must find the background one still in flight.
+        let overlapped = AsyncStream<Void>.makeStream()
+        await service.setOnFindsInFlight { overlapped.continuation.yield() }
         let forced = Task { await service.usage(for: claudeKey, force: true) }
-        // Let the forced call reach the service before the lookup ends.
-        try await Task.sleep(for: .milliseconds(200))
+        for await _ in overlapped.stream { break }
         secrets.open()
 
         #expect(await background.value.fetchedAt == usageEpoch)
