@@ -19,6 +19,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.test_webapp import app_js_function
+
 PAGES = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages"
 
 # The shared prelude: DOM stub, the globals app.js/manage.js/format.js
@@ -166,6 +168,9 @@ const choose = (sel, label) => { sel.value = optionsOf(sel).find((x) => x[1] ===
 """
 
 MENU_JS = (Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/model-menu.js")
+
+# Writes go through app.js's own send(), over the stubbed fetch.
+STUB += app_js_function("send")
 
 # The four harnesses every flow offers: claude and codex take a model
 # pick and have recent models, gemini takes none, and pi is what an old

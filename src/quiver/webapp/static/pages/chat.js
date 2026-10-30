@@ -47,25 +47,11 @@ const SessionChat = (() => {
 
   /* ------------------------------------------------------------ requests */
 
-  /* Every request carries app.js's authHeaders: the paired bearer when
+  /* Through app.js's send(), with its authHeaders: the paired bearer when
    * there is one, and X-Quiver-Pair, which lets the hub owner's own
    * tailnet devices in without pairing. status 0 means the hub never
    * answered (offline, connection lost). */
-  async function post(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "POST", credentials: "same-origin",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  const post = (path, body) => send("POST", path, body);
 
   const sessionPath = (key, action) => `/v1/sessions/${encodeURIComponent(key)}/${action}`;
   const errorText = (data) => (data && data.error && data.error.message) || "";
