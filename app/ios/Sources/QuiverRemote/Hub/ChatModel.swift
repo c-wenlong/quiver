@@ -94,6 +94,9 @@ final class ChatModel {
     /// The hub holds messages older than the oldest one shown.
     private(set) var hasEarlier = false
     private(set) var loadingEarlier = false
+    /// Each approval's numbered menu rows by request id, from its
+    /// `approval.requested`; the card answers with them when present.
+    private(set) var approvalOptions: [String: [ApprovalOption]] = [:]
     /// The view scrolled near the oldest loaded entry; it loads the next
     /// page once scrolling comes to rest.
     var wantsEarlier = false
@@ -522,6 +525,8 @@ final class ChatModel {
             if let meta = env.decode(SessionMeta.self) { app?.patch(key, meta: meta) }
         case "approval.requested":
             guard let req = env.decode(ApprovalRequested.self), let rid = req.requestId else { return }
+            let rows = ApprovalMenu.rows(req.options)
+            if !rows.isEmpty { approvalOptions[rid] = rows }
             if let i = items.firstIndex(where: { $0.id == "approval-\(rid)" }) {
                 // The inbox placeholder learns its real prompt.
                 if case .approval(_, _, let state) = items[i].kind {
@@ -709,9 +714,13 @@ final class ChatModel {
 
     private func resolveApprovals(requestId: String?, decision: String?) {
         for i in items.indices {
-            guard case .approval(let rid, let prompt, _) = items[i].kind else { continue }
+            guard case .approval(let rid, let prompt, let old) = items[i].kind else { continue }
             if requestId == nil || requestId == "" || requestId == rid {
-                items[i].kind = .approval(requestId: rid, prompt: prompt, state: .resolved(decision))
+                // The tailer's later "the prompt closed" carries no
+                // decision: the answer already recorded stays named.
+                var said = decision
+                if said == nil, case .resolved(let earlier) = old { said = earlier }
+                items[i].kind = .approval(requestId: rid, prompt: prompt, state: .resolved(said))
             }
         }
     }

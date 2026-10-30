@@ -388,6 +388,17 @@ def legacy_config_dir() -> Path | None:
     return LEGACY_CONFIG_DIR if LEGACY_CONFIG_DIR.is_dir() else None
 
 
+def home_relative(path: "Path", home: "Path") -> str:
+    """``path`` as ``~/<rest>`` under ``home``, else the absolute path.
+
+    How every terminal view names a file. ``home`` itself reads ``~/.``.
+    """
+    try:
+        return "~/" + str(path.relative_to(home))
+    except ValueError:
+        return str(path)
+
+
 def expand_user(value: "str | Path") -> "Path":
     """``Path(value).expanduser()`` minus the ``~user`` ``RuntimeError``.
 

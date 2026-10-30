@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from quiver import paths as _paths
+from quiver.paths import home_relative
 from quiver.harness.catalog import HARNESS_CATALOG
 from quiver.init.layout import (
     HARNESS_SIGNATURES,
@@ -118,14 +119,6 @@ def hold_unreviewed(skills: list[LinkStatus], labels: set[str]) -> None:
 def instruction_target(root: Path, filename: str) -> Path:
     """The instruction file next to a skills root: ~/.config/devin/AGENTS.md."""
     return root.parent / filename
-
-
-def home_relative(path: Path, home: Path) -> str:
-    """``~/.config/devin/skills`` form, absolute path when outside ``home``."""
-    try:
-        return "~/" + str(path.relative_to(home))
-    except ValueError:
-        return str(path)
 
 
 def legacy_registry_pending(home: Path) -> bool:
