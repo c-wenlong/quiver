@@ -10,6 +10,7 @@ time, satellites upsert theirs over the agent channel.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -360,13 +361,59 @@ def _satellite_dir(home: Path | None) -> Path:
     return remote_dir_for(home) / "satellite"
 
 
-def _safe_mid(machine_id: str) -> str:
-    """``machine_id`` as a filename: alphanumeric run, else its slug."""
+def _legacy_safe_mid(machine_id: str) -> str:
+    """The file stem before ids that map lossily got a hash suffix."""
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", machine_id)
     # "..", ".", "" escape the satellite dir — collapse to a slug.
     if not safe or set(safe) <= {".", "_", "-"}:
         safe = protocol.key_slug(machine_id)
     return safe
+
+
+def _safe_mid(machine_id: str) -> str:
+    """``machine_id`` as a filename. An id that is already a safe name
+    is used as is; any other gets a hash of the real id appended, since
+    "m.1" and "m_1" would otherwise share one file and overwrite each
+    other's rows, commands and usage."""
+    safe = _legacy_safe_mid(machine_id)
+    if safe == machine_id:
+        return safe
+    return f"{safe}-{hashlib.sha256(machine_id.encode()).hexdigest()[:8]}"
+
+
+def is_superseded(path: Path, machine_id: str) -> bool:
+    """A file left under the pre-suffix name of ``machine_id`` while the
+    suffixed one exists: read the new one, never both. Nothing is
+    deleted: the old name may be another machine's own file."""
+    stem = _safe_mid(machine_id)
+    return path.stem != stem and (path.parent / f"{stem}.json").exists()
+
+
+# A rows or usage file no push has refreshed for this long belongs to a
+# machine that is gone (or re-paired under a new id): it is skipped, so
+# the hub stops listing it. A machine that wakes later pushes again.
+# (Not the "/" menu files: an agent resends those only on a change.)
+SATELLITE_FILE_MAX_AGE_S = 30 * 86_400
+
+
+def satellite_files(folder: Path, now: float | None = None) -> list[Path]:
+    """The ``*.json`` under ``folder`` a push refreshed recently. Stale
+    ones are skipped, not deleted: a push can replace one at any moment
+    and a delete here would race it."""
+    now = time.time() if now is None else now
+    out = []
+    try:
+        files = list(folder.glob("*.json"))
+    except OSError:
+        return out
+    for f in files:
+        try:
+            if now - f.stat().st_mtime > SATELLITE_FILE_MAX_AGE_S:
+                continue
+        except OSError:
+            continue
+        out.append(f)
+    return out
 
 
 # supervise.tmux_name: "qv-" and a hex slug of the session key.
@@ -410,16 +457,15 @@ def merge_remote_rows(
 
 def load_remote_rows(home: Path | None) -> list[dict]:
     """All persisted satellite rows (``(key, row)``-ready dicts)."""
-    base = _satellite_dir(home)
     out: list[dict] = []
-    try:
-        files = list(base.glob("*.json"))
-    except OSError:
-        return out
-    for f in files:
+    for f in satellite_files(_satellite_dir(home)):
         try:
             rows = json.loads(f.read_text()).get("rows") or []
         except (OSError, ValueError):
+            continue
+        mid = next((str(r.get("machine_id") or "") for r in rows
+                    if isinstance(r, dict)), "")
+        if mid and is_superseded(f, mid):
             continue
         out.extend(r for r in rows if isinstance(r, dict))
     return out

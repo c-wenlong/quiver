@@ -3183,7 +3183,9 @@ class TestServeEntry(unittest.TestCase):
         state.catalog.refresh = lambda: []
         state._adopt_launches = lambda: None
         state._refresh_launchable = lambda: None
-        state.tail_manager.sync = lambda rows, **kw: state._stop.set()
+        # stop() wakes the loop as well; setting only _stop left it to sit
+        # out the whole refresh interval.
+        state.tail_manager.sync = lambda rows, **kw: state.stop()
         with patch("quiver.remote.supervise.reap_kept"):
             state._catalog_loop()
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
