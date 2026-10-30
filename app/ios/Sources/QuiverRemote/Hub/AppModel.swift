@@ -674,12 +674,16 @@ struct DismissalLedger {
     mutating func drop(_ key: String) { stamps[key] = nil }
 
     /// `items` minus rows a still-in-flight dismiss already cleared;
-    /// entries retire once the hub ships a row newer than the stamp.
+    /// entries retire once the hub ships a row newer than the stamp. A
+    /// pending approval always passes: the hub ships one whatever was
+    /// dismissed, and a session cleared moments ago can ask for approval
+    /// without its `last_active_at` moving past the stamp.
     mutating func overlay(_ items: [InboxItem]) -> [InboxItem] {
         guard !stamps.isEmpty else { return items }
         var out: [InboxItem] = []
         out.reserveCapacity(items.count)
         for item in items {
+            if item.sessionStatus == .approval { out.append(item); continue }
             guard let stamp = stamps[item.key] else { out.append(item); continue }
             if item.dismissStamp > stamp {
                 stamps[item.key] = nil
