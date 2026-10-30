@@ -7,6 +7,8 @@ struct ChatView: View {
     @Environment(\.scenePhase) private var phase
     let key: String
     @State private var model: ChatModel?
+    @State private var otherModelShown = false
+    @State private var otherModelText = ""
 
     var body: some View {
         Group {
@@ -23,6 +25,16 @@ struct ChatView: View {
                     HStack(spacing: 4) {
                         HarnessIcon(harness: row?.harness, name: row?.harnessName ?? "", size: 11)
                         Text(SessionGrouping.shortDir(row?.cwd))
+                        // The folder gives way first: the model shows
+                        // nowhere else on this screen.
+                        if let pending = ModelLabel.short(model?.pendingModel) {
+                            // Asked for, not yet in the transcript.
+                            Text("· → \(pending)").layoutPriority(1)
+                                .accessibilityLabel("Switching model to \(pending)")
+                        } else if let current = row?.modelLabel {
+                            Text("· \(current)").layoutPriority(1)
+                                .accessibilityLabel("Model \(current)")
+                        }
                     }
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
@@ -31,6 +43,9 @@ struct ChatView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button { UIPasteboard.general.string = key } label: { Label("Copy session id", systemImage: "doc.on.doc") }
+                    if let model, app.session(key)?.canSwitchModel == true {
+                        ModelSwitchMenu(model: model) { otherModelShown = true }
+                    }
                     if let model, app.session(key)?.isAttached == true {
                         Button(role: .destructive) { Task { await model.interrupt() } } label: { Label("Interrupt", systemImage: "stop.circle") }
                     }
@@ -42,11 +57,54 @@ struct ChatView: View {
             model = m
             await m.start()
         }
+        .alert("Switch model", isPresented: $otherModelShown) {
+            TextField("Model id", text: $otherModelText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Switch") {
+                let text = otherModelText
+                otherModelText = ""
+                Task { await model?.switchModel(to: text) }
+            }
+            .disabled(ModelSwitchOptions.validValue(otherModelText) == nil)
+            Button("Cancel", role: .cancel) { otherModelText = "" }
+        } message: {
+            Text("Typed into the session as /model <id>. The header shows it once a reply runs on it.")
+        }
         .onDisappear { model?.stop() }
         .onChange(of: phase) { _, new in
             guard let model else { return }
             if new == .active { Task { await model.start() } } else if new == .background { model.stop() }
         }
+    }
+}
+
+/// The chat menu's Model submenu, on sessions whose channel can switch
+/// it (`SessionRow.canSwitchModel`): the machine's recent models for the
+/// harness, the current one checked, then Other… for a typed id.
+private struct ModelSwitchMenu: View {
+    let model: ChatModel
+    let other: () -> Void
+
+    var body: some View {
+        let current = model.pendingModel ?? model.row?.model
+        Menu {
+            ForEach(model.modelChoices, id: \.self) { choice in
+                Button {
+                    Task { await model.switchModel(to: choice) }
+                } label: {
+                    if choice == current {
+                        Label(choice, systemImage: "checkmark")
+                    } else {
+                        Text(choice)
+                    }
+                }
+            }
+            Button("Other…", action: other)
+        } label: {
+            Label("Model", systemImage: "cpu")
+        }
+        .accessibilityIdentifier("chat-model-menu")
     }
 }
 

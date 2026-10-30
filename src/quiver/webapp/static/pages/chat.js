@@ -1104,6 +1104,278 @@ const SessionChat = (() => {
     return null;
   }
 
+  /* --------------------------------------------------------- page preview
+     A tool call that writes an .html, .htm or .svg file gets a Preview
+     button. It asks the hub for the file as it is on disk now
+     (GET /v1/sessions/{key}/preview?path=, remote/preview.py) and draws
+     it in a locked frame. Which calls count and how a path becomes the
+     route's is a port of the phone's PagePreview.swift
+     (app/ios/Sources/QuiverRemote/Hub/PagePreview.swift); keep them in
+     step. */
+
+  const PAGE_EXTENSIONS = new Set(["html", "htm", "svg"]);
+  /* Tools that write or edit a file, by lowercased name, across the
+   * harnesses the hub decodes. */
+  const PAGE_TOOLS = new Set([
+    "write", "edit", "multiedit", "file_edit", "write_file", "edit_file",
+    "create", "create_file", "replace", "str_replace_editor",
+    "str_replace_based_edit_tool", "apply_patch", "patch",
+  ]);
+  const PAGE_PATH_KEYS = ["file_path", "filePath", "path", "filename", "target_file"];
+  const PAGE_MAX_PATH = 4096; // the route refuses longer paths
+
+  /* The name ends in .html, .htm or .svg, any case. */
+  function isPage(path) {
+    const name = String(path || "").split("/").pop();
+    const dot = name.lastIndexOf(".");
+    return dot > 0 && PAGE_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+  }
+
+  /* The page files a Codex-style patch adds or updates. An update that
+   * moves the file counts where it lands; a deleted file has nothing to
+   * show. */
+  function patchPageFiles(patch) {
+    const out = [];
+    let updated = -1; // where in out this section's update went
+    const after = (line, marker) => (line.startsWith(marker) ? line.slice(marker.length).trim() : null);
+    for (const raw of String(patch || "").split("\n")) {
+      const line = raw.trim();
+      if (!line.startsWith("*** ")) continue;
+      let p;
+      if ((p = after(line, "*** Add File: ")) != null) {
+        updated = -1;
+        if (isPage(p)) out.push(p);
+      } else if ((p = after(line, "*** Update File: ")) != null) {
+        updated = -1;
+        if (isPage(p)) { out.push(p); updated = out.length - 1; }
+      } else if ((p = after(line, "*** Move to: ")) != null) {
+        if (updated >= 0) out.splice(updated, 1);
+        updated = -1;
+        if (isPage(p)) out.push(p);
+      } else {
+        updated = -1;
+      }
+    }
+    return out;
+  }
+
+  /* The page files a write tool call names, as it names them (absolute
+   * or relative). Empty for every other call. */
+  function pageFiles(tool) {
+    const full = String(tool.args_full || "");
+    if (!PAGE_TOOLS.has(String(tool.name || "").toLowerCase()) || !full) return [];
+    // Every call that could match names a page file somewhere, so most
+    // cards skip the JSON parse.
+    if (!/\.htm|\.svg/i.test(full)) return [];
+    let args;
+    try { args = JSON.parse(full); } catch { return []; }
+    if (typeof args === "string") return patchPageFiles(args);
+    if (!args || typeof args !== "object" || Array.isArray(args)) return [];
+    // The text editor tool's `view` reads the file.
+    if (args.command === "view") return [];
+    const out = [];
+    for (const key of PAGE_PATH_KEYS) {
+      if (typeof args[key] === "string" && args[key]) { out.push(args[key]); break; }
+    }
+    for (const key of ["patch", "input", "diff"]) {
+      if (typeof args[key] === "string") out.push(...patchPageFiles(args[key]));
+    }
+    return out.filter(isPage);
+  }
+
+  /* A path's parts without empty and "." ones; null when one is "..". */
+  function pathParts(path) {
+    const parts = path.split("/").filter((p) => p && p !== ".");
+    return parts.includes("..") ? null : parts;
+  }
+  /* /private/var and /private/tmp are /var and /tmp on macOS. */
+  const unprivate = (parts) =>
+    (parts.length >= 2 && parts[0] === "private" && ["var", "tmp", "etc"].includes(parts[1]) ? parts.slice(1) : parts);
+
+  /* `path` relative to the working folder `cwd`, or null when the route
+   * couldn't serve it: outside the folder, a ".." part, a home-relative
+   * "~" path, a NUL, or an absolute path with no absolute cwd to strip.
+   * A relative path is taken as relative to cwd already. */
+  function relativePath(path, cwd) {
+    path = String(path || "").trim();
+    if (!path || path.length > PAGE_MAX_PATH || path.includes("\0") || path.startsWith("~")) return null;
+    const parts = pathParts(path);
+    if (!parts) return null;
+    if (!path.startsWith("/")) return parts.length ? parts.join("/") : null;
+    cwd = String(cwd || "").trim();
+    const root = cwd.startsWith("/") ? pathParts(cwd) : null;
+    if (!root) return null;
+    const file = unprivate(parts), base = unprivate(root);
+    if (file.length <= base.length || base.some((p, i) => file[i] !== p)) return null;
+    return file.slice(base.length).join("/");
+  }
+
+  /* The paths the route can serve for these files, relative to cwd,
+   * first-seen order, no repeats. */
+  function pageTargets(files, cwd) {
+    const seen = new Set();
+    return files.map((f) => relativePath(f, cwd))
+      .filter((p) => p && isPage(p) && !seen.has(p) && seen.add(p));
+  }
+
+  /* The route for one page. encodeURIComponent, not URLSearchParams:
+   * the hub's parse_qs reads a raw "+" as a space, and the phone once
+   * sent "a+b.html" as "a b.html". */
+  const previewUrl = (key, path) => `${sessionPath(key, "preview")}?path=${encodeURIComponent(path)}`;
+
+  /* The frame's lockdown:
+   *
+   * - sandbox with no tokens: no scripts (no allow-scripts), an opaque
+   *   origin that can't read the app's storage or credential (no
+   *   allow-same-origin), no forms, popups, modals or top navigation.
+   *   Plugins and autoplay are off with it.
+   * - PREVIEW_CSP: sandbox alone still lets <img>, <link> and CSS
+   *   url()s load. This is the hub's own preview header
+   *   (remote/preview.py CSP) minus `sandbox`, which a <meta> policy
+   *   can't carry: nothing loads but inline styles and data: images,
+   *   fonts and media, and <base>/<form> can't point anywhere.
+   * - Two frames, both sandboxed: a wrapper of our own whose only
+   *   content is the page's frame. A frame may still navigate itself
+   *   (a `target="_self"` link click), and neither its sandbox nor its
+   *   own policy stops that; the browser checks such a navigation
+   *   against the parent's frame-src, which the wrapper's policy sets to
+   *   'none' (via default-src). The page's frame also inherits the
+   *   wrapper's policy, so it holds even if the page's own copy were
+   *   placed wrong.
+   *
+   * <base target="_blank"> sends a plain link click to a new window,
+   * which the sandbox refuses (no allow-popups). */
+  const PREVIEW_SANDBOX = "";
+  const PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
+    + "font-src data:; media-src data:; base-uri 'none'; form-action 'none'";
+  const PREVIEW_HEAD = `<meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}">`
+    + '<base target="_blank">';
+
+  /* The hub types its answer from the file it read (a link keeps its
+   * target's type); without a type, the name decides. */
+  function previewKind(contentType, path) {
+    const t = String(contentType || "").toLowerCase();
+    if (t.startsWith("image/svg")) return "svg";
+    if (t.startsWith("text/html")) return "html";
+    return String(path || "").toLowerCase().endsWith(".svg") ? "svg" : "html";
+  }
+
+  function bytesBase64(bytes) {
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+
+  /* The page's own frame's srcdoc. The policy has to come before
+   * anything that loads, and a <meta> policy counts only inside <head>,
+   * so it goes first: straight after a leading doctype (keeping the page
+   * out of quirks mode), else at the very start, where the parser opens
+   * <head> for it. Only HTML whitespace may precede the doctype: a
+   * comment (`<!-->` closes at once) or any other character could open
+   * <body> first, where the policy would be ignored. A doctype ends at
+   * its first ">", even inside a quoted identifier (the tokenizer's
+   * abrupt-doctype-public-identifier rule), as [^>]* does.
+   *
+   * An SVG is drawn as an image (a data: URL in an <img>), where the
+   * browser runs none of its scripts and loads none of its links, as on
+   * the phone. */
+  function pageDocument(kind, bytes) {
+    if (kind === "svg") {
+      return `<!doctype html><html><head><meta charset="utf-8">${PREVIEW_HEAD}`
+        // Scaled down to fit the frame either way; an SVG with only a
+        // viewBox would otherwise grow to the frame's width.
+        + "<style>html,body{margin:0;background:#fff}img{display:block;max-width:100%;max-height:100vh;margin:0 auto}</style>"
+        + `</head><body><img alt="" src="data:image/svg+xml;base64,${bytesBase64(bytes)}"></body></html>`;
+    }
+    const text = new TextDecoder("utf-8").decode(bytes); // drops a BOM
+    const lead = text.match(/^[\t\n\f\r ]*<!doctype[^>]*>/i);
+    return lead ? lead[0] + PREVIEW_HEAD + text.slice(lead[0].length) : PREVIEW_HEAD + text;
+  }
+
+  /* The outer frame's srcdoc: our wrapper, holding the page's frame
+   * (same sandbox, the page as an escaped srcdoc attribute). */
+  function previewDocument(kind, bytes) {
+    return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}">`
+      + "<style>html,body{margin:0;height:100%;background:#fff}iframe{display:block;border:0;width:100%;height:100%}</style>"
+      + `</head><body><iframe sandbox="${PREVIEW_SANDBOX}" referrerpolicy="no-referrer" title="Page" srcdoc="${esc(pageDocument(kind, bytes))}"></iframe></body></html>`;
+  }
+
+  /* The frame's attributes; sandbox is set before srcdoc, so the very
+   * first load is already locked. */
+  function previewFrameAttrs(doc, title) {
+    return { sandbox: PREVIEW_SANDBOX, referrerpolicy: "no-referrer", title, srcdoc: doc };
+  }
+
+  /* The plain message for a refused preview, as the phone words it. */
+  function previewMessage(status, data) {
+    const err = (data && data.error) || {};
+    switch (err.code) {
+      case "not_found":
+        // A hub from before the route answers every unknown path so.
+        return err.message === "unknown route" ? "Update the hub to preview pages here."
+          : "That file isn't on disk any more.";
+      case "too_large": return "This file is too big to preview (the hub's limit is 2 MB).";
+      case "unsupported_type": return "Only .html, .htm and .svg files preview.";
+      case "bad_path": return "That path can't be previewed.";
+      case "not_a_file": return "That path isn't a file.";
+      case "outside_folder": return "That file is outside the session's folder.";
+      case "not_readable": return "The hub can't read that file.";
+      case "preview_unavailable": return "Preview works only for sessions on the hub's own machine for now.";
+      case "cwd_missing": return "This session's folder is gone.";
+      case "bad_cwd": return "This session has no working folder.";
+      case "unknown_session": return "The hub doesn't know this session any more.";
+      default: break;
+    }
+    switch (status) {
+      case 0: return "Couldn't reach the hub. Check the connection, then try again.";
+      case 401: return "The hub doesn't know this browser's credential.";
+      case 404: return "That file isn't on disk any more.";
+      case 413: return "This file is too big to preview.";
+      case 415: return "Only .html, .htm and .svg files preview.";
+      case 422: return "That path can't be previewed.";
+      default: return err.message || `The hub answered ${status}.`;
+    }
+  }
+
+  /* ----------------------------------------------------------- link cards
+     A reply that links to web pages gets a card per page under the text:
+     host, path and Open (a new tab). Port of the phone's LinkCards.swift.
+     The links come from md()'s own anchors, so code spans and fences,
+     which md() never links, are skipped the same way, and only http and
+     https count (md() links mailto: and tel: too). */
+
+  const LINK_CARDS_MAX = 3;
+
+  function linkUrls(text) {
+    const out = [], seen = new Set();
+    for (const m of md(text).matchAll(/<a href="([^"]*)"/g)) {
+      const href = m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+      let url;
+      try { url = new URL(href); } catch { continue; }
+      if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) continue;
+      if (seen.has(url.href)) continue;
+      seen.add(url.href);
+      out.push(url);
+      if (out.length === LINK_CARDS_MAX) break;
+    }
+    return out;
+  }
+
+  /* "claude.ai" for https://www.claude.ai/code/x. */
+  const linkHost = (url) => url.hostname.replace(/^www\./i, "");
+  /* "/code/artifact/abc?x=1", or "" for a bare host. */
+  const linkPath = (url) => (url.pathname === "/" && !url.search ? "" : url.pathname + url.search);
+
+  function linkCardsHtml(text) {
+    const urls = linkUrls(text);
+    if (!urls.length) return "";
+    return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${esc(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
+      <span class="link-card-ic">${iconSvg("link")}</span>
+      <span class="link-card-main"><span class="link-card-host">${esc(linkHost(u))}</span>${linkPath(u) ? `<span class="link-card-path">${esc(linkPath(u))}</span>` : ""}</span>
+      <span class="link-card-open">Open ${iconSvg("out")}</span></a>`).join("")}</div>`;
+  }
+
   /* The phone's icon per message kind (app/ios's ToolCard.icon), as
    * 24px stroke svg in the bar chevron's style. */
   const KIND_ICONS = {
@@ -1116,6 +1388,11 @@ const SessionChat = (() => {
     wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-8 8l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 8-8z"/>',
     thought: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5a6 6 0 0 0-12 0c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
     warn: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+    out: '<path d="M7 17 17 7"/><path d="M8 7h9v9"/>',
+    eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    reload: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+    close: '<path d="M6 6l12 12M18 6 6 18"/>',
   };
   const TOOL_ICONS = {
     bash: "terminal", shell: "terminal", exec: "terminal", exec_command: "terminal", run_shell_command: "terminal",
@@ -1253,7 +1530,8 @@ const SessionChat = (() => {
       <aside class="chat-rail" id="chat-rail" aria-label="Sessions"></aside>
       </div>
     </div>
-    <dialog class="sheet" id="session-sheet"></dialog>`;
+    <dialog class="sheet" id="session-sheet"></dialog>
+    <dialog class="sheet preview-sheet" id="preview-sheet" aria-label="Page preview"></dialog>`;
     paintBar();
     paintRail();
     bindComposer();
@@ -1288,7 +1566,7 @@ const SessionChat = (() => {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg></button>` : ""}`;
     setConn(chat.connState || "connecting");
     const chip = $("chat-tmux");
-    if (chip) Fmt.copyTick(chip, () => `tmux attach -t ${(chat.row || {}).tmux}`);
+    if (chip) Fmt.copyTick(chip, () => `tmux attach -t ${Fmt.shellWord((chat.row || {}).tmux || "")}`);
     const detachBtn = $("chat-detach");
     if (detachBtn) detachBtn.onclick = openDetachSheet;
     const details = $("chat-details");
@@ -1374,7 +1652,7 @@ const SessionChat = (() => {
       const where = r.remote && r.machine ? ` on ${r.machine}` : "";
       const [title, note, go] = kept
         ? ["Reattach to the running tmux session?",
-          `The pane ${r.tmux || ""} is still alive${esc(where)}: attach takes it back as it is, mid-turn included. Nothing is stopped or relaunched.`,
+          `The pane ${esc(r.tmux || "")} is still alive${esc(where)}: attach takes it back as it is, mid-turn included. Nothing is stopped or relaunched.`,
           "Reattach"]
         : ["Attach this session?",
           `Attach stops ${esc(harnessLabel(r) || "the harness")} in the terminal running this session${esc(where)},
@@ -1427,6 +1705,153 @@ const SessionChat = (() => {
       b.onclick = () => { sheet.close(); detach(b.dataset.detach); };
     }
     sheet.showModal();
+  }
+
+  /* -------------------------------------------------------- preview sheet */
+
+  const preview = { targets: [], i: 0, gen: 0, view: "page", page: null, error: "" };
+  /* The Source view highlights at most this much of the file. */
+  const PREVIEW_SOURCE_MAX = 200000;
+
+  /* A tool card's Preview button. An absolute path needs the session's
+   * folder to become the route's relative one, so the button shows once
+   * the row is known; a card whose pages are all outside the folder has
+   * none (the hub would refuse them). */
+  function paintPreviewButton(card) {
+    let files = [];
+    try { files = JSON.parse(card.dataset.pages || "[]"); } catch { /* none */ }
+    const targets = pageTargets(files, chat.row && chat.row.cwd);
+    const summary = card.querySelector(":scope > summary");
+    let btn = summary && summary.querySelector(".tool-preview");
+    if (!summary || !targets.length) {
+      if (btn) btn.remove();
+      return;
+    }
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tool-preview";
+      btn.innerHTML = `${iconSvg("eye")}<span>Preview</span>`;
+      summary.prepend(btn); // floats right, ahead of the text it sits beside
+    }
+    btn.setAttribute("aria-label", targets.length === 1
+      ? `Preview ${targets[0].split("/").pop()}` : `Preview ${targets.length} pages`);
+    // The button sits in the card's toggle row: a click previews and
+    // leaves the card as it was.
+    btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openPreview(targets); };
+  }
+
+  function repaintPreviewButtons() {
+    const log = $("chat-log");
+    if (log) for (const card of log.querySelectorAll("details.tool[data-pages]")) paintPreviewButton(card);
+  }
+
+  function openPreview(targets, i = 0) {
+    const sheet = $("preview-sheet");
+    if (!sheet || !targets.length) return;
+    Object.assign(preview, { targets, i, view: "page" });
+    paintPreview();
+    if (!sheet.open) sheet.showModal();
+    loadPreview();
+  }
+
+  /* The page as it is on disk now. Every load fetches again (no-store):
+   * Reload after the agent edits the file shows the edit. */
+  async function loadPreview() {
+    const gen = ++preview.gen;
+    const path = preview.targets[preview.i];
+    preview.page = null;
+    preview.error = "";
+    paintPreviewStage();
+    let status = 0, data = null, page = null;
+    try {
+      const resp = await fetch(previewUrl(chat.key, path), {
+        headers: authHeaders(), credentials: "same-origin", cache: "no-store",
+      });
+      status = resp.status;
+      if (resp.ok) {
+        const bytes = new Uint8Array(await resp.arrayBuffer());
+        const kind = previewKind(resp.headers.get("Content-Type"), path);
+        page = { kind, bytes, doc: previewDocument(kind, bytes) };
+      } else {
+        try { data = await resp.json(); } catch { /* no body */ }
+      }
+    } catch { /* status 0: the hub never answered, or the body broke off */ }
+    if (gen !== preview.gen) return;
+    if (page) preview.page = page;
+    // A 200 whose body broke off reads as a lost connection.
+    else preview.error = previewMessage(status === 200 ? 0 : status, data);
+    paintPreviewStage();
+  }
+
+  function paintPreview() {
+    const sheet = $("preview-sheet");
+    if (!sheet) return;
+    const path = preview.targets[preview.i] || "";
+    // A patch that wrote several pages picks between them here.
+    const pick = preview.targets.length > 1
+      ? `<select class="field preview-pick" id="preview-pick" aria-label="Page">${preview.targets.map((t, n) =>
+        `<option value="${n}"${n === preview.i ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`
+      : "";
+    sheet.innerHTML = `<div class="preview-head">
+        <div class="preview-titles"><div class="preview-name">${esc(path.split("/").pop())}</div>
+          <div class="preview-path">${esc(path)}</div></div>
+        ${pick}
+        <button type="button" class="tab" id="preview-source" aria-pressed="false" title="Show the file's text">Source</button>
+        <button type="button" class="icon-button" id="preview-reload" aria-label="Reload" title="Load the file again">${iconSvg("reload")}</button>
+        <button type="button" class="icon-button" id="preview-close" aria-label="Close">${iconSvg("close")}</button>
+      </div>
+      <div class="preview-stage" id="preview-stage"></div>
+      <div class="preview-foot">Scripts and network are off in previews.</div>`;
+    $("preview-close").onclick = () => sheet.close();
+    $("preview-reload").onclick = () => loadPreview();
+    $("preview-source").onclick = () => {
+      preview.view = preview.view === "source" ? "page" : "source";
+      paintPreviewStage();
+    };
+    const sel = $("preview-pick");
+    if (sel) sel.onchange = () => { preview.i = Number(sel.value) || 0; preview.view = "page"; paintPreview(); loadPreview(); };
+    // A click on the backdrop closes it; the sheet's own content fills it.
+    sheet.onclick = (e) => { if (e.target === sheet) sheet.close(); };
+    // Closing drops the frame and any load still out.
+    sheet.onclose = () => { preview.gen++; sheet.innerHTML = ""; };
+  }
+
+  function paintPreviewStage() {
+    const stage = $("preview-stage");
+    if (!stage) return;
+    const name = (preview.targets[preview.i] || "").split("/").pop();
+    const src = $("preview-source");
+    const showSource = preview.view === "source" && !!preview.page;
+    if (src) {
+      src.classList.toggle("selected", showSource);
+      src.setAttribute("aria-pressed", String(showSource));
+      src.disabled = !preview.page;
+    }
+    if (preview.error) {
+      stage.innerHTML = `<div class="preview-msg"><div class="preview-msg-title">Couldn't preview ${esc(name)}</div>
+        <div class="caption">${esc(preview.error)}</div>
+        <button type="button" class="tab selected" id="preview-retry">Try again</button></div>`;
+      $("preview-retry").onclick = () => loadPreview();
+      return;
+    }
+    if (!preview.page) {
+      stage.innerHTML = `<div class="preview-msg caption" role="status">Loading ${esc(name)}…</div>`;
+      return;
+    }
+    if (showSource) {
+      const text = new TextDecoder("utf-8").decode(preview.page.bytes);
+      const cut = text.length > PREVIEW_SOURCE_MAX;
+      stage.innerHTML = `<pre class="preview-source">${hl(text.slice(0, PREVIEW_SOURCE_MAX), preview.page.kind === "svg" ? "xml" : "html")}</pre>`
+        + (cut ? `<div class="preview-foot">Showing the first ${PREVIEW_SOURCE_MAX.toLocaleString()} characters.</div>` : "");
+      return;
+    }
+    // Attributes go on before the frame joins the page, sandbox first,
+    // so its one load happens locked.
+    const frame = document.createElement("iframe");
+    for (const [k, v] of Object.entries(previewFrameAttrs(preview.page.doc, `Preview of ${name}`))) frame.setAttribute(k, v);
+    frame.className = "preview-frame";
+    stage.replaceChildren(frame);
   }
 
   async function detach(mode) {
@@ -1623,6 +2048,11 @@ const SessionChat = (() => {
         if (readable) body.innerHTML = `<pre>${hl(readable.text.slice(0, 8000), readable.lang)}</pre>`;
       }
       card.dataset.lang = toolOutLang(msg.tool);
+      const pages = pageFiles(msg.tool);
+      if (pages.length) {
+        card.dataset.pages = JSON.stringify(pages);
+        paintPreviewButton(card);
+      }
       if (msg.tool.call_id) chat.toolCards.set(msg.tool.call_id, card);
       if (live) { card.classList.add("arrive"); chat.awaitingReply = false; }
       put(card);
@@ -1684,6 +2114,7 @@ const SessionChat = (() => {
       div.innerHTML = `<div class="role"><span class="tool-ic">${iconSvg("warn")}</span>Error</div><div class="text">${md(msg.text)}</div>`;
     } else if (kind === "user" || kind === "assistant") {
       div.innerHTML = `<div class="text">${md(msg.text)}</div>`;
+      if (kind === "assistant") div.insertAdjacentHTML("beforeend", linkCardsHtml(msg.text));
       if (carried) {
         div.classList.add("degraded");
         div.insertAdjacentHTML("beforeend", `<div class="send-note">${esc(carried)}</div>`);
@@ -2172,6 +2603,8 @@ const SessionChat = (() => {
     chat.row = Object.assign({}, chat.row || {}, row, machine && machine.name ? { machine: machine.name } : {});
     chat.rowKnown = true;
     updateOwnership();
+    // The folder is known now: absolute page paths become previewable.
+    repaintPreviewButtons();
     return 200;
   }
 
@@ -2735,6 +3168,8 @@ const SessionChat = (() => {
       inlineImagesAsText, inline, taskBox, tableHtml,
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
       diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
+      isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
+      pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
       cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat },
   };

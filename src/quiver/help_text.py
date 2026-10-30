@@ -558,7 +558,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe init --yes')}              Register every new harness without asking
                                (also the non-terminal default)
   {c('cyan', 'swe init --hub=<git url>')}     Clone your hub repo as ~/.quiver first, then link
-                               (only into a missing or empty ~/.quiver)
+                               (only while ~/.quiver has no hub: no AGENTS.md, no .git)
 
   {c('dim', 'Collision: -n means dry-run here and on swe install, but fetch-fresh-data on swe list.')}
 
@@ -609,10 +609,10 @@ to use their own login state and environment."""
   {c('cyan', 'swe setup --json')}             Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
   {c('cyan', 'swe setup --hub=<git url>')}    Clone your hub repo as ~/.quiver first, then
-                               run any of the above (~/.quiver must be missing or empty)
+                               run any of the above (only while ~/.quiver has no hub yet)
 
-  While ~/.quiver is missing or empty, the wizard first asks for your hub repo's
-  URL; a blank answer starts an empty hub.
+  While ~/.quiver has no hub yet (no AGENTS.md, no .git), the wizard first asks
+  for your hub repo's URL; a blank answer starts an empty hub.
 
   Provider credentials remain external. Use {c('cyan', 'swe providers info <name>')} for the
   expected key file and environment variable; harness OAuth remains harness-owned."""

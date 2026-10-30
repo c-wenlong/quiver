@@ -11,6 +11,15 @@ import Testing
         #expect(segs == [.markdown("hello **world**\n\n- a\n- b")])
     }
 
+    @Test(.timeLimit(.minutes(1))) func aLessThanThatOpensNoTagIsText() {
+        // A `<` with no tag after it used to stop the converter in place:
+        // opening a PR whose body said "a < b" hung the app.
+        #expect(GitHubMarkdown.segments("a < b") == [.markdown("a < b")])
+        #expect(GitHubMarkdown.segments("x <= 3 and <3") == [.markdown("x <= 3 and <3")])
+        #expect(GitHubMarkdown.segments("ends with <") == [.markdown("ends with <")])
+        #expect(GitHubMarkdown.segments("<b>a</b> < <i>c</i>") == [.markdown("**a** < *c*")])
+    }
+
     @Test func inlineHtmlBecomesMarkdown() {
         let segs = GitHubMarkdown.segments(
             "Fixes <a href=\"https://x.dev\">the thing</a> in <code>foo.swift</code>.")

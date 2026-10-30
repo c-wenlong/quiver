@@ -390,6 +390,26 @@ class TestModel(_Model):
         self.assertEqual(trend["peaks"]["claude"], 3 * 1024**3 + 1024 * 1024)
         json.dumps(body)
 
+    def test_command_lines_hide_secrets_before_they_leave_the_hub(self):
+        """A harness's MCP child and an orphan started with a token on
+        their command line show it as "…" to every paired browser."""
+        self.m.process(103, 101, ["node", "mcp.js", "--token=ghp_abcdefghijklmnop1234"],
+                       exe="/usr/bin/node", start=310)
+        self.m.process(201, 1, ["npx", "--api-key", "sk-live-abcdefghijklmnop", "srv"],
+                       exe="/usr/bin/node", cwd="/home/u", start=60)
+        self.model.sample()
+        self.now[0] += 10.0
+        self.model.sample()
+        body = json.dumps(self.model.payload(10))
+        self.assertNotIn("ghp_abcdefghijklmnop1234", body)
+        self.assertNotIn("sk-live-abcdefghijklmnop", body)
+        rows = {r["pid"]: r for h in self.model.payload(10)["harnesses"] for r in h["processes"]}
+        self.assertEqual(rows[103]["command_line"], "node mcp.js --token=…")
+        self.assertEqual(rows[101]["command_line"], "claude")
+        orphans = {o["pid"]: o for o in self.model.payload(10)["orphans"]}
+        self.assertEqual(orphans[201]["command"], "npx --api-key …")
+        self.assertEqual(orphans[201]["command_line"], "npx --api-key … srv")
+
     def test_gpu_is_none_without_pmon_and_zero_off_the_gpu(self):
         self.gpu_by_pid = None
         self.model.sample()

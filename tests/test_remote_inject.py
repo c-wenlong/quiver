@@ -313,6 +313,10 @@ class TestHeadless(unittest.TestCase):
         self.assertIn("stream-json", argv)
         self.assertEqual(argv[-1], "hello")
 
+    def test_a_message_that_looks_like_a_flag_stays_the_prompt(self):
+        argv = self.inj.argv(self.session, "--help me")
+        self.assertEqual(argv[-2:], ["--", "--help me"])
+
     def test_argv_model_rides_as_a_flag(self):
         argv = self.inj.argv(self.session, "hello", model="opus")
         i = argv.index("--model")

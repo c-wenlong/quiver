@@ -86,6 +86,11 @@ class LayoutInvariantTest(unittest.TestCase):
         # Titles and links of the user's own Devin sessions.
         self.assertIn("data/devin-cloud/", paths.GITIGNORE_BODY)
 
+    def test_web_ledger_is_gitignored(self):
+        # The web app's ledger: the same personal rows as data/ledger/. A hub
+        # clone is moved in around it, so the hub must never track it.
+        self.assertIn("data/web-ledger/", paths.GITIGNORE_BODY.splitlines())
+
     def test_mcp_secrets_are_gitignored(self):
         # Resolved MCP tokens. A user who runs `git init` in ~/.quiver must
         # not commit them on the first `git add .`.
