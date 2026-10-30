@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iOS app: answer an approval with the pane's own menu rows.** When
+  the hub reads the agent's numbered menu ("1. Approve once", "2.
+  Always allow in this project", ...), the chat's approval card lists
+  those rows as its answers, as the web app does, so a row the Allow,
+  Always and Deny buttons can't name is still reachable. The row's
+  number goes to the hub as the decision, and the answered card names
+  the row it picked. Approvals without menu rows (older hubs,
+  non-tmux sessions) keep Allow, Always and Deny. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **Web app: pin, rename and fork sessions.** Each Sessions row has a
   More actions button (and a right-click menu) with the iPhone's
   swipe-left actions: Pin or Unpin, Rename, and Fork where the harness
@@ -714,6 +724,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the warning text can be selected to copy either out.
 
 ### Security
+
+- **Mac app: the fan helper is checked against Quiver's own signature
+  before it runs as root.** The one-time install copied
+  `Quiver.app/Contents/MacOS/QuiverFanHelper` to
+  `/Library/PrivilegedHelperTools` and only checked that the copy
+  matched a hash taken before the password prompt. The bundle is
+  user-writable, so anything running as the user could patch the helper
+  beforehand and have it run as root once the user typed their password.
+  A build signed by a team (Developer ID, or the Apple Development
+  identity dev builds pick up) now has the root script verify the
+  root-owned copy with `codesign --verify --strict` against
+  `identifier "QuiverFanHelper"` and that team, and deletes it and stops
+  otherwise. Ad-hoc builds have no signature to check against and keep
+  the hash check alone. Installed helpers are not reinstalled, so nobody
+  is asked for their password again
+  ([#967](https://github.com/c-wenlong/quiver/issues/967)).
 
 - **Remote: a local process can no longer claim the owner's tailnet
   identity.** Behind `tailscale serve` the hub read the client from
