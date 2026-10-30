@@ -7,6 +7,8 @@ struct ChatView: View {
     @Environment(\.scenePhase) private var phase
     let key: String
     @State private var model: ChatModel?
+    /// The stream was stopped when the app went to the background.
+    @State private var stoppedInBackground = false
     @State private var otherModelShown = false
     @State private var otherModelText = ""
 
@@ -72,9 +74,18 @@ struct ChatView: View {
             Text("Typed into the session as /model <id>. The header shows it once a reply runs on it.")
         }
         .onDisappear { model?.stop() }
+        // Only a trip to the background stopped the stream. Inactive and
+        // back (Control Center, a notification, the app switcher peek)
+        // keeps it, so it isn't torn down and replayed for nothing.
         .onChange(of: phase) { _, new in
             guard let model else { return }
-            if new == .active { Task { await model.start() } } else if new == .background { model.stop() }
+            if new == .background {
+                model.stop()
+                stoppedInBackground = true
+            } else if new == .active, stoppedInBackground {
+                stoppedInBackground = false
+                Task { await model.start() }
+            }
         }
     }
 }
