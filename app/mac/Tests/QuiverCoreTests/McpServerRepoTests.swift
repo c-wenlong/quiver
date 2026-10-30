@@ -310,6 +310,26 @@ private func git(_ args: String..., in dir: URL) async throws {
         #expect(state.hasChanges)
     }
 
+    @Test func gitStateNeverRewritesTheIndex() async throws {
+        let dir = try tempDir()
+        try await git("init", in: dir)
+        let file = dir.appending(path: "tracked.txt")
+        try "x".write(to: file, atomically: true, encoding: .utf8)
+        try await git("add", "tracked.txt", in: dir)
+        try await git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "x", in: dir)
+        // Stale stat data: a plain status would refresh it and write a
+        // new index (a new inode, through index.lock).
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000_000_000)],
+                             ofItemAtPath: file.path)
+        let index = dir.appending(path: ".git/index").path
+        let before = try fm.attributesOfItem(atPath: index)[.systemFileNumber] as? Int
+        let state = await McpServerRepo.gitState(of: dir)
+        #expect(state.isRepo)
+        #expect(!state.hasChanges)
+        let after = try fm.attributesOfItem(atPath: index)[.systemFileNumber] as? Int
+        #expect(before != nil && before == after)
+    }
+
     @Test func aPlainFolderIsNotARepo() async throws {
         let dir = try tempDir()
         let state = await McpServerRepo.gitState(of: dir)
