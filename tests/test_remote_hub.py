@@ -759,6 +759,26 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertNotIn("claude:a3", srv.state.pending_approvals)
         self.assertNotIn("claude:a3", srv.state._approval_at)
 
+    def test_expiry_drops_only_the_stale_request(self):
+        # One prompt past its TTL, one fresh, same session: the sweep
+        # must keep the fresh one in both maps and in the inbox.
+        srv = _Server(sessions=[_session(sid="a7")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        hdr = {"Authorization": f"Bearer {srv.pair()['credential']}"}
+        key = "claude:a7"
+        for rid in ("req-old", "req-new"):
+            srv.state.emit(key, protocol.event(
+                "approval.requested", key, "mbp",
+                {"request_id": rid, "prompt": "run it?"}))
+        srv.state._approval_at[key]["req-old"] = (
+            time.time() - APPROVAL_TTL_S - 1)
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        items = json.loads(data)["items"]
+        self.assertEqual([i["request_id"] for i in items], ["req-new"])
+        self.assertEqual(srv.state.pending_approvals[key], "req-new")
+        self.assertEqual(set(srv.state._approval_at[key]), {"req-new"})
+
     def test_overlapping_approvals_resolve_one_at_a_time(self):
         # A Codex app-server can hold two prompts on one session:
         # answering A must leave B pending, not clear the session.
