@@ -19,6 +19,7 @@ from unittest import mock
 
 from quiver.console import strip_ansi
 from quiver.find.entries import HIDE_DIRS, Entry
+from tests._tempdir import temp_dir
 
 
 class EntryContractTest(unittest.TestCase):
@@ -33,11 +34,11 @@ class EntryContractTest(unittest.TestCase):
         self.assertFalse(Entry("gone").can_descend)
 
     def test_a_directory_descends(self):
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         self.assertTrue(Entry("d", d).can_descend)
 
     def test_a_file_does_not(self):
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "SKILL.md"
         f.write_text("x")
         self.assertFalse(Entry("f", f).can_descend)
@@ -92,7 +93,7 @@ class BrowserSafetyTest(unittest.TestCase):
         carry an OSC link or a clipboard write into the browser."""
         from quiver.find.browser import _file_preview
 
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "SKILL.md"
         f.write_text(
             "ok line\n"
@@ -112,7 +113,7 @@ class BrowserSafetyTest(unittest.TestCase):
         expandtabs or indented files lose their shape."""
         from quiver.find.browser import _file_preview
 
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "x.md"
         f.write_text("one\n\tdeep\n\t\tdeeper\n")
         rows = _file_preview(f, 10)
@@ -312,7 +313,7 @@ class PreviewTest(unittest.TestCase):
     """Arrowing onto a file shows the file, not the next folder."""
 
     def setUp(self):
-        self.d = Path(tempfile.mkdtemp())
+        self.d = temp_dir(self)
 
     def test_a_directory_previews_its_children(self):
         from quiver.find.browser import _preview
