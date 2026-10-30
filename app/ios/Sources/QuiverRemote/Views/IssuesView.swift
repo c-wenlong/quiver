@@ -240,7 +240,7 @@ struct IssueRowView: View {
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 if let badges = badges, !badges.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(badges, id: \.self) { Badge($0) }
+                        ForEach(Array(badges.enumerated()), id: \.offset) { Badge($0.element) }
                     }
                 }
             }
