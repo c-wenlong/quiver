@@ -129,6 +129,7 @@ globalThis.registerPage = (id, r) => { PAGES[id] = r; };
 globalThis.esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+globalThis.safeHref = (u) => (/^(https?:\/\/|mailto:)/i.test(String(u || "").trim()) ? esc(String(u).trim()) : "");
 globalThis.icon = () => "";
 globalThis.pageHeader = () => "";
 globalThis.renderGate = () => {};
