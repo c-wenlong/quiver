@@ -122,7 +122,6 @@ Developer Mode).
 
 - Push: ntfy still sends notifications, including the lock-screen
   approve and deny buttons. APNs is on the roadmap.
-- Listing and removing paired devices needs a hub route (roadmap P8).
 - Decoding stays on the hub; the app only reads protocol DTOs.
 - The console reaches the hub's own machine only; satellites don't
   install phone keys or report host keys yet.
