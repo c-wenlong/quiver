@@ -26,6 +26,7 @@ and the fixture that pins the shape. Fixtures live under
 | `swe hooks new <harness> <name> --json` | `{"path", "harness", "command", "settings": [file], "stanza"}`; `swe hooks new shared <name> --json` returns `{"path", "harness": "shared", "tier", "commands": {h: cmd}, "deploys_to": [h], "stanza"}` | |
 | `swe mcp list --json` · `swe mcp status --json` | `McpInventory` | `swe-mcp-list.json`, `swe-mcp-status.json` |
 | `swe mcp sync ... --no-interactive --json` | `McpSyncReport` | |
+| `swe mcp gateway status --json` | `{"enabled", "port", "installed", "pid", "reachable", "servers": [{"name", "url", "state", "pid", "uptime_s", "starts", "error"}]}` — one row per shared hub server; `state` is `running` \| `idle` (not started yet) \| `error` \| `down` (the gateway does not answer). A sync report's targets also carry `via_gateway`: the servers written as the gateway's URL | |
 | `swe find plugins --json` | `PluginDriftReport` | `swe-find-plugins.json` |
 | `swe find plugins --fix=<id> --json` | `FixedDrift` | `swe-find-plugins-fix.json` |
 | `swe plugins catalog --json` | `PluginCatalog` | `swe-plugins-catalog.json` |
