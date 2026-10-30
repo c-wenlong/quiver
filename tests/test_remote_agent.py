@@ -1690,8 +1690,25 @@ class TestAgentLoopEdges(unittest.TestCase):
     def test_save_cmd_cursor_oserror(self):
         ag = self._agent()
         ag._done_cmd_seq = 9
-        with patch.object(Path, "write_text", side_effect=OSError):
+        with patch.object(agent_mod, "atomic_write_text",
+                          side_effect=OSError):
             ag._save_cmd_cursor()  # must not raise
+            ag._save_outbox_ack()
+
+    def test_cursor_and_ack_are_written_atomically(self):
+        # A plain write_text torn by a crash read back as no cursor
+        # (the backlog re-ran) or ack 0 (the outbox was resent).
+        ag = self._agent()
+        ag._done_cmd_seq, ag._outbox_ack = 3, 4
+        real = agent_mod.atomic_write_text
+        with patch.object(agent_mod, "atomic_write_text",
+                          side_effect=real) as write:
+            ag._save_cmd_cursor()
+            ag._save_outbox_ack()
+        self.assertEqual([c[0][0] for c in write.call_args_list],
+                         [ag._cmd_cursor_file(), ag._outbox_ack_file()])
+        b = self._agent()
+        self.assertEqual((b._done_cmd_seq, b._outbox_ack), (3, 4))
 
     def test_command_stream_reads_frames(self):
         ag = self._agent()
