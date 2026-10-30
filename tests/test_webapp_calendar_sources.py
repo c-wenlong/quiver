@@ -22,7 +22,8 @@ from tests.test_remote_hub import HubBase
 
 # Shared with app/mac/Tests/QuiverCoreTests/ActivityParityTests.swift.
 FIXTURES = Path(__file__).resolve().parent.parent / "app/mac/Tests/QuiverCoreTests/Fixtures/activity"
-PARSERS = {"pi": _activity.parse_pi, "droid": _activity.parse_droid}
+# Each source's (listing, parser), as _activity.SOURCES pairs them.
+PARSERS = {s.harness: (s._files, s._parse) for s in _activity.SOURCES}
 
 
 def _utc(text: str) -> float:
@@ -38,9 +39,8 @@ def _write(path: Path, *lines: str, newline: bool = True) -> Path:
 def _blocks(harness: str, root: Path, account: str, lo: float, hi: float, gap: float):
     """One source's per-session blocks, the way the Mac provider reports
     them: listing, parse, then ``ActivityBlocks.make``."""
-    index = _activity.FileIndex()
-    sessions = index.sessions(lambda: _activity.jsonl_files(str(root)),
-                              lambda p: PARSERS[harness](p, account))
+    files, parse = PARSERS[harness]
+    sessions = _activity.FileIndex().sessions(lambda: files(str(root)), lambda p: parse(p, account))
     return cal.file_pieces([(harness, s) for s in sessions], lo, hi, timezone.utc, gap)
 
 
@@ -151,6 +151,36 @@ class TestReaders(unittest.TestCase):
         self.assertEqual(listings, [100.0, 129.0, 159.0])
 
 
+class TestFreebuff(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def parse(self, body: str):
+        path = _write(self.dir / "chats" / "c1" / "run-state.json", body)
+        return _activity.parse_freebuff(str(path), "/m")
+
+    def test_the_state_level_initial_cwd_is_the_third_fallback(self):
+        [session] = self.parse('{"sessionState":{"initialCwd":"/fallback",'
+                               '"mainAgentState":{"messageHistory":[{"sentAt":1786349100123}]}}}')
+        self.assertEqual((session["session"], session["cwd"]), ("c1", "/fallback"))
+
+    def test_a_bool_sent_at_counts_as_as_nsnumber_reads_it(self):
+        [session] = self.parse('{"sessionState":{"mainAgentState":{"messageHistory":'
+                               '[{"sentAt":true},{"sentAt":1786349100123}]}}}')
+        self.assertEqual(session["timestamps"], [0.001, 1786349100.123])
+
+    def test_malformed_files_are_no_session(self):
+        for body in ("not json", "[]", '{"sessionState":[]}', '{"sessionState":{"mainAgentState":{}}}',
+                     '{"sessionState":{"mainAgentState":{"messageHistory":{}}}}',
+                     '{"sessionState":{"mainAgentState":{"messageHistory":[{"sentAt":NaN}]}}}',
+                     '{"sessionState":{"mainAgentState":{"messageHistory":[{"x":1}]}}}'):
+            self.assertEqual(self.parse(body), [], body)
+
+    def test_an_unreadable_file_is_no_session(self):
+        self.assertEqual(_activity.parse_freebuff(str(self.dir / "missing.json"), "/m"), [])
+
+
 class TestFilePieces(unittest.TestCase):
     def test_days_split_responses_and_counts_stay_zero(self):
         session = {"session": "s", "account": "/a", "cwd": "/w",
@@ -221,7 +251,7 @@ class TestTrivialDrop(unittest.TestCase):
 
 
 class TestRoute(HubBase):
-    def test_pi_and_droid_draw_blocks_with_time_and_responses(self):
+    def test_file_sources_draw_blocks_with_time_and_responses(self):
         home = self.srv.home
         pi = _write(home / ".pi/agent/sessions/--tmp-pi--/1_a.jsonl",
                     '{"type":"session","cwd":"/tmp/pi-proj"}',
@@ -230,12 +260,19 @@ class TestRoute(HubBase):
         _write(home / ".factory/sessions/-tmp-app/u1.jsonl",
                '{"type":"session_start","cwd":"/tmp/droid-proj"}',
                '{"type":"message","timestamp":"2026-10-21T10:00:00Z"}')
+        sent = int(_utc("2026-10-22T11:00:00Z") * 1000)
+        _write(home / ".config/manicode/projects/fb/chats/chat-1/run-state.json",
+               json.dumps({"sessionState": {"mainAgentState": {
+                   "cwd": "/tmp/fb-proj", "messageHistory": [{"sentAt": sent}]}}}))
         q = "/v1/app/calendar?mode=week&anchor=2026-10-20&tz=UTC&first_weekday=1"
         status, data = self.srv.request("GET", q, headers=self.auth())
         self.assertEqual(status, 200, data)
         body = json.loads(data)
         blocks = {b["harness"]: b for b in body["blocks"]}
-        self.assertEqual(set(blocks), {"pi", "droid"})
+        self.assertEqual(set(blocks), {"pi", "droid", "freebuff"})
+        self.assertEqual((blocks["freebuff"]["project"], blocks["freebuff"]["account"],
+                          blocks["freebuff"]["sessions"][0]["id"]),
+                         ("fb-proj", str(home / ".config/manicode"), "chat-1"))
         self.assertEqual((blocks["pi"]["project"], blocks["pi"]["responses"], blocks["pi"]["tokens"]),
                          ("pi-proj", 2, 0))
         self.assertEqual(blocks["pi"]["account"], str(home / ".pi"))
@@ -244,8 +281,8 @@ class TestRoute(HubBase):
         # A session the listing lacks opens a stand-in row named for its harness.
         row = body["sessions"][blocks["droid"]["sessions"][0]["row"]]
         self.assertEqual((row["harness"], row["agent"]), ("droid", "Factory Droid"))
-        self.assertEqual([e["harness"] for e in body["legend"]], ["droid", "pi"])
-        self.assertEqual(body["legend"][1]["total_s"], 1200)
+        self.assertEqual([e["harness"] for e in body["legend"]], ["droid", "freebuff", "pi"])
+        self.assertEqual(body["legend"][2]["total_s"], 1200)
 
     def test_the_trivial_drops_totals_are_read_once_per_scan(self):
         q = "/v1/app/calendar?mode=week&anchor=2026-10-20&tz=UTC"

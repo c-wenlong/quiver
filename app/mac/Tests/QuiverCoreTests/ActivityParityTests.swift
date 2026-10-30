@@ -41,13 +41,14 @@ import Testing
         switch harness {
         case "pi": return PiActivity(sessionsRoot: root, accountHome: account, index: index)
         case "droid": return DroidActivity(sessionsRoot: root, accountHome: account, index: index)
+        case "freebuff": return FreebuffActivity(projectsRoot: root, accountHome: account, index: index)
         default:
             Issue.record("no provider for \(harness)")
             throw CancellationError()
         }
     }
 
-    @Test(arguments: ["pi", "droid"])
+    @Test(arguments: ["pi", "droid", "freebuff"])
     func blocksMatchTheSharedExpectation(_ harness: String) async throws {
         let expected = try Self.expected()
         let source = try #require(expected.sources[harness])

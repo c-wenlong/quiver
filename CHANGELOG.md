@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Freebuff on the Calendar.** The hub reads Freebuff's
+  `run-state.json` chats under `~/.config/manicode/projects` as the Mac
+  app does, so its work shows as blocks with time and responses. Part
+  of [#970](https://github.com/c-wenlong/quiver/issues/970).
 - **Web app: Pi and Factory Droid on the Calendar.** The hub now reads
   their session files the way the Mac app does (`~/.pi/agent/sessions`
   and `~/.factory/sessions`), so their work shows as blocks beside the
