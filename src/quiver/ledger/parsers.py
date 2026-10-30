@@ -369,7 +369,11 @@ def iter_lines(path: Path, offset: int = 0, end: list | None = None):
 # ---------------------------------------------------------------- sqlite sources
 
 def _open_ro(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    # as_uri() percent-encodes the path: a raw "#", "?" or "%" in a home
+    # folder's name would end the file: URI early or decode into another
+    # path, as the remote readers' openers already guard against.
+    return sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro",
+                           uri=True, timeout=5)
 
 
 def opencode_records(db: Path) -> list[LedgerRecord]:
