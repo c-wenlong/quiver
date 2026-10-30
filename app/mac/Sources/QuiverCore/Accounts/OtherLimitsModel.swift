@@ -425,6 +425,10 @@ public final class OtherLimitsModel {
             // One failed poll (a swe timeout, a busy disk) keeps the last
             // cards up, as the starred set already is; the note says the
             // refresh failed. With nothing shown yet it is the only text.
+            // An account removed since is gone either way: it has no
+            // reading to keep.
+            cards.removeAll { $0.profile.map { !live.contains($0.id) } ?? false }
+            rows.removeAll { $0.profile.map { !live.contains($0.id) } ?? false }
             note = cards.isEmpty ? error.localizedDescription
                 : "Couldn't refresh: \(error.localizedDescription)"
         }
