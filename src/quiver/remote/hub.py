@@ -1430,6 +1430,13 @@ class _Handler(BaseHTTPRequestHandler):
             replay, truncated = self._state.journal.read_since(
                 journal_key, after_seq
             )
+            last = self._state.journal.last_seq(journal_key)
+            if after_seq > last:
+                # A cursor from before the journal was wiped: nothing
+                # replays, and every new event (seq <= the old cursor)
+                # would be dropped as already delivered. Restart the
+                # client at the journal's head and tell it to refetch.
+                replay, truncated, after_seq = [], True, last
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")
