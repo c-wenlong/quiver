@@ -107,9 +107,9 @@ struct PullGlyph: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 15))
+            .font(Theme.rowIcon)
             .foregroundStyle(color)
-            .frame(width: 20)
+            .iconColumn(20)
             .accessibilityLabel(accessibility)
     }
 
@@ -144,7 +144,7 @@ struct ChecksGlyph: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 13))
+            .font(Theme.font(size: 13))
             .foregroundStyle(color)
             .accessibilityLabel("Checks \(state ?? "none")")
     }
@@ -216,7 +216,7 @@ struct PullRowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
         }
         .padding(.vertical, Theme.rowVertical)
         .padding(.horizontal, Theme.rowHorizontal)

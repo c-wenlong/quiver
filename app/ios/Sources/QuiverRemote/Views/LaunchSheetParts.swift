@@ -27,7 +27,7 @@ struct HarnessPicker: View {
                     onPick()
                 } label: {
                     HarnessIcon(harness: h, name: name, size: 24)
-                        .font(.system(size: 10))
+                        .font(Theme.font(size: 10))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                         .frame(width: 48, height: 48)
@@ -99,7 +99,7 @@ struct StartsInCard: View {
     var body: some View {
         Card(padding: 0) {
             HStack(spacing: 12) {
-                Image(systemName: icon).font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                Image(systemName: icon).font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Starts in").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     Text(title)
@@ -167,7 +167,7 @@ struct FolderSearchField: View {
         }
         .font(Theme.body)
         .padding(.horizontal, 12)
-        .frame(height: Theme.controlHeight + 4)
+        .scaledMinHeight(Theme.controlHeight + 4)
         .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
     }

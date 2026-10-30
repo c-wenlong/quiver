@@ -149,7 +149,7 @@ struct PairView: View {
                         .disabled(app.pairing.busy)
                         Button("Use a pair token instead") { path.append(.token) }
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                            .frame(height: 36)
+                            .scaledMinHeight(36)
                     }
                     .padding(.horizontal, Theme.gutter)
                     .padding(.bottom, 8)
@@ -190,10 +190,10 @@ struct PairCodeView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text("swe remote devices --approve=\(pending.started.code)").font(Theme.mono).lineLimit(1).minimumScaleFactor(0.8)
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 12))
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc").font(Theme.font(size: 12))
                     }
                     .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 10).frame(height: 32)
+                    .padding(.horizontal, 10).scaledMinHeight(32)
                     .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
                 }
                 .buttonStyle(.plain)
@@ -227,7 +227,7 @@ struct PairCodeView: View {
                     Button("Try again") { Task { app.cancelPairing(); await app.startTailscalePairing() } }.primaryButton()
                 }
                 Button("Cancel") { app.cancelPairing() }
-                    .font(Theme.body).foregroundStyle(Theme.textSecondary).frame(height: 44)
+                    .font(Theme.body).foregroundStyle(Theme.textSecondary).scaledMinHeight(44)
             }
             .padding(.horizontal, Theme.gutter)
             .padding(.top, 12)
@@ -307,7 +307,7 @@ struct PairOfferSheet: View {
             Text("Pair with this hub?").font(Theme.sectionTitle).foregroundStyle(Theme.textPrimary)
             Card(padding: 0) {
                 HStack(spacing: 12) {
-                    Image(systemName: "desktopcomputer").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                    Image(systemName: "desktopcomputer").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(link.address).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                             .lineLimit(2).truncationMode(.middle)
@@ -338,7 +338,7 @@ struct PairOfferSheet: View {
                     .disabled(app.pairing.busy)
                 }
                 Button(app.pairing.codeSpent ? "Close" : "Cancel") { app.declinePairOffer() }
-                    .font(Theme.body).foregroundStyle(Theme.textSecondary).frame(height: 44)
+                    .font(Theme.body).foregroundStyle(Theme.textSecondary).scaledMinHeight(44)
             }
         }
         .padding(Theme.gutter)
