@@ -46,12 +46,13 @@ import Testing
     @Test func cmdWClosesAHostedCardAndKeepsTheWindow() {
         _ = NSApplication.shared
         let flag = Flag()
-        let main = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
-                            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let main = OffscreenWindow(size: CGSize(width: 600, height: 400),
+                                   styleMask: [.titled, .closable])
         main.isReleasedWhenClosed = false
         main.contentView = NSHostingView(rootView: Host(flag: flag))
         main.orderFront(nil)
         defer { main.orderOut(nil) }
+        #expect(main.screen == nil)
 
         spin { SheetOverlayRegistry.isCovered(main) }
         #expect(SheetOverlayRegistry.isCovered(main))
