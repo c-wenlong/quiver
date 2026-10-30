@@ -55,7 +55,9 @@ class WebApp:
             self._store = LedgerStore(ledger_path_for(self.home))
         now = time.time()
         if self._catalog is None or now - self._catalog_at > CATALOG_TTL_S:
-            if self._catalog is None:
+            # With downloads off nothing swaps a fresh list in later, so
+            # an expired one rereads the disk (its copy, the overrides).
+            if self._catalog is None or not self.download_prices:
                 self._catalog = load_catalog(self.home, download=False)
             self._catalog_at = now
             self._kick_prices()

@@ -76,7 +76,6 @@ class TestWebAppRoutes(HubBase):
 APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
 
 
-@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestPriceDownload(unittest.TestCase):
     """The LiteLLM download must never run under the page lock."""
 
@@ -114,6 +113,22 @@ class TestPriceDownload(unittest.TestCase):
         finally:
             release.set()
 
+    def test_without_downloads_the_disk_copy_still_reloads_hourly(self):
+        from unittest.mock import patch
+
+        from quiver.webapp import api
+
+        app = WebApp(None, download_prices=False)
+        app._store = object()
+        app._scanned_at = float("inf")
+        with patch.object(api, "load_catalog", side_effect=["old", "new"]), \
+                patch.object(app, "_kick_feed"):
+            app._ensure(False)
+            self.assertEqual(app._catalog, "old")
+            app._catalog_at -= api.CATALOG_TTL_S + 1
+            app._ensure(False)
+        self.assertEqual(app._catalog, "new")
+
     def test_a_pricing_write_beats_an_older_download(self):
         from unittest.mock import patch
 
@@ -127,6 +142,7 @@ class TestPriceDownload(unittest.TestCase):
         self.assertIsNone(app._catalog)
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestSetupOffer(unittest.TestCase):
     """app.js's first-run offer, run under node with the browser stubbed:
     each case is a fresh page load at ``hash``."""
