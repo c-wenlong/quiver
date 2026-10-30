@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from quiver.webapp.pages import CONFIG_LOCK, PageError
+from quiver.webapp.pages import CONFIG_LOCK, PageError, home_path
 
 # PrimitiveTree.isTextFile: under a megabyte, and UTF-8 with no NUL in
 # its first 8 KB.
@@ -29,7 +29,7 @@ _KINDS = (("skills", "Skills"), ("commands", "Commands"), ("agents", "Agents"), 
 
 
 def get(ctx, args: dict) -> dict:
-    home = Path(ctx.home) if ctx.home is not None else Path.home()
+    home = home_path(ctx)
     inventory = _inventory(home)
     if args.get("skill"):
         skill = _find(inventory, args["skill"])
@@ -391,7 +391,7 @@ def post(ctx, action: str, body: dict) -> dict:
         raise PageError(404, "unknown_action", f"unknown skills action: {action}")
     if not isinstance(body, dict):
         raise PageError(422, "bad_body", "Send a JSON object.")
-    home = Path(ctx.home) if ctx.home is not None else Path.home()
+    home = home_path(ctx)
     if action == "new":
         return _new(ctx, home, body)
     skill_ref = _ref(body, "skill", required=False)

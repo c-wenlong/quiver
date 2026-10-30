@@ -80,7 +80,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from quiver import __version__
-from quiver.webapp.pages import PageError, tilde, web_url
+from quiver.webapp.pages import PageError, home_path, tilde, web_url
 from quiver.webapp.pages._secrets import mask
 
 ACTIONS = ("pair", "revoke", "session_search", "sync", "key_set", "key_remove", "key_value")
@@ -111,7 +111,7 @@ def get(ctx, args: dict) -> dict:
         return {"remote": _remote(ctx)}
     if part:
         raise PageError(400, "bad_part", f"unknown part: {part}")
-    home = _home(ctx)
+    home = home_path(ctx)
     return {
         "machine": (ctx.machine or {}).get("name"),
         "version": __version__,
@@ -151,7 +151,7 @@ def _session_search(home: Path) -> dict:
 def _set_session_search(ctx, body: dict) -> dict:
     from quiver.sessions import search_writer
 
-    home = _home(ctx)
+    home = home_path(ctx)
     if body.get("resync") is True:
         _kick_pass(home)
         return {"session_search": _session_search(home)}
@@ -393,7 +393,7 @@ def _key_action(ctx, action: str, body: dict) -> dict:
         status = {"not_found": 404, "changed_on_disk": 409, "duplicate": 409,
                   "unreadable": 409, "unwritable": 500}.get(exc.code, 422)
         raise PageError(status, exc.code, exc.message) from None
-    return {"providers": _providers(ctx, _home(ctx))}
+    return {"providers": _providers(ctx, home_path(ctx))}
 
 
 def _key_value(body: dict) -> str:
@@ -513,10 +513,6 @@ def _paths(ctx, home: Path) -> dict:
         "api_keys": _display(provider_keys_path_for(ctx.home), home),
         "mcp_servers": _display(mcp_servers_dir_for(ctx.home), home),
     }
-
-
-def _home(ctx) -> Path:
-    return Path(ctx.home) if ctx.home is not None else Path.home()
 
 
 def _display(path: Path, home: Path) -> str:

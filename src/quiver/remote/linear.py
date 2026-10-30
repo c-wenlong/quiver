@@ -29,7 +29,6 @@ write-back is a later step, not this one.
 from __future__ import annotations
 
 import json
-import ssl
 import time
 import urllib.error
 import urllib.request
@@ -167,24 +166,6 @@ class GraphQLResult:
     error: str = ""
 
 
-def _urlopen(req: urllib.request.Request, timeout: float):
-    """``urlopen`` that retries a certificate failure once against the
-    OS CA bundle, as ``remote/agent.py``'s does: python.org builds on
-    macOS ship no CA certificates. Verification is never disabled."""
-    try:
-        return urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.URLError as exc:
-        if not isinstance(getattr(exc, "reason", None),
-                          ssl.SSLCertVerificationError):
-            raise
-        from quiver.harness.rate_limits import _verified_context
-
-        ctx = _verified_context()
-        if ctx is None:
-            raise
-        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
-
-
 def _graphql(api_key: str, query: str,
              variables: dict | None = None) -> GraphQLResult:
     """POST one GraphQL operation; never raises."""
@@ -195,6 +176,9 @@ def _graphql(api_key: str, query: str,
         headers={"Authorization": api_key,
                  "Content-Type": "application/json",
                  "User-Agent": f"quiver/{__version__}"})
+    # The agent's urlopen: a certificate failure retries against the OS
+    # CA bundle (python.org builds on macOS ship none), still verified.
+    from quiver.remote.agent import _urlopen
     try:
         with _urlopen(req, TIMEOUT) as resp:
             text = resp.read().decode("utf-8")
