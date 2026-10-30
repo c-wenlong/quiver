@@ -288,8 +288,10 @@ public struct HubClient: Sendable {
     }
 
     /// One session's live events after `last`, reconnecting with backoff
-    /// until the consuming task is cancelled or the hub refuses the
-    /// credential.
+    /// until the hub refuses the credential or the reader goes away: its
+    /// task cancelled, or its loop left by `break` or `return`. Either
+    /// way the stream terminates, and `onTermination` cancels the loop
+    /// and its connection.
     public func events(_ key: String, last: Int) -> AsyncStream<HubStreamEvent> {
         AsyncStream { continuation in
             let task = Task {
