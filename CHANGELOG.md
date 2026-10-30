@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: a tray for queued messages in the chat.** A Queue-mode
+  send made while the agent works now waits in a tray above the
+  composer, as on the iPhone, instead of a "Queued until the agent is
+  idle" bubble. Each row can be edited (its text goes into the box and
+  Send becomes Save), removed, or sent now into the running turn;
+  Remove all asks first. The hub holds the sends, so the tray comes
+  back when the chat reopens, with sends queued, edited or removed on
+  another device ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 - **Remote: a `limit` notification when a session hits its usage
   limit.** The hub and satellites now raise `notify` kind `limit` when
   a Claude Code session writes its rate-limit record ("You've hit your
