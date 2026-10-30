@@ -577,10 +577,8 @@ class TestAgentState(unittest.TestCase):
             a._execute("droid:/a/b#c", "attachment",
                        {"ref": "1 shot.png", "hub_key": "droid:/a/b#c@m1"})
         url = get.call_args[0][1]
-        key_part, _sep, ref = url[len("/v1/agent/attachments/"):].rpartition("/")
-        from urllib.parse import unquote
-        self.assertEqual((unquote(key_part), unquote(ref)),
-                         ("droid:/a/b#c@m1", "1 shot.png"))
+        self.assertEqual(
+            url, "/v1/agent/attachments/droid%3A%2Fa%2Fb%23c%40m1/1%20shot.png")
 
 
 class _AgentHub(_Hub):
