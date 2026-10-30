@@ -375,7 +375,10 @@ class TestCommentRoute(_Base):
         for env, code in (
                 (gh.GhEnv(installed=True, authenticated=False),
                  "gh_auth_required"),
-                (gh.GhEnv(installed=False), "gh_unavailable")):
+                (gh.GhEnv(installed=False), "gh_unavailable"),
+                # The probe itself timing out says nothing about auth.
+                (gh.GhEnv(installed=True, error="timed out"),
+                 "gh_upstream_error")):
             G.CACHE.clear()
             with self._stubs(env=env) as run:
                 status, body = self._post(

@@ -841,6 +841,14 @@ process.stdout.write(JSON.stringify({
         self.assertTrue(out["old"].startswith("No machine can start a session. Update swe on the hub"))
         self.assertTrue(out["none"].startswith("No machine can start a session. Update swe on the hub"))
 
+    def test_no_harness_note_names_the_settings_section(self):
+        """The web Settings section is "Providers"; "Provider visibility"
+        is only a row inside it on the Mac."""
+        for page in ("tasks.js", "repositories.js"):
+            text = (PAGES / page).read_text(encoding="utf-8")
+            self.assertNotIn("Settings › Provider visibility", text, page)
+            self.assertIn("turn it on in Settings › Providers.", text, page)
+
     def test_menu_rules(self):
         out = self.run_node(STUB + MENU_JS.read_text(encoding="utf-8") + "\n" + MENU_UNIT)
         self.assertEqual(out["untouched"], ["recent", "a"])

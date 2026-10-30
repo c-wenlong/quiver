@@ -55,13 +55,16 @@ extension MarkdownStyleSpans {
     /// One full pass over the storage: reset to body attributes, then lay
     /// the spans on in the order they were found, so structural looks
     /// land first and muted marks land last. Only attributes change, so
-    /// this never marks the text edited.
+    /// this never marks the text edited. Ligatures stay off: Geist draws
+    /// `->` and `-->` as one arrow glyph, so a comment's closing marker
+    /// read as an arrow, and an editor should show the characters typed.
     public static func apply(to storage: NSTextStorage, palette: MarkdownStylePalette) {
         let full = NSRange(location: 0, length: storage.length)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = palette.lineSpacing
         storage.beginEditing()
         storage.setAttributes([
+            .ligature: 0,
             .font: palette.bodyFont,
             .foregroundColor: palette.textPrimary,
             .paragraphStyle: paragraph,

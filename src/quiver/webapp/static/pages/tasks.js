@@ -497,7 +497,7 @@
     if (x.harnesses === null) {
       picker = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading what the hub can start…</div>`;
     } else if (!x.harnesses.length) {
-      picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Provider visibility.</div>`;
+      picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Providers.</div>`;
     } else {
       picker = `<select class="field" id="tk-harness" aria-label="Harness"${busy || x.started ? " disabled" : ""}>${
         x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;
