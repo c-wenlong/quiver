@@ -100,9 +100,12 @@ enum AttachmentRules {
         var names: [String] = []
         var rest = Substring(text)
         while rest.hasPrefix("@") {
-            guard let space = rest.firstIndex(of: " ") else { break }
+            // The home folder may hold spaces; the staged part after the
+            // inbox folder never does (`_safe_name`), so the path ends at
+            // the first space after it.
+            guard let inbox = rest.range(of: "/remote/inbox/"),
+                  let space = rest[inbox.upperBound...].firstIndex(of: " ") else { break }
             let path = rest[rest.index(after: rest.startIndex)..<space]
-            guard path.contains("/remote/inbox/") else { break }
             let base = (String(path) as NSString).lastPathComponent
             let name = displayName(ref: base)
             guard name != base else { break }
@@ -285,17 +288,7 @@ final class ComposerAttachments {
         items.append(PendingAttachment(id: id, name: name, size: 0, isImage: isImage, state: .preparing))
         let convert = self.convert
         let task = Task { [weak self] in
-            // Images load and convert one at a time: ten 200 MB TIFFs read
-            // side by side would run the phone out of memory.
-            if converts { await self?.prepTurn() }
-            defer { if converts { self?.prepDone() } }
-            guard !Task.isCancelled else { return }
-            var loaded = await load()
-            if converts, case .data(let raw) = loaded {
-                guard !Task.isCancelled else { return }
-                let jpeg = await Task.detached { convert(raw) }.value
-                loaded = jpeg.map(Picked.data) ?? .refused("\(name) couldn't be read as an image.")
-            }
+            guard let loaded = await self?.prepare(name: name, converts: converts, load: load) else { return }
             guard let self, !Task.isCancelled, self.items.contains(where: { $0.id == id }) else { return }
             switch loaded {
             case .refused(let why):
@@ -308,6 +301,22 @@ final class ComposerAttachments {
         }
         tasks[id] = task
         return task
+    }
+
+    /// Loads a pick and converts it if needed; nil when cancelled.
+    /// Images load and convert one at a time (ten 200 MB TIFFs read side
+    /// by side would run the phone out of memory); the turn ends here,
+    /// before the upload, so uploads still run side by side.
+    private func prepare(name: String, converts: Bool, load: @Sendable () async -> Picked) async -> Picked? {
+        if converts { await prepTurn() }
+        defer { if converts { prepDone() } }
+        guard !Task.isCancelled else { return nil }
+        let loaded = await load()
+        guard converts, case .data(let raw) = loaded else { return loaded }
+        guard !Task.isCancelled else { return nil }
+        let convert = self.convert
+        let jpeg = await Task.detached { convert(raw) }.value
+        return jpeg.map(Picked.data) ?? .refused("\(name) couldn't be read as an image.")
     }
 
     @ObservationIgnored private var prepBusy = false

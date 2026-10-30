@@ -57,13 +57,13 @@ struct AttachmentChips: View {
                     .padding(.horizontal, 4)
             }
             if !attachments.items.isEmpty {
-                FlowRows(spacing: 6) {
-                    ForEach(attachments.items) { item in
-                        AttachmentChip(item: item,
-                                       onRemove: { attachments.remove(item.id) },
-                                       onRetry: { attachments.retry(item.id) })
-                    }
+                // Past two rows the chips scroll, so a big pick never pushes
+                // the prompt box or a failed chip's controls off the screen.
+                ViewThatFits(in: .vertical) {
+                    chips
+                    ScrollView(.vertical) { chips }.frame(height: Self.maxHeight)
                 }
+                .frame(maxHeight: Self.maxHeight)
                 if needsText {
                     Text(AttachmentRules.needsText).font(Theme.caption).foregroundStyle(Theme.textMuted)
                         .padding(.horizontal, 4)
@@ -71,6 +71,20 @@ struct AttachmentChips: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Two rows of 44 pt chips and the gap between them.
+    static let maxHeight: CGFloat = 94
+
+    private var chips: some View {
+        FlowRows(spacing: 6) {
+            ForEach(attachments.items) { item in
+                AttachmentChip(item: item,
+                               onRemove: { attachments.remove(item.id) },
+                               onRetry: { attachments.retry(item.id) })
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

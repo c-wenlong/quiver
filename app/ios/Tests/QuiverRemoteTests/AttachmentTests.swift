@@ -44,6 +44,10 @@ final class AttachmentRulesTests: XCTestCase {
         XCTAssertEqual(AttachmentRules.splitEcho("@src/main.swift fix this").names, [])
         XCTAssertEqual(AttachmentRules.splitEcho("@src/main.swift fix this").text, "@src/main.swift fix this")
         XCTAssertEqual(AttachmentRules.splitEcho("plain").text, "plain")
+        // A home folder with a space in it.
+        let spaced = AttachmentRules.splitEcho("@/Volumes/Work Drive/k/.quiver/data/remote/inbox/abc/1730000000-a1b2c3-a.png what")
+        XCTAssertEqual(spaced.names, ["a.png"])
+        XCTAssertEqual(spaced.text, "what")
     }
 
     func testAStagedAnswerDecodes() throws {
@@ -333,6 +337,20 @@ final class ComposerAttachmentsTests: XCTestCase {
         await second?.value
         XCTAssertEqual(loads, 1)
         XCTAssertEqual(files.refs, ["1730000000-a1b2c3-photo-1.jpg"])
+    }
+
+    func testAnUploadDoesNotHoldTheNextImagesTurn() async {
+        let gate = Gate()
+        let files = model(gate: gate)
+        let first = files.addPhoto { Data("a".utf8) }
+        let second = files.addPhoto { Data("b".utf8) }
+        // Both reach their upload while the first upload is still held.
+        while files.items.contains(where: { $0.state == .preparing }) { await Task.yield() }
+        XCTAssertEqual(uploads.map(\.0), ["photo-1.jpg", "photo-2.jpg"])
+        gate.open()
+        await first?.value
+        await second?.value
+        XCTAssertEqual(files.refs.count, 2)
     }
 
     func testClearEmptiesTheComposer() {
