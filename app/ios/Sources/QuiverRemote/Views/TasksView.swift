@@ -28,22 +28,19 @@ struct TasksView: View {
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
             if let error = model.error, !(model.tasks.isEmpty && model.failedRepos.isEmpty) {
-                Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .lineLimit(2)
             }
             if !model.loaded {
                 LoadingRow(text: "Loading tasks")
             } else if let error = model.error, model.tasks.isEmpty, model.failedRepos.isEmpty {
-                StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") { Task { await model.load(client: app.client, refresh: true) } }
+                StateCard.unreachable(error) { Task { await model.load(client: app.client, refresh: true) } }
             } else {
                 // A blocked source leaves its stored rows on last-known
                 // state: the banner says why, each of its rows is marked.
-                if let blocked = model.envBlocked {
-                    blockedBanner(source: "GitHub", message: blocked)
-                } else if let failed = model.githubFailed {
-                    blockedBanner(source: "GitHub", message: failed)
+                if let reason = model.githubBanner {
+                    blockedBanner(source: "GitHub", message: reason)
                 }
                 if let blocked = model.linearBlocked {
                     blockedBanner(source: "Linear", message: blocked)
@@ -138,7 +135,7 @@ struct TasksView: View {
                     .font(.system(size: 14)).foregroundStyle(Theme.warningText)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Can't reach \(source)").font(Theme.control).foregroundStyle(Theme.warningText)
-                    Text("On \(model.machine ?? app.hubName): \(message)")
+                    Text(inlineCode: "On \(model.machine ?? app.hubName): \(message)")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     // `fetched_at` is the earliest reply across sources,

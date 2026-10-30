@@ -51,11 +51,14 @@ public struct CursorAppActivity: ActivityProviding {
     /// One IndexedSession per composer id. Keys without a second ':' and
     /// `task-` composers (subagent tasks) are skipped; `createdAt` may be
     /// an ISO string or epoch milliseconds. The database is opened
-    /// strictly read-only and queried once, retrying a single BUSY.
+    /// strictly read-only and queried once, retrying a single BUSY; the
+    /// retry starts the sessions over, so rows stepped before the BUSY
+    /// never count twice.
     static func parse(database path: String) throws -> [ActivityFileIndex.IndexedSession] {
         var sessions: [String: [Double]] = [:]
         var lastError: Error?
         for attempt in 0..<2 {
+            sessions = [:]
             do {
                 let db = try SQLiteDatabase(readOnlyURI:
                     "file:\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)?mode=ro")

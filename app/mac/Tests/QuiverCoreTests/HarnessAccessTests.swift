@@ -38,13 +38,17 @@ import Testing
 
 @MainActor
 @Suite struct HarnessLaunchTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     let launcher = FakeLauncher()
     /// Empty: a real scan would find the user's actual apps running and
     /// these tests must never activate them.
     let running = FakeRunningInstances()
 
     func model() throws -> AccountsModel {
-        let root = FileManager.default.temporaryDirectory.appending(path: "access-\(UUID().uuidString)")
+        let root = scratch.url.appending(path: "access-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         // Real stub CLIs on the injected PATH: signIn refuses a missing one.
         let bin = root.appending(path: "bin")
@@ -89,8 +93,12 @@ import Testing
 }
 
 @Suite struct CLIPathTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     @Test func aCommandIsOnPathOnlyAsAnExecutableFile() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "path-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "path-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let tool = dir.appending(path: "claude")
         try Data("#!/bin/sh\n".utf8).write(to: tool)
@@ -107,8 +115,12 @@ import Testing
 
 @MainActor
 @Suite struct AccountCLICheckTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     @Test func loadingChecksEachVendorsCLIDirectly() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "cli-\(UUID().uuidString)")
+        let root = scratch.url.appending(path: "cli-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         let bin = root.appending(path: "bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
@@ -159,11 +171,15 @@ import Testing
 
 @MainActor
 @Suite struct SignInInstallGuardTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     let launcher = FakeLauncher()
     let running = FakeRunningInstances()
 
     private func model(path: String = "") throws -> AccountsModel {
-        let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)")
+        let root = scratch.url.appending(path: "guard-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         return AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
                              terminal: { .terminal }, loginPath: { path }, running: running)
@@ -178,7 +194,7 @@ import Testing
 
     @Test func aMissingVendorCLIThrowsWithoutLaunching() async throws {
         let m = try model()
-        let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)")
+        let root = scratch.url.appending(path: "guard-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         let work = try store.add(vendor: .codex, name: "Work")
         let m2 = AccountsModel(store: store, usage: FakeUsage(), launcher: launcher,
@@ -190,7 +206,7 @@ import Testing
     }
 
     @Test func appSignInAccountsNeedNoCLI() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)")
+        let root = scratch.url.appending(path: "guard-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         let cursor = try store.add(vendor: .cursor, name: "Cursor 2")
         let codex = try store.add(vendor: .codex, name: "Codex 2")

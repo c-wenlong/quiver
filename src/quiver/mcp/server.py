@@ -9,6 +9,7 @@ from pathlib import Path
 
 from quiver.sessions import search_index
 from quiver.sessions.aggregator import get_all_sessions
+from quiver.sessions.commands import relative_time
 from quiver.sessions.query import SessionQuery
 
 try:
@@ -22,17 +23,6 @@ except ImportError:
     sys.exit(1)
 
 mcp = FastMCP("SWE Agent History")
-
-
-def _age(now: float, timestamp_ms: float) -> str:
-    diff = now - (timestamp_ms / 1000)
-    if diff < 60:
-        return "Just now"
-    if diff < 3600:
-        return f"{int(diff/60)}m ago"
-    if diff < 86400:
-        return f"{int(diff/3600)}h ago"
-    return f"{int(diff/86400)}d ago"
 
 
 @mcp.tool()
@@ -109,7 +99,7 @@ def get_recent_sessions(limit: int = 10, agent: str = None, directory_path: str 
 
     for s in sessions:
         title = s.title if s.title else "-"
-        result.append(f"{_age(now, s.timestamp)} | {s.agent} | {s.path} | {title}")
+        result.append(f"{relative_time(now - (s.timestamp / 1000))} | {s.agent} | {s.path} | {title}")
         snippet = snippets.get(s.session_id)
         if snippet:
             result.append(f"    match: {' '.join(snippet.split())}")

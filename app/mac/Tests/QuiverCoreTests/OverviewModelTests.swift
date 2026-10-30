@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -23,6 +24,9 @@ actor FakeLedger: LedgerQuerying {
     private var scanGate: CheckedContinuation<Void, Never>?
     private var holdScans = false
     private(set) var scanWaiting = false
+    /// Bumped once a held scan is parked, so a test waits for that instead
+    /// of spinning on `scanWaiting`.
+    let scanParks = CountGate()
 
     func holdNextScan() { holdScans = true }
     func releaseScan() {
@@ -40,7 +44,8 @@ actor FakeLedger: LedgerQuerying {
     /// while load's own earlier calls still go through.
     private var holdHarnessFrom: Int?
     private var harnessGates: [CheckedContinuation<Void, Never>] = []
-    private(set) var harnessWaiting = false
+    /// Bumped once per byHarness call that parks.
+    let harnessParks = CountGate()
 
     func holdHarnessQueries(fromCall index: Int) { holdHarnessFrom = index }
     func releaseHarnessQueries() {
@@ -71,7 +76,13 @@ actor FakeLedger: LedgerQuerying {
         if holdScans {
             holdScans = false
             scanWaiting = true
-            await withCheckedContinuation { scanGate = $0 }
+            let parks = scanParks
+            await withCheckedContinuation {
+                scanGate = $0
+                // Counted once the continuation is stored, so a release
+                // that follows the wait always finds it.
+                Task { await parks.bump() }
+            }
             scanWaiting = false
         }
         if let scanError { throw scanError }
@@ -81,9 +92,11 @@ actor FakeLedger: LedgerQuerying {
     func byHarness(in range: DateInterval) async -> [String: UsageTotals] {
         ranges.append(range)
         if let from = holdHarnessFrom, ranges.count >= from {
-            harnessWaiting = true
-            await withCheckedContinuation { harnessGates.append($0) }
-            harnessWaiting = false
+            let parks = harnessParks
+            await withCheckedContinuation {
+                harnessGates.append($0)
+                Task { await parks.bump() }
+            }
         }
         return harnesses
     }
@@ -333,7 +346,7 @@ struct ScanFailed: Error, LocalizedError {
         await ledger.holdNextScan()
         let model = model(ledger)
         let scan = Task { await model.load(scan: true) }
-        while !(await ledger.scanWaiting) { await Task.yield() }
+        try #require(await ledger.scanParks.reach(1))
         model.period = .today
         await model.reloadPeriod()
         await ledger.releaseScan()
@@ -395,12 +408,6 @@ final class OverviewClock {
     func model(_ ledger: FakeLedger) -> OverviewModel {
         OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
                       now: { [clock] in clock.now }, calendar: calendar)
-    }
-
-    /// Waits for the fake to report a parked query, with a bound so a broken
-    /// wait fails instead of spinning forever.
-    func untilParked(_ ledger: FakeLedger) async {
-        for _ in 0..<4_000 where !(await ledger.harnessWaiting) { await Task.yield() }
     }
 
     @Test func warmingFillsEveryPeriodAndSwitchesThenCostNothing() async throws {
@@ -474,8 +481,7 @@ final class OverviewClock {
         await ledger.holdHarnessQueries(fromCall: 1)
         model.period = .week
         let reload = Task { await model.reloadPeriod() }
-        await untilParked(ledger)
-        #expect(await ledger.harnessWaiting)
+        try #require(await ledger.harnessParks.reach(1))
         // The cached figure is already up while the recompute is parked.
         #expect(model.summary?.totals.totalTokens == 1)
         await ledger.releaseHarnessQueries()
@@ -491,8 +497,7 @@ final class OverviewClock {
         // is the warming pass, which parks inside its first period.
         await ledger.holdHarnessQueries(fromCall: 5)
         await model.load(scan: false)
-        await untilParked(ledger)
-        #expect(await ledger.harnessWaiting)
+        try #require(await ledger.harnessParks.reach(1))
         let second = Task { await model.load(scan: false) }
         await ledger.releaseHarnessQueries()
         await second.value
@@ -502,12 +507,6 @@ final class OverviewClock {
         // was a fresh cache hit) + 6 (warm 2): the cancelled pass stored
         // nothing, so its period is computed again.
         #expect(await ledger.ranges.count == 14)
-    }
-
-    /// Waits until the fake has recorded `count` byHarness calls, parked or
-    /// answered, with the same bound as `untilParked`.
-    func untilRanges(_ ledger: FakeLedger, _ count: Int) async {
-        for _ in 0..<4_000 where await ledger.ranges.count < count { await Task.yield() }
     }
 
     @Test func aFailedScanInvalidatesEveryEntry() async throws {
@@ -557,21 +556,26 @@ final class OverviewClock {
         #expect(model.summary?.totals.totalTokens == 999)
     }
 
-    @Test func aRevalidationSupersededByAnotherReloadStoresNothing() async throws {
+    // A warming pass left parked would hang the wait on it; fail instead.
+    @Test(.timeLimit(.minutes(1)))
+    func aRevalidationSupersededByAnotherReloadStoresNothing() async throws {
         let ledger = FakeLedger()
         await ledger.set(harnesses: ["claude": totals(tokens: 1, cost: 1)])
-        // Calls 1-4 are load's own; call 5 on parks, so warming stops with
-        // only the selected period cached and stays parked for the test.
+        // Calls 1-4 are load's own; every later one parks.
         await ledger.holdHarnessQueries(fromCall: 5)
         let model = model(ledger)
         await model.load(scan: false)
+        // The warming pass runs on the main actor, so it has not started
+        // yet: cancelled now, it ends before asking anything, leaving only
+        // the selected period cached.
         model.warming?.cancel()
+        await model.warming?.value
         model.period = .allTime
         let first = Task { await model.reloadPeriod() }
-        await untilRanges(ledger, 6)
+        try #require(await ledger.harnessParks.reach(1))
         model.period = .today
         let second = Task { await model.reloadPeriod() }
-        await untilRanges(ledger, 7)
+        try #require(await ledger.harnessParks.reach(2))
         await ledger.releaseHarnessQueries()
         await first.value
         await second.value
@@ -579,6 +583,55 @@ final class OverviewClock {
         // its figures were neither published nor cached.
         #expect(model.summary?.period == .today)
         #expect(model.cachedPeriods == [.month, .today])
+    }
+}
+
+/// Stands in for the scan watcher's sleep between progress reads. Sleep
+/// `n` parks on its own gate until the test ends it, so the test decides
+/// when each read happens instead of racing a wall-clock interval. A
+/// parked sleep throws when the watcher is cancelled, as `Task.sleep` does.
+final class WatchTicks: Sendable {
+    private struct State {
+        var gates: [HoldGate] = []
+        var calls = 0
+        /// Sleeps the test has ended so far.
+        var ended = 0
+    }
+
+    private let state = Mutex(State())
+
+    private func gate(_ n: Int) -> HoldGate {
+        state.withLock { s in
+            while s.gates.count < n { s.gates.append(HoldGate()) }
+            return s.gates[n - 1]
+        }
+    }
+
+    /// The sleep to hand the model.
+    var sleep: @Sendable (Duration) async throws -> Void {
+        { [self] _ in
+            let n = state.withLock { s -> Int in
+                s.calls += 1
+                return s.calls
+            }
+            try await gate(n).pass()
+        }
+    }
+
+    /// Ends the next `reads` sleeps in turn, each once the watcher reaches
+    /// it, and returns once the watcher is parked in the one after: by
+    /// then every read after those sleeps, and any rebuild it started, has
+    /// finished. False after `gateTimeout`.
+    func run(_ reads: Int) async -> Bool {
+        let first = state.withLock { s -> Int in
+            defer { s.ended += reads }
+            return s.ended + 1
+        }
+        for n in first ..< first + reads {
+            guard await gate(n).arrived() else { return false }
+            gate(n).open()
+        }
+        return await gate(first + reads).arrived()
     }
 }
 
@@ -593,25 +646,26 @@ final class OverviewClock {
     }
     let now = Date(timeIntervalSince1970: 1_791_703_800)
 
-    func model(_ ledger: FakeLedger) -> OverviewModel {
-        OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
-                      scanWatchInterval: .milliseconds(10),
-                      now: { [now] in now }, calendar: calendar)
+    /// A model whose progress reads happen when `ticks` lets them.
+    func model(_ ledger: FakeLedger, ticks: WatchTicks = WatchTicks()) -> OverviewModel {
+        let model = OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
+                                  scanWatchInterval: .seconds(1),
+                                  now: { [now] in now }, calendar: calendar)
+        model.scanWatchSleep = ticks.sleep
+        return model
     }
 
-    /// Yields until `done` holds, bounded so a broken wait fails instead of hanging.
-    func until(_ done: () async -> Bool) async {
-        for _ in 0..<500 where !(await done()) { try? await Task.sleep(for: .milliseconds(10)) }
-    }
-
-    @Test func theFirstScanShowsProgressAndPartialFigures() async {
+    @Test func theFirstScanShowsProgressAndPartialFigures() async throws {
         let ledger = FakeLedger()
         await ledger.set(harnesses: ["claude": totals(tokens: 100, cost: 1)])
         await ledger.set(progress: ScanProgress(filesDone: 12, filesTotal: 40))
         await ledger.holdNextScan()
-        let model = model(ledger)
+        let ticks = WatchTicks()
+        let model = model(ledger, ticks: ticks)
         let scan = Task { await model.load(scan: true) }
-        await until { model.scanProgress != nil && model.summary != nil }
+        try #require(await ledger.scanParks.reach(1))
+        // The third read rebuilds the figures.
+        try #require(await ticks.run(3))
         #expect(model.scanProgress == ScanProgress(filesDone: 12, filesTotal: 40))
         // Figures from what had committed, before the scan finished.
         #expect(model.summary?.totals.totalTokens == 100)
@@ -625,14 +679,15 @@ final class OverviewClock {
         #expect(model.completedScans == 1)
     }
 
-    @Test func aCappedScanFinishingMidwayKeepsThePartialFiguresComing() async {
+    @Test func aCappedScanFinishingMidwayKeepsThePartialFiguresComing() async throws {
         let ledger = FakeLedger()
         await ledger.set(harnesses: ["claude": totals(tokens: 100, cost: 1)])
         await ledger.set(progress: ScanProgress(filesDone: 5, filesTotal: 40))
         await ledger.holdNextScan()
-        let model = model(ledger)
+        let ticks = WatchTicks()
+        let model = model(ledger, ticks: ticks)
         let full = Task { await model.load(scan: true) }
-        await until { await ledger.scanWaiting }
+        try #require(await ledger.scanParks.reach(1))
         // The search index's reconcile tick: a capped scan that finishes
         // while the full one is still held.
         await model.load(scan: true, recentLimit: 12)
@@ -640,7 +695,7 @@ final class OverviewClock {
         #expect(!model.fullScanFinished)
 
         await ledger.set(harnesses: ["claude": totals(tokens: 250, cost: 2)])
-        await until { model.summary?.totals.totalTokens == 250 }
+        try #require(await ticks.run(3))
         #expect(model.summary?.totals.totalTokens == 250)
         #expect(model.scanProgress != nil)
 
@@ -651,19 +706,23 @@ final class OverviewClock {
         #expect(model.scanProgress == nil)
     }
 
-    @Test func partialFiguresWaitForTheThirdRead() async {
+    @Test func partialFiguresWaitForTheThirdRead() async throws {
         let ledger = FakeLedger()
         await ledger.set(harnesses: ["claude": totals(tokens: 100, cost: 1)])
         await ledger.set(progress: ScanProgress(filesDone: 1, filesTotal: 40))
         await ledger.holdNextScan()
-        // Slow reads, so the check below lands well before the third.
-        let model = OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
-                                  scanWatchInterval: .milliseconds(500),
-                                  now: { [now] in now }, calendar: calendar)
+        let ticks = WatchTicks()
+        let model = model(ledger, ticks: ticks)
         let scan = Task { await model.load(scan: true) }
-        await until { model.scanProgress != nil }
+        try #require(await ledger.scanParks.reach(1))
+        // The first two reads show progress and nothing else.
+        try #require(await ticks.run(1))
+        #expect(model.scanProgress != nil)
         #expect(model.summary == nil)
-        await until { model.summary != nil }
+        try #require(await ticks.run(1))
+        #expect(model.summary == nil)
+        // The third rebuilds the figures from what has committed.
+        try #require(await ticks.run(1))
         #expect(model.summary?.totals.totalTokens == 100)
         #expect(model.completedScans == 0)
 
@@ -672,15 +731,16 @@ final class OverviewClock {
         await scan.value
     }
 
-    @Test func fullScansRunOneAtATime() async {
+    // A load left waiting hangs here; fail instead of stalling the run.
+    @Test(.timeLimit(.minutes(1))) func fullScansRunOneAtATime() async throws {
         let ledger = FakeLedger()
         await ledger.holdNextScan()
         let model = model(ledger)
         let first = Task { await model.load(scan: true) }
-        await until { await ledger.scanWaiting }
+        try #require(await ledger.scanParks.reach(1))
         let second = Task { await model.load(scan: true) }
-        try? await Task.sleep(for: .milliseconds(100))
         // The second waits instead of scanning beside the held first.
+        try #require(await observe { model.queuedFullScans == 1 })
         #expect(await ledger.scans == 1)
 
         await ledger.releaseScan()
@@ -691,19 +751,19 @@ final class OverviewClock {
     }
 
     // A load left waiting hangs here; fail instead of stalling the run.
-    @Test(.timeLimit(.minutes(1))) func aFullScanQueuedBehindAnotherIsCoveredByIt() async {
+    @Test(.timeLimit(.minutes(1))) func aFullScanQueuedBehindAnotherIsCoveredByIt() async throws {
         let ledger = FakeLedger()
         await ledger.holdNextScan()
         let model = model(ledger)
         let first = Task { await model.load(scan: true) }
-        await until { await ledger.scanWaiting }
+        try #require(await ledger.scanParks.reach(1))
         // All ask while the first runs: the second's scan starts after the
         // third and fourth asked, so they have nothing left to read.
         let second = Task { await model.load(scan: true) }
-        try? await Task.sleep(for: .milliseconds(50))
+        try #require(await observe { model.queuedFullScans == 1 })
         let third = Task { await model.load(scan: true) }
         let fourth = Task { await model.load(scan: true) }
-        try? await Task.sleep(for: .milliseconds(50))
+        try #require(await observe { model.queuedFullScans == 3 })
 
         await ledger.releaseScan()
         await first.value
@@ -714,31 +774,47 @@ final class OverviewClock {
         #expect(await ledger.scans == 2)
     }
 
-    @Test func aCappedScanShowsNoProgress() async {
+    @Test func aCappedScanShowsNoProgress() async throws {
         let ledger = FakeLedger()
         await ledger.set(progress: ScanProgress(filesDone: 1, filesTotal: 2))
         await ledger.holdNextScan()
         let model = model(ledger)
         let scan = Task { await model.load(scan: true, recentLimit: 12) }
-        await until { await ledger.scanWaiting }
-        try? await Task.sleep(for: .milliseconds(100))
+        try #require(await ledger.scanParks.reach(1))
+        // No watcher started, so nothing reads progress while it is held.
+        #expect(model.scanWatchers == 0)
         #expect(model.scanProgress == nil)
         #expect(model.summary == nil)
         await ledger.releaseScan()
         await scan.value
     }
 
-    @Test func noWatchIntervalLeavesProgressOff() async {
+    @Test func noWatchIntervalLeavesProgressOff() async throws {
         let ledger = FakeLedger()
         await ledger.set(progress: ScanProgress(filesDone: 1, filesTotal: 2))
         await ledger.holdNextScan()
         let model = OverviewModel(ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 },
                                   now: { [now] in now }, calendar: calendar)
         let scan = Task { await model.load(scan: true) }
-        await until { await ledger.scanWaiting }
-        try? await Task.sleep(for: .milliseconds(100))
+        try #require(await ledger.scanParks.reach(1))
+        // No watcher started, so nothing reads progress while it is held.
+        #expect(model.scanWatchers == 0)
         #expect(model.scanProgress == nil)
         await ledger.releaseScan()
         await scan.value
+    }
+
+    /// The positive control for the two checks above: a full scan with an
+    /// interval does start a watcher, counted before the scan is asked.
+    @Test func aFullScanWithAnIntervalStartsAWatcher() async throws {
+        let ledger = FakeLedger()
+        await ledger.holdNextScan()
+        let model = model(ledger)
+        let scan = Task { await model.load(scan: true) }
+        try #require(await ledger.scanParks.reach(1))
+        #expect(model.scanWatchers == 1)
+        await ledger.releaseScan()
+        await scan.value
+        #expect(model.scanWatchers == 0)
     }
 }

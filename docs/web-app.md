@@ -27,7 +27,7 @@ client sees it.
 
 The hub already runs on the always-on machine, binds 127.0.0.1 and is
 published by Tailscale Serve, so the web app needs no new port, process or
-service: it is at `https://<host>:<hub port>/app/`.
+service: it is at `https://<host>:<hub port>/`.
 
 ## Auth
 
@@ -38,14 +38,16 @@ whose login is the hub owner's, as long as the request carries
 `X-Quiver-Pair: 1`, names a Host the hub answers to, and has no foreign
 `Origin`. That is the gate the app's tailnet-identity calls use: a page
 on another site can't send the header, so it can't borrow the owner's
-network identity. Tagged nodes and other people's logins still pair
+network identity. The hub machine's own node doesn't count (any local
+process reaches the hub as that node), so a browser on the hub machine
+pairs like anyone else. Tagged nodes and other people's logins still pair
 from the gate itself: "Pair with Tailscale" posts
 `POST /v1/pair/request` and polls for the owner's yes, the token field
 below trades a pair token through the app's own `#pair=` fragment, and
 either mints a device credential (`Authorization: Bearer`, kept in
-`localStorage` under the hub's origin); `/` redirects to `/app/` with
-the fragment intact, so an old `/#pair=` or `/#approve` link still
-lands. Satellite routes (`/v1/agent/*`) always want a bearer.
+`localStorage` under the hub's origin). The app lived under `/app/`
+until #944: that path now redirects to the same name at `/`, fragment
+intact, so a `/app/#pair=` link minted then still lands. Satellite routes (`/v1/agent/*`) always want a bearer.
 Behind `tailscale serve`, run the hub with `--public-url=https://…` so it
 reads the tailnet client from Serve's headers: "Pair with Tailscale" then
 works, and the Origin check accepts the `https://` origin Serve presents.
@@ -125,7 +127,7 @@ parallel without touching a shared file. A page with the sidebar id
 
 The hub dispatches `/v1/app/<page>` to the module (device bearer as for
 every `/v1` route; POSTs also pass the Origin check) and serves every
-page script as one `/app/pages.js`, every stylesheet as `/app/pages.css`.
+page script as one `/pages.js`, every stylesheet as `/pages.css`.
 The page goes live in the sidebar as soon as its script registers. The
 sidebar's order and icons are fixed in `app.js` and already list every
 Mac app page; Menu bar and Widgets wear Settings' "Mac app only" pill and

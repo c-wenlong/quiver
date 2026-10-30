@@ -154,7 +154,7 @@ private func openGeminiIncident() throws -> Data {
             #expect(service.feedURL.scheme == "https")
             #expect(service.pageURL.scheme == "https")
         }
-        #expect(StatusService.all.filter { $0.group == .providers }.map(\.name)
+        #expect(StatusService.all.filter { $0.group.isProvider }.map(\.name)
             == ["Claude", "OpenAI / Codex", "GitHub / Copilot", "Cursor", "Gemini", "Devin"])
     }
 
@@ -187,9 +187,10 @@ private func openGeminiIncident() throws -> Data {
                 #expect(entry.feedURL.path.hasSuffix("summary.json"))
             }
         }
-        // Both group chips must have rows to offer.
-        #expect(StatusCatalogue.all.contains { $0.group == .providers })
-        #expect(StatusCatalogue.all.contains { $0.group == .infrastructure })
+        // Every group chip must have rows to offer.
+        for group in StatusService.Group.allCases {
+            #expect(StatusCatalogue.all.contains { $0.group == group }, "no catalogue rows for \(group)")
+        }
     }
 
     /// The sheet's mark column: every catalogue row and every built-in
@@ -208,22 +209,26 @@ private func openGeminiIncident() throws -> Data {
     /// chips split on the group.
     @Test func filterMatchesGroupNameAndHost() {
         #expect(StatusCatalogue.filter(group: nil, query: "").count == StatusCatalogue.all.count)
-        #expect(StatusCatalogue.filter(group: .providers, query: "")
-            .allSatisfy { $0.group == .providers })
-        #expect(StatusCatalogue.filter(group: .infrastructure, query: "")
-            .allSatisfy { $0.group == .infrastructure })
+        #expect(StatusCatalogue.filter(group: .modelProviders, query: "")
+            .allSatisfy { $0.group == .modelProviders })
+        #expect(StatusCatalogue.filter(group: .services, query: "")
+            .allSatisfy { $0.group == .services })
         #expect(StatusCatalogue.filter(group: nil, query: " docker ")
             .map(\.id) == ["docker"])
         #expect(StatusCatalogue.filter(group: nil, query: "notion-status")
             .map(\.id) == ["notion"])
-        #expect(StatusCatalogue.filter(group: .providers, query: "docker").isEmpty)
+        #expect(StatusCatalogue.filter(group: .modelProviders, query: "docker").isEmpty)
         #expect(StatusCatalogue.filter(group: nil, query: "no such page").isEmpty)
     }
 }
 
 @Suite struct ServiceStatusServiceTests {
+    /// Every cache folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func makeService(_ transport: FakeTransport, clock: TestClock, directory: URL? = nil) -> ServiceStatusService {
-        let dir = directory ?? FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = directory ?? scratch.url.appending(path: UUID().uuidString)
         return ServiceStatusService(transport: transport, cacheURL: dir.appending(path: "service-status.json"),
                                     now: { clock.now })
     }
@@ -339,7 +344,7 @@ private func openGeminiIncident() throws -> Data {
         let clock = TestClock()
         let transport = ClockAdvancingTransport(clock: clock, seconds: 20)
         transport.inner.reply(429, headers: ["Retry-After": "120"])
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let status = ServiceStatusService(transport: transport, cacheURL: dir.appending(path: "service-status.json"),
                                           now: { clock.now })
         let cursor = [try service("cursor")]
@@ -360,7 +365,7 @@ private func openGeminiIncident() throws -> Data {
 
     /// The cache file carries readings across launches without a new request.
     @Test func cacheSurvivesARestart() async throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let directory = scratch.url.appending(path: UUID().uuidString)
         let transport = FakeTransport()
         transport.reply(200, body: try statusFixture("statuspage-openai"))
         let clock = TestClock()
@@ -378,24 +383,39 @@ private func openGeminiIncident() throws -> Data {
     /// A second call while the first is waiting on the network joins its
     /// request instead of sending another.
     @Test func overlappingCallsShareOneRequest() async throws {
-        let transport = DelayedTransport()
+        let transport = HeldTransport()
         transport.inner.reply(200, body: try statusFixture("statuspage-github"))
         let clock = TestClock()
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        // Armed once the first request is parked, the clock opens the gate
+        // on its next read: the second call's start. The service reads the
+        // clock and checks for a request under way in one actor step, so
+        // by the time the first call can land the second has joined it.
+        let armed = Box(false)
+        let gate = transport.gate
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let status = ServiceStatusService(transport: transport, cacheURL: dir.appending(path: "service-status.json"),
-                                          now: { clock.now })
+                                          now: {
+                                              if armed.value {
+                                                  armed.value = false
+                                                  gate.open()
+                                              }
+                                              return clock.now
+                                          })
         let github = [try service("github")]
-        async let first = status.statuses(for: github, force: false)
-        async let second = status.statuses(for: github, force: true)
-        let (a, b) = await (first, second)
+        let first = Task { await status.statuses(for: github, force: false) }
+        #expect(await gate.arrived(1))
+        armed.value = true
+        let b = await status.statuses(for: github, force: true)
+        let a = await first.value
         #expect(transport.inner.requests.count == 1)
         #expect(a.first?.report?.health == .operational)
+        // Without the join the second call returns at once with no reading.
         #expect(b.first?.report?.health == .operational)
     }
 
     /// With a cache that cannot be written, the limits still hold in memory.
     @Test func unwritableCacheKeepsTheCooldown() async throws {
-        let blocker = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let blocker = scratch.url.appending(path: UUID().uuidString)
         try Data().write(to: blocker)
         let transport = FakeTransport()
         transport.reply(429, headers: ["Retry-After": "1200"])
@@ -495,20 +515,40 @@ private func openGeminiIncident() throws -> Data {
             id: "custom-openrouter", name: "OpenRouter",
             pageURL: URL(string: "https://status.openrouter.ai")!,
             feed: .statuspage(URL(string: "https://status.openrouter.ai/api/v2/summary.json")!),
-            group: .providers, isCustom: true)
+            group: .modelProviders, isCustom: true)
         #expect(openRouter.logoID == "openrouter")
         let acme = StatusService(
             id: "custom-acme", name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
             feed: .statuspage(URL(string: "https://status.acme.test/api/v2/summary.json")!),
-            group: .infrastructure, isCustom: true)
+            group: .services, isCustom: true)
         #expect(acme.logoID == nil)
+    }
+
+    /// A catalogue row's one-click add lands under a fresh custom id;
+    /// the card still draws the catalogue's mark through the feed's host.
+    @Test func catalogueAddsKeepTheirMarkThroughTheHost() {
+        func added(_ name: String, _ host: String, _ group: StatusService.Group) -> StatusService {
+            StatusService(
+                id: StatusService.customID(for: name, taken: []), name: name,
+                pageURL: URL(string: "https://\(host)")!,
+                feed: .statuspage(URL(string: "https://\(host)/api/v2/summary.json")!),
+                group: group, isCustom: true)
+        }
+        #expect(added("PyPI", "status.python.org", .services).logoID == "pypi")
+        #expect(added("Sourcegraph", "sourcegraphstatus.com", .modelProviders).logoID == "sourcegraph")
+        // The name match still wins where a brand covers it.
+        #expect(added("Moonshot AI", "status.moonshot.cn", .modelProviders).logoID == "kimi")
     }
 }
 
 /// The status pages the user adds: slugs, storage, the model's add/remove
 /// and the sheet's Check button.
 @Suite struct CustomStatusTests {
-    private func customService(_ id: String, _ name: String, _ group: StatusService.Group = .providers)
+    /// Every cache folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
+    private func customService(_ id: String, _ name: String, _ group: StatusService.Group = .modelProviders)
         -> StatusService {
         let page = URL(string: "https://status.example.com")!
         return StatusService(id: id, name: name, pageURL: page,
@@ -519,7 +559,7 @@ private func openGeminiIncident() throws -> Data {
     private func probeService(_ transport: FakeTransport,
                               resolve: @escaping @Sendable (URL) async -> URL? = { $0 })
         -> ServiceStatusService {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         return ServiceStatusService(transport: transport,
                                     cacheURL: dir.appending(path: "service-status.json"),
                                     redirectResolver: resolve)
@@ -548,13 +588,11 @@ private func openGeminiIncident() throws -> Data {
     }
 
     @Test func storeRoundTripsThroughUserDefaults() throws {
-        let suite = "quiver-test-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("quiver-test")
         let store = CustomStatusServices(defaults: defaults)
         #expect(store.load() == StatusServicePrefs())
         var prefs = StatusServicePrefs()
-        let acme = customService("custom-acme", "Acme", .infrastructure)
+        let acme = customService("custom-acme", "Acme", .services)
         prefs.custom = [acme]
         prefs.hidden = ["vercel"]
         prefs.overrides = ["cursor": .init(pageURL: URL(string: "https://status.x.ai")!,
@@ -569,9 +607,7 @@ private func openGeminiIncident() throws -> Data {
 
     /// Records written before feeds could sit off /api/v2 still load.
     @Test func aLegacyStoreFileStillReads() throws {
-        let suite = "quiver-test-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("quiver-test")
         let store = CustomStatusServices(defaults: defaults)
         defaults.set(Data(#"[{"id":"custom-x","name":"X","pageURL":"https://x.test","group":"providers"}]"#.utf8),
                      forKey: CustomStatusServices.defaultsKey)
@@ -582,22 +618,48 @@ private func openGeminiIncident() throws -> Data {
     }
 
     @Test func badStoreDataReadsAsEmpty() throws {
-        let suite = "quiver-test-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("quiver-test")
         let store = CustomStatusServices(defaults: defaults)
         defaults.set(Data("<not json".utf8), forKey: CustomStatusServices.defaultsKey)
         #expect(store.load() == StatusServicePrefs())
-        defaults.set(Data(#"[{"id":"custom-x","name":"X","pageURL":"https://x.test","group":"bogus"}]"#.utf8),
+        defaults.set(Data(#"[{"id":"custom-x","name":"X","pageURL":123,"group":"bogus"}]"#.utf8),
                      forKey: CustomStatusServices.defaultsKey)
         #expect(store.load() == StatusServicePrefs())
+    }
+
+    /// Records written before the group split keep their page: a group
+    /// the enum no longer knows maps to the catch-all rather than
+    /// failing the store's decode.
+    @Test func oldAndUnknownGroupsLoadForward() throws {
+        let defaults = TestDefaults("quiver-test")
+        let store = CustomStatusServices(defaults: defaults)
+        defaults.set(Data(#"[{"id":"custom-a","name":"A","pageURL":"https://a.test","group":"providers"},{"id":"custom-b","name":"B","pageURL":"https://b.test","group":"infrastructure"},{"id":"custom-c","name":"C","pageURL":"https://c.test","group":"bogus"},{"id":"custom-d","name":"D","pageURL":"https://status.python.org","group":"providers"}]"#.utf8),
+                     forKey: CustomStatusServices.defaultsKey)
+        let loaded = store.load().custom
+        #expect(loaded.map(\.id) == ["custom-a", "custom-b", "custom-c", "custom-d"])
+        // A catalogue page's group follows the catalogue, not the record.
+        #expect(loaded.map(\.group) == [.modelProviders, .services, .services, .registries])
+    }
+
+    /// Only a pre-split group migrates: one the user picked under the
+    /// new layout survives a restart even when the page is a catalogue
+    /// host the catalogue groups elsewhere.
+    @Test func aChosenGroupSurvivesAReload() throws {
+        let defaults = TestDefaults("quiver-test")
+        let store = CustomStatusServices(defaults: defaults)
+        let groq = StatusService(id: "custom-g", name: "Groq",
+                                 pageURL: URL(string: "https://groqstatus.com")!,
+                                 feed: .statuspage(URL(string: "https://groqstatus.com/api/v2/summary.json")!),
+                                 group: .services, isCustom: true)
+        store.save(StatusServicePrefs(custom: [groq]))
+        #expect(store.load().custom.first?.group == .services)
     }
 
     /// Adding puts the card in its group as unknown until the load fills
     /// it in, persists it, and lets the poll floors fetch it right away.
     @MainActor @Test func addStoresFetchesAndGroupsTheService() async throws {
         let clock = TestClock()
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -607,13 +669,13 @@ private func openGeminiIncident() throws -> Data {
         let added = await model.add(name: "OpenRouter",
                                     pageURL: URL(string: "https://status.openrouter.ai")!,
                                     feedURL: URL(string: "https://status.openrouter.ai/api/v2/summary.json")!,
-                                    group: .providers)
+                                    group: .modelProviders)
         #expect(added.id.hasPrefix("custom-openrouter-"))
         #expect(added.isCustom)
         #expect(added.feedURL.absoluteString == "https://status.openrouter.ai/api/v2/summary.json")
         #expect(model.services.last == added)
         #expect(memory.saved.custom.map(\.id) == [added.id])
-        #expect(model.groups.first { $0.group == .providers }?.statuses.last?.service == added)
+        #expect(model.groups.first { $0.group == .modelProviders }?.statuses.last?.service == added)
         // The fetch ran: the card is filled, not left unknown.
         #expect(model.statuses.last?.report?.health == .operational)
         #expect(model.statuses.last?.checkedAt == usageEpoch)
@@ -622,7 +684,7 @@ private func openGeminiIncident() throws -> Data {
     /// Customs are deleted; a built-in goes hidden, its id kept free for
     /// the catalogue's Add to bring back.
     @MainActor @Test func removeDeletesCustomsAndHidesBuiltIns() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -630,7 +692,7 @@ private func openGeminiIncident() throws -> Data {
             store: memory)
         let added = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
                                     feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
-                                    group: .infrastructure)
+                                    group: .services)
         await model.remove(id: "claude")
         #expect(!model.services.contains { $0.id == "claude" })
         #expect(memory.saved.hidden == ["claude"])
@@ -644,7 +706,7 @@ private func openGeminiIncident() throws -> Data {
     /// The catalogue's Add on a built-in row restores the catalog's
     /// entry: a removed card comes back, an edited one loses its override.
     @MainActor @Test func trackRestoresABuiltIn() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -667,7 +729,7 @@ private func openGeminiIncident() throws -> Data {
     /// The editor's Save on a built-in keeps the difference from the
     /// catalog as an override, and Reset puts the catalog's entry back.
     @MainActor @Test func updateOverridesAndResetRestoresABuiltIn() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -675,7 +737,7 @@ private func openGeminiIncident() throws -> Data {
             store: memory)
         await model.update(id: "cursor", name: "Cursor", pageURL: URL(string: "https://status.cursor.sh")!,
                            feedURL: URL(string: "https://status.cursor.sh/api/v2/summary.json")!,
-                           group: .providers)
+                           group: .modelProviders)
         let edited = try #require(model.services.first { $0.id == "cursor" })
         #expect(edited.pageURL == URL(string: "https://status.cursor.sh"))
         #expect(edited.feedURL == URL(string: "https://status.cursor.sh/api/v2/summary.json"))
@@ -689,7 +751,7 @@ private func openGeminiIncident() throws -> Data {
 
     /// An edit that returns a built-in to its default writes no override.
     @MainActor @Test func anEditBackToTheDefaultWritesNoOverride() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
                                         cacheURL: dir.appending(path: "service-status.json")),
@@ -705,7 +767,7 @@ private func openGeminiIncident() throws -> Data {
     /// it `applying` would derive /api/v2/summary.json, which is wrong for
     /// feeds filed elsewhere, like Cursor's /api/compat.
     @MainActor @Test func anEditKeepsTheCheckedFeed() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let make = {
             ServiceStatusModel(
@@ -719,7 +781,7 @@ private func openGeminiIncident() throws -> Data {
         await model.update(id: "cursor", name: "Cursor",
                            pageURL: URL(string: "https://status.x.ai/")!,
                            feedURL: URL(string: "https://status.x.ai/api/compat/summary.json")!,
-                           group: .providers)
+                           group: .modelProviders)
         #expect(memory.saved.overrides["cursor"]?.feedURL
             == URL(string: "https://status.x.ai/api/compat/summary.json"))
         // A reload through `applying` keeps the compat feed.
@@ -729,7 +791,7 @@ private func openGeminiIncident() throws -> Data {
 
     /// The editor's Save on a custom page rewrites its record.
     @MainActor @Test func updateRewritesACustomService() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -737,14 +799,14 @@ private func openGeminiIncident() throws -> Data {
             store: memory)
         let added = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
                                     feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
-                                    group: .providers)
+                                    group: .modelProviders)
         await model.update(id: added.id, name: "Acme Two",
                            pageURL: URL(string: "https://status.acme.example")!,
                            feedURL: URL(string: "https://status.acme.example/api/v2/summary.json")!,
-                           group: .infrastructure)
+                           group: .services)
         let edited = try #require(model.services.last)
         #expect(edited.name == "Acme Two")
-        #expect(edited.group == .infrastructure)
+        #expect(edited.group == .services)
         #expect(edited.feedURL.host() == "status.acme.example")
         #expect(memory.saved.custom == [edited])
     }
@@ -753,7 +815,7 @@ private func openGeminiIncident() throws -> Data {
     /// out back into the list or the menu bar.
     @MainActor @Test func aRemovedPageStaysRemovedWhenAParkedLoadLands() async throws {
         let transport = GatedTransport(body: try statusFixture("statuspage-claude"))
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         memory.saved.custom = [customService("custom-acme-aaaa0001", "Acme")]
         let model = ServiceStatusModel(
@@ -761,11 +823,9 @@ private func openGeminiIncident() throws -> Data {
                                         cacheURL: dir.appending(path: "service-status.json")),
             store: memory)
         let loading = Task { await model.load(force: true) }
-        while transport.inFlight < model.services.count {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        #expect(await transport.gate.arrived(model.services.count))
         await model.remove(id: "custom-acme-aaaa0001")
-        transport.release()
+        transport.gate.open()
         await loading.value
         #expect(!model.statuses.contains { $0.service.id == "custom-acme-aaaa0001" })
         #expect(!model.affected.map(\.id).contains("custom-acme-aaaa0001"))
@@ -775,14 +835,14 @@ private func openGeminiIncident() throws -> Data {
     /// same-named page added later starts unknown instead of inheriting
     /// the old reading.
     @MainActor @Test func aReAddedPageStartsUnknown() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let cacheFile = dir.appending(path: "service-status.json")
         let statusService = ServiceStatusService(transport: StubStatusTransport(
             body: try statusFixture("statuspage-claude")), cacheURL: cacheFile)
         let model = ServiceStatusModel(service: statusService, store: MemoryStatusStore())
         let first = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
                                     feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
-                                    group: .providers)
+                                    group: .modelProviders)
         #expect(model.statuses.last?.report?.health == .minor)
         await model.remove(id: first.id)
         // The cache file has no entry for the removed id.
@@ -793,7 +853,7 @@ private func openGeminiIncident() throws -> Data {
         #expect(await statusService.cached(for: [first]).first?.report == nil)
         let second = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
                                      feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
-                                     group: .providers)
+                                     group: .modelProviders)
         #expect(second.id != first.id)
     }
 
@@ -802,16 +862,14 @@ private func openGeminiIncident() throws -> Data {
     /// it would hold the new feed off for the next five minutes.
     @MainActor @Test func aForgottenPollsAnswerIsDropped() async throws {
         let transport = GatedTransport(body: try statusFixture("statuspage-github"))
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let status = ServiceStatusService(transport: transport,
                                           cacheURL: dir.appending(path: "service-status.json"))
         let github = [try service("github")]
         async let first: [ServiceStatus] = status.statuses(for: github, force: false)
-        while transport.inFlight < 1 {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        #expect(await transport.gate.arrived(1))
         await status.forget(id: "github")
-        transport.release()
+        transport.gate.open()
         let statuses = await first
         #expect(statuses.first?.report == nil)
         #expect(await status.cached(for: github).first?.report == nil)
@@ -910,47 +968,28 @@ private struct StubStatusTransport: HTTPTransport {
     }
 }
 
-/// Parks every request at the gate until `release`, so a test can remove a
-/// service while its load is still out.
+/// Parks every request at `gate` until the test opens it, so a test can
+/// remove a service while its load is still out.
 private final class GatedTransport: HTTPTransport {
-    private struct State {
-        var waiting: [CheckedContinuation<Void, Never>] = []
-        var inFlight = 0
-        var open = false
-    }
-
-    private let state = Mutex(State())
+    let gate = HoldGate()
     let body: Data
     init(body: Data) { self.body = body }
 
-    var inFlight: Int { state.withLock { $0.inFlight } }
-
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        await withCheckedContinuation { continuation in
-            state.withLock { s in
-                s.inFlight += 1
-                if s.open { continuation.resume() } else { s.waiting.append(continuation) }
-            }
-        }
+        try await gate.pass()
         return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                       headerFields: nil)!)
     }
-
-    func release() {
-        state.withLock { s in
-            s.open = true
-            for continuation in s.waiting { continuation.resume() }
-            s.waiting.removeAll()
-        }
-    }
 }
 
-/// The fake network, answering only after a pause so calls can overlap.
-private final class DelayedTransport: HTTPTransport {
+/// The fake network, holding every request at `gate` until the test opens
+/// it, so calls can overlap.
+private final class HeldTransport: HTTPTransport {
     let inner = FakeTransport()
+    let gate = HoldGate()
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        try await Task.sleep(for: .milliseconds(200))
+        try await gate.pass()
         return try await inner.send(request)
     }
 }

@@ -8,8 +8,72 @@
  * Actions rows re-run failed or all jobs from their ⋯ menu (the app's
  * context menu), and the PR sheet opens a PR in a session: the hub
  * checks its head out (swe gh pr worktree) and starts a harness there
- * (POST /v1/sessions), then the chat opens. */
+ * (POST /v1/sessions), then the chat opens. An issue row opens the
+ * Mac app's IssueDetailSheet: the issue's body and comments from the
+ * hub's GET /v1/issues/<o>/<r>/<n>, a comment box (POST
+ * /v1/issues/comment), Open on GitHub, and its ResolveIssueSheet as a
+ * panel (POST /v1/issues/resolve). */
 "use strict";
+
+/* The iOS Pull requests page's Mine and Review requested filters
+ * (PullsModel.swift's PullFilter) over the dashboard's open PRs. The
+ * flags come from GET /v1/pulls (remote/pulls.py): ``mine`` and
+ * ``review_requested`` on each open PR, null when the hub couldn't read
+ * them. A filter is offered only while its flag is known for every PR
+ * the list shows, so a failed ``gh pr status`` hides it rather than
+ * hiding PRs on a guess. */
+const PrFilter = (() => {
+  const FILTERS = [
+    { id: "all", title: "All", flag: null },
+    { id: "mine", title: "Mine", flag: "mine" },
+    { id: "review", title: "Review requested", flag: "review_requested" },
+  ];
+  const flagName = (id) => (FILTERS.find((f) => f.id === id) || FILTERS[0]).flag;
+
+  /* GET /v1/pulls's answer as repo (lower case) -> number -> row, or
+   * null when it has no flags to give (gh blocked, a bad answer). A repo
+   * whose read failed maps to null. */
+  function index(data) {
+    if (!data || data.env_blocked || !Array.isArray(data.repos)) return null;
+    const out = {};
+    for (const r of data.repos) {
+      if (!r || typeof r.name !== "string") continue;
+      let rows = null;
+      if (r.status === "ok") {
+        rows = {};
+        for (const pr of r.pulls || []) if (pr && pr.number != null) rows[pr.number] = pr;
+      }
+      out[r.name.toLowerCase()] = rows;
+    }
+    return out;
+  }
+
+  /* One PR's flag: true, false, or null when unknown (no answer, the
+   * repo's read failed, the PR newer than the answer, or a null flag). */
+  function flagOf(flags, repo, number, flag) {
+    const rows = flags && flags[String(repo).toLowerCase()];
+    const pr = rows && rows[number];
+    const v = pr ? pr[flag] : null;
+    return typeof v === "boolean" ? v : null;
+  }
+
+  /* Whether filter ``id`` can be offered over ``lists``, [[repo, prs]]:
+   * its flag is known for every PR in them. */
+  function offered(flags, id, lists) {
+    const flag = flagName(id);
+    if (!flag) return true;
+    if (!flags) return false;
+    return lists.every(([repo, prs]) => prs.every((pr) => flagOf(flags, repo, pr.number, flag) !== null));
+  }
+
+  /* Whether ``pr`` in ``repo`` passes filter ``id``. */
+  function includes(flags, id, repo, pr) {
+    const flag = flagName(id);
+    return !flag || flagOf(flags, repo, pr.number, flag) === true;
+  }
+
+  return { FILTERS, index, flagOf, offered, includes };
+})();
 
 (() => {
   const ico = GhUI.ico;
@@ -31,9 +95,13 @@
   const page = {
     data: null, error: null, loading: false,
     tab: "pulls", shown: null, filter: "",
+    // The Pull requests tab's Mine / Review requested pick, and the flags
+    // GET /v1/pulls gave for it (PrFilter.index; null until it answers).
+    prFilter: "all", flags: null, flagsSeq: 0,
     expanded: new Set(), openQuiet: new Set(),
     focus: null, sheet: null, observer: null, seq: 0,
     add: null, // the Add repository sheet's state while it is open
+    issue: null, // the issue sheet's state while it is open
     // Pin writes: the gear popover, the one unpin or reorder in flight
     // (one at a time, as GitHubModel's mutating set), a newer drop queued
     // behind it, the last failure, and a drag in progress.
@@ -121,7 +189,71 @@
     const state = surfaceState(boardOf(repo), key);
     if (state.kind !== "loaded") return null;
     if (key === "pages") return state.rows ? 1 : 0;
-    return filtered(state, key, query(), showsAllRows(repo)).rows.length;
+    return prFiltered(repo, key, filtered(state, key, query(), showsAllRows(repo))).rows.length;
+  }
+
+  /* The open PRs each of ``repos`` shows under the search, as
+   * PrFilter.offered wants them; repos still loading or failed have none. */
+  function prLists(repos) {
+    return repos.map((p) => {
+      const state = filtered(surfaceState(boardOf(p.name), "pull_requests"), "pull_requests", query(), showsAllRows(p.name));
+      return [p.name, state.kind === "loaded" ? state.rows : []];
+    });
+  }
+
+  /* Every repo a pick reaches: the list's and the rail's, whose counts
+   * and quiet fold follow the pick too. A filter is offered only when
+   * its flag is known across all of them, so no repo reads as quiet for
+   * want of flags. */
+  function prCoverage() {
+    const names = new Set();
+    return prLists([...listedRepos(), ...visibleRepos()].filter((p) => !names.has(p.name) && names.add(p.name)));
+  }
+
+  /* The PR filter in force: the pick, while the Pull requests tab shows
+   * and its flag is known for every PR it reaches; else All. A paint
+   * works it out once (prMemo) instead of once per rail row. */
+  let prMemo = null;
+  function prFilterNow() {
+    if (prMemo) return prMemo.now;
+    if (page.tab !== "pulls" || page.prFilter === "all") return "all";
+    return PrFilter.offered(page.flags, page.prFilter, prCoverage()) ? page.prFilter : "all";
+  }
+
+  /* A loaded pull_requests state narrowed to the PR filter in force. */
+  function prFiltered(repo, key, state, id = prFilterNow()) {
+    if (key !== "pull_requests" || state.kind !== "loaded" || id === "all") return state;
+    return { kind: "loaded", rows: state.rows.filter((pr) => PrFilter.includes(page.flags, id, repo, pr)) };
+  }
+
+  /* All / Mine / Review requested with their counts, each offered only
+   * while its flag is known; nothing when only All would show. */
+  function prFilterBar() {
+    if (page.tab !== "pulls") return "";
+    const coverage = prCoverage();
+    const shown = PrFilter.FILTERS.filter((f) => PrFilter.offered(page.flags, f.id, coverage));
+    const lists = prLists(listedRepos());
+    if (shown.length < 2) return "";
+    const now = prFilterNow();
+    return `<div class="tabs gh-pr-filter" role="radiogroup" aria-label="Which pull requests to list">${shown.map((f) => {
+      const n = lists.reduce((sum, [repo, prs]) => sum + prs.filter((pr) => PrFilter.includes(page.flags, f.id, repo, pr)).length, 0);
+      const on = f.id === now;
+      return `<button type="button" class="tab${on ? " selected" : ""}" role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"
+        data-pr-filter="${f.id}">${f.title} <span class="num">${n}</span></button>`;
+    }).join("")}</div>`;
+  }
+
+  /* GET /v1/pulls for the flags, while the Pull requests tab shows. Only
+   * the newest read lands; a failed one clears the flags, which hides
+   * the filter rather than leaving stale picks. */
+  async function loadFlags(refresh = false) {
+    const gen = routeGen;
+    const seq = ++page.flagsSeq;
+    const { status, data } = await api(`/v1/pulls${refresh ? "?refresh=1" : ""}`);
+    if (gen !== routeGen || seq !== page.flagsSeq || !onDashboard()) return;
+    if (status === 401) return;
+    page.flags = status === 200 ? PrFilter.index(data) : null;
+    GhUI.keepFocus("gh-search", paintDashboard);
   }
 
   /* The rail's CI dot: the newest run on the default branch (or the
@@ -210,14 +342,17 @@
     return `<a class="gh-row ${cls}"${href ? ` href="${href}" target="_blank" rel="noopener"` : ""}>${body}</a>`;
   };
 
-  function issueRow(issue) {
+  /* An issue row opens the issue sheet, as the app's row does. */
+  function issueRow(repo, issue) {
     const open = issue.state === "open";
-    return link(issue.url, `<span class="gh-row-lead">${ico(open ? "issueOpen" : "issueClosed", open ? "gh-success" : "gh-muted")}</span>
+    return `<button type="button" class="gh-row" data-issue="${esc(issue.number)}" data-repo="${esc(repo)}">
+      <span class="gh-row-lead">${ico(open ? "issueOpen" : "issueClosed", open ? "gh-success" : "gh-muted")}</span>
       <span class="gh-row-main">
         <span class="gh-row-title"><span class="gh-title">${esc(issue.title)}</span>${(issue.labels || []).slice(0, 3).map(badge).join("")}</span>
         <span class="gh-row-sub">#${esc(issue.number)} · ${esc(issue.author)}${issue.comments > 0 ? ` · ${issue.comments} comments` : ""}${agoPart(issue.updated_at)}</span>
       </span>
-      <span class="gh-row-side">${(issue.assignees || []).slice(0, 2).map((a) => badge(`@${a}`)).join("")}</span>`);
+      <span class="gh-row-side">${(issue.assignees || []).slice(0, 2).map((a) => badge(`@${a}`)).join("")}</span>
+    </button>`;
   }
 
   /* A run row opens GitHub; its ⋯ button holds the app's context menu:
@@ -263,7 +398,7 @@
   }
 
   const ROW = {
-    pull_requests: (repo, r) => prRow(repo, r), issues: (_repo, r) => issueRow(r), runs: (repo, r) => runRow(repo, r),
+    pull_requests: (repo, r) => prRow(repo, r), issues: (repo, r) => issueRow(repo, r), runs: (repo, r) => runRow(repo, r),
     releases: (_repo, r) => releaseRow(r), tags: (_repo, r) => tagRow(r), branches: (_repo, r) => branchRow(r),
   };
   const EMPTY = {
@@ -309,7 +444,8 @@
     const key = tabOf(tabId).key;
     const raw = surfaceState(surfaces, key);
     if (key === "pages") return pagesPanel(raw);
-    const state = filtered(raw, key, opts.query, opts.unfiltered);
+    // opts.prFilter: the dashboard's Mine / Review requested pick.
+    const state = prFiltered(repo, key, filtered(raw, key, opts.query, opts.unfiltered), opts.prFilter || "all");
     if (state.kind === "loading") return loadingCard("Fetching…", false);
     if (state.kind === "failed") return errorCard(state.message, false);
     const rows = state.rows;
@@ -357,6 +493,7 @@
     const pinGen = page.pinGen;
     page.loading = true;
     GhUI.keepFocus("gh-search", paintDashboard);
+    if (page.tab === "pulls") loadFlags(refresh);
     const { status, data } = await api(`/v1/app/repositories${refresh ? "?refresh=1" : ""}`);
     if (gen !== routeGen || seq !== page.seq) return;
     page.loading = false;
@@ -395,10 +532,14 @@
     </div>`;
     const error = [page.pinError, page.actionError, page.error].filter(Boolean).map((e) => errorCard(e)).join("");
     const repos = listedRepos().filter((p) => rowCount(p.name, page.tab) !== 0);
+    const prFilter = prFilterNow();
     let list;
     if (!repos.length) {
       const place = page.shown || "your pinned repos";
-      const text = query() ? `Nothing matches "${query()}".` : {
+      const text = query() ? `Nothing matches "${query()}".` : prFilter !== "all" ? {
+        mine: `None of the open pull requests in ${place} are yours.`,
+        review: `No open pull request in ${place} asks for your review.`,
+      }[prFilter] : {
         pulls: `No open pull requests in ${place}.`, issues: `No open issues in ${place}.`,
         actions: `No workflow runs in ${place}.`, pages: `${place} has no GitHub Pages site.`,
         releases: `No releases in ${place}.`, tags: `No tags in ${place}.`, branches: `No branches in ${place}.`,
@@ -417,11 +558,11 @@
             </span>
           </div>
           <div class="gh-surface${last ? " last" : ""}">${surfaceHtml(pin.name, page.tab, boardOf(pin.name), {
-            query: query(), unfiltered: showsAllRows(pin.name), preview: 5, expandKey: `${pin.name}:${page.tab}`,
+            query: query(), unfiltered: showsAllRows(pin.name), preview: 5, expandKey: `${pin.name}:${page.tab}`, prFilter,
           })}</div>`;
       }).join("")}</div>`;
     }
-    return `${toolbar}${error}${list}`;
+    return `${toolbar}${prFilterBar()}${error}${list}`;
   }
 
   function railHtml() {
@@ -639,12 +780,18 @@
     if (page.dragging) { page.repaintAfterDrag = true; return; }
     const d = page.data;
     const rail = d && !GhUI.envSetup(d.github) && pins().length;
-    document.getElementById("panel").innerHTML = `<div class="page gh-page">
-      <div class="gh-dash${rail ? " with-rail" : ""}">
-        <div class="gh-head">${HEADER(!rail)}</div>
-        ${rail ? railHtml() : ""}
-        <div class="gh-body stack">${dashboardContent()}</div>
-      </div>${rail && page.managing ? managerHtml() : ""}</div>`;
+    prMemo = null;
+    prMemo = { now: prFilterNow() };
+    try {
+      document.getElementById("panel").innerHTML = `<div class="page gh-page">
+        <div class="gh-dash${rail ? " with-rail" : ""}">
+          <div class="gh-head">${HEADER(!rail)}</div>
+          ${rail ? railHtml() : ""}
+          <div class="gh-body stack">${dashboardContent()}</div>
+        </div>${rail && page.managing ? managerHtml() : ""}</div>`;
+    } finally {
+      prMemo = null;
+    }
     if (!rail) page.managing = false;
     placeManager();
     bindDashboard();
@@ -655,7 +802,28 @@
     bindRefresh(() => renderDashboard(true));
     GhUI.bindSetup(() => renderDashboard(true));
     for (const tab of panel.querySelectorAll("[data-tab]")) {
-      tab.onclick = () => { page.tab = tab.dataset.tab; paintDashboard(); };
+      tab.onclick = () => {
+        page.tab = tab.dataset.tab;
+        paintDashboard();
+        if (page.tab === "pulls") loadFlags();
+      };
+    }
+    for (const btn of panel.querySelectorAll("[data-pr-filter]")) {
+      const pick = (id) => {
+        page.prFilter = id;
+        paintDashboard();
+        const sel = document.querySelector('#panel [data-pr-filter][aria-checked="true"]');
+        if (sel) sel.focus();
+      };
+      btn.onclick = () => pick(btn.dataset.prFilter);
+      btn.onkeydown = (e) => {
+        // radiogroup: arrows move to the next or previous offered filter
+        if (!e.key.startsWith("Arrow")) return;
+        e.preventDefault();
+        const ids = [...panel.querySelectorAll("[data-pr-filter]")].map((b) => b.dataset.prFilter);
+        const step = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
+        pick(ids[(ids.indexOf(btn.dataset.prFilter) + step + ids.length) % ids.length]);
+      };
     }
     for (const row of panel.querySelectorAll("[data-shown]")) {
       row.onclick = () => {
@@ -795,6 +963,9 @@
     }
     for (const row of root.querySelectorAll("[data-pr]")) {
       row.onclick = () => openPr(row.dataset.repo, row.dataset.pr);
+    }
+    for (const row of root.querySelectorAll("[data-issue]")) {
+      row.onclick = () => openIssue(row.dataset.repo, row.dataset.issue);
     }
   }
 
@@ -1280,7 +1451,7 @@
     const busy = !!x.phase;
     let picker;
     if (x.harnesses === null) picker = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading what the hub can start…</div>`;
-    else if (!x.harnesses.length) picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Provider visibility.</div>`;
+    else if (!x.harnesses.length) picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Providers.</div>`;
     else picker = `<select class="field" id="gh-session-harness" aria-label="Harness"${busy || x.started ? " disabled" : ""}>${
       x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;
     const picked = pickedHarness(x);
@@ -1374,6 +1545,14 @@
     if (h && h.launch_model && model) body.model = model;
     const launched = await GhUI.post("/v1/sessions", body);
     if (!alive()) return;
+    await followLaunch(launched, "gh-pr-sheet", alive, say);
+  }
+
+  /* A launch's answer (POST /v1/sessions or /v1/issues/resolve), then
+   * GET /v1/launches/<id> once a second until the session shows up: the
+   * sheet ``sheetId`` closes and the chat opens. ``alive`` says the panel
+   * that asked is still on screen; ``say`` updates it and repaints. */
+  async function followLaunch(launched, sheetId, alive, say) {
     const id = launched.data && launched.data.launch_id;
     if ((launched.status !== 202 && launched.status !== 200) || !id) {
       return say({ phase: null, error: GhUI.failMessage(launched.status, launched.data) });
@@ -1382,7 +1561,7 @@
     let launch = launched.data;
     for (let polls = 0; ; polls++) {
       if (launch.state === "started" && launch.key) {
-        document.getElementById("gh-pr-sheet").close();
+        document.getElementById(sheetId).close();
         location.hash = `#/sessions?chat=${encodeURIComponent(launch.key)}`;
         return;
       }
@@ -1401,6 +1580,324 @@
       if (status === 200 && data) launch = data; // a dropped poll is retried
     }
     say({ phase: null, started: true, note: "It started but hasn't shown up yet. It'll appear in Sessions when it does." });
+  }
+
+  /* ---------------------------------------------------------- issue sheet */
+
+  /* IssueDetailSheet: what GET /v1/issues/<o>/<r>/<n> answers (title,
+   * labels, body, every comment), the comment box, Open on GitHub, and
+   * Resolve with agent, which opens ResolveIssueSheet's form as a panel
+   * in the sheet. A comment posts through the hub's own gh login (POST
+   * /v1/issues/comment), as the Mac's posts through gh on the Mac. */
+  function issueSheetEl() {
+    let dlg = document.getElementById("gh-issue-sheet");
+    if (!dlg) {
+      dlg = document.createElement("dialog");
+      dlg.className = "sheet gh-sheet";
+      dlg.id = "gh-issue-sheet";
+      dlg.setAttribute("aria-label", "Issue");
+      dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+      dlg.addEventListener("close", () => { page.issue = null; });
+      document.body.appendChild(dlg);
+    }
+    return dlg;
+  }
+
+  function openIssue(repo, number) {
+    page.issue = { repo, number: String(number), data: null, status: 0, seq: 0, busy: false,
+      resolve: null, // the Resolve panel while it is open
+      comment: { draft: "", posting: false, error: null } }; // the comment box
+    const dlg = issueSheetEl();
+    paintIssue();
+    if (!dlg.open) dlg.showModal();
+    loadIssue(false);
+  }
+
+  async function loadIssue(refresh) {
+    const s = page.issue;
+    if (!s) return;
+    const seq = ++s.seq;
+    s.busy = true;
+    paintIssue();
+    const [owner, name] = s.repo.split("/", 2);
+    const path = `/v1/issues/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/${encodeURIComponent(s.number)}`;
+    const { status, data } = await api(`${path}${refresh ? "?refresh=1" : ""}`);
+    if (page.issue !== s || seq !== s.seq) return;
+    s.busy = false;
+    s.status = status;
+    s.data = data;
+    // The Resolve panel's first prompt follows the hub's brief until typed in.
+    const r = s.resolve, issue = data && data.issue;
+    if (r && !r.edited && issue && issue.suggested_prompt) r.prompt = issue.suggested_prompt;
+    paintIssue();
+  }
+
+  function issueBody(issue, repo) {
+    const open = issue.state === "open";
+    const when = GhUI.ago(issue.created_at || issue.updated_at);
+    const meta = [`#${esc(issue.number)}`, esc(repo), `by ${esc(issue.author)}`, when ? `opened ${when}` : ""].filter(Boolean).join(" · ");
+    const marks = [...(issue.labels || []).slice(0, 5).map(badge), ...(issue.assignees || []).slice(0, 3).map((a) => badge(`@${a}`))].join("");
+    const header = `<div class="gh-pr-head"><span class="gh-pr-icon">${ico(open ? "issueOpen" : "issueClosed", open ? "gh-success" : "gh-muted")}</span>
+      <div class="gh-pr-headtext"><div class="gh-pr-title">${esc(issue.title)}</div>
+        <div class="caption gh-ellipsis">${meta}</div>${marks ? `<div class="gh-pr-marks">${marks}</div>` : ""}</div></div>`;
+    const body = String(issue.body || "").trim();
+    const description = `<div class="gh-section"><div class="caption gh-muted">Description</div>
+      <div class="gh-settings-card gh-md">${body ? GhUI.markdown(body) : '<span class="gh-muted">No description.</span>'}</div></div>`;
+    const comments = issue.comments || [];
+    const thread = `<div class="gh-section"><div class="caption gh-muted">${comments.length ? `Comments · ${comments.length}` : "Comments"}</div>
+      <div class="gh-settings-card">${comments.length ? comments.map((c) => {
+        const ago = GhUI.ago(c.created_at);
+        const href = safeHref(c.url);
+        return `<div class="gh-comment"><div class="gh-comment-head"><span class="gh-check-name">${esc(c.author)}</span>
+            ${ago ? `<span class="caption gh-muted">${ago}</span>` : ""}<span class="gh-spacer"></span>
+            ${href ? `<a href="${href}" target="_blank" rel="noopener" class="gh-muted" title="Open this comment on GitHub" aria-label="Open this comment on GitHub">${ico("external", "gh-small")}</a>` : ""}</div>
+          <div class="gh-md gh-comment-body">${GhUI.markdown(String(c.body || ""))}</div></div>`;
+      }).join("") : '<div class="gh-comment caption gh-muted">No comments yet.</div>'}</div></div>`;
+    return `${header}${description}${thread}`;
+  }
+
+  function paintIssue() {
+    const s = page.issue;
+    const dlg = document.getElementById("gh-issue-sheet");
+    if (!s || !dlg) return;
+    const d = s.data;
+    const retry = '<button type="button" class="gh-button" data-issue-refresh>Refresh</button>';
+    let content, issue = null;
+    if (!d && !s.status) {
+      content = loadingCard("Fetching the issue…", false);
+    } else if (s.status === 401) {
+      content = errorCard(CREDENTIAL_REFUSED, false);
+    } else if (s.status !== 200 || !d) {
+      content = errorCard(GhUI.failMessage(s.status, d), false, retry);
+    } else if (GhUI.envSetup(d.github)) {
+      content = GhUI.setupCard(GhUI.envSetup(d.github), d.machine);
+    } else if (d.status !== "ok" || !d.issue) {
+      content = errorCard(d.error || d.status, false, retry);
+    } else {
+      issue = d.issue;
+      content = `<div class="gh-sheet-scroll">${issueBody(issue, s.repo)}</div>`;
+    }
+    const url = issue && issue.url ? issue.url : `https://github.com/${s.repo}/issues/${s.number}`;
+    const closed = issue && issue.state !== "open";
+    // Typing survives a repaint (a refetch landing mid-word).
+    const carets = {};
+    for (const id of ["gh-resolve-prompt", "gh-resolve-context", "gh-resolve-model-other", "gh-issue-comment"]) {
+      const el = dlg.querySelector("#" + id);
+      if (el && document.activeElement === el) carets[id] = [el.selectionStart, el.selectionEnd];
+    }
+    dlg.innerHTML = `<div class="sheet-body">${content}${composer(s, issue)}${resolvePanel(s, issue)}
+      <div class="gh-sheet-actions">
+        ${issue && !s.resolve ? `<button type="button" class="gh-button gh-primary" id="gh-resolve-open"${closed ? " disabled" : ""}
+          title="${closed ? "This issue is closed." : "Start an agent on this issue in its own worktree"}">${ico("terminal")}<span>Resolve with agent</span></button>` : ""}
+        <span class="gh-spacer"></span>
+        ${safeHref(url) ? `<a class="icon-button" href="${safeHref(url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>` : ""}
+        <button type="button" class="icon-button${s.busy && d ? " spinning" : ""}" data-issue-refresh title="Fetch again" aria-label="Fetch again">${icon("rescan")}</button>
+        <button type="button" class="gh-button" id="gh-issue-done">Done</button>
+      </div></div>`;
+    for (const btn of dlg.querySelectorAll("[data-issue-refresh]")) btn.onclick = () => loadIssue(true);
+    dlg.querySelector("#gh-issue-done").onclick = () => dlg.close();
+    const open = dlg.querySelector("#gh-resolve-open");
+    if (open) open.onclick = () => openResolve(s, issue);
+    bindComposer(dlg, s, carets);
+    bindResolve(dlg, s, issue, carets);
+    GhUI.bindSetup(() => loadIssue(true));
+  }
+
+  /* The Mac sheet's comment box, under the thread: Return breaks the
+   * line, Cmd or Ctrl+Return posts. Off while the Resolve panel is open,
+   * which has its own "Also post as a comment". */
+  function composer(s, issue) {
+    const c = s.comment;
+    if (!issue || s.resolve) return "";
+    const d = s.data || {};
+    const login = d.github && d.github.login;
+    const off = c.posting ? " disabled" : "";
+    return `<div class="gh-composer" role="group" aria-label="Add a comment">
+      <div class="gh-composer-row">
+        <textarea class="field gh-session-prompt" id="gh-issue-comment" rows="2" aria-label="Comment"
+          placeholder="Add context for whoever picks this up, you or an agent…"${off}>${esc(c.draft)}</textarea>
+        <button type="button" class="gh-button" id="gh-issue-comment-post" title="Post this comment on GitHub (⌘↩)"${
+          c.posting || !c.draft.trim() ? " disabled" : ""}>${c.posting ? "Posting…" : "Comment"}</button>
+      </div>
+      <div class="caption gh-muted">Posts to GitHub as ${login ? esc(login) : "the hub's gh account"}, through gh on ${
+        d.machine ? esc(d.machine) : "the hub"}. Markdown works.</div>
+      ${c.error ? `<div class="caption gh-danger-text" role="alert">${esc(c.error)}</div>` : ""}
+    </div>`;
+  }
+
+  function bindComposer(dlg, s, carets) {
+    const box = dlg.querySelector("#gh-issue-comment");
+    const btn = dlg.querySelector("#gh-issue-comment-post");
+    if (!box || !btn) return;
+    const c = s.comment;
+    const caret = carets["gh-issue-comment"];
+    if (caret) { box.focus(); box.setSelectionRange(caret[0], caret[1]); }
+    // No repaint per keystroke: only the button follows the text.
+    box.oninput = () => { c.draft = box.value; btn.disabled = c.posting || !c.draft.trim(); };
+    box.onkeydown = (e) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); postComment(s); }
+    };
+    btn.onclick = () => postComment(s);
+  }
+
+  /* POST /v1/issues/comment, then read the issue again (the hub dropped
+   * its cached copy) so the thread lists the new comment. */
+  async function postComment(s) {
+    const c = s.comment;
+    const text = c.draft;
+    if (!text.trim() || c.posting) return;
+    c.posting = true;
+    c.error = null;
+    paintIssue();
+    const { status, data } = await GhUI.post("/v1/issues/comment",
+      { repo: s.repo, number: Number(s.number), body: text });
+    if (page.issue !== s) return;
+    c.posting = false;
+    if (status !== 200) {
+      c.error = GhUI.failMessage(status, data);
+      paintIssue();
+      const box = document.getElementById("gh-issue-comment");
+      if (box) box.focus();
+      return;
+    }
+    if (c.draft === text) c.draft = "";
+    loadIssue(false);
+  }
+
+  /* ResolveIssueSheet's form: where it starts, the harness, the Model
+   * menu (model-menu.js), Your context and the first prompt, prefilled
+   * with the hub's brief; an empty prompt lets the hub write it. */
+  function resolvePanel(s, issue) {
+    const x = s.resolve;
+    if (!x || !issue) return "";
+    const busy = !!x.phase, off = busy || x.started ? " disabled" : "";
+    let picker;
+    if (x.harnesses === null) picker = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading what the hub can start…</div>`;
+    else if (!x.harnesses.length) picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Providers.</div>`;
+    else picker = `<select class="field" id="gh-resolve-harness" aria-label="Harness"${off}>${
+      x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;
+    const picked = pickedHarness(x);
+    const model = picked && picked.launch_model ? ModelMenu.html(x.model, recentModels(x), "gh-resolve-model", busy || x.started) : "";
+    const where = s.data && s.data.machine ? ` on ${esc(s.data.machine)}` : " on the hub";
+    const branch = issue.branch || `quiver/issue-${issue.number}`;
+    // A refetch can find the issue closed since the panel opened: Start
+    // goes off, as the sheet's Resolve with agent is for a closed issue.
+    const closed = issue.state !== "open";
+    const ready = x.harnesses && x.harnesses.length && !busy && !x.started && !closed;
+    return `<div class="gh-confirm gh-session" role="group" aria-label="Resolve with agent">
+      <div class="gh-confirm-text">Resolve <strong>#${esc(issue.number)}</strong> with an agent: it starts in <code>${esc(branch)}</code>,
+        a worktree off the default branch${where}.</div>
+      ${picker}
+      ${model}
+      <label class="caption gh-muted" for="gh-resolve-context">Your context (optional)</label>
+      <textarea class="field gh-session-prompt" id="gh-resolve-context" rows="2"
+        placeholder="Anything the agent should know that the issue doesn't say."${off}>${esc(x.context)}</textarea>
+      <label class="gh-check caption gh-muted"><input type="checkbox" id="gh-resolve-post"${x.postContext ? " checked" : ""}${off}>
+        <span>Also post as a comment on #${esc(issue.number)}</span></label>
+      <label class="caption gh-muted" for="gh-resolve-prompt">First prompt</label>
+      <textarea class="field gh-session-prompt" id="gh-resolve-prompt" rows="5"
+        placeholder="The hub writes one from the issue when this is empty."${off}>${esc(x.prompt)}</textarea>
+      <div class="caption gh-muted">It runs under tmux on the hub. The chat opens once the session shows up.</div>
+      ${closed && !x.started ? '<div class="caption gh-danger-text" role="alert">This issue is closed.</div>' : ""}
+      ${x.commentWarning ? `<div class="caption gh-warning-text" role="status">${esc(x.commentWarning)}</div>` : ""}
+      ${x.error ? `<div class="caption gh-danger-text" role="alert">${esc(x.error)}</div>` : ""}
+      ${x.note ? `<div class="caption" role="status">${esc(x.note)}</div>` : ""}
+      <div class="gh-confirm-buttons">
+        <button type="button" class="gh-button" id="gh-resolve-cancel">${x.started ? "Close" : "Cancel"}</button>
+        <button type="button" class="gh-button gh-primary" id="gh-resolve-start"${ready ? "" : " disabled"}>${esc(x.phase || "Start")}</button>
+      </div></div>`;
+  }
+
+  function bindResolve(dlg, s, issue, carets) {
+    const x = s.resolve;
+    if (!x || !issue) return;
+    const harness = dlg.querySelector("#gh-resolve-harness");
+    if (harness) harness.onchange = () => {
+      x.harness = harness.value;
+      ModelMenu.redefault(x.model, recentModels(x));
+      paintIssue();
+      const again = dlg.querySelector("#gh-resolve-harness");
+      if (again) again.focus();
+    };
+    ModelMenu.bind(dlg, x.model, recentModels(x), "gh-resolve-model", paintIssue);
+    const context = dlg.querySelector("#gh-resolve-context");
+    if (context) context.oninput = () => { x.context = context.value; };
+    const post = dlg.querySelector("#gh-resolve-post");
+    if (post) post.onchange = () => { x.postContext = post.checked; };
+    const prompt = dlg.querySelector("#gh-resolve-prompt");
+    if (prompt) prompt.oninput = () => { x.prompt = prompt.value; x.edited = true; };
+    for (const [id, caret] of Object.entries(carets)) {
+      const el = dlg.querySelector("#" + id);
+      if (el) { el.focus(); el.setSelectionRange(caret[0], caret[1]); }
+    }
+    const start = dlg.querySelector("#gh-resolve-start");
+    if (start) start.onclick = () => startResolve(s);
+    dlg.querySelector("#gh-resolve-cancel").onclick = () => {
+      s.resolve = null; // a launch still waiting is dropped from view; the hub keeps it
+      paintIssue();
+      const back = dlg.querySelector("#gh-resolve-open");
+      if (back) back.focus();
+    };
+  }
+
+  async function openResolve(s, issue) {
+    const x = { harnesses: null, harness: null, model: ModelMenu.fresh(), phase: null, error: null,
+      note: null, started: false, context: "", prompt: issue.suggested_prompt || "", edited: false,
+      postContext: true, posted: null, commentWarning: null };
+    s.resolve = x;
+    paintIssue();
+    const ctx = document.getElementById("gh-resolve-context");
+    if (ctx) ctx.focus();
+    const { status, data } = await api("/v1/app/repositories?harnesses=1");
+    if (page.issue !== s || s.resolve !== x) return;
+    x.harnesses = status === 200 && data ? data.harnesses || [] : [];
+    if (status !== 200) x.error = GhUI.failMessage(status, data);
+    x.harness = x.harnesses.length ? x.harnesses[0].name : null;
+    ModelMenu.redefault(x.model, recentModels(x));
+    paintIssue();
+  }
+
+  /* The Mac's IssueResolve.postsComment: the context posts only when it
+   * holds text, the box is ticked, and that text didn't already post (a
+   * Start retried after a failed launch must not comment twice). */
+  function postsComment(context, ticked, posted) {
+    const text = String(context || "").trim();
+    return !!ticked && !!text && text !== String(posted || "").trim();
+  }
+
+  /* POST /v1/issues/resolve: the hub clones or reuses the mirror, makes
+   * the issue's worktree and starts the harness there; the launch it
+   * answers with is followed like Open in session's. With "Also post as
+   * a comment" ticked the context goes to POST /v1/issues/comment first;
+   * a failed comment is a warning, and the launch goes ahead. */
+  async function startResolve(s) {
+    const x = s.resolve;
+    if (!x || x.phase || x.started || !x.harness) return;
+    const issue = s.data && s.data.issue;
+    if (!issue || issue.state !== "open") return;
+    const alive = () => page.issue === s && s.resolve === x;
+    const say = (fields) => { Object.assign(x, fields); if (alive()) paintIssue(); };
+    say({ phase: "Starting…", error: null, note: null, commentWarning: null });
+    const context = x.context.trim();
+    if (postsComment(context, x.postContext, x.posted)) {
+      say({ phase: "Posting…", note: "Posting your context to GitHub…" });
+      const posted = await GhUI.post("/v1/issues/comment", { repo: s.repo, number: Number(s.number), body: context });
+      if (!alive()) return;
+      if (posted.status === 200) x.posted = context;
+      else {
+        const why = GhUI.failMessage(posted.status, posted.data);
+        x.commentWarning = `Couldn't post your context to GitHub: ${why}${/[.!?]$/.test(why) ? "" : "."} The agent still gets it in the prompt.`;
+      }
+      say({ phase: "Starting…", note: null });
+    }
+    const body = { repo: s.repo, number: Number(s.number), harness: x.harness, prompt: x.prompt.trim() };
+    if (x.context.trim()) body.context = x.context.trim();
+    const h = pickedHarness(x);
+    const model = ModelMenu.value(x.model);
+    if (h && h.launch_model && model) body.model = model;
+    const launched = await GhUI.post("/v1/issues/resolve", body);
+    if (!alive()) return;
+    await followLaunch(launched, "gh-issue-sheet", alive, say);
   }
 
   /* ---------------------------------------------------------- add repository */
@@ -1561,7 +2058,7 @@
 
   /* Either sheet open: the minute poll waits, so rows never shift
    * under a confirm or a search. */
-  const SHEETS = ["gh-pr-sheet", "gh-add-sheet"];
+  const SHEETS = ["gh-pr-sheet", "gh-issue-sheet", "gh-add-sheet"];
   const sheetOpen = () => SHEETS.some((id) => (document.getElementById(id) || {}).open);
   function closeSheets() {
     for (const id of SHEETS) {

@@ -438,6 +438,8 @@ final class CommandMenu {
             guard gen == generation else { return }
             response = body
             error = nil
+        } catch is CancellationError {
+            // Pull to refresh was cut short: keep the list shown.
         } catch {
             guard gen == generation else { return }
             self.error = Self.message(for: error)

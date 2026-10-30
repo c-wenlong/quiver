@@ -951,10 +951,12 @@ public final class ModelsModel {
         return (group, hit.row.key.count, hit.row.key)
     }
 
-    /// Every priced model's percentile against the rest, from one pass
-    /// over the sorted prices; `CostPercentile.rank` rescans the whole
-    /// list per row, which a per-keystroke rebuild felt.
-    nonisolated private static func costRanks(in models: [AALanguageModel]) -> [String: Double] {
+    /// Where each priced model's blended price lands on AA's whole price
+    /// scale: `(cheaper + 0.5 × same-priced others) / (count − 1)`,
+    /// clamped to 0…1, so equal-priced models share a spot. One pass over
+    /// the sorted prices, since a per-keystroke rebuild felt a rescan per
+    /// row.
+    nonisolated static func costRanks(in models: [AALanguageModel]) -> [String: Double] {
         let priced = models.compactMap(\.priceBlended).filter { $0 > 0 }.sorted()
         guard priced.count > 1 else { return [:] }
         // First index the predicate stops holding: `< price` counts the

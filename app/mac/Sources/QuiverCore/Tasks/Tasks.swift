@@ -782,6 +782,22 @@ public enum NewSessionOptions {
         machine.launchable ?? machine.harnesses ?? []
     }
 
+    /// What the sheet says when no machine can start a session, from the
+    /// rows the hub listed. A row with `launchable` answered: nothing is
+    /// installed there or every harness is switched off, so updating swe
+    /// would change nothing. Only rows without the field (a hub older
+    /// than the new-session route), or none at all, mean swe is too old.
+    /// The iPhone's twin says "Quiver's Settings"; here Settings is the
+    /// app's own.
+    public static func noMachineMessage(_ listed: [HubMachine]) -> String {
+        guard listed.contains(where: { $0.launchable != nil }) else {
+            return "No machine can start a session. Update swe on the hub."
+        }
+        return listed.count > 1
+            ? "No harness can start on any machine: install one, or turn it on in Settings › Providers."
+            : "No harness can start on the hub: install one there, or turn it on in Settings › Providers."
+    }
+
     /// Online machines first, then by name; a machine that can launch
     /// nothing is left out.
     public static func machines(_ machines: [HubMachine]) -> [HubMachine] {

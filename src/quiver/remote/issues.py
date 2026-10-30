@@ -1,5 +1,6 @@
 """GitHub issues on the phone: ``GET /v1/issues``,
-``GET /v1/issues/<o>/<r>/<n>`` and ``POST /v1/issues/resolve``.
+``GET /v1/issues/<o>/<r>/<n>``, ``POST /v1/issues/resolve`` and
+``POST /v1/issues/comment``.
 
 The reads answer from the same 60-second ``gh`` cache the web app's
 Repositories page uses (``github/shared.py``), per pinned repo,
@@ -35,6 +36,13 @@ launch ``failed`` with a readable note. When adoption names the new
 session, its title becomes ``<owner>/<repo>#<n> <issue title>``
 (``title_adopted``, called from ``HubState.emit``). Hub machine only:
 satellites have no mirrors.
+
+The comment: body ``{repo, number, body}``. The hub posts ``body`` on
+the issue with its own ``gh`` login, through ``swe gh issue comment``'s
+``post_comment``: the text goes to ``gh issue comment --body-file -``
+on stdin, never argv, where every process on the machine could read it.
+Only a pinned repo, and nothing past GitHub's own size cap, so a paired
+client can't post anywhere the hub's ``gh`` login reaches.
 """
 
 from __future__ import annotations
@@ -59,6 +67,9 @@ MAX_CONTEXT = 8_000
 # Room for the "Context for this run, from <login>:" line (a GitHub
 # login is at most 39 characters) when context joins a client's prompt.
 _CONTEXT_HEADER_ROOM = 80
+
+# GitHub refuses a comment body longer than this many characters.
+MAX_COMMENT = 65_536
 
 # Issues whose resolve is still between the 202 and launch_new's
 # pending marker, as (repo lower, number). A second resolve of one of
@@ -87,6 +98,16 @@ def _number_arg(raw) -> int | None:
         return None
     number = int(raw)
     return number if number >= 1 else None
+
+
+def _body_number(raw) -> int | None:
+    """A JSON body's issue number: an int or digit string, as
+    ``_number_arg`` reads a path's. ``true`` is no number."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        raw = str(raw)
+    return _number_arg(raw.strip() if isinstance(raw, str) else raw)
 
 
 # ------------------------------------------------------------------ reads
@@ -260,6 +281,71 @@ def parse_body(body) -> dict:
             "prompt": prompt if prompt.strip() else "", "context": context,
             "model": protocol._launch_value(body, "model"),
             "effort": protocol._launch_value(body, "effort")}
+
+
+def comment(state, body: dict | None) -> tuple[int, dict]:
+    """``POST /v1/issues/comment``: post ``body`` on issue ``number`` of
+    a pinned ``repo`` as the hub's ``gh`` login. Answers ``200 {ok,
+    github, repo, number, comment: {author, body, created_at, url},
+    machine, machine_id}``; the issue's cached reads are dropped so the
+    next detail read lists the new comment."""
+    if body is None:
+        return 400, protocol.error("bad_body", "unreadable JSON body")
+    raw = body.get("repo")
+    name = repos.normalize_repo_input(raw) if isinstance(raw, str) else None
+    if not name:
+        return 422, protocol.error("bad_repo", "repo must be owner/name")
+    number = _body_number(body.get("number"))
+    if number is None:
+        return 422, protocol.error("bad_issue",
+                                   "number must be an issue number")
+    text = body.get("body")
+    if not isinstance(text, str):
+        return 422, protocol.error("bad_comment",
+                                   "body must be the comment's text")
+    # The Mac's composer posts the trimmed text; so does this.
+    text = text.strip()
+    if not text:
+        return 422, protocol.error("bad_comment", "The comment is empty")
+    if len(text) > MAX_COMMENT:
+        return 422, protocol.error(
+            "comment_too_long",
+            f"The comment is over GitHub's {MAX_COMMENT:,} characters")
+    pinned = _pinned(state.home, name)
+    if pinned is None:
+        return 404, protocol.error(
+            "not_pinned", f"{name} is not pinned on the hub")
+    env = G.probe(state.home, refresh=True)
+    if env.status != "ok":
+        return 409, protocol.error("gh_" + env.status.replace("-", "_"),
+                                   gh.env_error(env))
+    with G.WRITE_LOCK:
+        result = gh_issues.post_comment(pinned, number, text, env.login)
+    # Dropped even after a failure: a timeout may still have posted.
+    _drop_issue(state.home, pinned, number)
+    if result.status == "not-found":
+        return 404, protocol.error(
+            "unknown_issue", f"No issue #{number} in {pinned}: "
+                             f"{result.error or 'not found'}")
+    if result.status != "ok":
+        return 502, protocol.error(
+            "comment_failed", result.error or result.status)
+    return 200, {"ok": True, "github": G.env_payload(env), "repo": pinned,
+                 "number": number, "comment": result.data,
+                 "machine": (state.machine or {}).get("name"),
+                 "machine_id": state.machine_id}
+
+
+def _drop_issue(home, repo: str, number: int) -> None:
+    """Forget the issue's detail and every list that counts its
+    comments (the phone's ``/v1/issues``, the Repositories board and
+    focus surfaces, the task rows), as the Mac drops its own after a
+    post."""
+    hk = G.home_key(home)
+    G.CACHE.drop(lambda k: isinstance(k, tuple) and len(k) > 2
+                 and k[1] == hk and k[2] == repo
+                 and (k[0] in ("issues", "board", "focus", "task")
+                      or (k[0] == "issue" and k[3:4] == (str(number),))))
 
 
 def _pinned(home, name: str) -> str | None:

@@ -14,18 +14,22 @@ enum PrivateFile {
         try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
     }
 
-    /// Tighten what an older build left: `file` to 0600 and its folder to
-    /// 0700, each only when it is there. A store calls this when it opens,
-    /// so an old file isn't readable by others until the next save.
+    /// Tighten what an older build left: take group and other access off
+    /// `file` and its folder, each only when it is there. A store calls
+    /// this when it opens, so an old file isn't readable by others until
+    /// the next save. Only bits are removed, never added: a file its owner
+    /// locked (mode 0) stays locked, and a store reading it still fails
+    /// rather than reading as empty and overwriting it.
     static func tighten(_ file: URL) {
+        removeGroupAndOther(file.deletingLastPathComponent().path)
+        removeGroupAndOther(file.path)
+    }
+
+    private static func removeGroupAndOther(_ path: String) {
         let manager = FileManager.default
-        let folder = file.deletingLastPathComponent().path
-        if manager.fileExists(atPath: folder) {
-            try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder)
-        }
-        if manager.fileExists(atPath: file.path) {
-            try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        }
+        guard let mode = (try? manager.attributesOfItem(atPath: path))?[.posixPermissions] as? Int,
+              mode & 0o077 != 0 else { return }
+        try? manager.setAttributes([.posixPermissions: mode & ~0o077], ofItemAtPath: path)
     }
 
     /// Write `data` to `url` atomically: created 0600 under a temporary

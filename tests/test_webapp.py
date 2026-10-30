@@ -34,19 +34,17 @@ class TestWebAppRoutes(HubBase):
         }) + "\n")
 
     def test_pages_are_public_and_confined(self):
-        status, body = self.srv.request("GET", "/app/")
+        status, body = self.srv.request("GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn(b"/app/app.js", body)
-        self.assertIn(b"/app/model-menu.js", body)
-        for path in ("/app/app.js", "/app/format.js", "/app/model-menu.js", "/app/styles.css",
-                     "/app/harness-devin.svg"):
+        self.assertIn(b'src="/app.js"', body)
+        self.assertIn(b'src="/model-menu.js"', body)
+        for path in ("/app.js", "/format.js", "/model-menu.js", "/styles.css",
+                     "/harness-devin.svg"):
             self.assertEqual(self.srv.request("GET", path)[0], 200, path)
-        self.assertEqual(self.srv.request("GET", "/app")[0], 301)
-        for path in ("/app/../hub.py", "/app/%2e%2e/hub.py", "/app/api.py", "/app/x/y.js"):
+        # Only a flat asset name of a known type: nothing climbs out of
+        # the folder, and a Python module beside it is never served.
+        for path in ("/../hub.py", "/%2e%2e/hub.py", "/api.py", "/x/y.js", "/nope.js"):
             self.assertEqual(self.srv.request("GET", path)[0], 404, path)
-        # The remote PWA's own routes are gone; ``/`` lands here.
-        self.assertEqual(self.srv.request("GET", "/app.js")[0], 404)
-        self.assertEqual(self.srv.request("GET", "/")[0], 301)
 
     def test_overview_needs_a_device_and_reads_the_ledger(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/overview")[0], 401)
@@ -554,7 +552,7 @@ class TestHarnessMark(unittest.TestCase):
     def test_every_shipped_logo_draws(self):
         files = sorted(p.name for p in FORMAT_JS.parent.glob("harness-*.svg"))
         ids = [f[len("harness-"):-len(".svg")].removesuffix("-color") for f in files]
-        drawn = self.fmt(json.dumps(ids) + ".map((id) => (Fmt.logo(id).match(/src=\"\\/app\\/([^\"]+)\"/) || [])[1] || null)")
+        drawn = self.fmt(json.dumps(ids) + ".map((id) => (Fmt.logo(id).match(/src=\"\\/([^\"]+)\"/) || [])[1] || null)")
         self.assertEqual(drawn, files)
 
     def test_marks_like_the_mac(self):
@@ -572,7 +570,7 @@ class TestHarnessMark(unittest.TestCase):
         logos = self.fmt("[Fmt.logo('claude-desktop'), Fmt.logo('codex-acc2'), Fmt.logo('copilot'), Fmt.logo('zed')]")
         self.assertIn("harness-claude-color.svg", logos[0])
         self.assertIn('alt="Codex (acc2)"', logos[1])
-        self.assertIn('class="logo mono" src="/app/harness-copilot.svg"', logos[2])
+        self.assertIn('class="logo mono" src="/harness-copilot.svg"', logos[2])
         self.assertEqual(logos[3], '<span class="logo" aria-hidden="true"></span>')
         self.assertEqual(self.fmt("Fmt.harnessName('codex-acc2')"), "Codex (acc2)")
 

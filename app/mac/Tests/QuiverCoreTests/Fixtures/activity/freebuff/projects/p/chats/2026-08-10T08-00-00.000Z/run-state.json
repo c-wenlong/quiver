@@ -1,0 +1,8 @@
+{"sessionState": {"initialCwd": "/work/state-fallback",
+  "mainAgentState": {"cwd": "/work/fb", "initialCwd": "/work/agent-initial", "messageHistory": [
+    {"role": "user", "sentAt": 1786349100123},
+    {"role": "assistant", "sentAt": 1786350000000},
+    {"role": "assistant", "noTime": true},
+    {"role": "assistant", "sentAt": "1786351000000"},
+    {"role": "assistant", "sentAt": 1786352400000}]}},
+ "initialCwd": "/work/root-fallback"}

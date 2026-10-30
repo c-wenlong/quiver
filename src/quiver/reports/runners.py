@@ -17,7 +17,6 @@ REPORT_ENV_MARKER = "QUIVER_REPORT_GENERATED"
 REPORT_ENV_RUN_ID = "QUIVER_REPORT_RUN_ID"
 REPORT_ENV_OUTPUT_KIND = "QUIVER_REPORT_OUTPUT_KIND"
 
-_SUPPORTED_HARNESSES = {"claude", "codex"}
 _TRANSIENT_RE = re.compile(
     r"(?i)(rate.?limit|too many requests|\b429\b|temporar(?:y|ily)|timed? out|"
     r"timeout|connection (?:reset|refused)|network|service unavailable|"

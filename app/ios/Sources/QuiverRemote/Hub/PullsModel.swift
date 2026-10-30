@@ -32,6 +32,9 @@ final class PullsModel {
             envBlocked = body.envBlocked
             login = body.github?.login
             error = nil
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message

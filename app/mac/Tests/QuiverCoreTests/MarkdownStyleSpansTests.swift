@@ -169,6 +169,17 @@ import Testing
         #expect(font(5)?.fontDescriptor.symbolicTraits.isSuperset(of: [.bold, .italic]) == true)
     }
 
+    /// Geist ligates `->` and `-->` into one arrow glyph, which drew a
+    /// comment's closing marker as an arrow. Every character gets its
+    /// own glyph in the editor.
+    @Test func geistDrawsEveryCharacterOfACommentAndAnArrow() {
+        let text = "<!-- note --> a -> b"
+        let palette = MarkdownStylePalette.test.with(bodyFont: AppFonts.nsFont(size: 13))
+        let styled = MarkdownStyleSpans.styled(text, palette: palette)
+        let line = CTLineCreateWithAttributedString(styled)
+        #expect(CTLineGetGlyphCount(line) == (text as NSString).length)
+    }
+
     @Test func aLongDocumentStylesQuickly() {
         let text = String(repeating: "a **b** and *i* and ~~s~~\n", count: 5_000)
         let start = Date()

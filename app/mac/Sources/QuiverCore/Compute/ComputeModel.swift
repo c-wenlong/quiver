@@ -251,7 +251,7 @@ public final class ComputeModel {
         sampleSeq += 1
         let seq = sampleSeq
         let sampler = self.sampler
-        let table = await runOffPool { sampler.sample() }
+        let table = await offMain { sampler.sample() }
         return Sampled(seq: seq, table: table, at: clock())
     }
 
@@ -393,7 +393,7 @@ public final class ComputeModel {
             accept(sampled)
         }
         let gpu = gpuSampler, thermometer = temperatureSampler
-        let (times, reading) = await runOffPool { (gpu.times(), thermometer.read()) }
+        let (times, reading) = await offMain { (gpu.times(), thermometer.read()) }
         if replaced(generation) { return }
         let gpuAt = clock()
         if !times.isEmpty { gpuAvailable = true }
@@ -430,7 +430,7 @@ public final class ComputeModel {
     /// then one refresh.
     public func quit(_ items: [CleanupItem], force: Bool = false) async {
         let sampler = self.sampler
-        let fresh = await runOffPool { sampler.sample() }
+        let fresh = await offMain { sampler.sample() }
         signal(items, force: force, in: fresh)
         await refresh()
     }
@@ -442,7 +442,7 @@ public final class ComputeModel {
     /// shuts its helpers down itself on the way out.
     public func quitHarness(_ harness: String, force: Bool = false) async {
         let sampler = self.sampler
-        let fresh = await runOffPool { sampler.sample() }
+        let fresh = await offMain { sampler.sample() }
         let found = ProcessAttribution.attribute(fresh, matchers: matchers,
                                                  managedPIDs: managedPIDs).byHarness[harness] ?? []
         let matcher = matchers.first { $0.harness == harness }

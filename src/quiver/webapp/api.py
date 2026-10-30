@@ -42,6 +42,10 @@ class WebApp:
         # by_session over the whole ledger, kept until the next scan or
         # price list: ``(scanned_at, catalog, usage)``.
         self._usage: tuple | None = None
+        # The Calendar file sources' per-account totals, kept until the
+        # next scan: ``((scanned_at, harnesses), stats)``. The Cursor feed
+        # writes no Pi or Droid rows, so its rounds leave them be.
+        self._activity_stats: tuple | None = None
         # Cursor's feed fetches over the network, so a round runs off
         # this lock on its own thread and store (``keepFresh``); its last
         # notes surface with the next page's.
@@ -189,6 +193,17 @@ class WebApp:
         usage = by_session(self._store, self._catalog)
         self._usage = (self._scanned_at, self._catalog, usage)
         return usage
+
+    def activity_session_stats(self, harnesses: tuple[str, ...]) -> dict:
+        """``LedgerStore.activity_session_stats`` for the Calendar's file
+        sources, kept until the next scan like ``session_usage``; the
+        caller holds the page lock."""
+        cached = self._activity_stats
+        if cached is not None and cached[0] == (self._scanned_at, harnesses):
+            return cached[1]
+        stats = self._store.activity_session_stats(list(harnesses))
+        self._activity_stats = ((self._scanned_at, harnesses), stats)
+        return stats
 
     def prices_changed(self) -> None:
         """``config/pricing.json`` was written: the next read builds the
