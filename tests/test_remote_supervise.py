@@ -1501,7 +1501,7 @@ class TestResolveMode(unittest.TestCase):
 
     def test_headless_attach_checks_claude_binary(self):
         # attach can't register a headless channel whose binary is absent.
-        home = Path(tempfile.mkdtemp())
+        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
         session = _session(sid="abc")
         with patch("shutil.which", return_value=None), \
              patch("quiver.remote.tail.resolve_jsonl_path",
