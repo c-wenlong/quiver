@@ -377,11 +377,17 @@ struct OpenPullSheet: View {
                 .padding(12)
                 .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+            if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Leave it empty and the hub writes the review brief.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 4)
+            }
         }
     }
 
     private func startSection(_ machine: Machine) -> some View {
-        let ready = harness != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // A blank prompt is fine: the hub writes its review brief then.
+        let ready = harness != nil
         return VStack(alignment: .leading, spacing: 8) {
             Button { launch = Task { await start(machine) } } label: {
                 HStack(spacing: 8) {
