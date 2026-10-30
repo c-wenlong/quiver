@@ -26,6 +26,7 @@ import socket
 import sqlite3
 import threading
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from email.utils import formatdate
 from pathlib import Path
@@ -882,7 +883,22 @@ class _Handler(BaseHTTPRequestHandler):
         self._must_close = False
         self._body_cache = _UNSET
         self._device_row = None
-        super().handle_one_request()
+        self._sent_headers = None
+        try:
+            super().handle_one_request()
+        except (ConnectionResetError, BrokenPipeError):
+            # The client went away; nothing to answer and nothing to log.
+            self.close_connection = True
+        except Exception:
+            # A route bug. Answer 500 if nothing went out yet, so the
+            # client sees an error instead of a dropped connection.
+            traceback.print_exc()
+            self.close_connection = True
+            if self._sent_headers is None:
+                try:
+                    self._send_error(500, "internal", "the hub hit an error")
+                except OSError:
+                    pass
 
     def parse_request(self) -> bool:
         if not super().parse_request():
@@ -980,7 +996,7 @@ class _Handler(BaseHTTPRequestHandler):
         # no other site may frame a hub page, sniff a body into a script
         # or learn the hub's URL from a referrer. A route that sets its
         # own policy (page previews) keeps it.
-        sent = getattr(self, "_sent_headers", set())
+        sent = getattr(self, "_sent_headers", None) or set()
         for name, value in _SECURITY_HEADERS:
             if name.lower() not in sent:
                 self.send_header(name, value)
@@ -1060,13 +1076,25 @@ class _Handler(BaseHTTPRequestHandler):
         node = self._approver_node(self._state.whois_cached(self._client_ip()))
         return f"tailnet:{node}" if node else None
 
+    def _client_device(self) -> str | None:
+        """The paired device behind the bearer, unless it is a satellite.
+
+        A satellite credential is a machine's, for /v1/agent/* only.
+        Any pair token can mint one, so without this it would carry
+        every phone power: launch agents, approve pair requests, read
+        API keys through /v1/app."""
+        device_id = self._device()
+        if device_id is not None and (
+                (self._device_row or {}).get("role") == "satellite"):
+            return None
+        return device_id
+
     def _caller(self, path: str) -> str | None:
         """The paired device, else the owner's own device. Satellite
         routes stay bearer-only: a satellite is a paired machine."""
-        device_id = self._device()
-        if device_id is None and not path.startswith("/v1/agent/"):
-            device_id = self._owner_device()
-        return device_id
+        if path.startswith("/v1/agent/"):
+            return self._device()
+        return self._client_device() or self._owner_device()
 
     def _scoped_approval_device(self, path: str) -> str | None:
         """A minted ntfy action token as caller identity.
@@ -1263,7 +1291,7 @@ class _Handler(BaseHTTPRequestHandler):
                 403, "bad_origin", "request blocked by origin policy"
             )
             return
-        device_id = self._device()
+        device_id = self._client_device()
         # The peer's node decides self-approval no matter how the
         # caller proved itself — bearer or owner identity alike.
         peer = self._state.whois(self._client_ip())
@@ -1515,7 +1543,7 @@ class _Handler(BaseHTTPRequestHandler):
         # tailnet login that owns this hub node.
         if path == "/v1/pair/requests":
             peer = self._state.whois(self._client_ip())
-            device_id = self._device()
+            device_id = self._client_device()
             if device_id is None and self._approver_node(peer) is None:
                 self._send_error(401, "unauthorized",
                                  "pair this device first")
@@ -2527,6 +2555,12 @@ class _Handler(BaseHTTPRequestHandler):
                 fields = {"ctl": op, "value": cmd.get("value") or ""}
                 if "mode" in cmd:
                     fields["mode"] = cmd["mode"]
+                # The agent echoes it on the command.result, so the phone
+                # can tell its own model switch's failure from another
+                # control's.
+                cid = body.get("client_id")
+                if isinstance(cid, str) and cid:
+                    fields["client_id"] = cid[:64]
                 queued = self._state.queue_command(
                     mid, "control", key, fields)
             if queued is None:
@@ -3384,6 +3418,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
         except (OSError, ValueError, sqlite3.Error) as exc:
             self._send_error(503, "page_unavailable", str(exc))
+            return
+        except Exception as exc:  # a page bug: answer, don't drop the socket
+            traceback.print_exc()
+            self._send_error(500, "page_failed", type(exc).__name__)
             return
         self._send_json(200, body)
 

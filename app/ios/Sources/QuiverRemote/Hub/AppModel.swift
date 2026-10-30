@@ -260,6 +260,14 @@ final class AppModel {
         }
     }
 
+    /// A `session.ownership` event: the owner and, with it, the channel,
+    /// which decides whether the chat offers its Model menu.
+    func patch(_ key: String, ownershipEvent event: OwnershipData) {
+        patch(key, ownership: event.ownership)
+        guard event.ownership != nil, let i = sessions.firstIndex(where: { $0.key == key }) else { return }
+        sessions[i].mode = event.mode
+    }
+
     /// A pin or rename answered or announced (`session.meta`).
     func patch(_ key: String, meta: SessionMeta) {
         guard let i = sessions.firstIndex(where: { $0.key == key }) else { return }
