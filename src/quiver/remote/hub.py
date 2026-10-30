@@ -624,6 +624,22 @@ class HubState:
     def sat_journal_key(machine_id: str) -> str:
         return f"_sat_{machine_id}"
 
+    def _own_journal_keys(self) -> list[str]:
+        """Journals the sweep must leave: the global stream, each paired
+        satellite's command queue (its agent's cursor counts on that
+        queue's seqs), and every satellite session still listed. Those
+        have no tailer or cursor here, and the agent that tails them
+        doesn't know to backfill a journal the hub dropped."""
+        keys = [GLOBAL_KEY] + [
+            self.sat_journal_key(mid)
+            for mid in catalog_mod.load_machines(self.home)
+        ]
+        keys += [
+            str(row.get("key") or "") for row in self.catalog.rows()
+            if row.get("remote")
+        ]
+        return keys
+
     def machine_online(self, mid: str) -> bool:
         return self._sat_subs.get(mid, 0) > 0 or mid == self.machine_id
 
@@ -908,6 +924,11 @@ class HubState:
                     attachments.sweep(self.home)
                 except Exception:
                     self._log_loop_error("attachment sweep")
+                try:
+                    self.tail_manager.sweep_stale(
+                        self.journal, keep=self._own_journal_keys())
+                except Exception:
+                    self._log_loop_error("journal sweep")
             # A write to a session (tail_manager.wake) cuts this short.
             self.tail_manager.wait(0.25)
 
@@ -3862,6 +3883,20 @@ def serve(state: HubState, host: str, port: int,
     state.catalog.on_github_alert = state._github_alert
     state.start()
     server = make_server(state, host, port)
+    # Auto clean quits orphans without a browser ever opening Compute:
+    # its switch is hub state, so the background sampler starts at boot
+    # while it is on rather than wait for a page request.
+    from quiver.webapp import compute as webapp_compute
+    try:
+        # A settings read that fails means off: it can never keep the
+        # hub from serving.
+        auto_clean = webapp_compute.supported() \
+            and webapp_compute.clean_settings(state.home)["enabled"]
+    except (OSError, ValueError, TypeError, AttributeError):
+        auto_clean = False
+    if auto_clean:
+        webapp_compute.model().home = state.home or Path.home()
+        webapp_compute.start_ticker()
     # Only a hub that owns the port may say where it is: a second copy
     # that fails to bind must not overwrite the running one's address.
     save_hub_config(state.home, host, port, public_url)

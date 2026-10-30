@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -1177,7 +1178,7 @@ class TestTailManager(unittest.TestCase):
         mgr.tick(time.time())
         self.assertEqual(self.events[-1][1]["data"]["text"], "a0")
         mgr.sync([("claude:s", sess_b, "active")])
-        src = mgr.tailers["claude:s"].source
+        src = mgr.tailers["claude:s"].next_source()
         self.assertEqual(getattr(src, "path", None), path_b)
         with open(path_a, "a") as fh:
             fh.write(json.dumps(_claude_user("stale")) + "\n")
@@ -1188,6 +1189,115 @@ class TestTailManager(unittest.TestCase):
                  if e["type"] == "message.appended"]
         self.assertNotIn("stale", texts)
         self.assertIn("b1", texts)
+
+    def _resume_pair(self):
+        # Claude --resume from another folder: the new file starts as a
+        # line-for-line copy of the old one.
+        path_a = self.tmp / "a.jsonl"
+        path_a.write_text("".join(
+            json.dumps(_claude_user(f"a{i}")) + "\n" for i in range(3)))
+        path_b = self.tmp / "b.jsonl"
+        sess_a = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_a), tool_name="claude")
+        sess_b = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_b), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess_a, "active")])
+        mgr.tick(time.time())
+        return mgr, path_a, path_b, sess_b
+
+    def _texts(self):
+        return [e["data"]["text"] for _k, e in self.events
+                if e["type"] == "message.appended"]
+
+    def test_reresolve_keeps_turns_written_past_the_copy(self):
+        # The catalog sees the new file a refresh late: a turn already
+        # appended after the copy must still stream, history must not.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "b1"])
+
+    def test_reresolve_finds_the_last_line_when_the_copy_shifts(self):
+        # A copy with an extra record ahead of it: no longer at the same
+        # offset, so the line is found by scanning.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(
+            (json.dumps({"type": "worktree-state"}) + "\n").encode()
+            + path_a.read_bytes()
+            + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "b1"])
+
+    def test_reresolve_streams_old_lines_never_read(self):
+        # Lines the old file got after its last poll were copied too and
+        # were never sent: they stream from the new file.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        with open(path_a, "a") as fh:
+            fh.write(json.dumps(_claude_user("a3")) + "\n")
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "a3", "b1"])
+
+    def test_reresolve_past_a_large_last_record(self):
+        # The old source's last record is bigger than any line window:
+        # the boundary still matches, so the new turn streams.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        big = json.dumps(_claude_user("x" * (3 << 20))) + "\n"
+        with open(path_a, "a") as fh:
+            fh.write(big)
+        mgr.tick(time.time() + 2)
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 4)
+        self.assertEqual(self._texts()[-1], "b1")
+        self.assertEqual(self._texts().count("b1"), 1)
+        self.assertEqual(len(self._texts()), 5)
+
+    def test_reresolve_shifted_copy_with_repeated_lines(self):
+        # A shifted copy whose last read line ("ok") repeats after the
+        # new turns: the cursor must land after the copied "ok", not the
+        # later one, or the turns in between are lost.
+        path_a = self.tmp / "a.jsonl"
+        ok = json.dumps(_claude_user("ok")) + "\n"
+        path_a.write_text(json.dumps(_claude_user("a0")) + "\n" + ok)
+        path_b = self.tmp / "b.jsonl"
+        sess_a = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_a), tool_name="claude")
+        sess_b = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_b), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess_a, "active")])
+        mgr.tick(time.time())
+        path_b.write_bytes(
+            (json.dumps({"type": "worktree-state"}) + "\n").encode()
+            + path_a.read_bytes()
+            + (json.dumps(_claude_user("b1")) + "\n" + ok).encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "ok", "b1", "ok"])
+
+    def test_reresolve_hands_off_on_the_tail_thread(self):
+        # The catalog thread only queues the new source: the old one is
+        # still the one polled until the tail thread swaps them, so its
+        # boundary can't move after being read.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(path_a.read_bytes())
+        old = mgr.tailers["claude:s"].source
+        mgr.sync([("claude:s", sess_b, "active")])
+        self.assertIs(mgr.tailers["claude:s"].source, old)
+        mgr.tick(time.time() + 2)
+        self.assertEqual(mgr.tailers["claude:s"].source.path, path_b)
+        self.assertEqual(
+            json.loads((mgr.cursors_dir / (tail.protocol.key_slug("claude:s")
+                                           + ".json")).read_text())["path"],
+            str(path_b))
 
     def test_ensure_on_demand_tailer_survives_cap(self):
         path = self.tmp / "s.jsonl"
@@ -1248,6 +1358,111 @@ class TestTailManager(unittest.TestCase):
             n = mgr.tick(time.time())
         self.assertEqual(n, 1)
         self.assertIsNotNone(mgr.last_append_at("claude:y"))
+
+
+class TestSweepStale(unittest.TestCase):
+    """``sweep_stale``: old journal + cursor pairs go, live ones stay."""
+
+    def setUp(self):
+        from quiver.remote.journal import Journal
+
+        self.tmp = Path(tempfile.mkdtemp())
+        self.journal = Journal(self.tmp)
+        self.mgr = tail.TailManager(lambda k, e: None, "mbp", home=self.tmp)
+        self.mgr.cursors_dir.mkdir(parents=True, exist_ok=True)
+        self.now = time.time()
+        self.old = self.now - tail.STALE_FILE_AGE_S - 3600
+
+    def _files(self, key, journal_at=None, cursor_at=None):
+        import os
+
+        slug = tail.protocol.key_slug(key)
+        j = self.journal.dir / f"{slug}.jsonl"
+        c = self.mgr.cursors_dir / f"{slug}.json"
+        if journal_at is not None:
+            self.journal.append(key, {"type": "t"})
+            os.utime(j, (journal_at, journal_at))
+        if cursor_at is not None:
+            c.write_text("{}")
+            os.utime(c, (cursor_at, cursor_at))
+        return j, c
+
+    def test_old_pair_goes(self):
+        j, c = self._files("claude:old", self.old, self.old)
+        self.assertEqual(self.mgr.sweep_stale(self.journal, now=self.now), 2)
+        self.assertFalse(j.exists())
+        self.assertFalse(c.exists())
+        # The journal forgot the key: it starts over, as after a restart.
+        self.assertEqual(self.journal.last_seq("claude:old"), 0)
+
+    def test_fresh_journal_or_cursor_keeps_both(self):
+        j1, c1 = self._files("claude:a", self.now, self.old)
+        j2, c2 = self._files("claude:b", self.old, self.now)
+        self.assertEqual(self.mgr.sweep_stale(self.journal, now=self.now), 0)
+        for path in (j1, c1, j2, c2):
+            self.assertTrue(path.exists(), path)
+
+    def test_lone_old_files_go(self):
+        j, _ = self._files("claude:j", journal_at=self.old)
+        _, c = self._files("claude:c", cursor_at=self.old)
+        self.assertEqual(self.mgr.sweep_stale(self.journal, now=self.now), 2)
+        self.assertFalse(j.exists())
+        self.assertFalse(c.exists())
+
+    def test_tailed_and_kept_keys_stay(self):
+        sess_path = self.tmp / "t.jsonl"
+        sess_path.write_text(json.dumps(_claude_user("hi")) + "\n")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(sess_path), tool_name="claude")
+        self.mgr.ensure("claude:tailed", sess, "")
+        j1, c1 = self._files("claude:tailed", self.old, self.old)
+        j2, _ = self._files("_global", journal_at=self.old)
+        self.assertEqual(
+            self.mgr.sweep_stale(self.journal, keep=["_global"], now=self.now),
+            0)
+        for path in (j1, c1, j2):
+            self.assertTrue(path.exists(), path)
+
+
+    def test_a_tailer_starting_mid_sweep_keeps_its_files(self):
+        # A phone opening an idle session while the sweep runs: the
+        # tailer either starts before the sweep (and its key is held)
+        # or after it (with neither file); never on files then deleted.
+        # As the hub wires it: a journal on disk means skip backfill.
+        self.mgr = tail.TailManager(
+            lambda k, e: None, "mbp", home=self.tmp,
+            journal_has=lambda k: self.journal.last_seq(k) > 0)
+        _j, c = self._files("claude:back", self.old, self.old)
+        sess_path = self.tmp / "back.jsonl"
+        sess_path.write_text(json.dumps(_claude_user("hi")) + "\n")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(sess_path), tool_name="claude")
+        started = threading.Event()
+        real = self.journal.sweep
+
+        def slow_sweep(cutoff, keep):
+            started.set()
+            time.sleep(0.2)  # the ensure below runs meanwhile
+            return real(cutoff, keep)
+
+        with patch.object(self.journal, "sweep", side_effect=slow_sweep):
+            t = threading.Thread(
+                target=self.mgr.sweep_stale, args=(self.journal,),
+                kwargs={"now": self.now})
+            t.start()
+            started.wait(2)
+            self.mgr.ensure("claude:back", sess, "")
+            t.join()
+        # The ensure waited for the sweep: both files went first, and
+        # the tailer started fresh, so recent history backfills (one
+        # started on the doomed journal would skip to the end).
+        self.assertFalse(c.exists())
+        self.assertIn("claude:back", self.mgr.tailers)
+        sent = []
+        self.mgr.emit = lambda k, e: sent.append(e)
+        self.mgr.tick(time.time())
+        self.assertEqual([e["data"]["text"] for e in sent
+                          if e["type"] == "message.appended"], ["hi"])
 
 
 class TestApprovalWatcher(unittest.TestCase):
