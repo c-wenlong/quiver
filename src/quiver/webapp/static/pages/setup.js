@@ -523,7 +523,7 @@ function hubCard() {
   const busy = job.state === "cloning";
   const error = page.hubError || (job.state === "failed" ? job.error : null);
   const demo = /^https?:\/\//i.test(hub.demo_url || "")
-    ? `<p class="caption">Demo hub: <a href="${esc(hub.demo_url)}" target="_blank" rel="noopener noreferrer">${esc(hub.demo_url)}</a></p>` : "";
+    ? `<p class="caption">Demo hub: <a href="${safeHref(hub.demo_url)}" target="_blank" rel="noopener noreferrer">${esc(hub.demo_url)}</a></p>` : "";
   return `<div class="card setup-hub">
     <div class="card-title">Start from your hub repo</div>
     <p class="setup-text">Optional. Clone your own hub repo into ~/.quiver on ${esc(machineName())}, so its AGENTS.md, skills,
