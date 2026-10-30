@@ -36,8 +36,9 @@ const DOCTOR_ICONS = {
 const doctorIcon = (name) =>
   `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DOCTOR_ICONS[name]}</svg>`;
 
-/* DoctorReport.Finding.id */
-const doctorId = (f) => f.check + f.message;
+/* DoctorReport.Finding.id, with a separator: check "a" with message
+ * "bc" and check "ab" with message "c" are two findings, not one. */
+const doctorId = (f) => `${f.check}\u0000${f.message}`;
 
 async function renderDoctor() {
   const p = doctorPage;
