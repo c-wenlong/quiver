@@ -164,7 +164,7 @@ import Testing
         let provider = FakeActivity(blocks: [
             ActivityBlock(harness: "claude", accountHome: "/h", sessionId: "sep",
                           start: utc("2026-09-29T09:00:00Z"),
-                          end: utc("2026-09-29T10:00:00Z"), responses: 1),
+                          end: utc("2026-09-29T11:00:00Z"), responses: 1),
             ActivityBlock(harness: "claude", accountHome: "/h", sessionId: "oct",
                           start: utc("2026-10-14T09:00:00Z"),
                           end: utc("2026-10-14T10:00:00Z"), responses: 1)])
@@ -173,10 +173,11 @@ import Testing
         model.mode = .month
         await model.load()
         #expect(model.totals["claude"] == 3600)
-        // In week mode on the September week the same blocks count fully.
+        // In week mode on the September week the two-hour block counts fully
+        // and the October one drops out.
         model.mode = .week
         model.go(to: utc("2026-09-29T12:00:00Z"))
-        #expect(model.totals["claude"] == 3600)
+        #expect(model.totals["claude"] == 7200)
     }
 
     @Test func threeDayRangeAndShift() {
