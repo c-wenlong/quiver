@@ -46,10 +46,12 @@ struct SessionChatPage: View {
         }
     }
 
-    /// harness · folder, as the web app's chat bar has it.
+    /// harness · folder · model, as the web app's chat bar has it. The
+    /// model is the hub's row for the newest reply, left out while unknown.
     private var subtitle: String {
         let folder = (model?.row?.cwd ?? row.session.cwd).map { displayPath($0) }
-        return [HarnessMark(row.session.harness).name, folder].compactMap { $0 }.joined(separator: " · ")
+        return [HarnessMark(row.session.harness).name, folder, model?.row?.modelLabel]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 }
 
