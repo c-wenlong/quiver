@@ -155,13 +155,16 @@ struct AddHarnessSheet: View {
                     Text("Not on PATH yet").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
-            // Checked off the main thread, per edit: a PATH entry on a
-            // stale mount must not stall typing.
+            // Checked off the main thread once typing pauses: a PATH entry
+            // on a stale mount must not stall typing, and an edit that was
+            // typed over starts no lookup of its own.
             .task(id: command) {
                 onPath = nil
                 let command = command
                 guard !command.isEmpty, !command.hasPrefix("/") else { return }
+                try? await Task.sleep(for: .milliseconds(300))
                 let path = await LoginShell.cachedEnvironment()["PATH"] ?? ""
+                guard !Task.isCancelled else { return }
                 let found = await Task.detached { Self.onPath(command, path: path) }.value
                 if !Task.isCancelled { onPath = found }
             }
