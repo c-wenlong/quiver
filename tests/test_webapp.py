@@ -202,6 +202,33 @@ class TestMacOnlySidebar(unittest.TestCase):
 
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestGateLead(unittest.TestCase):
+    """renderGate's lead line: the refusal message only while a credential
+    is stored, unless the caller keeps it (Settings after "Revoke this
+    browser", which has just dropped the credential)."""
+
+    def lead(self, call, stored):
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "const els = {};\n"
+            "globalThis.document = { addEventListener() {}, getElementById: (id) => (els[id] ||= { innerHTML: '' }) };\n"
+            "globalThis.location = { hash: '' };\n"
+            "globalThis.localStorage = { getItem: () => " + json.dumps(stored) + " };\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n")
+        src = (prelude + APP_JS.read_text(encoding="utf-8") + "\n" + call
+               + ";\nprocess.stdout.write(els.panel.innerHTML.match(/<p>([^<]*)<\\/p>/)[1]);\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_lead(self):
+        cred = json.dumps({"credential": "c"})
+        self.assertEqual(self.lead('renderGate("Revoked.")', cred), "Revoked.")
+        self.assertIn("needs pairing", self.lead('renderGate("Revoked.")', None))
+        self.assertEqual(self.lead('renderGate("Signed out.", true)', None), "Signed out.")
+
+
 FORMAT_JS = APP_JS.with_name("format.js")
 
 

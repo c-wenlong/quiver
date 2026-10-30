@@ -1119,3 +1119,39 @@ class TestSync(_Settings):
         status, _ = self.srv.request("POST", "/v1/app/settings/sync", body={}, headers=headers)
         self.assertEqual(status, 403)
         self.assertEqual(fake.calls(), [])
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestRevokeThisBrowserScript(unittest.TestCase):
+    """pages/settings.js under node: revoking this browser's own row drops
+    its credential from localStorage, and a revoke of another device
+    leaves it alone."""
+
+    def revoke(self, this_device):
+        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/settings.js"
+        prelude = (
+            "const store = new Map([['quiver.remote', '{\"credential\":\"c\"}']]);\n"
+            "globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v),"
+            " removeItem: (k) => store.delete(k) };\n"
+            "globalThis.location = { hash: '#/overview' };\n"
+            "globalThis.document = { documentElement: { dataset: {} }, head: { appendChild() {} },"
+            " getElementById: () => null, createElement: () => ({}), querySelectorAll: () => [] };\n"
+            "function registerPage() {}\n"
+            "function pairForget() { localStorage.removeItem('quiver.remote'); }\n"
+            "const apiPost = async () => ({ status: 200, data: " + ("{ this_device: true }" if this_device
+                                                                    else "{ devices: [] }") + " });\n")
+        body = ("settingsPage.data = { remote: { devices: [{ id: 'd1', this_device: " + json.dumps(this_device)
+                + " }] } };\nsettingsPage.setupBusy = true;\n"
+                "settingsRevoke('d1').then(() => process.stdout.write(JSON.stringify("
+                "{ stored: store.has('quiver.remote'), signedOut: !!settingsPage.signedOut })));\n")
+        done = subprocess.run(["node", "-e", prelude + page.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_revoking_this_browser_forgets_its_credential(self):
+        self.assertEqual(self.revoke(True), {"stored": False, "signedOut": True})
+
+    def test_revoking_another_device_keeps_it(self):
+        self.assertEqual(self.revoke(False), {"stored": True, "signedOut": False})
+

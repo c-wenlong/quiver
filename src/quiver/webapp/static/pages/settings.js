@@ -183,8 +183,8 @@ async function renderSettings() {
   const signedOut = p.signedOut;
   p.signedOut = false;
   if (status === 401) {
-    return renderGate(signedOut ? "This browser was signed out of the hub. Pair it again to come back."
-      : "The hub doesn't know this browser's credential. It may have been revoked.");
+    return signedOut ? renderGate("This browser was signed out of the hub. Pair it again to come back.", true)
+      : renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   }
   if (status !== 200 || !data) {
     if (!p.data) return pageError(settingsHeader(), status, data, renderSettings);
@@ -1464,8 +1464,10 @@ async function settingsRevoke(id) {
     { device_id: id, confirm_this_device: dev.this_device === true });
   p.revoking.delete(id);
   if (status === 200 && data && data.this_device) {
-    // This browser's credential is gone. The owner's own tailnet device
-    // still gets in without it; anything else now answers 401.
+    // This browser's credential is gone, so it leaves localStorage too.
+    // The owner's own tailnet device still gets in without it; anything
+    // else now answers 401.
+    pairForget();
     p.data = null;
     p.confirming = null;
     p.signedOut = true;
