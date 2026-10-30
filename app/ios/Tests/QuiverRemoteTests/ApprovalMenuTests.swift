@@ -19,6 +19,20 @@ final class ApprovalMenuTests: XCTestCase {
         XCTAssertEqual(chat.items.first?.kind, .approval(requestId: "r1", prompt: "Run rm -rf build?", state: .pending))
     }
 
+    @MainActor func testAClosingEventKeepsTheRowAnswered() {
+        let chat = ChatModel(key: "devin:1", app: AppModel(hub: nil))
+        chat.apply(env(#"""
+        {"type":"approval.requested","seq":3,"data":{"request_id":"r1","prompt":"Run it?",
+         "options":[{"n":"1","label":"Approve once"},{"n":"2","label":"Always allow"}]}}
+        """#))
+        chat.apply(env(#"{"type":"approval.resolved","seq":4,"data":{"request_id":"r1","decision":"2"}}"#))
+        // The menu leaves the pane: the tailer says so without a decision.
+        chat.apply(env(#"{"type":"approval.resolved","seq":5,"data":{"request_id":"r1","source":"pane"}}"#))
+        XCTAssertEqual(chat.items.first?.kind, .approval(requestId: "r1", prompt: "Run it?", state: .resolved("2")))
+        XCTAssertEqual(ApprovalMenu.title(.resolved("2"), options: chat.approvalOptions["r1"] ?? []),
+                       "Answered: Always allow")
+    }
+
     @MainActor func testAnEventWithoutRowsKeepsTheThreeButtons() {
         let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.apply(env(#"{"type":"approval.requested","seq":3,"data":{"request_id":"r1","prompt":"Run npm test?"}}"#))

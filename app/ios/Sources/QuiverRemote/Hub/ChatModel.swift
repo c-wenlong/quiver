@@ -714,9 +714,13 @@ final class ChatModel {
 
     private func resolveApprovals(requestId: String?, decision: String?) {
         for i in items.indices {
-            guard case .approval(let rid, let prompt, _) = items[i].kind else { continue }
+            guard case .approval(let rid, let prompt, let old) = items[i].kind else { continue }
             if requestId == nil || requestId == "" || requestId == rid {
-                items[i].kind = .approval(requestId: rid, prompt: prompt, state: .resolved(decision))
+                // The tailer's later "the prompt closed" carries no
+                // decision: the answer already recorded stays named.
+                var said = decision
+                if said == nil, case .resolved(let earlier) = old { said = earlier }
+                items[i].kind = .approval(requestId: rid, prompt: prompt, state: .resolved(said))
             }
         }
     }
