@@ -381,5 +381,26 @@ apiAnswers.push(["/v1/app/tasks", { status: 503, data: null }]);
         self.assertEqual(json.loads(done.stdout), {"refresh": True, "retry": "function"})
 
 
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestTaskGroupNames(unittest.TestCase):
+    """tasks.js groups a row with no repo or project under its source's
+    name, spelled as the Mac and iOS spell it."""
+
+    def test_scopeless_rows_group_under_their_source_name(self):
+        import re
+
+        from tests.test_webapp_launch_sheets import PAGES
+        src = (PAGES / "tasks.js").read_text(encoding="utf-8")
+        helpers = "\n".join(re.search(r"^  const %s = .*?;$" % name, src, re.M | re.S).group(0)
+                            for name in ("SOURCE_NAMES", "sourceName", "groupName"))
+        rows = [{"source": "linear"}, {"source": "github", "repo": ""}, {"source": "jira"},
+                {}, {"source": "linear", "repo": "", "project": "QUI"}, {"source": "github", "repo": "o/a"}]
+        done = subprocess.run(["node", "-e", helpers + "\nprocess.stdout.write(JSON.stringify("
+                               + json.dumps(rows) + ".map(groupName)));"],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), ["Linear", "GitHub", "Jira", "Other", "QUI", "o/a"])
+
 if __name__ == "__main__":
     unittest.main()
