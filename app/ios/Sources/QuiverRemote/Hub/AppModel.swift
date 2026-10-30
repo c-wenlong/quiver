@@ -24,9 +24,16 @@ final class AppModel {
 
     private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private let store: HubStore
+    /// The console's saved targets, one per hub; an unpaired hub's goes.
+    @ObservationIgnored private let sshTargets: SSHTargetStore
+    /// How Unpair tells the hub to sign this phone out; tests swap it.
+    @ObservationIgnored var revokeOnHub: (HubClient, String) async -> Void = { client, deviceId in
+        try? await client.revokeDevice(id: deviceId, confirmThisDevice: true)
+    }
 
-    init(store: HubStore = KeychainHubStore()) {
+    init(store: HubStore = KeychainHubStore(), sshTargets: SSHTargetStore = SSHTargetStore()) {
         self.store = store
+        self.sshTargets = sshTargets
         hubs = store.load()
     }
 
@@ -325,14 +332,32 @@ final class AppModel {
         showHub()
     }
 
-    /// Unpairs the hub on screen and shows the next one, if any. With
-    /// `client`, only if that client still talks to the hub on screen: a
-    /// refused answer from a hub this phone has switched away from must
-    /// not unpair the one it switched to.
-    func unpair(from client: HubClient? = nil) {
+    /// Unpair, from the hub menu: drops the hub on screen and shows the
+    /// next one, if any. The hub is told to sign this phone out as well
+    /// (`POST /v1/devices/revoke`), which ends the credential and takes
+    /// the phone's SSH key out of `authorized_keys`; forgetting only the
+    /// local copy left both working on the hub. Best effort: a hub that
+    /// can't be reached keeps the row, for Pair requests to remove.
+    func unpair() {
+        guard let current = hub, let client else { return }
+        let revoke = revokeOnHub
+        Task { await revoke(client, current.credential.deviceId) }
+        forget(current)
+    }
+
+    /// The hub refused this phone's credential: drops it the same way,
+    /// but only if `client` still talks to the hub on screen. A refused
+    /// answer from a hub this phone has switched away from must not
+    /// unpair the one it switched to.
+    func unpair(from client: HubClient) {
         guard let current = hub else { return }
-        if let client, client.baseURL != current.baseURL || client.credential != current.credential.credential { return }
+        if client.baseURL != current.baseURL || client.credential != current.credential.credential { return }
+        forget(current)
+    }
+
+    private func forget(_ current: PairedHub) {
         store.deleteCredential(current.id)
+        sshTargets.remove(current.id)
         hubs.remove(current.id)
         store.saveIndex(hubs)
         if hub == nil {
@@ -390,11 +415,18 @@ final class AppModel {
     /// when they appear.
     var pendingIssue: IssueLink?
 
-    /// `quiver://pair` deep link or a scanned QR; `quiver://issue/…`
-    /// deep link onto the Issues stack.
+    /// A `quiver://pair` link that came from outside the app (the Camera
+    /// app, a tapped link), held until the person confirms the hub it
+    /// names. Anyone can craft one, and a hub paired by it sees every
+    /// prompt and approval, so nothing goes to that hub before then.
+    var pairOffer: PairLink?
+
+    /// A `quiver://pair` deep link waits in `pairOffer`; a
+    /// `quiver://issue/…` deep link goes onto the Issues stack.
     func handle(_ url: URL) async {
         if let link = PairLink(url) {
-            await pair(with: link)
+            pairing.error = nil
+            pairOffer = link
             return
         }
         if let issue = IssueLink(url) {
@@ -402,20 +434,55 @@ final class AppModel {
         }
     }
 
-    func pair(with link: PairLink) async {
+    /// Pairs with the hub `pairOffer` names, which the person confirmed.
+    /// The offer stays up on failure so its error shows where they are.
+    func acceptPairOffer() async {
+        guard let link = pairOffer else { return }
+        let gen = pairingGen
+        offerPairingGen = gen
+        // Only this pair's own mark: a cancelled one finishing late must
+        // not clear the mark of a newer offer's pair still out.
+        defer { if offerPairingGen == gen { offerPairingGen = nil } }
+        if await pair(with: link) { pairOffer = nil }
+    }
+
+    /// The offer's own pair, if one is out, can no longer add the hub. A
+    /// Tailscale pairing under way behind the sheet carries on.
+    func declinePairOffer() {
+        if offerPairingGen != nil {
+            offerPairingGen = nil
+            pairingGen += 1
+            pairing.busy = false
+        }
+        pairOffer = nil
+        pairing.error = nil
+    }
+
+    /// The `pairingGen` an `acceptPairOffer` pair still waiting on the
+    /// hub started under.
+    @ObservationIgnored private var offerPairingGen: Int?
+
+    /// A scanned QR, or a confirmed `pairOffer`. True once the hub is
+    /// paired and on screen. A second call while one is out is dropped:
+    /// the scanner can read the same code twice before it closes.
+    @discardableResult
+    func pair(with link: PairLink) async -> Bool {
+        guard !pairing.busy else { return false }
         let gen = pairingGen
         pairing.busy = true
         pairing.error = nil
         let client = HubClient(baseURL: link.baseURL, credential: nil)
         do {
             let cred = try await client.pair(token: link.token, name: link.name ?? pairing.deviceName)
-            guard gen == pairingGen else { return }
+            guard gen == pairingGen else { return false }
             pairing.busy = false
             adopt(PairedHub(baseURL: link.baseURL, credential: cred))
+            return true
         } catch {
-            guard gen == pairingGen else { return }
+            guard gen == pairingGen else { return false }
             pairing.busy = false
             pairing.error = (error as? HubError)?.message ?? error.localizedDescription
+            return false
         }
     }
 
