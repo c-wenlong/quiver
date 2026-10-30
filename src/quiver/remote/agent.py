@@ -845,12 +845,26 @@ class RemoteAgent:
             )
 
     def _tail_loop(self) -> None:
+        sweeps = 0
         while not self._stop.is_set():
             try:
                 self.tail_manager.tick()
             except Exception:
                 pass
+            sweeps += 1
+            if sweeps >= 1200:  # ~5 min at a 250 ms tick, as on the hub
+                sweeps = 0
+                self._sweep()
             self.tail_manager.wait(0.25)
+
+    def _sweep(self) -> None:
+        """Delete files this satellite stopped needing: cursors of
+        sessions idle past ``tail.STALE_FILE_AGE_S``. The uplink outbox
+        is its own and stays."""
+        try:
+            self.tail_manager.sweep_stale(self._outbox, keep=(OUTBOX_KEY,))
+        except Exception:
+            pass
 
     def _downlink_loop(self) -> None:
         while not self._stop.is_set():
