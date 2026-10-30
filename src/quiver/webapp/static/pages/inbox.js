@@ -113,12 +113,13 @@
 
   function row(note) {
     const when = GhUI.ago(note.updated_at);
+    const href = safeHref(note.url);
     const busy = inbox.busy.has(String(note.id)) || inbox.busy.has("*");
     const read = note.unread ? `<button type="button" class="icon-button gh-note-read${busy ? " spinning" : ""}"
         data-read="${esc(note.id)}" title="Mark as read" aria-label="Mark as read: ${esc(note.title)}"${busy ? " disabled" : ""}>${
         GhUI.ico(busy ? "running" : "envelopeOpen")}</button>` : "";
     return `<div class="gh-note${note.unread ? " unread" : ""}">
-      <a class="gh-note-link" href="${esc(note.url)}" target="_blank" rel="noopener">
+      <a class="gh-note-link"${href ? ` href="${href}" target="_blank" rel="noopener"` : ""}>
         <span class="gh-note-dot" aria-label="${note.unread ? "Unread" : "Read"}"></span>
         ${typeIcon(note)}
         <span class="gh-row-main">
