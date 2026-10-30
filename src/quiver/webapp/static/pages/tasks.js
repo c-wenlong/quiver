@@ -54,7 +54,7 @@
   const LAUNCH_POLLS = 60;
 
   const page = {
-    data: null, status: 0, error: null, loading: false,
+    data: null, error: null, loading: false,
     filter: "all", busy: new Set(), actionError: null,
     seq: 0, forTask: null,
     // The list: the rail's chosen group (null is every task), the groups
@@ -69,7 +69,7 @@
   const tasks = () => (page.data && page.data.tasks) || [];
   const task = (id) => tasks().find((t) => t.id === id) || null;
   const selectedId = () => GhUI.hashParams().get("task");
-  const onTasks = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "tasks";
+  const onTasks = () => currentRoute() === "tasks";
 
   /* A github task groups under its repo; another source's task under its
    * project or the source's name. */
@@ -90,23 +90,8 @@
     return ref;
   };
 
-  /* GhUI.post only POSTs; the unlink route is a DELETE with the same
-   * JSON shape. Never throws: {status: 0} when the hub is unreachable. */
-  async function del_(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "DELETE",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  // The unlink route is a DELETE with the same JSON shape as a POST.
+  const del_ = (path, body) => apiSend("DELETE", path, body);
 
   /* ----------------------------------------------------------- marks */
 
@@ -816,14 +801,15 @@
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the other pages do.
       if (!page.data) {
-        return pageError(pageHeader("Tasks", "The issues and pull requests your agents are on."),
+        // The error says "then refresh", so the header carries the button.
+        return pageError(pageHeader("Tasks", "The issues and pull requests your agents are on.",
+          `<button class="icon-button" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>`),
           status, data, () => load(true));
       }
       page.error = GhUI.failMessage(status, data);
       return paint();
     }
     page.data = data;
-    page.status = status;
     page.error = null;
     // The rail's group went away (all closed out, unpinned): back to All.
     if (page.shown && !tasks().some((t) => groupName(t) === page.shown)

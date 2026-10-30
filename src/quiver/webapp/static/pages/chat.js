@@ -15,7 +15,7 @@
 const SessionChat = (() => {
   const chat = {
     key: null, gen: 0, row: null, rowKnown: false, details: null,
-    stream: null, retryTimer: null,
+    stream: null, retryTimer: null, retries: 0,
     // Live events not yet shown. The hub polls a busy transcript about
     // once a second, so several messages arrive together; they are shown
     // one at a time instead of as a block.
@@ -47,25 +47,11 @@ const SessionChat = (() => {
 
   /* ------------------------------------------------------------ requests */
 
-  /* Every request carries app.js's authHeaders: the paired bearer when
+  /* app.js's apiPost, with its authHeaders: the paired bearer when
    * there is one, and X-Quiver-Pair, which lets the hub owner's own
    * tailnet devices in without pairing. status 0 means the hub never
    * answered (offline, connection lost). */
-  async function post(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "POST", credentials: "same-origin",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  const post = (path, body) => apiPost(path, body);
 
   const sessionPath = (key, action) => `/v1/sessions/${encodeURIComponent(key)}/${action}`;
   const errorText = (data) => (data && data.error && data.error.message) || "";
@@ -505,9 +491,9 @@ const SessionChat = (() => {
      The code a transcript shows — shell commands, tool arguments, file
      bodies and fenced blocks — tokenised by a small hand-rolled scanner
      (the web app has no build step, so no highlighter library). The same
-     rules live in src/quiver/remote/web/app.js and, in Swift, in
+     rules live, in Swift, in
      app/mac/Sources/QuiverCore/Syntax/SyntaxHighlight.swift; keep the
-     three in step. Token classes live in chat.css, their colours in
+     two in step. Token classes live in chat.css, their colours in
      styles.css's --tk-* variables (Theme.swift's syntax* colours). */
 
   const tkPattern = (k, src, boundary, flags) => ({ k, r: new RegExp(src, flags || "y"), b: !!boundary });
@@ -2305,6 +2291,11 @@ const SessionChat = (() => {
 
   /* --------------------------------------------------------------- stream */
 
+  /* How long the nth reconnect in a row waits: 2s, doubling, at most 30s.
+   * A hub that stays down is asked twice a minute, not every 2 seconds. */
+  const RETRY_MS = 2000, RETRY_MAX_MS = 30000;
+  const retryDelay = (n) => Math.min(RETRY_MS * 2 ** Math.min(n, 10), RETRY_MAX_MS);
+
   function openStream(gen, after) {
     closeStream();
     const key = chat.key;
@@ -2330,6 +2321,7 @@ const SessionChat = (() => {
       }
       if (!resp.ok || !resp.body) throw new Error(`sse ${resp.status}`);
       setConn(true);
+      chat.retries = 0;
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -2351,11 +2343,13 @@ const SessionChat = (() => {
       if (chat.stream !== mine) return;
       chat.stream = null;
       setConn("err");
-      // Reconnect with replay from the last seq shown.
+      // Reconnect with replay from the last seq shown, backing off while
+      // it keeps failing. A hidden tab waits: coming back reconnects at
+      // once (the visibilitychange handler below).
       clearTimeout(chat.retryTimer);
       chat.retryTimer = setTimeout(() => {
-        if (gen === chat.gen && !chat.stream) openStream(gen, resumeSeq());
-      }, 2000);
+        if (gen === chat.gen && !chat.stream && !document.hidden) openStream(gen, resumeSeq());
+      }, retryDelay(chat.retries++));
     });
   }
 
@@ -2630,6 +2624,7 @@ const SessionChat = (() => {
     close();
     const gen = ++chat.gen;
     chat.key = key;
+    chat.retries = 0;
     chat.details = opts.details || null;
     chat.row = opts.row ? Object.assign({}, opts.row) : null;
     chat.rowKnown = false;
@@ -3158,6 +3153,7 @@ const SessionChat = (() => {
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && chat.key && chat.opened && !chat.stream) {
+      chat.retries = 0;
       openStream(chat.gen, resumeSeq());
     }
   });
@@ -3169,7 +3165,7 @@ const SessionChat = (() => {
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
       inlineImagesAsText, inline, taskBox, tableHtml,
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
-      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
+      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,

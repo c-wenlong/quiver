@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import QuiverRemote
 
@@ -14,6 +15,21 @@ final class SSEParserTests: XCTestCase {
         var p = SSEParser()
         XCTAssertNil(p.feed(": ka"))
         XCTAssertNil(p.feed(""))
+    }
+}
+
+final class EventStreamTests: XCTestCase {
+    func testOnlyARefusalNoRetryCanChangeEndsTheStream() {
+        XCTAssertTrue(EventStream.ends(status: 403, notFoundInARow: 0))
+        // A restarted hub answers 404 until its catalog scan lands.
+        for n in 1..<EventStream.notFoundLimit {
+            XCTAssertFalse(EventStream.ends(status: 404, notFoundInARow: n), "404 number \(n) may be a restart")
+        }
+        XCTAssertTrue(EventStream.ends(status: 404, notFoundInARow: EventStream.notFoundLimit),
+                      "unknown_session that long: the hub dropped it")
+        for status in [0, 500, 502, 503, 504] {
+            XCTAssertFalse(EventStream.ends(status: status, notFoundInARow: 99), "\(status) is worth reconnecting for")
+        }
     }
 }
 
@@ -302,7 +318,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testToolResultMergesIntoCallAndDuplicatesAreDropped() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         let use = env(#"{"type":"message.appended","seq":1,"data":{"kind":"tool_use","text":"","tool":{"name":"Bash","call_id":"t1","args_summary":"Bash · ls"}}}"#)
         chat.apply(use)
         chat.apply(use)
@@ -314,7 +330,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testApprovalRequestedThenResolved() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.apply(env(#"{"type":"approval.requested","seq":3,"data":{"request_id":"r1","prompt":"Run npm test?"}}"#))
         chat.apply(env(#"{"type":"approval.resolved","seq":4,"data":{"request_id":"r1","decision":"allow"}}"#))
         XCTAssertEqual(chat.items.first?.kind, .approval(requestId: "r1", prompt: "Run npm test?", state: .resolved("allow")))
@@ -350,7 +366,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testLiveResultFindsACallFromAnOlderPage() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.apply(env(#"{"type":"message.appended","seq":10,"data":{"kind":"assistant","text":"working"}}"#))
         // The call is on an older page and still running.
         XCTAssertTrue(chat.prepend(page(#"{"type":"message.appended","seq":5,"data":{"kind":"tool_use","text":"","tool":{"name":"Bash","call_id":"t1","args_summary":"Bash · sleep"}}}"#,
@@ -361,7 +377,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testPageOfOnlyOrphanResultsShowsNothingButKeepsPaging() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         let added = chat.prepend(page(#"{"type":"message.appended","seq":7,"data":{"kind":"tool_result","text":"x","result_ref":"t9"}}"#,
                                       nextBefore: 7, hasMore: true))
         XCTAssertFalse(added)
@@ -381,7 +397,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testABurstIsRevealedOneAtATime() async throws {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         for seq in 1...3 { chat.enqueue(say(seq)) }
         XCTAssertTrue(chat.items.isEmpty)
         XCTAssertTrue(chat.working)
@@ -413,7 +429,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testAnEventJustAfterOneWasShownStillWaitsItsTurn() async {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         let gate = Gate()
         chat.pause = gate.pause
         chat.enqueue(say(1))
@@ -430,7 +446,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testAResultJustAfterItsCallLandsWithoutWaiting() async {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         let gate = Gate()
         chat.pause = gate.pause
         chat.enqueue(env(#"{"type":"message.appended","seq":1,"data":{"kind":"tool_use","text":"","tool":{"name":"Bash","call_id":"t1","args_summary":"Bash · ls"}}}"#))
@@ -443,14 +459,14 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testAReplayAfterReconnectingLandsAtOnce() async throws {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         for seq in 1...30 { chat.enqueue(say(seq)) }
         await Task.yield()
         XCTAssertEqual(chat.items.count, 30)
     }
 
     func testLeavingShowsWhatsStillWaiting() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         for seq in 1...3 { chat.enqueue(say(seq)) }
         chat.stop()
         XCTAssertEqual(chat.items.count, 3)
@@ -492,7 +508,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testMessagesStillBeingRevealedDontOfferStop() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         for seq in 1...3 { chat.enqueue(say(seq)) }
         XCTAssertTrue(chat.working)
         XCTAssertFalse(chat.canInterrupt)
@@ -500,7 +516,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testReopeningAChatReusesItsModel() {
-        let app = AppModel()
+        let app = AppModel(hub: nil)
         let first = app.chat("claude:1")
         first.apply(env(#"{"type":"message.appended","seq":1,"data":{"kind":"assistant","text":"hi"}}"#))
         XCTAssertTrue(app.chat("claude:1") === first)
@@ -519,7 +535,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testASendWhileTheAgentWorksWaitsInTheTrayNotTheTranscript() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("run the tests", clientId: "c1", toTray: true)
         XCTAssertTrue(chat.items.isEmpty)
         XCTAssertEqual(chat.tray.map(\.clientId), ["c1"])
@@ -531,7 +547,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testAnIdleSendGoesStraightToTheTranscript() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("hello", clientId: "c1", toTray: false)
         XCTAssertTrue(chat.queued.isEmpty)
         XCTAssertEqual(chat.items.map(\.id), ["send-c1"])
@@ -540,7 +556,7 @@ final class ChatModelTests: XCTestCase {
 
     func testTheHubDecidesWhetherASendWaits() {
         // The phone thought the agent was busy; the hub sent it at once.
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("one", clientId: "c1", toTray: true)
         chat.posted("c1", waiting: false)
         XCTAssertTrue(chat.queued.isEmpty)
@@ -553,7 +569,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testTheEchoMovesAQueuedSendIntoTheTranscript() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.apply(env(#"{"type":"message.appended","seq":1,"data":{"kind":"assistant","text":"working on it"}}"#))
         chat.stage("and update the docs", clientId: "c1", toTray: true)
         chat.posted("c1", waiting: true)
@@ -567,7 +583,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testItsResultMovesAQueuedSendIntoTheTranscript() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("/rename tray", clientId: "c1", toTray: true)
         chat.posted("c1", waiting: true)
         chat.apply(commandResult(#"{"op":"message","ok":true,"note":"sent to tmux pane","client_id":"c1"}"#))
@@ -576,7 +592,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testAnOlderPageIsNotTakenForAnEcho() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("continue", clientId: "c1", toTray: true)
         chat.posted("c1", waiting: true)
         XCTAssertTrue(chat.prepend(page(#"{"type":"message.appended","seq":3,"data":{"kind":"user","text":"continue"}}"#,
@@ -585,7 +601,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testARemovedSendLeavesWithoutAFailure() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("never mind", clientId: "c1", toTray: true)
         chat.posted("c1", waiting: true)
         chat.markRemoving("c1")
@@ -600,7 +616,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testARefusedRemoveComesBackWithANote() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("one", clientId: "c1", toTray: true)
         chat.stage("two", clientId: "c2", toTray: true)
         chat.posted("c1", waiting: true)
@@ -620,7 +636,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testSendNowShowsSendingAndRefusalsBecomeShortNotes() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("ship it", clientId: "c1", toTray: true)
         XCTAssertFalse(chat.markSendingNow("c1"), "the hub can't act on it before it answers the POST")
         chat.posted("c1", waiting: true)
@@ -672,7 +688,7 @@ final class ChatModelTests: XCTestCase {
         XCTAssertTrue(stale.departed.isEmpty)
 
         // On the model: a send already in the transcript isn't added twice.
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("mine", clientId: "b", toTray: false)
         chat.mergeQueue(body.sends)
         XCTAssertEqual(chat.tray.map(\.clientId), ["a"])
@@ -688,7 +704,7 @@ final class ChatModelTests: XCTestCase {
         XCTAssertFalse(ChatModel.echoes("  run tests", "run tests"))
 
         // Another device's message ending in the same words leaves the row.
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("run tests", clientId: "c1", toTray: true)
         chat.posted("c1", waiting: true)
         chat.apply(user(1, "please run tests"))
@@ -708,7 +724,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testASendThatLeftWhileAwayStillShowsItsReplayedResult() {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         chat.stage("/compact", clientId: "c1", toTray: true)
         chat.stage("/rename later", clientId: "c2", toTray: true)
         chat.posted("c1", waiting: true)
@@ -740,7 +756,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     private func queuedChat(_ texts: [String]) -> ChatModel {
-        let chat = ChatModel(key: "claude:1", app: AppModel())
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
         for (i, text) in texts.enumerated() {
             chat.stage(text, clientId: "c\(i + 1)", toTray: true)
             chat.posted("c\(i + 1)", waiting: true)
@@ -836,7 +852,7 @@ final class ChatModelTests: XCTestCase {
     }
 
     func testChatCacheDropsTheLeastRecentlyOpened() {
-        let app = AppModel()
+        let app = AppModel(hub: nil)
         let oldest = app.chat("claude:0")
         for i in 1...AppModel.chatCacheSize { _ = app.chat("claude:\(i)") }
         XCTAssertFalse(app.chat("claude:0") === oldest)
@@ -1364,5 +1380,18 @@ final class LaunchFlowTests: XCTestCase {
         """
         XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString),
                        ["https://one.example.com", "https://two.example.com/x"])
+    }
+}
+
+final class ChatStreamGateTests: XCTestCase {
+    func testOnlyTheBackgroundStopsAndRestartsTheStream() {
+        var gate = ChatStreamGate()
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none, "Control Center leaves it running")
+        XCTAssertEqual(gate.phase(.active), ChatStreamGate.Action.none, "and coming back restarts nothing")
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none)
+        XCTAssertEqual(gate.phase(.background), .stop)
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none)
+        XCTAssertEqual(gate.phase(.active), .start, "back from the background: started once")
+        XCTAssertEqual(gate.phase(.active), ChatStreamGate.Action.none)
     }
 }

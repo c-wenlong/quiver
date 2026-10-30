@@ -37,12 +37,16 @@ struct NewSessionSheet: View {
     /// How many recent folders list under the field, like the web sheet.
     private static let foldersShown = 6
 
+    /// This Mac's hub machine id from machine.json, read once by load():
+    /// as a computed property it read and decoded the file on every body
+    /// pass and inside each `first(where:)`.
+    @State private var localMachineId: String?
+
     /// The hub's own machine: the one this Mac's hub runs on, else the
     /// listing's first row. Satellite machines can launch but their
     /// folders can't be browsed from the hub.
     private var hubMachineId: String? {
-        IssueResolve.localMachineId(home: FileManager.default.homeDirectoryForCurrentUser)
-            ?? machines?.first?.id
+        localMachineId ?? machines?.first?.id
     }
 
     private var machine: HubMachine? {
@@ -421,6 +425,8 @@ struct NewSessionSheet: View {
     /// One read of machines and sessions: the pickers and the folder
     /// and harness defaults derive from these.
     private func load() async {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        localMachineId = await offMain { IssueResolve.localMachineId(home: home) }
         do {
             async let machinesCall = app.hub.withClient { try await $0.machines() }
             async let sessionsCall = app.hub.withClient { try await $0.sessions() }

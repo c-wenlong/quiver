@@ -34,13 +34,10 @@ TOKEN_TTL_S = 300
 # A device row's ``role`` is what its credential may do. ``phone`` is
 # the default — and the effective role of every row minted before roles
 # existed: session routes only. ``satellite`` may use ``/v1/agent/*``,
-# pinned to one ``machine_id`` at its first register. ``actions`` is
-# the ntfy action-button row: approval POSTs, never agent routes.
-DEVICE_ROLES = frozenset({"phone", "satellite", "actions"})
-
-# Roles a ``/v1/pair`` body may claim. ``actions`` is never wire-
-# claimable — the hub writes those rows itself for ntfy action buttons.
-PAIR_ROLES = DEVICE_ROLES - {"actions"}
+# pinned to one ``machine_id`` at its first register. These are the
+# roles a ``/v1/pair`` body may claim. (Old hubs also wrote ``actions``
+# rows for ntfy buttons; notify.retire_action_credential revokes them.)
+PAIR_ROLES = frozenset({"phone", "satellite"})
 
 _DEVICES_BASENAME = "devices.json"
 _TOKENS_BASENAME = "pair_tokens.json"
@@ -674,6 +671,20 @@ def approve_request(
     with _state_lock(home_path):
         now = time.time()
         rows = _prune_requests(_load_requests(home_path), now)
+        pending = [r for r in rows if r.get("status") == "pending"]
+        if request_id is None and pending and not any(
+            hmac.compare_digest(str(r.get("code") or ""), str(code))
+            for r in pending
+        ):
+            # A code with no request id is checked against every pending
+            # row, so a miss is a strike against each: otherwise guessing
+            # without an id would never hit the five-strike limit.
+            for row in pending:
+                row["attempts"] = row.get("attempts", 0) + 1
+                if row["attempts"] >= MAX_CODE_ATTEMPTS:
+                    row["status"] = "denied"
+            _save_requests(home_path, rows)
+            return None
         for row in rows:
             if row.get("status") != "pending":
                 continue

@@ -37,11 +37,13 @@ async function renderHarnesses() {
   paintHarnesses();
 }
 
-function harnessesHeader() {
+/* Detect and Add harness only once the list is painted: paintHarnesses
+ * binds them, so in the loading and error states they would do nothing. */
+function harnessesHeader(actions = false) {
   const where = harnessesPage.data && harnessesPage.data.machine ? ` on ${harnessesPage.data.machine}` : "";
   return pageHeader("Harnesses", `The AI coding CLIs swe knows about${where}. Star the ones you use; archive the ones you've ruled out.`,
-    `<button class="harness-button" data-sheet="detect">Detect</button>
-     <button class="harness-button primary harness-add" data-sheet="add">${harnessIcon("plus")}Add harness</button>
+    `${actions ? `<button class="harness-button" data-sheet="detect">Detect</button>
+     <button class="harness-button primary harness-add" data-sheet="add">${harnessIcon("plus")}Add harness</button>` : ""}
      <button class="icon-button" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
 }
 
@@ -86,7 +88,7 @@ function paintHarnesses() {
         ? "Hide the harnesses you haven't starred" : `Show ${hidden} more you haven't starred`}</button>`;
     }
   }
-  document.getElementById("panel").innerHTML = `<div class="page">${harnessesHeader()}
+  document.getElementById("panel").innerHTML = `<div class="page">${harnessesHeader(true)}
     <div class="stack">
       <div class="filters">
         <select class="field" id="harness-scope" aria-label="Scope">${options(
@@ -325,26 +327,10 @@ function repaintHarnesses(fallback) {
 }
 
 function onHarnessesPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "harnesses";
+  return currentRoute() === "harnesses";
 }
 
 /* app.js's api() only reads; writes send JSON with the same headers. */
-async function apiPost(path, body) {
-  let resp;
-  try {
-    resp = await fetch(path, {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return { status: 0, data: null };
-  }
-  let data = null;
-  try { data = await resp.json(); } catch { /* empty body */ }
-  return { status: resp.status, data };
-}
-
 /* ------------------------------------------------- Harnesses: the sheets */
 
 /* The Mac app's three sheets as one <dialog>: the row editor (HarnessEditor),
@@ -790,7 +776,7 @@ function paintAccounts() {
 function startAccountsClock() {
   if (accountsPage.timer) return;
   accountsPage.timer = setInterval(() => {
-    const onPage = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "accounts";
+    const onPage = currentRoute() === "accounts";
     if (!onPage) { clearInterval(accountsPage.timer); accountsPage.timer = null; return; }
     if (accountsPage.data && !accountsPage.loading && !accountsPage.failed && !document.hidden) paintAccounts();
   }, 30000);

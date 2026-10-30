@@ -219,6 +219,24 @@ class TestLedgerCoverage(unittest.TestCase):
         (proj / "abc.settings.json").write_text("{}")
         self.assertTrue(self._build(home, "droid", "abc")["trivial"])
 
+    def test_droid_folders_are_listed_once_per_build(self):
+        # A glob per Droid row walked every project folder each time.
+        home = Path(tempfile.mkdtemp())
+        proj = home / ".factory" / "sessions" / "proj"
+        proj.mkdir(parents=True)
+        for sid in ("a", "b", "c"):
+            (proj / f"{sid}.settings.json").write_text("{}")
+        rows = [{"key": f"droid:{sid}", "id": sid, "harness": "droid",
+                 "machine_id": "hub", "cwd": "/w", "last_active_at": 1}
+                for sid in ("a", "b", "c", "gone")]
+        real = Path.glob
+        with patch.object(Path, "glob", autospec=True,
+                          side_effect=lambda self, pat: real(self, pat)) as walk:
+            built = sessions.build(rows, {}, "hub", {}, scanned=True, home=home)
+        self.assertEqual(walk.call_count, 1)
+        self.assertEqual({r["id"]: r["trivial"] for r in built},
+                         {"a": True, "b": True, "c": True, "gone": False})
+
     def test_pi_rows_are_covered_by_definition(self):
         home = Path(tempfile.mkdtemp())
         self.assertTrue(self._build(home, "pi", "anything")["trivial"])
@@ -449,7 +467,8 @@ class TestChatScript(unittest.TestCase):
             ".replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');\n"
             "const safeHref = (u) => /^(https?:\\/\\/|mailto:)/i.test(String(u || '').trim()) ? esc(String(u).trim()) : '';\n"
             "globalThis.window = { addEventListener() {} };\n"
-            "globalThis.document = { addEventListener() {} };\n"
+            "const registered = {};\n"
+            "globalThis.document = { addEventListener(t, f) { registered[t] = f; } };\n"
             "globalThis.location = { hash: '' };\n")
         source = (STATIC / "pages" / "chat.js").read_text(encoding="utf-8")
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
@@ -461,6 +480,37 @@ class TestChatScript(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
 
+    def test_reconnects_back_off_to_half_a_minute(self):
+        out = self.run_js("return [0, 1, 2, 3, 4, 5, 9, 60].map(T.retryDelay);")
+        self.assertEqual(out, [2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000])
+
+    def test_a_hidden_tab_waits_and_showing_it_reconnects(self):
+        """A dropped stream retries on a timer that does nothing while the
+        tab is hidden; showing the tab reconnects at once, and failures in
+        a row wait longer."""
+        out = self.run_js(r"""
+const timers = [], listeners = {};
+let fetches = 0;
+globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+globalThis.clearTimeout = () => {};
+globalThis.fetch = () => { fetches++; return Promise.reject(new Error("down")); };
+globalThis.authHeaders = () => ({});
+document.getElementById = () => null;
+const settle = () => new Promise((r) => setImmediate(r));
+// The visibility handler chat.js registered at load.
+const vis = registered.visibilitychange;
+Object.assign(T.chat, { key: "k", opened: true, gen: 1 });
+T.openStream(1, 0); await settle();
+document.hidden = true; document.visibilityState = "hidden";
+timers[0].fn(); await settle();                       // hidden: no request
+const hiddenFetches = fetches;
+document.hidden = false; document.visibilityState = "visible";
+vis(); await settle();                                // shown: reconnects now
+timers[1].fn(); await settle();                       // visible: the retry runs
+return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
+""")
+        self.assertEqual(out, {"fetches": 3, "hiddenFetches": 1, "delays": [2000, 2000, 4000]})
+
     def test_bare_urls_keep_their_underscores(self):
         """A bare URL goes back after emphasis runs, so `__init__` in a
         path stays in the href and the text, never <strong>."""
@@ -468,6 +518,14 @@ class TestChatScript(unittest.TestCase):
         out = self.run_js("return T.md(" + json.dumps(f"see {url} and **bold**") + ");")
         self.assertEqual(out, f'<p>see <a href="{url}" target="_blank" rel="noopener">{url}</a>'
                               " and <strong>bold</strong></p>")
+
+    def test_writes_go_through_app_js_apipost(self):
+        """chat.js has a send() of its own (the composer's): its requests
+        must reach app.js's apiPost, not call that handler again."""
+        out = self.run_js(
+            "const calls = []; globalThis.apiPost = async (path, body) => { calls.push([path, body]); return { status: 200, data: {} }; };"
+            " const r = await T.post('/v1/sessions/k/send', { text: 'hi' }); return { calls, status: r.status };")
+        self.assertEqual(out, {"calls": [["/v1/sessions/k/send", {"text": "hi"}]], "status": 200})
 
     def test_markdown_escapes_then_restores_code_and_bold(self):
         out = self.run_js(
@@ -1001,10 +1059,6 @@ class TestChatScript(unittest.TestCase):
         self.assertEqual(out["newest"], ["new"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 SESSIONS_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/sessions.js"
 
 
@@ -1118,3 +1172,7 @@ class TestTranscriptSearchBox(unittest.TestCase):
         """, {"status": 0, "data": None})
         self.assertEqual(out["kept"], ["k1"])
         self.assertIn("Couldn't reach transcript search", out["note"])
+
+
+if __name__ == "__main__":
+    unittest.main()

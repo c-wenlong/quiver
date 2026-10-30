@@ -368,7 +368,7 @@ private struct EntryRow: View {
                     Image(systemName: "puzzlepiece.extension")
                         .font(Theme.font(size: 11))
                         .foregroundStyle(Theme.textMuted)
-                        .help("Declared by another tool")
+                        .hoverTip("Declared by another tool")
                 }
                 Text(hook.script)
                     .font(Theme.font(size: 13, weight: .medium, design: .monospaced))

@@ -10,9 +10,11 @@ struct PairedHub: Equatable, Identifiable {
 
     /// The host, with the port when it isn't the hub's default, so two
     /// hubs on one machine read apart.
-    var address: String {
-        let host = baseURL.host ?? id
-        guard let port = baseURL.port, port != Hub.defaultPort else { return host }
+    var address: String { Self.address(of: baseURL) }
+
+    static func address(of url: URL) -> String {
+        let host = url.host ?? url.absoluteString
+        guard let port = url.port, port != Hub.defaultPort else { return host }
         return "\(host):\(port)"
     }
 }
@@ -63,16 +65,25 @@ protocol HubStore {
     func deleteCredential(_ id: String)
 }
 
-/// Keeps the list in memory only, for tests and previews.
+/// Keeps the list in memory only, for tests and previews. Credentials
+/// are kept by hub id, as the Keychain would, so a test can see what
+/// was stored and what was deleted.
 final class MemoryHubStore: HubStore {
     private(set) var list: HubList
+    private(set) var credentials: [String: Credential]
 
-    init(_ list: HubList = HubList()) { self.list = list }
+    init(_ list: HubList = HubList()) {
+        self.list = list
+        credentials = Dictionary(list.hubs.map { ($0.id, $0.credential) }, uniquingKeysWith: { _, new in new })
+    }
 
     func load() -> HubList { list }
     func saveIndex(_ list: HubList) { self.list = list }
-    func saveCredential(_ hub: PairedHub) -> Bool { true }
-    func deleteCredential(_ id: String) {}
+    func saveCredential(_ hub: PairedHub) -> Bool {
+        credentials[hub.id] = hub.credential
+        return true
+    }
+    func deleteCredential(_ id: String) { credentials[id] = nil }
 }
 
 struct KeychainHubStore: HubStore {
@@ -218,6 +229,14 @@ struct KeychainHubStore: HubStore {
         if let data = try? encoder.encode(hub.credential) { _ = keychainWrite(data, account: Self.legacyAccount) }
     }
 
+    /// Whether any copy of a pre-list pairing is still stored: the old
+    /// Keychain item, the webview shell's JSON or the old address (tests).
+    var legacyPairingLeft: Bool {
+        keychainRead(account: Self.legacyAccount) != nil
+            || defaults.object(forKey: Self.legacyCredentialKey) != nil
+            || defaults.object(forKey: Self.legacyHubKey) != nil
+    }
+
     /// Forgets everything this store holds (tests).
     func wipe() {
         for entry in (defaults.data(forKey: Self.hubsKey).flatMap { try? JSONDecoder().decode([IndexEntry].self, from: $0) } ?? []) {
@@ -270,6 +289,13 @@ struct PairLink: Equatable {
     private static func query(_ items: [URLQueryItem]?) -> [String: String] {
         Dictionary((items ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
     }
+
+    /// The hub as the confirm sheet names it, the way the hub menu does.
+    var address: String { PairedHub.address(of: baseURL) }
+}
+
+extension PairLink: Identifiable {
+    var id: String { "\(baseURL.absoluteString) \(token)" }
 }
 
 /// Turns what someone types ("100.64.1.2", "mac.tailnet.ts.net:8477",

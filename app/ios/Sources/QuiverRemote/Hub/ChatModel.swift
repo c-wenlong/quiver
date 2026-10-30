@@ -261,6 +261,10 @@ final class ChatModel {
                 case .connected: self.live = true
                 case .disconnected: self.live = false
                 case .unauthorized: self.app?.unpair(from: client); return
+                case .gone(let error):
+                    self.live = false
+                    self.items.append(ChatItem(id: UUID().uuidString, kind: .system(error.message)))
+                    return
                 case .truncated:
                     self.dropPending()
                     await self.backfill(client)
@@ -409,7 +413,7 @@ final class ChatModel {
             }
             loadError = nil
         } catch {
-            loadError = (error as? HubError)?.message ?? error.localizedDescription
+            loadError = error.localizedDescription
         }
         // The newest page held nothing to show (only results of older
         // calls): fetch back until something does, rather than "No
