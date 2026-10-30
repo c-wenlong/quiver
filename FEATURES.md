@@ -103,6 +103,7 @@ owes the other the same change; say so in the row's Notes until it is paid.
 | Sessions rows and filters | `Sessions.swift`, `SessionFilter.swift` | `src/quiver/webapp/sessions.py`. Owed by Swift: `ledger_covers` (Python keeps Cline `taskHistory.json`-only and Droid no-settings rows visible; the Mac hides them as accidental) and the per-thread Codex usage merge. Search text: the Mac matches account, the web machine |
 | Models page usage figures | `ModelsModel.swift` | `src/quiver/webapp/pages/models.py` |
 | Calendar figures | `CalendarPage.swift` and its model | `src/quiver/webapp/pages/calendar.py` |
+| Grok Bot roster read: which persistence blob is the roster (base32 key ending `.roster.last-roster`), only each row's `id` and `name`, "Subagent" for `sand-subagent-` ids | `app/mac/Sources/QuiverCore/Calendar/GrokBotRoster.swift` | `src/quiver/webapp/pages/calendar.py` (`_grok_names`, `session_title`). Differs by design: the Mac remembers names in its own `~/.quiver/data/grok-bot-names.json` and titles a Bot missing from a non-empty roster "Deleted Bot (<short id>)"; the web never reads the Mac app's store, so a deleted Bot titles by its id |
 | API key file and store | `APIKeysFile`, `APIKeysStore` | `src/quiver/providers/keyfile.py` |
 | MCP redaction and the managed server repo | `McpRedaction`, `SecretText.maskingKeys`, `McpServerRepo` | `src/quiver/webapp/pages/mcp.py` |
 | Plugin drift severity | `CatalogPlugin.worstDrift` | `src/quiver/webapp/pages/plugins.py` |
