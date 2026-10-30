@@ -276,7 +276,14 @@ def launch_tmux(
         args += ["-e", f"{key}={value}"]
     if cwd:
         args += ["-c", cwd]
-    args += [binary, *argv[1:]]
+    command = [binary, *argv[1:]]
+    if len(command) == 1:
+        # tmux hands a lone command argument to default-shell -c, which
+        # is the PATH rebuild above, and splits a binary path with a
+        # space in it. Two or more arguments are exec'd as given, so a
+        # bare launch goes through env.
+        command = ["/usr/bin/env", binary]
+    args += command
     try:
         if _tmux(*args).returncode != 0:
             return None

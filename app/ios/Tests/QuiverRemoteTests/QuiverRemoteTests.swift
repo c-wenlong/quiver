@@ -54,6 +54,16 @@ final class PairLinkTests: XCTestCase {
         XCTAssertEqual(hubURL(from: "mac:9000")?.absoluteString, "http://mac:9000")
         XCTAssertEqual(hubURL(from: "http://mac:8477/#approve")?.absoluteString, "http://mac:8477")
         XCTAssertNil(hubURL(from: "   "))
+        // https with no port is `tailscale serve` on 443, not the hub's 8477.
+        XCTAssertEqual(hubURL(from: "https://mac.tailnet.ts.net")?.absoluteString, "https://mac.tailnet.ts.net")
+        XCTAssertEqual(hubURL(from: "https://mac.tailnet.ts.net:8443/")?.absoluteString, "https://mac.tailnet.ts.net:8443")
+    }
+
+    func testHttpsFragmentLinkWithoutAPortIs443() {
+        XCTAssertEqual(PairLink(URL(string: "https://mac.tailnet.ts.net/app/#pair=tok")!)?.baseURL.absoluteString,
+                       "https://mac.tailnet.ts.net")
+        XCTAssertEqual(PairLink(URL(string: "http://mac.ts.net/app/#pair=tok")!)?.baseURL.absoluteString,
+                       "http://mac.ts.net:8477")
     }
 }
 
