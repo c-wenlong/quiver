@@ -18,7 +18,7 @@ from quiver.github import gh, manage, repos
 from quiver.github import pulls as gh_pulls
 from quiver.remote import pulls as pulls_mod
 from quiver.remote import protocol
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 from quiver.webapp.pages import repositories
 
 from tests.test_remote_hub import _Server, _session

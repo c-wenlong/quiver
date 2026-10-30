@@ -33,7 +33,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, home_path
 from quiver.webapp.pages.doctor import blocked_now
 from quiver.webapp.pages.skills import _inside, read_text
 
@@ -43,7 +43,7 @@ _WRITE_LOCK = threading.Lock()
 
 
 def get(ctx, args: dict) -> dict:
-    home = Path(ctx.home) if ctx.home is not None else Path.home()
+    home = home_path(ctx)
     if args.get("hook"):
         return detail(ctx, home, args)
     return listing(ctx, home)
@@ -53,19 +53,15 @@ def post(ctx, action: str, body: dict) -> dict:
     if action == "new":
         if not isinstance(body, dict):
             raise PageError(422, "bad_body", "Send a JSON object.")
-        return _new(ctx, _home(ctx), body)
+        return _new(ctx, home_path(ctx), body)
     force = {"link": False, "replace": True}.get(action)
     if force is None:
         raise PageError(404, "unknown_action", f"unknown hooks action: {action}")
     from quiver.webapp.pages.doctor import run_init_now
 
-    home = _home(ctx)
+    home = home_path(ctx)
     error = run_init_now(home, force=force)
     return {"ran": action, "error": error, **listing(ctx, home)}
-
-
-def _home(ctx) -> Path:
-    return Path(ctx.home) if ctx.home is not None else Path.home()
 
 
 # -- the list ------------------------------------------------------------

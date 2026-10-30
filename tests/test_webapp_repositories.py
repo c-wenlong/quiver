@@ -17,7 +17,7 @@ from unittest.mock import patch
 from quiver import paths
 from quiver.github import gh, repos
 from quiver.webapp.pages import PageError
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 from quiver.webapp.pages import repositories as R
 
 from tests.test_remote_hub import HubBase

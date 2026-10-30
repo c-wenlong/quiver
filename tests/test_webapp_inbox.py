@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from quiver.github import gh
 from quiver.webapp.pages import PageError
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 from quiver.webapp.pages import inbox
 
 from tests.test_remote_hub import HubBase
