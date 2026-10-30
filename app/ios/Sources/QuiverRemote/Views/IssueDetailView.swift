@@ -99,6 +99,9 @@ struct IssueDetailView: View {
                 reply = body
                 error = nil
             }
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch {
             guard gen == generation else { return }
             self.error = error.localizedDescription
@@ -354,6 +357,8 @@ struct ResolveIssueSheet: View {
             // The worktree is now known, so the last-harness-used
             // default can match it — unless the user already picked.
             if !harnessTouched { harness = defaultHarness() }
+        } catch is CancellationError {
+            // The sheet closed mid-fetch: nothing failed.
         } catch {
             detailNote = error.localizedDescription
         }

@@ -326,6 +326,8 @@ struct FolderBrowserView: View {
         error = nil
         do {
             listing = try await client.folders(machine: machineId, path: current ?? path)
+        } catch is CancellationError {
+            // The picker closed mid-fetch: nothing failed.
         } catch {
             self.error = error.localizedDescription
         }

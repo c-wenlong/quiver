@@ -36,8 +36,11 @@ struct HubError: LocalizedError, Equatable {
 struct HubClient: Sendable {
     let baseURL: URL
     let credential: String?
+    /// The session REST calls go through; tests hand in one whose
+    /// protocol is stubbed.
+    var session: URLSession = HubClient.requestSession
 
-    private static let session: URLSession = {
+    static let requestSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.waitsForConnectivity = false
@@ -102,8 +105,15 @@ struct HubClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await Self.session.data(for: req)
+            (data, response) = try await session.data(for: req)
         } catch {
+            // URLSession reports a cancelled task as URLError(.cancelled):
+            // leaving a page is not a hub that can't be reached, so callers
+            // get CancellationError and ignore it.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled
+                || Task.isCancelled {
+                throw CancellationError()
+            }
             throw HubError.network(error)
         }
         let http = response as? HTTPURLResponse
