@@ -115,16 +115,7 @@ struct McpServersPage: View {
             }
         }
         .quiverSheet(isPresented: $adding) {
-            let (harnesses, active, servers): ([String], [String], [McpServer]) = {
-                if case .loaded(let inventory) = model.state {
-                    return (inventory.harnesses,
-                            inventory.activeHarnesses.filter { !hidden.contains($0) },
-                            inventory.servers)
-                }
-                return ([], [], [])
-            }()
-            McpAddServerSheet(harnesses: harnesses, active: active,
-                              existing: servers) {
+            McpAddServerSheet(hidden: hidden) {
                 await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth)
             }
         }
