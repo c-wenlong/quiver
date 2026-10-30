@@ -49,25 +49,11 @@ const SessionChat = (() => {
 
   /* ------------------------------------------------------------ requests */
 
-  /* Every request carries app.js's authHeaders: the paired bearer when
+  /* app.js's apiPost, with its authHeaders: the paired bearer when
    * there is one, and X-Quiver-Pair, which lets the hub owner's own
    * tailnet devices in without pairing. status 0 means the hub never
    * answered (offline, connection lost). */
-  async function post(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "POST", credentials: "same-origin",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  const post = (path, body) => apiPost(path, body);
 
   const sessionPath = (key, action) => `/v1/sessions/${encodeURIComponent(key)}/${action}`;
   const errorText = (data) => (data && data.error && data.error.message) || "";
@@ -2326,7 +2312,7 @@ const SessionChat = (() => {
       if (resp.status === 401) {
         chat.stream = null;
         close();
-        renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+        renderGate();
         return;
       }
       if (resp.status === 404) {
@@ -2409,30 +2395,46 @@ const SessionChat = (() => {
    * view stopped, or it was wiped (hub state reset) and its numbering now
    * starts below the cursor, which would skip every new event as already
    * seen. The view adopts the seq the hub sent, lower or not, and reads
-   * the transcript again, as the phone does; the stream stays open and
-   * what arrives meanwhile is held, then shown if it is newer than the
-   * history (an approval always, since the transcript has none). */
+   * the transcript again, as the phone does. The stream stays open; what
+   * arrives meanwhile is held, then applied, except messages the redrawn
+   * history already shows. */
   async function resync(head) {
-    const gen = chat.gen;
+    const gen = chat.gen, key = chat.key;
     dropPending();
     chat.held = [];
     chat.history = null;
     chat.seq = typeof head === "number" && head >= 0 ? head : 0;
-    chat.toolCards.clear();
-    const log = $("chat-log");
-    if (log) log.innerHTML = '<p class="empty" id="chat-loading">Reloading the transcript…</p>';
-    const status = await backfill(gen);
+    const { status, data } = await api(`${sessionPath(key, "messages")}?limit=500`);
     if (gen !== chat.gen) return;
     const held = chat.held || [];
     chat.held = null;
     if (status === 401) {
       close();
-      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      renderGate();
       return;
     }
-    for (const ev of held) {
-      if (typeof ev.seq !== "number" || ev.seq > chat.seq || String(ev.type).startsWith("approval.")) enqueue(ev);
+    const log = $("chat-log");
+    // A failed read leaves the history on screen rather than an error.
+    if (status === 200 && data && log) {
+      // Unanswered approval cards stay, buttons and all: the transcript
+      // has no approvals, and their asks are behind the cursor.
+      const open = [...log.querySelectorAll(".msg.approval:not(.resolved)")];
+      log.innerHTML = "";
+      chat.toolCards.clear();
+      const messages = data.messages || [];
+      for (const ev of messages) appendEvent(ev, false);
+      if (messages.length) remember(messages[messages.length - 1].seq);
+      for (const card of open) log.appendChild(card);
+      scrollBottom();
     }
+    // Status, ownership, command results and approvals aren't in the
+    // transcript, so they apply whatever their seq.
+    for (const ev of held) {
+      if (ev.type === "message.appended" && typeof ev.seq === "number" && ev.seq <= chat.seq) continue;
+      enqueue(ev);
+    }
+    // An attach or detach may have happened behind the cursor as well.
+    loadRow(gen);
   }
 
   function closeStream() {
@@ -2614,7 +2616,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     chat.rail.loading = false;
     if (status === 401) {
-      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      renderGate();
       return;
     }
     if (status !== 200 || !data) {
@@ -2711,7 +2713,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     if (rowStatus === 401 || logStatus === 401) {
       close();
-      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      renderGate();
       return;
     }
     if (rowStatus === 404) { setConn("err"); return; }
@@ -3216,7 +3218,7 @@ const SessionChat = (() => {
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
       inlineImagesAsText, inline, taskBox, tableHtml,
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
-      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, handleFrame,
+      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post, handleFrame,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,

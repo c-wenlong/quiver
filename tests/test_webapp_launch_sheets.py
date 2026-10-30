@@ -171,6 +171,9 @@ STUB += app_js_function("currentRoute")
 
 MENU_JS = (Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/model-menu.js")
 
+# Writes go through app.js's own send(), over the stubbed fetch.
+STUB += app_js_function("apiSend") + "const apiPost = (path, body) => apiSend(\"POST\", path, body);\n"
+
 # The four harnesses every flow offers: claude and codex take a model
 # pick and have recent models, gemini takes none, and pi is what an old
 # hub sends (``last_model`` only, no ``recent_models``).

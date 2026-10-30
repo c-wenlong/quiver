@@ -511,39 +511,53 @@ return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
 """)
         self.assertEqual(out, {"fetches": 3, "hiddenFetches": 1, "delays": [2000, 2000, 4000]})
 
-    def test_a_truncated_journal_takes_its_lower_seq_and_refetches(self):
-        """A hub whose journal was wiped sends journal.truncated with its
-        head below this view's cursor: the view adopts it, reads
-        /messages again, holds what streams meanwhile, then shows only
-        what is newer (and an approval whatever its seq)."""
-        out = self.run_js(r"""
+    RESYNC = r"""
 let answer; const asked = [];
-globalThis.api = (path) => { asked.push(path); return new Promise((r) => { answer = r; }); };
-const els = { "chat-log": { innerHTML: "" } };
-document.getElementById = (id) => els[id] || null;
+globalThis.api = (path) => {
+  asked.push(path);
+  if (path === "/v1/sessions") return Promise.resolve({ status: 200, data: { sessions: [] } });
+  return new Promise((r) => { answer = r; });
+};
+const card = { kind: "open approval card" }, appended = [];
+const log = { innerHTML: "old history", querySelectorAll: () => [card], appendChild: (el) => appended.push(el) };
+document.getElementById = (id) => (id === "chat-log" ? log : null);
 globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
 const frame = (ev) => "data: " + JSON.stringify(ev);
 Object.assign(T.chat, { key: "k", gen: 1, seq: 500 });
 T.handleFrame("k", frame({ type: "journal.truncated", seq: 3 }));
-const during = { seq: T.chat.seq, asked: asked.slice(), log: els["chat-log"].innerHTML };
+const during = { seq: T.chat.seq, asked: asked.slice(), log: log.innerHTML };
 T.handleFrame("k", frame({ type: "journal.caught-up", seq: 3 }));
+T.handleFrame("k", frame({ type: "session.status", seq: 1, data: {} }));
 T.handleFrame("k", frame({ type: "message.appended", seq: 2, data: {} }));
 T.handleFrame("k", frame({ type: "approval.requested", seq: 1, data: { request_id: "r" } }));
 T.handleFrame("k", frame({ type: "message.appended", seq: 4, data: {} }));
 const heldWhileReading = T.chat.held.length;
 T.chat.revealTimer = 1;  // keep what is queued in chat.pending, unrevealed
-answer({ status: 200, data: { messages: [] } });
+answer(ANSWER);
 await new Promise((r) => setImmediate(r));
-return { during, heldWhileReading, held: T.chat.held, seq: T.chat.seq,
-         queued: T.chat.pending.map((e) => e.type + ":" + e.seq) };
-""")
-        self.assertEqual(out["during"]["seq"], 3)
-        self.assertEqual(out["during"]["asked"], ["/v1/sessions/k/messages?limit=500"])
-        self.assertIn("Reloading the transcript", out["during"]["log"])
-        self.assertEqual(out["heldWhileReading"], 3)
+return { during, heldWhileReading, held: T.chat.held, seq: T.chat.seq, log: log.innerHTML,
+         kept: appended.length, asked, queued: T.chat.pending.map((e) => e.type + ":" + e.seq) };
+"""
+
+    def test_a_truncated_journal_takes_its_lower_seq_and_refetches(self):
+        """A hub whose journal was wiped sends journal.truncated with its
+        head below this view's cursor: the view adopts it, reads
+        /messages again, holds what streams meanwhile, then applies all
+        but the messages the redraw shows; an unanswered approval card
+        survives the redraw and the session row is read again."""
+        out = self.run_js(self.RESYNC.replace("ANSWER", "{ status: 200, data: { messages: [] } }"))
+        self.assertEqual(out["during"], {"seq": 3, "asked": ["/v1/sessions/k/messages?limit=500"], "log": "old history"})
+        self.assertEqual(out["heldWhileReading"], 4)
         self.assertIsNone(out["held"])
         self.assertEqual(out["seq"], 3)
-        self.assertEqual(out["queued"], ["approval.requested:1", "message.appended:4"])
+        self.assertEqual((out["log"], out["kept"]), ("", 1))
+        self.assertEqual(out["queued"], ["session.status:1", "approval.requested:1", "message.appended:4"])
+        self.assertEqual(out["asked"][-1], "/v1/sessions")
+
+    def test_a_failed_refetch_keeps_the_history(self):
+        out = self.run_js(self.RESYNC.replace("ANSWER", "{ status: 0, data: null }"))
+        self.assertEqual((out["log"], out["kept"], out["seq"]), ("old history", 0, 3))
+        self.assertEqual(out["queued"], ["session.status:1", "approval.requested:1", "message.appended:4"])
 
     def test_bare_urls_keep_their_underscores(self):
         """A bare URL goes back after emphasis runs, so `__init__` in a
@@ -552,6 +566,14 @@ return { during, heldWhileReading, held: T.chat.held, seq: T.chat.seq,
         out = self.run_js("return T.md(" + json.dumps(f"see {url} and **bold**") + ");")
         self.assertEqual(out, f'<p>see <a href="{url}" target="_blank" rel="noopener">{url}</a>'
                               " and <strong>bold</strong></p>")
+
+    def test_writes_go_through_app_js_apipost(self):
+        """chat.js has a send() of its own (the composer's): its requests
+        must reach app.js's apiPost, not call that handler again."""
+        out = self.run_js(
+            "const calls = []; globalThis.apiPost = async (path, body) => { calls.push([path, body]); return { status: 200, data: {} }; };"
+            " const r = await T.post('/v1/sessions/k/send', { text: 'hi' }); return { calls, status: r.status };")
+        self.assertEqual(out, {"calls": [["/v1/sessions/k/send", {"text": "hi"}]], "status": 200})
 
     def test_markdown_escapes_then_restores_code_and_bold(self):
         out = self.run_js(
