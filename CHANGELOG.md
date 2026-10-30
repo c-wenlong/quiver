@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hub isn't running
   ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 
+- **Web app: Needs you in the Inbox.** The Inbox page now opens with
+  the iOS Inbox's Waiting on you, Errors and Finished today sections
+  from the hub's `GET /v1/inbox`, above the GitHub notifications. A row
+  opens its session's chat, and Clear (a row or a whole section) posts
+  `POST /v1/inbox/dismiss`; a pending approval can't be cleared. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **Remote: a `limit` notification when a session hits its usage
   limit.** The hub and satellites now raise `notify` kind `limit` when
   a Claude Code session writes its rate-limit record ("You've hit your

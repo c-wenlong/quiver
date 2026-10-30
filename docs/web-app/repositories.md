@@ -293,6 +293,19 @@ the narrow layout's chip strip drags sideways.
 
 ## Inbox
 
+**Needs you** sits above the GitHub list: the iOS Inbox's session
+sections from the hub's own `GET /v1/inbox?done=1`, in its order (Waiting
+on you, Errors, Finished today; an unknown status counts as waiting). A
+row shows the status dot, title, harness logo, what it waits on and age,
+and opens the session's chat (`#/sessions?chat=<key>`); a pending approval
+says Review. Clear, on a row (on hover or focus) or a section's head,
+posts `POST /v1/inbox/dismiss` with the row's `last_active_at`, so the
+hub keeps it off this browser's inbox until the session moves again. A
+pending approval has no Clear and a section's Clear skips it. A row
+leaves at once; a refused clear says so and the next read brings it back.
+The hub's GitHub rows are left out, since the list below shows them. It
+reads again with the GitHub list: on open, Refresh and the minute poll.
+
 `GET /v1/app/inbox` is `swe gh inbox --all --limit=50 --json`: `{"github",
 "status", "notifications": [GhNotification], "error"?, "fetched_at",
 "machine"}`. Read rows come back too, so Unread only (on by default)

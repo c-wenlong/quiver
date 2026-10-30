@@ -188,3 +188,18 @@ extension HubStubbed {
     }
 }
 }
+
+@MainActor
+@Suite struct NeedsYouApprovalTests {
+    /// The hub ships a pending approval whatever this Mac cleared; a
+    /// session cleared a moment ago that now asks for approval with the
+    /// same activity stamp must still show.
+    @Test func anApprovalShowsEvenRightAfterItsSessionWasCleared() async {
+        let model = NeedsYouModel()
+        await model.load { [item("a", "followup", at: 50)] }
+        await model.dismiss(model.items, post: { _, _ in }, refetch: { [] })
+        #expect(model.items.isEmpty)
+        await model.load { [item("a", "approval", at: 50)] }
+        #expect(model.items.map(\.key) == ["a"])
+    }
+}

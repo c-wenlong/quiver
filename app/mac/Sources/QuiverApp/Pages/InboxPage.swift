@@ -33,7 +33,13 @@ struct InboxPage: View {
                 .help("Mark every notification read")
             }
             Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await model.loadInbox(swe: app.swe, force: true) }
+                Task {
+                    async let sessions: Void = needsYou.load {
+                        try await app.hub.withClient { try await $0.inbox(done: true) }
+                    }
+                    await model.loadInbox(swe: app.swe, force: true)
+                    await sessions
+                }
             }
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)

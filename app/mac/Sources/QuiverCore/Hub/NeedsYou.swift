@@ -127,7 +127,10 @@ public enum NeedsYouSection: CaseIterable, Sendable {
 /// An entry filters fetched rows whose `lastActiveAt` has not moved past
 /// the stamp posted; a row that did move past it has new activity,
 /// returns legitimately, and retires the entry. The iPhone app's
-/// `DismissalLedger` follows the same rule, which is the hub's.
+/// `DismissalLedger` follows the same rule, which is the hub's. A
+/// pending approval always passes, as the hub ships one whatever was
+/// dismissed: a session cleared a moment ago can ask for approval
+/// without its activity stamp moving.
 public struct InboxDismissals: Sendable {
     public private(set) var stamps: [String: Double] = [:]
 
@@ -141,7 +144,7 @@ public struct InboxDismissals: Sendable {
         var out: [HubInboxItem] = []
         out.reserveCapacity(items.count)
         for item in items {
-            guard let stamp = stamps[item.key] else { out.append(item); continue }
+            guard !item.isApproval, let stamp = stamps[item.key] else { out.append(item); continue }
             if item.dismissStamp > stamp {
                 stamps[item.key] = nil
                 out.append(item)

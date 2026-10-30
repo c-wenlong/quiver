@@ -262,6 +262,29 @@ select.field.gh-method { height: 32px; width: 180px; flex: 0 1 180px; }
 }
 .gh-note.unread .gh-note-title { font-size: 14px; font-weight: 500; color: var(--text-primary); }
 .gh-inbox > .caption { padding: 10px 6px 0; }
+/* Needs you: the iOS Inbox's sections over the GitHub list, each head
+ * with the Clear its toolbar menu has. */
+.gh-inbox-heading { margin: 0 0 -8px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.gh-need-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px 2px; font-size: 12px; font-weight: 500; }
+.gh-need-head:not(:first-child) { margin-top: 10px; }
+.gh-need-head + .gh-note { border-top: 0; }
+.gh-need-section.gh-warning { color: var(--warning-text); }
+.gh-need-section.gh-danger { color: var(--danger-text); }
+.gh-need-clear {
+  border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: 12px;
+  padding: 2px 6px; border-radius: 6px; cursor: pointer;
+}
+.gh-need-clear:hover { background: var(--hover); color: var(--text-primary); }
+.gh-need-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none; background: var(--text-muted); }
+.gh-need-dot.status-active { background: var(--accent); }
+.gh-need-dot.status-error { background: var(--danger-text); }
+.gh-need-dot.status-approval, .gh-need-dot.status-followup, .gh-need-dot.status-interrupted { background: var(--warning-text); }
+.gh-need-title { font-size: 14px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-need-meta { display: flex; align-items: center; gap: 6px; }
+.gh-need-review {
+  align-self: center; flex: none; font-size: 12px; padding: 3px 10px; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 6px;
+}
 
 /* Add repository: the rail's last row, and AddRepoSheet's droplist. */
 .gh-rail-add { color: var(--text-muted); margin-top: 14px; }
