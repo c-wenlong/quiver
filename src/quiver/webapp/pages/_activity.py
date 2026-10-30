@@ -15,13 +15,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sqlite3
 import stat
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from quiver.ledger.models import parse_timestamp
 from quiver.ledger.parsers import iter_lines
+from quiver.paths import quiver_dir_for
 
 # Sessions the ledger also logs, so the Calendar drops the accidental
 # ones the way the block query judges the rest
@@ -235,6 +239,128 @@ def parse_freebuff(path: str, account: str) -> list[dict]:
              "timestamps": timestamps}]
 
 
+# ---------------------------------------------------------------- Cursor app
+
+# Every bubble row. A range on the key, not ``LIKE 'bubbleId:%'``: LIKE
+# is case-insensitive, so SQLite can't use the key's index for it.
+# ``;`` is the character after ``:``.
+CURSOR_BUBBLES = ("SELECT key, json_extract(value, '$.createdAt')"
+                  " FROM cursorDiskKV WHERE key >= 'bubbleId:' AND key < 'bubbleId;'")
+CURSOR_DB = "User/globalStorage/state.vscdb"
+# What ``Double(String)`` takes: a decimal, inf/infinity/nan, or a hex
+# float, signed or not, with no whitespace and no ``_`` (``float`` takes both).
+_SWIFT_DOUBLE = re.compile(r"[+-]?(?:(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?|inf|infinity|nan)", re.I)
+_SWIFT_HEX = re.compile(r"[+-]?0x(?:[0-9a-f]+\.?[0-9a-f]*|\.[0-9a-f]+)(?:p[+-]?\d+)?", re.I)
+
+
+def swift_double(text: str) -> float | None:
+    """``Double(text)``, None where Swift would give nil."""
+    if _SWIFT_DOUBLE.fullmatch(text):
+        return float(text)
+    if _SWIFT_HEX.fullmatch(text):
+        try:
+            return float.fromhex(text)
+        except OverflowError:
+            # Swift rounds a hex float past the largest double to infinity.
+            return float("-inf") if text.startswith("-") else float("inf")
+    return None
+
+
+def cursor_created_at(value) -> float | None:
+    """``CursorAppActivity.createdAt``: epoch seconds from an ISO string or
+    a millisecond number. Swift reads the column as text, so a number
+    arrives as its decimal text and a string holding a number counts too;
+    zero and below are no time."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return value / 1000 if value > 0 else None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "replace")
+    ts = parse_timestamp(value)
+    if ts is not None:
+        return ts
+    ms = swift_double(value)
+    return ms / 1000 if ms is not None and ms > 0 else None
+
+
+def cursor_composer(key: str) -> str | None:
+    """The composer id out of ``bubbleId:<composer>:<bubble>``, splitting
+    as Swift's ``split(separator:)`` does (empty pieces dropped); None
+    for a key with no bubble part or a ``task-`` (subagent) composer."""
+    parts = [p for p in key.split(":") if p]
+    if len(parts) < 3 or parts[0] != "bubbleId":
+        return None
+    return None if parts[1].startswith("task-") else parts[1]
+
+
+def cursor_user_data_dirs(home: Path, profiles: list[dict]) -> list[str]:
+    """The account roots ``AppModel`` hands ``CursorAppActivity``: the
+    app's own ``~/Library/Application Support/Cursor`` plus each extra
+    Cursor profile's ``desktop`` folder (``ProfileStore.paths``)."""
+    root = quiver_dir_for(home) / "accounts"
+    dirs = [str(home / "Library/Application Support/Cursor")]
+    dirs += [str(root / "cursor" / p["id"] / "desktop") for p in profiles
+             if p.get("vendor") == "cursor" and not p.get("isDefault")]
+    return dirs
+
+
+def cursor_stamp(db: str) -> tuple | None:
+    """The db's stamp folded with its WAL's: a live WAL-mode database
+    changes in the -wal file while the main file's mtime stands still."""
+    found = stamp(db)
+    if found is None:
+        return None
+    wal = stamp(db + "-wal")
+    if wal is None:
+        return found
+    return (max(found[0], wal[0]), found[1] + wal[1])
+
+
+def cursor_files(dirs: list[str]) -> dict[str, tuple]:
+    """One ``state.vscdb`` per account root; two roots naming one
+    database read it once."""
+    files: dict[str, tuple] = {}
+    for d in dirs:
+        db = str(Path(d) / CURSOR_DB)
+        found = cursor_stamp(db)
+        if found is not None:
+            files.setdefault(db, found)
+    return files
+
+
+def parse_cursor(path: str) -> list[dict]:
+    """``CursorAppActivity.parse``: one session per composer id, the
+    database opened strictly read-only and queried once, retrying a
+    single BUSY. The rows are read as the query steps; a retry starts
+    the sessions over, so rows read before a BUSY never count twice."""
+    sessions: dict[str, list[float]] = {}
+    for attempt in range(2):
+        sessions = {}
+        try:
+            con = sqlite3.connect(f"file:{quote(path)}?mode=ro", uri=True, timeout=2)
+            try:
+                for key, value in con.execute(CURSOR_BUBBLES):
+                    if not isinstance(key, str):
+                        continue
+                    created, composer = cursor_created_at(value), cursor_composer(key)
+                    if created is not None and composer is not None:
+                        sessions.setdefault(composer, []).append(created)
+            finally:
+                con.close()
+            break
+        except sqlite3.OperationalError as exc:
+            # WAL readers can collide with a checkpoint; once is enough.
+            if attempt == 0 and getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY:
+                time.sleep(0.1)
+                continue
+            raise
+    # The account is the user-data dir three levels up.
+    account = str(Path(path).parent.parent.parent)
+    return [{"session": composer, "account": account, "cwd": None, "timestamps": sorted(stamps)}
+            for composer, stamps in sessions.items()]
+
+
 class Source:
     """One file source: its harness, the account home it reports, where
     its files live under that home, and how to list and parse them."""
@@ -260,15 +386,19 @@ SOURCES = (
 
 
 def read(home: Path | None, stats: dict[str, dict], trivial,
-         force: bool = False) -> list[tuple[str, dict]]:
-    """``(harness, session)`` for every file source's sessions, the
-    accidental Pi and Droid ones dropped. ``stats`` maps a filtered
-    harness to ``LedgerStore.activity_session_stats``, keyed by account
-    and session; ``trivial`` is ``sessions.is_trivial``. A session the
-    ledger has no rows for stays: absent rows prove nothing about a
-    file's responses. ``force`` (a rescan) lists the files again now."""
+         profiles: list[dict] = (), force: bool = False) -> list[tuple[str, dict]]:
+    """``(harness, session)`` for every file source's sessions and the
+    Cursor app's chats, the accidental Pi and Droid ones dropped.
+    ``stats`` maps a filtered harness to
+    ``LedgerStore.activity_session_stats``, keyed by account and session;
+    ``trivial`` is ``sessions.is_trivial``. A session the ledger has no
+    rows for stays: absent rows prove nothing about a file's responses.
+    ``profiles`` are ``~/.quiver/accounts/profiles.json``'s, for the extra
+    Cursor accounts. ``force`` (a rescan) lists the files again now."""
     user = Path(home) if home is not None else Path.home()
-    out = []
+    dirs = cursor_user_data_dirs(user, list(profiles))
+    out = [("cursor", s) for s in _index("cursor", str(user)).sessions(
+        lambda: cursor_files(dirs), parse_cursor, force)]
     for source in SOURCES:
         usage = stats.get(source.harness)
         for session in source.sessions(user, force):

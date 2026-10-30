@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Both post through the hub's `gh` login with `POST /v1/issues/comment`.
   A context comment that fails is a warning; the launch still goes
   ahead. Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+- **Web app: the Cursor app on the Calendar.** The hub reads each Cursor
+  account's `state.vscdb` (the app's own folder and every extra Cursor
+  profile's) as the Mac app does, so editor chats show as blocks with
+  time and responses, one legend row per account. Devin cloud stays
+  Mac-only, since its sessions live in the Mac app's own store. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
 - **Web app: comment on an issue, and post your Resolve context as a
   comment.** The issue sheet in Repositories now has the Mac's comment
   box under the thread (Cmd or Ctrl+Return posts), and the Resolve

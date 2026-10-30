@@ -69,11 +69,39 @@ import Testing
         }.sorted {
             $0.session != $1.session ? $0.session < $1.session : $0.block.start < $1.block.start
         }
-        #expect(got.count == source.blocks.count, "\(got.map(\.session))")
-        for (actual, want) in zip(got, source.blocks) {
+        check(got, against: source.blocks, harness: harness, account: source.account)
+    }
+
+    /// Cursor's fixture is the SQL for a `state.vscdb`, built under a
+    /// scratch user-data dir, which is also the blocks' account.
+    @Test func cursorMatchesTheSharedExpectation() async throws {
+        let expected = try Self.expected()
+        let source = try #require(expected.sources["cursor"])
+        let dir = try TempDir()
+        let dbURL = dir.url.appending(path: "User/globalStorage/state.vscdb")
+        try FileManager.default.createDirectory(
+            at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try SQLiteDatabase(url: dbURL).execute(
+            String(contentsOf: Self.base().appendingPathComponent(source.root), encoding: .utf8))
+        let range = DateInterval(start: Date(timeIntervalSince1970: expected.range[0]),
+                                 end: Date(timeIntervalSince1970: expected.range[1]))
+        let blocks = try await CursorAppActivity(
+            userDataDirs: { [dir.url] },
+            index: ActivityFileIndex(url: dir.url.appending(path: "cache/cursor.json")))
+            .activityBlocks(in: range, gap: expected.gap, force: true)
+        let got = blocks.map { (session: $0.sessions[0].sessionId, block: $0) }.sorted {
+            $0.session != $1.session ? $0.session < $1.session : $0.block.start < $1.block.start
+        }
+        check(got, against: source.blocks, harness: "cursor", account: dir.url.path)
+    }
+
+    private func check(_ got: [(session: String, block: ActivityBlock)],
+                       against want: [Expected.Block], harness: String, account: String) {
+        #expect(got.count == want.count, "\(got.map(\.session))")
+        for (actual, want) in zip(got, want) {
             #expect(actual.session == want.session)
             #expect(actual.block.harness == harness)
-            #expect(actual.block.accountHome == source.account)
+            #expect(actual.block.accountHome == account)
             #expect(actual.block.sessions[0].cwd == want.cwd)
             #expect(abs(actual.block.start.timeIntervalSince1970 - want.start) < 0.001)
             #expect(abs(actual.block.end.timeIntervalSince1970 - want.end) < 0.001)

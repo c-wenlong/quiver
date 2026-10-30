@@ -803,8 +803,8 @@
   }
 
   /* The block's figures: range, time, responses, tokens and spend. File
-   * sources (Pi, Factory Droid, Freebuff) carry no tokens, so their
-   * blocks stop at responses, as on the Mac. */
+   * sources (Pi, Factory Droid, Freebuff, the Cursor app) carry no
+   * tokens, so their blocks stop at responses, as on the Mac. */
   function figures(block, active) {
     const unpriced = block.unpriced_tokens
       ? ` <span title="Plus ${Fmt.tokens(block.unpriced_tokens)} tokens with no list price">ⓘ</span>` : "";
