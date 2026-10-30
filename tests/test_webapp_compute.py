@@ -354,6 +354,29 @@ class _Model(unittest.TestCase):
 
 
 class TestModel(_Model):
+    def test_nvidia_smi_runs_off_the_lock(self):
+        # Two nvidia-smi calls of up to 3 s each ran under the model's
+        # lock, so every Compute read waited for them.
+        held = []
+
+        def nvidia():
+            held.append(self.model.lock.locked())
+            return None
+
+        self.model.nvidia = nvidia
+        self.model.nvidia_processes = lambda: held.append(
+            self.model.lock.locked())
+        self.model.sample()
+        self.assertEqual(held, [False, False])
+
+    def test_a_fresh_sample_skips_nvidia_smi(self):
+        calls = []
+        self.model.sample()
+        self.model.nvidia = lambda: calls.append(1)
+        self.now[0] += 1.0
+        self.model.sample()  # inside MIN_SAMPLE
+        self.assertEqual(calls, [])
+
     def test_two_samples_make_the_payload(self):
         self.model.sample()
         self.m.process(101, 100, ["claude"], exe="/usr/bin/node", start=200, anon_kb=3 * 1024 * 1024,
