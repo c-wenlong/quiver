@@ -9,12 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Instruction chapters:** `swe instructions build`, `check` and `watch`
-  compile the ordered Markdown paths in `~/.quiver/AGENTS_MD/index.txt`
-  into the complete shared `~/.quiver/AGENTS.md`. Builds replace the file
-  atomically and skip unchanged content; check reports drift without
-  writing; watch rebuilds after edits and keeps running after source errors.
-
 - **Web app: the session's model in the chat header and Sessions
   list.** The chat's header shows the model of the transcript's newest
   reply after the folder, and each Sessions row names it first in its
@@ -340,6 +334,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edited one reset — from the same one-click list, and the Check probe
   also tries `/api/compat/summary.json`, the path Cursor's new host
   serves.
+
+- **Instruction chapters:** `swe instructions build`, `check` and `watch`
+  compile the ordered Markdown paths in `~/.quiver/AGENTS_MD/index.txt`
+  into the complete shared `~/.quiver/AGENTS.md`. Builds replace the file
+  atomically and skip unchanged content; check reports drift without
+  writing; watch rebuilds after edits and keeps running after source errors.
 
 ### Changed
 
