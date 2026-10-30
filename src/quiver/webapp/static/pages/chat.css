@@ -387,6 +387,36 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
 .chat-text:focus-visible { outline: none; }
 .chat-text:disabled { cursor: not-allowed; }
 .chat-mode { flex: none; height: 36px; }
+.chat-clip { flex: none; border: 0; background: transparent; color: var(--text-secondary); }
+.chat-clip svg { width: 17px; height: 17px; }
+.chat-clip:disabled { opacity: .4; cursor: default; }
+.chat-composer.dropping { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+
+/* Files waiting to go with the next message: a chip each, name then
+ * size (or "Uploading…", or why the hub refused it), and a remove x. */
+.chat-files { flex: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; }
+.att-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  background: var(--card); border: 1px solid var(--border); border-radius: 99px;
+  padding: 3px 4px 3px 10px; font-size: 12px;
+}
+.att-name { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-meta { flex: none; color: var(--text-secondary); white-space: nowrap; }
+.att-chip.uploading .att-meta { color: var(--text-muted); }
+.att-chip.failed { border-color: var(--danger-text); }
+.att-chip.failed .att-meta { color: var(--danger-text); white-space: normal; }
+.att-x {
+  flex: none; width: 20px; height: 20px; border: 0; border-radius: 50%; background: transparent;
+  color: var(--text-secondary); display: grid; place-items: center; cursor: pointer; padding: 0;
+}
+.att-x:hover { background: var(--hover); }
+.att-x svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.att-note { flex-basis: 100%; font-size: 12px; color: var(--text-secondary); padding-left: 4px; }
+.msg-files { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.msg-files span {
+  font-size: 12px; color: var(--text-secondary); border: 1px solid var(--border);
+  border-radius: 99px; padding: 1px 8px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .chat-stop { flex: none; }
 .chat-stop svg { width: 14px; height: 14px; }
 .chat-stop:disabled, .chat-send:disabled { opacity: .4; cursor: default; }

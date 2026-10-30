@@ -121,8 +121,8 @@ struct DevicesView: View {
         HStack(spacing: 12) {
             Image(systemName: device.symbol).font(Theme.font(size: 16)).foregroundStyle(Theme.textSecondary).iconColumn(20)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(device.label).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                WrappingHStack(spacing: 6) {
+                    Text(device.label).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1, larger: 3)
                     if selfDevice(device) {
                         // The shared badge: its hairline keeps it visible on
                         // a light card, where the subtle fill alone vanished.
@@ -132,7 +132,7 @@ struct DevicesView: View {
                 // Two lines: on one, a phone's OS and client used the
                 // width and "last seen" was cut to "last seen 1…".
                 Text(detail(of: device))
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(2, larger: 4)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
@@ -196,10 +196,10 @@ private struct PairRequestCard: View {
                 HStack(spacing: 12) {
                     Image(systemName: "iphone.gen3").font(Theme.font(size: 18)).foregroundStyle(Theme.textSecondary).iconColumn(22)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(request.name ?? "New device").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Text(request.name ?? "New device").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1, larger: 3)
                         Text([request.nodeName, request.login, RelativeTime.ago(request.createdAt)]
                             .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1, larger: 3)
                     }
                     Spacer()
                 }
@@ -211,7 +211,7 @@ private struct PairRequestCard: View {
                     .quiverField()
                     .onChange(of: code) { _, new in code = String(new.filter(\.isNumber).prefix(6)) }
                 if let error { Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText) }
-                HStack(spacing: 8) {
+                StackingRow {
                     Button("Approve") { Task { await decide(true) } }.primaryButton()
                         .disabled(code.count != 6 || busy)
                     // The hub checks the code on a deny too, so a stray

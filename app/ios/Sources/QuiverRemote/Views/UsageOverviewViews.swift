@@ -28,12 +28,13 @@ struct PeriodChips: View {
 struct QuickFiguresCard: View {
     var overview: OverviewResponse
     var harnessName: (String) -> String
+    @Environment(\.dynamicTypeSize) private var size
 
     var body: some View {
         let models = overview.topModels ?? []
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
+                StackingRow {
                     ForEach(OverviewFormat.quickChips(overview.quick), id: \.label) { chip in
                         VStack(spacing: 2) {
                             Text(chip.value).font(Theme.rowTitle.monospacedDigit())
@@ -67,20 +68,39 @@ struct QuickFiguresCard: View {
         return HStack(spacing: 10) {
             Text("\(index + 1)")
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .frame(width: 22, height: 22)
+                .iconColumn(22, height: 22)
                 .background(Theme.subtle, in: .circle)
-            // The name comes first: the harnesses that ran it follow
-            // only while the whole name still fits.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    modelName(model.model)
-                    harnessLogos(marks)
+            if size.isAccessibilitySize {
+                // No room beside the name for the share: the name wraps,
+                // and the logos and share go on the line under it, or on a
+                // line each when several logos leave the share no room.
+                VStack(alignment: .leading, spacing: 4) {
+                    modelName(model.model, lines: 3)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            harnessLogos(marks)
+                            Spacer(minLength: 8)
+                            share(model.share)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            harnessLogos(marks)
+                            share(model.share)
+                        }
+                    }
                 }
-                modelName(model.model)
+            } else {
+                // The name comes first: the harnesses that ran it follow
+                // only while the whole name still fits.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        modelName(model.model)
+                        harnessLogos(marks)
+                    }
+                    modelName(model.model)
+                }
+                Spacer(minLength: 8)
+                share(model.share)
             }
-            Spacer(minLength: 8)
-            Text(OverviewFormat.share(model.share))
-                .font(Theme.rowTitle.monospacedDigit()).foregroundStyle(Theme.textPrimary)
         }
         .padding(.vertical, 9)
         .accessibilityElement(children: .ignore)
@@ -88,9 +108,15 @@ struct QuickFiguresCard: View {
                             + (model.harnesses ?? []).map(harnessName).joined(separator: ", "))
     }
 
-    private func modelName(_ name: String) -> some View {
+    private func share(_ share: Double?) -> some View {
+        Text(OverviewFormat.share(share))
+            .font(Theme.rowTitle.monospacedDigit()).foregroundStyle(Theme.textPrimary)
+            .fixedSize()
+    }
+
+    private func modelName(_ name: String, lines: Int = 1) -> some View {
         Text(name).font(Theme.control).foregroundStyle(Theme.textPrimary)
-            .lineLimit(1).truncationMode(.middle)
+            .lineLimit(lines).truncationMode(.middle)
     }
 
     @ViewBuilder private func harnessLogos(_ marks: (shown: [String], more: String?)) -> some View {
@@ -159,6 +185,10 @@ struct ActivityHeatmapCard: View {
                             }
                         }
                     }
+                    // The squares are a fixed 12pt grid sized to the card,
+                    // so the month and weekday labels on it stop growing at
+                    // xLarge, where "Wed" still fits its 24pt gutter.
+                    .dynamicTypeSize(...DynamicTypeSize.xLarge)
                     // Each day is its own element, so VoiceOver reads them
                     // one by one with their figures.
                     .accessibilityElement(children: .contain)

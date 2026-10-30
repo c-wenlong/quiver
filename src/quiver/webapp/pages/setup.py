@@ -27,6 +27,14 @@ registered harness), and ``adopt`` one of the preview's
 ``adopt_candidates`` right now; anything else is refused.
 The reply is ``{"applied", "first_run", "starred"}``.
 
+``POST /v1/app/setup/hub`` with ``{"url"}`` clones the user's hub repo
+as ``~/.quiver``, ``swe setup --hub``'s own clone, on a thread: it
+answers at once with ``{"hub"}`` (``hub_status``), and the page polls
+``GET /v1/app/setup?hub=1`` until ``hub.job.state`` leaves ``cloning``.
+409 ``has_hub`` when ~/.quiver already holds a hub (or is a file or a
+symlink), 409 ``busy`` while a clone or setup runs. The URL is only ever
+kept or answered with its credentials removed (``public_url``).
+
 ``POST /v1/app/setup/install`` with ``{"id", "via"}`` is ``swe install
 <id> --via=<via>`` in process with its output captured, for an agent the
 page lists as not found: one of the agent's own install commands, never
@@ -41,6 +49,7 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from quiver.webapp.pages import CONFIG_LOCK, PageError, home_path
@@ -97,6 +106,9 @@ def get(ctx, args) -> dict:
     from quiver.setup.commands import setup_preview
 
     home = home_path(ctx)
+    if args.get("hub") == "1":
+        # What the page polls while a clone runs: no discovery, no preview.
+        return {"hub": hub_status(home)}
     preview = setup_preview(home)
     agents = _agents(home, {h["name"] for h in preview.get("harness", [])})
     return {
@@ -106,12 +118,15 @@ def get(ctx, args) -> dict:
         "first_run": _first_run(home),
         "agents": agents,
         "preview": preview,
+        "hub": hub_status(home),
     }
 
 
 def post(ctx, action: str, body: dict) -> dict:
     if action == "install":
         return _install(ctx, body)
+    if action == "hub":
+        return _start_clone(ctx, body)
     if action != "apply":
         raise PageError(404, "unknown_action", f"unknown setup action: {action}")
     starred = _starred(body.get("starred"))
@@ -128,8 +143,9 @@ def post(ctx, action: str, body: dict) -> dict:
     # The Harnesses page's writes and Doctor's fixes rewrite harness.json
     # too, under the same registry lock, so setup waits for them; it also
     # writes mcp.json and relinks skills, under the MCP and Skills pages'
-    # CONFIG_LOCK.
-    with _LOCK, REGISTRY_LOCK, CONFIG_LOCK:
+    # CONFIG_LOCK. A hub clone holds _LOCK for minutes, so that one is a
+    # 409 instead of a wait.
+    with _apply_lock(), REGISTRY_LOCK, CONFIG_LOCK:
         registry = load_registry_readonly()
         for name in starred:
             if name not in PROVIDER_IDS and resolve(registry, name) is None:
@@ -159,6 +175,137 @@ def post(ctx, action: str, body: dict) -> dict:
             "first_run": _first_run(home),
             "starred": starred_names(load_registry_readonly()),
         }
+
+
+# --------------------------------------------------------------- hub clone
+# One clone per home, on its own thread: ls-remote can take 30 s and the
+# clone 10 minutes, far past what a page request should hold a handler
+# for. The thread holds _LOCK, so setup's apply can't write ~/.quiver
+# underneath it; the page polls ``GET /v1/app/setup?hub=1``.
+
+URL_MAX = 2048
+_JOBS: dict[str, dict] = {}
+_JOBS_LOCK = threading.Lock()
+# Under _JOBS_LOCK: a clone has claimed _LOCK (it may not hold it yet).
+_clone_claimed = False
+# How often an apply waiting on _LOCK checks whether a clone holds it.
+_APPLY_POLL_S = 0.1
+
+
+def _idle() -> dict:
+    return {"state": "idle", "url": None, "error": None, "cloned": None}
+
+
+def hub_status(home: Path) -> dict:
+    """``{can_clone, demo_url, job}``: whether ~/.quiver can take a clone
+    now (the page shows its hub field only then), the demo hub to fork
+    (null until it exists), and this hub's last clone. ``job.state`` is
+    ``idle``, ``cloning``, ``done`` or ``failed``; ``job.url`` never
+    carries credentials."""
+    from quiver.init.hub import DEMO_HUB_URL, can_clone
+
+    with _JOBS_LOCK:
+        job = dict(_JOBS.get(str(home)) or _idle())
+    return {"can_clone": can_clone(home), "demo_url": DEMO_HUB_URL or None, "job": job}
+
+
+def _bad_url(url) -> bool:
+    return (not isinstance(url, str) or not url.strip() or len(url) > URL_MAX
+            or any(ord(ch) < 32 for ch in url))
+
+
+def _start_clone(ctx, body: dict) -> dict:
+    from quiver.init.hub import HubError, check_target, public_url
+
+    url = body.get("url")
+    if _bad_url(url):
+        raise PageError(422, "bad_url", "url must be a git URL on one line")
+    url = url.strip()
+    if url.startswith("-"):
+        raise PageError(422, "bad_url", public_url(f"not a git URL: {url}"))
+    home = home_path(ctx)
+    busy = PageError(409, "busy", "Setup or a hub clone is already running. Wait for it, then try again.")
+    # Claim first, then take the lock: an apply waiting on _LOCK sees the
+    # claim and answers 409 rather than sit behind the clone.
+    if not _claim_clone():
+        raise busy
+    if not _LOCK.acquire(blocking=False):
+        _release_claim()
+        raise busy
+    try:
+        check_target(home)
+    except HubError as exc:
+        _LOCK.release()
+        _release_claim()
+        raise PageError(409, "has_hub", str(exc)) from None
+    with _JOBS_LOCK:
+        _JOBS[str(home)] = {"state": "cloning", "url": public_url(url), "error": None, "cloned": None}
+    try:
+        threading.Thread(target=_clone, args=(home, url), name="setup-hub-clone", daemon=True).start()
+    except RuntimeError as exc:
+        _finish(home, {"state": "failed", "error": f"couldn't start the clone: {exc}"})
+        _LOCK.release()
+        _release_claim()
+        raise PageError(503, "clone_failed", f"couldn't start the clone: {exc}") from None
+    return {"hub": hub_status(home)}
+
+
+def _claim_clone() -> bool:
+    global _clone_claimed
+    with _JOBS_LOCK:
+        if _clone_claimed:
+            return False
+        _clone_claimed = True
+        return True
+
+
+def _release_claim() -> None:
+    global _clone_claimed
+    with _JOBS_LOCK:
+        _clone_claimed = False
+
+
+def _clone_running() -> bool:
+    with _JOBS_LOCK:
+        return _clone_claimed
+
+
+@contextmanager
+def _apply_lock():
+    """_LOCK for an apply: it waits for another apply as before, but a
+    clone claiming or holding the lock is a 409, never a wait of minutes
+    on one of the hub's few request workers."""
+    while not _LOCK.acquire(timeout=_APPLY_POLL_S):
+        if _clone_running():
+            raise PageError(409, "busy", "A hub clone is still running. Wait for it, then try again.")
+    try:
+        yield
+    finally:
+        _LOCK.release()
+
+
+def _clone(home: Path, url: str) -> None:
+    """The clone thread: ``swe setup --hub``'s own clone, then release the
+    setup lock and the claim the request took for it."""
+    from quiver.init.hub import HubError, clone_and_register, public_url
+
+    try:
+        cloned = clone_and_register(home, url)
+    except HubError as exc:
+        _finish(home, {"state": "failed", "error": str(exc)})
+    except Exception as exc:  # the page must hear about it, never a hung "cloning"
+        _finish(home, {"state": "failed", "error": public_url(f"the clone failed: {exc}")})
+    else:
+        _finish(home, {"state": "done", "cloned": cloned})
+    finally:
+        _LOCK.release()
+        _release_claim()
+
+
+def _finish(home: Path, update: dict) -> None:
+    with _JOBS_LOCK:
+        job = _JOBS.setdefault(str(home), _idle())
+        job.update(update)
 
 
 def _install(ctx, body: dict) -> dict:
