@@ -171,6 +171,28 @@ class TestDamagedPairLink(unittest.TestCase):
             self.assertEqual(pairs, 0, hash_)
             self.assertIn("This pair link is damaged", panel, hash_)
 
+    def test_a_refused_link_says_why_without_a_credential(self):
+        """The real pairExchange, answered 410, in a browser with no stored
+        credential: the gate shows the hub's reason, not the generic
+        pairing line."""
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "const els = { sidebar: { innerHTML: '', querySelector: () => ({ outerHTML: '' }) } };\n"
+            "globalThis.document = { addEventListener() {}, querySelectorAll: () => [],"
+            " getElementById: (id) => (els[id] ||= { innerHTML: '' }) };\n"
+            "globalThis.location = { hash: '' };\n"
+            "globalThis.navigator = { userAgent: '' };\n"
+            "globalThis.localStorage = { getItem() { return null; } };\n"
+            "globalThis.fetch = async () => ({ status: 410, json: async () => ({ error: { message: 'That token was used.' } }) });\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n"
+            "const sessionsPage = { gen: 0 }, harnessesPage = { gen: 0 }, accountsPage = { gen: 0 };\n")
+        body = "\npairExchange('tok', '').then(() => process.stdout.write(els.panel.innerHTML));\n"
+        done = subprocess.run(["node", "-e", prelude + APP_JS.read_text(encoding="utf-8") + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("The pair link didn&#39;t work: That token was used.", done.stdout)
+        self.assertNotIn("needs pairing", done.stdout)
+
     def test_a_whole_link_still_pairs(self):
         self.assertEqual(self.panel_at("#pair=abc%2Bd&name=my%20phone")[0], 1)
 
