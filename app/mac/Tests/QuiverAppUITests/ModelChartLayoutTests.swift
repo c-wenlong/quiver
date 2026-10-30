@@ -154,9 +154,8 @@ struct ModelChartLayoutTests {
         let hosting = NSHostingView(rootView:
             ScrollView { ChartCard(model: model).padding() }
                 .textSelection(.enabled))
-        let window = NSWindow(
-            contentRect: NSRect(x: -10_000, y: -10_000, width: 1400, height: 900),
-            styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffscreenWindow(size: CGSize(width: 1400, height: 900),
+                                     styleMask: [.titled, .resizable])
         window.contentView = hosting
         window.orderBack(nil)
         defer { window.orderOut(nil) }
@@ -181,6 +180,8 @@ struct ModelChartLayoutTests {
 
         #expect(bad == 0)
         #expect(seen > 0)
+        // Resizes never pull the window onto the user's screen.
+        #expect(window.screen == nil)
         #expect(hosting.bounds.width > 0 && hosting.bounds.height > 0)
         withExtendedLifetime(scratch) {}
 

@@ -66,6 +66,14 @@ const STATUS_LOGOS = {
   postman: "harness-postman.svg", ngrok: "harness-ngrok.svg", hashicorp: "harness-hashicorp.svg",
   figma: "harness-figma.svg", atlassian: "harness-atlassian.svg", workos: "harness-workos-color.svg",
   mailgun: "harness-mailgun.svg", discord: "harness-discord.svg", revenuecat: "harness-revenuecat.svg",
+  nvidia: "harness-nvidia-color.svg", anyscale: "harness-anyscale.svg",
+  bolt: "harness-bolt.svg", v0: "harness-v0.svg",
+  snowflake: "harness-snowflake.svg", clickhouse: "harness-clickhouse.svg",
+  cockroach: "harness-cockroach.svg", planetscale: "harness-planetscale.svg",
+  semaphore: "harness-semaphore.svg", sonatype: "harness-sonatype.svg",
+  langfuse: "harness-langfuse.svg", braintrust: "harness-braintrust.svg",
+  prefect: "harness-prefect.svg",
+  zapier: "harness-zapier-color.svg", make: "harness-make.svg", loom: "harness-loom.svg",
 };
 /* The logo cell: the shipped mark for a known id, else the service's
  * initial on a tile, so rows with no mark still line up (CatalogueRow
@@ -349,8 +357,11 @@ function statusProblem(s) {
 
 /* ------------------------------------------------------- the catalogue */
 
-const CAT_GROUPS = [[null, "All"], ["providers", "AI providers"], ["infrastructure", "Infrastructure"]];
-const CAT_TITLES = { providers: "AI providers", infrastructure: "Infrastructure" };
+const CAT_GROUPS = [[null, "All"], ["modelProviders", "Model providers"],
+  ["agentPlatforms", "Agent platforms"], ["cloud", "Cloud & network"], ["data", "Data"],
+  ["devtools", "Dev tools & quality"], ["registries", "Registries"],
+  ["observability", "Observability"], ["services", "Services & productivity"]];
+const CAT_TITLES = Object.fromEntries(CAT_GROUPS.slice(1));
 
 /* The sheet lives on document.body, so a page repaint behind it does not
  * close it (the app's sheet stays up while adds land). */

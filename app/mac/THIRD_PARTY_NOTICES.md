@@ -244,7 +244,8 @@ Where each came from is in `Resources/harness-icons.tsv`:
   ElevenLabs and Atlas Cloud come from LobeHub icons
   (`@lobehub/icons-static-svg`), as do the status-page marks for
   AssemblyAI, Baseten, Lambda, Mistral AI, Stability AI, AI21, SambaNova,
-  Windsurf, Replit, Manus, Lovable, Tavily and Morph. Synthetic,
+  Windsurf, Replit, Manus, Lovable, Tavily, Morph, Anyscale, Langfuse and
+  v0. Synthetic,
   CheapestInference, Standard
   Compute, TaoToken, JD Cloud, State Cloud (China Telecom), SCNet, Charm,
   LLM Gateway and UCloud come from each company's own site or brand kit;
@@ -260,8 +261,10 @@ Where each came from is in `Resources/harness-icons.tsv`:
   Travis CI, Netlify, Fly.io, PyPI, RubyGems, MongoDB, Prisma, Postman,
   Mailgun, Atlassian, Grafana, New Relic, ngrok, Figma, Discord,
   HashiCorp, Expo, RevenueCat, Snyk, Codecov, Linode (Akamai's mark),
-  Sanity, Contentful, Temporal and Maven Central (the Apache Maven
-  feather); Routing.Run's
+  Sanity, Contentful, Temporal, Maven Central (the Apache Maven
+  feather), StackBlitz (the bolt Bolt.new's mark reuses), Braintrust,
+  ClickHouse, CockroachDB (Cockroach Labs), Loom, Make, PlanetScale,
+  Prefect, Semaphore, Snowflake, Sonatype and Zapier; Routing.Run's
   planet mark from Phosphor Icons (`@phosphor-icons/core`, MIT).
 - The remaining status-page marks come from each company's own site,
   brand page or logo file: E2B, Ona, Pinecone, Runloop, Writer,
