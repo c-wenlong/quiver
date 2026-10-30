@@ -90,6 +90,9 @@ final class RollingTextView: NSView {
     private var leaving: [CALayer] = []
     /// Runs the tidy after a roll; tests swap in timers they fire by hand.
     var schedule: MainTimer = MainTimer.runLoop
+    /// Whether to skip the roll (System Settings › Accessibility › Reduce
+    /// motion); tests pin it so a Mac with it on still runs them.
+    var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -113,7 +116,7 @@ final class RollingTextView: NSView {
         style = newStyle
         guard newText != text || restyled || cells.isEmpty else { return }
         let animated = !restyled && !cells.isEmpty && window != nil
-            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            && !reduceMotion()
         let old = text
         text = newText
         self.perCharacter = perCharacter
