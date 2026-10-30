@@ -85,6 +85,15 @@ private struct NoHTTP: HTTPTransport {
             PrivateFile.tighten(file)
             #expect(try Self.mode(file) == after, "\(String(before, radix: 8))")
         }
+        // The folder too: only group and other bits come off.
+        for (before, after) in [(0o500, 0o500), (0o755, 0o700), (0o711, 0o700)] {
+            let locked = dir.path("folder\(before)")
+            try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes([.posixPermissions: before], ofItemAtPath: locked.path)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path) }
+            PrivateFile.tighten(locked.appending(path: "store.json"))
+            #expect(try Self.mode(locked) == after, "folder \(String(before, radix: 8))")
+        }
     }
 
     /// An old loose file is tightened when its store opens, not only at
