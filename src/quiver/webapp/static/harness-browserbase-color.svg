@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+<rect x="30" y="36" width="134" height="124" fill="white" />
+<path d="M 111.168 116.901 H 83.168 V 109.901 H 111.168 V 116.901 Z" fill="#FF4500" />
+<path d="M 111.168 86.208 H 83.168 V 79.208 H 111.168 V 86.208 Z" fill="#FF4500" />
+<path fill-rule="evenodd" clip-rule="evenodd" d="M 200 200 H 0 V 0 H 200 V 200 Z M 55.4453 147.815 H 128.678 L 145.259 131.234 V 111.891 L 131.441 98.0723 L 142.495 87.0186 V 69.0557 L 125.914 52.4756 H 55.4453 V 147.815 Z" fill="#FF4500" />
+</svg>

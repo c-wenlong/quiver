@@ -11,6 +11,7 @@ import copy
 import datetime
 import http.client
 import json
+import re
 import shutil
 import ssl
 import subprocess
@@ -652,13 +653,15 @@ class TestRoute(HubBase):
 
 class TestCatalogue(unittest.TestCase):
     def test_mirrors_the_mac_catalogue(self):
-        self.assertEqual(len(catalogue.CATALOGUE), 23)
-        self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "providers"],
-                         ["groq", "perplexity", "fireworks", "cerebras", "cohere", "baseten",
-                          "minimax", "elevenlabs", "lambda", "assemblyai"])
-        self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "infrastructure"],
-                         ["docker", "tailscale", "sentry", "datadog", "supabase", "digitalocean",
-                          "render", "upstash", "convex", "linear", "notion", "twilio", "clerk"])
+        # The mirror is literal: the rows the Mac's StatusCatalogue.swift
+        # declares, in order, are this catalogue.
+        swift = (Path(__file__).resolve().parents[1]
+                 / "app/mac/Sources/QuiverCore/Status/StatusCatalogue.swift")
+        if not swift.exists():
+            self.skipTest("no app/mac/ in this checkout")
+        rows = re.findall(r'statuspage\("([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*\.(\w+)\)',
+                          swift.read_text(encoding="utf-8"))
+        self.assertEqual([(e.id, e.name, e.page_url, e.group) for e in catalogue.CATALOGUE], rows)
         for e in catalogue.CATALOGUE:
             self.assertTrue(e.page_url.startswith("https://"), e.id)
             self.assertEqual(e.feed_url, f"{e.page_url}/api/v2/summary.json", e.id)
@@ -812,7 +815,7 @@ class TestTrackRoute(HubBase):
     def test_catalogue_view(self):
         status, body = self.get("/v1/app/status?view=catalogue")
         self.assertEqual(status, 200, body)
-        self.assertEqual(len(body["entries"]), 23)
+        self.assertEqual(len(body["entries"]), 88)
         groq = next(e for e in body["entries"] if e["id"] == "groq")
         self.assertEqual((groq["name"], groq["host"], groq["group"], groq["logo"]),
                          ("Groq", "groqstatus.com", "providers", "groq"))
