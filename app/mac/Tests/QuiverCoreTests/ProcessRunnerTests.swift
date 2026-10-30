@@ -268,6 +268,30 @@ import Testing
         #expect(pids.allSatisfy { kill($0, 0) != 0 })
     }
 
+    @Test func aTimedOutShellsNestedCommandsAreKilledToo() async throws {
+        // The shell waits on a helper that waits on its own command. Killing
+        // the helper before listing its children let the grandchild
+        // reparent to launchd and outlive the timeout.
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pidFile = dir.appending(path: "grandchild.pid")
+        let shell = dir.appending(path: "nested-shell")
+        try "#!/bin/sh\ntrap '' TERM\n/bin/sh -c \"sleep 30 & echo \\$! > '\(pidFile.path)'; wait\" &\nwait\n"
+            .write(to: shell, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+
+        _ = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"], timeout: .milliseconds(500))
+        let pid = pid_t((try? String(contentsOf: pidFile, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        try #require(pid != nil && pid! > 0)
+        let reapDeadline = Date().addingTimeInterval(10)
+        while kill(pid!, 0) == 0, Date() < reapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(kill(pid!, 0) != 0)
+    }
+
     @Test func aWorkingShellSuppliesItsPATH() async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

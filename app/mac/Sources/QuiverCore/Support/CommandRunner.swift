@@ -257,6 +257,9 @@ public struct ProcessRunner: CommandRunning {
     /// exited: its pid may belong to another process by then.
     @discardableResult
     fileprivate static func stopDescendants(of pid: pid_t, signal: Int32) -> [TaggedPid] {
+        // The whole tree is listed before anything is signalled, then
+        // signalled leaves first: a parent killed mid-walk would let its
+        // children reparent to launchd before the walk listed them.
         var found: [TaggedPid] = []
         var seen: Set<pid_t> = [pid]
         var queue = [pid]
@@ -276,12 +279,14 @@ public struct ProcessRunner: CommandRunning {
                 // and its number may already serve another process, so
                 // only a tagged pid is ever signalled. Its own children
                 // are still walked either way.
-                if let tagged = Self.tag(child) {
-                    found.append(tagged)
-                    kill(child, signal)
-                }
+                if let tagged = Self.tag(child) { found.append(tagged) }
                 queue.append(child)
             }
+        }
+        // Every child comes after its parent in `found`. The tag is
+        // checked again: a process may have exited since it was listed.
+        for tagged in found.reversed() where Self.tag(tagged.pid) == tagged {
+            kill(tagged.pid, signal)
         }
         return found
     }
