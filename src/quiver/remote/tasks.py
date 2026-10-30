@@ -42,8 +42,8 @@ only. Each row's ``state_source`` says which it got: ``live``,
 
 ``TaskSource`` is the seam other trackers plug into: ``list()``
 for what the source has open, ``get(ref)`` to refresh one stored task's
-state. GitHub and Linear are live adapters (``remote/linear.py``);
-Notion refs still only validate and link.
+state. GitHub, Linear (``remote/linear.py``) and Notion
+(``remote/notion.py``) are live adapters.
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ from quiver.github import gh, manage, repos
 from quiver.paths import (atomic_write_text, remote_dir_for,
                           task_states_cache_for)
 from quiver.remote import linear as linear_mod
+from quiver.remote import notion as notion_mod
 from quiver.remote import protocol
 from quiver.webapp.pages import _github as G
 
@@ -442,7 +443,7 @@ def list_view(state, args) -> tuple[int, dict]:
     """``GET /v1/tasks``: the store over what the sources list.
 
     ``{tasks: [TaskRow], repos?: [per-repo failures], github, linear,
-    env_blocked?, machine, machine_id, fetched_at?}``. A ``TaskRow`` is
+    notion, env_blocked?, machine, machine_id, fetched_at?}``. A ``TaskRow`` is
     the TaskRef fields plus ``id``, derived ``state``, ``sessions``,
     ``launches``, ``agent_running``, ``linked``, ``last_active_at``,
     ``created_at`` (linked tasks) and ``pr`` (the PR an issue's
@@ -456,24 +457,32 @@ def list_view(state, args) -> tuple[int, dict]:
     block (``disabled`` with no section, ``auth-required``/
     ``upstream-error`` with the reason in ``error``). A blocked source
     leaves its stored tasks showing their last-known state, from the
-    state cache.
+    state cache. ``notion`` answers the same block as ``linear``; a
+    Notion database that fails names itself in ``error`` while the
+    other databases' rows still list.
     """
     refresh = _refresh(args)
     stored = _load(state.home)
     sources = {"github": GitHubTasks(state.home, refresh=refresh),
                "linear": linear_mod.LinearTasks(state.home,
+                                                refresh=refresh),
+               "notion": notion_mod.NotionTasks(state.home,
                                                 refresh=refresh)}
     env = sources["github"].probe()
-    lin = sources["linear"].probe()
+    # The configured-tracker sources, each answering its own env block.
+    trackers = {"linear": (linear_mod, "Linear"),
+                "notion": (notion_mod, "Notion")}
+    envs = {name: sources[name].probe() for name in trackers}
     body = {"github": G.env_payload(env),
-            "linear": linear_mod.env_payload(lin),
+            **{name: mod.env_payload(envs[name])
+               for name, (mod, _label) in trackers.items()},
             "machine": (state.machine or {}).get("name"),
             "machine_id": state.machine_id,
             "tasks": []}
     rows: dict[str, dict] = {}
     source_state: dict[str, str] = {}
     # A source's own word for the state, where it has one beyond the
-    # ladder's: a Linear workflow state's name.
+    # ladder's: a Linear workflow state's name, a Notion status.
     status_name: dict[str, str] = {}
     # Tasks a source listed this round, and those whose PR a read
     # answered outright: a listed issue with no open PR on its branch
@@ -500,31 +509,35 @@ def list_view(state, args) -> tuple[int, dict]:
     elif env.status in ("unavailable", "auth-required"):
         body["env_blocked"] = gh.env_error(env)
 
-    if lin.status == "ok":
-        listed = sources["linear"].list()
-        if listed.get("status") == "ok":
-            for item in listed["tasks"]:
-                tid = task_id(item["task"])
-                rows[tid] = {**item["task"], "id": tid,
-                             "sessions": [], "launches": [],
-                             "pr": item.get("pr"),
-                             "updated_at": item.get("updated_at")}
-                source_state[tid] = str(item.get("state") or "")
-                if item.get("status_name"):
-                    status_name[tid] = str(item["status_name"])
-                on_list.add(tid)
-                if item.get("pr") is not None:
-                    pr_read.add(tid)
+    for name, (_mod, label) in trackers.items():
+        if envs[name].status != "ok":
+            continue
+        listed = sources[name].list()
+        # A failed list answers no rows; a partly failed one (a Notion
+        # database whose mapping doesn't fit) still answers the rest.
+        for item in listed.get("tasks") or []:
+            tid = task_id(item["task"])
+            rows[tid] = {**item["task"], "id": tid,
+                         "sessions": [], "launches": [],
+                         "pr": item.get("pr"),
+                         "updated_at": item.get("updated_at")}
+            source_state[tid] = str(item.get("state") or "")
+            if item.get("status_name"):
+                status_name[tid] = str(item["status_name"])
+            on_list.add(tid)
+            if item.get("pr") is not None:
+                pr_read.add(tid)
+        if listed.get("status") == "ok" or listed.get("tasks"):
             if listed.get("fetched_at") is not None:
                 fetched.append(listed["fetched_at"])
-        else:
+        if listed.get("status") != "ok":
             # The probe passed but the fetch failed anyway: say so on
-            # the linear block and keep the stored rows' last state.
-            body["linear"] = {**body["linear"],
-                              "status": str(listed.get("status")
-                                            or "upstream-error"),
-                              "error": listed.get("error")
-                                       or "Linear is unreachable"}
+            # the source's block and keep the stored rows' last state.
+            body[name] = {**body[name],
+                          "status": str(listed.get("status")
+                                        or "upstream-error"),
+                          "error": listed.get("error")
+                                   or f"{label} is unreachable"}
 
     for tid, entry in stored.items():
         task = entry["task"]
@@ -543,8 +556,9 @@ def list_view(state, args) -> tuple[int, dict]:
     readers = {}
     if env.status == "ok":
         readers["github"] = sources["github"].get
-    if lin.status == "ok":
-        readers["linear"] = sources["linear"].get
+    for name in trackers:
+        if envs[name].status == "ok":
+            readers[name] = sources[name].get
     if readers:
         # A stored task's own read sees what the open list can't: the
         # merged PR behind a ``quiver/issue-<n>`` branch, a closed
@@ -671,7 +685,7 @@ def _status(row: dict, source_name: str) -> str:
     progress reads off the pipeline: an agent running, then its PR, then
     the merge; a linked session that has ended says nothing, so the
     issue reads Open again rather than "in progress" forever. Linear's
-    workflow state passes through by name ("In Review").
+    workflow state and a Notion status pass through by name ("In Review").
     """
     state = row.get("state") or "open"
     if row.get("source") == "github":
@@ -711,7 +725,9 @@ def _derive(kind, source_state: str, pr, linked: bool) -> str:
         return "in_progress" if linked or source_state == "in_progress" \
             else "open"
     # card / page: a link or the source's own word is all there is to
-    # infer from, for now.
+    # infer from — a Notion row whose status reads done is closed.
+    if source_state == "closed":
+        return "closed"
     return "in_progress" if linked or source_state == "in_progress" \
         else "open"
 
