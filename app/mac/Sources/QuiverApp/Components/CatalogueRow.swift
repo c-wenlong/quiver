@@ -24,9 +24,11 @@ struct CatalogueRow: View {
     /// can't be added twice.
     var reusable = false
     var actionTitle = "Add"
-    var action: () -> Void
-    /// Set on tap so a slow add can't be double-fired; `done` takes over
-    /// the moment the sheet learns the entry landed.
+    /// Awaited, so the row knows when the add is over.
+    var action: () async -> Void
+    /// Set while the action runs so a slow add can't be double-fired.
+    /// Cleared when it returns: `done` takes over if the entry landed,
+    /// and a failed add shows its button again instead of "Added".
     @State private var added = false
     @State private var hovering = false
     @FocusState private var focused: Bool
@@ -92,9 +94,12 @@ struct CatalogueRow: View {
     }
 
     private func activate() -> KeyPress.Result {
-        guard isActionable else { return .ignored }
+        guard isActionable, !added else { return .ignored }
         added = true
-        action()
+        Task {
+            await action()
+            added = false
+        }
         return .handled
     }
 }

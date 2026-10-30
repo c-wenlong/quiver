@@ -279,9 +279,7 @@ private struct StatusCatalogueSheet: View {
         return CatalogueRow(logo: entry.logoID, name: entry.name, detail: entry.host,
                      done: edited ? "Edited" : (tracked.contains(entry.host.lowercased()) ? "Added" : nil),
                      reusable: edited, actionTitle: edited ? "Reset" : "Add") {
-            Task {
-                await model.track(entry)
-            }
+            _ = await model.track(entry)
         }
     }
 }
