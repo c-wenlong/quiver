@@ -802,12 +802,16 @@
     return rows + more;
   }
 
-  /* The block's figures: range, time, responses, tokens and spend. */
+  /* The block's figures: range, time, responses, tokens and spend. File
+   * sources (Pi, Factory Droid, Freebuff) carry no tokens, so their
+   * blocks stop at responses, as on the Mac. */
   function figures(block, active) {
     const unpriced = block.unpriced_tokens
       ? ` <span title="Plus ${Fmt.tokens(block.unpriced_tokens)} tokens with no list price">ⓘ</span>` : "";
+    const spend = block.tokens || block.unpriced_tokens
+      ? `<div class="caption num">${Fmt.tokens(block.tokens)} tokens · <span class="spend">${Fmt.dollars(block.cost_usd)}</span>${unpriced}</div>` : "";
     return `<div class="caption num">${esc(span(block.start, block.end))} · ${duration(active)} · ${plural(block.responses, "response")}</div>
-      <div class="caption num">${Fmt.tokens(block.tokens)} tokens · <span class="spend">${Fmt.dollars(block.cost_usd)}</span>${unpriced}</div>`;
+      ${spend}`;
   }
 
   /* BlockCard: icon, project, account when the harness has several,

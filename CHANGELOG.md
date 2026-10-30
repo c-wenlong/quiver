@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: comment on an issue, and post your Resolve context as a
+  comment.** The issue sheet in Repositories now has the Mac's comment
+  box under the thread (Cmd or Ctrl+Return posts), and the Resolve
+  panel has "Also post as a comment on #<n>", ticked by default. Both
+  post through the hub's `gh` login with `POST /v1/issues/comment`. A
+  context comment that fails is a warning; the launch still goes ahead.
+  Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+- **Web app: Freebuff on the Calendar.** The hub reads Freebuff's
+  `run-state.json` chats under `~/.config/manicode/projects` as the Mac
+  app does, so its work shows as blocks with time and responses. Part
+  of [#970](https://github.com/c-wenlong/quiver/issues/970).
+- **Web app: Pi and Factory Droid on the Calendar.** The hub now reads
+  their session files the way the Mac app does (`~/.pi/agent/sessions`
+  and `~/.factory/sessions`), so their work shows as blocks beside the
+  ledger harnesses, with time and responses. Accidental sessions stay
+  off, judged on the ledger's history as on the Mac. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
 - **Hub: `POST /v1/issues/comment` posts an issue comment.** The body
   `{repo, number, body}` goes through the hub's own `gh` login, the way
   the Mac's composer posts through `swe gh issue comment`, with the text
@@ -17,6 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to GitHub's 65,536 characters. The web and iPhone issue detail build
   their comment composer and Resolve's "Also post as a comment" on it.
   Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **`swe mcp gateway`: one copy of each shared MCP server for every
+  session.** Each harness session started its own copy of every stdio
+  server: with 17 servers, one Claude Code session held 26 processes and
+  about 1.3 GB. `swe mcp gateway share <server...>` marks hub servers
+  that keep no per-session state, `swe mcp gateway install` runs a
+  LaunchAgent that starts each of them once and serves it on
+  `http://127.0.0.1:8478/mcp/<server>`, and `swe mcp sync quiver ...`
+  then writes that URL instead of the command. Measured with 18 shared
+  servers and playwright left per session: one session's MCP processes
+  went from 26 (1,375 MB) to 1 (63 to 85 MB), and the gateway held the
+  shared servers once (25 processes, about 1.3 GB) with one session or
+  four. Browser and REPL servers are refused without `--force`; Claude
+  Desktop keeps the command, since it takes no URL server.
+
 - **Web app: a tray for queued messages in the chat.** A Queue-mode
   send made while the agent works now waits in a tray above the
   composer, as on the iPhone, instead of a "Queued until the agent is
