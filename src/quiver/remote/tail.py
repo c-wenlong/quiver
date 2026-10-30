@@ -542,6 +542,74 @@ class JsonlTailSource:
             self.offset = size - max_bytes
             self._align = True
 
+    def continue_from(self, old: "JsonlTailSource") -> bool:
+        """Place this source right after the last line ``old`` read,
+        found in this file; False (unplaced) when it isn't here.
+
+        Claude ``--resume`` from another folder copies the transcript
+        line for line into a new file, then appends the new turns. The
+        catalog sees the new file a refresh later, so turns can already
+        sit past the copy: starting at the end would lose them.
+        """
+        if old._align:
+            return False  # never polled: its offset is mid-line
+        lines = old._consumed_tail()
+        if not lines:
+            return False
+        newest = lines[0]
+        # The copy is usually byte for byte: the line sits at the same
+        # offset. Otherwise scan for the newest of the old tail lines.
+        at = old.offset - len(newest) - 1
+        if at >= 0:
+            try:
+                with open(self.path, "rb") as fh:
+                    fh.seek(at)
+                    if fh.read(len(newest) + 1) == newest + b"\n":
+                        self.offset = old.offset
+                        self._prime_head()
+                        return True
+            except OSError:
+                return False
+        rank = {line: i for i, line in reversed(list(enumerate(lines)))}
+        best: tuple[int, int] | None = None  # (rank, offset after line)
+        pos = 0
+        try:
+            with open(self.path, "rb") as fh:
+                for raw in fh:
+                    pos += len(raw)
+                    if not raw.endswith(b"\n"):
+                        break  # a line still being written
+                    r = rank.get(raw[:-1])
+                    if r is not None and (best is None or r <= best[0]):
+                        best = (r, pos)
+        except OSError:
+            return False
+        if best is None:
+            return False
+        self.offset = best[1]
+        self._prime_head()
+        return True
+
+    def _consumed_tail(self, count: int = 64) -> list[bytes]:
+        """The last ``count`` non-empty lines before ``offset``, newest
+        first, read from at most the last MiB of them."""
+        end = self.offset
+        if end <= 0:
+            return []
+        start = max(0, end - (1 << 20))
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(start)
+                window = fh.read(end - start)
+        except OSError:
+            return []
+        lines = window.split(b"\n")
+        if lines and lines[-1] == b"":
+            lines.pop()  # offset sits after a newline
+        if start > 0 and lines:
+            lines.pop(0)  # began mid-line
+        return [line for line in reversed(lines) if line.strip()][:count]
+
     def _file_head(self, span: int) -> bytes:
         try:
             with open(self.path, "rb") as fh:
@@ -1435,8 +1503,10 @@ class TailManager:
 
         Claude ``--resume`` from another folder writes a new JSONL under
         that project; the old source would keep polling a dead path.
-        The journal already holds the history the new file rewrites, so
-        the fresh source starts at its end — only new turns stream.
+        The journal already holds the history the new file copies, so
+        the fresh source starts after the last line the old one read,
+        found in the new file: turns written past the copy before this
+        refresh still stream. When that line isn't there, the end.
         """
         new_path = resolve_jsonl_path(session)
         if new_path is None or new_path == self._source_path(tailer.source):
@@ -1444,7 +1514,11 @@ class TailManager:
         source = make_source(session)
         if source is None:
             return
-        source.skip_to_end()
+        old = tailer.source
+        if not (isinstance(old, JsonlTailSource)
+                and isinstance(source, JsonlTailSource)
+                and source.continue_from(old)):
+            source.skip_to_end()
         tailer.source = source
         tailer.save_cursor()
 

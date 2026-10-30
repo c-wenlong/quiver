@@ -1189,6 +1189,60 @@ class TestTailManager(unittest.TestCase):
         self.assertNotIn("stale", texts)
         self.assertIn("b1", texts)
 
+    def _resume_pair(self):
+        # Claude --resume from another folder: the new file starts as a
+        # line-for-line copy of the old one.
+        path_a = self.tmp / "a.jsonl"
+        path_a.write_text("".join(
+            json.dumps(_claude_user(f"a{i}")) + "\n" for i in range(3)))
+        path_b = self.tmp / "b.jsonl"
+        sess_a = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_a), tool_name="claude")
+        sess_b = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_b), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess_a, "active")])
+        mgr.tick(time.time())
+        return mgr, path_a, path_b, sess_b
+
+    def _texts(self):
+        return [e["data"]["text"] for _k, e in self.events
+                if e["type"] == "message.appended"]
+
+    def test_reresolve_keeps_turns_written_past_the_copy(self):
+        # The catalog sees the new file a refresh late: a turn already
+        # appended after the copy must still stream, history must not.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "b1"])
+
+    def test_reresolve_finds_the_last_line_when_the_copy_shifts(self):
+        # A copy with an extra record ahead of it: no longer at the same
+        # offset, so the line is found by scanning.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(
+            (json.dumps({"type": "worktree-state"}) + "\n").encode()
+            + path_a.read_bytes()
+            + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "b1"])
+
+    def test_reresolve_streams_old_lines_never_read(self):
+        # Lines the old file got after its last poll were copied too and
+        # were never sent: they stream from the new file.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        with open(path_a, "a") as fh:
+            fh.write(json.dumps(_claude_user("a3")) + "\n")
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "a3", "b1"])
+
     def test_ensure_on_demand_tailer_survives_cap(self):
         path = self.tmp / "s.jsonl"
         path.write_text(json.dumps(_claude_user("hi")) + "\n")
