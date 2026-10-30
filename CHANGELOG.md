@@ -462,6 +462,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mac app: less CPU while idle.** The trend sampler no longer reads
+  every HID temperature sensor each tick when the SMC already gave the
+  CPU, SSD and battery temperatures, and the session search status line
+  reads its index counts only while Settings shows it. On one Mac the
+  app's idle CPU went from 4.2% to 2.9% of a core.
+
 - **Remote: the web app lives at the hub's root.** `https://<hub>/`
   is the app and its assets sit beside it (`/app.js`, `/styles.css`),
   so there is no redirect on the way in. The `/app/…` paths earlier

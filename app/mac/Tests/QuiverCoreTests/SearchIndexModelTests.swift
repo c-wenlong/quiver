@@ -20,7 +20,8 @@ import Testing
     private func stack(
         enabled: Bool = false,
         supported: Bool = true,
-        reconcileInterval: Duration = .seconds(60)
+        reconcileInterval: Duration = .seconds(60),
+        pollSettled: Duration = .seconds(10)
     ) throws -> Stack {
         let temp = try TempDir()
         let ledger = try Ledger(directory: temp.path("data/ledger"))
@@ -31,7 +32,7 @@ import Testing
         let model = SearchIndexModel(
             quiver: temp.url, ledger: ledger, overview: overview,
             defaults: defaults, supported: supported,
-            reconcileInterval: reconcileInterval)
+            reconcileInterval: reconcileInterval, pollSettled: pollSettled)
         return Stack(temp: temp, ledger: ledger, overview: overview,
                      defaults: defaults, model: model)
     }
@@ -100,6 +101,49 @@ import Testing
         // with when rather than "Synced:".
         #expect(s.model.statusText.hasPrefix("Last synced "))
         #expect(s.model.statusText.contains("0 sessions, 0 messages"))
+    }
+
+    @Test func showingTheStatusLineReadsTheIndexAtOnce() async throws {
+        let s = try stack()
+        s.model.enabled = true
+        await s.model.apply()
+        #expect(s.model.statusText.contains("0 sessions"))
+
+        // A row lands while the line is hidden; the poll doesn't read the
+        // index then, so only showing the line can pick it up.
+        _ = try #require(s.model.store).createSession(
+            SearchSessionFields(agent: "claude", filePath: "/t/one.jsonl"))
+        s.model.statusVisible = true
+        let read = await observe { s.model.statusText.contains("1 session,") }
+        #expect(read)
+    }
+
+    @Test func onlyAVisibleStatusLinePollsTheIndex() async throws {
+        let s = try stack(enabled: true, pollSettled: .milliseconds(5))
+        // One apply only: flipping `enabled` would start a second, whose
+        // attach reads the index whenever it lands. The attach stamps
+        // lastSynced last, once its scan has finished.
+        s.model.start()
+        #expect(await observe {
+            s.model.indexer != nil && !s.overview.isLoading && s.model.lastSynced != nil
+        })
+
+        // Hidden: the poll keeps ticking but never reads the index.
+        var reads = s.model.statusReads
+        var ticks = s.model.pollTicks
+        #expect(await observe { s.model.pollTicks >= ticks + 3 })
+        #expect(s.model.statusReads == reads)
+
+        // Shown: every tick reads it.
+        s.model.statusVisible = true
+        #expect(await observe { s.model.statusReads >= reads + 3 })
+
+        // Hidden again: the reads stop.
+        s.model.statusVisible = false
+        reads = s.model.statusReads
+        ticks = s.model.pollTicks
+        #expect(await observe { s.model.pollTicks >= ticks + 3 })
+        #expect(s.model.statusReads == reads)
     }
 
     @Test func disablingDetachesButKeepsTheFiles() async throws {

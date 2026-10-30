@@ -28,6 +28,28 @@ import Testing
         #expect(TemperatureReading.summarise([("gas gauge battery", 30)])?[.cpu] == nil)
     }
 
+    @Test func hidIsReadOnlyForWhatTheSMCLeftOut() {
+        var asked = 0
+        let hid = { () -> TemperatureReading? in
+            asked += 1
+            return TemperatureReading([.cpu: 70, .ssd: 40, .battery: 30])
+        }
+        // The SMC answered all three: the HID sensors are never read.
+        let full = TemperatureReading([.cpu: 60, .gpu: 55, .ssd: 45, .battery: 35])
+        #expect(MacTemperatureSampler.combine(full, hid: hid) == full)
+        #expect(asked == 0)
+
+        // No SSD key answered: HID is read and fills only the gap.
+        let partial = TemperatureReading([.cpu: 60, .battery: 35])
+        #expect(MacTemperatureSampler.combine(partial, hid: hid)
+                == TemperatureReading([.cpu: 60, .ssd: 40, .battery: 35]))
+        #expect(asked == 1)
+
+        // No SMC at all: HID is the whole reading, and nothing means nil.
+        #expect(MacTemperatureSampler.combine(nil, hid: hid)?[.cpu] == 70)
+        #expect(MacTemperatureSampler.combine(nil, hid: { nil }) == nil)
+    }
+
     @Test func chipNamesParse() {
         #expect(ThermalKeys.chip("Apple M4 Pro")! == (4, "pro"))
         #expect(ThermalKeys.chip("Apple M1")! == (1, "base"))
