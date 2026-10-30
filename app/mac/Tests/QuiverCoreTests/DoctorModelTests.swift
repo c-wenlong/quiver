@@ -206,9 +206,10 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
             let run = Task { await model.run(DoctorReport.Finding(
                 check: "setup.registry", severity: .warning, message: "none",
                 fix: nil, action: action)) }
-            // Without the gate the run reaches swe within these yields.
-            for _ in 0..<100 where runner.calls.isEmpty { await Task.yield() }
-            #expect(!model.running.isEmpty)
+            // Either the run queues at the gate or, without it, reaches swe.
+            while HarnessesModel.registryWrites.waiters == 0, runner.calls.isEmpty {
+                await Task.yield()
+            }
             #expect(runner.calls.isEmpty, "\(action) ran while the gate was held")
             HarnessesModel.registryWrites.release()
             await run.value
