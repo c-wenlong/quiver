@@ -9,6 +9,8 @@ struct AddRepoSheet: View {
     @Environment(\.dismissSheet) private var dismiss
 
     @State private var query = ""
+    /// The text Return searched, so the debounce doesn't search it again.
+    @State private var submitted: String?
     @State private var working = false
 
     private var model: GitHubModel { app.github }
@@ -32,7 +34,10 @@ struct AddRepoSheet: View {
             FormField("Repository") {
                 TextField("owner/repo, GitHub URL, or search terms", text: $query)
                     .quiverField(monospaced: true)
-                    .onSubmit { Task { await model.search(query, swe: app.swe) } }
+                    .onSubmit {
+                        submitted = query
+                        Task { await model.search(query, swe: app.swe) }
+                    }
             }
             if let error = model.pinError ?? model.searchError {
                 Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
@@ -94,7 +99,8 @@ struct AddRepoSheet: View {
                 return
             }
             try? await Task.sleep(for: .milliseconds(350))
-            if !Task.isCancelled {
+            // Return already searched this text: one gh call, not two.
+            if !Task.isCancelled, query != submitted {
                 await model.search(query, swe: app.swe)
             }
         }

@@ -88,6 +88,9 @@ struct RepositoriesPage: View {
             let tabs: [RepoTab] = model.tab == .actions ? [.actions] : [model.tab, .actions]
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
+                // try? swallows the cancel: without this every filter
+                // keystroke ran one more round of fetches.
+                guard !Task.isCancelled else { return }
                 await withTaskGroup(of: Void.self) { group in
                     for repo in visibleRepos {
                         for tab in tabs {

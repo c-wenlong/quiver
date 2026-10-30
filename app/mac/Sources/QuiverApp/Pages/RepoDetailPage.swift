@@ -148,6 +148,9 @@ struct RepoDetailPage: View {
             // refetches every minute while the page is open.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
+                // try? swallows the cancel: without this a tab switch ran
+                // one more round of fetches for the tab just left.
+                guard !Task.isCancelled else { return }
                 await model.loadFocusTab(model.focusTab, repo: repo, swe: app.swe)
                 if model.focusTab == .pulls {
                     await model.loadReviewRequests(repo: repo, swe: app.swe)
