@@ -5,9 +5,8 @@
 When each harness was actually working, read from the ledger's response
 timestamps, and for Pi, Factory Droid, Freebuff and the Cursor app from
 their own session files and database (``_activity``), as the Mac reads
-them. One session's responses form a
-block until more than
-``GAP_S`` of silence passes; blocks of one harness, account and project
+them. One session's responses form a block until more than ``GAP_S`` of
+silence passes; blocks of one harness, account and project
 then merge under the same gap, so parallel sessions in a repository read
 as one stretch of work. Every Grok Bot session shares one project, "Grok
 Bot", since its Bots pass one task between them.
