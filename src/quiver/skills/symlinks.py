@@ -162,6 +162,12 @@ def apply_skills_symlink_hints(hints: list[SkillsSymlinkHint], home: Path | None
                 hint.path.parent.mkdir(parents=True, exist_ok=True)
             except (FileExistsError, NotADirectoryError):
                 continue  # a file further up the path; leave it alone
+            if hint.path.is_symlink():
+                # A dangling link (one into the removed ~/.agents/skills,
+                # say) fails exists() but still holds the path, and
+                # symlink_to raised FileExistsError on every apply. Nothing
+                # sits behind it to lose.
+                hint.path.unlink()
             hint.path.symlink_to(home / SHARED_REL)
             applied.append(f"symlink {hint.label}")
 
