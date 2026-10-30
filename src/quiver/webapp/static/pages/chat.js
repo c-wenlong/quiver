@@ -1527,6 +1527,15 @@ const SessionChat = (() => {
     bindComposer();
   }
 
+  /* The bar's second line: harness, folder, then the model of the newest
+   * reply as on the phone (nothing while the hub doesn't know it), and
+   * the machine of a satellite's session. */
+  function barSub(r) {
+    r = r || {};
+    return [harnessLabel(r), r.cwd, Fmt.modelName(r.model), r.remote ? r.machine : ""]
+      .filter(Boolean).map(esc).join(" · ");
+  }
+
   function paintBar() {
     const bar = $("chat-bar");
     if (!bar) return;
@@ -1534,8 +1543,7 @@ const SessionChat = (() => {
     const status = STATUS[r.status] ? `<span class="badge status-${esc(r.status)}">${esc(STATUS[r.status])}</span>` : "";
     // Ownership needs no chip: an observed session says so in the banner
     // below, and an attached one shows an enabled composer.
-    const sub = [harnessLabel(chat.row), r.cwd, r.remote ? r.machine : ""]
-      .filter(Boolean).map(esc).join(" · ");
+    const sub = barSub(chat.row);
     // The tmux pane name rides the catalog row for an attached tmux-mode
     // session and for a kept one; the chip copies its attach command.
     const tmuxChip = r.tmux
@@ -1891,7 +1899,11 @@ const SessionChat = (() => {
     } else if (ev.type === "session.status") {
       const status = d.status || "";
       // The turn ended (or stopped to ask) without a message to show.
-      if (ev.session === chat.key && status && status !== "active") chat.awaitingReply = false;
+      if (ev.session === chat.key && status && status !== "active") {
+        chat.awaitingReply = false;
+        // A reply just finished: the header's model may be new.
+        if (live) refreshModel();
+      }
       if (chat.row && ev.session === chat.key) {
         chat.row.status = status;
         // An open chat polls nothing: a turn ending here should show the
@@ -2635,6 +2647,33 @@ const SessionChat = (() => {
 
   /* -------------------------------------------------------------- opening */
 
+  /* The model alone, read again from the catalog row. The row is read
+   * once at open and no event carries the model, so one that first
+   * appears with the opening reply, or changes from another client or
+   * the terminal, would show as it was until a reopen. A failed read, or
+   * a hub that doesn't know the model, leaves the header as it is. One
+   * read at a time; returns the model now shown. */
+  let modelRead = null;
+  function refreshModel() {
+    if (modelRead || !chat.key || !chat.row) return modelRead || Promise.resolve("");
+    const gen = chat.gen;
+    modelRead = (async () => {
+      try {
+        const { status, data } = await api("/v1/sessions");
+        if (gen !== chat.gen || status !== 200 || !data) return "";
+        const row = (data.sessions || []).find((r) => r.key === chat.key);
+        if (row && row.model && chat.row && row.model !== chat.row.model) {
+          chat.row.model = row.model;
+          paintBar();
+        }
+        return (chat.row && chat.row.model) || "";
+      } finally {
+        modelRead = null;
+      }
+    })();
+    return modelRead;
+  }
+
   /* The catalog row: ownership, attachable and status as the hub has them
    * now, not as the list had them when it loaded. */
   async function loadRow(gen) {
@@ -2764,7 +2803,9 @@ const SessionChat = (() => {
         const rows = menu.rows.length;
         // Enter waits only while the first fetch is still out; an
         // answered list with nothing pickable sends the text as typed.
-        const waiting = cmds.loading && !(cmds.response && cmds.key === chat.key);
+        const waiting = menu.token.kind === "mention"
+          ? files.loading && files.answered === null
+          : cmds.loading && !(cmds.response && cmds.key === chat.key);
         const key = menuKey(e, rows, waiting);
         if (key === "dismiss") {
           e.preventDefault();
@@ -2937,8 +2978,11 @@ const SessionChat = (() => {
      as the name grows. The hub only lists them: a pick inserts
      "/name " (or the command's own `insert`), and the harness expands
      it when the message lands. Ported from the remote PWA's "/" menu.
-     Positions are offsets into the
-     box's value; the caret is the input's selectionEnd. */
+     The same menu lists files for an `@path` typed anywhere in the box
+     (the hub's GET .../files), with the same keys and rows; its token
+     and insertion rules are the iPhone's (PromptCompletion.swift,
+     `Mention`). Positions are offsets into the box's value; the caret
+     is the input's selectionEnd. */
 
   /* A `/command` being typed: the box starts with / and the caret is
    * still in that first word. */
@@ -2998,6 +3042,97 @@ const SessionChat = (() => {
     return null;
   }
 
+  /* An `@path` being typed: the @ sits at the start of the text or after
+   * whitespace and runs to the caret with no whitespace in between, so
+   * an email (a@b.com) never starts one. A path with spaces is quoted,
+   * `@"My Documents/notes.txt"`, as Claude Code writes it; while a
+   * folder is browsed the quote stays open (`@"My Documents/`). `end`
+   * is the end of the word the caret is in, which a pick replaces. */
+  function mentionToken(text, caret) {
+    caret = Math.min(Math.max(caret, 0), text.length);
+    const quoted = quotedMention(text, caret);
+    if (quoted) return quoted;
+    let start = caret;
+    while (start > 0 && !/\s/.test(text[start - 1])) start--;
+    if (start >= caret || text[start] !== "@") return null;
+    let end = caret;
+    while (end < text.length && !/\s/.test(text[end])) end++;
+    return { start, end, query: text.slice(start + 1, caret) };
+  }
+
+  /* `@"` at the start or after whitespace, with no quote or newline
+   * between it and the caret. It runs to its closing quote or, left
+   * open, to the end of the word the caret is in. */
+  function quotedMention(text, caret) {
+    let q = caret - 1;
+    while (q >= 0 && text[q] !== '"' && !/[\n\r]/.test(text[q])) q--;
+    if (q < 1 || text[q] !== '"' || text[q - 1] !== "@") return null;
+    const start = q - 1;
+    if (start > 0 && !/\s/.test(text[start - 1])) return null;
+    let end = caret;
+    while (end < text.length && text[end] !== '"' && !/[\n\r]/.test(text[end])) end++;
+    if (end < text.length && text[end] === '"') {
+      end++;
+    } else {
+      end = caret;
+      while (end < text.length && !/\s/.test(text[end])) end++;
+    }
+    return { start, end, query: text.slice(q + 1, caret) };
+  }
+
+  /* A path without its trailing slashes ("/" itself stays). */
+  function trimmedSlash(path) {
+    let p = String(path || "");
+    while (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
+    return p;
+  }
+
+  /* "src/app/main.py" as its name and the folder it's in. */
+  function splitPath(path) {
+    const clean = trimmedSlash(path);
+    const slash = clean.lastIndexOf("/");
+    return slash < 0 ? { name: clean, parent: "" } : { name: clean.slice(slash + 1), parent: clean.slice(0, slash) };
+  }
+
+  /* The box after picking `path`, and where the caret goes. A file
+   * becomes `@path ` with the caret after the space (an existing space
+   * is reused); a folder becomes `@path/` with the caret after the
+   * slash, so the menu stays open to pick inside it. A path with
+   * whitespace is quoted, `@"a b.txt" `, and a folder's quote is left
+   * open, `@"a b/`, until a file closes it. */
+  function insertMention(text, token, path, isDir) {
+    const start = Math.min(token.start, text.length);
+    const end = Math.min(Math.max(token.end, start), text.length);
+    const clean = trimmedSlash(path);
+    const quoted = /\s/.test(clean);
+    let inserted = (quoted ? '@"' : "@") + clean;
+    if (isDir) {
+      inserted += "/";
+    } else {
+      if (quoted) inserted += '"';
+      if (end >= text.length || !/\s/.test(text[end])) inserted += " ";
+    }
+    const next = text.slice(0, start) + inserted + text.slice(end);
+    let caret = start + inserted.length;
+    // A file before existing whitespace: step over it, as if the space
+    // had been typed.
+    if (!isDir && !inserted.endsWith(" ") && caret < next.length) caret++;
+    return { text: next, caret };
+  }
+
+  /* The one muted line the @ menu shows instead of rows. */
+  function filesError(status, data, machine) {
+    const code = data && data.error && data.error.code;
+    if (code === "files_unavailable") return `File search isn't available for sessions on ${machine || "that machine"}`;
+    if (code === "cwd_missing") return "This session's folder is gone";
+    if (code === "bad_cwd") return "This session has no working folder";
+    if (code === "not_readable") return "The hub can't read this session's folder";
+    if (code === "unknown_session") return "The hub doesn't know this session any more";
+    if (!status) return "Can't reach the hub";
+    // A hub from before the route answers any unknown path 404.
+    return status === 404 ? "Update the hub to search files from here" : "Couldn't search files";
+  }
+
   /* The / menu's list: warmed when the chat opens so the first / opens
    * it already filled, filtered as you type. A failed load retries the
    * next time the menu opens. */
@@ -3010,9 +3145,76 @@ const SessionChat = (() => {
    * a newer request's answer. */
   const cmdSeqs = {};
 
-  /* The menu's state: the token it opened on, the filtered rows and the
-   * highlighted one. `dismissed` is the token Escape closed it on: it
-   * stays closed until the token changes. */
+  /* The @ menu's search, the iPhone's MentionSearch: debounced, one
+   * request at a time (a newer query aborts an older request, and its
+   * answer is dropped if it lands anyway), and the last results stay up
+   * while the next query loads. `query` is what the newest search asked;
+   * `answered` is what `entries` answer, null before any came back.
+   * `ctrl` aborts the request in flight; `settle` resolves the pending
+   * search's promise when it is replaced. */
+  const files = { gen: 0, timer: null, ctrl: null, settle: null, query: null, entries: [], answered: null,
+    loading: false, error: "" };
+
+  /* Drops the pending search: its timer, its request and its promise. */
+  function dropSearch() {
+    files.gen++;
+    clearTimeout(files.timer);
+    files.timer = null;
+    if (files.ctrl) files.ctrl.abort();
+    files.ctrl = null;
+    if (files.settle) files.settle();
+    files.settle = null;
+  }
+  const FILES = { debounce: 120, limit: 50 };
+
+  function resetFiles() {
+    dropSearch();
+    files.query = null;
+    files.entries = [];
+    files.answered = null;
+    files.loading = false;
+    files.error = "";
+  }
+
+  /* Searches for `query` after the debounce. Resolves once the answer
+   * is in (or the search was replaced), so tests can wait on it. */
+  function searchFiles(query) {
+    dropSearch();
+    const gen = files.gen;
+    const key = chat.key;
+    files.query = query;
+    files.loading = true;
+    return new Promise((resolve) => {
+      files.settle = resolve;
+      files.timer = setTimeout(async () => {
+        files.timer = null;
+        if (gen !== files.gen || key !== chat.key) return resolve();
+        const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+        files.ctrl = ctrl;
+        const { status, data } = await api(
+          `${sessionPath(key, "files")}?q=${encodeURIComponent(query)}&limit=${FILES.limit}`,
+          { signal: ctrl ? ctrl.signal : undefined });
+        if (gen !== files.gen || key !== chat.key) return resolve();
+        files.ctrl = null;
+        files.settle = null;
+        const ok = status === 200 && data && Array.isArray(data.entries);
+        files.entries = ok ? data.entries.filter((e) => e && typeof e.path === "string") : [];
+        files.error = ok ? "" : filesError(status, data, (chat.row && chat.row.machine) || "");
+        files.answered = query;
+        files.loading = false;
+        if (menu.open && menu.token.kind === "mention") {
+          menu.active = 0;
+          renderMenu();
+        }
+        resolve();
+      }, FILES.debounce);
+    });
+  }
+
+  /* The menu's state: the token it opened on (`kind` "slash" or
+   * "mention"), the rows it shows and the highlighted one. `dismissed`
+   * is the token Escape closed it on: it stays closed until the token
+   * changes. */
   const menu = { open: false, token: null, rows: [], active: 0, dismissed: null };
 
   function resetMenus() {
@@ -3021,6 +3223,7 @@ const SessionChat = (() => {
     cmds.response = null;
     cmds.loading = false;
     cmds.error = "";
+    resetFiles();
     menu.open = false;
     menu.token = null;
     menu.rows = [];
@@ -3029,10 +3232,11 @@ const SessionChat = (() => {
   }
 
   function sameToken(a, b) {
-    return !!a && !!b && a.start === b.start && a.end === b.end && a.query === b.query;
+    return !!a && !!b && a.kind === b.kind && a.start === b.start && a.end === b.end && a.query === b.query;
   }
 
   function closeMenu() {
+    resetFiles();
     menu.open = false;
     menu.token = null;
     menu.rows = [];
@@ -3045,16 +3249,28 @@ const SessionChat = (() => {
     const input = $("chat-text");
     const caret = input.selectionEnd;
     const live = document.activeElement === input && !input.disabled && input.selectionStart === caret;
-    const token = live ? slashToken(input.value, caret) : null;
+    const slash = live ? slashToken(input.value, caret) : null;
+    const mention = live && !slash ? mentionToken(input.value, caret) : null;
+    const token = slash ? { ...slash, kind: "slash" } : mention ? { ...mention, kind: "mention" } : null;
     if (!token || !sameToken(token, menu.dismissed)) menu.dismissed = null;
     if (!token || menu.dismissed) {
       if (menu.open) closeMenu();
       return;
     }
-    const opening = !menu.open;
+    const opening = !menu.open || menu.token.kind !== token.kind;
+    if (opening && menu.open) resetFiles();
     if (!opening && token.query !== menu.token.query) menu.active = 0;
     menu.open = true;
     menu.token = token;
+    if (token.kind === "mention") {
+      // Search when the query changed, or when nothing answered it and
+      // nothing is out for it; a caret move inside the word re-renders.
+      if (files.query !== token.query || (files.answered === null && !files.loading && !files.error)) {
+        searchFiles(token.query);
+      }
+      renderMenu();
+      return;
+    }
     const loaded = !!cmds.response && cmds.key === chat.key;
     // Fetch when there's no list and no failure to show; retry a failure
     // only on opening, so typing doesn't hammer a hub that refused.
@@ -3099,7 +3315,7 @@ const SessionChat = (() => {
     cmds.response = (cmdLists[key] || {}).response || null;
     cmds.error = (cmdLists[key] || {}).error || "";
     // The list is kept either way; only an open menu redraws.
-    if (menu.open) {
+    if (menu.open && menu.token.kind === "slash") {
       menu.active = 0;
       renderMenu();
     }
@@ -3146,6 +3362,13 @@ const SessionChat = (() => {
       input.removeAttribute("aria-activedescendant");
       return;
     }
+    const mention = menu.token.kind === "mention";
+    box.setAttribute("aria-label", mention ? "Files" : "Commands");
+    if (mention) {
+      box.innerHTML = fileMenuHtml();
+      showActive(box, input);
+      return;
+    }
     const r = cmds.key === chat.key ? cmds.response : null;
     menu.rows = r ? filterCommands(r.commands || [], menu.token.query) : [];
     if (menu.active >= menu.rows.length) menu.active = 0;
@@ -3181,6 +3404,10 @@ const SessionChat = (() => {
       html += `<div class="menu-foot">${footnotes.map((f) => `<div>${esc(f)}</div>`).join("")}</div>`;
     }
     box.innerHTML = html;
+    showActive(box, input);
+  }
+
+  function showActive(box, input) {
     if (menu.rows.length) {
       input.setAttribute("aria-activedescendant", `chat-menu-opt-${menu.active}`);
       const row = box.querySelector(".menu-row.active");
@@ -3190,11 +3417,36 @@ const SessionChat = (() => {
     }
   }
 
+  const FILE_ICON = '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/>';
+  const FOLDER_ICON = '<path d="M3 6h6l2 2h10v11H3z"/>';
+
+  /* The @ menu's body: the error, "Searching files" before the first
+   * answer, "No files match", or a row per file (name, then its folder). */
+  function fileMenuHtml() {
+    menu.rows = files.error ? [] : files.entries;
+    if (menu.active >= menu.rows.length) menu.active = 0;
+    if (files.error) return `<div class="menu-note error-note">${esc(files.error)}</div>`;
+    if (!menu.rows.length) {
+      return `<div class="menu-note">${files.answered === null ? "Searching files" : "No files match"}</div>`;
+    }
+    return menu.rows.map((f, i) => {
+      const { name, parent } = splitPath(f.path);
+      const dir = f.kind === "dir";
+      return `<div class="menu-row file${i === menu.active ? " active" : ""}" role="option" id="chat-menu-opt-${i}"` +
+        ` aria-selected="${i === menu.active}" data-i="${i}" aria-label="${esc(parent ? `${name}, in ${parent}` : name)}">` +
+        `<svg class="file-icon" viewBox="0 0 24 24" aria-hidden="true">${dir ? FOLDER_ICON : FILE_ICON}</svg>` +
+        `<span class="menu-name">${esc(name)}</span>` +
+        (parent ? `<span class="menu-sub">${esc(parent)}</span>` : "") + `</div>`;
+    }).join("");
+  }
+
   function pickMenu(i) {
     const entry = menu.rows[i];
     if (!entry || !menu.open) return;
     const input = $("chat-text");
-    const next = insertCommand(input.value, menu.token, entry);
+    const next = menu.token.kind === "mention"
+      ? insertMention(input.value, menu.token, entry.path, entry.kind === "dir")
+      : insertCommand(input.value, menu.token, entry);
     input.value = next.text;
     input.focus();
     input.setSelectionRange(next.caret, next.caret);
@@ -3208,9 +3460,13 @@ const SessionChat = (() => {
     if (chat.key && keyFromHash() !== chat.key) close();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && chat.key && chat.opened && !chat.stream) {
-      chat.retries = 0;
-      openStream(chat.gen, resumeSeq());
+    if (document.visibilityState === "visible" && chat.key && chat.opened) {
+      // Back on the tab: a model switched elsewhere meanwhile shows now.
+      refreshModel();
+      if (!chat.stream) {
+        chat.retries = 0;
+        openStream(chat.gen, resumeSeq());
+      }
     }
   });
 
@@ -3224,8 +3480,9 @@ const SessionChat = (() => {
       diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post, handleFrame, approvalCard,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
-      railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
-      cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat },
+      barSub, refreshModel, railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
+      cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat,
+      mentionToken, insertMention, splitPath, filesError, files, FILES, searchFiles, trackMenus, menu },
   };
 })();
 

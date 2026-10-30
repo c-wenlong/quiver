@@ -106,6 +106,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--requests", "List pending pair requests"),
         ("--approve=", "Approve a pair request by its 6-digit code"),
         ("--deny=", "Deny a pair request by its 6-digit code"),
+        ("--request-id=", "Hold --approve/--deny to one pending request"),
         ("--json", "Print the device list as JSON"),
     ],
     "remote attach": [

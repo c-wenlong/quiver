@@ -15,6 +15,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   atomically and skip unchanged content; check reports drift without
   writing; watch rebuilds after edits and keeps running after source errors.
 
+- **Web app: the session's model in the chat header and Sessions
+  list.** The chat's header shows the model of the transcript's newest
+  reply after the folder, and each Sessions row names it first in its
+  details line, ahead of the ledger's other models (the ledger's own
+  spelling of the same model isn't repeated). The provider path and the
+  8-digit date stamp are dropped, as on the phone:
+  `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
+  `claude-opus-4-5`. Nothing shows when the hub doesn't know it. An
+  open chat reads the hub's row again when a turn ends and when the
+  tab becomes visible, so the header follows a model that first
+  appears with the opening reply or changes elsewhere. The
+  page's rows (`/v1/app/sessions`) now carry the hub's `model` as the
+  catalog read it, so the page has no second transcript reader. Display
+  only: the web app doesn't switch models. Part of
+  [#643](https://github.com/c-wenlong/quiver/issues/643).
+
+- **Mac app: approve pair requests in Settings › Remote.** A "Pending
+  requests" group under Paired devices lists the phones asking to pair
+  over Tailscale, with each one's name, tailnet node, login and how long
+  it has waited, a code field for the 6 digits the phone shows, and
+  Approve / Deny. It reads `swe remote devices --requests --json` every
+  3 seconds, only while the section is on screen, and an approval
+  refreshes the device list. This covers a hub on the same Mac; a hub on
+  another machine is [#681](https://github.com/c-wenlong/quiver/issues/681).
+  `swe remote devices --approve=<code>` and `--deny=<code>` gain
+  `--request-id=<id>`, which holds the code to that one request, as the
+  hub's HTTP route already did: a code typed against one row never
+  decides another, and five wrong approve codes deny it. The app always
+  sends it.
+  Part of [#522](https://github.com/c-wenlong/quiver/issues/522).
+
+- **Web app: `@` file completion in the chat composer.** Typing `@` at
+  the start of the box or after a space opens the composer's menu with
+  files and folders under the session's folder, from the hub's
+  `GET /v1/sessions/{key}/files` route, the same list the iPhone's `@`
+  menu shows. It uses the `/` menu's box and keys (arrows, Enter or Tab
+  to pick, Escape to close) and the iPhone's token rules: an `@` inside
+  a word (an email) opens nothing, a path with spaces is quoted
+  (`@"My Documents/notes.txt"`), a file goes in as `@path ` and a
+  folder as `@path/` so the menu stays open inside it. Searches wait
+  120 ms after the last keystroke, and a newer query drops an older
+  answer. A satellite session's refusal and an older hub's 404 are
+  worded in the menu
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
 - **Compute: auto clean orphaned processes, on the Mac and the web app.**
   The Compute settings gain an "Auto clean" switch (Mac: the cleanup
   sheet, web: the settings gear): while it is on, an orphan tree older

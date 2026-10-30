@@ -62,11 +62,12 @@ async function apiSend(method, path, body) {
 }
 const apiPost = (path, body) => apiSend("POST", path, body);
 
-/* status 0 means the hub didn't answer at all (offline, connection lost). */
-async function api(path) {
+/* status 0 means the hub didn't answer at all (offline, connection lost,
+ * or the request was aborted through `opts.signal`). */
+async function api(path, opts = {}) {
   let resp;
   try {
-    resp = await fetch(path, { headers: authHeaders() });
+    resp = await fetch(path, { headers: authHeaders(), signal: opts.signal });
   } catch {
     return { status: 0, data: null };
   }
