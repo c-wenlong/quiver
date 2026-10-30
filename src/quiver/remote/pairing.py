@@ -27,6 +27,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.remote.protocol import url_host
 
 # A pairing token is worthless within minutes of `swe remote pair`.
 TOKEN_TTL_S = 300
@@ -321,7 +322,8 @@ def pair_url(host: str, port: int, token: str, name: str = "",
              scheme: str = "http") -> str:
     """The form a phone browser can open directly: the web app's
     ``#pair=`` handler trades the token for a device credential."""
-    out = f"{scheme}://{host}:{port}/app/#pair={quote(token, safe='')}"
+    out = (f"{scheme}://{url_host(host)}:{port}/app/"
+           f"#pair={quote(token, safe='')}")
     if name:
         out += f"&name={quote(name, safe='')}"
     return out
