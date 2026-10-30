@@ -1333,13 +1333,14 @@ const SessionChat = (() => {
      host, path and Open (a new tab). Port of the phone's LinkCards.swift.
      The links come from md()'s own anchors, so code spans and fences,
      which md() never links, are skipped the same way, and only http and
-     https count (md() links mailto: and tel: too). */
+     https count (md() links mailto: and tel: too). Both take the reply's
+     md() HTML, the markup its bubble shows, so it is rendered once. */
 
   const LINK_CARDS_MAX = 3;
 
-  function linkUrls(text) {
+  function linkUrls(html) {
     const out = [], seen = new Set();
-    for (const m of md(text).matchAll(/<a href="([^"]*)"/g)) {
+    for (const m of html.matchAll(/<a href="([^"]*)"/g)) {
       const href = m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">").replace(/&amp;/g, "&");
       let url;
@@ -1358,8 +1359,8 @@ const SessionChat = (() => {
   /* "/code/artifact/abc?x=1", or "" for a bare host. */
   const linkPath = (url) => (url.pathname === "/" && !url.search ? "" : url.pathname + url.search);
 
-  function linkCardsHtml(text) {
-    const urls = linkUrls(text);
+  function linkCardsHtml(html) {
+    const urls = linkUrls(html);
     if (!urls.length) return "";
     return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${safeHref(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
       <span class="link-card-ic">${iconSvg("link")}</span>
@@ -2173,8 +2174,9 @@ const SessionChat = (() => {
     } else if (kind === "error") {
       div.innerHTML = `<div class="role"><span class="tool-ic">${iconSvg("warn")}</span>Error</div><div class="text">${md(msg.text)}</div>`;
     } else if (kind === "user" || kind === "assistant") {
-      div.innerHTML = `<div class="text">${md(msg.text)}</div>`;
-      if (kind === "assistant") div.insertAdjacentHTML("beforeend", linkCardsHtml(msg.text));
+      const html = md(msg.text);
+      div.innerHTML = `<div class="text">${html}</div>`;
+      if (kind === "assistant") div.insertAdjacentHTML("beforeend", linkCardsHtml(html));
       if (carried) {
         div.classList.add("degraded");
         div.insertAdjacentHTML("beforeend", `<div class="send-note">${esc(carried)}</div>`);
