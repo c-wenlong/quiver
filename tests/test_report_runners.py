@@ -83,6 +83,20 @@ class RunnerArgvTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "managed by Quiver"):
             build_argv(RunnerSpec("codex", "gpt-5", ("--sandbox=danger-full-access",)))
 
+    def test_other_spellings_of_the_unsafe_flags_are_refused(self):
+        for harness, args in (
+            ("codex", ("--dangerously-bypass-approvals-and-sandbox",)),
+            ("codex", ("-s", "danger-full-access")),
+            ("codex", ("-sdanger-full-access",)),
+            ("codex", ("-c", "sandbox_mode=danger-full-access")),
+            ("codex", ("--config=sandbox_mode=danger-full-access",)),
+            ("codex", ("-c", "approval_policy=never")),
+            ("claude", ("--allow-dangerously-skip-permissions",)),
+        ):
+            with self.subTest(args=args):
+                with self.assertRaisesRegex(ValueError, "managed by Quiver"):
+                    build_argv(RunnerSpec(harness, "model", args))
+
     def test_claude_rejects_option_terminator(self):
         with self.assertRaisesRegex(ValueError, "terminators"):
             build_argv(RunnerSpec("claude", "sonnet", ("--", "ignored")))
