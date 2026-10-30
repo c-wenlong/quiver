@@ -431,6 +431,7 @@ private struct ProcessRowView: View {
             }
             .menuIndicator(.hidden)
             .menuStyle(.borderlessButton)
+            .accessibilityLabel("More for \(row.sample.name)")
         }
         .help(row.sample.commandLine)
         .alert(row.isMain ? "Quit \(UsageFormat.harness(harness))?" : "Quit \(row.sample.name)?",
@@ -713,6 +714,7 @@ private struct CleanupSheet: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .disabled(working)
+                .accessibilityLabel("Select every \(group.harness.map(UsageFormat.harness) ?? "orphaned") process")
         }
     }
 
@@ -789,6 +791,7 @@ private struct CleanupRow: View {
                 Toggle(isOn: Binding(get: { isOn }, set: { _ in toggle() })) { EmptyView() }
                     .labelsHidden()
                     .frame(width: 20)
+                    .accessibilityLabel("Select \(name)")
             }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {

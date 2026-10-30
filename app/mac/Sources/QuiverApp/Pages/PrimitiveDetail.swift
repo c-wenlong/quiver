@@ -498,6 +498,7 @@ struct PartsCard: View {
                     Image(systemName: "trash").font(Theme.font(size: 11))
                 }
                 .secondaryButton()
+                .accessibilityLabel("Move \(entry.name) to the Trash")
             }
         }
         .padding(.vertical, 3)
