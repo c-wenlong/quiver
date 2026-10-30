@@ -76,6 +76,39 @@ import Testing
         #expect(result.status == SIGTERM)
     }
 
+    @Test func cancellingTheCallerStopsTheWholeCommandTree() async throws {
+        // The child reports the pid of a sleep it spawned, then waits on
+        // it. The sleep ignores SIGTERM, as a build tool mid-write may:
+        // a terminate alone (which reaches the child's process group)
+        // left it running, holding the pipes, after its page went away.
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pidFile = dir.appending(path: "child.pid")
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        let task = Task {
+            try await runner.run(["-c", "(trap '' TERM; exec sleep 60) & echo $! > '\(pidFile.path)'; wait"])
+        }
+        let startDeadline = Date().addingTimeInterval(20)
+        while (try? String(contentsOf: pidFile, encoding: .utf8))?.hasSuffix("\n") != true,
+              Date() < startDeadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        task.cancel()
+        let grandchild = pid_t(
+            (try? String(contentsOf: pidFile, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        try #require(grandchild != nil && grandchild! > 0)
+
+        _ = try? await task.value
+        // Dead already, but reaped on launchd's schedule: poll the pid.
+        let reapDeadline = Date().addingTimeInterval(10)
+        while kill(grandchild!, 0) == 0, Date() < reapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(kill(grandchild!, 0) != 0)
+    }
+
     @Test func aCancelBeforeLaunchNeverStartsTheChild() async throws {
         // The task cancels itself before calling run, so the cancel handler
         // fires before the launch every time, with no timing involved. A
@@ -127,7 +160,9 @@ import Testing
         // The child reports the pid of a sleep it spawned, then waits on
         // it. Stopping only the direct child would leave the sleep
         // running — the rebuild case is `bash` under a timed-out
-        // `build-app.sh` leaving `swift build` alive.
+        // `build-app.sh` leaving `swift build` alive. The sleep ignores
+        // SIGTERM, so only the tree walk's SIGKILL pass can end it (the
+        // terminate already reaches the child's process group).
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -135,7 +170,7 @@ import Testing
         let runner = ProcessRunner(executable: "/bin/sh", environment: env)
         let task = Task {
             try await runner.run(
-                ["-c", "sleep 60 & echo $! > '\(pidFile.path)'; wait"],
+                ["-c", "(trap '' TERM; exec sleep 60) & echo $! > '\(pidFile.path)'; wait"],
                 input: nil, timeout: .milliseconds(500))
         }
         // Poll rather than guess when the grandchild exists.
