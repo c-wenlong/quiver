@@ -323,7 +323,13 @@ struct McpAddServerSheet: View {
                 }
                 _ = try await app.swe.mcpAdd(spec, to: picked.sorted(), force: force)
             } catch {
-                for secret in created { _ = try? await app.swe.mcpSecretRemove(name: secret) }
+                // swe saves the hub before the harness files, so once the
+                // hub holds the server its ${NAME}s must keep their values.
+                // A list that can't be read keeps them too.
+                let hub = try? await app.swe.mcpServers(health: false)
+                if let hub, !hub.servers.contains(where: { $0.name == name && $0.inHub }) {
+                    for secret in created { _ = try? await app.swe.mcpSecretRemove(name: secret) }
+                }
                 throw error
             }
             // Kept until the add lands, so a refused one can be retried
