@@ -2,6 +2,9 @@
 
 import json
 import os
+import secrets
+import shutil
+import subprocess
 import tempfile
 import time
 import unittest
@@ -28,8 +31,38 @@ class TestTmuxHelpers(unittest.TestCase):
         with patch.object(supervise, "_tmux", return_value=self._cp()) as t:
             self.assertTrue(supervise.send_text("qv-x", "hello"))
         calls = [list(c[0]) for c in t.call_args_list]
-        self.assertEqual(calls[0], ["send-keys", "-t", "qv-x", "-l", "hello"])
+        self.assertEqual(calls[0],
+                         ["send-keys", "-t", "qv-x", "-l", "--", "hello"])
         self.assertEqual(calls[1], ["send-keys", "-t", "qv-x", "Enter"])
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_send_text_types_a_leading_dash(self):
+        # tmux reads "- item" after -l as a flag unless "--" ends them:
+        # a pasted list sent from the phone failed as "not reachable".
+        socket = f"qv-test-{secrets.token_hex(4)}"
+        sockets = tempfile.mkdtemp(prefix="qvt", dir="/tmp")
+        self.addCleanup(shutil.rmtree, sockets, True)
+        # The server's socket lives under this TMUX_TMPDIR, and the patch
+        # below is gone by cleanup time: name it here, or kill-server
+        # looks in the default folder and leaves the server running.
+        self.addCleanup(subprocess.run, ["tmux", "-L", socket, "kill-server"],
+                        capture_output=True,
+                        env={**os.environ, "TMUX_TMPDIR": sockets})
+        with patch.object(supervise, "_TMUX_SOCKET", socket), \
+             patch.dict(os.environ, {"TMUX_TMPDIR": sockets}):
+            out = subprocess.run(
+                ["tmux", "-L", socket, "new-session", "-d", "-s", "qv-x",
+                 "cat"], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertTrue(supervise.send_text("qv-x", "- item one"))
+            self.assertTrue(supervise.send_text("qv-x", "-x"))
+            for _ in range(50):
+                pane = supervise.capture_pane("qv-x")
+                if "-x" in pane:
+                    break
+                time.sleep(0.05)
+        self.assertIn("- item one", pane)
+        self.assertIn("-x", pane)
 
     def test_send_text_failure(self):
         with patch.object(supervise, "_tmux", return_value=self._cp(rc=1)):
