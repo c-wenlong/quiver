@@ -34,7 +34,7 @@ The CLI is organized by domain under `src/quiver/`:
 | `mcp/` | The `~/.quiver/mcp.json` hub, per-tool format handlers, sync/diff/validate/doctor, `${NAME}` secret refs |
 | `find/` | Read-only views of shared assets — `amd`, `skills`, `plugins`, `mcps` |
 | `init/` | Writes the shared `AGENTS.md` and skills tree, symlinks them into each harness, migrates the old root |
-| `plugins/` | `swe plugins`: every marketplace's plugins with per-harness state, and install/enable/disable through the harness CLIs |
+| `plugins/` | `swe plugins`: every marketplace's plugins with per-harness state, and install/enable/disable through the harness CLIs (Codex enable and disable edit `~/.codex/config.toml` directly) |
 | `hooks/` | `swe hooks`: the hook scripts under `~/.quiver/hooks/<harness>/` and their drift check |
 | `reports/` | Daily and weekly session reports: transcripts, triage, batching, model runners, follow-up ledger |
 | `providers/` | LLM provider metadata and API-key file lookup |
