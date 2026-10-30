@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harnesses don't raise it yet
   ([#516](https://github.com/c-wenlong/quiver/issues/516)).
 
+- **Remote iPhone app: switch a session's model from the chat.** On a
+  session attached through tmux whose harness takes `/model <id>`
+  (Claude Code and Codex; the row's `model_modes` says so), the chat's
+  menu gains a Model submenu: the machine's recent models for that
+  harness, newest first, the running one checked, then Other… for a
+  typed id. A pick sends the `model` control op, which types
+  `/model <id>` into the pane. A typed id must be one token of letters,
+  digits and `._:/+@-`, so it can't carry a second command. The header
+  shows the request as "→ id" until the transcript catches up: it
+  settles when the row's model changes, or once a reply has come in and
+  the list has refreshed after the hub's next read, so a switch the
+  harness refused shows the model that actually ran. Elsewhere (watching
+  only, headless, app-server, opencode) the submenu is hidden. Part of
+  [#643](https://github.com/c-wenlong/quiver/issues/643).
+
 - **Web app: Preview on tool cards that write a page, and link cards
   under replies.** In a session's chat, a tool call that writes or
   edits an `.html`, `.htm` or `.svg` file inside the session's folder
