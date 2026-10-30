@@ -300,6 +300,41 @@ class TestOpencodeServe(unittest.TestCase):
                 _session(), {"text": "x", "mode": "queue"}, "idle")
         self.assertFalse(res.ok)
 
+    def test_serve_exiting_before_ready_is_unregistered(self):
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+        self.proc.killed = True  # poll() reports it exited
+        res = self._injector().send(
+            _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+        self.assertEqual(inject.OpencodeServeInjector._serves, {})
+
+    def test_timed_out_waiter_leaves_a_held_serve_alone(self):
+        # Another session already holds the proc: a waiter that gives
+        # up must not kill it under them.
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+        held = inject._ServeProc(self.proc, "http://127.0.0.1:1")
+        held.refs = 1
+        held.reader_started = True
+        cwd = os.path.realpath("/tmp/proj")
+        inject.OpencodeServeInjector._serves[cwd] = held
+        self.routes = {"session": (0, b"")}
+        with patch.object(inject, "_SERVE_READY_S", 0.3):
+            res = self._injector().send(
+                _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+        self.assertFalse(self.proc.killed)
+        self.assertIs(inject.OpencodeServeInjector._serves[cwd], held)
+
+    def test_kill_failure_on_timeout_still_unregisters(self):
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+        self.routes = {"session": (0, b"")}
+        with patch.object(inject, "_SERVE_READY_S", 0.3), \
+             patch.object(self.proc, "kill", side_effect=OSError("gone")):
+            res = self._injector().send(
+                _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+        self.assertEqual(inject.OpencodeServeInjector._serves, {})
+
     def test_serve_that_never_gets_ready_is_killed(self):
         supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
         self.routes = {"session": (0, b"")}  # never answers
