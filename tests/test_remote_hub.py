@@ -2424,6 +2424,8 @@ class TestPairRoutes(unittest.TestCase):
             hdrs.update(auth)
         if node is not None:
             self.srv.state.whois = lambda ip: dict(node)
+            # The approval routes read whois through the cache.
+            self.srv.state._whois_cache.clear()
         try:
             return self.srv.request(
                 "POST", "/v1/pair/requests/approve",
@@ -2434,6 +2436,7 @@ class TestPairRoutes(unittest.TestCase):
                 self.srv.state.whois = (
                     lambda ip: dict(_PHONE) if ip == "127.0.0.1" else None
                 )
+                self.srv.state._whois_cache.clear()
 
     def test_request_403_without_tailnet_identity(self):
         self.srv.state.whois = lambda ip: None
@@ -2593,8 +2596,50 @@ class TestPairRoutes(unittest.TestCase):
             body={"code": r["code"], "request_id": r["request_id"]},
             headers={"Content-Type": "application/json"},
         )
-        self.assertEqual(status, 403)
-        self.assertEqual(json.loads(d)["error"]["code"], "bad_origin")
+        # No bearer and no X-Quiver-Pair: the identity path can't
+        # pass, so the hub refuses without looking the peer up.
+        self.assertEqual(status, 401)
+        self.assertEqual(json.loads(d)["error"]["code"], "unauthorized")
+
+    def test_unauthenticated_approver_never_forks_whois(self):
+        calls = []
+        self.srv.state.whois = lambda ip: calls.append(ip) or dict(_MAC)
+        for hdrs in (
+            {},  # no bearer, no pair header
+            {"X-Quiver-Pair": "1", "Origin": "http://evil.example"},
+        ):
+            status, _ = self.srv.request(
+                "GET", "/v1/pair/requests", headers=hdrs)
+            self.assertIn(status, (401, 403))
+            status, _ = self.srv.request(
+                "POST", "/v1/pair/requests/deny",
+                body={"code": "123456"},
+                headers={"Content-Type": "application/json", **hdrs},
+            )
+            self.assertIn(status, (401, 403))
+        self.assertEqual(calls, [])
+
+    def test_owner_identity_lookups_are_cached_and_rate_limited(self):
+        calls = []
+        self.srv.state.whois = lambda ip: calls.append(ip) or dict(_MAC)
+        hdrs = {"X-Quiver-Pair": "1"}
+        for _ in range(5):
+            status, _ = self.srv.request(
+                "GET", "/v1/pair/requests", headers=hdrs)
+            self.assertEqual(status, 200)
+        # One lookup serves the burst.
+        self.assertEqual(len(calls), 1)
+        status, data = self.srv.request(
+            "GET", "/v1/pair/requests", headers=hdrs)
+        self.assertEqual(status, 429)
+        self.assertEqual(json.loads(data)["error"]["code"], "rate_limited")
+        # A paired bearer is never throttled by the identity budget.
+        status, _ = self.srv.request(
+            "GET", "/v1/pair/requests",
+            headers={"Authorization":
+                     f"Bearer {self.srv.pair()['credential']}"},
+        )
+        self.assertEqual(status, 200)
 
     def test_decide_rejects_foreign_origin_and_host(self):
         _, data = self._req()
