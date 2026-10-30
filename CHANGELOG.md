@@ -476,6 +476,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote: queue-mode sends wait for idle on satellites too.** A
+  `queue`-mode message to a session on another machine used to fail
+  with "session is mid-turn; steer to write anyway" whenever that
+  session was busy. `swe remote agent` now parks it on a lane of its
+  own, as the hub does: it waits until the turn ends (up to 30 min,
+  then fails honestly) and for the attachment pulls it names, while
+  steers and their pulls go ahead. A send the agent stops before
+  delivering replays on restart.
+  The hub's and the satellite's idle wait both probe with the tailer's
+  activity time, so a turn that started since the last catalog refresh
+  no longer reads as "interrupted" and gets a queued send typed into it
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
 - **The Mac app's Model menu keeps your pick across a harness round
   trip.** On New session, Resolve issue and a task's New agent session,
   picking `claude-opus`, switching to Codex and back used to land on

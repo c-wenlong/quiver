@@ -2237,3 +2237,27 @@ class TestStatusProbe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFreshSession(unittest.TestCase):
+    """``fresh_session`` brings a catalog copy's activity time up to date."""
+
+    def test_fresh_session_uses_tailer_activity(self):
+        tmp = Path(tempfile.mkdtemp())
+        path = tmp / "t.jsonl"
+        path.write_text("")
+        mgr = tail.TailManager(lambda k, ev: None, "mbp", home=tmp)
+        stale = Session(timestamp=0, agent="x", path="/tmp",
+                        session_id="", tool_name="claude")
+        # Nothing tails the key: unchanged.
+        self.assertIs(mgr.fresh_session("claude:s", stale), stale)
+        src = tail.JsonlTailSource(path, "claude")
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:s", stale, "done")])
+        fresh = mgr.fresh_session("claude:s", stale)
+        self.assertGreater(fresh.timestamp, 0)  # the file's mtime
+        self.assertEqual(stale.timestamp, 0)    # the copy is untouched
+        mgr.last_append["claude:s"] = time.time() + 100
+        self.assertAlmostEqual(
+            mgr.fresh_session("claude:s", stale).timestamp,
+            mgr.last_append["claude:s"] * 1000)

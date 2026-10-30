@@ -467,10 +467,18 @@ cancel racing the job's start either wins, and nothing is sent, or
 loses with `409 not_waiting` ("that message already went out"); there is
 never both a send and a removal. An unknown `client_id` is `404
 unknown_send`; one that already left (sent, steered, removed, failed) is
-`409 not_waiting` while the hub remembers it (the last 256). Satellite
-sessions never park a queue-mode send on the hub (the satellite delivers
-on arrival or refuses a busy session), so their list is empty and every
-op answers `409 queue_unsupported`.
+`409 not_waiting` while the hub remembers it (the last 256). A
+satellite session's queue-mode send waits on the satellite, not the hub:
+`swe remote agent` runs `message` commands through the same per-session
+`SendQueue`, polls the session's status every 2 s and delivers once the
+turn ends, failing it after 30 min of busy with "session stayed busy for
+30 min; message not sent". Steers go on their own queue and never wait
+behind it. A send the agent is stopped before delivering is not marked
+done, so the hub replays it when the agent comes back. The hub holds
+nothing for those sends, so their list is empty and every op answers
+`409 queue_unsupported`. The `202` for such a send keeps `waiting:
+false`, so a client never parks it in a tray whose actions would act on
+the hub's queue.
 
 `edit` takes a `text` (checked like a message's: a string with more
 than spaces in it, else `422 bad_command`) and replaces the waiting
