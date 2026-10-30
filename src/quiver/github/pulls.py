@@ -62,12 +62,9 @@ def shape(raw: dict, repo: str, home: Path | None = None,
     return detail
 
 
-def worktree_path(repo: str, number, home: Path | None = None) -> str:
-    """Where ``manage.pr_worktree`` puts ``repo`` PR ``number``'s
-    checkout (the same naming, so a pending launch's cwd matches what
-    the worktree call will return)."""
-    return str(manage.worktrees_dir(home)
-               / f"{repo.replace('/', '__')}-pr{number}")
+# Where ``manage.pr_worktree`` puts the checkout: its own naming, so a
+# pending launch's cwd is the folder the worktree call returns.
+worktree_path = manage.pr_worktree_path
 
 
 def build_prompt(repo: str, pr: dict | None, worktree: str,
