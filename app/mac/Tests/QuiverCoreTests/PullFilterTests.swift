@@ -114,6 +114,24 @@ private func decodePr(_ json: String) throws -> GhPr {
         #expect(model.pullCount(.reviewRequested) == 0)
     }
 
+    /// swe skips `gh auth status` when every surface read came back ok,
+    /// so a pull request reply's probe has no login. Mine stays offered.
+    @Test func aSurfaceReplyWithoutALoginKeepsMine() async {
+        let anonymous = "\"github\":{\"status\":\"ok\",\"login\":null,\"error\":null}"
+        let runner = Runner([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+            "gh pr --state=open --limit=50 --repo=o/a --json":
+                "\(anonymous),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[\(pr(1, author: "me"))]}]",
+        ])
+        let swe = SweClient(runner: runner)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadTab(.pulls, repo: "o/a", swe: swe)
+        #expect(model.env?.login == "me")
+        #expect(model.pullFilters == [.all, .mine])
+        #expect(model.pullCount(.mine) == 1)
+    }
+
     @Test func aFreshReplyIsReusedAndAFailureKeepsTheLastGoodSet() async {
         let runner = Runner(["gh pr status --repo=o/a --json": status("o/a", requested: [4])])
         let swe = SweClient(runner: runner)
