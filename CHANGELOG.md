@@ -638,6 +638,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   /api/compat/summary.json; the app's transport follows no redirects, so
   its card read "answered 301". Both catalogs (the app's and the web
   app's Python port) point at the final URL.
+- **A failed Rebuild explains itself.** The Local code row used to show
+  the build log's last six lines, which for a Swift build are progress
+  counters like `[167/172]` and say nothing. The row now shows the
+  lines that name the failure — compiler and tool `error:`/`fatal:`
+  diagnostics, the build scripts' own `build-app:`/`bundle-swe:`
+  messages, and shell complaints — with styling escapes stripped and
+  overlong lines cut; a flooded log shows the first few errors and the
+  last. The whole log is written to
+  `~/.quiver/cache/rebuild/last-build.log`, which the message links to,
+  and the warning text can be selected to copy either out.
 
 ### Security
 
