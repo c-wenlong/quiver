@@ -36,6 +36,35 @@ def _tmux_meta(name, sid="s1"):
             "session_id": sid, "cwd": "/tmp/proj", "attached_at": 0}
 
 
+def _until(predicate, timeout=3.0):
+    """Poll ``predicate`` until it holds; False once ``timeout`` runs out."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
+def _count_polls(detaches):
+    """Count the status checks of every when_idle wait ``detaches`` starts.
+
+    A test then waits for a few checks instead of a fixed time, so "it
+    has not fired yet" is asserted after the waiter really looked.
+    """
+    polls = []
+    real = detaches.schedule
+
+    def schedule(key, *, status, fire, report):
+        def counted():
+            polls.append(key)
+            return status()
+        return real(key, status=counted, fire=fire, report=report)
+
+    detaches.schedule = schedule
+    return polls
+
+
 class TestDetachModeParsing(unittest.TestCase):
     def test_mode_defaults_to_now(self):
         self.assertEqual(
@@ -89,9 +118,9 @@ class TestPendingDetaches(unittest.TestCase):
     def test_fires_on_the_idle_transition_and_not_before(self):
         self._live = "active"
         self.assertTrue(self._schedule())
-        time.sleep(0.2)
+        # It really was polling, and saw "active" each time.
+        self.assertTrue(_until(lambda: len(self.statuses) > 2))
         self.assertFalse(self.fired.is_set())
-        self.assertGreater(len(self.statuses), 2)  # it really was polling
         self.assertTrue(self.pd.pending("k"))
         self._live = "done"
         self.assertTrue(self.fired.wait(2))
@@ -108,12 +137,14 @@ class TestPendingDetaches(unittest.TestCase):
     def test_cancel_reports_once_and_never_fires(self):
         self._live = "active"
         self._schedule()
+        entry = self.pd._pending["k"]
         self.assertEqual(self.pd.cancel("k", "cancelled by attach"),
                          "cancelled")
         self.assertEqual(self.reports.get(timeout=2),
                          (False, "cancelled by attach", True))
         self._live = "done"
-        time.sleep(0.15)
+        # The waiter thread has exited, so nothing can fire after this.
+        self.assertTrue(entry.done.wait(2))
         self.assertFalse(self.fired.is_set())
         self.assertTrue(self.reports.empty())
         self.assertEqual(self.pd.cancel("k", "again"), "none")
@@ -230,6 +261,7 @@ class TestHubDetachRoutes(unittest.TestCase):
         self.key = "claude:s1"
         self.live = ["active"]
         self.srv.state.status_of = lambda sessions: list(self.live)
+        self.polls = _count_polls(self.srv.state.detaches)
         self.events = self.srv.state.bus.subscribe(self.key)
         self.addCleanup(self.srv.state.detaches.close)
         self.addCleanup(self.srv.state._stop.set)
@@ -275,7 +307,7 @@ class TestHubDetachRoutes(unittest.TestCase):
         self.assertEqual(status, 202, data)
         self.assertTrue(data["queued"])
         self.assertEqual(data["mode"], "when_idle")
-        time.sleep(0.2)
+        self.assertTrue(_until(lambda: len(self.polls) > 2))
         # Still mid-turn: nothing killed, still writable.
         self.assertEqual(self.kills, [])
         self.assertEqual(self._ownership(), "attached")
@@ -297,6 +329,7 @@ class TestHubDetachRoutes(unittest.TestCase):
     def test_when_idle_cancelled_by_attach(self):
         status, _ = self._control({"op": "detach", "mode": "when_idle"})
         self.assertEqual(status, 202)
+        entry = self.srv.state.detaches._pending[self.key]
         status, data = self._control({"op": "attach"})
         self.assertEqual(status, 200, data)
         self.assertIn("cancelled", data["note"])
@@ -305,20 +338,21 @@ class TestHubDetachRoutes(unittest.TestCase):
         self.assertTrue(result["cancelled"])
         self.assertEqual(result["op"], "detach")
         self.live = ["done"]
-        time.sleep(0.2)
+        self.assertTrue(entry.done.wait(2))  # the waiter has exited
         self.assertEqual(self.kills, [])
         self.assertEqual(self._ownership(), "attached")
         self.assertFalse(self.srv.state.detaches.pending(self.key))
 
     def test_now_replaces_a_pending_when_idle(self):
         self._control({"op": "detach", "mode": "when_idle"})
+        entry = self.srv.state.detaches._pending[self.key]
         status, data = self._control({"op": "detach", "mode": "now"})
         self.assertEqual(status, 200, data)
         result = self._event("command.result")["data"]
         self.assertTrue(result["cancelled"])
         self.assertEqual(self.kills, ["qv-fake"])
         self.live = ["done"]
-        time.sleep(0.2)
+        self.assertTrue(entry.done.wait(2))  # the waiter has exited
         self.assertEqual(self.kills, ["qv-fake"])  # not killed twice
 
     def test_when_idle_needs_an_attached_session(self):
@@ -421,13 +455,24 @@ class TestHubDetachRoutes(unittest.TestCase):
             self.assertEqual(status, 202)
             self.live = ["done"]
             self.assertTrue(firing.wait(3))
+            # cancel() waits on the running detach's done event; note
+            # when it starts waiting, so the release lands only then.
+            waiting = threading.Event()
+
+            class _NotedDone(threading.Event):
+                def wait(self, timeout=None):
+                    waiting.set()
+                    return super().wait(timeout)
+
+            state.detaches._pending[self.key].done = _NotedDone()
             answer = {}
             t = threading.Thread(target=lambda: answer.update(
                 zip(("status", "data"), self._control({"op": "attach"}))))
             t.start()
-            time.sleep(0.3)  # the attach is now waiting in cancel()
+            self.assertTrue(waiting.wait(5))
             release.set()
             t.join(5)
+            self.assertFalse(t.is_alive())
         self.assertEqual(answer["status"], 200, answer)
         self.assertEqual(answer["data"]["note"], "attached under tmux")
         att.assert_called_once()
@@ -824,6 +869,7 @@ class TestSatelliteDetachModes(unittest.TestCase):
         supervise.mark(self.home, self.key, _tmux_meta("qv-fake"))
         self.live = ["active"]
         self.agent.status_of = lambda sessions: list(self.live)
+        self.polls = _count_polls(self.agent.detaches)
         self.kills = []
         for p in (
             patch.object(detach, "WHEN_IDLE_POLL_S", 0.02),
@@ -861,12 +907,10 @@ class TestSatelliteDetachModes(unittest.TestCase):
         ok, note, _ = self._control("when_idle")
         self.assertTrue(ok)
         self.assertIn("turn ends", note)
-        time.sleep(0.2)
+        self.assertTrue(_until(lambda: len(self.polls) > 2))
         self.assertEqual(self.kills, [])
         self.live = ["done"]
-        deadline = time.time() + 3
-        while not self._results() and time.time() < deadline:
-            time.sleep(0.02)
+        self.assertTrue(_until(self._results))
         result = self._results()[0]
         self.assertTrue(result["ok"])
         self.assertEqual(result["op"], "detach")
@@ -875,12 +919,13 @@ class TestSatelliteDetachModes(unittest.TestCase):
 
     def test_when_idle_cancelled_by_attach(self):
         self._control("when_idle")
+        entry = self.agent.detaches._pending[self.key]
         ok, note, _ = self.agent._execute(self.key, "attach", {})
         self.assertTrue(ok)
         self.assertIn("pending detach is cancelled", note)
         self.assertTrue(self._results()[0]["cancelled"])
         self.live = ["done"]
-        time.sleep(0.2)
+        self.assertTrue(entry.done.wait(2))  # the waiter has exited
         self.assertEqual(self.kills, [])
         self.assertIsNotNone(supervise.meta_for(self.home, self.key))
 

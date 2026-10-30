@@ -1113,6 +1113,18 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertEqual(NewSessionOptions.matching(folders, query: "nothing"), [])
     }
 
+    func testTheFolderListFoldsAndSearchesOnlyWhenThereAreMore() {
+        let folders = ["/p/a", "/p/b", "/p/c", "/p/d", "/p/e", "/q/api"]
+        XCTAssertEqual(RecentFolderPicker.shown(folders, query: "", showAll: false), ["/p/a", "/p/b", "/p/c", "/p/d"])
+        XCTAssertEqual(RecentFolderPicker.shown(folders, query: "", showAll: true), folders)
+        // A search reads every folder, folded or not.
+        XCTAssertEqual(RecentFolderPicker.shown(folders, query: " api ", showAll: false), ["/q/api"])
+        XCTAssertTrue(RecentFolderPicker.offersSearch(folderCount: 5, query: ""))
+        // Four or fewer all show: nothing to search, until a query is typed.
+        XCTAssertFalse(RecentFolderPicker.offersSearch(folderCount: 4, query: ""))
+        XCTAssertTrue(RecentFolderPicker.offersSearch(folderCount: 2, query: "a"))
+    }
+
     func testHarnessNamesComeFromTheMachineCapitalised() {
         var m = machine("m1", name: "mac", launchable: ["devin", "kilo"])
         m.harnessNames = ["devin": "devin", "kilo": "Kilo"]

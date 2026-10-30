@@ -23,8 +23,6 @@ struct TaskSessionSheet: View {
     /// The Model menu; `follow` re-defaults it on a harness change.
     @State private var model = ModelSelection()
     @State private var folder: String?
-    @State private var showAllFolders = false
-    @State private var folderQuery = ""
     @State private var browsePath: [FolderBrowse] = []
     @State private var flow = LaunchFlow()
     /// The running launch, so Cancel or a swipe-down stops it before it
@@ -33,8 +31,6 @@ struct TaskSessionSheet: View {
     /// The session list as it was when the sheet opened, for the
     /// harness last used in the picked folder.
     @State private var rows: [SessionRow] = []
-
-    private static let foldersShown = 4
 
     /// `(repo, number)` when the task maps onto a worktree route.
     private var issueRoute: (repo: String, number: Int)? {
@@ -81,7 +77,17 @@ struct TaskSessionSheet: View {
                                selection: $model,
                                sessions: rows, disabled: flow.busy)
                     promptSection
-                    if !worktreeLaunch { folderSection(machine) }
+                    if !worktreeLaunch {
+                        // The folder a plain session starts in. GitHub
+                        // tasks never see this: their worktree is the
+                        // hub's choice.
+                        RecentFolderPicker(machine: machine, sessions: rows, selected: folder, disabled: flow.busy,
+                                           browse: {
+                                               browsePath = [FolderBrowse(machineId: machine.id,
+                                                                          path: folder.map(FolderRow.parent))]
+                                           },
+                                           pick: { pickFolder($0, on: machine) })
+                    }
                     startSection(machine)
                 } else {
                     StateCard(icon: "terminal", title: "No machine can start a session",
@@ -101,13 +107,7 @@ struct TaskSessionSheet: View {
             .navigationDestination(for: FolderBrowse.self) { place in
                 FolderBrowserView(machineId: place.machineId, path: place.path) { picked in
                     if let machine = app.machines.first(where: { $0.id == place.machineId }) {
-                        folder = picked
-                        if !harnessTouched {
-                            harness = NewSessionOptions.defaultHarness(
-                                folder: picked, machineId: machine.id,
-                                offered: NewSessionOptions.harnesses(on: machine),
-                                sessions: rows)
-                        }
+                        pickFolder(picked, on: machine)
                     }
                     browsePath = []
                 }
@@ -164,60 +164,15 @@ struct TaskSessionSheet: View {
         }
     }
 
-    /// The folder a plain session starts in: recent folders on the
-    /// machine, with the browser for anywhere else. GitHub tasks never
-    /// see this — their worktree is the hub's choice.
-    @ViewBuilder private func folderSection(_ machine: Machine) -> some View {
-        let folders = NewSessionOptions.folders(on: machine.id, sessions: rows)
-        let searching = !folderQuery.trimmingCharacters(in: .whitespaces).isEmpty
-        let matches = NewSessionOptions.matching(folders, query: folderQuery)
-        HStack(spacing: 14) {
-            Text(folders.isEmpty ? "Folder" : "Folder · \(folders.count) recent")
-                .font(Theme.groupLabel).foregroundStyle(Theme.textSecondary)
-            Spacer(minLength: 8)
-            Button {
-                browsePath = [FolderBrowse(machineId: machine.id, path: folder.map(FolderRow.parent))]
-            } label: {
-                Label("Browse", systemImage: "folder.badge.magnifyingglass")
-            }
-            .disabled(flow.busy)
-            if folders.count > Self.foldersShown && !searching {
-                Button(showAllFolders ? "Show fewer" : "Show all") { showAllFolders.toggle() }
-            }
-        }
-        .font(Theme.control)
-        .foregroundStyle(Theme.textPrimary)
-        .buttonStyle(.plain)
-        .padding(.horizontal, 4)
-        .padding(.top, 14)
-        if folders.isEmpty {
-            Text("No recent folders. Browse to pick any folder on \(machine.displayName).")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
-        } else {
-            if searching || folders.count > Self.foldersShown {
-                FolderSearchField(query: $folderQuery)
-            }
-            let shown = searching || showAllFolders ? matches : Array(matches.prefix(Self.foldersShown))
-            if shown.isEmpty {
-                Text("No recent folder matches. Browse to find it.")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
-            } else {
-                CardList(data: shown.map(TaskFolder.init)) { choice in
-                    Button {
-                        folder = choice.path
-                        if !harnessTouched {
-                            harness = NewSessionOptions.defaultHarness(
-                                folder: choice.path, machineId: machine.id,
-                                offered: NewSessionOptions.harnesses(on: machine),
-                                sessions: rows)
-                        }
-                    } label: {
-                        FolderRow(path: choice.path, selected: choice.path == folder)
-                    }
-                    .buttonStyle(RowButtonStyle())
-                    .disabled(flow.busy)
-                }
-            }
+    /// A picked folder, from the list or the browser: the harness last
+    /// run there becomes the default, unless one was tapped.
+    private func pickFolder(_ path: String, on machine: Machine) {
+        folder = path
+        if !harnessTouched {
+            harness = NewSessionOptions.defaultHarness(
+                folder: path, machineId: machine.id,
+                offered: NewSessionOptions.harnesses(on: machine),
+                sessions: rows)
         }
     }
 
@@ -295,13 +250,6 @@ extension Notification.Name {
     static let taskLinked = Notification.Name("QuiverRemote.taskLinked")
 }
 
-/// A folder path as an Identifiable for the sheet's card list (the
-/// new-session page's own wrapper is file-private).
-private struct TaskFolder: Identifiable {
-    let path: String
-    var id: String { path }
-}
-
 /// The task detail's "Link a session" sheet: the sessions the hub
 /// knows, minus the ones already linked, newest first. A pick posts
 /// `POST /v1/sessions/<key>/task` and refreshes the list behind it.
@@ -341,22 +289,7 @@ struct LinkSessionSheet: View {
     var body: some View {
         NavigationStack {
             PageScroll {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
-                    TextField("Search sessions", text: $query)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    if !query.isEmpty {
-                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted) }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Clear search")
-                    }
-                }
-                .font(Theme.body)
-                .padding(.horizontal, 12)
-                .scaledMinHeight(Theme.controlHeight + 4)
-                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+                SearchField(placeholder: "Search sessions", query: $query)
                 .padding(.top, 4)
 
                 if app.displaySessions.isEmpty {

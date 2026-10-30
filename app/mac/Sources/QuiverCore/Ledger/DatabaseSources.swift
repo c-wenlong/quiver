@@ -103,20 +103,20 @@ enum DatabaseSources {
         do {
             while try reading({ try statement.step() }) {
                 highest = max(highest, statement.int(3))
-                let input = Int(statement.int(7)), output = Int(statement.int(8))
-                let reasoning = Int(statement.int(9)), cacheRead = Int(statement.int(10))
-                let cacheWrite = Int(statement.int(11))
-                let total = statement.isNull(12) ? nil : Int(statement.int(12))
+                let input = statement.tokens(7), output = statement.tokens(8)
+                let reasoning = statement.tokens(9), cacheRead = statement.tokens(10)
+                let cacheWrite = statement.tokens(11)
+                let total = statement.isNull(12) ? nil : statement.tokens(12)
                 let reasoningInsideOutput = reasoning > 0 && total == input + output + cacheRead + cacheWrite
                 let event = UsageEvent(
                     harness: "opencode", accountHome: accountHome,
                     sessionId: statement.text(1) ?? "unknown", cwd: statement.text(4),
                     model: openCodeModel(provider: statement.text(13), id: statement.text(5)),
                     timestamp: Date(timeIntervalSince1970: Double(statement.int(2)) / 1_000),
-                    inputTokens: max(0, input),
+                    inputTokens: input,
                     outputTokens: max(0, reasoningInsideOutput ? output - reasoning : output),
-                    cacheReadTokens: max(0, cacheRead), cacheWriteTokens: max(0, cacheWrite),
-                    reasoningTokens: max(0, reasoning),
+                    cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite,
+                    reasoningTokens: reasoning,
                     costUSD: statement.isNull(6) || statement.double(6) <= 0 ? nil : statement.double(6))
                 guard event.totalTokens > 0 else { continue }
                 try store.upsert(LedgerRecord(
@@ -253,8 +253,8 @@ enum DatabaseSources {
                     harness: "devin", accountHome: accountHome,
                     sessionId: session, cwd: statement.text(3),
                     model: statement.text(5) ?? "unknown", timestamp: timestamp,
-                    inputTokens: max(0, Int(statement.int(7))), outputTokens: max(0, Int(statement.int(8))),
-                    cacheReadTokens: max(0, Int(statement.int(9))), cacheWriteTokens: max(0, Int(statement.int(10))))
+                    inputTokens: statement.tokens(7), outputTokens: statement.tokens(8),
+                    cacheReadTokens: statement.tokens(9), cacheWriteTokens: statement.tokens(10))
                 guard event.totalTokens > 0, let requestID = statement.text(4) else { continue }
                 try store.upsert(LedgerRecord(key: "devin:\(requestID)", event: event))
             }
@@ -268,5 +268,15 @@ enum DatabaseSources {
             throw error
         }
         return true
+    }
+}
+
+private extension Statement {
+    /// A token count column, between 0 and `JSONValue.maxTokens`: the
+    /// cap the JSON log readers apply. A corrupt count near `Int64.max`
+    /// would otherwise trap in `UsageEvent.totalTokens`, and since the
+    /// watermark is saved only after the loop, on every launch scan.
+    func tokens(_ column: Int32) -> Int {
+        min(max(0, Int(int(column))), JSONValue.maxTokens)
     }
 }

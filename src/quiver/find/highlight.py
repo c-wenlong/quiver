@@ -2,8 +2,7 @@
 
 Deliberately regex-based and small. The CLI is stdlib-only, and a preview
 pane is not a code editor: it needs a reader to recognise a heading, a
-string or a comment at a glance, not a correct parse. Pygments is used
-when it happens to be installed, and nothing depends on it being there.
+string or a comment at a glance, not a correct parse.
 
 Highlighting runs after truncation, never before. The pane cuts lines to
 its own width, and cutting a line that already carries escape sequences
