@@ -16,15 +16,31 @@ struct SessionChatPage: View {
     var onDetails: () -> Void
     /// The hub turned out not to list it (found only once paired).
     var onMissing: () -> Void
+    /// Pin, Rename or Fork from the header's More menu, run by the page.
+    var act: (SessionMenuAction) -> Void
     @State private var model: SessionChatModel?
 
     private var key: String { HubSessionRow.key(harness: row.session.harness, id: row.session.id) }
 
+    /// The hub's pin, name and fork flag: the list's read, which the
+    /// chat's own read and its `session.meta` events keep current.
+    private var meta: HubSessionMeta? { app.hub.meta(for: key) }
+
+    /// A name set on the hub wins, from here or another device; else the
+    /// title swe listed, then the hub's.
+    private var title: String {
+        let local = row.session.title ?? model?.row?.title
+        return meta?.title(over: local) ?? local ?? row.session.id
+    }
+
     var body: some View {
-        Page(title: row.session.title ?? model?.row?.title ?? row.session.id,
+        Page(title: title,
              subtitle: subtitle,
              back: ("Back to all sessions", onBack), maxWidth: 960, scrolls: false) {
             if let model { ChatBadges(model: model) }
+            if let meta {
+                EllipsisMenu { SessionHubMenuItems(meta: meta, act: act) }
+            }
             RailIconButton(symbol: "info.circle", help: "Details: folder, usage and the resume command",
                            action: onDetails)
         } content: {

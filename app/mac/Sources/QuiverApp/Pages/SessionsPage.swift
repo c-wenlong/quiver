@@ -33,6 +33,10 @@ private struct SessionsContent: View {
     /// The newest click, so a slower lookup for an older one can't land.
     @State private var opening: UUID?
     @State private var actionError: String?
+    /// The hub refused a pin or unpin; the row went back.
+    @State private var pinNote: String?
+    /// Rename or Fork's sheet, from a row's menu or the chat's header.
+    @State private var hubSheet: SessionHubSheet?
     /// Rows a day's group shows before folding behind a Show more row.
     private static let foldLimit = 10
     /// Days the user has unfolded.
@@ -60,7 +64,8 @@ private struct SessionsContent: View {
                                     onMissing: {
                                         self.chat = nil
                                         detail = chat
-                                    })
+                                    },
+                                    act: { run($0, on: chat) })
                         .frame(maxWidth: .infinity)
                         .onChange(of: app.navReselects) { self.chat = nil }
                     SessionRail(model: model, current: chat, select: { self.chat = $0 })
@@ -73,8 +78,21 @@ private struct SessionsContent: View {
             }
         }
         .quiverSheet(item: $detail) { row in
-            SessionDetail(row: row, resume: { resume(row) }, close: { detail = nil })
+            SessionDetail(row: row, title: model.hubOverlay.title(for: row),
+                          resume: { resume(row) }, close: { detail = nil })
         }
+        .quiverSheet(item: $hubSheet) { sheet in
+            switch sheet.kind {
+            case .rename:
+                SessionRenameSheet(key: sheet.key, current: model.hubOverlay.title(for: sheet.row) ?? "")
+            case .fork:
+                SessionForkSheet(key: sheet.key, row: sheet.row,
+                                 title: model.hubOverlay.title(for: sheet.row) ?? sheet.row.session.id)
+            }
+        }
+        // The hub's pins and names, read with its keys, over the rows swe
+        // listed: the Pinned group, hub titles and the rows' hub actions.
+        .onChange(of: app.hub.overlay, initial: true) { model.hubOverlay = app.hub.overlay }
         // A launch the sheet lands refreshes the list behind the chat
         // it opens.
         .quiverSheet(isPresented: $showsNewSession) {
@@ -141,7 +159,7 @@ private struct SessionsContent: View {
         } content: {
             FilterBar(model: model)
             SummaryStrip(summary: model.summary)
-            if let error = model.error ?? actionError {
+            if let error = model.error ?? actionError ?? pinNote {
                 Card {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
@@ -210,6 +228,20 @@ private struct SessionsContent: View {
         }
     }
 
+    /// Pin runs at once (a refusal puts the row back with a note); Rename
+    /// and Fork open their sheet. Only rows the hub lists offer these.
+    private func run(_ action: SessionMenuAction, on row: SessionsModel.Row) {
+        guard let key = HubSessionOverlay.key(row) else { return }
+        switch action {
+        case .pin(let pinned):
+            Task { pinNote = await app.hub.setPinned(key, pinned) }
+        case .rename:
+            hubSheet = SessionHubSheet(kind: .rename, key: key, row: row)
+        case .fork:
+            hubSheet = SessionHubSheet(kind: .fork, key: key, row: row)
+        }
+    }
+
     /// A click opens the session's chat when this Mac's hub can show it,
     /// else its details: cloud sessions, ones the hub doesn't list, or
     /// any while the hub is down.
@@ -229,9 +261,10 @@ private struct SessionsContent: View {
 
     @ViewBuilder private var list: some View {
         let groups = model.groupedByDay()
+        let pinned = model.pinnedRows()
         if model.rows.isEmpty && model.isLoading {
             LoadingCard(text: "Listing sessions…")
-        } else if groups.isEmpty {
+        } else if groups.isEmpty && pinned.isEmpty {
             // Every matching row can be trivial: the footer still shows
             // what was hidden and offers "Show" to reveal them.
             if model.rows.isEmpty {
@@ -261,6 +294,22 @@ private struct SessionsContent: View {
                 Divider().overlay(Theme.border)
 
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    // Pinned on the hub: first, in the order they were
+                    // pinned, whatever the window, like the web and iPhone.
+                    if !pinned.isEmpty {
+                        Text("Pinned")
+                            .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 18).padding(.bottom, 10)
+                        Divider().overlay(Theme.border)
+                        // Their own ids: a row pinned while on screen
+                        // would otherwise keep its day-group view, which
+                        // LazyVStack matches by id and never redraws.
+                        ForEach(pinned, id: \.pinnedID) { row in
+                            sessionRow(row)
+                            Divider().overlay(Theme.border)
+                        }
+                    }
                     ForEach(groups) { group in
                         Text(group.day, format: .dateTime.month(.abbreviated).day().year())
                             .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
@@ -270,12 +319,7 @@ private struct SessionsContent: View {
                         let shown = RowFold.visible(group.rows, limit: Self.foldLimit,
                                                     expanded: openedDays.contains(group.day))
                         ForEach(shown) { row in
-                            SessionRow(row: row, project: model.project(for: row.session),
-                                       hubModel: app.hub.model(for: HubSessionRow.key(
-                                           harness: row.session.harness, id: row.session.id)),
-                                       match: model.searchHit(for: row.session.id),
-                                       open: { open(row) }, showDetails: { detail = row },
-                                       resume: { resume(row) })
+                            sessionRow(row)
                             Divider().overlay(Theme.border)
                         }
                         if RowFold.hiddenCount(total: group.rows.count, limit: Self.foldLimit) > 0 {
@@ -295,6 +339,16 @@ private struct SessionsContent: View {
                 hiddenFooter
             }
         }
+    }
+
+    private func sessionRow(_ row: SessionsModel.Row) -> some View {
+        SessionRow(row: row, project: model.project(for: row.session),
+                   hubModel: app.hub.model(for: HubSessionRow.key(
+                       harness: row.session.harness, id: row.session.id)),
+                   hub: model.hubOverlay.meta(for: row),
+                   match: model.searchHit(for: row.session.id),
+                   open: { open(row) }, showDetails: { detail = row },
+                   resume: { resume(row) }, act: { run($0, on: row) })
     }
 
     /// "N short or empty sessions hidden" plus the Show/Hide toggle,
@@ -537,6 +591,11 @@ private struct SummaryStrip: View {
 
 // MARK: - Rows
 
+private extension SessionsModel.Row {
+    /// A pinned row's id in the Pinned group, apart from its day-group id.
+    var pinnedID: String { "pinned|\(id)" }
+}
+
 private struct SessionRow: View {
     var row: SessionsModel.Row
     /// The session's project resolved to its main repository.
@@ -544,6 +603,9 @@ private struct SessionRow: View {
     /// The model of the session's newest reply, from the hub's row; nil
     /// when the hub doesn't list it or doesn't know the model.
     var hubModel: String?
+    /// The hub's pin, name and fork flag; nil when the hub doesn't list
+    /// the session (or is down), and the menu then has no hub actions.
+    var hub: HubSessionMeta?
     /// The transcript hit this row surfaced on, for the snippet line; nil
     /// when it matched on metadata or content search is off.
     var match: SearchHit?
@@ -551,6 +613,7 @@ private struct SessionRow: View {
     var open: () -> Void
     var showDetails: () -> Void
     var resume: () -> Void
+    var act: (SessionMenuAction) -> Void
     @State private var hovering = false
     @FocusState private var resumeFocused: Bool
 
@@ -564,7 +627,8 @@ private struct SessionRow: View {
                     .hoverTip(HarnessMark(s.harness).name)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text(s.title ?? s.id).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Text(hub?.title(over: s.title) ?? s.title ?? s.id)
+                            .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                         StatusBadge(status: s.status)
                     }
                     Text(details)
@@ -618,6 +682,10 @@ private struct SessionRow: View {
             } else {
                 Button("Resume in terminal", action: resume).disabled(s.resume == nil)
             }
+            if let hub {
+                Divider()
+                SessionHubMenuItems(meta: hub, act: act)
+            }
             Divider()
             Button("Copy session ID") { copyToPasteboard(s.id) }
             if let cwd = s.cwd {
@@ -630,6 +698,13 @@ private struct SessionRow: View {
         .accessibilityAction(named: "Open chat", open)
         .accessibilityAction(named: "Details", showDetails)
         .accessibilityAction(named: "Resume", resume)
+        .accessibilityActions {
+            if let hub {
+                Button(hub.pinned ? "Unpin" : "Pin") { act(.pin(!hub.pinned)) }
+                Button("Rename") { act(.rename) }
+                if hub.canFork { Button("Fork") { act(.fork) } }
+            }
+        }
     }
 
     /// "match: <snippet>" with each matched term in primary text on the
@@ -755,7 +830,7 @@ private struct SessionRail: View {
                             RailRow(selected: row.id == current.id, select: { select(row) }) {
                                 HarnessIcon(harness: HarnessMark(row.session.harness).icon ?? row.session.harness,
                                             size: 13)
-                                Text(row.session.title ?? row.session.id)
+                                Text(model.hubOverlay.title(for: row) ?? row.session.id)
                                     .font(Theme.nav)
                                     .lineLimit(1).truncationMode(.middle)
                                 Spacer(minLength: 6)
@@ -807,6 +882,9 @@ struct SessionDetail: View {
     /// the label column.
     static let valueWidth: CGFloat = 460
     var row: SessionsModel.Row
+    /// The title to show: a name set on the hub, else swe's; nil falls
+    /// back to swe's title, then the id.
+    var title: String? = nil
     var resume: () -> Void
     var close: () -> Void
 
@@ -815,7 +893,7 @@ struct SessionDetail: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 8) {
                 HarnessIcon(harness: HarnessMark(s.harness).icon ?? s.harness, size: 20)
-                Text(s.title ?? s.id).font(Theme.sectionTitle).tracking(-0.5).lineLimit(2)
+                Text(title ?? s.title ?? s.id).font(Theme.sectionTitle).tracking(-0.5).lineLimit(2)
                 StatusBadge(status: s.status)
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {

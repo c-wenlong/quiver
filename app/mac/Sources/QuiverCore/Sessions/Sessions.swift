@@ -311,6 +311,14 @@ public final class SessionsModel {
     public private(set) var rows: [Row] = [] {
         didSet { rowsVersion &+= 1 }
     }
+    /// The hub's pins and names over the listed rows (`LocalHub.overlay`,
+    /// which the page passes in). A pinned row leads the list in
+    /// `pinnedRows`, out of its day, and stays listed whatever the window
+    /// or the short-session rule says, as on the web and the iPhone. A
+    /// name set on the hub is searchable.
+    public var hubOverlay = HubSessionOverlay() {
+        didSet { if hubOverlay != oldValue { filterVersion &+= 1 } }
+    }
     public private(set) var failures: [String] = []
     public private(set) var isLoading = false
     public private(set) var error: String?
@@ -749,12 +757,29 @@ public final class SessionsModel {
 
     public var summary: Summary { filtered().summary }
 
-    /// The visible sessions by the local day they were last active, newest first.
+    /// The visible sessions by the local day they were last active, newest
+    /// first, without the pinned ones (`pinnedRows`).
     public func groupedByDay(calendar: Calendar = .current) -> [DayGroup] {
+        grouping(calendar).days
+    }
+
+    /// The visible sessions pinned on the hub, in the order they were
+    /// pinned: the web app's Pinned group and the iPhone's
+    /// `groupsWithPins`.
+    public func pinnedRows(calendar: Calendar = .current) -> [Row] {
+        grouping(calendar).pinned
+    }
+
+    private func grouping(_ calendar: Calendar) -> (days: [DayGroup], pinned: [Row]) {
         let key = filteredKey
-        if let cache = groupsCache, cache.key == key, cache.calendar == calendar { return cache.groups }
+        if let cache = groupsCache, cache.key == key, cache.calendar == calendar { return (cache.groups, cache.pinned) }
         var groups: [DayGroup] = []
+        var pinned: [(at: Double, key: String, row: Row)] = []
         for row in filtered().visible {
+            if let meta = hubOverlay.meta(for: row), meta.pinned {
+                pinned.append((meta.pinnedAt ?? .infinity, HubSessionOverlay.key(row) ?? row.id, row))
+                continue
+            }
             let day = calendar.startOfDay(for: row.session.lastActiveAt)
             if groups.last?.day == day {
                 groups[groups.count - 1].rows.append(row)
@@ -762,8 +787,11 @@ public final class SessionsModel {
                 groups.append(DayGroup(day: day, rows: [row]))
             }
         }
-        groupsCache = (key, calendar, groups)
-        return groups
+        // Two rows can share a hub key (one session in two accounts): the
+        // row id keeps their order fixed.
+        let ordered = pinned.sorted { ($0.at, $0.key, $0.row.id) < ($1.at, $1.key, $1.row.id) }.map(\.row)
+        groupsCache = (key, calendar, groups, ordered)
+        return (groups, ordered)
     }
 
     /// The period's start: today from local midnight, the other windows
@@ -1020,14 +1048,17 @@ public final class SessionsModel {
 
     /// The non-trivial filter terms: harness, window (from `since`),
     /// project, model and search (`needle`, trimmed and lower-cased).
-    private func matches(_ row: Row, since: Date, needle: String, keys: inout ProjectKeys) -> Bool {
+    private func matches(_ row: Row, meta: HubSessionMeta?, since: Date, needle: String,
+                         keys: inout ProjectKeys) -> Bool {
         let s = row.session
         if let harness = filter.harness, s.harness != harness { return false }
-        if s.lastActiveAt < since { return false }
+        // A pinned row has no window, like the phone's Pinned section.
+        if s.lastActiveAt < since, meta?.pinned != true { return false }
         if let key = filter.project, keys.key(project(for: s)) != key { return false }
         if let model = filter.model, !(row.usage?.models.contains(model) ?? false) { return false }
         if !needle.isEmpty {
-            let haystack = ([s.title, s.cwd, project(for: s), s.id, s.agent, row.account, row.location.title]
+            let haystack = ([s.title, meta.flatMap { $0.isRenamed ? $0.title : nil }, s.cwd, project(for: s),
+                             s.id, s.agent, row.account, row.location.title]
                 + (row.usage?.models ?? []).map(Optional.some))
                 .compactMap { $0 }.joined(separator: " ").lowercased()
             // swe's union: a transcript hit keeps a session the metadata
@@ -1076,7 +1107,8 @@ public final class SessionsModel {
     // keep each answer until its inputs change. Not observed: filling a
     // cache while a view reads it must not count as a change.
     @ObservationIgnored private var filteredCache: (key: FilteredKey, value: Filtered)?
-    @ObservationIgnored private var groupsCache: (key: FilteredKey, calendar: Calendar, groups: [DayGroup])?
+    @ObservationIgnored private var groupsCache: (key: FilteredKey, calendar: Calendar, groups: [DayGroup],
+                                                  pinned: [Row])?
     @ObservationIgnored private var choicesCache: (rows: Int, harnesses: [String], projects: [ProjectChoice])?
     @ObservationIgnored private var modelsCache: (rows: Int, since: Date, models: [ModelChoice])?
 
@@ -1087,8 +1119,10 @@ public final class SessionsModel {
         let needle = filter.search.trimmingCharacters(in: .whitespaces).lowercased()
         var keys = ProjectKeys()
         var value = Filtered()
-        for row in rows where matches(row, since: since, needle: needle, keys: &keys) {
-            if hideTrivial, isTrivial(row) {
+        for row in rows {
+            let meta = hubOverlay.meta(for: row)
+            guard matches(row, meta: meta, since: since, needle: needle, keys: &keys) else { continue }
+            if hideTrivial, meta?.pinned != true, isTrivial(row) {
                 value.hiddenTrivialCount += 1
                 if !showTrivial { continue }
             }

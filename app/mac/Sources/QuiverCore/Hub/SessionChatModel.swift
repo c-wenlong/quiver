@@ -222,6 +222,7 @@ public final class SessionChatModel {
                     code: "unknown_session", fallback: nil, status: 404))
             }
             self.row = row
+            hub.noteRow(row)
             let page = try await hub.withClient { [key] in try await $0.messages(key, limit: Self.pageSize) }
             guard gen == generation else { return }
             load(page)
@@ -489,6 +490,18 @@ public final class SessionChatModel {
             if let result = env.decode(HubCommandResult.self) { settle(result) }
         case "session.ownership":
             if let ownership = env.decode(HubOwnershipData.self)?.ownership { row?.ownership = ownership }
+        case "session.meta":
+            // A pin or rename, from here or another device: the header's
+            // title and menu read the hub's overlay.
+            if let meta = env.decode(HubMetaReply.self) {
+                if let title = meta.title { row?.title = title.isEmpty ? meta.harnessTitle : title }
+                if let harness = meta.harnessTitle { row?.harnessTitle = harness }
+                if let pinned = meta.pinned {
+                    row?.pinned = pinned
+                    row?.pinnedAt = pinned ? meta.pinnedAt : nil
+                }
+                hub.noteMeta(key, meta)
+            }
         case "approval.requested":
             guard let req = env.decode(HubApprovalRequested.self), let rid = req.requestId else { return }
             let prompt = req.prompt ?? "Approval requested"

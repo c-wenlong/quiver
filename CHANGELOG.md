@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac app: pin, rename and fork sessions.** The Sessions list still
+  comes from `swe session --json` (tokens, cost, filters); when this
+  Mac's hub is running, each row the hub also lists picks up the hub's
+  pin, name and fork flag. Its right-click menu, and the chat header's
+  More menu, offer Pin or Unpin, Rename, and Fork where the harness can
+  fork. Pinned rows lead the list in a Pinned group, in the order they
+  were pinned, whatever the time window. A name set on the hub replaces
+  the row's title (and is searchable), and a rename made on another
+  device shows in an open chat live. Rows the hub doesn't list, and
+  every row while the hub is down, keep the list as it was
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 - **Remote iPhone app: photo and file attachments in the chat
   composer.** A paperclip left of the prompt box offers Photos and
   Files. Each pick uploads at once to the hub's
