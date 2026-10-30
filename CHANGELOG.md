@@ -19,6 +19,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names it. The chat's header has the same menu, and a rename made on
   another device shows there live
   ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+- **iOS app: merge, auto-merge and re-run on the pull request
+  page.** The detail page has the Mac and web merge controls: a
+  strategy menu (Squash and merge, Rebase and merge, Create a merge
+  commit), Merge and Auto-merge. Both ask first, naming the PR, the
+  base branch and the strategy, as the web's inline confirm does. Why a
+  button is off ("Draft PRs can't merge", "Resolve the conflicts
+  first", "Auto-merge is already armed") shows under the buttons, and
+  an armed auto-merge shows as a badge. A check row from a GitHub
+  Actions run has a menu with Re-run failed jobs (when a check in that
+  run failed) and Re-run all jobs. The phone calls the web app's
+  routes the hub already serves to paired devices,
+  `POST /v1/app/repositories/merge` and `…/rerun`. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **Web app: Mine and Review requested pull request filters.** The
+  Repositories dashboard's Pull requests tab now offers All, Mine and
+  Review requested with counts, as the iOS app does, from the flags the
+  hub's `GET /v1/pulls` puts on each open PR. A filter hides while the
+  hub can't say (a failed `gh pr status`) instead of guessing. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **Web app: Needs you in the Inbox.** The Inbox page now opens with
   the iOS Inbox's Waiting on you, Errors and Finished today sections
   from the hub's `GET /v1/inbox`, above the GitHub notifications. A row
@@ -505,6 +526,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `detail` for it.
 
 ### Fixed
+
+- **Mac app: notarized builds keep Terminal automation.** Open in
+  Terminal, account sign-in and session resume drive Terminal and iTerm
+  through an `osascript` child, and macOS charges that Apple Event to
+  Quiver. Under the hardened runtime that prod and notarized builds use,
+  an app without the `com.apple.security.automation.apple-events`
+  entitlement is refused (`-1743`) before any prompt appears. Prod builds
+  now sign the app, and the bundled Python that runs the hub, with
+  `app/mac/script/Quiver.entitlements`, which grants it; the existing
+  `NSAppleEventsUsageDescription` gives the prompt its text
+  ([#968](https://github.com/c-wenlong/quiver/issues/968)).
 
 - **Remote: queue-mode sends wait for idle on satellites too.** A
   `queue`-mode message to a session on another machine used to fail
