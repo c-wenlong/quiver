@@ -959,6 +959,29 @@ class TestTailManager(unittest.TestCase):
                      mgr.last_append):
             self.assertNotIn("claude:x", kept)
 
+    def test_a_session_dropped_mid_pane_read_raises_no_card(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+
+        def capture(_name):
+            mgr.sync([])  # the catalog drops it while the pane is read
+            return "pane"
+
+        with patch.object(tail.supervise, "meta_for", return_value={"mode": "tmux"}), \
+                patch.object(tail.supervise, "channel_name", return_value="qv-1"), \
+                patch.object(tail.supervise, "capture_pane", side_effect=capture), \
+                patch.object(tail.supervise, "pane_shows_approval", return_value=True), \
+                patch.object(tail.supervise, "set_pending_approval"):
+            mgr._poll_approvals(1000.0)
+        self.assertNotIn("claude:x", mgr._approval_outstanding)
+        self.assertEqual([e for _k, e in self.events
+                          if e["type"] == "approval.requested"], [])
+
     def test_notify_transitions(self):
         src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
         (self.tmp / "x.jsonl").write_text("")
