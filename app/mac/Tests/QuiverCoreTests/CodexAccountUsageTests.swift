@@ -82,6 +82,21 @@ import Testing
         }
     }
 
+    /// The report's dates read in the calendar's own zone, whatever zone
+    /// the machine is in: a calendar far from the system clock (Kiritimati
+    /// at UTC+14, then Baker Island at UTC-12) still keys each day on its
+    /// own midnight.
+    @Test func reportDatesReadInTheCalendarsZone() {
+        for zone in ["Pacific/Kiritimati", "Etc/GMT+12"] {
+            var far = Calendar(identifier: .gregorian)
+            far.timeZone = TimeZone(identifier: zone)!
+            let days = CodexAccountUsage.parseDays(report([("2026-10-13", 10)]), calendar: far)
+            var parts = DateComponents()
+            (parts.year, parts.month, parts.day) = (2026, 10, 13)
+            #expect(days == [far.date(from: parts)!: 10], "\(zone)")
+        }
+    }
+
     @Test func monthsUseTheLocalCalendar() {
         let account = [day("2026-08-03"): 10, day("2026-09-30"): 20, day("2026-10-15"): 30]
         let mac = [day("2026-08-03"): 1, day("2026-09-30"): 2, day("2026-10-15"): 3]
