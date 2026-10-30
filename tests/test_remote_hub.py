@@ -3186,6 +3186,97 @@ class TestServeEntry(unittest.TestCase):
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
         self.assertFalse(state.tail_manager.is_hot("claude:b"))
 
+    def test_satellite_presence_counts_survive_concurrent_streams(self):
+        # Each stream connects/disconnects on its own request thread;
+        # an unlocked read-modify-write lost counts and could leave a
+        # machine flagged online (or offline) for good.
+        import sys
+        state = HubState(Path(tempfile.mkdtemp()))
+        writes = []
+        events = []
+
+        def emit(_key, event):
+            events.append(event["type"] == "machine.online")
+
+        state.emit = emit
+
+        def upsert(_home, row):
+            writes.append(row["online"])
+
+        def stream():
+            for _ in range(300):
+                state.sat_connected("m1")
+                state.sat_disconnected("m1")
+
+        prev = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            with patch.object(hub_mod.catalog_mod, "upsert_machine", upsert):
+                # Daemon threads and a bounded join: a locking bug must
+                # fail the test, not hang the run.
+                threads = [threading.Thread(target=stream, daemon=True)
+                           for _ in range(8)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join(timeout=30)
+        finally:
+            sys.setswitchinterval(prev)
+        self.assertFalse(any(t.is_alive() for t in threads),
+                         "a presence worker never finished")
+        self.assertEqual(state._sat_subs["m1"], 0)
+        self.assertFalse(state.machine_online("m1"))
+        # Flags and events match one for one, alternate online/offline,
+        # and end offline.
+        self.assertEqual(events, writes)
+        self.assertEqual(writes[-1], False)
+        self.assertTrue(all(a != b for a, b in zip(writes, writes[1:])))
+
+    def test_failing_loop_step_logs_once_per_window(self):
+        # A loop step that raises used to vanish without a trace; it
+        # must reach stderr, but not on every 250 ms tick.
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+        ticks = iter(range(3))
+
+        def tick():
+            if next(ticks) == 2:
+                state._stop.set()
+            raise RuntimeError("tick broke")
+
+        state.tail_manager.tick = tick
+        state.tail_manager.wait = lambda _t: None
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            state._tail_loop()
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 1, out)
+        self.assertIn("RuntimeError: tick broke", out)
+
+    def test_loop_error_log_throttles_per_step_and_window(self):
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+
+        def fail(step):
+            try:
+                raise RuntimeError(step)
+            except RuntimeError:
+                state._log_loop_error(step)
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            fail("tail tick")
+            fail("tail tick")          # same window: quiet
+            fail("catalog refresh")    # another step logs in that window
+            # The window passes: the same step logs again.
+            state._loop_error_at["tail tick"] -= hub_mod._LOOP_ERROR_LOG_S + 1
+            fail("tail tick")
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 2, out)
+        self.assertEqual(out.count("catalog refresh failed"), 1, out)
+
     def test_catalog_loop_prunes_pair_requests_at_most_once_a_minute(self):
         home = Path(tempfile.mkdtemp())
         state = HubState(home)

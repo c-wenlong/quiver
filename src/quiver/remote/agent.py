@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from pathlib import Path
 
 from quiver.paths import atomic_write_text, remote_dir_for
@@ -661,7 +662,10 @@ class RemoteAgent:
                 hub_key = str(data.get("hub_key") or key)
                 blob = _get_bytes(
                     self.hub,
-                    f"/v1/agent/attachments/{hub_key}/{ref}", self.cred,
+                    # Both quoted whole: a key can hold "/" or "#",
+                    # and the hub unquotes each part.
+                    f"/v1/agent/attachments/{quote(hub_key, safe='')}/"
+                    f"{quote(ref, safe='')}", self.cred,
                 )
                 if blob is None:
                     return False, "attachment fetch failed", False

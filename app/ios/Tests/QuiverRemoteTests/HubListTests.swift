@@ -191,4 +191,29 @@ final class HubListTests: XCTestCase {
         XCTAssertEqual(app.connection, .connecting, "a cancel isn't the hub being unreachable")
         XCTAssertNil(app.loadError)
     }
+
+    @MainActor
+    func testAHubWhoseCredentialWontSaveIsntListed() {
+        let store = MemoryHubStore()
+        store.refusesSaves = true
+        let app = AppModel(store: store)
+        XCTAssertFalse(app.adopt(hub("mac")))
+        XCTAssertNil(app.hub, "listed without its credential, it would be gone at the next launch")
+        XCTAssertTrue(store.list.hubs.isEmpty)
+        XCTAssertNotNil(app.pairing.error)
+        XCTAssertTrue(app.pairing.codeSpent, "the hub took the code; Pair can't send it again")
+    }
+
+    @MainActor
+    func testASpentPairLinkIsntSentAgain() async {
+        let app = AppModel(hub: nil)
+        await app.handle(URL(string: "quiver://pair?host=box.example&token=t")!)
+        app.pairing.codeSpent = true
+        await app.acceptPairOffer()
+        XCTAssertFalse(app.pairing.busy, "nothing went to the hub")
+        XCTAssertNotNil(app.pairOffer)
+        // A new link is a new code.
+        await app.handle(URL(string: "quiver://pair?host=box.example&token=t2")!)
+        XCTAssertFalse(app.pairing.codeSpent)
+    }
 }

@@ -80,8 +80,10 @@ def detected_harnesses() -> list[str]:
 
 
 # The Mac app's preferences: Settings > Provider visibility keeps the
-# provider order and the ones switched off here.
-APP_PREFS = Path.home() / "Library/Preferences/com.cwenlong.quiver.plist"
+# provider order and the ones switched off here. Resolved at each read
+# under the current home (None); tests set a path.
+APP_PREFS: Path | None = None
+_APP_PREFS_REL = "Library/Preferences/com.cwenlong.quiver.plist"
 
 
 def _provider_visibility() -> tuple[list[str], set[str]]:
@@ -90,7 +92,7 @@ def _provider_visibility() -> tuple[list[str], set[str]]:
     import plistlib
 
     try:
-        with open(APP_PREFS, "rb") as fh:
+        with open(APP_PREFS or Path.home() / _APP_PREFS_REL, "rb") as fh:
             prefs = plistlib.load(fh)
     except (OSError, ValueError, plistlib.InvalidFileException):
         return [], set()

@@ -327,14 +327,17 @@ struct PairOfferSheet: View {
             }
             Spacer(minLength: 0)
             VStack(spacing: 4) {
-                Button {
-                    Task { await app.acceptPairOffer() }
-                } label: {
-                    if app.pairing.busy { ProgressView().tint(Theme.primaryForeground) } else { Text("Pair") }
+                // A used-up code can't pair again; only a new link can.
+                if !app.pairing.codeSpent {
+                    Button {
+                        Task { await app.acceptPairOffer() }
+                    } label: {
+                        if app.pairing.busy { ProgressView().tint(Theme.primaryForeground) } else { Text("Pair") }
+                    }
+                    .primaryButton()
+                    .disabled(app.pairing.busy)
                 }
-                .primaryButton()
-                .disabled(app.pairing.busy)
-                Button("Cancel") { app.declinePairOffer() }
+                Button(app.pairing.codeSpent ? "Close" : "Cancel") { app.declinePairOffer() }
                     .font(Theme.body).foregroundStyle(Theme.textSecondary).frame(height: 44)
             }
         }

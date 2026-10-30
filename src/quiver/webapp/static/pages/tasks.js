@@ -644,7 +644,7 @@
     const id = launched.data && launched.data.launch_id;
     if ((launched.status !== 202 && launched.status !== 200) || !id) {
       return say({ phase: null, error: launched.status === 401
-        ? "The hub doesn't know this browser's credential. It may have been revoked."
+        ? CREDENTIAL_REFUSED
         : GhUI.failMessage(launched.status, launched.data) });
     }
     say({ phase: "Waiting for the session…" });
@@ -688,7 +688,7 @@
     } else {
       x.sessions = [];
       x.error = status === 401
-        ? "The hub doesn't know this browser's credential. It may have been revoked."
+        ? CREDENTIAL_REFUSED
         : GhUI.failMessage(status, data);
     }
     paint();
@@ -708,7 +708,7 @@
     if (status !== 200 || !data) {
       if (x && page.link === x) {
         x.error = status === 401
-          ? "The hub doesn't know this browser's credential. It may have been revoked."
+          ? CREDENTIAL_REFUSED
           : GhUI.failMessage(status, data);
         if (onTasks()) paint();
       }
@@ -736,7 +736,7 @@
        * may have moved to. */
       if (onTasks() && selectedId() === t.id) {
         page.actionError = status === 401
-          ? "The hub doesn't know this browser's credential. It may have been revoked."
+          ? CREDENTIAL_REFUSED
           : GhUI.failMessage(status, data);
         paint();
       }
