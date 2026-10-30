@@ -57,6 +57,12 @@ final class SQLiteDatabase: @unchecked Sendable {
         if let handle { sqlite3_close_v2(handle) }
     }
 
+    /// How long a statement waits out another connection's lock before
+    /// failing with SQLITE_BUSY. Every connection opens with two seconds.
+    func setBusyTimeout(milliseconds: Int32) {
+        sqlite3_busy_timeout(handle, milliseconds)
+    }
+
     func execute(_ sql: String) throws {
         var error: UnsafeMutablePointer<CChar>?
         let code = sqlite3_exec(handle, sql, nil, nil, &error)
