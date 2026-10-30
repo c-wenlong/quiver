@@ -363,7 +363,7 @@
     // A read that began before an unpin or reorder, or lands while one
     // runs, may list the pins as they were: the page's own list wins.
     if (data && data.repos && page.data && (page.mutating || pinGen !== page.pinGen)) data.repos = page.data.repos;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("repositories");
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the app does.
       if (!page.data) return pageError(HEADER(true), status, data, () => renderDashboard(true));
@@ -829,7 +829,7 @@
     const { status, data } = await api(`/v1/app/repositories?${q}${refresh ? "&refresh=1" : ""}`);
     if (gen !== routeGen || page.focus !== f || seq !== f.seq) return;
     f.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("repositories");
     if (status === 404 && data && data.error && data.error.code === "not_pinned") {
       // A link to a repo the hub hasn't pinned: offer the pin itself.
       f.data = null;
