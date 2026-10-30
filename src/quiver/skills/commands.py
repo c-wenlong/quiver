@@ -1,9 +1,8 @@
 """Skills CLI commands."""
 
 import sys
-from pathlib import Path
 
-from quiver.console import c, cpad, elide, terminal_width, truncate
+from quiver.console import c, cpad, elide, terminal_width, tilde, truncate
 from quiver.json_output import emit, take_json_flag, error_stream
 from quiver.skills.catalog_commands import cmd_skills_catalog, cmd_skills_discover
 from quiver.skills.discovery import discover_skills
@@ -170,13 +169,12 @@ def cmd_skills(args):
     table.add_column("path", "PATH", width=path_w,
                      kind="preformatted", trust_cell_width=True)
 
-    home_str = str(Path.home())
     for skill in skills:
         table.add_row({
             "name": cpad("bold", truncate(skill["name"], name_w), name_w),
             "scope": cpad("cyan", truncate(skill["scope"], scope_w), scope_w),
             "path": cpad(
-                "dim", elide(skill["path"].replace(home_str, "~"), path_w), path_w
+                "dim", elide(tilde(skill["path"]), path_w), path_w
             ),
         })
 

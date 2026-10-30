@@ -2,9 +2,8 @@
 
 
 import sys
-from pathlib import Path
 
-from quiver.console import c, elide
+from quiver.console import c, elide, tilde
 from quiver.harness.models import DiscoveryRow
 from quiver.json_output import emit
 from quiver.multiselect import Choice, _supported, multiselect
@@ -82,12 +81,11 @@ def _pick(findings) -> set[str] | None:
     new = [f for f in findings if f.status == "new"]
     if not new:
         return set()
-    home = str(Path.home())
     choices = [
         Choice(
             key=f.name,
             label=f.name,
-            about=f"{f.confidence} · {(f.path or '').replace(home, '~') or f.description}",
+            about=f"{f.confidence} · {tilde(f.path) if f.path else f.description}",
         )
         for f in new
     ]
@@ -155,9 +153,8 @@ def cmd_discover(args):
             )
             print(c("dim", hdr))
             print(c("dim", "  " + "─" * 90))
-            home = str(Path.home())
             for f in findings:
-                path = elide(f.path.replace(home, "~") if f.path else "—", 48)
+                path = elide(tilde(f.path) if f.path else "—", 48)
                 conf = c("green", f.confidence) if f.confidence == "high" else c("yellow", f.confidence)
                 stat = c("cyan", f.status) if f.status == "new" else c("dim", f.status)
                 print(

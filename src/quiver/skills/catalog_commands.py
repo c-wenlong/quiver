@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from quiver.console import c, elide
+from quiver.console import c, elide, tilde
 from quiver.json_output import emit
 from quiver.paths import expand_user
 from quiver.skills.catalog_discover import apply_skill_catalog_findings, discover_skill_catalogs
@@ -60,7 +60,7 @@ def cmd_skills_catalog(args):
             except ValueError as exc:
                 print(c("red", f"  {exc}"))
                 return 1
-            display = str(resolve_catalog_path(path)).replace(str(Path.home()), "~")
+            display = tilde(resolve_catalog_path(path))
             print(c("green", f"  ✓ Added catalog {entry['label']}: {display}"))
             print(c("dim", "  Run `swe skills` to list skills from this catalog.\n"))
             return 0
@@ -72,7 +72,6 @@ def cmd_skills_catalog(args):
             print(c("dim", "  No catalogs configured.\n"))
             print(c("dim", "  Try: swe skills discover  │  swe skills catalog add <path>\n"))
             return 0
-        home = str(Path.home())
         w_label, w_count = 18, 8
         print(c("dim", f"  {'LABEL':<{w_label}} {'SKILLS':>{w_count}}  PATH"))
         print(c("dim", "  " + "─" * 100))
@@ -82,7 +81,7 @@ def cmd_skills_catalog(args):
             n_str = c("green", str(n)) if n > 0 else c("dim", "0")
             print(
                 f"  {c('cyan', entry['label']):<{w_label + 9}} {n_str:>{w_count + 9}}  "
-                f"{c('dim', str(path).replace(home, '~'))}"
+                f"{c('dim', tilde(path))}"
             )
         print()
         return 0
@@ -155,9 +154,8 @@ def cmd_skills_discover(args):
                 )
             )
             print(c("dim", "  " + "─" * 100))
-            home = str(Path.home())
             for f in findings:
-                path = str(f.path).replace(home, "~")
+                path = tilde(f.path)
                 stat = c("cyan", f.status) if f.status == "new" else c("dim", f.status)
                 print(
                     f"  {c('bold', f.label):<{w_label + 9}} {f.source:<{w_src}} "

@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from quiver.console import c
+from quiver.console import c, tilde
 from quiver.json_output import emit
 from quiver.setup.models import HarnessPreview, McpPreview, SkillsPreview
 from quiver.harness.discover import apply_findings, discover_harnesses
@@ -325,7 +325,7 @@ def cmd_setup(args):
     print(c("dim", "  Step 1/3 — AI coding CLI harnesses\n"))
     if new_harness:
         for f in new_harness:
-            path = f.path.replace(str(home), "~")
+            path = tilde(f.path, home)
             print(f"  {c('green', '•')} {c('bold', f.name)} ({f.command})  {c('dim', path)}")
     else:
         print(c("green", "  ✓ No new high-confidence harnesses to register."))
