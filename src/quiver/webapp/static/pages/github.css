@@ -39,6 +39,8 @@
 /* An inline confirm naming exactly what a write will do. */
 .gh-confirm { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--border-strong); border-radius: 12px; padding: 12px 14px; background: var(--subtle); }
 .card.gh-confirm { background: var(--card); }
+/* A field's caption sits close to its field. */
+.gh-confirm label.caption + .field { margin-top: -6px; }
 .gh-confirm-text { font-size: 13px; color: var(--text-primary); line-height: 1.45; overflow-wrap: anywhere; }
 .gh-confirm-text code { font-size: 12px; }
 .gh-confirm-buttons { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
@@ -224,6 +226,12 @@ select.field.gh-method { height: 32px; width: 180px; flex: 0 1 180px; }
 /* PR body markdown */
 .gh-md { font-size: 13px; color: var(--text-secondary); line-height: 1.5; padding: 10px 14px; overflow-wrap: anywhere; }
 .gh-md > :first-child { margin-top: 0; }
+/* The issue sheet's comments: one row each in a settings card, read only. */
+.gh-comment { padding: 10px 0; border-top: 1px solid var(--row-divider); }
+.gh-comment:first-child { border-top: 0; }
+.gh-comment-head { display: flex; align-items: center; gap: 8px; }
+.gh-md.gh-comment-body { padding: 4px 0 0; }
+.gh-md.gh-comment-body > :last-child { margin-bottom: 0; }
 .gh-md p { margin: 0 0 8px; }
 .gh-md a { color: var(--link); }
 .gh-md-h { color: var(--text-primary); font-weight: 600; margin: 4px 0 8px; }
