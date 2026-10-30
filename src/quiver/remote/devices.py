@@ -123,8 +123,12 @@ def revoke(
         raise Refused(
             409, "already_revoked",
             f"{row.get('name') or 'That device'} is already signed out.")
-    if device_id == caller_device_id \
-            and body.get("confirm_this_device") is not True:
+    # A device paired from a tailnet node takes the node with it, so the
+    # caller is hit when it is that node, or another device paired there.
+    node = str(row.get("tailscale_node") or "")
+    hits = device_id == caller_device_id or (
+        bool(node) and _caller_on_node(home, caller_device_id, node))
+    if hits and body.get("confirm_this_device") is not True:
         raise Refused(
             409, "confirm_this_device",
             "That's the device you're using. "
@@ -138,13 +142,26 @@ def revoke(
             f"~/.ssh/authorized_keys: {exc}") from exc
     if not revoked:
         raise Refused(404, "unknown_device", "No paired device has that id.")
-    return _answer(home, caller_device_id, device_id)
+    return _answer(home, caller_device_id, device_id, hits)
 
 
-def _answer(home, caller_device_id, device_id) -> dict:
+def _caller_on_node(home, caller_device_id: str | None, node: str) -> bool:
+    """Whether revoking tailnet node ``node`` takes the caller's own
+    access: its tailnet sign-in, or a device paired from that node."""
+    if not caller_device_id:
+        return False
+    if caller_device_id == TAILNET_PREFIX + node:
+        return True
+    row = pairing.load_devices(home).get(caller_device_id) or {}
+    return row.get("tailscale_node") == node
+
+
+def _answer(home, caller_device_id, device_id, hits: bool) -> dict:
     return {
         "revoked": device_id,
-        "this_device": device_id == caller_device_id,
+        # Whether the caller lost its own access, so a client can sign
+        # itself out: not only its exact id, but its node too.
+        "this_device": hits,
         "devices": rows(home, caller_device_id),
         "signins": signin_rows(home, caller_device_id),
     }
@@ -159,8 +176,8 @@ def _revoke_signin(home, caller_device_id, body: dict, device_id: str) -> dict:
     name = row.get("node_name") or "That device"
     if row.get("revoked_at"):
         raise Refused(409, "already_revoked", f"{name} is already signed out.")
-    if device_id == caller_device_id \
-            and body.get("confirm_this_device") is not True:
+    hits = _caller_on_node(home, caller_device_id, node)
+    if hits and body.get("confirm_this_device") is not True:
         raise Refused(
             409, "confirm_this_device",
             "That's the device you're using. "
@@ -172,4 +189,4 @@ def _revoke_signin(home, caller_device_id, body: dict, device_id: str) -> dict:
             500, "ssh_key_left",
             f"Signed out, but a device paired from it still has its SSH key "
             f"in ~/.ssh/authorized_keys: {exc}") from exc
-    return _answer(home, caller_device_id, device_id)
+    return _answer(home, caller_device_id, device_id, hits)

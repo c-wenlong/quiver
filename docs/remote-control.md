@@ -1100,8 +1100,15 @@ this_device, devices, signins}` with the lists refreshed. A
 identity (no unpaired access, no owner approval of pair requests) until
 a pair request from it is approved again, and devices paired from it are
 signed out with it. Revoking a device paired through a tailnet request
-revokes its node the same way, so a lost phone on the owner's login
-can't walk back in through Safari. The owner's other nodes are
+revokes its node the same way, every other device paired from it
+included, so a lost phone on the owner's login can't walk back in
+through Safari or a second pairing; open event streams from the node
+close within the usual revocation check. A `tailnet_signins.json` that
+can't be read refuses every node rather than forgetting revocations
+(owner devices then pair like anyone else), and is never rewritten
+until it reads again. `this_device` in the answer, and the
+`confirm_this_device` guard, cover the caller losing its own access
+through its node, not only its exact id. The owner's other nodes are
 untouched. Refusals: `400 bad_device`, `404 unknown_device`, `409
 already_revoked`, `409 confirm_this_device` for the caller's own row or
 sign-in without `confirm_this_device: true` (a stray tap can't lock the

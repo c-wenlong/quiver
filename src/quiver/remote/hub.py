@@ -1197,6 +1197,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _device_revoked(home: Path | None, device_id: str) -> bool:
+        """Whether the caller's access is gone: its paired row, or for
+        the owner's ``tailnet:<node>`` identity, that node's sign-in.
+        Open SSE streams ask this every few seconds."""
+        if device_id.startswith(devices_mod.TAILNET_PREFIX):
+            return pairing.signin_revoked(
+                home, device_id[len(devices_mod.TAILNET_PREFIX):])
         row = pairing.load_devices(home).get(device_id) or {}
         return bool(row.get("revoked_at"))
 

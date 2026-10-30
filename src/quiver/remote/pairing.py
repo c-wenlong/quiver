@@ -524,8 +524,10 @@ def bind_machine(
 
 def revoke_device(home: Path | str | None, device_id: str) -> bool:
     """Sign one paired device out. A device paired through a tailnet
-    request also loses its node's tailnet sign-in: a lost phone on the
-    owner's login would otherwise walk back in without a credential."""
+    request is a node, so the node goes with it (``_revoke_node``): its
+    tailnet sign-in and every other credential paired from it. A lost
+    phone on the owner's login would otherwise walk back in through
+    Safari, or through a second pairing."""
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         devices = load_devices(home_path)
@@ -534,15 +536,11 @@ def revoke_device(home: Path | str | None, device_id: str) -> bool:
             return False
         now = time.time()
         row["revoked_at"] = now
-        _save_devices(home_path, devices)
         node = str(row.get("tailscale_node") or "")
         if node:
-            signins = load_signins(home_path)
-            entry = signins.setdefault(node, {})
-            if not entry.get("revoked_at"):
-                entry["revoked_at"] = now
-                entry.setdefault("node_name", row.get("node_name") or "")
-                _save_signins(home_path, signins)
+            _revoke_node(home_path, devices, node, now, row.get("node_name") or "")
+        else:
+            _save_devices(home_path, devices)
     # A lost phone loses its SSH login too. After the lock, since sync
     # takes its own. The revoke is saved by now, so a failed rewrite is
     # KeysNotSynced, never the OSError a failed save raises: the person
@@ -566,10 +564,26 @@ def revoke_device(home: Path | str | None, device_id: str) -> bool:
 # changes but not removing the node from the tailnet.
 
 
+def _read_signins(home: Path | str | None) -> dict[str, dict] | None:
+    """The sign-in rows; ``{}`` when the file doesn't exist yet, None
+    when it exists but can't be read or parsed. A damaged file must not
+    read as "nothing revoked"."""
+    path = signins_file(home)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return None
+    rows = data.get("signins") if isinstance(data, dict) else None
+    if not isinstance(rows, dict):
+        return None
+    return {k: v for k, v in rows.items() if isinstance(v, dict)}
+
+
 def load_signins(home: Path | str | None = None) -> dict[str, dict]:
-    data = _read_json(signins_file(home), {"signins": {}})
-    rows = data.get("signins")
-    return {k: v for k, v in rows.items() if isinstance(v, dict)} if isinstance(rows, dict) else {}
+    """The sign-in rows for listing; a damaged file lists nothing."""
+    return _read_signins(home) or {}
 
 
 def _save_signins(home_path: Path | None, rows: dict[str, dict]) -> None:
@@ -579,8 +593,31 @@ def _save_signins(home_path: Path | None, rows: dict[str, dict]) -> None:
 
 
 def signin_revoked(home: Path | str | None, node_id: str) -> bool:
-    """True when the owner revoked this tailnet node's sign-in."""
-    return bool((load_signins(home).get(node_id) or {}).get("revoked_at"))
+    """True when the owner revoked this tailnet node's sign-in, and for
+    every node while the file can't be read: owner devices then pair
+    like anyone else rather than a revoked phone getting back in."""
+    rows = _read_signins(home)
+    return rows is None or bool((rows.get(node_id) or {}).get("revoked_at"))
+
+
+def _revoke_node(home_path: Path | None, devices: dict, node: str, now: float,
+                 node_name: str = "") -> None:
+    """Under ``_state_lock``: revoke every device paired from ``node``,
+    then its sign-in. Devices are saved first, so a failure between the
+    two leaves the sign-in open and a retry does the whole job again."""
+    for drow in devices.values():
+        if drow.get("tailscale_node") == node and not drow.get("revoked_at"):
+            drow["revoked_at"] = now
+    _save_devices(home_path, devices)
+    rows = _read_signins(home_path)
+    if rows is None:
+        raise OSError(f"{signins_file(home_path)} is unreadable; not overwriting it")
+    entry = rows.setdefault(node, {})
+    if not entry.get("revoked_at"):
+        entry["revoked_at"] = now
+        if node_name:
+            entry.setdefault("node_name", node_name)
+        _save_signins(home_path, rows)
 
 
 def note_signin(
@@ -593,15 +630,25 @@ def note_signin(
     if not node_id:
         return
     now = time.time() if now is None else now
-    row = load_signins(home).get(node_id) or {}
-    seen = row.get("last_seen_at")
-    if row.get("revoked_at") or (seen is not None and now - float(seen) < SIGNIN_TOUCH_S):
+
+    def fresh(row: dict) -> bool:
+        seen = row.get("last_seen_at")
+        return bool(row.get("revoked_at")) or (
+            seen is not None and now - float(seen) < SIGNIN_TOUCH_S)
+
+    rows = _read_signins(home)
+    if rows is None or fresh(rows.get(node_id) or {}):
         return
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
-        rows = load_signins(home_path)
+        rows = _read_signins(home_path)
+        if rows is None:
+            # Never rewrite a file we couldn't read: it may hold revocations.
+            return
         row = rows.setdefault(node_id, {})
-        if row.get("revoked_at"):
+        # Re-checked under the lock: a parallel request may have just
+        # written it.
+        if fresh(row):
             return
         row.setdefault("first_seen_at", now)
         row["last_seen_at"] = now
@@ -616,28 +663,19 @@ def revoke_signin(home: Path | str | None, node_id: str) -> bool:
     not one of its credentials. False when the node was never seen."""
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
-        rows = load_signins(home_path)
-        row = rows.get(node_id)
-        if row is None:
+        rows = _read_signins(home_path)
+        if rows is None:
+            raise OSError(f"{signins_file(home_path)} is unreadable")
+        if node_id not in rows:
             return False
-        now = time.time()
-        row["revoked_at"] = now
-        _save_signins(home_path, rows)
-        devices = load_devices(home_path)
-        hit = False
-        for drow in devices.values():
-            if drow.get("tailscale_node") == node_id and not drow.get("revoked_at"):
-                drow["revoked_at"] = now
-                hit = True
-        if hit:
-            _save_devices(home_path, devices)
-    if hit:
-        from quiver.remote import sshkeys
+        _revoke_node(home_path, load_devices(home_path), node_id, time.time())
+    # Always: a retry after a failed rewrite must still drop the keys.
+    from quiver.remote import sshkeys
 
-        try:
-            sshkeys.sync(home_path)
-        except OSError as exc:
-            raise sshkeys.KeysNotSynced(str(exc)) from exc
+    try:
+        sshkeys.sync(home_path)
+    except OSError as exc:
+        raise sshkeys.KeysNotSynced(str(exc)) from exc
     return True
 
 

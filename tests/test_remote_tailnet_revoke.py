@@ -140,6 +140,87 @@ class TestPairedDevicesAndNodes(_Owner):
         self.assertFalse(pairing.revoke_signin(self.home, "n-ghost"))
 
 
+class TestReviewFixes(_Owner):
+    def pair_from(self, ip):
+        peer = {**_PEERS[ip], "ip": ip}
+        req = pairing.request_pair(self.home, peer, "phone")
+        return pairing.approve_request(self.home, req["code"], req["request_id"])
+
+    def test_every_credential_from_the_node_goes(self):
+        first, second = self.pair_from(_PHONE_IP), self.pair_from(_PHONE_IP)
+        laptop = self.pair_from(_LAPTOP_IP)
+        pairing.revoke_device(self.home, first["device_id"])
+        rows = pairing.load_devices(self.home)
+        self.assertTrue(rows[second["device_id"]]["revoked_at"])
+        self.assertFalse(rows[laptop["device_id"]]["revoked_at"])
+
+    def test_open_streams_see_a_revoked_sign_in(self):
+        from quiver.remote import hub as hub_mod
+
+        self.owner(_PHONE_IP)
+        self.assertFalse(hub_mod._Handler._device_revoked(self.home, "tailnet:n-phone"))
+        pairing.revoke_signin(self.home, "n-phone")
+        self.assertTrue(hub_mod._Handler._device_revoked(self.home, "tailnet:n-phone"))
+
+    def test_a_damaged_file_fails_closed_and_is_never_overwritten(self):
+        self.owner(_PHONE_IP)
+        path = pairing.signins_file(self.home)
+        path.write_text("{not json")
+        self.assertTrue(pairing.signin_revoked(self.home, "n-phone"))
+        self.assertTrue(pairing.signin_revoked(self.home, "n-anything"))
+        self.assertEqual(self.owner(_LAPTOP_IP)[0], 401)
+        pairing.note_signin(self.home, "n-laptop", now=10.0 ** 9)
+        self.assertEqual(path.read_text(), "{not json")
+        with self.assertRaises(OSError):
+            pairing.revoke_signin(self.home, "n-phone")
+        path.write_text('{"signins": []}')
+        self.assertTrue(pairing.signin_revoked(self.home, "n-phone"))
+
+    def test_a_failed_sign_in_save_leaves_a_retry_that_finishes(self):
+        dev = self.pair_from(_PHONE_IP)
+        self.owner(_PHONE_IP)
+        with patch.object(pairing, "_save_signins", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                pairing.revoke_signin(self.home, "n-phone")
+        self.assertTrue(pairing.load_devices(self.home)[dev["device_id"]]["revoked_at"])
+        self.assertFalse(pairing.signin_revoked(self.home, "n-phone"))
+        status, reply = self.revoke(_LAPTOP_IP, "tailnet:n-phone")
+        self.assertEqual(status, 200, reply)
+        self.assertTrue(pairing.signin_revoked(self.home, "n-phone"))
+
+    def test_keys_are_resynced_on_every_revoke(self):
+        self.owner(_PHONE_IP)
+        with patch("quiver.remote.sshkeys.sync") as sync:
+            pairing.revoke_signin(self.home, "n-phone")
+        sync.assert_called_once()
+
+    def test_a_paired_phone_revoking_its_own_node_must_confirm(self):
+        dev = self.pair_from(_PHONE_IP)
+        self.owner(_PHONE_IP)
+        auth = {"Authorization": f"Bearer {self._credential(dev)}",
+                "Content-Type": "application/json"}
+        status, data = self.srv.request("POST", "/v1/devices/revoke",
+                                        {"device_id": "tailnet:n-phone"}, headers=auth)
+        self.assertEqual((status, json.loads(data)["error"]["code"]), (409, "confirm_this_device"))
+        status, data = self.srv.request(
+            "POST", "/v1/devices/revoke",
+            {"device_id": "tailnet:n-phone", "confirm_this_device": True}, headers=auth)
+        self.assertEqual(status, 200, data)
+        self.assertTrue(json.loads(data)["this_device"])
+
+    def test_an_owner_node_revoking_a_device_paired_from_it_must_confirm(self):
+        dev = self.pair_from(_PHONE_IP)
+        status, reply = self.revoke(_PHONE_IP, dev["device_id"])
+        self.assertEqual((status, reply["error"]["code"]), (409, "confirm_this_device"))
+        status, reply = self.revoke(_PHONE_IP, dev["device_id"], confirm_this_device=True)
+        self.assertEqual(status, 200, reply)
+        self.assertTrue(reply["this_device"])
+
+    def _credential(self, dev):
+        rows = pairing._load_requests(self.home)
+        return next(r["credential"] for r in rows if r.get("device_id") == dev["device_id"])
+
+
 class TestNoteSignin(unittest.TestCase):
     def setUp(self):
         import tempfile
@@ -164,6 +245,16 @@ class TestNoteSignin(unittest.TestCase):
         pairing.revoke_signin(self.home, "n1")
         pairing.note_signin(self.home, "n1", "one", now=10_000.0)
         self.assertEqual(pairing.load_signins(self.home)["n1"]["last_seen_at"], 1.0)
+
+    def test_a_parallel_write_is_seen_under_the_lock(self):
+        pairing.note_signin(self.home, "n1", "one", now=1000.0)
+        # The unlocked read is stale (another request is mid-write); the
+        # one under the lock sees the fresh row and writes nothing.
+        fresh = pairing._read_signins(self.home)
+        with patch.object(pairing, "_read_signins", side_effect=[{}, fresh]), \
+                patch.object(pairing, "_save_signins") as save:
+            pairing.note_signin(self.home, "n1", "one", now=1001.0)
+        save.assert_not_called()
 
     def test_file_is_private(self):
         pairing.note_signin(self.home, "n1", "one")

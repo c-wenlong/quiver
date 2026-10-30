@@ -1441,6 +1441,8 @@ function remoteSig(remote) {
   return JSON.stringify([
     (r.requests || []).map((q) => q.request_id),
     (r.devices || []).map((d) => d.id),
+    // A node seen or revoked from another browser or the CLI.
+    (r.signins || []).map((x) => `${x.id}:${x.revoked ? 1 : 0}`),
   ]);
 }
 
