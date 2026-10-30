@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote iPhone app: photo and file attachments in the chat
+  composer.** A paperclip left of the prompt box offers Photos and
+  Files. Each pick uploads at once to the hub's
+  `POST /v1/sessions/{key}/attachments` and shows as a chip above the
+  box with its name and size, or its upload progress, and an x to drop
+  it; a failed upload stays red until you tap it to retry or remove it.
+  The hub's caps (20 MB, images, PDFs and text files) are checked on the
+  phone first, so a refused file gets a plain note instead of an upload.
+  Photos, and HEIC or TIFF files from Files, go up as JPEG with the long
+  edge at most 2048 px, since models can't read HEIC. Send waits while
+  any upload is in flight and needs typed text (the hub refuses a
+  message without it); the message carries the refs, the bubble names
+  the files, and the hub's `@path` echo shows as the same names. A send
+  held in the queued tray keeps its files (the row shows a paperclip
+  count), and a retry or an edit on an older hub resends the same refs.
+  Detaching clears the chips, since the hub drops the staged files.
+  Part of [#516](https://github.com/c-wenlong/quiver/issues/516).
 - **Web app: Setup can start from your hub repo.** While `~/.quiver` on
   the hub machine has no hub yet, step 2 shows "Start from your hub
   repo": a URL field, the note "Fork a hub repo first (or use it as a

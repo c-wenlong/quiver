@@ -414,7 +414,10 @@ private struct ChatItemView: View {
     var body: some View {
         switch item.kind {
         case .user(let text, let send):
-            UserBubble(text: text, send: send) { Task { await model.retry(item) } }
+            // An echo the hub wrote with files starts with their "@path"s.
+            let echo = AttachmentRules.splitEcho(text)
+            UserBubble(text: echo.text, files: echo.names.isEmpty ? model.fileNames(for: item.id) : echo.names,
+                       send: send) { Task { await model.retry(item) } }
         case .assistant(let text):
             AssistantReply(text: text)
         case .thinking(let text):
@@ -469,11 +472,13 @@ struct WorkingIndicator: View {
 
 private struct UserBubble: View {
     let text: String
+    var files: [String] = []
     let send: SendState?
     let retry: () -> Void
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
+            if !files.isEmpty { SentFiles(names: files).opacity(send == .sending ? 0.6 : 1) }
             Text(text)
                 .font(Theme.body).foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
@@ -1074,6 +1079,7 @@ private struct Composer: View {
         let editing = model.editingId != nil
         let mentions = model.mentions
         let commands = model.commands
+        let files = model.attachments
         VStack(spacing: 8) {
             if !tray.isEmpty {
                 QueuedTray(sends: tray, note: model.trayNote, editingId: model.editingId,
@@ -1093,7 +1099,16 @@ private struct Composer: View {
                 MentionMenu(entries: mentions.entries, answered: mentions.answered, error: mentions.error) { pick($0) }
                     .transition(arrival)
             }
+            // An edit changes a queued message's text only; the files
+            // picked for the next message wait, as the draft does.
+            if !editing, !files.isEmpty || files.notice != nil {
+                AttachmentChips(attachments: files,
+                                needsText: model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .transition(arrival)
+            }
             HStack(alignment: .bottom, spacing: 8) {
+                AttachButton(attachments: files)
+                    .disabled(editing)
                 PromptField(placeholder: editing ? "Edit the queued message" : "Message the session",
                             text: $model.draft, cursor: $cursor, moveCaret: $moveCaret)
                     .font(Theme.body)
@@ -1103,7 +1118,8 @@ private struct Composer: View {
                     .background(Theme.field, in: .rect(cornerRadius: 22))
                     .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Theme.border, lineWidth: 1))
                 SendOrStopButton(action: ChatModel.composerAction(draft: model.draft, agentWorking: model.canInterrupt,
-                                                                  editing: editing),
+                                                                  editing: editing, files: files.items.count,
+                                                                  filesBusy: files.blocksSend),
                                  onSend: { Task { await model.send() } },
                                  onStop: { Task { await model.interrupt() } })
                     .disabled(model.savingEdit)
@@ -1113,6 +1129,7 @@ private struct Composer: View {
         .animation(.easeOut(duration: 0.2), value: editing)
         .animation(.easeOut(duration: 0.15), value: mentions.isOpen)
         .animation(.easeOut(duration: 0.15), value: commands.isOpen)
+        .animation(.easeOut(duration: 0.2), value: files.items.map(\.id))
         .onChange(of: model.editingId) { _, id in
             // The queued message's text replaced the draft: caret to its end.
             cursor = nil
@@ -1273,11 +1290,20 @@ private struct QueuedRow: View {
                 }
             }
             .iconColumn(18)
-            Text(send.text.replacingOccurrences(of: "\n", with: " "))
-                .font(Theme.body).foregroundStyle(editing ? Theme.textSecondary : Theme.textPrimary)
-                .lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .opacity(send.phase == .posting ? 0.6 : 1)
+            HStack(spacing: 6) {
+                Text(send.text.replacingOccurrences(of: "\n", with: " "))
+                    .font(Theme.body).foregroundStyle(editing ? Theme.textSecondary : Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.tail)
+                if !send.attachments.isEmpty {
+                    // The files go out with it; an edit keeps them.
+                    Label("\(send.attachments.count)", systemImage: "paperclip")
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .labelStyle(.titleAndIcon).fixedSize()
+                        .accessibilityLabel(send.attachments.count == 1 ? "1 file" : "\(send.attachments.count) files")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(send.phase == .posting ? 0.6 : 1)
             if let note = send.note {
                 Text(note).font(Theme.caption)
                     .foregroundStyle(send.phase == .left ? Theme.textMuted : Theme.dangerText)

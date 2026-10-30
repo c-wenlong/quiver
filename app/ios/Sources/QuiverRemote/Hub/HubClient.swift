@@ -175,6 +175,15 @@ struct HubClient: Sendable {
         case "bad_key": "The hub didn't accept this phone's SSH key. Update the hub."
         case "unknown_device": "The hub doesn't know this device any more."
         case "bad_dismiss": "The hub couldn't clear that row. Update the app or the hub."
+        case "too_large": "That file is over the hub's 20 MB limit."
+        case "bad_attachment":
+            // A send naming a ref the hub no longer has (swept after a
+            // week, or the session ended), else the stage's own reason.
+            if fallback?.hasPrefix("unknown attachment") == true {
+                "The hub no longer has an attached file. Attach it again."
+            } else {
+                fallback.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "The hub refused that file."
+            }
         default: fallback ?? "The hub answered with an error (\(status))."
         }
     }
@@ -361,9 +370,48 @@ struct HubClient: Sendable {
         return try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/messages", query: query))
     }
 
-    func sendMessage(_ key: String, text: String, mode: String, clientId: String) async throws -> SendAccepted {
-        try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/message",
-                               body: ["text": text, "mode": mode, "client_id": clientId]))
+    /// `attachments` are refs `uploadAttachment` returned; the hub turns
+    /// each into the staged file's path on the session's machine.
+    func sendMessage(_ key: String, text: String, mode: String, clientId: String,
+                     attachments: [String] = []) async throws -> SendAccepted {
+        var body: [String: Any] = ["text": text, "mode": mode, "client_id": clientId]
+        if !attachments.isEmpty { body["attachments"] = attachments }
+        return try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/message", body: body))
+    }
+
+    /// Uploads with a longer idle timeout than the 15 s of plain calls: a
+    /// 20 MB photo over a slow tailnet hop can pause longer than that.
+    private static let uploadSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config)
+    }()
+
+    /// `POST /v1/sessions/{key}/attachments?name=`: stages one file on the
+    /// session's machine (a satellite's pulls it from the hub) and returns
+    /// its ref for the next message. The body is the raw bytes; `progress`
+    /// gets the fraction sent, off the main thread.
+    func uploadAttachment(_ key: String, name: String, data: Data,
+                          progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> StagedAttachment {
+        var req = request("POST", "/v1/sessions/\(Self.encodeKey(key))/attachments", query: ["name": name])
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let body: Data
+        let response: URLResponse
+        do {
+            (body, response) = try await Self.uploadSession.upload(for: req, from: data,
+                                                                   delegate: UploadProgress(report: progress))
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw HubError.network(error)
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else { throw Self.error(status: status, body: body) }
+        do {
+            return try Hub.decoder.decode(StagedAttachment.self, from: body)
+        } catch {
+            throw HubError(status: status, code: "bad_response", message: "The hub sent something this app doesn't understand. Update the app or the hub.")
+        }
     }
 
     /// Queue-mode sends still waiting for the session to go idle, oldest first.
@@ -535,5 +583,18 @@ struct HubClient: Sendable {
         var body: [String: Any] = ["device_id": id]
         if confirmThisDevice { body["confirm_this_device"] = true }
         _ = try await raw(request("POST", "/v1/devices/revoke", body: body))
+    }
+}
+
+/// Reports an upload's progress as a fraction of the bytes to send.
+private final class UploadProgress: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let report: @Sendable (Double) -> Void
+
+    init(report: @escaping @Sendable (Double) -> Void) { self.report = report }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                    totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        guard totalBytesExpectedToSend > 0 else { return }
+        report(Double(totalBytesSent) / Double(totalBytesExpectedToSend))
     }
 }

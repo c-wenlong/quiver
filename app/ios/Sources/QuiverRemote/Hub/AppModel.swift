@@ -78,6 +78,7 @@ final class AppModel {
         // hub must not overwrite (or unpair) the new one.
         let pairedAtStart = hub
         let pinMark = pins.mark
+        let attachedAtStart = Set(sessions.filter(\.isAttached).map(\.key))
         do {
             async let s = client.sessions()
             // done=1 so the Inbox's "Finished today" rows ship with it.
@@ -85,7 +86,15 @@ final class AppModel {
             let (sessionsBody, inboxBody) = try await (s, i)
             guard hub == pairedAtStart else { return }
             let fetched = pins.overlay(sessionsBody.sessions, fetchedFrom: pinMark)
+            // Attached both when this refresh asked and now, and the hub
+            // says it isn't: detached elsewhere. One attached while the
+            // request was out isn't judged by an answer older than that.
+            let attachedNow = Set(sessions.filter(\.isAttached).map(\.key))
             sessions = fetched
+            for key in attachedAtStart.intersection(attachedNow)
+            where fetched.first(where: { $0.key == key })?.isAttached != true {
+                handedBack(key)
+            }
             let now = Date()
             pendingDetaches = pendingDetaches.filter { key, at in
                 now.timeIntervalSince(at) < Self.detachWaitCap && fetched.first { $0.key == key }?.isAttached != false
@@ -256,6 +265,7 @@ final class AppModel {
     /// A session's status or ownership changed on the live stream; patch
     /// the cached row so the list agrees before the next poll.
     func patch(_ key: String, status: String? = nil, ownership: String? = nil) {
+        if let ownership, ownership != "attached" { handedBack(key) }
         guard let i = sessions.firstIndex(where: { $0.key == key }) else { return }
         if let status { sessions[i].status = status }
         if let ownership {
@@ -263,6 +273,13 @@ final class AppModel {
             // Handed back: a detach waiting for the turn to end is done.
             if ownership != "attached" { pendingDetaches[key] = nil }
         }
+    }
+
+    /// The session is no longer attached. The hub deletes its staged
+    /// files on detach, so a cached chat's picked files (even one not on
+    /// screen) would name files that are gone: drop them.
+    private func handedBack(_ key: String) {
+        chats.first { $0.key == key }?.attachments.clear()
     }
 
     /// A `session.ownership` event: the owner and, with it, the channel,
