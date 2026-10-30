@@ -86,19 +86,27 @@ struct ModelChartLayoutTests {
         view.subviews.forEach { auditFinite($0, bad: &bad, seen: &seen) }
     }
 
-    /// The room before the first bar holds against the column width it
-    /// leaves: the first bar's middle sits at least `reach` from the edge,
-    /// with no more room than needed, flexible or at the minimum width.
-    @Test(arguments: [(1400.0, 25), (900.0, 25), (1600.0, 8), (600.0, 3), (2000.0, 40)])
-    func leadingRoomClearsTheFirstLabel(width: Double, count: Int) {
-        for reach in [0.0, 20.0, 60.0, 95.0] {
-            let room = ChartCard.leadingRoom(reach: reach, width: width, count: count)
-            let column = max(ChartCard.minColumnWidth,
-                             (width - 2 * ChartCard.inset - room) / CGFloat(count))
-            let middle = room + ChartCard.inset + (column - ChartCard.spacing) / 2
-            #expect(middle >= reach - 0.001, "width \(width), count \(count), reach \(reach)")
-            if room > 0 { #expect(middle - reach < 1.5, "no more room than needed") }
-        }
+    /// The room before the first bar, worked out by hand (inset 6,
+    /// spacing 8, columns at least 36) rather than with the chart's own
+    /// formula, so a mistake in that formula can't pass by agreeing with
+    /// itself. Each case notes where the first bar's middle lands.
+    @Test(arguments: [
+        // Flexible columns: room 31 leaves (1388 − 31) / 25 = 54.28-wide
+        // columns, middle 31 + 6 + 23.14 = 60.14, just past 60.
+        (1400.0, 25, 60.0, 31.0),
+        // The columns floor at 36 (flexible room 76.8 would leave 32.4):
+        // room 95 − 6 − 14 = 75 puts the middle exactly at 95.
+        (900.0, 25, 95.0, 75.0),
+        // Wide columns already clear it: 588 / 3 = 196, middle 100 ≥ 95.
+        (600.0, 3, 95.0, 0.0),
+        // 1988 / 40 = 49.7-wide columns, middle 26.85 ≥ 20.
+        (2000.0, 40, 20.0, 0.0),
+        // Nothing to clear.
+        (1400.0, 25, 0.0, 0.0),
+    ])
+    func leadingRoomClearsTheFirstLabel(width: Double, count: Int, reach: Double, room: Double) {
+        let measured: CGFloat = ChartCard.leadingRoom(reach: reach, width: width, count: count)
+        #expect(measured == CGFloat(room))
     }
 
     /// Every benchmark header tip reads "<Domain>: <measure>" over a

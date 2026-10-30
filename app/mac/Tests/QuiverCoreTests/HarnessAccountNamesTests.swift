@@ -51,7 +51,7 @@ import Testing
         #expect(try Data(contentsOf: file) == garbage)
     }
 
-    @Test func anUnreadableFileThrowsInsteadOfBeingFlattened() throws {
+    @Test(skippedAsRoot) func anUnreadableFileThrowsInsteadOfBeingFlattened() throws {
         let file = tempFile()
         try FileManager.default.createDirectory(
             at: file.deletingLastPathComponent(), withIntermediateDirectories: true)

@@ -159,30 +159,6 @@ import Testing
         #expect(layout.segments.allSatisfy { $0.laneCount == 3 })
     }
 
-    @Test func aLoneHiddenRunRendersAsASegmentNotAChip() throws {
-        // Five pieces needing four lanes: the two longest (A and D)
-        // keep lanes 0 and 1. Of the hidden, B is alone in its run, so
-        // it renders as a real block on the last lane rather than a
-        // "+1" chip as wide as itself; C and G overlap and fold into
-        // one "+2" chip there too.
-        let layout = CalendarLayout.layout([
-            block("2026-10-05T10:00:00Z", "2026-10-05T12:00:00Z", session: "a"),
-            block("2026-10-05T10:00:00Z", "2026-10-05T12:00:00Z", session: "d"),
-            block("2026-10-05T10:00:00Z", "2026-10-05T10:30:00Z", session: "b"),
-            block("2026-10-05T11:00:00Z", "2026-10-05T11:30:00Z", session: "c"),
-            block("2026-10-05T11:10:00Z", "2026-10-05T11:20:00Z", session: "g"),
-        ], day: day, maxLanes: 3)
-        #expect(layout.segments.compactMap(\.block.sessions.first?.sessionId).sorted() == ["a", "b", "d"])
-        let b = try #require(layout.segments.first {
-            $0.block.sessions.first?.sessionId == "b" })
-        #expect(b.lane == 2 && b.laneCount == 3)
-        try #require(layout.overflows.count == 1)
-        #expect(layout.overflows[0].hidden.compactMap(\.block.sessions.first?.sessionId) == ["c", "g"])
-        #expect(layout.overflows[0].start == utc("2026-10-05T11:00:00Z"))
-        #expect(layout.overflows[0].end == utc("2026-10-05T11:30:00Z"))
-        #expect(layout.overflows[0].lane == 2 && layout.overflows[0].laneCount == 3)
-    }
-
     @Test func twoHiddenPiecesInOneRunMakeAChip() throws {
         // Three mutually overlapping blocks over two lanes: one keeps
         // the lane, the other two overlap each other while hidden, so
@@ -198,23 +174,29 @@ import Testing
         #expect(layout.overflows[0].lane == 1 && layout.overflows[0].laneCount == 2)
     }
 
-    @Test func aLoneHiddenRunRendersAsASegmentInTheLastLane() throws {
-        // L fills the visible lane (maxLanes 2); B is hidden alone, so
-        // it stays a block on the last lane rather than a "+1" chip,
-        // while C and T overlap and still fold together.
-        let layout = CalendarLayout.layout([
-            block("2026-10-05T09:00:00Z", "2026-10-05T12:00:00Z", session: "l"),
+    /// Long blocks fill every lane but the last. Of the hidden ones, B is
+    /// alone in its run, so it renders as a real block on the last lane
+    /// rather than a "+1" chip as wide as itself; C and G overlap and fold
+    /// into one "+2" chip there too. The same at any lane count.
+    @Test(arguments: [2, 3])
+    func aLoneHiddenRunRendersAsASegmentInTheLastLane(maxLanes: Int) throws {
+        let long = (1..<maxLanes).map { "long\($0)" }
+        let layout = CalendarLayout.layout(long.map {
+            block("2026-10-05T09:00:00Z", "2026-10-05T12:00:00Z", session: $0)
+        } + [
             block("2026-10-05T09:30:00Z", "2026-10-05T10:00:00Z", session: "b"),
             block("2026-10-05T11:00:00Z", "2026-10-05T11:30:00Z", session: "c"),
-            block("2026-10-05T11:10:00Z", "2026-10-05T11:20:00Z", session: "t"),
-        ], day: day, maxLanes: 2)
-        #expect(layout.segments.compactMap(\.block.sessions.first?.sessionId).sorted() == ["b", "l"])
+            block("2026-10-05T11:10:00Z", "2026-10-05T11:20:00Z", session: "g"),
+        ], day: day, maxLanes: maxLanes)
+        #expect(layout.segments.compactMap(\.block.sessions.first?.sessionId).sorted() == ["b"] + long)
         let b = try #require(layout.segments.first {
             $0.block.sessions.first?.sessionId == "b" })
-        #expect(b.lane == 1 && b.laneCount == 2)
+        #expect(b.lane == maxLanes - 1 && b.laneCount == maxLanes)
         try #require(layout.overflows.count == 1)
-        #expect(layout.overflows[0].hidden.compactMap(\.block.sessions.first?.sessionId) == ["c", "t"])
-        #expect(layout.overflows[0].lane == 1)
+        #expect(layout.overflows[0].hidden.compactMap(\.block.sessions.first?.sessionId) == ["c", "g"])
+        #expect(layout.overflows[0].start == utc("2026-10-05T11:00:00Z"))
+        #expect(layout.overflows[0].end == utc("2026-10-05T11:30:00Z"))
+        #expect(layout.overflows[0].lane == maxLanes - 1 && layout.overflows[0].laneCount == maxLanes)
     }
 
     @Test func aLaterLoneBlockKeepsItsOwnClusterLaneCount() {

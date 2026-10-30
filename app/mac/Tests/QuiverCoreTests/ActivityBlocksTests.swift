@@ -187,8 +187,7 @@ import Testing
     }
 
     @Test func theResolverMemoizesPerFolder() {
-        final class Count: @unchecked Sendable { var value = 0 }
-        let count = Count()
+        let count = Box(0)
         let resolve = ProjectResolver { folder in
             count.value += 1
             return folder == "/repo" ? .repository : nil

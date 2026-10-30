@@ -60,42 +60,42 @@ import Testing
 @Suite struct APIKeyCheckRequestTests {
     let key = "sk-fake-TEST-KEY-0001"
 
-    @Test func aBearerProbeSendsAnAuthorizationHeader() async {
+    @Test func aBearerProbeSendsAnAuthorizationHeader() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "OPENAI_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "OPENAI_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
-        let request = try! #require(transport.requests.first)
+        let request = try #require(transport.requests.first)
         #expect(request.httpMethod == "GET")
         #expect(request.url?.absoluteString == "https://api.openai.com/v1/models")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer \(key)")
     }
 
-    @Test func anAnthropicProbeSendsXApiKeyAndTheVersionHeader() async {
+    @Test func anAnthropicProbeSendsXApiKeyAndTheVersionHeader() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "ANTHROPIC_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "ANTHROPIC_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
-        let request = try! #require(transport.requests.first)
+        let request = try #require(transport.requests.first)
         #expect(request.value(forHTTPHeaderField: "x-api-key") == key)
         #expect(request.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
     }
 
-    @Test func aGoogleProbeSendsXGoogApiKey() async {
+    @Test func aGoogleProbeSendsXGoogApiKey() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "GEMINI_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "GEMINI_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
-        let request = try! #require(transport.requests.first)
+        let request = try #require(transport.requests.first)
         #expect(request.value(forHTTPHeaderField: "x-goog-api-key") == key)
     }
 
-    @Test func routingRunPostsAnEmptyJsonBody() async {
+    @Test func routingRunPostsAnEmptyJsonBody() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "ROUTING_RUN_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "ROUTING_RUN_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
-        let request = try! #require(transport.requests.first)
+        let request = try #require(transport.requests.first)
         #expect(request.httpMethod == "POST")
         #expect(request.url?.absoluteString == "https://api.routing.run/v1/chat/completions")
         #expect(request.httpBody == Data("{}".utf8))
@@ -103,10 +103,10 @@ import Testing
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer \(key)")
     }
 
-    @Test func requestsTimeOutAfterTenSeconds() async {
+    @Test func requestsTimeOutAfterTenSeconds() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "OPENAI_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "OPENAI_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
         #expect(transport.requests.first?.timeoutInterval == 10)
     }
@@ -197,10 +197,10 @@ import Testing
         #expect(message.contains("Invalid authentication credentials"))
     }
 
-    @Test func aMessageInAnotherFieldIsFoundAndTrimmed() {
+    @Test func aMessageInAnotherFieldIsFoundAndTrimmed() throws {
         let long = String(repeating: "x", count: 200)
         let body = Data(#"{"detail":"\#(long)"}"#.utf8)
-        let message = try! #require(APIKeyProbe.errorMessage(in: body, key: key))
+        let message = try #require(APIKeyProbe.errorMessage(in: body, key: key))
         #expect(message.count <= 121)
         #expect(message.hasSuffix("…"))
     }
