@@ -154,6 +154,7 @@ class TestHostileFiles(_Home):
             rows = {r["name"]: r for r in
                     slash.custom_entries("claude", str(self.proj))}
         self.assertEqual(rows["big"]["description"], "big one")
+        self.assertTrue(got)  # the reads went through os.read
         self.assertLessEqual(sum(got), slash.MAX_READ * len(rows))
 
 
