@@ -960,7 +960,6 @@ class TestPrWorktree(_Base):
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
-@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestFailMessage(unittest.TestCase):
     def test_it_is_app_failtext_ending_then_refresh(self):
         """GhUI.failMessage says what app.js's failText says. It used to
@@ -980,6 +979,7 @@ class TestFailMessage(unittest.TestCase):
             "Couldn't reach the hub. Check the connection, then refresh."])
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMarkdown(unittest.TestCase):
     """GhUI.markdown, run under node with the two globals it borrows."""
 
