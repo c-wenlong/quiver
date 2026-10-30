@@ -71,6 +71,17 @@ class RefusalTest(unittest.TestCase):
             self.mod.main(str(table))
         self.assertEqual(self.snapshot(), before)
 
+    def test_an_id_that_leaves_the_folder_changes_nothing(self):
+        before = self.snapshot()
+        table = self.root / "sources.tsv"
+        table.write_text("id\tkind\tfile\tsource_url\tlicence\tnotes\n"
+                         "../../evil\tmono\ta.svg\thttps://e\tMIT\t\n")
+        with self.assertRaises(SystemExit) as raised:
+            self.mod.main(str(table))
+        self.assertIn("id must be", str(raised.exception))
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.root.parent / "evil.svg").exists())
+
     def test_a_good_table_replaces_the_set(self):
         table = self.root / "sources.tsv"
         table.write_text("id\tkind\tfile\tsource_url\tlicence\tnotes\na\tmono\ta.svg\thttps://e\tMIT\t\n")
