@@ -57,6 +57,39 @@ class TestLoad(unittest.TestCase):
         self.assertNotEqual(etag, etag2)
         self.assertIn(b"AB", body2)
 
+    def test_etag_matches_by_weak_comparison(self):
+        tag = '"abc"'
+        for header in ('"abc"', 'W/"abc"', '"x", "abc"', "*", ' W/"abc" ,"y"'):
+            self.assertTrue(pages.etag_matches(header, tag), header)
+        for header in (None, "", '"abd"', 'W/"x"'):
+            self.assertFalse(pages.etag_matches(header, tag), header)
+
+    def test_concurrent_requests_build_once(self):
+        import threading
+        folder = Path(tempfile.mkdtemp())
+        (folder / "a.js").write_text("A")
+        gate, built = threading.Event(), []
+        real = pages.bundle
+
+        def slow(suffix):
+            built.append(suffix)
+            gate.wait(5)
+            return real(suffix)
+
+        with patch.object(pages, "STATIC", folder), \
+                patch.dict(pages._BUNDLES, clear=True), \
+                patch.object(pages, "bundle", side_effect=slow):
+            threads = [threading.Thread(target=pages.bundled, args=(".js",))
+                       for _ in range(3)]
+            for t in threads:
+                t.start()
+            import time
+            time.sleep(0.3)  # every request is in before the build ends
+            gate.set()
+            for t in threads:
+                t.join(5)
+        self.assertEqual(built, [".js"])
+
     def test_a_broken_page_does_not_stop_the_others(self):
         """One page that won't parse and one that throws are logged and
         skipped; the pages around them still register."""

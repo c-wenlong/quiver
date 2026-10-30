@@ -3315,7 +3315,8 @@ class _Handler(BaseHTTPRequestHandler):
         name = path[len("/app/"):] or "index.html"
         if name in {"pages.js", "pages.css"}:
             body, etag = webapp_pages.bundled(name[len("pages"):])
-            if self.headers.get("If-None-Match") == etag:
+            if webapp_pages.etag_matches(
+                    self.headers.get("If-None-Match"), etag):
                 self.send_response(304)
                 self.send_header("ETag", etag)
                 self.send_header("Cache-Control", "no-cache")
