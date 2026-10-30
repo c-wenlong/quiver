@@ -461,6 +461,14 @@ class TestChatScript(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
 
+    def test_bare_urls_keep_their_underscores(self):
+        """A bare URL goes back after emphasis runs, so `__init__` in a
+        path stays in the href and the text, never <strong>."""
+        url = "https://github.com/a/b/blob/main/pkg/__init__.py"
+        out = self.run_js("return T.md(" + json.dumps(f"see {url} and **bold**") + ");")
+        self.assertEqual(out, f'<p>see <a href="{url}" target="_blank" rel="noopener">{url}</a>'
+                              " and <strong>bold</strong></p>")
+
     def test_markdown_escapes_then_restores_code_and_bold(self):
         out = self.run_js(
             "return [T.md('<img src=x onerror=alert(1)> **bold** `a<b`'),"

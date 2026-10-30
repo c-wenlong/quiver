@@ -406,11 +406,13 @@ const SessionChat = (() => {
       // Bare URLs are set aside first, so emphasis never reaches inside one.
       // esc() wrote `<`, `>`, `"` and `'` as entities: an `&` starting one
       // of them ends a URL, while `&amp;` — a real `&` — stays inside it.
+      // They go back only after emphasis has run: a `__init__.py` in a
+      // path is part of the link, never bold.
       const urls = [];
       return emphasis(part
         .replace(/\bhttps?:\/\/(?:[^\s<>"&\u0001]|&(?!lt;|gt;|quot;|#39;))+[^\s<>"&\u0001.,;:!?)\]']/g,
-          (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; })
-        .replace(/\u0002(\d+)\u0002/g, (_m, n) => `<a href="${urls[+n]}" target="_blank" rel="noopener">${urls[+n]}</a>`));
+          (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; }))
+        .replace(/\u0002(\d+)\u0002/g, (_m, n) => `<a href="${urls[+n]}" target="_blank" rel="noopener">${urls[+n]}</a>`);
     }).join("");
     t = t.replace(/\u0004(\d+)\u0004/g, (_m, i) => esc(escaped[+i]));
     return t.replace(/\u0001(\d+)\u0001/g, (_m, i) => `<code>${esc(codes[+i])}</code>`);
