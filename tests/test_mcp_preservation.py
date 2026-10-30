@@ -205,6 +205,12 @@ class SummaryMaskingTest(unittest.TestCase):
         self.assertIn("${K}", s)
 
 
+    def test_wrapped_summary_skips_non_string_args(self):
+        s = mcp_cli.server_summary(
+            {"command": "npx",
+             "args": ["mcp-remote", "--port", 3334, "https://x/mcp"]})
+        self.assertEqual(s, "wrapped → https://x/mcp")
+
 class UnverifiedNameSafetyTest(unittest.TestCase):
     def test_traversal_name_gets_no_config(self):
         for bad in ("../x", "a/b", "a\\b", "..", "a..b/c", "-x"):

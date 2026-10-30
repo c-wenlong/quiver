@@ -327,8 +327,14 @@ def _refresh_download(home: Path | None, now: float) -> None:
     except OSError:
         pass
     try:
+        # The python.org build swe runs from ships no CA store, so every
+        # plain urlopen of an https URL failed verification and the list
+        # never refreshed. agent._urlopen retries a certificate failure
+        # against the OS bundle, still verified, as notify and linear do.
+        from quiver.remote.agent import _urlopen
+
         req = urllib.request.Request(LITELLM_URL, headers={"User-Agent": "quiver"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with _urlopen(req, 15) as resp:
             body = resp.read()
         data = json.loads(body)
         if not isinstance(data, dict) or len(data) < 100:

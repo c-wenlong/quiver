@@ -1,7 +1,6 @@
 """Journal: seq numbering, replay, ring trim."""
 
 import json
-import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -10,10 +9,12 @@ from quiver.remote import protocol
 from quiver.remote import journal as journal_mod
 from quiver.remote.journal import Journal
 
+from tests._tempdir import temp_dir
+
 
 class TestJournal(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp()
+        self.tmp = str(temp_dir(self))
         self.journal = Journal(Path(self.tmp))
 
     def _append(self, key, n):
@@ -203,7 +204,7 @@ class TestReadTail(unittest.TestCase):
     """``read_tail``: the newest events, read backward from the end."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp()
+        self.tmp = str(temp_dir(self))
         self.journal = Journal(Path(self.tmp))
         self.key = "a:t"
         self.path = self.journal.dir / f"{protocol.key_slug(self.key)}.jsonl"

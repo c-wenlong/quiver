@@ -2,43 +2,10 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
-/// A fresh folder per test, removed afterwards.
-final class TempFolder {
-    let url: URL
-
-    init() throws {
-        url = FileManager.default.temporaryDirectory
-            .appending(path: "quiver-tests-\(UUID().uuidString)")
-            .resolvingSymlinksInPath()
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    }
-
-    deinit { try? FileManager.default.removeItem(at: url) }
-
-    func write(_ name: String, _ text: String) throws -> URL {
-        let file = url.appending(path: name)
-        try Data(text.utf8).write(to: file)
-        return file
-    }
-
-    func read(_ name: String) throws -> String {
-        try String(contentsOf: url.appending(path: name), encoding: .utf8)
-    }
-
-    func link(_ name: String, to destination: String) throws {
-        try FileManager.default.createSymbolicLink(atPath: url.appending(path: name).path,
-                                                   withDestinationPath: destination)
-    }
-
-    func isLink(_ name: String) -> Bool {
-        (try? FileManager.default.destinationOfSymbolicLink(atPath: url.appending(path: name).path)) != nil
-    }
-}
-
 @MainActor
 @Suite struct InstructionDocumentTests {
     @Test func loadsAndSavesInPlace() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let file = try folder.write("AGENTS.md", "# Rules\n")
         let doc = InstructionDocument(url: file)
         await doc.load()
@@ -54,7 +21,7 @@ final class TempFolder {
     }
 
     @Test func refusesToOverwriteAChangeMadeOnDiskSinceOpening() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let file = try folder.write("AGENTS.md", "one\n")
         let doc = InstructionDocument(url: file)
         await doc.load()
@@ -72,7 +39,7 @@ final class TempFolder {
     }
 
     @Test func aFileCreatedElsewhereWhileNewIsAlsoAConflict() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let doc = InstructionDocument(url: folder.url.appending(path: "AGENTS.md"))
         await doc.load()
         #expect(doc.state == .ready)
@@ -83,7 +50,7 @@ final class TempFolder {
     }
 
     @Test func savingANewFileCreatesIt() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let doc = InstructionDocument(url: folder.url.appending(path: "CLAUDE.md"))
         await doc.load()
         doc.text = "hello\n"
@@ -93,7 +60,7 @@ final class TempFolder {
     }
 
     @Test func checkDiskPicksUpOutsideEditsWhenThereIsNothingToLose() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let file = try folder.write("AGENTS.md", "v1\n")
         let doc = InstructionDocument(url: file)
         await doc.load()
@@ -104,7 +71,7 @@ final class TempFolder {
     }
 
     @Test func checkDiskFlagsOutsideEditsWhenThereAreUnsavedOnes() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let file = try folder.write("AGENTS.md", "v1\n")
         let doc = InstructionDocument(url: file)
         await doc.load()
@@ -116,7 +83,7 @@ final class TempFolder {
     }
 
     @Test func savingThroughASymlinkWritesTheTargetAndKeepsTheLink() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         _ = try folder.write("AGENTS.md", "shared\n")
         try folder.link("CLAUDE.md", to: "AGENTS.md")
         let doc = InstructionDocument(url: folder.url.appending(path: "CLAUDE.md"))
@@ -131,7 +98,7 @@ final class TempFolder {
     }
 
     @Test func aDanglingLinkIsWrittenAtItsTargetNotReplaced() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         try folder.link("CLAUDE.md", to: "AGENTS.md")
         let doc = InstructionDocument(url: folder.url.appending(path: "CLAUDE.md"))
         await doc.load()
@@ -142,7 +109,7 @@ final class TempFolder {
     }
 
     @Test func aCircularLinkIsNeverReplacedByASave() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         try folder.link("A.md", to: "B.md")
         try folder.link("B.md", to: "A.md")
         let doc = InstructionDocument(url: folder.url.appending(path: "A.md"))
@@ -158,7 +125,7 @@ final class TempFolder {
     }
 
     @Test func checkDiskRetriesAFileThatFailedOnceItIsRepaired() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         try folder.link("A.md", to: "B.md")
         try folder.link("B.md", to: "A.md")
         let doc = InstructionDocument(url: folder.url.appending(path: "A.md"))
@@ -172,7 +139,7 @@ final class TempFolder {
     }
 
     @Test func revertDropsEdits() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let doc = InstructionDocument(url: try folder.write("AGENTS.md", "keep\n"))
         await doc.load()
         doc.text = "oops"
@@ -184,7 +151,7 @@ final class TempFolder {
     /// Reverting after an outside change drops the edits and loads the
     /// change, rather than leaving the conflict flag up over stale text.
     @Test func revertAfterAnOutsideChangeLoadsIt() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let file = try folder.write("AGENTS.md", "old\n")
         let doc = InstructionDocument(url: file)
         await doc.load()
@@ -201,7 +168,7 @@ final class TempFolder {
     /// A document that was never read (still loading, or a failed read)
     /// refuses to save, even with overwrite: its text isn't the file.
     @Test func aDocumentThatWasNotReadRefusesToSave() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let file = folder.url.appending(path: "AGENTS.md")
         let bytes = Data([0xff, 0xfe, 0x00, 0xd8])
         try bytes.write(to: file)
@@ -221,7 +188,7 @@ final class TempFolder {
     /// A second save waits for the first and writes on top of it with no
     /// false conflict; text typed while the first ran stays unsaved.
     @Test(.timeLimit(.minutes(1))) func overlappingSavesQueueAndKeepNewerTyping() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let file = try folder.write("AGENTS.md", "v0\n")
         let doc = InstructionDocument(url: file)
         await doc.load()
@@ -273,7 +240,7 @@ final class TempFolder {
     }
 
     @Test func aFileThatIsNotUTF8IsNotOpenedForEditing() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let file = folder.url.appending(path: "AGENTS.md")
         try Data([0xff, 0xfe, 0x00, 0xd8]).write(to: file)
         let doc = InstructionDocument(url: file)
@@ -286,7 +253,7 @@ final class TempFolder {
     }
 
     @Test func savingKeepsTheFileMode() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let file = try folder.write("AGENTS.md", "x\n")
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
         let doc = InstructionDocument(url: file)

@@ -46,7 +46,14 @@ def _load_source_servers() -> dict:
         # to overwrite the malformed file. stderr keeps --json output clean.
         print(c("yellow", f"  {exc}"), file=sys.stderr)
         return {}
-    servers = data.get(MCP_SOURCE_KEY, data if MCP_SOURCE_KEY not in data and data else {})
+    if MCP_SOURCE_KEY in data:
+        servers = data[MCP_SOURCE_KEY]
+    else:
+        # A legacy flat hub keeps servers at the top level. The gateway's
+        # settings live there too, and `swe mcp gateway install` writes
+        # them into a hub that has no servers yet: read as a server, they
+        # reached harness configs as an empty entry named "gateway".
+        servers = {k: v for k, v in data.items() if k != gateway.GATEWAY_KEY}
     if not isinstance(servers, dict):
         return {}
     return {k: v for k, v in servers.items() if isinstance(v, dict)}

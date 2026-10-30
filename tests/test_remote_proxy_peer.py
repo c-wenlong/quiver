@@ -15,7 +15,6 @@ import os
 import socket
 import struct
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +23,7 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import hub as hub_mod
 from quiver.remote import peer
 
+from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server, _session
 
 _PHONE_IP = "100.64.0.9"
@@ -145,7 +145,7 @@ class TestOwnNode(_Owner):
 
 class TestConfigureOwnNode(unittest.TestCase):
     def setUp(self):
-        self.state = hub_mod.HubState(Path(tempfile.mkdtemp()))
+        self.state = hub_mod.HubState(temp_dir(self))
         self.state.whois = MagicMock(return_value=dict(_PEERS[_HUB_IP]))
 
     def test_behind_serve(self):
@@ -194,7 +194,7 @@ def _proc_line(local, remote, uid, v6=False):
 
 class TestLinux(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = temp_dir(self)
 
     def write(self, name, *lines):
         (self.root / name).write_text(_PROC_HEAD + "".join(lines))
@@ -282,9 +282,7 @@ class TestDarwin(unittest.TestCase):
         ok_path.assert_called_once_with(path)
 
     def test_app_store_binary_needs_a_root_owned_bundle(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        app = Path(tmp.name) / "Tailscale.app"
+        app = temp_dir(self) / "Tailscale.app"
         exe = app / "Contents" / "MacOS" / "Tailscale"
         exe.parent.mkdir(parents=True)
         exe.write_text("")

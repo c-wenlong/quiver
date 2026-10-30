@@ -2,7 +2,6 @@
 
 import os
 import stat
-import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -10,10 +9,12 @@ from unittest.mock import patch
 
 from quiver.remote import pairing
 
+from tests._tempdir import temp_dir
+
 
 class TestPairing(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
 
     def test_exchange_caps_name_length(self):
         token = pairing.mint_pair_token(self.tmp)
@@ -143,7 +144,7 @@ _PEER = {
 
 class TestPairRequests(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
 
     def _request(self, peer=None, name=""):
         return pairing.request_pair(self.tmp, dict(peer or _PEER), name)
@@ -515,7 +516,7 @@ class TestClientMeta(unittest.TestCase):
 
 class TestDeviceMetadata(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
 
     def test_exchange_stores_meta(self):
         token = pairing.mint_pair_token(self.tmp)

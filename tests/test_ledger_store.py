@@ -106,6 +106,18 @@ class TestScan(unittest.TestCase):
         self.assertEqual(_inputs(self.store), {"claude:m1:r1": 5, "claude:m2:r2": 7})
         self.assertEqual(scan(self.store, self.home).files_read, 0)
 
+    def test_a_line_nested_too_deep_to_parse_is_skipped(self):
+        # json.loads raises RecursionError, not ValueError, on deep
+        # nesting: the scan must skip that line, not stop at it on
+        # every run with the cursor unmoved.
+        deep = '{"usage": 1, "x": ' + "[" * 100_000 + "]" * 100_000 + "}\n"
+        (self.proj / "a.jsonl").write_text(
+            _line("m1", "r1", 5) + deep + _line("m2", "r2", 7))
+        result = scan(self.store, self.home)
+        self.assertEqual(result.errors, [])
+        self.assertEqual(_inputs(self.store),
+                         {"claude:m1:r1": 5, "claude:m2:r2": 7})
+
     def test_rows_outlive_deleted_logs(self):
         f = self.proj / "a.jsonl"
         f.write_text(_line("m1", "r1", 5))
@@ -208,6 +220,23 @@ class TestDatabaseSources(unittest.TestCase):
         self.assertNotIn("opencode:m3", rows)
         # Unchanged database: nothing read again.
         self.assertEqual(scan(self.store, self.home).files_read, 0)
+
+    def test_a_home_whose_name_holds_uri_characters_still_reads(self):
+        # The database opens as a file: URI; "#", "?" and "%20" in the
+        # folder name must be encoded, not end the path or decode away.
+        self.home = Path(tempfile.mkdtemp(suffix=" a#b?c%20d"))
+        self.store = LedgerStore(ledger_path_for(self.home))
+        self.addCleanup(self.store.close)
+        reply = json.dumps({"role": "assistant", "modelID": "gpt-x", "tokens": {
+            "input": 4, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}}})
+        self._db(".local/share/opencode/opencode.db", f"""
+            CREATE TABLE session (id TEXT, directory TEXT);
+            CREATE TABLE message (id TEXT, session_id TEXT, time_created INT, time_updated INT, data TEXT);
+            INSERT INTO message VALUES ('m1', 's1', 1790000000000, 1, '{reply}');
+        """)
+        result = scan(self.store, self.home)
+        self.assertEqual(result.errors, [])
+        self.assertIn("opencode:m1", self._rows())
 
     def test_devin(self):
         def node(rid, metrics=True):

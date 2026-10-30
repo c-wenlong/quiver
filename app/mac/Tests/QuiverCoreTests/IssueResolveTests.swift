@@ -317,8 +317,9 @@ import Testing
     }
 
     @Test func localMachineIdReadsMachineJson() throws {
-        let home = FileManager.default.temporaryDirectory.appending(path: "machine-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: home) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let home = temp.url
         #expect(IssueResolve.localMachineId(home: home) == nil)
         let dir = home.appending(path: ".quiver/data/remote")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

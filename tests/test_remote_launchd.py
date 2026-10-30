@@ -2,11 +2,12 @@
 
 import plistlib
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 
 from quiver.remote import launchd
+
+from tests._tempdir import temp_dir
 
 
 class FakeLaunchctl:
@@ -23,7 +24,7 @@ class FakeLaunchctl:
 
 class LaunchdTest(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.log = self.home / ".quiver" / "data" / "remote" / "serve.log"
 
     def test_install_writes_a_keepalive_agent_and_loads_it(self):
@@ -93,7 +94,7 @@ class BootstrapRetryTest(unittest.TestCase):
     still tears the old job down; it loads on a retry."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.log = self.home / "serve.log"
 
     def fake(self, eio_times):
