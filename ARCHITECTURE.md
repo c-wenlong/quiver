@@ -20,6 +20,8 @@ This file is the overview; each topic below has a deeper document in `docs/`:
 | [docs/json-contracts.md](docs/json-contracts.md) | Every `swe --json` command the app calls, its shape, and the Swift type that decodes it |
 | [docs/testing.md](docs/testing.md) | Running both suites, the throwaway-HOME rule, fixture capture, coverage and floors |
 | [docs/COVERAGE.md](docs/COVERAGE.md) | The dated coverage audit and current risk areas |
+| [docs/remote-control.md](docs/remote-control.md) | The hub (`swe remote serve`), satellites, pairing, devices, every `/v1/*` route and the threat model |
+| [docs/web-app.md](docs/web-app.md) | The web app the hub serves at `/`: its pages, their `/v1/app/*` data and how to add one |
 
 ## The shape
 
@@ -450,24 +452,29 @@ credential-shaped parts of URLs and arguments are masked
 ## Command tree
 
 Two layers, on purpose. The top level is shortcuts for the harness verbs
-run most often; everything else lives under the domain command that owns
-it.
+run most often, plus a few one-shot commands that belong to no domain;
+everything else lives under the domain command that owns it.
 
 ```
-swe <verb>                          top level: shortcuts only
+swe <verb>                          top level: shortcuts and one-shot commands
   list · info · add · edit · remove · use · check · doctor · install
   discover                          alias for `swe harness discover`
+  tags · aliases · models · autocomplete · bug · version · help
 
 swe <domain> <verb>                 domains: everything else
-  harness    star · archive · discover · list · edit
+  harness    star · archive · discover · list · edit · usage · usage-events · usage-daily
   mcp        discover · list · status · sync · diff · edit · validate · doctor
+             add · remove · secret · gateway
   find       amd · skills · plugins · mcps
-  plugins    catalog · install · uninstall · enable · disable
+  plugins    catalog · marketplace · install · uninstall · enable · disable
   providers  list · info · add · remove
-  report     daily · weekly · followups · warnings
-  skills     list · tree · link · unlink · move · discover · catalog · scope
-  session    use
+  report     daily · weekly · followups · followup · warnings
+  skills     list · tree · link · unlink · move · new · discover · hub · catalog · scope
+  session    use · index
   config     get · set · unset · edit · check · setup
+  hooks      list · info · new · edit · enable · disable · delete · check · sync
+  gh         pr · issue · run · inbox · repo · board · sync · pages · releases · tags · branches
+  remote     serve · agent · setup · pair · status · devices · attach · notify · ssh
 ```
 
 `swe harness star` and `swe harness archive` live under the harness domain
