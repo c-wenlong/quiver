@@ -7,13 +7,13 @@ decided, when, and why, and takes it out of the default listing.
 
 import io
 import json
-import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from quiver.console import strip_ansi
+from tests._tempdir import temp_dir
 
 
 class ArchiveStoreTest(unittest.TestCase):
@@ -23,7 +23,7 @@ class ArchiveStoreTest(unittest.TestCase):
     is under test."""
 
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
+        self.dir = temp_dir(self)
         self.file = self.dir / "harness.json"
         from quiver.harness import registry
 
@@ -571,7 +571,7 @@ class UsageLevelTest(unittest.TestCase):
 
 class UsagePersistenceTest(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
+        self.dir = temp_dir(self)
         self.file = self.dir / "harness.json"
         from quiver.harness import registry
 
