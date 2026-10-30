@@ -223,13 +223,6 @@ enum SearchClaudeDecoder {
         #""type":"user""#, #""type":"assistant""#, #""custom-title""#, #""ai-title""#,
     ].map { Data($0.utf8) }
 
-    static func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
-        guard markers.contains(where: { line.range(of: $0) != nil }),
-              let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return ([], SearchHints()) }
-        return decode(object: object)
-    }
-
     static func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
         var hints = SearchHints()
         hints.sessionId = JSONValue.string(object["sessionId"])
@@ -293,13 +286,6 @@ struct SearchCodexDecoder {
     /// The record an append's head re-scan looks for — the one line a
     /// fresh decoder needs from before the offset (`Decoder.prime`).
     static let sessionMetaMarker = Data(#""session_meta""#.utf8)
-
-    mutating func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
-        guard Self.markers.contains(where: { line.range(of: $0) != nil }),
-              let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return ([], SearchHints()) }
-        return decode(object: object)
-    }
 
     mutating func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
         var hints = SearchHints()
@@ -452,13 +438,6 @@ enum SearchPiDecoder {
     /// `"session_info"`.
     static let markers = [#""message""#, #""session"#].map { Data($0.utf8) }
 
-    static func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
-        guard markers.contains(where: { line.range(of: $0) != nil }),
-              let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return ([], SearchHints()) }
-        return decode(object: object)
-    }
-
     static func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
         var hints = SearchHints()
         switch object["type"] as? String {
@@ -517,13 +496,6 @@ struct SearchDevinDecoder {
     static let markers = [
         #""steps""#, #""role""#, #""source""#, #""step_id""#,
     ].map { Data($0.utf8) }
-
-    mutating func decode(line: Data) -> (messages: [SearchMessage], hints: SearchHints) {
-        guard Self.markers.contains(where: { line.range(of: $0) != nil }),
-              let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-        else { return ([], SearchHints()) }
-        return decode(object: object)
-    }
 
     mutating func decode(object: [String: Any]) -> (messages: [SearchMessage], hints: SearchHints) {
         var hints = SearchHints()

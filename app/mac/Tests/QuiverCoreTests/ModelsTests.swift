@@ -450,18 +450,19 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
 
     @Test func extremesAreZeroAndOneAndTiesShare() {
         let models = [priced("cheap", 1), priced("mid-a", 5), priced("mid-b", 5), priced("dear", 10)]
-        #expect(CostPercentile.rank(of: models[0], in: models) == 0)
+        let ranks = ModelsModel.costRanks(in: models)
+        #expect(ranks["cheap"] == 0)
         // The two $5 models share a spot: (1 cheaper + 0.5 ties) / 3.
-        #expect(CostPercentile.rank(of: models[1], in: models) == 0.5)
-        #expect(CostPercentile.rank(of: models[2], in: models) == 0.5)
-        #expect(CostPercentile.rank(of: models[3], in: models) == 1)
+        #expect(ranks["mid-a"] == 0.5)
+        #expect(ranks["mid-b"] == 0.5)
+        #expect(ranks["dear"] == 1)
     }
 
     @Test func unpricedOrLoneModelsHaveNoRank() {
         let free = priced("free", nil)
-        #expect(CostPercentile.rank(of: free, in: [free, priced("x", 5)]) == nil)
+        #expect(ModelsModel.costRanks(in: [free, priced("x", 5)])["free"] == nil)
         let one = priced("one", 5)
-        #expect(CostPercentile.rank(of: one, in: [one, free]) == nil)
+        #expect(ModelsModel.costRanks(in: [one, free])["one"] == nil)
     }
 }
 

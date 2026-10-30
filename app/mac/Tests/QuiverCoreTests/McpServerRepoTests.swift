@@ -3,9 +3,9 @@ import Testing
 @testable import QuiverCore
 
 /// `git -C <dir> <args>`, waiting off the cooperative pool the timing
-/// tests share (`runOffPool`, like the code under test).
+/// tests share (`offMain`, like the code under test).
 private func runGit(_ args: [String], in dir: URL) async throws {
-    let status = await runOffPool { () -> Int32 in
+    let status = await offMain { () -> Int32 in
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", dir.path] + args
