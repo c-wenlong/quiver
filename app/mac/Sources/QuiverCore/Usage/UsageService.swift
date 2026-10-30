@@ -28,7 +28,12 @@ public actor UsageService {
     private let files: FileReading
     private let store: UsageCacheStore
     private let now: @Sendable () -> Date
-    private var inFlight: [AccountKey: Task<AccountUsage, Never>] = [:]
+    private struct Running {
+        let id: UUID
+        let force: Bool
+        let task: Task<AccountUsage, Never>
+    }
+    private var inFlight: [AccountKey: Running] = [:]
 
     public init(
         transport: HTTPTransport, secrets: SecretReading, files: FileReading,
@@ -44,14 +49,22 @@ public actor UsageService {
     /// The account's usage. `force` skips the cached reuse, never a cooldown;
     /// `freshFor` says how long a good reading counts as fresh this call (the
     /// Settings refresh window); the default is the service's five minutes.
-    /// Calls for an account already being fetched wait for that fetch.
+    /// Calls for an account already being fetched wait for that fetch,
+    /// except that a forced call never takes a non-forced one's answer
+    /// (which may be the cached reading): it waits for it to land, so two
+    /// requests never overlap, then fetches.
     public func usage(for key: AccountKey, force: Bool,
                       freshFor: TimeInterval = 300) async -> AccountUsage {
-        if let running = inFlight[key] { return await running.value }
+        while let running = inFlight[key] {
+            if running.force || !force { return await running.task.value }
+            _ = await running.task.value
+            if inFlight[key]?.id == running.id { inFlight[key] = nil }
+        }
+        let id = UUID()
         let task = Task { await self.resolve(key, force: force, freshFor: freshFor) }
-        inFlight[key] = task
+        inFlight[key] = Running(id: id, force: force, task: task)
         let result = await task.value
-        inFlight[key] = nil
+        if inFlight[key]?.id == id { inFlight[key] = nil }
         return result
     }
 
