@@ -236,6 +236,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sampler starts at hub boot while the switch is on, so cleanup runs
   with no browser open. A signalled orphan shows a "Quitting" badge.
 
+- **Mac app: the setup sheet can start from your hub repo.** While
+  `~/.quiver` has no hub yet (no `AGENTS.md`, no `.git`; the app's own
+  ledger and caches there don't count), the links step shows "Start
+  from your hub repo": a URL field, the note "Fork a hub repo first (or
+  use it as a template for a private copy), then paste your fork's
+  URL.", the demo hub link once it exists, and Clone. Clone runs `swe
+  setup --hub=<url> --json --non-interactive` and takes the preview it
+  answers with, so the step then shows the cloned hub's AGENTS.md and
+  Set up sends no adopt. While it runs the sheet's other buttons wait;
+  swe's refusal (a hub already there, a URL git can't reach, a timeout)
+  shows under the field, and the card names any plugin marketplace
+  that couldn't be registered
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+
 - **Remote iPhone app: switch a session's model from the chat.** On a
   session attached through tmux whose harness takes `/model <id>`
   (Claude Code and Codex; the row's `model_modes` says so), the chat's
