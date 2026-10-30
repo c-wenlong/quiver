@@ -1022,13 +1022,12 @@ function bindSettings(section) {
   if (status) status.onchange = () => { settingsPage.status = status.value; paintSettings(); };
   const search = document.getElementById("set-key-search");
   if (search) {
-    search.oninput = () => {
-      settingsPage.query = search.value;
+    bindSearch(search, (text) => { settingsPage.query = text; }, () => {
       const caret = search.selectionStart;
       paintSettings();
       const again = document.getElementById("set-key-search");
       if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch { /* not text */ } }
-    };
+    });
   }
   if (section === "integrations") bindRemote();
   bindKeys();
@@ -1052,13 +1051,12 @@ function bindKeys() {
     if (!catSheet.open) catSheet.showModal();
     catSheet.oncancel = (ev) => { ev.preventDefault(); p.catalog = false; settingsKeyRepaint("#set-key-catalog"); };
     const catSearch = document.getElementById("set-cat-search");
-    catSearch.oninput = () => {
-      p.catalogQuery = catSearch.value;
+    bindSearch(catSearch, (text) => { p.catalogQuery = text; }, () => {
       const caret = catSearch.selectionStart;
       settingsKeyRepaint("#set-cat-search");
       const again = document.getElementById("set-cat-search");
       if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch { /* not text */ } }
-    };
+    });
     for (const btn of catSheet.querySelectorAll("[data-cat-pick]")) {
       btn.onclick = () => {
         p.catalog = false;
