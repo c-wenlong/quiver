@@ -652,13 +652,28 @@ class TestRoute(HubBase):
 
 class TestCatalogue(unittest.TestCase):
     def test_mirrors_the_mac_catalogue(self):
-        self.assertEqual(len(catalogue.CATALOGUE), 23)
+        self.assertEqual(len(catalogue.CATALOGUE), 88)
         self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "providers"],
                          ["groq", "perplexity", "fireworks", "cerebras", "cohere", "baseten",
-                          "minimax", "elevenlabs", "lambda", "assemblyai"])
+                          "minimax", "elevenlabs", "lambda", "assemblyai",
+                          "mistral", "moonshot", "nebius", "stability", "ai21", "sambanova",
+                          "poe", "writer", "cartesia", "deepgram",
+                          "droid", "windsurf", "replit", "sourcegraph", "augment", "warp",
+                          "manus", "lovable", "blackbox", "kilo", "ona",
+                          "e2b", "browserbase", "tavily", "runloop", "arcade", "morph",
+                          "supermemory"])
         self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "infrastructure"],
                          ["docker", "tailscale", "sentry", "datadog", "supabase", "digitalocean",
-                          "render", "upstash", "convex", "linear", "notion", "twilio", "clerk"])
+                          "render", "upstash", "convex", "linear", "notion", "twilio", "clerk",
+                          "pypi", "crates", "rubygems", "maven",
+                          "bitbucket", "circleci", "buildkite", "travisci",
+                          "netlify", "flyio", "linode", "expo",
+                          "mongodb", "pinecone", "prisma", "sanity", "contentful",
+                          "temporal", "inngest", "astronomer",
+                          "grafana", "newrelic", "honeycomb", "incidentio",
+                          "launchdarkly", "statsig", "snyk", "codecov",
+                          "postman", "ngrok", "hashicorp", "figma", "atlassian", "workos",
+                          "mailgun", "discord", "revenuecat"])
         for e in catalogue.CATALOGUE:
             self.assertTrue(e.page_url.startswith("https://"), e.id)
             self.assertEqual(e.feed_url, f"{e.page_url}/api/v2/summary.json", e.id)
@@ -812,7 +827,7 @@ class TestTrackRoute(HubBase):
     def test_catalogue_view(self):
         status, body = self.get("/v1/app/status?view=catalogue")
         self.assertEqual(status, 200, body)
-        self.assertEqual(len(body["entries"]), 23)
+        self.assertEqual(len(body["entries"]), 88)
         groq = next(e for e in body["entries"] if e["id"] == "groq")
         self.assertEqual((groq["name"], groq["host"], groq["group"], groq["logo"]),
                          ("Groq", "groqstatus.com", "providers", "groq"))

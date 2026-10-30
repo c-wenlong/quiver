@@ -38,14 +38,14 @@ serves.
 
 ## The catalogue sheet
 
-"Add service" opens the app's `StatusCatalogueSheet` (the same 23 entries
+"Add service" opens the app's `StatusCatalogueSheet` (the same 88 entries
 as `StatusCatalogue.swift`, in `catalogue.py`): a "Service catalogue"
 sheet with a search field, the All / AI providers / Infrastructure chips,
 and two-column rows — logo, name, the feed's host, and either an "Added"
 mark or an Add button. Search and chips filter as the app's
 `StatusCatalogue.filter` does: the query matches the name and the feed's
 host ("docker" finds Docker Hub by name, "notion-status" by its page's
-host). A footer counts "N of 23".
+host). A footer counts "N of 88".
 
 A row is marked Added when its feed's host is already on the page, built-in
 or custom, so the same page can never be tracked twice under different
@@ -59,7 +59,7 @@ card appears behind the sheet and the row reads Added.
 | Module | Swift | What |
 |---|---|---|
 | `catalog.py` | `ServiceStatusModels.swift` | `SERVICES` (same ids, names, page and feed URLs, groups), `Health`, `ComponentState`, the logo each card draws, `StatusService.custom` (`isCustom`) |
-| `catalogue.py` | `StatusCatalogue.swift` | `CATALOGUE` — the 23 one-click entries — and `filter_` (`StatusCatalogue.filter`) |
+| `catalogue.py` | `StatusCatalogue.swift` | `CATALOGUE` — the 88 one-click entries — and `filter_` (`StatusCatalogue.filter`) |
 | `tracked.py` | `CustomStatusServices.swift` | the tracked extras, in `~/.quiver/data/web-status-services.json` |
 | `parsers.py` | `StatusParser.swift` | Statuspage / incident.io `summary.json` and Google Cloud `incidents.json` into a `Report` |
 | `poller.py` | `ServiceStatusService.swift` | polling floors, conditional requests, `Retry-After` cooldowns, the cache file, `forget` (`ServiceStatusService.forget`) |
@@ -89,7 +89,7 @@ exactly like a built-in.
 
 | Query | Effect |
 |---|---|
-| `view=catalogue` | The add sheet's rows: `{entries: [{id, name, host, group, logo, added}]}`, all 23 in catalogue order. `added` is true when the entry's feed host is already tracked. |
+| `view=catalogue` | The add sheet's rows: `{entries: [{id, name, host, group, logo, added}]}`, all 88 in catalogue order. `added` is true when the entry's feed host is already tracked. |
 | `cached=1` | The last readings, no request to any status page. The page paints this first. |
 | `force=1` | Refresh: the one-minute floor instead of five. |
 
@@ -156,5 +156,5 @@ zone. Incident `url` is passed only when it is an `http(s)` address.
   follows none, so its catalog URLs are already the final ones.
 - A catalogue row or card with no shipped mark draws the service's
   initial on a tile (the app's `CatalogueRow` leaves the square empty);
-  all 23 entries currently ship a mark, so this only covers future ones.
+  all 88 entries currently ship a mark, so this only covers future ones.
 - The menu bar line (`ServiceStatusSummary`) is Mac only and not ported.
