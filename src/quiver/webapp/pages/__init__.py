@@ -33,6 +33,15 @@ _HERE = Path(__file__).resolve().parent
 STATIC = _HERE.parent / "static" / "pages"
 
 
+# One lock for the pages that rewrite the hub's shared config: MCP
+# servers (``mcp.json`` and the harness configs synced from it), skill
+# links (``skill_links.json`` and the links themselves) and Setup, which
+# does both in one apply. Each held its own lock, so a Setup apply could
+# rewrite mcp.json under an MCP page write, or relink a skills root the
+# Skills page was linking.
+CONFIG_LOCK = threading.Lock()
+
+
 class PageError(Exception):
     """A refusal the page shows: an HTTP status, a code and a message."""
 

@@ -7,6 +7,7 @@ struct ChatView: View {
     @Environment(\.scenePhase) private var phase
     let key: String
     @State private var model: ChatModel?
+    @State private var streamGate = ChatStreamGate()
     @State private var otherModelShown = false
     @State private var otherModelText = ""
 
@@ -74,8 +75,34 @@ struct ChatView: View {
         .onDisappear { model?.stop() }
         .onChange(of: phase) { _, new in
             guard let model else { return }
-            if new == .active { Task { await model.start() } } else if new == .background { model.stop() }
+            switch streamGate.phase(new) {
+            case .stop: model.stop()
+            case .start: Task { await model.start() }
+            case .none: break
+            }
         }
+    }
+}
+
+/// What a scene-phase change does to an open chat's live stream. Only a
+/// trip to the background stops it, and only that brings a restart.
+/// Inactive and back (Control Center, a notification, the app switcher
+/// peek) leaves it running, so it isn't torn down and replayed for
+/// nothing.
+struct ChatStreamGate {
+    enum Action: Equatable { case none, stop, start }
+    private(set) var stoppedInBackground = false
+
+    mutating func phase(_ new: ScenePhase) -> Action {
+        if new == .background {
+            stoppedInBackground = true
+            return .stop
+        }
+        if new == .active, stoppedInBackground {
+            stoppedInBackground = false
+            return .start
+        }
+        return .none
     }
 }
 
