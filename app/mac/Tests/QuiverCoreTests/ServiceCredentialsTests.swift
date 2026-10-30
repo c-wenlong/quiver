@@ -63,6 +63,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         let secrets = StubSecrets()
         let added = Date(timeIntervalSince1970: 1_791_000_000)
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let credentials = ServiceCredentials(
             secrets: secrets, service: "svc",
             metadataURL: dir.url.appending(path: "config/services.json"),
@@ -81,6 +82,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         final class Clock: @unchecked Sendable { var date = Date(timeIntervalSince1970: 1_791_000_000) }
         let clock = Clock()
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let credentials = ServiceCredentials(
             secrets: secrets, service: "svc",
             metadataURL: dir.url.appending(path: "config/services.json"),
@@ -280,6 +282,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func anInFlightProbeCantWriteOverANewerKey() async throws {
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let credentials = ServiceCredentials(
             secrets: StubSecrets(), service: "svc",
             metadataURL: dir.url.appending(path: "config/services.json"))
@@ -319,6 +322,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func aRemoveDuringReloadKeepsTheNewerStatus() async throws {
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let secrets = GatedSecrets()
         try await secrets.setGenericPassword(
             service: "svc", account: "DEVIN_API_KEY", value: "tok")
@@ -342,6 +346,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func anOlderReloadCannotOverwriteANewerOne() async throws {
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let secrets = GatedSecrets()
         let credentials = ServiceCredentials(
             secrets: secrets, service: "svc",
