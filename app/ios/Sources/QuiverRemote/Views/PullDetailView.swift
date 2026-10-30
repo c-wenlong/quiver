@@ -74,6 +74,9 @@ struct PullDetailView: View {
             let body = try await client.pull(repo: repo, number: number, refresh: refresh)
             guard gen == generation else { return }
             (reply, error) = Self.landing(body, over: reply)
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch {
             guard gen == generation else { return }
             self.error = error.localizedDescription

@@ -50,6 +50,9 @@ final class TasksModel {
             case nil, "ok", "disabled": nil
             default: body.linear?.error ?? status ?? "Linear is unreachable"
             }
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message

@@ -80,6 +80,9 @@ struct DevicesView: View {
         do {
             requests = try await client.pairRequests()
             requestsError = nil
+        } catch is CancellationError {
+            // The page closed mid-fetch: nothing failed.
+            return
         } catch {
             requestsError = error.localizedDescription
         }
@@ -99,6 +102,8 @@ struct DevicesView: View {
                 return ($0.lastSeenAt ?? 0) > ($1.lastSeenAt ?? 0)
             }
             devicesError = nil
+        } catch is CancellationError {
+            return
         } catch let error as HubError where error.status == 404 {
             devicesError = "This hub can't list devices yet. Update it, and this page shows everyone paired."
         } catch {
