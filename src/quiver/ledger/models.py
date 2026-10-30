@@ -65,13 +65,19 @@ class LedgerRecord:
     account_spans_profiles: bool = False
 
 
+# ``JSONValue.maxTokens``: no real response logs more. A larger count is a
+# corrupt line; capping it keeps sums inside SQLite's 64-bit integers.
+MAX_TOKENS = 1 << 40
+
+
 def json_int(value) -> int:
-    """``JSONValue.int``: a non-negative integer from a JSON number, else 0."""
+    """``JSONValue.int``: a non-negative integer from a JSON number, else 0,
+    at most ``MAX_TOKENS``."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
     if value != value or value <= 0 or value == float("inf"):
         return 0
-    return int(value)
+    return MAX_TOKENS if value >= MAX_TOKENS else int(value)
 
 
 def json_str(value) -> str | None:

@@ -361,7 +361,21 @@ struct MarkdownBody: View {
                                failurePolicy: .returnPartiallyParsedIfPossible)))
                 ?? AttributedString(String(line))
         }
-        return out
+        return webLinksOnly(out)
+    }
+
+    /// PR, issue and transcript text is someone else's: a link it holds
+    /// opens through the default handler on click, so a `file:` or
+    /// custom-scheme link would launch whatever it names. Only web links
+    /// stay links, as every other open in the app checks `isWebURL`.
+    static func webLinksOnly(_ text: AttributedString) -> AttributedString {
+        var text = text
+        for run in text.runs {
+            if let url = run.link, !url.isWebURL {
+                text[run.range].link = nil
+            }
+        }
+        return text
     }
 }
 

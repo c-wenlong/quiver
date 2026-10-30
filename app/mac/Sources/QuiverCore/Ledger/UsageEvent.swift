@@ -123,14 +123,20 @@ struct LedgerRecord: Sendable, Equatable {
 }
 
 enum JSONValue {
-    /// A non-negative integer from a JSON number, or 0.
+    /// No real response logs more tokens than this. A larger count is a
+    /// corrupt line, and capping it keeps every sum of an event's counts
+    /// (and the ledger's totals) far from overflowing, which traps.
+    /// `quiver.ledger.models.MAX_TOKENS` is the same number.
+    static let maxTokens = 1 << 40
+
+    /// A non-negative integer from a JSON number, or 0, at most `maxTokens`.
     static func int(_ value: Any?) -> Int {
         guard let number = value as? NSNumber, !(number === kCFBooleanTrue || number === kCFBooleanFalse) else {
             return 0
         }
         let double = number.doubleValue
         guard double.isFinite, double > 0 else { return 0 }
-        return double >= Double(Int.max) ? Int.max : Int(double)
+        return double >= Double(maxTokens) ? maxTokens : Int(double)
     }
 
     static func string(_ value: Any?) -> String? {

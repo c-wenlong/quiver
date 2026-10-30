@@ -548,7 +548,7 @@ import Testing
         #expect(pick.choice == .harnessDefault)
         #expect(pick.picked)
 
-        // Other keeps its typed text, blank included.
+        // Other keeps its typed text.
         pick.pick(.other)
         pick.otherText = "my-model"
         pick.refit(["gpt-5"])
@@ -560,17 +560,104 @@ import Testing
         pick.refit(["opus", "sonnet"])
         #expect(pick.choice == .recent("sonnet"))
         #expect(pick.picked)
-        // ...and re-defaults (untouched again) where it doesn't, so
+        // ...and shows the new list's default where it doesn't, so
         // another harness's model never travels.
         pick.refit(["gpt-5", "o3"])
         #expect(pick.choice == .recent("gpt-5"))
         #expect(!pick.picked)
+        #expect(pick.model(supported: true) == "gpt-5")
         pick.pick(.recent("o3"))
         pick.refit([])
         #expect(pick.choice == .harnessDefault)
         #expect(!pick.picked)
         pick.refit(["opus"])
         #expect(pick.choice == .recent("opus"))
+    }
+
+    /// A blank "Other…" is a pick too: it survives a switch, still blank,
+    /// and still sends no model.
+    @Test func modelMenuKeepsABlankOtherAcrossSwitches() {
+        var pick = ModelPick(recent: ["opus"])
+        pick.pick(.other)
+        pick.refit(["gpt-5"])
+        #expect(pick.choice == .other)
+        #expect(pick.otherText == "")
+        #expect(pick.picked)
+        #expect(pick.model(supported: true) == nil)
+        pick.refit([])
+        #expect(pick.choice == .other)
+    }
+
+    /// Claude's picked model survives a trip through Codex: Codex shows
+    /// and sends its own newest model, and Claude gets the pick back.
+    @Test func modelMenuRestoresAPickAfterAHarnessThatLacksIt() {
+        let claude = ["claude-sonnet", "claude-opus"]
+        var pick = ModelPick(recent: claude)
+        pick.pick(.recent("claude-opus"))
+
+        pick.refit(["gpt-5", "o3"])
+        #expect(pick.choice == .recent("gpt-5"))
+        #expect(!pick.picked)
+        #expect(pick.model(supported: true) == "gpt-5")
+        #expect(pick.remembered == "claude-opus")
+
+        // A second foreign harness in a row keeps the memory too.
+        pick.refit([])
+        #expect(pick.choice == .harnessDefault)
+        #expect(pick.model(supported: true) == nil)
+
+        pick.refit(claude)
+        #expect(pick.choice == .recent("claude-opus"))
+        #expect(pick.picked)
+        #expect(pick.model(supported: true) == "claude-opus")
+    }
+
+    /// A harness that can't take a model at launch (Kilo) sends none,
+    /// whatever its list, and the pick comes back after it.
+    @Test func modelMenuRestoresAPickAfterAnUnsupportedHarness() {
+        let claude = ["claude-sonnet", "claude-opus"]
+        var pick = ModelPick(recent: claude)
+        pick.pick(.recent("claude-opus"))
+
+        pick.refit([])
+        #expect(pick.model(supported: false) == nil)
+        pick.refit(["kilo/model"])
+        #expect(pick.model(supported: false) == nil)
+
+        pick.refit(claude)
+        #expect(pick.choice == .recent("claude-opus"))
+        #expect(pick.model(supported: true) == "claude-opus")
+    }
+
+    /// Picking anything else from the menu replaces the remembered model.
+    @Test func modelMenuForgetsAPickWhenTheUserPicksAgain() {
+        let claude = ["claude-sonnet", "claude-opus"]
+
+        // Another recent model, here Codex's shown default picked by hand.
+        var pick = ModelPick(recent: claude)
+        pick.pick(.recent("claude-opus"))
+        pick.refit(["gpt-5"])
+        pick.pick(.recent("gpt-5"))
+        #expect(pick.remembered == "gpt-5")
+        pick.refit(claude)
+        #expect(pick.choice == .recent("claude-sonnet"))
+        #expect(!pick.picked)
+
+        // "Harness default", which then stays put.
+        pick = ModelPick(recent: claude)
+        pick.pick(.recent("claude-opus"))
+        pick.pick(.harnessDefault)
+        #expect(pick.remembered == nil)
+        pick.refit(claude)
+        #expect(pick.choice == .harnessDefault)
+
+        // "Other…", which stays put the same way.
+        pick = ModelPick(recent: claude)
+        pick.pick(.recent("claude-opus"))
+        pick.pick(.other)
+        #expect(pick.remembered == nil)
+        pick.refit(claude)
+        #expect(pick.choice == .other)
     }
 }
 

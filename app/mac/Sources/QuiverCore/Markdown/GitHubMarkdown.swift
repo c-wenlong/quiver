@@ -406,7 +406,10 @@ public enum GitHubMarkdown {
                     i = end   // past the tag — handle() may scan ahead
                     handle(tag)
                 } else {
-                    let next = s[i...].firstIndex(of: "<") ?? s.endIndex
+                    // A `<` that opens no tag ("a < b") is text; search past
+                    // it, or the loop would find it again forever.
+                    let from = s[i] == "<" ? s.index(after: i) : i
+                    let next = s[from...].firstIndex(of: "<") ?? s.endIndex
                     text(s[i..<next])
                     i = next
                 }
