@@ -240,6 +240,17 @@ class McpSyncLocalOnlyTargetTest(unittest.TestCase):
                          ["local", "remote"])
         self.assertIn("1 remote left out (remote)", result.stdout)
 
+    def test_a_url_server_reaches_claude_code_with_its_type(self):
+        # Claude Code skips a url entry with no type, so sync stamps one,
+        # and an overwrite of a stdio entry does not keep the old "stdio".
+        (self.home / ".claude.json").write_text(json.dumps({"mcpServers": {
+            "remote": {"type": "stdio", "command": "old"}}}) + "\n")
+        result = self.run_mcp("sync", "quiver", "claude", "--no-interactive", "--force")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        claude = json.loads((self.home / ".claude.json").read_text())["mcpServers"]
+        self.assertEqual(claude["remote"], {"type": "http", "url": "https://mcp.example.com/mcp"})
+        self.assertNotIn("type", claude["local"])
+
     def test_an_unset_secret_on_a_remote_server_does_not_block_claude_desktop(self):
         hub = self.home / ".quiver" / "mcp.json"
         data = json.loads(hub.read_text())
