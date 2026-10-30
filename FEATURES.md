@@ -38,7 +38,7 @@ Status words:
 | Issues, resolve with agent | yes | part | yes | Web: an issue row links to github.com; there is no issue detail or comment view, and Resolve exists only from a Tasks detail. iOS: own tab plus a Resolve sheet, no comment composer; Mac: detail sheet with comments and ResolveIssueSheet. All sheets carry the model picker prefilled with the last-used model (#914); on the Mac and the web it is a menu of Harness default, the harness's `recent_models`, then Other… (web: `static/model-menu.js`) |
 | Tasks | yes | yes | part | Mac: sidebar page with the same filters, groups, state stepper, sessions and link/unlink. Mac and Web have the Repositories rail and five-row groups (#941, #942); iOS doesn't |
 | GitHub notifications | yes | yes | part | Mac and Web: the Inbox page, Unread/All and mark read; Mac also posts banners. iOS: a GitHub group inside its Inbox tab, which can't mark threads read |
-| Needs you (pending decisions) | - | - | yes | iOS Inbox tab: Waiting on you, Errors, GitHub, Finished today, cleared per device on the hub; badges count only "Waiting on you". Mac and Web have no view of it yet |
+| Needs you (pending decisions) | yes | - | yes | iOS Inbox tab: Waiting on you, Errors, GitHub, Finished today, cleared per device on the hub; badges count only "Waiting on you". Mac: Waiting on you, Errors and Finished today above the GitHub list on the Inbox page (GitHub rows come from `swe gh inbox`, not the hub), a row opens its chat, Clear per section or row, Finished today folds after five rows, no sidebar badge, nothing shown while the hub is down. Web has no view of it yet |
 
 ## Manage
 

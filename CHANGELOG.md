@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac app: Needs you on the Inbox page.** Above the GitHub
+  notifications, the Inbox now lists the sessions this Mac's hub says
+  wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the
+  iPhone's sections: Waiting on you, Errors and Finished today. A row
+  opens that session's chat; Clear, per row or per section, hides it
+  for this Mac until the session moves again (`POST /v1/inbox/dismiss`),
+  and never offers a pending approval. Nothing extra shows while the
+  hub isn't running
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 - **Remote: a `limit` notification when a session hits its usage
   limit.** The hub and satellites now raise `notify` kind `limit` when
   a Claude Code session writes its rate-limit record ("You've hit your
