@@ -328,13 +328,19 @@ function duration(seconds) {
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+/* Mid-turn, as the hub counts it: it refuses an attach and holds a
+ * when_idle detach only while a row is "active". One waiting on an
+ * approval is idle to it, as it is to the chat and the phone. */
+function midTurn(r) {
+  return r.status === "active";
+}
+
 /* The lifecycle action a row offers, the phone's leading-swipe rule:
  * detach an attached one, attach one the hub can take over (a kept pane
  * attaches even mid-turn: it is adopted, nothing restarts). */
 function rowAction(r) {
   if (r.ownership === "attached") return "detach";
-  const busy = r.status === "active" || r.status === "approval";
-  if ((r.attachable || r.kept) && (r.kept || !busy)) return "attach";
+  if ((r.attachable || r.kept) && (r.kept || !midTurn(r))) return "attach";
   return "";
 }
 
@@ -537,8 +543,7 @@ function detachRow(r, mode) {
 /* The chat's same three-way choice, stacked like the phone's: idle rows
  * just detach when_idle, busy ones ask first since `now` cuts the turn. */
 function detachClick(r) {
-  const busy = r.status === "active" || r.status === "approval";
-  if (!busy) return detachRow(r, "when_idle");
+  if (!midTurn(r)) return detachRow(r, "when_idle");
   const sheet = detachSheetEl();
   const canKeep = r.tmux || r.mode === "tmux";
   sheet.innerHTML = `<div class="sheet-body">

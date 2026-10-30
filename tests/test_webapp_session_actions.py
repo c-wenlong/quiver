@@ -81,6 +81,21 @@ class TestSessionActionRules(unittest.TestCase):
                     rowMenuActions({ can_fork: "yes" })];""")
         self.assertEqual(out, [["pin", "rename"], ["unpin", "rename", "fork"], ["pin", "rename"]])
 
+    def test_a_row_waiting_on_an_approval_is_idle_as_the_hub_counts_it(self):
+        """The hub refuses an attach, and holds a when_idle detach, only
+        while a row is "active": a row waiting on an approval offers
+        Attach and detaches without the mid-turn sheet, as the chat and
+        the phone do."""
+        out = self.run_js("""
+            const row = (status, more = {}) => ({ key: "claude:a", status, attachable: true, ...more });
+            const actions = [rowAction(row("approval")), rowAction(row("active")),
+                             rowAction(row("active", { kept: true })), rowAction(row("approval", { ownership: "attached" }))];
+            globalThis.sessionsListVisible = () => false;
+            await detachClick(row("approval", { ownership: "attached" }));
+            return { actions, detach: posts.map((p) => [p.path, p.body]) };""")
+        self.assertEqual(out["actions"], ["attach", "", "attach", "detach"])
+        self.assertEqual(out["detach"], [["/v1/sessions/claude%3Aa/control", {"op": "detach", "mode": "when_idle"}]])
+
     def test_rename_rules_match_the_hub(self):
         out = self.run_js("""
             const long = "é".repeat(130);
