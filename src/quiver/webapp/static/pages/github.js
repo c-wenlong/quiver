@@ -167,10 +167,8 @@ const GhUI = (() => {
    * the hub is unreachable. */
   const post = (path, body) => apiPost(path, body);
 
-  function failMessage(status, data) {
-    return (data && data.error && (data.error.message || data.error))
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
-  }
+  /* app.js's failText, its offline line ending "then refresh". */
+  const failMessage = (status, data) => failText(status, data, "then refresh");
 
   /* Keep a search box's focus and caret across a repaint. */
   function keepFocus(id, paint) {

@@ -469,8 +469,6 @@ function mcpRequest(s, st) {
  * is stored, and the pair header an owner's tailnet device signs in with). */
 const mcpPost = (action, body) => apiPost(`/v1/app/mcp/${action}`, body);
 
-const mcpFailure = (status, data) => failText(status, data);
-
 /* The list a sync answered with becomes the page's, keeping the health
  * the old list had (the write does not probe). */
 function mcpAdopt(page) {
@@ -507,7 +505,7 @@ async function mcpPreview(s, thenConfirm) {
   st.running = false;
   if (status === 401) { renderGate(); return; }
   if (status !== 200 || !data) {
-    st.error = mcpFailure(status, data);
+    st.error = failText(status, data);
     st.preview = null;
     if (data && data.error && data.error.code === "target_changed") mcpLoad(mcpHasHealth());
   } else {
@@ -533,7 +531,7 @@ async function mcpSync(s) {
   st.confirming = false;
   if (status === 401) { renderGate(); return; }
   if (status !== 200 || !data) {
-    st.error = mcpFailure(status, data);
+    st.error = failText(status, data);
     st.preview = null;
     // Something changed on disk, or a write failed part way: read again.
     if (mcpPage.sheet === st) mcpRepaintSheet(s);
@@ -590,7 +588,7 @@ function mcpSecretsHtml(s, st) {
 async function mcpSecretValue(name, st) {
   const { status, data } = await mcpPost("secret_value", { name });
   if (status === 200 && data && typeof data.value === "string") return data.value;
-  st.secretError = mcpFailure(status, data);
+  st.secretError = failText(status, data);
   return null;
 }
 
@@ -667,7 +665,7 @@ async function mcpSaveSecret(s, name) {
     return;
   }
   if (status !== 200 || !data) {
-    st.secretError = mcpFailure(status, data);
+    st.secretError = failText(status, data);
     if (mcpPage.sheet === st) mcpRepaintSheet(s);
     return;
   }
@@ -712,7 +710,7 @@ async function mcpRemove(s) {
     return;
   }
   if (status !== 200 || !data) {
-    st.error = mcpFailure(status, data);
+    st.error = failText(status, data);
     if (mcpPage.sheet === st) mcpRepaintSheet(s);
     // Most refusals mean the configs moved on: read them again.
     if (status) mcpLoad(mcpHasHealth());
@@ -1316,7 +1314,7 @@ async function mcpAdd() {
   }
   if (status !== 200 || !data) {
     if (mcpPage.add !== a) return;
-    a.error = mcpFailure(status, data);
+    a.error = failText(status, data);
     return mcpOpenAdd();
   }
   // A server that was added is shown even if its sheet went away meanwhile.
