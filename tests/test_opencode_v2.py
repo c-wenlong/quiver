@@ -379,6 +379,15 @@ class TailTest(OpencodeV2Case):
         self.assertEqual(src.state()["seq"], 12)
         self.assertEqual(src.poll(), [])
 
+    def test_start_near_end_reads_only_recent_v2_rows(self):
+        src = self.source("ses_new")
+        src.start_near_end(2)  # rows 7 (assistant) and 12 (idle)
+        self.assertEqual(src.state()["seq"], 5)
+        self.assertEqual(
+            [e["kind"] for e in src.poll()],
+            ["thinking", "tool_use", "tool_result", "assistant"],
+        )
+
     def test_a_streaming_reply_waits_until_it_completes(self):
         conn = self.conn()
         self.v2_row(conn, "m5", "ses_new", "user", 16, {"text": "next"}, T0 + 5000)
