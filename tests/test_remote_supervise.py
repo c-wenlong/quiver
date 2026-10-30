@@ -42,8 +42,12 @@ class TestTmuxHelpers(unittest.TestCase):
         socket = f"qv-test-{secrets.token_hex(4)}"
         sockets = tempfile.mkdtemp(prefix="qvt", dir="/tmp")
         self.addCleanup(shutil.rmtree, sockets, True)
+        # The server's socket lives under this TMUX_TMPDIR, and the patch
+        # below is gone by cleanup time: name it here, or kill-server
+        # looks in the default folder and leaves the server running.
         self.addCleanup(subprocess.run, ["tmux", "-L", socket, "kill-server"],
-                        capture_output=True)
+                        capture_output=True,
+                        env={**os.environ, "TMUX_TMPDIR": sockets})
         with patch.object(supervise, "_TMUX_SOCKET", socket), \
              patch.dict(os.environ, {"TMUX_TMPDIR": sockets}):
             out = subprocess.run(
