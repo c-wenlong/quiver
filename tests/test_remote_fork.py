@@ -1,6 +1,5 @@
 """fork.py: fork a session from the phone, on the hub or a satellite."""
 
-import http.client
 import json
 import os
 import tempfile
@@ -13,9 +12,10 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import agent as agent_mod
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import fork as fork_mod
-from quiver.remote import pairing, protocol, supervise
-from quiver.remote.hub import HubState, make_server
+from quiver.remote import protocol, supervise
 from quiver.sessions.models import Session
+
+from tests.test_remote_hub import _Server
 
 CODEX_ID = "rollout-2026-10-20T10-55-33-01a1144a-41bf-7123-ae76-1cff676b946f"
 CODEX_THREAD = "01a1144a-41bf-7123-ae76-1cff676b946f"
@@ -27,56 +27,30 @@ def _session(sid="s1", tool="claude", path="/tmp", ts=0):
 
 
 class _Hub:
+    """test_remote_hub's _Server (no tailnet, no price download) with a
+    paired phone; ``request`` answers parsed JSON."""
+
     def __init__(self, sessions):
-        self.home = Path(tempfile.mkdtemp())
-        self.state = HubState(self.home)
-        self.state.catalog._fetch = lambda: list(sessions)
-        self.state.catalog._status_of = lambda ss: ["done"] * len(ss)
-        self.state.catalog.refresh()
-        self.server = make_server(self.state, "127.0.0.1", 0)
-        self.port = self.server.server_address[1]
-        self.thread = threading.Thread(
-            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
-            daemon=True)
-        self.thread.start()
-        token = pairing.mint_pair_token(self.home)
-        _status, data = self.request(
-            "POST", "/v1/pair", {"token": token, "name": "t"}, auth=False)
-        cred = data["credential"]
+        self.srv = _Server(sessions=sessions,
+                           statuses=lambda ss: ["done"] * len(ss))
+        self.home, self.state = self.srv.home, self.srv.state
+        cred = self.srv.pair()["credential"]
         self.auth = {"Authorization": f"Bearer {cred}"}
 
     def satellite(self, mid):
         """Pair a satellite credential and bind it to ``mid``."""
-        token = pairing.mint_pair_token(self.home)
-        _s, data = self.request(
-            "POST", "/v1/pair",
-            {"token": token, "name": "sat", "role": "satellite"},
-            auth=False)
-        sat = {"Authorization": f"Bearer {data['credential']}"}
-        status, data = self.request(
-            "POST", "/v1/agent/register", {"machine": {"id": mid}},
-            auth=sat)
-        assert status == 200, data
-        return sat
+        return self.srv.satellite(mid)
 
     def stop(self):
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join(timeout=3)
+        self.srv.stop()
 
     def request(self, method, path, body=None, auth=True):
         # auth=True sends the phone credential; a dict is sent verbatim;
         # False sends nothing (e.g. /v1/pair).
         headers = self.auth if auth is True else (auth or {})
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
-        try:
-            conn.request(method, path,
-                         body=json.dumps(body) if body is not None else None,
-                         headers=headers)
-            resp = conn.getresponse()
-            return resp.status, json.loads(resp.read() or b"{}")
-        finally:
-            conn.close()
+        status, data = self.srv.request(method, path, body=body,
+                                        headers=headers)
+        return status, json.loads(data or b"{}")
 
 
 class TestForkCommandLines(unittest.TestCase):
