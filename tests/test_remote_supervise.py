@@ -1059,6 +1059,28 @@ class TestLaunchTuning(unittest.TestCase):
         kill.assert_called_once_with("qv-a")
         self.assertEqual(supervise.meta_for(self.home, key)["tmux"], "qv-b")
 
+    def test_attach_elsewhere_during_boot_with_another_model_is_refused(self):
+        # The winning entry runs a different model than this attach
+        # asked for: report that, not success.
+        key = "claude:abc"
+
+        def boot(name, timeout):
+            supervise.mark(self.home, key,
+                           {"mode": "headless", "model": "sonnet"})
+            return "❯"
+
+        stack, kill = self._tmux_patches(boot)
+        with stack, patch.object(supervise, "_send_launch_controls",
+                                 return_value=True):
+            ok, note = supervise.attach(
+                self.home, key, _session(sid="abc", path=self.proj),
+                last_append_at=None, status="done", mode="tmux",
+                model="opus")
+        self.assertFalse(ok)
+        self.assertIn("/model", note)
+        kill.assert_called_once_with("qv-a")
+        self.assertEqual(supervise.meta_for(self.home, key)["model"], "sonnet")
+
     def test_attach_tmux_types_the_pick_and_records_it(self):
         (ok, note), st, key = self._attach(
             _session(sid="abc", path=self.proj), "tmux", model="opus")

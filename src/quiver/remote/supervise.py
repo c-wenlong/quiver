@@ -641,6 +641,26 @@ def attach(
                             writers, model=model, effort=effort)
 
 
+def _already_attached(
+    current: dict, model: str | None, effort: str | None,
+) -> tuple[bool, str]:
+    """The answer to an attach of a key that already has an entry.
+
+    Idempotent — but a pick is a request for the session to run that
+    value, and a live pane's launch-time apply can't be redone: a pick
+    differing from the recorded one is refused rather than silently
+    dropped.
+    """
+    changed = [op for op, want in (("model", model), ("effort", effort))
+               if want and want != str(current.get(op) or "")]
+    if changed:
+        ops = " and ".join(f"/{op}" for op in changed)
+        return False, (
+            f"already attached; {ops} can only be picked on a "
+            "fresh attach — detach the session and attach again")
+    return True, "already attached"
+
+
 def _attach_checks_locked(
     home: Path | None,
     session_key: str,
@@ -659,19 +679,7 @@ def _attach_checks_locked(
     """
     current = _load_registry(home).get(session_key)
     if current is not None:
-        # Idempotent — but a pick is a request for the session to
-        # run that value, and a live pane's launch-time apply can't
-        # be redone: a pick differing from the recorded one is
-        # refused rather than silently dropped.
-        changed = [op for op, want in
-                   (("model", model), ("effort", effort))
-                   if want and want != str(current.get(op) or "")]
-        if changed:
-            ops = " and ".join(f"/{op}" for op in changed)
-            return False, (
-                f"already attached; {ops} can only be picked on a "
-                "fresh attach — detach the session and attach again")
-        return True, "already attached"
+        return _already_attached(current, model, effort)
     # A tmux session kept running by an earlier detach is taken back
     # as it is, mid-turn or not: launching here would start a second
     # run of the same session next to it.
@@ -800,12 +808,14 @@ def _attach_tmux(
             "be delivered — attach again or send them by hand")
     meta["tmux"] = name
     with _registry_lock(home):
-        if _load_registry(home).get(session_key) is not None:
+        current = _load_registry(home).get(session_key)
+        if current is not None:
             # Another process attached the key while this pane booted
             # (in-process attaches wait on the key's lock): theirs
-            # stands, this one goes.
+            # stands, this one goes, answered as any attach of an
+            # attached key is (a different pick is refused).
             kill(name)
-            return True, "already attached"
+            return _already_attached(current, model, effort)
         _stop_local_writers(session, writers)
         _mark_locked(home, session_key, meta)
     return True, f"attached under tmux {name}"
