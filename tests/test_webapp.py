@@ -144,6 +144,38 @@ class TestSetupOffer(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestDamagedPairLink(unittest.TestCase):
+    """A #pair= link cut short mid-escape can't be decoded: route() shows
+    the gate saying so, credential or not, instead of throwing on a blank
+    page."""
+
+    def panel_at(self, hash_):
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "const els = { sidebar: { innerHTML: '', querySelector: () => ({ outerHTML: '' }) } };\n"
+            "globalThis.document = { addEventListener() {}, querySelectorAll: () => [],"
+            " getElementById: (id) => (els[id] ||= { innerHTML: '' }) };\n"
+            "globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
+            "globalThis.localStorage = { getItem() { return null; } };\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n"
+            "const sessionsPage = { gen: 0 }, harnessesPage = { gen: 0 }, accountsPage = { gen: 0 };\n")
+        body = "\nlet pairs = 0; pairExchange = () => { pairs++; }; route(); process.stdout.write(JSON.stringify([pairs, (els.panel || {}).innerHTML || '']));\n"
+        done = subprocess.run(["node", "-e", prelude + APP_JS.read_text(encoding="utf-8") + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_the_gate_says_the_link_is_damaged(self):
+        for hash_ in ("#pair=abc%", "#pair=abc&name=ph%E0%A4"):
+            pairs, panel = self.panel_at(hash_)
+            self.assertEqual(pairs, 0, hash_)
+            self.assertIn("This pair link is damaged", panel, hash_)
+
+    def test_a_whole_link_still_pairs(self):
+        self.assertEqual(self.panel_at("#pair=abc%2Bd&name=my%20phone")[0], 1)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMacOnlySidebar(unittest.TestCase):
     """app.js's sidebar and router for the Mac-only pages (Menu bar,
     Widgets), run under node with a two-element DOM stubbed."""

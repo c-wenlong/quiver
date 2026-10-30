@@ -244,7 +244,7 @@ async function pairExchange(token, name) {
   if (!pairStillLive(gen, rgen)) return;
   const msg = (data && data.error && data.error.message)
     || (status ? `the hub answered ${status}` : "the hub couldn't be reached");
-  renderGate(`The pair link didn't work: ${msg} Mint a fresh one — it lives only minutes.`);
+  renderGate(`The pair link didn't work: ${msg} Mint a fresh one — it lives only minutes.`, true);
 }
 
 /* ── pair by tailnet identity (the asking side of /v1/pair/request) ── */
@@ -346,7 +346,18 @@ function pairHash() {
   const m = hash.match(/#pair=([^&]+)/);
   if (!m) return false;
   const nm = hash.match(/[?&]name=([^&]+)/);
-  pairExchange(decodeURIComponent(m[1]), nm ? decodeURIComponent(nm[1]) : "");
+  let token, name;
+  try {
+    token = decodeURIComponent(m[1]);
+    name = nm ? decodeURIComponent(nm[1]) : "";
+  } catch {
+    // A link cut short mid-escape (#pair=abc%) can't be decoded; left to
+    // throw, it stopped route() and the page stayed blank.
+    renderSidebar("");
+    renderGate("This pair link is damaged: it may have been cut short when it was copied. Copy the whole link, or mint a fresh one.", true);
+    return true;
+  }
+  pairExchange(token, name);
   return true;
 }
 
