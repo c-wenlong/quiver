@@ -185,6 +185,38 @@ class Journal:
         except OSError:
             return None
 
+    def sweep(self, cutoff: float, keep: Callable[[str], bool]) -> int:
+        """Delete journals last appended to before ``cutoff``, except
+        those whose file slug ``keep`` claims; returns how many.
+
+        Each delete runs under the file's lock, so an append can't land
+        in a file that is going away, and drops what this instance
+        cached for it: a key appended to again starts over at seq 1, as
+        it would after a restart.
+        """
+        try:
+            files = list(self.dir.glob("*.jsonl"))
+        except OSError:
+            return 0
+        removed = 0
+        for path in files:
+            if keep(path.stem):
+                continue
+            with _lock_for(path):
+                try:
+                    if path.stat().st_mtime >= cutoff:
+                        continue
+                    path.unlink()
+                except OSError:
+                    continue
+                self._lines.pop(str(path), None)
+                self._bytes.pop(str(path), None)
+                for key in [k for k in self._seqs
+                            if key_slug(k) == path.stem]:
+                    del self._seqs[key]
+            removed += 1
+        return removed
+
     def read_since(
         self,
         session_key: str,
