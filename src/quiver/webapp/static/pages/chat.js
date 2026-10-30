@@ -1370,7 +1370,7 @@ const SessionChat = (() => {
   function linkCardsHtml(text) {
     const urls = linkUrls(text);
     if (!urls.length) return "";
-    return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${esc(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
+    return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${safeHref(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
       <span class="link-card-ic">${iconSvg("link")}</span>
       <span class="link-card-main"><span class="link-card-host">${esc(linkHost(u))}</span>${linkPath(u) ? `<span class="link-card-path">${esc(linkPath(u))}</span>` : ""}</span>
       <span class="link-card-open">Open ${iconSvg("out")}</span></a>`).join("")}</div>`;

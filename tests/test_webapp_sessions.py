@@ -447,6 +447,7 @@ class TestChatScript(unittest.TestCase):
         prelude = (
             "const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')"
             ".replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');\n"
+            "const safeHref = (u) => /^(https?:\\/\\/|mailto:)/i.test(String(u || '').trim()) ? esc(String(u).trim()) : '';\n"
             "globalThis.window = { addEventListener() {} };\n"
             "globalThis.document = { addEventListener() {} };\n"
             "globalThis.location = { hash: '' };\n")

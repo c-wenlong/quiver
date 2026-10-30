@@ -233,8 +233,8 @@ function statusCard(raw) {
   return `<article class="card status-card">
     <div class="status-body">
       <div class="status-head">${statusLogo(s.logo, s.name)}<span class="status-name">${esc(s.name)}</span>
-        <a class="status-open" href="${esc(s.page_url)}" target="_blank" rel="noopener noreferrer"
-          title="${esc(s.page_url)}" aria-label="Open the ${esc(s.name)} status page">${statusIcon("open")}</a>${remove}</div>
+        ${safeHref(s.page_url) ? `<a class="status-open" href="${safeHref(s.page_url)}" target="_blank" rel="noopener noreferrer"
+          title="${esc(s.page_url)}" aria-label="Open the ${esc(s.name)} status page">${statusIcon("open")}</a>` : ""}${remove}</div>
       <div class="status-health-block">
         <div class="status-health"><span class="health-dot health-${esc(s.health || "unknown")}" aria-hidden="true"></span>
           <span class="${s.health ? "" : "muted"}">${esc(label)}</span></div>
@@ -296,8 +296,8 @@ function statusDetails(s) {
   }
   if (s.incidents.length) {
     out += `<div class="status-incidents">${s.incidents.slice(0, INCIDENT_LIMIT).map(statusIncident).join("")}
-      ${s.incidents.length > INCIDENT_LIMIT
-        ? `<a class="status-more" href="${esc(s.page_url)}" target="_blank" rel="noopener noreferrer">${
+      ${s.incidents.length > INCIDENT_LIMIT && safeHref(s.page_url)
+        ? `<a class="status-more" href="${safeHref(s.page_url)}" target="_blank" rel="noopener noreferrer">${
           s.incidents.length - INCIDENT_LIMIT} more on the status page</a>` : ""}</div>`;
   }
   return out;
@@ -308,7 +308,7 @@ function statusIncident(i) {
   if (i.stage) meta.push(i.stage);
   if (i.started_at != null) meta.push(`${i.maintenance ? "began" : "started"} ${statusWhen(i.started_at)}`);
   if (i.updated_at != null) meta.push(`updated ${statusRelative(i.updated_at)}`);
-  const link = i.url ? `<a class="status-incident-link" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer"
+  const link = safeHref(i.url) ? `<a class="status-incident-link" href="${safeHref(i.url)}" target="_blank" rel="noopener noreferrer"
       title="${esc(i.url)}" aria-label="Open incident">${statusIcon("arrow")}</a>` : "";
   return `<div class="status-incident">
     <div class="status-incident-name">${esc(i.name)}${link}</div>
