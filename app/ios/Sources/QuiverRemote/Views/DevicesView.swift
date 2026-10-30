@@ -129,8 +129,11 @@ struct DevicesView: View {
                             .background(Theme.subtle, in: .capsule)
                     }
                 }
+                // Two lines: on one, a phone's OS and client used the
+                // width and "last seen" was cut to "last seen 1…".
                 Text(detail(of: device))
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             if device.revoked == true {
@@ -156,8 +159,8 @@ struct DevicesView: View {
     private func detail(of device: PairedDevice) -> String {
         var bits = [device.isSatellite ? "machine" : nil, device.os, device.client, device.nodeName]
             .compactMap { $0 }
-        let seen = RelativeTime.short(device.lastSeenAt)
-        bits.append(seen.isEmpty ? "never seen" : seen == "now" ? "seen just now" : "last seen \(seen) ago")
+        let seen = RelativeTime.ago(device.lastSeenAt)
+        bits.append(seen.isEmpty ? "never seen" : seen == "just now" ? "seen just now" : "last seen \(seen)")
         return bits.joined(separator: " · ")
     }
 
@@ -194,8 +197,8 @@ private struct PairRequestCard: View {
                     Image(systemName: "iphone.gen3").font(.system(size: 18)).foregroundStyle(Theme.textSecondary).frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(request.name ?? "New device").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Text([request.nodeName, request.login, request.createdAt.map { "\(RelativeTime.short($0)) ago" }]
-                            .compactMap { $0 }.joined(separator: " · "))
+                        Text([request.nodeName, request.login, RelativeTime.ago(request.createdAt)]
+                            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                     }
                     Spacer()

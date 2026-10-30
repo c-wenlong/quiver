@@ -249,6 +249,12 @@ final class UsageFormatTests: XCTestCase {
         XCTAssertEqual(UsageFormat.usd(nil), "$0.00")
         XCTAssertEqual(UsageFormat.usdAxis(800), "$800")
         XCTAssertEqual(UsageFormat.usdAxis(1260), "$1.3K")
+        XCTAssertEqual(UsageFormat.usdAxis(0), "$0")
+        // A $1 axis ticks at $0.50; rounding printed "$1" for both.
+        XCTAssertEqual(UsageFormat.usdAxis(0.5), "$0.50")
+        XCTAssertEqual(UsageFormat.usdAxis(1), "$1")
+        XCTAssertEqual(UsageFormat.usdAxis(0.25), "$0.25")
+        XCTAssertEqual(UsageFormat.usdAxis(12.5), "$12.5")
     }
 
     func testAgoAndStaleness() {

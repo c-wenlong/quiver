@@ -33,7 +33,7 @@ the chat, like the Repositories rail's fold.
 
 | Part | What |
 |---|---|
-| Top bar | Back, harness logo, title, harness · folder (· machine for a satellite), the status badge, a `qv-…` tmux chip when the row names a pane (click copies `tmux attach -t qv-…`), a Live / Reconnecting dot, Detach (attached sessions only), and Details: the sheet the row used to open (harness, machine, folder, last active, id, models, the supervised mode and pane, tokens and spend, icon copy buttons, Run in terminal on macOS hubs). |
+| Top bar | Back, harness logo, title, harness · folder (· machine for a satellite), the status badge, a `qv-…` tmux chip when the row names a pane (click copies `tmux attach -t qv-…`), a Live / Reconnecting dot, Detach (attached sessions only), More actions (the list's Pin, Rename and Fork menu, see From the list), and Details: the sheet the row used to open (harness, machine, folder, last active, id, models, the supervised mode and pane, tokens and spend, icon copy buttons, Run in terminal on macOS hubs). |
 | Rail | Every session the page lists, grouped by day like the list: harness logo, title and a status dot (the badge colours; nothing for a finished one). A row swaps the chat to that session; the open one is marked and stays listed even when the list's data or filters would leave it out. The header button relists; under 960 px the rail is a strip of chips above the chat. |
 | Transcript | The last 500 messages from `GET /v1/sessions/{key}/messages?limit=500`, then live events. User text right in a bubble, assistant text left, both with the app's markdown (fenced code, inline code, bold; everything else escaped). Thinking folds under "Thought". Tool calls are cards ("Edit src/x.py") that open to their arguments and output; Edit, MultiEdit, Write, NotebookEdit and apply_patch cards show a diff instead. A card whose call writes an `.html`, `.htm` or `.svg` file inside the session's folder has a Preview button (see Page preview below). A reply's web links (http and https, not in code) get up to three cards under it: host, path and Open, which opens a new tab with `rel="noopener noreferrer"`. Compaction is a "Context compacted" rule; system notes are centred captions; errors are red. |
 | Approval card | "Approval needed", the prompt, and the menu rows the pane shows as stacked option buttons (the event carries `options` with each row's digit and label, so "6 Edit command" or "Yes, switch to bypass mode" are answerable too). Older events and non-tmux approvals carry no menu; they show Allow, Always, Deny. Once answered the card folds to a "Approval · {what was picked}" row that re-opens to the full prompt and menu, the picked row at full shade and the rest greyed. |
@@ -73,7 +73,8 @@ browser has one, and `X-Quiver-Pair: 1`, so the hub owner's own tailnet
 devices work without pairing.
 
 Events handled: `message.appended`, `session.status` (badge, dots, Attach
-offer), `session.ownership` (composer and banner), `approval.requested`,
+offer), `session.ownership` (composer and banner), `session.meta` (the
+header's title and the menu's Pin or Unpin), `approval.requested`,
 `approval.resolved`, `command.result` (settles a send by `client_id` or a
 queued approval; an unmatched failure becomes a system line).
 
@@ -113,6 +114,30 @@ can be attached or detached without opening its chat:
 - A finished write refetches the list rather than patching the row, so
   badges and actions always match the hub; a refusal lands as a note
   above the filters.
+
+The iPhone's swipe-left actions sit behind each row's More actions
+button (the `⋯`), and a right-click on a row opens the same menu, as a
+long press does on the phone. The chat's header has the same button.
+
+- **Pin** / **Unpin**: `POST /v1/sessions/{key}/pin {pinned}`. The row
+  moves at once; a refusal puts it back with a note above the filters
+  ("Couldn't pin it. …"). Pinned rows lead the list in a Pinned group,
+  in the order they were pinned (`pinned_at`), out of their day groups,
+  and stay listed whatever the time filter says (a pinned short session
+  too). Like the phone's `PinLedger`, each pin choice gets a version: a
+  reply for an older choice is dropped, and a list fetched before the
+  latest choice was answered keeps the choice.
+- **Rename**: the phone's `RenameSheet`. `POST .../title {title}` with
+  the hub's rules applied as you type: one line, at most 120 code
+  points, spaces collapsed on save. Save is off until the name is
+  non-empty and new; a renamed session also offers "Use the original
+  name" (posts `""`) with the harness's own title under it. The hub
+  keeps the name, so every paired device shows it.
+- **Fork**, only when the row's `can_fork` is true: the phone's
+  `ForkSheet`. A first message is required; `POST .../fork {prompt}`
+  then polls `GET /v1/launches/<id>` the same way New session does, and
+  opens the fork's chat once the hub names its key. The hub's refusals
+  (`fork_unsupported`, `fork_pending`, `bad_cwd`, …) show in the sheet.
 
 **New session** in the header is the iPhone's `NewSessionView`: machine
 chips (from `GET /v1/machines`, the ones with anything in `launchable`,
@@ -166,6 +191,5 @@ list whenever it lands.
   only), and it has no New session sheet. The page mirrors the iPhone
   rules instead: the same leading-swipe attach/detach rules, the same
   three-way detach choice, the same `NewSessionView` pickers and
-  `LaunchFlow` polling. What it doesn't do is the iPhone's extra row
-  actions (pin, rename, fork) — a chat keeps its name and session files
-  stay as the harness wrote them.
+  `LaunchFlow` polling, and its pin, rename and fork actions behind a
+  More actions menu instead of swipes.
