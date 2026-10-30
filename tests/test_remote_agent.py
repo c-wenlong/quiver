@@ -566,8 +566,19 @@ class TestAgentState(unittest.TestCase):
                 {"ref": "1-shot.png", "hub_key": "claude:s1@m1"})
         self.assertTrue(ok)
         url = get.call_args[0][1]
-        self.assertIn("claude:s1@m1/1-shot.png", url)
+        self.assertIn("claude%3As1%40m1/1-shot.png", url)
         self.assertEqual(staged[0][1], "1-shot.png")
+
+    def test_attachment_pull_quotes_a_key_with_slashes(self):
+        # A session id can be a path: unquoted, its "/" split the route
+        # at the wrong place and "#" ended the URL early.
+        a = self._agent()
+        with patch.object(agent_mod, "_get_bytes", return_value=None) as get:
+            a._execute("droid:/a/b#c", "attachment",
+                       {"ref": "1 shot.png", "hub_key": "droid:/a/b#c@m1"})
+        url = get.call_args[0][1]
+        self.assertEqual(
+            url, "/v1/agent/attachments/droid%3A%2Fa%2Fb%23c%40m1/1%20shot.png")
 
 
 class _AgentHub(_Hub):
