@@ -212,6 +212,22 @@ class GatewayServerTest(unittest.TestCase):
         self.gateway.reload(force=True)
         self.assertEqual(self.request(INIT)[0], 404)
 
+    def test_a_burst_of_connections_is_queued_not_reset(self):
+        # One session opens every shared server at once; 5 queued
+        # connections (Python 3.13's default) reset the rest.
+        self.assertGreaterEqual(self.server.request_queue_size, 64)
+        results = []
+
+        def ping(i):
+            results.append(self.request({"jsonrpc": "2.0", "id": i, "method": "ping"})[0])
+
+        threads = [threading.Thread(target=ping, args=(i,)) for i in range(40)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(results, [200] * 40)
+
     def test_status_lists_problems(self):
         self.gateway.problems = {"broken": "no value for TOKEN"}
         rows = {r["name"]: r for r in self.gateway.status()["servers"]}
