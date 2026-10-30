@@ -3,7 +3,7 @@ import Testing
 
 /// The session detail's resume command must paste into a shell as the
 /// argv it shows.
-@Suite struct ResumeCommandLineTests {
+@Suite @MainActor struct ResumeCommandLineTests {
     @Test func plainWordsStayBare() {
         #expect(SessionDetail.shellLine(["claude", "--resume", "0b1c-2d"]) == "claude --resume 0b1c-2d")
     }
