@@ -17,6 +17,16 @@ final class SSEParserTests: XCTestCase {
     }
 }
 
+final class EventStreamTests: XCTestCase {
+    func testOnlyARefusalNoRetryCanChangeEndsTheStream() {
+        XCTAssertTrue(EventStream.ends(status: 404), "unknown_session: the hub dropped it")
+        XCTAssertTrue(EventStream.ends(status: 403))
+        for status in [0, 500, 502, 503, 504] {
+            XCTAssertFalse(EventStream.ends(status: status), "\(status) is worth reconnecting for")
+        }
+    }
+}
+
 final class PairLinkTests: XCTestCase {
     func testQuiverScheme() {
         let link = PairLink(URL(string: "quiver://pair?host=100.64.0.5&port=9000&token=abc&name=phone")!)
