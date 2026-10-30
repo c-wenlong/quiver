@@ -276,8 +276,8 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
 /// Holds every request parked until released, so in-flight counts and
 /// queueing behind the limiter are observable.
 final class GateTransport: HTTPTransport {
-    private let state = Mutex<(inFlight: Int, peak: Int, requests: [URLRequest],
-                              waiters: [CheckedContinuation<Void, Never>])>((0, 0, [], []))
+    private let state = Mutex<(inFlight: Int, peak: Int, requests: [URLRequest], open: Bool,
+                              waiters: [CheckedContinuation<Void, Never>])>((0, 0, [], false, []))
     private let sendsStarted = CountGate()
 
     var peak: Int { state.withLock { $0.peak } }
@@ -301,17 +301,30 @@ final class GateTransport: HTTPTransport {
         for waiter in released { waiter.resume() }
     }
 
+    /// Answers every parked request and every later one at once, so a
+    /// test whose waits failed can still end its run.
+    func openAll() {
+        let released = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.open = true
+            defer { s.waiters = [] }
+            return s.waiters
+        }
+        for waiter in released { waiter.resume() }
+    }
+
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         // Count and park under one lock: a release between the two could
         // run before the waiter existed and leave this send parked.
         let started = sendsStarted
         await withCheckedContinuation { waiter in
-            state.withLock { s in
+            let parked = state.withLock { s -> Bool in
                 s.inFlight += 1
                 s.peak = max(s.peak, s.inFlight)
                 s.requests.append(request)
-                s.waiters.append(waiter)
+                if !s.open { s.waiters.append(waiter) }
+                return !s.open
             }
+            if !parked { waiter.resume() }
             Task { await started.bump() }
         }
         state.withLock { $0.inFlight -= 1 }
@@ -381,12 +394,15 @@ final class GateTransport: HTTPTransport {
         await model.load()
         let all = Task { await model.checkAll() }
         // Four run at once and hold their slots...
-        #expect(await transport.waitForRequests(4))
+        let four = await transport.waitForRequests(4)
+        #expect(four)
         #expect(transport.inFlight == 4)
         // ...and the other three start only as those slots free up.
         transport.release()
-        #expect(await transport.waitForRequests(7))
-        transport.release()
+        #expect(four ? await transport.waitForRequests(7) : false)
+        // Lets the rest through even if a wait above failed, so the run
+        // ends instead of hanging on a request still parked.
+        transport.openAll()
         await all.value
         #expect(transport.requestCount == 7)
         #expect(transport.peak == 4)

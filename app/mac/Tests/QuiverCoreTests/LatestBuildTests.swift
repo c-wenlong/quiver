@@ -41,17 +41,16 @@ private final class BuildGate: @unchecked Sendable {
 
 @MainActor
 @Suite struct LatestBuildTests {
-    /// Opens `gate` and returns once the build it held has finished and
-    /// been thrown away, so a check after it sees the drop, not a result
-    /// still on its way.
-    private func openAndAwaitDrop(_ gate: BuildGate, on build: LatestBuild<some Sendable>) async {
-        await withCheckedContinuation { (dropped: CheckedContinuation<Void, Never>) in
-            build.onDrop = {
-                build.onDrop = nil
-                dropped.resume()
-            }
-            gate.open()
-        }
+    /// Opens `gate` and waits for the build it held to finish and be
+    /// thrown away, so a check after it sees the drop, not a result still
+    /// on its way. False if no drop comes (the build was published
+    /// instead) within the gate timeout.
+    private func openAndAwaitDrop(_ gate: BuildGate, on build: LatestBuild<some Sendable>) async -> Bool {
+        let drops = CountGate()
+        build.onDrop = { Task { await drops.bump() } }
+        defer { build.onDrop = nil }
+        gate.open()
+        return await drops.reach(1)
     }
 
     @Test func theWorkRunsOffTheMainThreadAndPublishesOnIt() async {
@@ -77,7 +76,7 @@ private final class BuildGate: @unchecked Sendable {
         await build.settled()
         #expect(published == ["new"])
         // The old one finishes late, and is dropped.
-        await openAndAwaitDrop(gate, on: build)
+        #expect(await openAndAwaitDrop(gate, on: build))
         #expect(published == ["new"])
     }
 
@@ -147,7 +146,7 @@ private final class BuildGate: @unchecked Sendable {
         // Nothing left to wait for.
         await build.settled()
         // The cancelled build finishes and is dropped, unpublished.
-        await openAndAwaitDrop(gate, on: build)
+        #expect(await openAndAwaitDrop(gate, on: build))
         #expect(published.isEmpty)
         // A new one after it is published as usual.
         build.start({ 2 }) { published.append($0) }
