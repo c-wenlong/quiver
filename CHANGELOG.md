@@ -9,20 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Compute: auto clean orphaned processes, on the Mac and the web app.**
-  The Compute settings gain an "Auto clean" switch (Mac: the cleanup
-  sheet, web: the settings gear): while it is on, an orphan tree older
-  than the "Orphans count as old after" age gets one SIGTERM, deepest
-  member first, through the same kill plan and guards a manual Quit
-  runs — never pid 1, the app or its ancestors, and a pid only while it
-  is still the recorded process. A nested "Force quit" switch shows only
-  while auto clean is on and sends SIGKILL to a marked tree still alive
-  ten seconds later. On the web, the switches live in the hub's
-  `config.json` (the `compute` section, so `swe config` reads them too),
-  a `POST /v1/app/compute/settings` route writes them, and the background
-  sampler starts at hub boot while the switch is on, so cleanup runs
-  with no browser open. A signalled orphan shows a "Quitting" badge.
-
 - **Remote iPhone app: switch a session's model from the chat.** On a
   session attached through tmux whose harness takes `/model <id>`
   (Claude Code and Codex; the row's `model_modes` says so), the chat's

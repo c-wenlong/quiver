@@ -218,19 +218,6 @@ private struct CleanupLimitsView: View {
                        detail: "A process using more memory than this is flagged, and can be suggested for clean-up.") {
                 SelectMenu(options: memoryOptions, selection: memory, width: 120)
             }
-            SettingsDivider()
-            SettingRow(title: "Auto clean",
-                       detail: "Orphans older than the age above get a quit signal, without asking.") {
-                SettingSwitch(title: "Auto clean", isOn: autoClean)
-            }
-            if app.compute.limits.autoClean {
-                SettingsDivider()
-                SettingRow(title: "Force quit",
-                           detail: "An orphan still running \(Int(ComputeModel.autoCleanGrace)) seconds "
-                               + "after its quit signal is force quit.") {
-                    SettingSwitch(title: "Force quit", isOn: autoCleanForce)
-                }
-            }
         }
         .onAppear {
             let (value, unit) = OrphanAgeUnit.split(app.compute.limits.orphanAge)
@@ -270,16 +257,6 @@ private struct CleanupLimitsView: View {
     private var memory: Binding<UInt64> {
         Binding(get: { app.compute.limits.memoryBytes },
                 set: { app.compute.limits.memoryBytes = $0 })
-    }
-
-    private var autoClean: Binding<Bool> {
-        Binding(get: { app.compute.limits.autoClean },
-                set: { app.compute.limits.autoClean = $0 })
-    }
-
-    private var autoCleanForce: Binding<Bool> {
-        Binding(get: { app.compute.limits.autoCleanForce },
-                set: { app.compute.limits.autoCleanForce = $0 })
     }
 
     private var memoryOptions: [(value: UInt64, title: String)] {

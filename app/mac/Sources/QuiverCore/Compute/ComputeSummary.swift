@@ -7,20 +7,12 @@ public struct ComputeLimits: Sendable, Equatable {
     public var orphanAge: TimeInterval = 24 * 3600
     /// A process (or a whole orphan tree) above this is flagged. Bytes.
     public var memoryBytes: UInt64 = 2 << 30
-    /// Quit orphans older than `orphanAge` without asking. The switch
-    /// sends SIGTERM, as a clean-up Quit does.
-    public var autoClean: Bool = false
-    /// With `autoClean`, force quit an orphan still alive a grace after
-    /// its quit signal. Only meaningful while `autoClean` is on.
-    public var autoCleanForce: Bool = false
 
     /// Whole minutes under this key; a minute is the field's finest unit.
     public static let orphanAgeKey = "computeOrphanAgeMinutes"
     /// The pre-minutes key, read once for upgrade then removed on save.
     public static let legacyOrphanAgeKey = "computeOrphanAgeHours"
     public static let memoryLimitKey = "computeMemoryLimitGB"
-    public static let autoCleanKey = "computeAutoClean"
-    public static let autoCleanForceKey = "computeAutoCleanForce"
 
     /// The field's bounds: a minute up to a year.
     public static let orphanAgeRange: ClosedRange<TimeInterval> = 60...(365 * 86400)
@@ -38,8 +30,6 @@ public struct ComputeLimits: Sendable, Equatable {
         if let gb = defaults.object(forKey: Self.memoryLimitKey) as? Int, gb > 0 {
             memoryBytes = UInt64(gb) << 30
         }
-        autoClean = defaults.bool(forKey: Self.autoCleanKey)
-        autoCleanForce = defaults.bool(forKey: Self.autoCleanForceKey)
     }
 
     public func save(to defaults: UserDefaults) {
@@ -48,8 +38,6 @@ public struct ComputeLimits: Sendable, Equatable {
         defaults.set(Int(clamped / 60), forKey: Self.orphanAgeKey)
         defaults.removeObject(forKey: Self.legacyOrphanAgeKey)
         defaults.set(Int(memoryBytes >> 30), forKey: Self.memoryLimitKey)
-        defaults.set(autoClean, forKey: Self.autoCleanKey)
-        defaults.set(autoCleanForce, forKey: Self.autoCleanForceKey)
     }
 }
 
