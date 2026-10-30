@@ -2,23 +2,6 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
-/// A one-shot gate: `wait` parks until `open`, or returns at once after.
-private actor Latch {
-    private var opened = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func wait() async {
-        if opened { return }
-        await withCheckedContinuation { waiters.append($0) }
-    }
-
-    func open() {
-        opened = true
-        waiters.forEach { $0.resume() }
-        waiters = []
-    }
-}
-
 private func item(_ key: String, _ status: String?, at: Double = 100, kind: String? = nil) -> HubInboxItem {
     HubInboxItem(key: key, harness: "claude", title: key, status: status, lastActiveAt: at, kind: kind)
 }
@@ -132,18 +115,16 @@ private func item(_ key: String, _ status: String?, at: Double = 100, kind: Stri
         let model = NeedsYouModel()
         let rows = [item("a", "error"), item("b", "error")]
         await model.load { rows }
-        let started = Latch()
-        let release = Latch()
+        let gate = HoldGate()
         let slow = Task { @MainActor in
             await model.load {
-                await started.open()
-                await release.wait()
+                try await gate.pass()
                 return [item("a", "error"), item("b", "error"), item("z", "followup")]
             }
         }
-        await started.wait()
+        #expect(await gate.arrived())
         await model.dismiss([rows[0]], post: { _, _ in }, refetch: { [] })
-        await release.open()
+        gate.open()
         await slow.value
         #expect(model.items.map(\.key) == ["b"])
     }
