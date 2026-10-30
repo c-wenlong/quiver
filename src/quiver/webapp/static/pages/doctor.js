@@ -301,7 +301,7 @@ async function doctorReplace() {
 }
 
 function onDoctorPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "doctor";
+  return currentRoute() === "doctor";
 }
 
 registerPage("doctor", renderDoctor);

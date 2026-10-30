@@ -243,7 +243,7 @@ function statusCard(raw) {
 /* True while the status page is the visible one, so a slow POST landing
  * after the browser moved on cannot paint cards over another page. */
 function statusOnPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "status";
+  return currentRoute() === "status";
 }
 
 /* The card's Remove, confirmed inline. The hub's answer is a fresh
@@ -341,7 +341,7 @@ function statusCatalogueDialog() {
   document.body.appendChild(dlg);
   // A sheet belongs to the status page: leaving it closes the sheet.
   window.addEventListener("hashchange", () => {
-    if ((location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] !== "status" && dlg.open) dlg.close();
+    if (currentRoute() !== "status" && dlg.open) dlg.close();
   });
   return dlg;
 }
@@ -492,7 +492,7 @@ function startStatusClock() {
   const p = statusPage;
   if (p.timer) return;
   p.timer = setInterval(() => {
-    const onPage = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "status";
+    const onPage = currentRoute() === "status";
     if (!onPage) { clearInterval(p.timer); p.timer = null; return; }
     if (document.hidden || p.loading || !p.data) return;
     if (Date.now() - p.loadedAt >= 300000) renderStatus("status");

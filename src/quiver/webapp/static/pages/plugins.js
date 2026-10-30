@@ -58,7 +58,7 @@ const COMPONENTS = [["skills", "skill", "skills"], ["agents", "agent", "agents"]
   ["commands", "command", "commands"], ["hooks", "hook", "hooks"], ["mcp_servers", "MCP server", "MCP servers"]];
 
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-const onPage = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "plugins";
+const onPage = () => currentRoute() === "plugins";
 
 /* ------------------------------------------------------------ loading */
 

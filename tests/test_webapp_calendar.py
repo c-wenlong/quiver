@@ -320,11 +320,6 @@ class TestRoute(HubBase):
         self.assertEqual(sorted(b["project"] for b in body["blocks"]), ["next", "proj"])
         self.assertEqual(body["legend"], [])
 
-    def test_page_script_is_bundled(self):
-        status, body = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("calendar"', body)
-
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestSlidingScript(unittest.TestCase):

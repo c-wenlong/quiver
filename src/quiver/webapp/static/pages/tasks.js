@@ -69,7 +69,7 @@
   const tasks = () => (page.data && page.data.tasks) || [];
   const task = (id) => tasks().find((t) => t.id === id) || null;
   const selectedId = () => GhUI.hashParams().get("task");
-  const onTasks = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "tasks";
+  const onTasks = () => currentRoute() === "tasks";
 
   /* A github task groups under its repo; another source's task under its
    * project or the source's name. */

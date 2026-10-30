@@ -947,7 +947,7 @@
 
   /* ------------------------------------------------------------ keys */
 
-  const onCalendar = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "calendar";
+  const onCalendar = () => currentRoute() === "calendar";
 
   document.addEventListener("keydown", (e) => {
     if (!onCalendar() || !S.data || e.metaKey || e.ctrlKey || e.altKey) return;

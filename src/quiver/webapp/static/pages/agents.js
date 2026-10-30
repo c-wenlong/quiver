@@ -221,7 +221,7 @@ async function agentsRun(action) {
 }
 
 function onAgentsPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "agents";
+  return currentRoute() === "agents";
 }
 
 function agentsLinkRow(h, home) {

@@ -946,14 +946,3 @@ private struct LinkSheet: View {
         .background(Theme.panel)
     }
 }
-
-/// The row-hover fill, as Overview and Pricing rows get.
-private struct RowHover: ViewModifier {
-    @State private var hovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(hovering ? Theme.rowHover : .clear)
-            .onHover { hovering = $0 }
-    }
-}
