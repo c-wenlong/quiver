@@ -465,7 +465,7 @@ function mcpRequest(s, st) {
   return { server: s.name, source: st.source, targets, replace: replacing };
 }
 
-/* manage.js's apiPost: JSON with app.js's authHeaders (the bearer when one
+/* app.js's apiPost: JSON with its authHeaders (the bearer when one
  * is stored, and the pair header an owner's tailnet device signs in with). */
 const mcpPost = (action, body) => apiPost(`/v1/app/mcp/${action}`, body);
 
