@@ -194,6 +194,47 @@ def parse_pi(path: str, account: str) -> list[dict]:
     return _session_log(path, account, path, "session")
 
 
+def freebuff_files(root: str) -> dict[str, tuple]:
+    """``FreebuffActivity.files``: every ``<project>/chats/<chat>/run-state.json``
+    under the root, at any depth, with its stamp."""
+    files = {}
+    for path in walk(root):
+        p = Path(path)
+        if p.name != "run-state.json" or p.parent.parent.name != "chats":
+            continue
+        found = stamp(path)
+        if found is not None:
+            files[path] = found
+    return files
+
+
+def parse_freebuff(path: str, account: str) -> list[dict]:
+    """``FreebuffActivity.parse``: ``sessionState.mainAgentState.messageHistory``
+    carries ``sentAt`` epoch milliseconds (any JSON number, a bool too, as
+    ``as? NSNumber`` takes it), the chat folder's name is swe's session id,
+    and the cwd is the agent's ``cwd`` or ``initialCwd``, else the
+    state's, else the file's ``initialCwd``. An unreadable or malformed
+    file, or a history holding anything but objects, is no session."""
+    try:
+        root = json_object(Path(path).read_bytes())
+    except OSError:
+        return []
+    state = root.get("sessionState") if root is not None else None
+    agent = state.get("mainAgentState") if isinstance(state, dict) else None
+    history = agent.get("messageHistory") if isinstance(agent, dict) else None
+    if not isinstance(history, list) or not all(isinstance(m, dict) for m in history):
+        return []
+    timestamps = sorted(m["sentAt"] / 1000 for m in history
+                        if isinstance(m.get("sentAt"), (int, float)))
+    if not timestamps:
+        return []
+    cwd = next((c for c in (agent.get("cwd"), agent.get("initialCwd"),
+                            state.get("initialCwd"), root.get("initialCwd"))
+                if isinstance(c, str)), None)
+    return [{"session": Path(path).parent.name, "account": account, "cwd": cwd,
+             "timestamps": timestamps}]
+
+
 class Source:
     """One file source: its harness, the account home it reports, where
     its files live under that home, and how to list and parse them."""
@@ -213,6 +254,8 @@ class Source:
 SOURCES = (
     Source("droid", ".factory", ".factory/sessions", jsonl_files, parse_droid),
     Source("pi", ".pi", ".pi/agent/sessions", jsonl_files, parse_pi),
+    Source("freebuff", ".config/manicode", ".config/manicode/projects",
+           freebuff_files, parse_freebuff),
 )
 
 

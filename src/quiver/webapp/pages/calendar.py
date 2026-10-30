@@ -3,8 +3,8 @@
 ``ActivityBlocks``, ``ProjectResolver``, ``CalendarFormat``).
 
 When each harness was actually working, read from the ledger's response
-timestamps, and for Pi and Factory Droid from their own session files
-(``_activity``), as the Mac reads them. One session's responses form a
+timestamps, and for Pi, Factory Droid and Freebuff from their own
+session files (``_activity``), as the Mac reads them. One session's responses form a
 block until more than
 ``GAP_S`` of silence passes; blocks of one harness, account and project
 then merge under the same gap, so parallel sessions in a repository read
