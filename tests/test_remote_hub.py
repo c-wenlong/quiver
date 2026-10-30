@@ -2676,6 +2676,25 @@ class TestPairRoutes(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(json.loads(d)["error"]["code"], "self_approval")
 
+    def test_bearer_self_approval_rechecks_a_cached_whois_miss(self):
+        _, data = self._req()
+        r = json.loads(data)
+        # An earlier lookup missed and the miss is still cached; the
+        # node resolves now. The approval must not skip the self check.
+        self.srv.state._whois_cache["127.0.0.1"] = (time.time() + 60, None)
+        self.srv.state.whois = lambda ip: dict(_PHONE)
+        cred = self.srv.pair()
+        status, d = self.srv.request(
+            "POST", "/v1/pair/requests/approve",
+            body={"code": r["code"], "request_id": r["request_id"]},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {cred['credential']}",
+            },
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(d)["error"]["code"], "self_approval")
+
     def test_rate_limited_after_five(self):
         for _ in range(5):
             status, _ = self._req()

@@ -1329,8 +1329,11 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._approver_ok():
             return
         # The peer's node decides self-approval no matter how the
-        # caller proved itself — bearer or owner identity alike.
-        peer = self._state.whois_cached(self._client_ip())
+        # caller proved itself — bearer or owner identity alike. A
+        # cached miss is re-checked: with no node the self-approval
+        # check can't run, and the caller is already authenticated.
+        ip = self._client_ip()
+        peer = self._state.whois_cached(ip) or self._state.whois(ip)
         node_id = (
             str(peer.get("node_id") or "") or None
         ) if peer else None
