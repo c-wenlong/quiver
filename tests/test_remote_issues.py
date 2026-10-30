@@ -282,6 +282,156 @@ class TestDropRepo(_Base):
             self.assertIs(value, fresh, key)
 
 
+class TestCommentRoute(_Base):
+    """``POST /v1/issues/comment``: the web and iPhone composers'
+    write, through the hub's own ``gh``."""
+
+    POSTED = "https://github.com/o/r/issues/5#issuecomment-1\n"
+
+    @contextlib.contextmanager
+    def _stubs(self, env=OK_ENV, ran=None):
+        ran = ran or gh.GhResult("ok", data=self.POSTED)
+        with patch("quiver.github.gh.probe_env", return_value=env), \
+             patch("quiver.github.gh.run_gh", return_value=ran) as run:
+            yield run
+
+    def _post(self, body, headers=None):
+        status, data = self.srv.request(
+            "POST", "/v1/issues/comment", body=body,
+            headers=self.hdr if headers is None else headers)
+        return status, json.loads(data)
+
+    def test_posts_the_text_on_stdin_and_drops_the_issue_reads(self):
+        hk = G.home_key(self.srv.home)
+        dropped = [("issue", hk, "o/r", "5"), ("issues", hk, "o/r"),
+                   ("issues", hk, "o/r", "closed"), ("board", hk, "o/r")]
+        kept = [("issue", hk, "o/r", "6"), ("issues", hk, "o/s"),
+                ("pr", hk, "o/r", "5")]
+        for key in dropped + kept:
+            G.CACHE.get(key, lambda: {"stale": True})
+        text = "--repo evil/x\n\nLooks fixed on main; `$(rm -rf ~)` stays text."
+        with self._stubs() as run:
+            status, body = self._post(
+                {"repo": "O/R", "number": "5", "body": f"  {text}\n"})
+        self.assertEqual(status, 200, body)
+        self.assertTrue(body["ok"])
+        self.assertEqual((body["repo"], body["number"]), ("o/r", 5))
+        self.assertEqual(body["comment"]["url"], self.POSTED.strip())
+        self.assertEqual(body["comment"]["author"], "octocat")
+        self.assertEqual(body["comment"]["body"], text)
+        self.assertEqual(body["github"]["login"], "octocat")
+        args, kwargs = run.call_args
+        # The text rides stdin, trimmed like the Mac's composer; argv
+        # names only the pinned repo and the number.
+        self.assertEqual(args[0], ["issue", "comment", "5", "--repo", "o/r",
+                                   "--body-file", "-"])
+        self.assertEqual(kwargs["stdin"], text)
+        fresh = {"fresh": True}
+        for key in dropped:
+            self.assertIs(G.CACHE.get(key, lambda: fresh)[0], fresh, key)
+        for key in kept:
+            self.assertIsNot(G.CACHE.get(key, lambda: fresh)[0], fresh, key)
+
+    def test_bad_input_is_refused_before_gh_runs(self):
+        cases = [
+            ({"number": 5, "body": "x"}, "bad_repo"),
+            ({"repo": "not a repo", "number": 5, "body": "x"}, "bad_repo"),
+            ({"repo": ["o/r"], "number": 5, "body": "x"}, "bad_repo"),
+            ({"repo": "o/r", "body": "x"}, "bad_issue"),
+            ({"repo": "o/r", "number": 0, "body": "x"}, "bad_issue"),
+            ({"repo": "o/r", "number": -5, "body": "x"}, "bad_issue"),
+            ({"repo": "o/r", "number": True, "body": "x"}, "bad_issue"),
+            ({"repo": "o/r", "number": 5.0, "body": "x"}, "bad_issue"),
+            ({"repo": "o/r", "number": "5x", "body": "x"}, "bad_issue"),
+            ({"repo": "o/r", "number": 10 ** 9, "body": "x"}, "bad_issue"),
+            ({"repo": "o/r", "number": 5}, "bad_comment"),
+            ({"repo": "o/r", "number": 5, "body": 7}, "bad_comment"),
+            ({"repo": "o/r", "number": 5, "body": " \n\t "}, "bad_comment"),
+            ({"repo": "o/r", "number": 5,
+              "body": "x" * (issues_mod.MAX_COMMENT + 1)},
+             "comment_too_long"),
+        ]
+        with self._stubs() as run:
+            for sent, code in cases:
+                status, body = self._post(sent)
+                self.assertEqual((status, body["error"]["code"]),
+                                 (422, code), sent)
+            # A repo the hub doesn't pin is never written to.
+            status, body = self._post(
+                {"repo": "other/repo", "number": 5, "body": "x"})
+            self.assertEqual((status, body["error"]["code"]),
+                             (404, "not_pinned"))
+        run.assert_not_called()
+
+    def test_the_cap_counts_the_trimmed_text(self):
+        text = "x" * issues_mod.MAX_COMMENT
+        with self._stubs() as run:
+            status, body = self._post(
+                {"repo": "o/r", "number": 5, "body": f"\n{text}\n"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(run.call_args.kwargs["stdin"], text)
+
+    def test_gh_missing_or_signed_out_is_a_409(self):
+        for env, code in (
+                (gh.GhEnv(installed=True, authenticated=False),
+                 "gh_auth_required"),
+                (gh.GhEnv(installed=False), "gh_unavailable"),
+                # The probe itself timing out says nothing about auth.
+                (gh.GhEnv(installed=True, error="timed out"),
+                 "gh_upstream_error")):
+            G.CACHE.clear()
+            with self._stubs(env=env) as run:
+                status, body = self._post(
+                    {"repo": "o/r", "number": 5, "body": "x"})
+            self.assertEqual((status, body["error"]["code"]), (409, code))
+            run.assert_not_called()
+
+    def test_gh_failures_answer_with_its_words(self):
+        missing = gh.GhResult("not-found", error="HTTP 404: Not Found")
+        with self._stubs(ran=missing):
+            status, body = self._post({"repo": "o/r", "number": 5,
+                                       "body": "x"})
+        self.assertEqual((status, body["error"]["code"]),
+                         (404, "unknown_issue"))
+        self.assertIn("No issue #5 in o/r", body["error"]["message"])
+        failed = gh.GhResult("upstream-error", error="gh timed out after 60s")
+        with self._stubs(ran=failed):
+            status, body = self._post({"repo": "o/r", "number": 5,
+                                       "body": "x"})
+        self.assertEqual((status, body["error"]["code"]),
+                         (502, "comment_failed"))
+        self.assertIn("timed out", body["error"]["message"])
+
+    def test_unreadable_body(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
+                                          timeout=5)
+        self.addCleanup(conn.close)
+        conn.request("POST", "/v1/issues/comment", body=b"{not json",
+                     headers={**self.hdr,
+                              "Content-Type": "application/json"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 400, resp.read())
+
+    def test_needs_a_phone_or_owner_device(self):
+        sent = {"repo": "o/r", "number": 5, "body": "x"}
+        with self._stubs() as run:
+            status, _ = self.srv.request("POST", "/v1/issues/comment",
+                                         body=sent)
+            self.assertEqual(status, 401)
+            # A satellite credential is a machine's, for /v1/agent/*.
+            cred = self.srv.pair(role="satellite")
+            status, _ = self.srv.request(
+                "POST", "/v1/issues/comment", body=sent,
+                headers={"Authorization": f"Bearer {cred['credential']}"})
+            self.assertEqual(status, 401)
+        run.assert_not_called()
+
+    def test_a_get_is_no_route(self):
+        status, body = self._get("/v1/issues/comment")
+        self.assertEqual((status, body["error"]["code"]),
+                         (404, "not_found"))
+
+
 class TestResolveRoute(unittest.TestCase):
     def setUp(self):
         self.srv = _Server(sessions=[_session()])

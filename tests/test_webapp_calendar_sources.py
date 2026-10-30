@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from quiver.ledger.models import LedgerRecord, UsageEvent
 from quiver.ledger.store import LedgerStore
@@ -39,7 +40,7 @@ def _blocks(harness: str, root: Path, account: str, lo: float, hi: float, gap: f
     """One source's per-session blocks, the way the Mac provider reports
     them: listing, parse, then ``ActivityBlocks.make``."""
     files, parse = PARSERS[harness]
-    sessions = _activity.FileIndex().sessions(files(str(root)), lambda p: parse(p, account))
+    sessions = _activity.FileIndex().sessions(lambda: files(str(root)), lambda p: parse(p, account))
     return cal.file_pieces([(harness, s) for s in sessions], lo, hi, timezone.utc, gap)
 
 
@@ -121,12 +122,33 @@ class TestReaders(unittest.TestCase):
                 raise OSError("busy")
             return [{"session": "s", "account": "/a", "cwd": None, "timestamps": [1.0]}]
 
-        self.assertEqual(index.sessions({"/x": (1.0, 1)}, parse), [])
-        self.assertEqual(len(index.sessions({"/x": (1.0, 1)}, parse)), 1)
+        files = lambda: {"/x": (1.0, 1)}  # noqa: E731
+        self.assertEqual(index.sessions(files, parse), [])
+        self.assertEqual(len(index.sessions(files, parse, force=True)), 1)
         # An unchanged stamp keeps the parsed sessions; a vanished file drops them.
-        self.assertEqual(len(index.sessions({"/x": (1.0, 1)}, parse)), 1)
+        self.assertEqual(len(index.sessions(files, parse, force=True)), 1)
         self.assertEqual(len(calls), 2)
-        self.assertEqual(index.sessions({}, parse), [])
+        self.assertEqual(index.sessions(lambda: {}, parse, force=True), [])
+
+    def test_files_are_listed_again_only_after_the_refresh_window(self):
+        clock = [100.0]
+        index = _activity.FileIndex(now=lambda: clock[0])
+        listings = []
+
+        def files():
+            listings.append(clock[0])
+            return {"/x": (clock[0], 1)}
+
+        def parse(_path):
+            return [{"session": "s", "account": "/a", "cwd": None, "timestamps": [clock[0]]}]
+
+        index.sessions(files, parse)
+        clock[0] += _activity.REFRESH_S - 1
+        self.assertEqual(index.sessions(files, parse)[0]["timestamps"], [100.0])
+        self.assertEqual(index.sessions(files, parse, force=True)[0]["timestamps"], [clock[0]])
+        clock[0] += _activity.REFRESH_S
+        index.sessions(files, parse)
+        self.assertEqual(listings, [100.0, 129.0, 159.0])
 
 
 class TestFreebuff(unittest.TestCase):
@@ -203,7 +225,7 @@ class TestTrivialDrop(unittest.TestCase):
                '{"type":"message","timestamp":"2026-08-10T08:37:16Z"}')
 
     def read(self):
-        stats = {h: self.store.activity_session_stats(h) for h in _activity.TRIVIAL_FILTERED}
+        stats = self.store.activity_session_stats(list(_activity.TRIVIAL_FILTERED))
         return sorted((h, s["session"]) for h, s in _activity.read(self.home, stats,
                                                                   sessions_mod.is_trivial))
 
@@ -261,6 +283,15 @@ class TestRoute(HubBase):
         self.assertEqual((row["harness"], row["agent"]), ("droid", "Factory Droid"))
         self.assertEqual([e["harness"] for e in body["legend"]], ["droid", "freebuff", "pi"])
         self.assertEqual(body["legend"][2]["total_s"], 1200)
+
+    def test_the_trivial_drops_totals_are_read_once_per_scan(self):
+        q = "/v1/app/calendar?mode=week&anchor=2026-10-20&tz=UTC"
+        real = LedgerStore.activity_session_stats
+        with patch.object(LedgerStore, "activity_session_stats", autospec=True,
+                          side_effect=real) as stats:
+            for _ in range(2):
+                self.assertEqual(self.srv.request("GET", q, headers=self.auth())[0], 200)
+        self.assertEqual(stats.call_count, 1)
 
 
 if __name__ == "__main__":

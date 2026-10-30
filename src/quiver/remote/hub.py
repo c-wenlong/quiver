@@ -2305,6 +2305,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._state, self._read_body()))
             return
 
+        if path == "/v1/issues/comment":  # issues.py: gh issue comment
+            self._send_json(*issues_mod.comment(
+                self._state, self._read_body()))
+            return
+
         if path.startswith("/v1/pulls/"):
             parts = path[len("/v1/pulls/"):].split("/")
             if len(parts) != 4 or parts[3] != "open":

@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ledger harnesses, with time and responses. Accidental sessions stay
   off, judged on the ledger's history as on the Mac. Part of
   [#970](https://github.com/c-wenlong/quiver/issues/970).
+- **Hub: `POST /v1/issues/comment` posts an issue comment.** The body
+  `{repo, number, body}` goes through the hub's own `gh` login, the way
+  the Mac's composer posts through `swe gh issue comment`, with the text
+  on `gh`'s stdin rather than its command line. Only a paired phone or
+  the owner's device can call it, only for a pinned repo, and only up
+  to GitHub's 65,536 characters. The web and iPhone issue detail build
+  their comment composer and Resolve's "Also post as a comment" on it.
+  Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
 - **Web app: a tray for queued messages in the chat.** A Queue-mode
   send made while the agent works now waits in a tray above the
   composer, as on the iPhone, instead of a "Queued until the agent is
