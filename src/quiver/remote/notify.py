@@ -391,11 +391,14 @@ class Notifier:
         self._post(cfg, payload)
 
     def _session_title(self, key: str) -> str:
+        """The notification title's prefix. A session title is often
+        the first prompt, so it runs the secret-redactor, before the
+        cut so a half-truncated token can't slip past the patterns."""
         row = self._state.catalog.row_for(key) if key else None
         if row:
             title = str(row.get("title") or "").strip()
             if title:
-                return title[:60]
+                return _tr._redact_secrets(title)[:60]
             cwd = str(row.get("cwd") or "")
             if cwd:
                 return cwd.rstrip("/").rsplit("/", 1)[-1] or cwd
