@@ -456,6 +456,19 @@ class TestLoadOrder(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
 
+    def test_check_again_ignores_clicks_while_a_read_runs(self):
+        out = self.run_js(
+            "const btn = { classList: { add() {}, remove() {} } };"
+            " globalThis.document = { getElementById: (id) => (id === 'page-refresh' ? btn : null) };"
+            " globalThis.location = { hash: '#/overview' };"
+            " bindRefreshButton();"
+            " const first = btn.onclick(); btn.onclick();"
+            " const during = answers.length;"
+            " answers[0]({ status: 200, data: { n: 1 } }); await first;"
+            " btn.onclick();"
+            " process.stdout.write(JSON.stringify({ during, after: answers.length }));")
+        self.assertEqual(out, {"during": 1, "after": 2})
+
     def test_the_newer_read_wins(self):
         out = self.run_js("const a = load(1), b = load(1);"
                           " answers[1]({ status: 200, data: { n: 2 } }); answers[0]({ status: 200, data: { n: 1 } });"
