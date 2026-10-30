@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: the session's model in the chat header and Sessions
+  list.** The chat's header shows the model of the transcript's newest
+  reply after the folder, and each Sessions row names it first in its
+  details line, ahead of the ledger's other models (the ledger's own
+  spelling of the same model isn't repeated). The provider path and the
+  8-digit date stamp are dropped, as on the phone:
+  `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
+  `claude-opus-4-5`. Nothing shows when the hub doesn't know it. The
+  page's rows (`/v1/app/sessions`) now carry the hub's `model` as the
+  catalog read it, so the page has no second transcript reader. Display
+  only: the web app doesn't switch models. Part of
+  [#643](https://github.com/c-wenlong/quiver/issues/643).
+
 - **Remote iPhone app: switch a session's model from the chat.** On a
   session attached through tmux whose harness takes `/model <id>`
   (Claude Code and Codex; the row's `model_modes` says so), the chat's

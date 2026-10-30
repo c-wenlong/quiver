@@ -317,6 +317,17 @@ function rowAction(r) {
   return "";
 }
 
+/* The models a row names: the newest reply's first, as the phone's list
+ * shows it (dateless, no provider), then the ledger's other models. The
+ * ledger's own spelling of the newest one is left out, so a model never
+ * reads twice. */
+function rowModels(r) {
+  const current = Fmt.modelName(r.model);
+  const used = (r.usage ? r.usage.models.map((m) => m.model) : [])
+    .filter((m) => !current || Fmt.modelName(m) !== current);
+  return (current ? [current, ...used] : used).join(", ");
+}
+
 function sessionRow(r) {
   const badge = (STATUS_BADGE[r.status] ? `<span class="badge status-${r.status}">${STATUS_BADGE[r.status]}</span>` : "")
     + (r.ownership === "attached" ? '<span class="badge ownership-attached" title="Runs under Quiver: you can send to it">Attached</span>' : "")
@@ -326,7 +337,7 @@ function sessionRow(r) {
   const snippet = hit && (hit.marked || hit.snippet)
     ? `<span class="session-snippet">${markedSnippet(hit)}</span>` : "";
   const second = [r.project, Fmt.harnessName(r.harness), r.remote ? r.machine : r.location,
-    r.usage ? r.usage.models.map((m) => m.model).join(", ") : "", time, duration(r.duration_s)]
+    rowModels(r), time, duration(r.duration_s)]
     .filter(Boolean).map(esc).join(" · ");
   const act = rowAction(r);
   const acting = sessionsPage.acting.has(r.key);

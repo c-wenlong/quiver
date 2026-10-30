@@ -1537,6 +1537,15 @@ const SessionChat = (() => {
     bindComposer();
   }
 
+  /* The bar's second line: harness, folder, then the model of the newest
+   * reply as on the phone (nothing while the hub doesn't know it), and
+   * the machine of a satellite's session. */
+  function barSub(r) {
+    r = r || {};
+    return [harnessLabel(r), r.cwd, Fmt.modelName(r.model), r.remote ? r.machine : ""]
+      .filter(Boolean).map(esc).join(" · ");
+  }
+
   function paintBar() {
     const bar = $("chat-bar");
     if (!bar) return;
@@ -1544,8 +1553,7 @@ const SessionChat = (() => {
     const status = STATUS[r.status] ? `<span class="badge status-${esc(r.status)}">${esc(STATUS[r.status])}</span>` : "";
     // Ownership needs no chip: an observed session says so in the banner
     // below, and an attached one shows an enabled composer.
-    const sub = [harnessLabel(chat.row), r.cwd, r.remote ? r.machine : ""]
-      .filter(Boolean).map(esc).join(" · ");
+    const sub = barSub(chat.row);
     // The tmux pane name rides the catalog row for an attached tmux-mode
     // session and for a kept one; the chip copies its attach command.
     const tmuxChip = r.tmux
@@ -3170,7 +3178,7 @@ const SessionChat = (() => {
       diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
-      railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
+      barSub, railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
       cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat },
   };
 })();

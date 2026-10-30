@@ -80,7 +80,7 @@ hosts the hub; the web app and the iOS app are its clients.
 | Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval |
 | Devices list and revoke | yes | yes | yes | Mac and Web: Settings. iOS: under the hub chip menu |
 | Launch a new session | yes | yes | yes | All three: machine, folder and harness pickers, first prompt, launch poll, then the chat opens. All sheets carry the model picker prefilled with the last-used model (`last_models`/`last_model`, #914); on all three it is a menu of Harness default, the harness's `recent_models` newest first, then Other… (web: `static/model-menu.js`; iOS: `ModelSelection`) |
-| Session model (show and switch) | - | - | yes | Hub rows carry `model`, the newest reply's model, and `model_modes` (#643). iOS shows the model in the chat header and the session list, and the chat's menu has a Model submenu (recent models plus Other…) on sessions attached through a channel in `model_modes` (tmux for Claude Code and Codex); the header shows "→ id" until the transcript catches up (`ModelSwitch`). The API channels can't switch yet (#643 box 4). Mac and Web don't show it yet |
+| Session model (show and switch) | - | part | yes | Hub rows carry `model`, the newest reply's model, and `model_modes` (#643). iOS shows the model in the chat header and the session list, and the chat's menu has a Model submenu (recent models plus Other…) on sessions attached through a channel in `model_modes` (tmux for Claude Code and Codex); the header shows "→ id" until the transcript catches up (`ModelSwitch`). The API channels can't switch yet (#643 box 4). The web app shows the model (never switches it): the chat header after the folder and the Sessions row, as `Fmt.modelName` in `static/format.js` spells it, the same rule as iOS `ModelLabel.short`. The Mac does not show it yet |
 | Machine switcher | - | - | planned | iOS P4: one machine today |
 | Machine vitals | yes | yes | planned | Compute page on Mac and Web; iOS P9 carries the samples over the hub |
 | Push notifications | - | - | part | ntfy today; APNs planned |
@@ -103,6 +103,7 @@ owes the other the same change; say so in the row's Notes until it is paid.
 | MCP redaction and the managed server repo | `McpRedaction`, `SecretText.maskingKeys`, `McpServerRepo` | `src/quiver/webapp/pages/mcp.py` |
 | Plugin drift severity | `CatalogPlugin.worstDrift` | `src/quiver/webapp/pages/plugins.py` |
 | OpenCode model naming | `openCodeModel` | `src/quiver/ledger/parsers.py` |
+| Session model on screen: drop the provider path and the 8-digit date stamp | `ModelLabel.short` (`app/ios/Sources/QuiverRemote/Hub/Models.swift`; the Mac is owed its own) | `src/quiver/webapp/static/format.js` (`Fmt.modelName`) |
 | Page preview targets and link cards: which tool calls get Preview, path to the route's relative one, which links get a card | `app/ios/Sources/QuiverRemote/Hub/PagePreview.swift`, `Views/LinkCards.swift` (iOS only) | `src/quiver/webapp/static/pages/chat.js` (`pageFiles`, `relativePath`, `linkUrls`) |
 | Chat rendering: Markdown, diffs, tool cards, syntax highlighting | `QuiverCore/Syntax/SyntaxHighlight.swift` + `Hub/ToolDiff.swift` (`ToolDisplay`) under the Mac chat views; iOS has `ToolDiff`/`ToolArgs` and is owed highlighting | `src/quiver/webapp/static/pages/chat.js` (`md`, `hl`, `readableArgs`, `renderDiff`) |
 
