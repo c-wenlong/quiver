@@ -837,8 +837,16 @@ def save_satellite(home: Path | None, machine_id: str, payload) -> bool:
 
 
 def load_satellite(home: Path | None, machine_id: str) -> dict | None:
+    from quiver.remote.catalog import _legacy_safe_mid
+
+    path = _sat_file(home, machine_id)
+    if not path.exists():
+        # Saved before ids that map lossily got a hash suffix: an agent
+        # resends its menu only on a change, so the old file still
+        # answers until it does.
+        path = path.with_name(f"{_legacy_safe_mid(machine_id)}.json")
     try:
-        data = json.loads(_sat_file(home, machine_id).read_text())
+        data = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None

@@ -209,6 +209,16 @@ final class PrimitiveHome {
 }
 
 @Suite struct JSONTextEditTests {
+    /// A URL keeps its slashes bare, in a string and inside an object.
+    @Test func slashesStayBare() throws {
+        let text = "{\n  \"name\": \"eng\"\n}\n"
+        var edited = try JSONTextEdit.set("https://example.com/a/b", at: ["homepage"], in: text)
+        edited = try JSONTextEdit.set(["url": "https://github.com/o/r"], at: ["repository"], in: edited)
+        #expect(edited.contains(#""homepage": "https://example.com/a/b""#))
+        #expect(edited.contains(#""url" : "https://github.com/o/r""#) || edited.contains(#""url": "https://github.com/o/r""#))
+        #expect(!edited.contains(#"\/"#))
+    }
+
     @Test func replacesAValueKeepingOrderAndUnknownKeys() throws {
         let text = """
         {
@@ -267,6 +277,42 @@ final class PrimitiveHome {
         // `extra` untouched and still ahead of `author` in the file.
         #expect(edited.contains("\"extra\": [1, 2]"))
         #expect(edited.range(of: "\"extra\"")!.lowerBound < edited.range(of: "\"author\"")!.lowerBound)
+    }
+
+    /// Only fields the form changed are written: no empty keys appear,
+    /// and values the form can't show stay as they are.
+    @Test func applyWritesOnlyTheFieldsThatChanged() throws {
+        let text = """
+        {
+          "name": "eng",
+          "repository": {"type": "git", "url": "https://github.com/o/r"},
+          "author": "Kai",
+          "keywords": ["a", 3]
+        }
+        """
+        var fields = PluginManifestFields(parsing: text)
+        #expect(try fields.apply(to: text) == text)
+        fields.version = "1.0.0"
+        let edited = try fields.apply(to: text)
+        #expect(edited.contains(#""version": "1.0.0""#))
+        #expect(edited.contains(#""repository": {"type": "git", "url": "https://github.com/o/r"}"#))
+        #expect(edited.contains(#""author": "Kai""#))
+        #expect(edited.contains(#""keywords": ["a", 3]"#))
+        for key in ["description", "homepage", "license", "email", "url"] {
+            #expect(!edited.contains("\"\(key)\": \"\""), "\(key)")
+        }
+        // A string author stays a string when only its name changes.
+        fields = PluginManifestFields(parsing: text)
+        fields.authorName = "Kai Chen"
+        #expect(try fields.apply(to: text).contains(#""author": "Kai Chen""#))
+        // A string author turning into an object keeps its unchanged name.
+        fields = PluginManifestFields(parsing: text)
+        fields.authorEmail = "k@x.dev"
+        let object = try JSONSerialization.jsonObject(with: Data(try fields.apply(to: text).utf8)) as? [String: Any]
+        let author = object?["author"] as? [String: Any]
+        #expect(author?["name"] as? String == "Kai")
+        #expect(author?["email"] as? String == "k@x.dev")
+        #expect(author?["url"] == nil)
     }
 
     @Test func versionAndURLValidation() {

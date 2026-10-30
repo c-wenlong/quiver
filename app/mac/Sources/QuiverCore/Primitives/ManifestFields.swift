@@ -62,22 +62,51 @@ public struct PluginManifestFields: Sendable, Equatable {
         return url.scheme != nil && url.host != nil
     }
 
-    /// The manifest text with these fields applied. An empty value removes
-    /// nothing: it writes the field empty, matching how `swe` writes them.
+    /// The manifest text with the fields this form changed applied. A
+    /// field still reading as it did in `text` is not written, so a key the
+    /// file lacks isn't added empty and a value the form can't show (a
+    /// `repository` object, a string `author`) stays as it is. A field
+    /// cleared on purpose is written empty, matching how `swe` writes them.
     public func apply(to text: String) throws -> String {
+        let before = PluginManifestFields(parsing: text)
         var text = text
-        try set(description, at: ["description"], in: &text)
-        try set(version, at: ["version"], in: &text)
-        try set(homepage, at: ["homepage"], in: &text)
-        try set(repository, at: ["repository"], in: &text)
-        try set(license, at: ["license"], in: &text)
-        try set(keywords.isEmpty ? [] : keywords.components(separatedBy: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty },
-            at: ["keywords"], in: &text)
-        try set(authorName, at: ["author", "name"], in: &text)
-        try set(authorEmail, at: ["author", "email"], in: &text)
-        try set(authorURL, at: ["author", "url"], in: &text)
+        for (value, old, key) in [(description, before.description, "description"),
+                                  (version, before.version, "version"),
+                                  (homepage, before.homepage, "homepage"),
+                                  (repository, before.repository, "repository"),
+                                  (license, before.license, "license")] where value != old {
+            try set(value, at: [key], in: &text)
+        }
+        let words = Self.keywordList(keywords)
+        if words != Self.keywordList(before.keywords) {
+            try set(words, at: ["keywords"], in: &text)
+        }
+        let nameChanged = authorName != before.authorName
+        let detailChanged = authorEmail != before.authorEmail || authorURL != before.authorURL
+        if Self.authorIsString(text), !detailChanged {
+            // `"author": "Name"` stays a string when only the name moves.
+            if nameChanged { try set(authorName, at: ["author"], in: &text) }
+        } else {
+            // A string author becoming an object takes its name along.
+            if nameChanged || (detailChanged && Self.authorIsString(text)) {
+                try set(authorName, at: ["author", "name"], in: &text)
+            }
+            if authorEmail != before.authorEmail { try set(authorEmail, at: ["author", "email"], in: &text) }
+            if authorURL != before.authorURL { try set(authorURL, at: ["author", "url"], in: &text) }
+        }
         return text
+    }
+
+    private static func keywordList(_ keywords: String) -> [String] {
+        keywords.components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    private static func authorIsString(_ text: String) -> Bool {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return object["author"] is String
     }
 
     private func set(_ value: Any, at path: [String], in text: inout String) throws {

@@ -981,6 +981,49 @@ class TestTailManager(unittest.TestCase):
         self.assertNotIn("claude:x", mgr.tailers)
         self.assertNotIn("claude:x", mgr.statuses)
 
+    def test_a_gone_session_retires_its_approval_and_state(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+        mgr._approval_outstanding["claude:x"] = ("req-1", "fp")
+        mgr._approval_checked_at["claude:x"] = 1.0
+        mgr.last_append["claude:x"] = 1.0
+        with patch.object(tail.supervise, "set_pending_approval") as pending:
+            mgr.sync([])
+        pending.assert_called_once_with("claude:x", None)
+        resolved = [e for _k, e in self.events if e["type"] == "approval.resolved"]
+        self.assertEqual(resolved[-1]["data"]["request_id"], "req-1")
+        for kept in (mgr._approval_outstanding, mgr._approval_checked_at,
+                     mgr.last_append):
+            self.assertNotIn("claude:x", kept)
+
+    def test_a_session_dropped_mid_pane_read_raises_no_card(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+
+        def capture(_name):
+            mgr.sync([])  # the catalog drops it while the pane is read
+            return "pane"
+
+        with patch.object(tail.supervise, "meta_for", return_value={"mode": "tmux"}), \
+                patch.object(tail.supervise, "channel_name", return_value="qv-1"), \
+                patch.object(tail.supervise, "capture_pane", side_effect=capture), \
+                patch.object(tail.supervise, "pane_shows_approval", return_value=True), \
+                patch.object(tail.supervise, "set_pending_approval"):
+            mgr._poll_approvals(1000.0)
+        self.assertNotIn("claude:x", mgr._approval_outstanding)
+        self.assertEqual([e for _k, e in self.events
+                          if e["type"] == "approval.requested"], [])
+
     def test_notify_transitions(self):
         src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
         (self.tmp / "x.jsonl").write_text("")

@@ -145,16 +145,19 @@ class TestLimitsAndRaces(unittest.TestCase):
             def request():
                 sessionmeta.set_title(self.home, key, "Fresh")
                 cat.reapply_meta(key)
-            t = threading.Thread(target=request)
+            t = threading.Thread(target=request, daemon=True)
             t.start()
-            self.addCleanup(t.join)
+            started.append(t)
             time.sleep(0.2)
 
+        started = []
         cat._after_meta_read = save_midway
         cat.refresh()
-        for t in threading.enumerate():
-            if t is not threading.current_thread() and t.name.startswith("Thread"):
-                t.join(timeout=3)
+        # Only the request thread this test started: joining every live
+        # thread waited out ones other tests left running.
+        for t in started:
+            t.join(timeout=3)
+            self.assertFalse(t.is_alive())
         self.assertEqual(cat.row_for(key)["title"], "Fresh")
 
 
@@ -182,16 +185,19 @@ class TestLimitsAndRaces(unittest.TestCase):
                 sessionmeta.set_title(self.home, key, "Fresh")
                 cat.note_status(key, "followup", time.time() + 2)
                 cat.reapply_meta(key)
-            t = threading.Thread(target=request)
+            t = threading.Thread(target=request, daemon=True)
             t.start()
-            self.addCleanup(t.join)
+            started.append(t)
             time.sleep(0.2)
 
+        started = []
         cat._after_meta_read = save_midway
         cat.refresh()
-        for t in threading.enumerate():
-            if t is not threading.current_thread() and t.name.startswith("Thread"):
-                t.join(timeout=3)
+        # Only the request thread this test started: joining every live
+        # thread waited out ones other tests left running.
+        for t in started:
+            t.join(timeout=3)
+            self.assertFalse(t.is_alive())
         row = cat.row_for(key)
         self.assertEqual(row["title"], "Fresh")
         self.assertEqual(row["status"], "followup")
