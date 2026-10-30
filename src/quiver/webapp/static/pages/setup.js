@@ -30,9 +30,9 @@ const page = {
   showingMore: false, installing: null, finished: false,
   // The install in flight ("<id>:<via>") and each agent's last failure.
   installRun: null, installErrors: {},
-  // Step 2's hub field: what's typed, a refusal from the hub, and whether
-  // this page is polling a clone.
-  hubUrl: "", hubError: null, hubPolling: false,
+  // Step 2's hub field: what's typed, a refusal from the hub, whether the
+  // clone request is out, and whether this page is polling a clone.
+  hubUrl: "", hubError: null, hubPosting: false, hubPolling: false,
   // A clone finished while the page wasn't shown: read the machine again
   // before the next paint, so no choice from the old preview is sent.
   hubStale: false,
@@ -48,8 +48,7 @@ function agentName(id) {
 }
 
 function tilde(path) {
-  const home = page.data && page.data.home;
-  return home && path.startsWith(home + "/") ? "~" + path.slice(home.length) : path;
+  return Fmt.tilde(path, page.data && page.data.home);
 }
 
 function machineName() {
@@ -521,6 +520,7 @@ function hubCard() {
   }
   if (!hub.can_clone && job.state !== "cloning" && job.state !== "failed") return "";
   const busy = job.state === "cloning";
+  const locked = busy || page.hubPosting || page.applying || !hub.can_clone;
   const error = page.hubError || (job.state === "failed" ? job.error : null);
   const demo = /^https?:\/\//i.test(hub.demo_url || "")
     ? `<p class="caption">Demo hub: <a href="${safeHref(hub.demo_url)}" target="_blank" rel="noopener noreferrer">${esc(hub.demo_url)}</a></p>` : "";
@@ -533,8 +533,8 @@ function hubCard() {
     <form class="setup-hub-form" id="setup-hub-form">
       <input class="field" id="setup-hub-url" type="text" inputmode="url" autocomplete="off" spellcheck="false"
         aria-label="Hub repo URL" placeholder="https://github.com/you/quiver-hub.git"
-        value="${esc(page.hubUrl)}"${busy || page.applying || !hub.can_clone ? " disabled" : ""}>
-      <button class="setup-button" type="submit" id="setup-hub-clone"${busy || page.applying || !hub.can_clone || !page.hubUrl.trim() ? " disabled" : ""}>Clone</button>
+        value="${esc(page.hubUrl)}"${locked ? " disabled" : ""}>
+      <button class="setup-button" type="submit" id="setup-hub-clone"${locked || !page.hubUrl.trim() ? " disabled" : ""}>Clone</button>
     </form>
     ${busy ? `<p class="setup-installing" role="status"><span class="setup-spinner" aria-hidden="true"></span>Cloning ${esc(job.url)}… This can take a few minutes.</p>` : ""}
     ${error ? `<p class="error setup-pre" role="alert">${esc(error)}</p>` : ""}
@@ -543,9 +543,14 @@ function hubCard() {
 
 async function cloneHub() {
   const url = page.hubUrl.trim();
-  if (!url || cloning()) return;
+  // One request at a time: Enter twice sent a second clone, whose 409
+  // said "already running" under the clone the first one started.
+  if (!url || cloning() || page.hubPosting) return;
   page.hubError = null;
+  page.hubPosting = true;
+  paint();
   const { status, data } = await apiPost("/v1/app/setup/hub", { url });
+  page.hubPosting = false;
   if (status === 401) {
     if (onPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     return;
@@ -556,8 +561,7 @@ async function cloneHub() {
     // hub: that job is done already and needs the same reload.
     if (hubJob().state === "done") page.hubStale = true;
   } else {
-    page.hubError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    page.hubError = failText(status, data);
   }
   // A stale preview is never painted: pollHub reloads it first.
   if (!page.hubStale) paint();

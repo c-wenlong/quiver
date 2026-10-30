@@ -220,14 +220,13 @@ struct StubbornSource: SessionListing {
 }
 
 @Suite struct SessionSnapshotFileTests {
-    func temporaryURL() -> URL {
-        FileManager.default.temporaryDirectory
-            .appending(path: "quiver-snapshot-\(UUID().uuidString)/cache/sessions.json")
-    }
+    /// Swift Testing makes a new suite value per test, so each test gets
+    /// its own folder, kept for as long as the test runs.
+    private let temp: TempDir
+    init() throws { temp = try TempDir() }
+    private var url: URL { temp.path("cache/sessions.json") }
 
     @Test func aSnapshotRoundTripsThroughAPrivateFile() async throws {
-        let url = temporaryURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent().deletingLastPathComponent()) }
         let file = SessionSnapshotFile(url: url)
         var totals = UsageTotals()
         totals.cacheReadTokens = 42
@@ -249,8 +248,6 @@ struct StubbornSource: SessionListing {
     }
 
     @Test func aMissingOrDamagedFileIsNoSnapshot() async throws {
-        let url = temporaryURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent().deletingLastPathComponent()) }
         let file = SessionSnapshotFile(url: url)
         #expect(await file.load() == nil)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

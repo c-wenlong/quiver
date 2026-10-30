@@ -708,8 +708,9 @@ func decodedInventory() throws -> [Skill] {
     }
 
     @Test func aSkillFoundThroughASymlinkStillFindsItsPlugin() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "quiver-symlink-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
         let real = root.appending(path: "real/kit/toolkit/skills/hammer")
         try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(at: root.appending(path: "plugins"),

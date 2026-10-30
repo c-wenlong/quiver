@@ -18,6 +18,8 @@ from quiver.remote.hub import APPROVAL_TTL_S, HubState, make_server
 from quiver.remote import catalog as catalog_mod, hub as hub_mod, pairing
 from quiver.sessions.models import Session
 
+from tests._tempdir import temp_dir
+
 
 def _session(sid="s1", tool="claude", path="/tmp/proj", ts=0):
     """``ts`` is seconds since the epoch; Session keeps milliseconds."""
@@ -27,7 +29,9 @@ def _session(sid="s1", tool="claude", path="/tmp/proj", ts=0):
 
 class _Server:
     def __init__(self, sessions=None, statuses=None):
-        self.home = Path(tempfile.mkdtemp())
+        # Removed by stop(), or when the object goes if a test never stops it.
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.home = Path(self._tmp.name)
         self.state = HubState(self.home)
         self.state.catalog._fetch = lambda: list(sessions or [])
         self.state.catalog._status_of = (
@@ -57,6 +61,7 @@ class _Server:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=3)
+        self._tmp.cleanup()
 
     def request(self, method, path, body=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
@@ -996,7 +1001,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         # adoption still sees the session.
         from quiver.remote import catalog as catalog_mod, supervise
 
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         folder = supervise._pending_dir(home)
         folder.mkdir(parents=True)
         (folder / "qv-x.json").write_text(
@@ -1211,7 +1216,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertTrue(self.srv.state.tail_manager.is_hot("claude:new"))
 
     def test_folders_lists_subfolders_only(self):
-        root = Path(tempfile.mkdtemp())
+        root = temp_dir(self)
         for name in ("beta", "Alpha", ".hidden"):
             (root / name).mkdir()
         (root / "notes.txt").write_text("x")
@@ -1227,7 +1232,7 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertFalse(body["truncated"])
 
     def test_folders_defaults_home_and_refuses_bad_paths(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         with patch.dict(os.environ, {"HOME": str(home)}):
             status, data = self.srv.request(
                 "GET", "/v1/folders", headers=self.hdr)
@@ -1464,7 +1469,7 @@ class TestInboxCutoff(unittest.TestCase):
 
     def _catalog(self, rows):
         from quiver.remote.catalog import Catalog
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         sessions = [_session(sid=sid, ts=ts) for sid, ts, _st in rows]
         cat = Catalog(home, machine_id="mbp",
                       fetch_sessions=lambda: sessions,
@@ -3237,7 +3242,7 @@ class TestServeEntry(unittest.TestCase):
     def test_attach_seen_by_the_catalog_loop_wakes_the_tailer(self):
         # Attached outside HTTP (CLI attach, a kept tmux session taken
         # back): the catalog loop's ownership check starts it hot.
-        state = HubState(Path(tempfile.mkdtemp()))
+        state = HubState(temp_dir(self))
         seen = iter([
             [{"key": "claude:a", "ownership": "observed"},
              {"key": "claude:b", "ownership": "observed"}],
@@ -3261,7 +3266,7 @@ class TestServeEntry(unittest.TestCase):
         # an unlocked read-modify-write lost counts and could leave a
         # machine flagged online (or offline) for good.
         import sys
-        state = HubState(Path(tempfile.mkdtemp()))
+        state = HubState(temp_dir(self))
         writes = []
         events = []
 
@@ -3307,7 +3312,7 @@ class TestServeEntry(unittest.TestCase):
         # must reach stderr, but not on every 250 ms tick.
         import io
         import contextlib
-        state = HubState(Path(tempfile.mkdtemp()))
+        state = HubState(temp_dir(self))
         ticks = iter(range(3))
 
         def tick():
@@ -3327,7 +3332,7 @@ class TestServeEntry(unittest.TestCase):
     def test_tail_loop_sweeps_stale_journals_keeping_its_own(self):
         # Every ~5 min the tail loop sweeps idle journals and cursors,
         # sparing the global stream and each satellite's command queue.
-        state = HubState(Path(tempfile.mkdtemp()))
+        state = HubState(temp_dir(self))
         catalog_mod.upsert_machine(state.home, {"id": "sat1", "name": "s"})
         # A satellite session has no tailer or cursor on the hub: its
         # journal must stay while the catalog lists it.
@@ -3358,7 +3363,7 @@ class TestServeEntry(unittest.TestCase):
     def test_loop_error_log_throttles_per_step_and_window(self):
         import io
         import contextlib
-        state = HubState(Path(tempfile.mkdtemp()))
+        state = HubState(temp_dir(self))
 
         def fail(step):
             try:
@@ -3379,7 +3384,7 @@ class TestServeEntry(unittest.TestCase):
         self.assertEqual(out.count("catalog refresh failed"), 1, out)
 
     def test_catalog_loop_prunes_pair_requests_at_most_once_a_minute(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         state = HubState(home)
         r = pairing.request_pair(home, {"node_id": "n1"}, "phone")
         pairing.approve_request(home, r["code"])
@@ -3412,7 +3417,7 @@ class TestServeEntry(unittest.TestCase):
         self.assertEqual(pairing._load_requests(home), [])
 
     def test_tail_manager_probes_through_state_status_of(self):
-        state = HubState(Path(tempfile.mkdtemp()))
+        state = HubState(temp_dir(self))
         state.status_of = lambda sessions: ["active"] * len(sessions)
         self.assertEqual(state.tail_manager._status_of([object()]),
                          ["active"])
@@ -3420,7 +3425,7 @@ class TestServeEntry(unittest.TestCase):
                          state._on_probed_status)
 
     def test_state_start_stop(self):
-        state = HubState(Path(tempfile.mkdtemp()))
+        state = HubState(temp_dir(self))
         # No real session scan or notify config: only the thread
         # lifecycle is under test.
         state.catalog._fetch = lambda: []
@@ -4245,7 +4250,7 @@ class TestStartNotify(unittest.TestCase):
     def test_start_spawns_notifier_when_enabled(self):
         from quiver.remote import hub as hub_mod, notify
 
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         state = HubState(home)
         state.catalog._fetch = lambda: []
         cfg = {"enabled": True, "url": "https://ntfy.invalid",
@@ -4264,7 +4269,7 @@ class TestStartNotify(unittest.TestCase):
     def test_start_skips_notifier_when_disabled(self):
         from quiver.remote import notify
 
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         state = HubState(home)
         state.catalog._fetch = lambda: []
         with patch.object(notify, "load_config", return_value={}):
@@ -4280,7 +4285,7 @@ class TestStartNotify(unittest.TestCase):
         # left on the bus either.
         from quiver.remote import notify
 
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         state = HubState(home)
         state.catalog._fetch = lambda: []
         with patch.object(
@@ -4300,7 +4305,7 @@ class TestStartNotify(unittest.TestCase):
         # as a paired device until the row is revoked.
         from quiver.remote import notify, pairing
 
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         device_id = "deadbeef02"
         with pairing._state_lock(home):
             devices = pairing.load_devices(home)

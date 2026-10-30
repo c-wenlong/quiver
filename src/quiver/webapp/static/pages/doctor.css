@@ -53,8 +53,7 @@
 .doctor-confirm .caption { margin: 0; line-height: 1.5; }
 .doctor-confirm-buttons { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .doctor-run-error { margin: 0; padding-left: 12px; font-size: 12px; }
-.doctor-fold { align-self: center; margin: 4px 0; }
-.doctor-card .doctor-fold { display: block; width: 100%; border-top: 1px solid var(--border); padding: 10px 0 6px; border-radius: 0; }
+.doctor-card .doctor-fold { display: block; width: 100%; margin: 4px 0; border-top: 1px solid var(--border); padding: 10px 0 6px; border-radius: 0; }
 @media (max-width: 720px) {
   .doctor-fix { flex-wrap: wrap; }
   .doctor-command { flex: 1 1 160px; }

@@ -2,7 +2,6 @@
 
 import json
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +11,7 @@ from quiver.remote import agent as agent_mod
 from quiver.remote import slash, slash_builtins, supervise
 from quiver.sessions.models import Session
 
+from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server
 
 
@@ -29,8 +29,8 @@ class _Home(unittest.TestCase):
     """A throwaway $HOME and project folder; caches start empty."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.proj = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
+        self.proj = temp_dir(self)
         (self.proj / ".git").mkdir()
         env = patch.dict(os.environ, {"HOME": str(self.home)})
         env.start()
@@ -570,7 +570,7 @@ class TestSatellite(_Home):
 
     def test_oversized_menu_never_blocks_rows(self):
         ag = agent_mod.RemoteAgent(
-            "http://h:1", "cred", Path(tempfile.mkdtemp()))
+            "http://h:1", "cred", temp_dir(self))
         ag.catalog._fetch = lambda: [
             Session(timestamp=0, agent="Claude Code", path=str(self.proj),
                     title="t", session_id="r1", tool_name="claude")]
@@ -605,7 +605,7 @@ class TestSatellite(_Home):
 
     def test_agent_sends_commands_only_when_changed(self):
         ag = agent_mod.RemoteAgent(
-            "http://h:1", "cred", Path(tempfile.mkdtemp()))
+            "http://h:1", "cred", temp_dir(self))
         ag.catalog._fetch = lambda: [
             Session(timestamp=0, agent="Claude Code", path=str(self.proj),
                     title="t", session_id="r1", tool_name="claude")]

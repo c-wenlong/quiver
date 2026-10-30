@@ -127,6 +127,27 @@ const Fmt = (() => {
     return `<img class="${cls}${mono}" src="/${file}" alt="${m.name.replace(/"/g, "&quot;")}">`;
   }
 
+  // format.js loads before app.js and runs alone in node tests, so it
+  // keeps its own copy of app.js's esc().
+  const escHtml = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  /* HarnessMarkView: the logo and the mark's word after it (CLI,
+   * Desktop, a second account's suffix), or the name alone with no logo,
+   * in a span of class `wrap` that names the harness. */
+  function markView(id, wrap, cls = "logo") {
+    const m = mark(id);
+    const inner = m.icon ? logo(id, cls) + (m.word ? `<span>${escHtml(m.word)}</span>` : "")
+      : `<span>${escHtml(m.name)}</span>`;
+    return `<span class="${wrap}" title="${escHtml(m.name)}" aria-label="${escHtml(m.name)}">${inner}</span>`;
+  }
+
+  /* `~/…` for a path under the hub's home; any other path as it is. */
+  function tilde(path, home) {
+    return home && path.startsWith(home + "/") ? "~" + path.slice(home.length) : path;
+  }
+
   /* MarbleScale: one marble per round amount of spend (1, 2, 5 times a
    * power of ten, from a cent), the smallest that keeps the pile within
    * `capacity`. With no priced spend it counts tokens instead. */
@@ -297,7 +318,7 @@ const Fmt = (() => {
     return dash > 0 && /^[0-9]{8}$/.test(name.slice(dash + 1)) ? name.slice(0, dash) : name;
   }
 
-  return { tokens, dollars, ago, relative, harnessName, modelName, harnessColor, logo, mark, marbleScale,
+  return { tokens, dollars, ago, relative, harnessName, modelName, harnessColor, logo, mark, markView, tilde, marbleScale,
     resetIn, windowLabel, planTitle, money, balance, onDemand,
     copyIcon, copy, copyTick, shellWord };
 })();

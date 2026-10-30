@@ -22,7 +22,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func decodesLinkStatusAndOpensTheSharedFile() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "shared rules\n")
         let runner = ScriptedRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
         let model = AgentsModel()
@@ -40,7 +40,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func linkRunsPlainInitThenChecksAgain() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "x")
         let runner = ScriptedRunner([
             (["init", "--check", "--json"], check(agentsFile: agents.path, claudeState: "create")),
@@ -61,7 +61,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func replaceRunsInitWithForce() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "x")
         let runner = ScriptedRunner([
             (["init", "--check", "--json"], check(agentsFile: agents.path)),
@@ -74,7 +74,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func replaceWaitsForUnsavedProjectEdits() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         _ = try folder.write("AGENTS.md", "project\n")
         let runner = ScriptedRunner([])
         let model = AgentsModel()
@@ -88,7 +88,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aFailedInitIsShownAndTheCheckStillRefreshes() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "x")
         let runner = ScriptedRunner([
             (["init", "--check", "--json"], check(agentsFile: agents.path)),
@@ -101,7 +101,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aFileThatInitCreatesShowsUpInTheEditor() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = folder.url.appending(path: "AGENTS.md")
         let runner = ScriptedRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
         let model = AgentsModel()
@@ -117,7 +117,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func reloadingKeepsTheOpenDocumentAndItsEdits() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "x")
         let runner = ScriptedRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
         let model = AgentsModel()
@@ -130,7 +130,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func projectFilesShowWhatExistsAndWhichOneIsALink() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         _ = try folder.write("AGENTS.md", "project\n")
         try folder.link("CLAUDE.md", to: "AGENTS.md")
         let model = AgentsModel()
@@ -150,7 +150,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aDocumentAlwaysWritesTheFileItIsCachedUnder() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         _ = try folder.write("AGENTS.md", "agents\n")
         _ = try folder.write("OTHER.md", "other\n")
         try folder.link("CLAUDE.md", to: "AGENTS.md")
@@ -172,7 +172,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func checkDiskRereadsOpenProjectFilesAndRescans() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         _ = try folder.write("AGENTS.md", "v1\n")
         let model = AgentsModel()
         model.openProject(folder.url)
@@ -186,7 +186,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aMissingProjectFileCanBeCreated() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let model = AgentsModel()
         model.openProject(folder.url)
         #expect(model.projectFiles.map(\.exists) == [false, false])
@@ -199,8 +199,8 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func openingAnotherProjectDropsTheOldDocuments() async throws {
-        let one = try TempFolder()
-        let two = try TempFolder()
+        let one = try TempDir()
+        let two = try TempDir()
         _ = try one.write("AGENTS.md", "one")
         let model = AgentsModel()
         model.openProject(one.url)
