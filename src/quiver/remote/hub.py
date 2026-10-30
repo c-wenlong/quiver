@@ -45,6 +45,7 @@ from quiver.remote import (
     inject,
     notify,
     pairing,
+    peer as peer_mod,
     preview as preview_mod,
     protocol,
     search as search_mod,
@@ -291,6 +292,12 @@ class HubState:
         # The hub owner's tailnet login — set by serve() from whois of
         # the bind address; "" means owner-identity approval is off.
         self.owner_login = ""
+        # This machine's own tailnet node, set with owner_login. A
+        # request that whois names as this node came from a process on
+        # this machine (serve's local listener, or a direct dial of the
+        # tailnet IP), whichever user runs it, so it never counts as
+        # the owner's device.
+        self.own_node_id = ""
         # Set by configure() when that lookup could not run yet; owner()
         # calls it again, at most every _OWNER_RETRY_S.
         self.owner_retry = None
@@ -317,6 +324,11 @@ class HubState:
         # with the real tailnet client, so loopback requests carrying
         # them are read as that client. Off, the headers are ignored.
         self.trust_proxy = False
+        # Whether the loopback peer ``(server, peer)`` is the Tailscale
+        # daemon itself (peer.is_proxy). With trust_proxy on, only its
+        # X-Forwarded-For names the client: any other local process
+        # could write one. Tests stub it.
+        self.proxy_peer = peer_mod.is_proxy
         # session key -> request_id of its newest approval.requested
         # that has not yet been answered — local panes and satellites
         # both flow through emit(), so the inbox sees them uniformly.
@@ -1010,6 +1022,9 @@ class _Handler(BaseHTTPRequestHandler):
     _must_close = False
     _body_cache: object = _UNSET
     _device_row: dict | None = None
+    # Whether this connection's loopback peer is the Tailscale daemon;
+    # None until a forwarded header first needs the answer.
+    _peer_is_proxy: bool | None = None
 
     def handle_one_request(self) -> None:
         self._unread = 0
@@ -1187,7 +1202,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _approver_node(self, peer: dict | None) -> str | None:
         """The peer's node id when it shares the hub owner's login —
-        else None. Tagged nodes never qualify."""
+        else None. Tagged nodes never qualify, nor does this machine's
+        own node: any local user's process reaches the hub as that node
+        through serve's local listener, so it proves nothing."""
         owner = self._state.owner()
         if (
             peer is None or peer.get("tagged")
@@ -1195,7 +1212,10 @@ class _Handler(BaseHTTPRequestHandler):
             or peer.get("login") != owner
         ):
             return None
-        return str(peer.get("node_id") or "") or None
+        node = str(peer.get("node_id") or "")
+        if not node or node == self._state.own_node_id:
+            return None
+        return node
 
     def _owner_device(self) -> str | None:
         """A device id for the hub owner's own tailnet device, which needs
@@ -1325,20 +1345,42 @@ class _Handler(BaseHTTPRequestHandler):
         return bound == mid
 
     def _proxied(self) -> bool:
-        """True when ``tailscale serve`` relayed this request: the hub
-        trusts its proxy and the TCP peer is this machine."""
+        """True when the request may have come through ``tailscale
+        serve``: the hub runs behind it and the TCP peer is this
+        machine. Enough for X-Forwarded-Proto, which only feeds the
+        Origin check a local process can satisfy anyway; the client's
+        identity needs ``_from_proxy``."""
         return (self._state.trust_proxy
                 and self.client_address[0] in _LOOPBACK)
+
+    def _from_proxy(self) -> bool:
+        """True when the loopback peer is the Tailscale daemon, so its
+        X-Forwarded-For can name the client. Asked once per connection:
+        serve keeps its connections open across requests."""
+        if not self._proxied():
+            return False
+        cached = self._peer_is_proxy
+        if cached is None:
+            try:
+                server = self.connection.getsockname()[:2]
+                cached = bool(self._state.proxy_peer(
+                    (server[0], server[1]),
+                    (self.client_address[0], self.client_address[1])))
+            except Exception:  # noqa: BLE001 - doubt means not the proxy
+                cached = False
+            self._peer_is_proxy = cached
+        return cached
 
     def _client_ip(self) -> str:
         """The requester's address: the tailnet client serve forwarded
         for, else the TCP peer. Serve replaces any X-Forwarded-For the
-        client sent, so the last hop is the one it added."""
-        if self._proxied():
-            forwarded = self.headers.get("X-Forwarded-For") or ""
-            hop = forwarded.split(",")[-1].strip()
-            if hop:
-                return hop
+        client sent, so the last hop is the one it added. Only serve's
+        own connection is believed: another local process sending the
+        header is read as the loopback peer it is."""
+        forwarded = self.headers.get("X-Forwarded-For") or ""
+        hop = forwarded.split(",")[-1].strip()
+        if hop and self._from_proxy():
+            return hop
         return self.client_address[0]
 
     def _scheme(self) -> str:
@@ -3840,6 +3882,7 @@ def configure(state: HubState, host: str, port: int,
                 peer = state.whois(ip) if ip else None
                 if peer is None:
                     return False
+                state.own_node_id = str(peer.get("node_id") or "")
                 if not peer.get("tagged"):
                     state.owner_login = str(peer.get("login") or "")
                 return True
@@ -3875,6 +3918,8 @@ def configure(state: HubState, host: str, port: int,
                              peer.get("node_short")):
                     if name:
                         state.allowed_hosts.add(_hostport(name, port))
+        if peer:
+            state.own_node_id = str(peer.get("node_id") or "")
         if peer and not peer.get("tagged"):
             state.owner_login = str(peer.get("login") or "")
 
