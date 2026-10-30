@@ -1357,8 +1357,12 @@ private struct UsageLegend: View {
         .accessibilityValue(hidden ? "0" : "1")
         .frame(height: 22)
         if let usage = card.usage {
-            ForEach(usage.windows, id: \.label) { window in
-                windowRow(window, usage: usage)
+            // The countdown and the reset-passed dimming both depend on
+            // now; the grid's own minute ticker can't reach the panel.
+            TimelineView(.everyMinute) { context in
+                ForEach(usage.windows, id: \.label) { window in
+                    windowRow(window, usage: usage, now: context.date)
+                }
             }
         }
     }
@@ -1366,16 +1370,16 @@ private struct UsageLegend: View {
     /// One window's row: its label, then how much of it is left. A kept
     /// older or already-reset reading dims; a failed fetch reddens the
     /// label — the same vocabulary the Accounts page's UsageBar speaks.
-    private func windowRow(_ window: UsageWindow, usage: AccountUsage) -> some View {
+    private func windowRow(_ window: UsageWindow, usage: AccountUsage, now: Date) -> some View {
         let left = max(0, 100 - Int(window.usedPercent.rounded()))
         let failed = usage.isStale && usage.status != .ok
-        let past = window.resetsAt.map { $0 <= Date() } ?? false
+        let past = window.resetsAt.map { $0 <= now } ?? false
         let reset = !failed && !past ? window.resetsAt : nil
         return HStack(spacing: 6) {
             Text(window.label).font(Theme.font(size: 10))
                 .foregroundStyle(failed ? Theme.dangerText : (hidden ? .secondary : .primary))
             Spacer()
-            Text("\(left)% left" + (reset.map { " · \(UsageFormat.resetIn($0, now: .now))" } ?? ""))
+            Text("\(left)% left" + (reset.map { " · \(UsageFormat.resetIn($0, now: now))" } ?? ""))
                 .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
         }
         .padding(.leading, 18)
