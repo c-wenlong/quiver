@@ -10,7 +10,6 @@ simply drops offline on the hub until it wakes and replays the queue.
 
 import json
 import os
-import queue as queue_mod
 import ssl
 import sys
 import threading
@@ -21,7 +20,7 @@ from pathlib import Path
 
 from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
-from quiver.remote import inject, journal, protocol, supervise, tail
+from quiver.remote import inject, journal, protocol, sendq, supervise, tail
 from quiver.remote import fork as fork_mod, usage as usage_mod
 from quiver.remote.detach import PendingDetaches
 
@@ -206,8 +205,10 @@ class RemoteAgent:
         self._stop = threading.Event()
         # Commands dispatch on the stream thread except ``message``,
         # which can run minutes (headless claude): those go through
-        # ``_work_q`` so a queued interrupt/detach isn't stuck behind it.
-        self._work_q: "queue_mod.Queue" = queue_mod.Queue()
+        # ``_sendq``, one worker per session like the hub's, so a queued
+        # interrupt/detach isn't stuck behind a run and one session's
+        # turn doesn't hold every other session's messages.
+        self._sendq = sendq.SendQueue()
         # ``detach`` with ``mode: when_idle``, waiting out a turn here.
         self.detaches = PendingDetaches(self._stop)
         # Fresh per-session status for those waits; tests stub it.
@@ -542,8 +543,14 @@ class RemoteAgent:
             self._last_cmd_seq = seq
         if (ev.get("data") or {}).get("op") == "message":
             # Headless sends block for the whole turn — queue them so a
-            # later interrupt/detach isn't stuck behind the run.
-            self._work_q.put((seq, ev))
+            # later interrupt/detach isn't stuck behind the run. One
+            # session's sends stay in order. A send still queued at
+            # shutdown is left undone, so the replay runs it.
+            self._sendq.submit(
+                str(ev.get("session") or ""),
+                lambda: self._dispatch_then_done(seq, ev),
+                lambda: None,
+            )
             return
         if (ev.get("data") or {}).get("op") == "fork":
             # Booting the fork's pane can take 30 s: run it beside the
@@ -562,17 +569,6 @@ class RemoteAgent:
             self._dispatch(ev)
         finally:
             self._mark_done(seq)
-
-    def _work_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                seq, cmd = self._work_q.get(timeout=0.5)
-            except queue_mod.Empty:
-                continue
-            try:
-                self._dispatch(cmd)
-            finally:
-                self._mark_done(seq)
 
     def _dispatch(self, cmd: dict) -> None:
         """Execute one command envelope; report back as command.result."""
@@ -844,8 +840,6 @@ class RemoteAgent:
                              name="agent-tail"),
             threading.Thread(target=self._downlink_loop, daemon=True,
                              name="agent-downlink"),
-            threading.Thread(target=self._work_loop, daemon=True,
-                             name="agent-worker"),
         ]
         for t in threads:
             t.start()
@@ -857,6 +851,7 @@ class RemoteAgent:
         except KeyboardInterrupt:
             pass
         self._stop.set()
+        self._sendq.close()
         self.tail_manager.interrupt()
         self.detaches.close()
         for t in threads:
