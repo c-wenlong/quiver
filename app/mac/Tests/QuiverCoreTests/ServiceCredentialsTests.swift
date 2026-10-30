@@ -47,6 +47,9 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 }
 
 @Suite struct ServiceCredentialsTests {
+    /// Callers keep the `TempDir` alive to the end of the test: dropped
+    /// at once, it deletes its folder and the next metadata write puts
+    /// it back, outside anything that removes it.
     private func make(_ secrets: StubSecrets)
         throws -> (TempDir, ServiceCredentials) {
         let dir = try TempDir()
@@ -100,7 +103,8 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func removeDeletesTheValueAndItsDates() async throws {
         let secrets = StubSecrets()
-        let (_, credentials) = try make(secrets)
+        let (dir, credentials) = try make(secrets)
+        defer { withExtendedLifetime(dir) {} }
         try await credentials.set("DEVIN_ORG_ID", value: "org-secret")
         try await credentials.remove("DEVIN_ORG_ID")
         let status = await credentials.status(for: "DEVIN_ORG_ID")
@@ -121,7 +125,8 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func aFailedSetThrowsWithoutTheValue() async throws {
         let secrets = StubSecrets()
-        let (_, credentials) = try make(secrets)
+        let (dir, credentials) = try make(secrets)
+        defer { withExtendedLifetime(dir) {} }
         await secrets.setNextError(SweError.commandFailed(status: 1, message: "keychain locked"))
         do {
             try await credentials.set("DEVIN_API_KEY", value: "secret-token")
@@ -133,7 +138,8 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func probeCallsDevinSelfWithTheBearerToken() async throws {
         let secrets = StubSecrets()
-        let (_, credentials) = try make(secrets)
+        let (dir, credentials) = try make(secrets)
+        defer { withExtendedLifetime(dir) {} }
         try await credentials.set("DEVIN_API_KEY", value: "tok")
         let transport = ProbeTransport(.success((Data(), 200)))
         let devin = try #require(ServiceCredentials.services.first { $0.id == "devin" })
@@ -145,7 +151,8 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func probeReportsHTTPAndNetworkFailures() async throws {
         let secrets = StubSecrets()
-        let (_, credentials) = try make(secrets)
+        let (dir, credentials) = try make(secrets)
+        defer { withExtendedLifetime(dir) {} }
         try await credentials.set("DEVIN_API_KEY", value: "tok")
         let devin = try #require(ServiceCredentials.services.first { $0.id == "devin" })
         #expect(await credentials.probe(devin, transport: ProbeTransport(.success((Data(), 401)))) == .httpError(401))
@@ -159,7 +166,8 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func probeWithoutAKeySaysSo() async throws {
         let secrets = StubSecrets()
-        let (_, credentials) = try make(secrets)
+        let (dir, credentials) = try make(secrets)
+        defer { withExtendedLifetime(dir) {} }
         let devin = try #require(ServiceCredentials.services.first { $0.id == "devin" })
         #expect(await credentials.probe(devin, transport: ProbeTransport(.success((Data(), 200))))
                 == .unavailable("DEVIN_API_KEY is not saved."))
@@ -167,7 +175,8 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func artificialAnalysisSendsItsKeyHeader() async throws {
         let secrets = StubSecrets()
-        let (_, credentials) = try make(secrets)
+        let (dir, credentials) = try make(secrets)
+        defer { withExtendedLifetime(dir) {} }
         try await credentials.set("ARTIFICIAL_ANALYSIS_API_KEY", value: "aa-key")
         let transport = ProbeTransport(.success((Data(), 200)))
         let service = try #require(ServiceCredentials.services.first { $0.id == "artificial-analysis" })
@@ -273,7 +282,8 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
     }
 
     @Test func replacingOrRemovingTheKeyClearsAWorksResult() async throws {
-        let (_, _, model) = try make()
+        let (dir, _, model) = try make()
+        defer { withExtendedLifetime(dir) {} }
         let devin = try devin()
         await model.set("DEVIN_API_KEY", value: "one")
         await model.probe(devin)
@@ -316,7 +326,8 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
             var date = Date(timeIntervalSince1970: 1_791_000_000)
         }
         let clock = Clock()
-        let (_, _, model) = try make(now: { clock.date })
+        let (dir, _, model) = try make(now: { clock.date })
+        defer { withExtendedLifetime(dir) {} }
         let devin = try devin()
         await model.set("DEVIN_API_KEY", value: "tok")
         #expect(model.statuses["DEVIN_API_KEY"]?.lastUsed == nil)

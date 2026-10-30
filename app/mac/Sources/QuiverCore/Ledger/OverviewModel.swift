@@ -192,6 +192,12 @@ public final class OverviewModel {
     private let refreshPricing: @Sendable () async -> PricingCatalog?
     /// How often a running full scan's progress is read; nil never reads it.
     private let scanWatchInterval: Duration?
+    /// Waits out one `scanWatchInterval` between progress reads. Tests
+    /// replace it to let each read happen at a point they pick, instead of
+    /// racing a wall-clock interval.
+    @ObservationIgnored var scanWatchSleep: @Sendable (Duration) async throws -> Void = {
+        try await Task.sleep(for: $0)
+    }
     /// Bumped by every full load: only the newest writes spend and activity.
     private var loadGeneration = 0
     /// Bumped by every load and period reload: only the newest writes the summary.
@@ -384,6 +390,9 @@ public final class OverviewModel {
     private var fullScanRunning = false
     private var fullScanWaiters: [CheckedContinuation<Void, Never>] = []
     private var fullScansStarted = 0
+    /// Full-scan loads waiting behind the running one, so a test can tell
+    /// a load queued without waiting and hoping.
+    var queuedFullScans: Int { fullScanWaiters.count }
 
     /// Waits for the running full-scan load, if any. False when another
     /// full scan started after this one asked and has finished: it read
@@ -409,8 +418,9 @@ public final class OverviewModel {
         for waiter in waiters { waiter.resume() }
     }
 
-    /// Full-scan loads currently watching progress; the last to finish clears it.
-    private var scanWatchers = 0
+    /// Full-scan loads currently watching progress; the last to finish
+    /// clears it. Tests read it to know no watcher is running.
+    private(set) var scanWatchers = 0
 
     /// While a load's full scan runs: reads its progress every
     /// `scanWatchInterval` (the first read after one interval, so a quick
@@ -425,10 +435,11 @@ public final class OverviewModel {
     /// otherwise skips its unchanged files in about a second.
     private func watchScan() -> Task<Void, Never>? {
         guard let interval = scanWatchInterval else { return nil }
+        let sleep = scanWatchSleep
         return Task { [weak self] in
             var reads = 0
             while !Task.isCancelled {
-                do { try await Task.sleep(for: interval) } catch { return }
+                do { try await sleep(interval) } catch { return }
                 guard let self else { return }
                 let progress = await self.ledger.scanProgress()
                 guard !Task.isCancelled else { return }

@@ -208,18 +208,20 @@ import Testing
     @Test func neighbourPrefetchLandsOnTheNextMonthAndNextNdaySpan() async throws {
         actor Calls: ActivityProviding {
             private(set) var ranges: [DateInterval] = []
+            /// Counts every call, prefetches included, which run as tasks
+            /// of their own after `load` returns.
+            private let calls = CountGate()
             func activityBlocks(in range: DateInterval, gap: TimeInterval,
                                 force: Bool) throws -> [ActivityBlock] {
                 ranges.append(range)
+                let calls = self.calls
+                Task { await calls.bump() }
                 return []
             }
-            /// The recorded ranges once at least `count` calls have run,
-            /// polling briefly so prefetch tasks have time to land.
+            /// The recorded ranges once at least `count` calls have run
+            /// in all, or what has run by `gateTimeout`.
             func wait(for count: Int) async -> [DateInterval] {
-                for _ in 0..<500 {
-                    if ranges.count >= count { return ranges }
-                    try? await Task.sleep(for: .milliseconds(10))
-                }
+                _ = await calls.reach(count)
                 return ranges
             }
             func reset() { ranges = [] }

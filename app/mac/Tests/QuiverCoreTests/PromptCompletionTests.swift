@@ -246,13 +246,13 @@ import Testing
         let key = "claude:stale-\(#line)"
         let first = SlashCommandMenu()
         first.cacheKey = key
-        var gate: CheckedContinuation<Void, Never>?
+        let gate = HoldGate()
         first.fetch = {
-            await withCheckedContinuation { gate = $0 }
+            try await gate.pass()
             return CommandsResponse(commands: [SlashCommand(name: "old")])
         }
         let slow = first.warm()
-        for _ in 0..<1000 where gate == nil { await Task.yield() }
+        #expect(await gate.arrived())
         // The chat reopened and asked again; its newer answer lands
         // first, then the request left behind finishes — the kept list
         // must stay the newer one.
@@ -260,7 +260,7 @@ import Testing
         second.cacheKey = key
         second.fetch = { CommandsResponse(commands: [SlashCommand(name: "new")]) }
         await second.warm()?.value
-        gate?.resume()
+        gate.open()
         await slow?.value
         let probe = SlashCommandMenu()
         probe.cacheKey = key

@@ -54,23 +54,30 @@ import Testing
         defer { main.orderOut(nil) }
         #expect(main.screen == nil)
 
-        spin { SheetOverlayRegistry.isCovered(main) }
-        #expect(SheetOverlayRegistry.isCovered(main))
+        #expect(spin { SheetOverlayRegistry.isCovered(main) })
         let action = PopupKeyRouting.action(chars: "w", flags: [.command], key: main)
         #expect(action == .sendEscape)
         #expect(PopupKeyRouting.perform(action, key: main))
 
-        spin { !flag.isPresented && !SheetOverlayRegistry.isCovered(main) }
+        #expect(spin { !flag.isPresented && !SheetOverlayRegistry.isCovered(main) })
         #expect(!flag.isPresented)
         #expect(!SheetOverlayRegistry.isCovered(main))
         #expect(main.isVisible)
     }
 
-    private func spin(timeout: TimeInterval = 3, until done: () -> Bool) {
+    /// Runs the main run loop until `done` holds, true if it did. SwiftUI
+    /// mounts the card and AppKit delivers the Esc only from run loop
+    /// turns, and a synchronous test on the main thread has no other way
+    /// to give it those turns, so this loop stays. Each turn returns as
+    /// soon as the run loop handles a source, and the bound is sized for a
+    /// starved machine, like the core tests' `gateTimeout`: a passing test
+    /// never comes near it.
+    private func spin(timeout: TimeInterval = 60, until done: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while !done() && Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
+        return done()
     }
 }
 

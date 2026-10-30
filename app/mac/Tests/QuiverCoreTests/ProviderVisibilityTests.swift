@@ -6,18 +6,18 @@ import Testing
 actor Gate {
     struct Failed: Error, LocalizedError { var errorDescription: String? { "old check failed" } }
     var calls = 0
-    var waiting: CheckedContinuation<Void, Never>?
-    var parked = false
+    private let hold = HoldGate()
     func next() async throws -> Set<String> {
         calls += 1
         if calls == 1 {
-            parked = true
-            await withCheckedContinuation { waiting = $0 }
+            try? await hold.pass()
             throw Failed()
         }
         return ["claude"]
     }
-    func release() { waiting?.resume(); waiting = nil }
+    /// True once the first check is parked, false after `gateTimeout`.
+    nonisolated func parked() async -> Bool { await hold.arrived() }
+    func release() { hold.open() }
 }
 
 /// Installed providers the first time, a failure after that.
@@ -77,16 +77,16 @@ actor FakeSwe {
 /// released, with a harness added.
 actor HeldCheck {
     var calls = 0
-    var parked = false
-    var waiting: CheckedContinuation<Void, Never>?
+    private let hold = HoldGate()
     func next() async -> Set<String> {
         calls += 1
         if calls == 1 { return ["claude"] }
-        parked = true
-        await withCheckedContinuation { waiting = $0 }
+        try? await hold.pass()
         return ["claude", "codex"]
     }
-    func release() { waiting?.resume(); waiting = nil }
+    /// True once the second check is parked, false after `gateTimeout`.
+    nonisolated func parked() async -> Bool { await hold.arrived() }
+    func release() { hold.open() }
 }
 
 /// An in-memory stand-in for UserDefaults.
@@ -239,7 +239,7 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         let gate = Gate()
         let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await gate.next() })
         let old = Task { await model.load() }
-        while !(await gate.parked) { await Task.yield() }
+        #expect(await gate.parked())
         await model.load()
         #expect(model.isVisible("claude"))
         #expect(model.isLoading == false)   // the newest check is done
@@ -320,7 +320,7 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         let model = ProviderVisibilityModel(store: MemoryStore(), detect: { try await gate.next() })
         // A check of B that parks, then a return to A before it finishes.
         let pending = Task { await model.loadIfNeeded(for: "B") }
-        while !(await gate.parked) { await Task.yield() }
+        #expect(await gate.parked())
         await model.loadIfNeeded(for: "A")
         #expect(await gate.calls == 2)
         #expect(model.isVisible("claude"))
@@ -432,7 +432,7 @@ final class MemoryStore: KeyValueStoring, @unchecked Sendable {
         await model.loadIfNeeded(for: "A")
         clock.advance(ProviderVisibilityModel.recheckInterval)
         let recheck = Task { await model.recheck(for: "A") }
-        while !(await gate.parked) { await Task.yield() }
+        #expect(await gate.parked())
         #expect(model.hasChecked)   // rows keep their result, no "Checking…"
         #expect(model.isVisible("claude"))
         await gate.release()

@@ -175,6 +175,9 @@ public final class GitHubModel {
     private var inboxReading = false
     /// Callers waiting for the read in flight to land.
     private var inboxWaiters: [CheckedContinuation<Void, Never>] = []
+    /// How many callers are waiting on the read in flight, so a test can
+    /// wait for an overlapping caller to queue instead of yielding.
+    var inboxWaiterCount: Int { inboxWaiters.count }
     /// How many reads have started, so a forced caller can tell a read
     /// begun after it asked (which answers it) from an older one.
     private var inboxReadsStarted = 0

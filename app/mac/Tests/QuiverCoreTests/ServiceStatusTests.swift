@@ -223,8 +223,12 @@ private func openGeminiIncident() throws -> Data {
 }
 
 @Suite struct ServiceStatusServiceTests {
+    /// Every cache folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func makeService(_ transport: FakeTransport, clock: TestClock, directory: URL? = nil) -> ServiceStatusService {
-        let dir = directory ?? FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = directory ?? scratch.url.appending(path: UUID().uuidString)
         return ServiceStatusService(transport: transport, cacheURL: dir.appending(path: "service-status.json"),
                                     now: { clock.now })
     }
@@ -340,7 +344,7 @@ private func openGeminiIncident() throws -> Data {
         let clock = TestClock()
         let transport = ClockAdvancingTransport(clock: clock, seconds: 20)
         transport.inner.reply(429, headers: ["Retry-After": "120"])
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let status = ServiceStatusService(transport: transport, cacheURL: dir.appending(path: "service-status.json"),
                                           now: { clock.now })
         let cursor = [try service("cursor")]
@@ -361,7 +365,7 @@ private func openGeminiIncident() throws -> Data {
 
     /// The cache file carries readings across launches without a new request.
     @Test func cacheSurvivesARestart() async throws {
-        let directory = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let directory = scratch.url.appending(path: UUID().uuidString)
         let transport = FakeTransport()
         transport.reply(200, body: try statusFixture("statuspage-openai"))
         let clock = TestClock()
@@ -379,24 +383,39 @@ private func openGeminiIncident() throws -> Data {
     /// A second call while the first is waiting on the network joins its
     /// request instead of sending another.
     @Test func overlappingCallsShareOneRequest() async throws {
-        let transport = DelayedTransport()
+        let transport = HeldTransport()
         transport.inner.reply(200, body: try statusFixture("statuspage-github"))
         let clock = TestClock()
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        // Armed once the first request is parked, the clock opens the gate
+        // on its next read: the second call's start. The service reads the
+        // clock and checks for a request under way in one actor step, so
+        // by the time the first call can land the second has joined it.
+        let armed = Box(false)
+        let gate = transport.gate
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let status = ServiceStatusService(transport: transport, cacheURL: dir.appending(path: "service-status.json"),
-                                          now: { clock.now })
+                                          now: {
+                                              if armed.value {
+                                                  armed.value = false
+                                                  gate.open()
+                                              }
+                                              return clock.now
+                                          })
         let github = [try service("github")]
-        async let first = status.statuses(for: github, force: false)
-        async let second = status.statuses(for: github, force: true)
-        let (a, b) = await (first, second)
+        let first = Task { await status.statuses(for: github, force: false) }
+        #expect(await gate.arrived(1))
+        armed.value = true
+        let b = await status.statuses(for: github, force: true)
+        let a = await first.value
         #expect(transport.inner.requests.count == 1)
         #expect(a.first?.report?.health == .operational)
+        // Without the join the second call returns at once with no reading.
         #expect(b.first?.report?.health == .operational)
     }
 
     /// With a cache that cannot be written, the limits still hold in memory.
     @Test func unwritableCacheKeepsTheCooldown() async throws {
-        let blocker = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let blocker = scratch.url.appending(path: UUID().uuidString)
         try Data().write(to: blocker)
         let transport = FakeTransport()
         transport.reply(429, headers: ["Retry-After": "1200"])
@@ -525,6 +544,10 @@ private func openGeminiIncident() throws -> Data {
 /// The status pages the user adds: slugs, storage, the model's add/remove
 /// and the sheet's Check button.
 @Suite struct CustomStatusTests {
+    /// Every cache folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func customService(_ id: String, _ name: String, _ group: StatusService.Group = .modelProviders)
         -> StatusService {
         let page = URL(string: "https://status.example.com")!
@@ -536,7 +559,7 @@ private func openGeminiIncident() throws -> Data {
     private func probeService(_ transport: FakeTransport,
                               resolve: @escaping @Sendable (URL) async -> URL? = { $0 })
         -> ServiceStatusService {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         return ServiceStatusService(transport: transport,
                                     cacheURL: dir.appending(path: "service-status.json"),
                                     redirectResolver: resolve)
@@ -636,7 +659,7 @@ private func openGeminiIncident() throws -> Data {
     /// it in, persists it, and lets the poll floors fetch it right away.
     @MainActor @Test func addStoresFetchesAndGroupsTheService() async throws {
         let clock = TestClock()
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -661,7 +684,7 @@ private func openGeminiIncident() throws -> Data {
     /// Customs are deleted; a built-in goes hidden, its id kept free for
     /// the catalogue's Add to bring back.
     @MainActor @Test func removeDeletesCustomsAndHidesBuiltIns() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -683,7 +706,7 @@ private func openGeminiIncident() throws -> Data {
     /// The catalogue's Add on a built-in row restores the catalog's
     /// entry: a removed card comes back, an edited one loses its override.
     @MainActor @Test func trackRestoresABuiltIn() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -706,7 +729,7 @@ private func openGeminiIncident() throws -> Data {
     /// The editor's Save on a built-in keeps the difference from the
     /// catalog as an override, and Reset puts the catalog's entry back.
     @MainActor @Test func updateOverridesAndResetRestoresABuiltIn() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -728,7 +751,7 @@ private func openGeminiIncident() throws -> Data {
 
     /// An edit that returns a built-in to its default writes no override.
     @MainActor @Test func anEditBackToTheDefaultWritesNoOverride() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
                                         cacheURL: dir.appending(path: "service-status.json")),
@@ -744,7 +767,7 @@ private func openGeminiIncident() throws -> Data {
     /// it `applying` would derive /api/v2/summary.json, which is wrong for
     /// feeds filed elsewhere, like Cursor's /api/compat.
     @MainActor @Test func anEditKeepsTheCheckedFeed() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let make = {
             ServiceStatusModel(
@@ -768,7 +791,7 @@ private func openGeminiIncident() throws -> Data {
 
     /// The editor's Save on a custom page rewrites its record.
     @MainActor @Test func updateRewritesACustomService() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         let model = ServiceStatusModel(
             service: ServiceStatusService(transport: StubStatusTransport(body: try statusFixture("statuspage-github")),
@@ -792,7 +815,7 @@ private func openGeminiIncident() throws -> Data {
     /// out back into the list or the menu bar.
     @MainActor @Test func aRemovedPageStaysRemovedWhenAParkedLoadLands() async throws {
         let transport = GatedTransport(body: try statusFixture("statuspage-claude"))
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let memory = MemoryStatusStore()
         memory.saved.custom = [customService("custom-acme-aaaa0001", "Acme")]
         let model = ServiceStatusModel(
@@ -800,11 +823,9 @@ private func openGeminiIncident() throws -> Data {
                                         cacheURL: dir.appending(path: "service-status.json")),
             store: memory)
         let loading = Task { await model.load(force: true) }
-        while transport.inFlight < model.services.count {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        #expect(await transport.gate.arrived(model.services.count))
         await model.remove(id: "custom-acme-aaaa0001")
-        transport.release()
+        transport.gate.open()
         await loading.value
         #expect(!model.statuses.contains { $0.service.id == "custom-acme-aaaa0001" })
         #expect(!model.affected.map(\.id).contains("custom-acme-aaaa0001"))
@@ -814,7 +835,7 @@ private func openGeminiIncident() throws -> Data {
     /// same-named page added later starts unknown instead of inheriting
     /// the old reading.
     @MainActor @Test func aReAddedPageStartsUnknown() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let cacheFile = dir.appending(path: "service-status.json")
         let statusService = ServiceStatusService(transport: StubStatusTransport(
             body: try statusFixture("statuspage-claude")), cacheURL: cacheFile)
@@ -841,16 +862,14 @@ private func openGeminiIncident() throws -> Data {
     /// it would hold the new feed off for the next five minutes.
     @MainActor @Test func aForgottenPollsAnswerIsDropped() async throws {
         let transport = GatedTransport(body: try statusFixture("statuspage-github"))
-        let dir = FileManager.default.temporaryDirectory.appending(path: "status-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: UUID().uuidString)
         let status = ServiceStatusService(transport: transport,
                                           cacheURL: dir.appending(path: "service-status.json"))
         let github = [try service("github")]
         async let first: [ServiceStatus] = status.statuses(for: github, force: false)
-        while transport.inFlight < 1 {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        #expect(await transport.gate.arrived(1))
         await status.forget(id: "github")
-        transport.release()
+        transport.gate.open()
         let statuses = await first
         #expect(statuses.first?.report == nil)
         #expect(await status.cached(for: github).first?.report == nil)
@@ -949,47 +968,28 @@ private struct StubStatusTransport: HTTPTransport {
     }
 }
 
-/// Parks every request at the gate until `release`, so a test can remove a
-/// service while its load is still out.
+/// Parks every request at `gate` until the test opens it, so a test can
+/// remove a service while its load is still out.
 private final class GatedTransport: HTTPTransport {
-    private struct State {
-        var waiting: [CheckedContinuation<Void, Never>] = []
-        var inFlight = 0
-        var open = false
-    }
-
-    private let state = Mutex(State())
+    let gate = HoldGate()
     let body: Data
     init(body: Data) { self.body = body }
 
-    var inFlight: Int { state.withLock { $0.inFlight } }
-
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        await withCheckedContinuation { continuation in
-            state.withLock { s in
-                s.inFlight += 1
-                if s.open { continuation.resume() } else { s.waiting.append(continuation) }
-            }
-        }
+        try await gate.pass()
         return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                       headerFields: nil)!)
     }
-
-    func release() {
-        state.withLock { s in
-            s.open = true
-            for continuation in s.waiting { continuation.resume() }
-            s.waiting.removeAll()
-        }
-    }
 }
 
-/// The fake network, answering only after a pause so calls can overlap.
-private final class DelayedTransport: HTTPTransport {
+/// The fake network, holding every request at `gate` until the test opens
+/// it, so calls can overlap.
+private final class HeldTransport: HTTPTransport {
     let inner = FakeTransport()
+    let gate = HoldGate()
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        try await Task.sleep(for: .milliseconds(200))
+        try await gate.pass()
         return try await inner.send(request)
     }
 }

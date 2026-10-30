@@ -1673,7 +1673,7 @@ import Testing
         #expect(await runner.parks.reach(1))
         // A second forced read waits for the first instead of racing it.
         let second = Task { await model.loadInbox(swe: swe, force: true) }
-        await Task.yield()
+        #expect(await observe { model.inboxWaiterCount == 1 })
         #expect(runner.lists == 2)
         #expect(await model.markInboxRead(["1"], swe: swe) == nil)
         #expect(model.unreadCount == 0)
@@ -1692,7 +1692,7 @@ import Testing
         let third = Task { await model.loadInbox(swe: swe, force: true) }
         #expect(await runner.parks.reach(2))
         let poll = Task { await model.loadInbox(swe: swe) }
-        await Task.yield()
+        #expect(await observe { model.inboxWaiterCount == 1 })
         runner.open()
         await third.value
         await poll.value

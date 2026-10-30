@@ -273,18 +273,19 @@ import Testing
     @Test func refreshAfterKeepFreshSeesANewAccount() async throws {
         var calls: [String] = []
         var homes = ["/h"]
+        let fetched = CountGate()
         let model = CodexAccountUsage(
             cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { home in
                 calls.append(home)
+                await fetched.bump()
                 return self.report([("2026-10-13", 10)])
             },
             macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
         let poller = Task { await model.keepFresh(homes: { homes }) }
         defer { poller.cancel() }
-        let deadline = Date().addingTimeInterval(10)
-        while calls.isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(await fetched.reach(1))
         #expect(calls == ["/h"])
         homes.append("/i")
         await model.refresh(force: true)
@@ -357,6 +358,7 @@ import Testing
         // path change's forced refresh runs and succeeds.
         var gate: CheckedContinuation<CodexDailyReport, Error>?
         var entered = false
+        let parked = CountGate()
         let url = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString).json")
         let model = CodexAccountUsage(
@@ -365,13 +367,16 @@ import Testing
                 if !entered {
                     entered = true
                     return try await withCheckedThrowingContinuation {
-                        (c: CheckedContinuation<CodexDailyReport, Error>) in gate = c }
+                        (c: CheckedContinuation<CodexDailyReport, Error>) in
+                        gate = c
+                        Task { await parked.bump() }
+                    }
                 }
                 return self.report([("2026-10-13", 10)])
             },
             macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
         let stale = Task { await model.refresh(homes: ["/h"]) }
-        while !entered { await Task.yield() }
+        #expect(await parked.reach(1))
         await model.swePathChanged()
         #expect(model.section(for: "/h")?.kind == .data)
         // Only now does the old path's fetch fail "unknown subcommand":
@@ -390,19 +395,23 @@ import Testing
         // Both fetches park: the older refresh's reply lands while the
         // newer one is still in flight.
         var gates: [CheckedContinuation<CodexDailyReport, Error>] = []
+        let parked = CountGate()
         let url = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString).json")
         let model = CodexAccountUsage(
             cacheFile: url,
             fetch: { _ in
                 try await withCheckedThrowingContinuation {
-                    (c: CheckedContinuation<CodexDailyReport, Error>) in gates.append(c) }
+                    (c: CheckedContinuation<CodexDailyReport, Error>) in
+                    gates.append(c)
+                    Task { await parked.bump() }
+                }
             },
             macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
         let stale = Task { await model.refresh(homes: ["/h"]) }
-        while gates.count < 1 { await Task.yield() }
+        #expect(await parked.reach(1))
         let fresh = Task { await model.refresh(homes: ["/h"]) }
-        while gates.count < 2 { await Task.yield() }
+        #expect(await parked.reach(2))
         #expect(model.fetching == ["/h"])
         // The old reply lands first: dropped, and it must not clear the
         // newer refresh's in-flight flag.

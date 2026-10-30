@@ -338,7 +338,10 @@ private struct TogglingActivity: ActivityProviding {
         #expect(model.windowBlocks.count == 1)
     }
 
-    @Test func anAnchorMoveKeepsTheOldBlocksUntilTheLoadLands() async {
+    // The time limit fails the test instead of hanging the suite if the
+    // prefetches never settle or the load never asks the provider.
+    @Test(.timeLimit(.minutes(1)))
+    func anAnchorMoveKeepsTheOldBlocksUntilTheLoadLands() async {
         let held = HeldActivity(blocks: [block("2026-10-14T09:00:00Z")])
         held.held = false
         let model = CalendarModel(providers: [held], defaults: freshDefaults(),
@@ -346,16 +349,22 @@ private struct TogglingActivity: ActivityProviding {
         model.mode = .day
         await model.load()
         #expect(model.blocks.count == 1)
-        // The next day's render range is a cache miss; the provider read
-        // hangs, and the old blocks stay up rather than flashing empty.
+        // The neighbouring days' prefetches land first, so the next read
+        // the provider sees is the landing's own.
+        await settled(model)
+        let calls = held.calls
+        // Oct 20's render range (Oct 19-21) shares no day with anything
+        // read so far: a cache miss. The provider read hangs, and the old
+        // blocks stay up rather than flashing empty.
         held.held = true
-        model.land(on: utc("2026-10-15T00:00:00Z"))
+        model.land(on: utc("2026-10-20T00:00:00Z"))
         async let load: () = model.load()
-        await Task.yield()
-        await Task.yield()
+        await held.started(calls + 1)
         #expect(model.blocks.count == 1)
         held.release()
         await load
+        // Once it lands, the new range's own (empty) blocks replace them.
+        #expect(model.blocks.isEmpty)
     }
 
     @Test func theCacheIsKeyedByRenderRange() async {
@@ -767,7 +776,10 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         return block
     }
 
-    @Test func aRestoredSnapshotPaintsBeforeTheLoadLands() async {
+    // The time limit fails the test instead of hanging the suite if the
+    // load never asks the provider.
+    @Test(.timeLimit(.minutes(1)))
+    func aRestoredSnapshotPaintsBeforeTheLoadLands() async {
         // Snapshot entries are keyed by render range: the visible week
         // Oct 12–19 plus one window of buffer on each side.
         let snap = CalendarSnapshot(ranges: [
@@ -778,7 +790,7 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
                                   now: { utc("2026-10-14T12:00:00Z") },
                                   calendar: calendar, restored: snap)
         async let load: () = model.load()
-        await Task.yield()
+        await held.started()
         // The cached range's blocks are on screen while the provider's
         // read is still suspended.
         #expect(model.blocks.count == 1)
@@ -810,19 +822,24 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         #expect(model.blocks.map(\.project) == ["prev", "now"])
     }
 
-    @Test func aCompletedScanKeepsStaleBlocksUntilTheRefetchLands() async {
+    // The time limit fails the test instead of hanging the suite if the
+    // prefetches never settle or the refetch never asks the provider.
+    @Test(.timeLimit(.minutes(1)))
+    func aCompletedScanKeepsStaleBlocksUntilTheRefetchLands() async {
         let held = HeldActivity(blocks: [block("2026-10-14T09:00:00Z")])
         held.held = false
         let model = CalendarModel(providers: [held], defaults: freshDefaults(),
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         await model.load()
         #expect(model.blocks.count == 1)
+        // The prefetches land first, so the next read is the refetch.
+        await settled(model)
+        let calls = held.calls
         // Next load hangs; the stale range stays visible meanwhile.
         held.held = true
         model.noteScanCompleted()
         async let load: () = model.load(force: true)
-        await Task.yield()
-        await Task.yield()
+        await held.started(calls + 1)
         #expect(model.blocks.count == 1)
         held.release()
         await load
@@ -843,14 +860,12 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         #expect(saved.ranges.contains {
             $0.start == utc("2026-10-05T00:00:00Z") && $0.end == utc("2026-10-26T00:00:00Z")
         })
-        // A new model hydrates from it.
+        // A new model hydrates from it, before any load.
         let restored = CalendarModel(providers: [provider], defaults: freshDefaults(),
                                      now: { utc("2026-10-14T12:00:00Z") },
                                      calendar: calendar, restored: saved)
-        async let load: () = restored.load()
-        await Task.yield()
         #expect(restored.blocks.count == 1)
-        await load
+        await restored.load()
     }
 
     // The time limit fails the test instead of hanging the suite if

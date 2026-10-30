@@ -2,15 +2,6 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
-/// A scratch directory used as the user's home. The accounts root sits under
-/// it the way it does in production: <home>/.quiver/accounts.
-private func scratch() throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("quiver-profiles-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
-}
-
 private func root(of home: URL) -> URL {
     home.appendingPathComponent(".quiver/accounts", isDirectory: true)
 }
@@ -20,6 +11,14 @@ private func makeStore(_ home: URL) -> ProfileStore {
 }
 
 @Suite struct ProfileStoreTests {
+    /// Each test gets its own instance, so its folder goes when the test ends.
+    private let home: TempDir
+    init() throws { home = try TempDir() }
+
+    /// A scratch directory used as the user's home. The accounts root sits
+    /// under it the way it does in production: <home>/.quiver/accounts.
+    private func scratch() throws -> URL { home.url }
+
     @Test func aStoreWithNoFileStillListsTheTwoDefaultsFirst() throws {
         let home = try scratch()
         let profiles = try makeStore(home).load()

@@ -170,7 +170,7 @@ import Testing
 
     /// Signals that a gated fake has parked, so a test awaits the park
     /// on a continuation instead of spinning the cooperative pool with
-    /// yield loops. `wait` gives up after ten seconds so a fake that
+    /// yield loops. `wait` gives up after `gateTimeout` so a fake that
     /// never parks fails the test rather than hanging the suite.
     actor GateFlag {
         private var raised = false
@@ -185,7 +185,7 @@ import Testing
             for waiter in pending.values { waiter.resume(returning: true) }
         }
 
-        /// True once `raise` has run, false if ten seconds pass first.
+        /// True once `raise` has run, false if `gateTimeout` passes first.
         /// Checking `raised` and registering the waiter happen inside one
         /// actor step, so a `raise` can never slip between them and leave
         /// the waiter parked until the timeout.
@@ -205,7 +205,7 @@ import Testing
         /// The timeout resumes only its own waiter, and only if `raise`
         /// has not already answered it.
         private func expire(_ id: Int) async {
-            try? await Task.sleep(for: .seconds(10))
+            try? await Task.sleep(for: gateTimeout)
             waiters.removeValue(forKey: id)?.resume(returning: false)
         }
     }
@@ -673,7 +673,7 @@ import Testing
         #expect(model.processes["claude"]?.first?.flags.contains(.busy) == true)
     }
 
-    @MainActor @Test func changingTheIntervalWakesTheLoopRightAway() async {
+    @MainActor @Test(.timeLimit(.minutes(1))) func changingTheIntervalWakesTheLoopRightAway() async {
         // A sleep that records each requested duration, then parks until
         // the task is cancelled (Task.sleep observes the cancellation) or
         // the test ends it, so no loop outlives the test.

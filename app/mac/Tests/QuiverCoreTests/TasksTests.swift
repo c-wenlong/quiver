@@ -856,7 +856,10 @@ extension HubStubbed {
 /// keeping the rows it had, and link/unlink writing the store.
 @MainActor
 @Suite struct TasksModelTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// Each test gets its own instance, so its folder goes when the test ends.
+    private let scratch: TempDir
+    private var dir: URL { scratch.url }
+    init() throws { scratch = try TempDir() }
 
     /// The page payload the stub answers — `nonisolated` so the
     /// Sendable request handler can read it.

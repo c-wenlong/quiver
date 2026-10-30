@@ -149,9 +149,15 @@ let harnessesJSON = #"""
         await model.load()
         let codex = try #require(model.all.first { $0.name == "codex" })
         let opencode = try #require(model.all.first { $0.name == "opencode" })
-        async let a: Void = model.toggleStar(codex)
-        async let b: Void = model.archive(opencode, reason: "slow")
-        _ = await (a, b)
+        let star = Task { await model.toggleStar(codex) }
+        let archive = Task { await model.archive(opencode, reason: "slow") }
+        // Both changes have asked while the first swe run is held, so a
+        // second run that did not wait its turn would overlap it.
+        #expect(await runner.firstCounted.arrived())
+        #expect(await observe { model.busy.count == 2 })
+        runner.firstCounted.open()
+        await star.value
+        await archive.value
         #expect(runner.calls.filter { $0.first == "harness" }.count == 2)
         #expect(runner.peak == 1)
         #expect(model.busy.isEmpty)

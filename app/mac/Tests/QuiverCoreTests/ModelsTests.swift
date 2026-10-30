@@ -825,11 +825,15 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
     /// is one in-flight call.
     private final class SlicesGate: @unchecked Sendable {
         private let state = Mutex<[CheckedContinuation<[ModelUsage], Never>]>([])
+        /// Bumped once a call is parked, for the test to wait on.
+        let parked = CountGate()
         var pendingCount: Int { state.withLock { $0.count } }
         func call(_ range: DateInterval) async -> [ModelUsage] {
             _ = range
+            let parked = self.parked
             return await withCheckedContinuation { continuation in
                 state.withLock { $0.append(continuation) }
+                Task { await parked.bump() }
             }
         }
         func resume(_ index: Int, with value: [ModelUsage]) {
@@ -848,9 +852,7 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
     }
 
     private func waitForCalls(_ gate: SlicesGate, _ count: Int) async throws {
-        while gate.pendingCount < count {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try #require(await gate.parked.reach(count))
     }
 
     @Test func anOlderPeriodAnswerCannotOverwriteANewerOne() async throws {
@@ -892,15 +894,21 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
             var waiting: [CheckedContinuation<String?, Never>] = []
         }
         private let state = Mutex(State())
-        var pendingCount: Int { state.withLock { $0.waiting.count } }
+        /// Bumped once a call is waiting on the closed gate.
+        let parked = CountGate()
         func call() async -> String? {
-            await withCheckedContinuation { continuation in
+            let parked = self.parked
+            return await withCheckedContinuation { continuation in
                 let ready: String?? = state.withLock { state in
                     if state.open { return .some(state.value) }
                     state.waiting.append(continuation)
                     return .none
                 }
-                if case .some(let value) = ready { continuation.resume(returning: value) }
+                if case .some(let value) = ready {
+                    continuation.resume(returning: value)
+                } else {
+                    Task { await parked.bump() }
+                }
             }
         }
         func close() { state.withLock { $0.open = false } }
@@ -933,7 +941,7 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
 
         gate.close()
         let loading = Task { await model.load(allowRefresh: false) }
-        while gate.pendingCount < 1 { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await gate.parked.reach(1))
         await model.loadIfNeeded(usageStamp: 1)
         gate.open(with: "key")
         await loading.value
@@ -941,14 +949,15 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(!model.isLoading)
     }
 
-    /// Answers every endpoint after a short wait that throws once the
-    /// calling task is cancelled, like URLSession.
+    /// Answers every endpoint once `gate` opens; a request whose calling
+    /// task is cancelled while it waits throws, like URLSession.
     private final class SlowHTTP: HTTPTransport, @unchecked Sendable {
         private let count = Mutex(0)
+        let gate = HoldGate()
         var requests: Int { count.withLock { $0 } }
         func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
             count.withLock { $0 += 1 }
-            try await Task.sleep(for: .milliseconds(20))
+            try await gate.pass()
             let body = #"{"data":[{"id":"m","name":"M","slug":"m","model_creator":{"id":"c","name":"C","slug":"c"},"evaluations":{},"pricing":{}}]}"#
             return (body.data(using: .utf8)!,
                     HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: [:])!)
@@ -965,8 +974,11 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
                                 linksURL: dir.path("links.json"),
                                 slices: { _ in [] })
         let page = Task { await model.load() }
-        while transport.requests < 1 { try await Task.sleep(for: .milliseconds(2)) }
+        #expect(await transport.gate.arrived())
+        // A refresh tied to the page would throw from the parked request
+        // right here; one that outlives the page goes on once opened.
         page.cancel()
+        transport.gate.open()
         await page.value
         #expect(model.refreshError == nil)
         #expect(transport.requests == AAEndpoint.allCases.count)
