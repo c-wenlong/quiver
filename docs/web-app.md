@@ -23,7 +23,7 @@ client sees it.
 | Pages | `src/quiver/webapp/static/` | Plain HTML, CSS and JS. No build step, no framework, no CDN. Same Devin-derived look as the Mac app (`Theme.swift`); the CSS variables in `styles.css` carry the same names. |
 | Page data | `src/quiver/webapp/api.py`, `src/quiver/webapp/pages/` | Builds each page's JSON from the domain services, in process, the way `/v1/usage` does. |
 | Ledger | `src/quiver/ledger/` | The Python port of `QuiverCore/Ledger`: scans harness logs into its own SQLite store and prices tokens. |
-| Routes | `src/quiver/remote/hub.py` | `/` serves the app and its assets as flat names beside it (`_serve_static`, names checked by `webapp/static.py`); `/v1/app/*` serves their data. Old `/app/…` paths redirect to `/`. |
+| Routes | `src/quiver/remote/hub.py` | `/` serves the app and its assets as flat names beside it (`_serve_static`, names checked by `webapp/static.py`); `/v1/app/*` serves their data. Old `/app/…` paths redirect to the same name at the root. |
 
 The hub already runs on the always-on machine, binds 127.0.0.1 and is
 published by Tailscale Serve, so the web app needs no new port, process or
