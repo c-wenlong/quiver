@@ -304,7 +304,9 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         try file.rename(name: "BETA_KEY", to: "DELTA_KEY")
         #expect(file.text == Self.moveFile.replacingOccurrences(
             of: "export BETA_KEY=\"b2\"", with: "export DELTA_KEY=\"b2\""))
-        try file.rename(name: "BETA_KEY", to: "BETA_KEY") // a no-op, not an error
+        let renamed = file.text
+        try file.rename(name: "DELTA_KEY", to: "DELTA_KEY") // a no-op, not an error
+        #expect(file.text == renamed)
     }
 
     @Test func aRenameNeedsAFreeValidName() throws {

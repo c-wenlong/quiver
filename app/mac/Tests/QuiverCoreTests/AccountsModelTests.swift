@@ -14,9 +14,13 @@ final class FakeUsage: UsageFetching, @unchecked Sendable {
     /// Config homes asked of the no-network cache.
     var cachedRequests: [String] { lock.withLock { recordedCached } }
     private var recordedCached: [String] = []
+    /// When set, every live read parks here first, so a test can look at
+    /// the cards while the fetch is still running.
+    var gate: HoldGate?
 
     func usage(for key: AccountKey, force: Bool, freshFor _: TimeInterval) async -> AccountUsage {
-        lock.withLock {
+        try? await gate?.pass()
+        return lock.withLock {
             recorded.append((key, force))
             return byHome[key.configHome]
                 ?? AccountUsage(status: .signedOut, plan: nil, email: nil, windows: [], fetchedAt: nil, isStale: false)
@@ -510,9 +514,16 @@ final class FakeRunningInstances: RunningInstances {
         usage.cached[home] = AccountUsage(status: .rateLimited(until: .distantFuture),
                                           windows: reading.windows,
                                           fetchedAt: .now, isStale: true)
-        await model.load(force: false)
-        // The cache answered without a keychain read and the card saw it.
+        let gate = HoldGate()
+        usage.gate = gate
+        let load = Task { await model.load(force: false) }
+        // The fetch is parked, so the card shows only what the cache gave.
+        #expect(await gate.arrived())
         #expect(usage.cachedRequests.contains(home))
+        let card = model.cards.first { $0.id == "claude-default" }
+        #expect(card?.usage == usage.cached[home])
+        gate.open()
+        await load.value
     }
 
     @Test(.timeLimit(.minutes(1))) func aSecondPressSkipsAccountsAlreadyRenewing() async throws {
