@@ -916,9 +916,9 @@ private struct LinkSheet: View {
                         Button { pick(aa.id) } label: {
                             HStack(spacing: 8) {
                                 let vendor = ModelVendor.of(aa)
-                                if let icon = vendor.icon, HarnessIcon.exists(for: icon) {
-                                    HarnessIcon(harness: icon, size: 16)
-                                }
+                                // As every view naming a model: its lab's logo
+                                // first, a blank square when there is none.
+                                BrandLogo(vendor: vendor, size: 16)
                                 Text(aa.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                                     .lineLimit(1).truncationMode(.tail)
                                 Spacer()
