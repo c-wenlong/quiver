@@ -1071,6 +1071,8 @@ class TestEndToEnd(unittest.TestCase):
                 sess = _session("r1")
                 agent.catalog._fetch = lambda: [sess]
                 agent.catalog._status_of = lambda ss: ["idle"]
+                # The usage push would fetch real provider quotas.
+                agent._usage_loop = lambda: None
                 fake = MagicMock()
                 fake.send.return_value = inject.InjectResult(True, "sent")
                 mid = agent.machine_id
@@ -1144,10 +1146,6 @@ class TestEndToEnd(unittest.TestCase):
                 self.assertFalse(row["online"])
             finally:
                 srv.stop()
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestAgentEdges(unittest.TestCase):
@@ -1714,8 +1712,9 @@ class TestAgentLoopEdges(unittest.TestCase):
         ag._register = lambda: None
         ag._push_catalog = lambda: True
         # Loop bodies exit instantly; run() then waits on _stop.
+        # _usage_loop too: its push reads real provider quotas.
         ag._uplink_loop = ag._catalog_loop = ag._tail_loop = \
-            ag._downlink_loop = lambda: None
+            ag._downlink_loop = ag._usage_loop = lambda: None
         t = threading.Thread(target=ag.run, daemon=True)
         t.start()
         time.sleep(0.2)
@@ -2231,3 +2230,7 @@ class TestReviewHubFixes(unittest.TestCase):
         seqs = st._sat_cmd_seqs["sat-m1"]
         self.assertNotIn(first["data"]["command_id"], seqs)
         self.assertEqual(len(seqs), 1)  # the unacked command stays
+
+
+if __name__ == "__main__":
+    unittest.main()

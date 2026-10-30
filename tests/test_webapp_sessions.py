@@ -1001,10 +1001,6 @@ class TestChatScript(unittest.TestCase):
         self.assertEqual(out["newest"], ["new"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 SESSIONS_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/sessions.js"
 
 
@@ -1118,3 +1114,7 @@ class TestTranscriptSearchBox(unittest.TestCase):
         """, {"status": 0, "data": None})
         self.assertEqual(out["kept"], ["k1"])
         self.assertIn("Couldn't reach transcript search", out["note"])
+
+
+if __name__ == "__main__":
+    unittest.main()
