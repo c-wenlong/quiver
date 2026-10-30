@@ -570,6 +570,56 @@ class TestAttachments(unittest.TestCase):
             stat.S_IMODE(Path(placed["path"]).stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(folder.stat().st_mode), 0o700)
 
+    def test_modes_are_set_before_the_first_byte(self):
+        # The point is no readable window: at the first write the file
+        # must already be 0600 and its folders 0700, for a new upload
+        # and for one replacing a loose file in a loose folder.
+        import stat
+        real_fdopen = os.fdopen
+        seen = []
+
+        class Checked:
+            def __init__(self, fh, folder):
+                self.fh, self.folder = fh, folder
+
+            def __enter__(self):
+                self.fh.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self.fh.__exit__(*exc)
+
+            def fileno(self):
+                return self.fh.fileno()
+
+            def write(self, data):
+                seen.append((
+                    stat.S_IMODE(os.fstat(self.fh.fileno()).st_mode),
+                    stat.S_IMODE(self.folder.stat().st_mode),
+                    stat.S_IMODE(self.folder.parent.stat().st_mode)))
+                return self.fh.write(data)
+
+        loose = attachments.inbox_dir(self.home, "claude:s2")
+        loose.mkdir(parents=True)
+        os.chmod(loose.parent, 0o755)
+        os.chmod(loose, 0o755)
+        (loose / "r.png").write_bytes(b"old")
+        os.chmod(loose / "r.png", 0o644)
+
+        def fdopen(fd, mode="r", *a, **kw):
+            return Checked(real_fdopen(fd, mode, *a, **kw), self._folder)
+
+        old_umask = os.umask(0o022)
+        try:
+            with patch.object(attachments.os, "fdopen", side_effect=fdopen):
+                self._folder = attachments.inbox_dir(self.home, self.key)
+                attachments.stage(self.home, self.key, "s.png", b"x")
+                self._folder = loose
+                attachments.place(self.home, "claude:s2", "r.png", b"new")
+        finally:
+            os.umask(old_umask)
+        self.assertEqual(seen, [(0o600, 0o700, 0o700)] * 2)
+
     def test_caps_and_types(self):
         payload, err = attachments.stage(self.home, self.key, "x.exe", b"x")
         self.assertIsNone(payload)
