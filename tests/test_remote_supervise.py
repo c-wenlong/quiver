@@ -238,6 +238,23 @@ class TestTmuxHelpers(unittest.TestCase):
             "/opt/bin/claude", "--resume", "s1",
         ])
 
+    def test_launch_tmux_never_passes_a_lone_command(self):
+        # One command argument makes tmux run it through default-shell
+        # -c (zsh rebuilds PATH; a space in the path splits it). A
+        # launch with no extra args must still reach tmux as an argv.
+        with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
+             patch.object(supervise, "tmux_alive", side_effect=[False, True]), \
+             patch.object(supervise.shutil, "which",
+                          return_value="/Users/a b/bin/claude"), \
+             patch.object(supervise.time, "sleep"), \
+             patch.dict(supervise.os.environ, {"PATH": "/usr/bin"}), \
+             patch.object(supervise, "_tmux", return_value=self._cp()) as t:
+            name = supervise.launch_tmux("claude:s1", ["claude"], None)
+        self.assertEqual(list(t.call_args[0]), [
+            "new-session", "-d", "-s", name, "-e", "PATH=/usr/bin",
+            "/usr/bin/env", "/Users/a b/bin/claude",
+        ])
+
     def test_launch_tmux_edges(self):
         # No tmux → None. A live session under the name is not ours
         # (callers launch only when nothing is supervised or kept for
