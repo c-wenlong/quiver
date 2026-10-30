@@ -157,6 +157,8 @@ are server changes in `src/quiver/remote/`.
 - [x] "Resolve with agent" sheet: "Starts in" card naming `repo · quiver/issue-<n>`, the harness icon grid, prompt field prefilled with `suggested_prompt` — a row's Resolve has no detail yet, so the sheet fetches it for the prefill and a blank field still lets the hub build the brief
 - [x] Hub: `GET /v1/issues` (list + `mine`, `?state=` picks the `gh` list state for the Closed chip), `GET /v1/issues/<o>/<r>/<n>` (detail), `POST /v1/issues/resolve {repo, number, harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the issues stack
 - [x] Comments on the detail page
+- [x] Comment box under the thread, posting through the hub's `gh` login (`POST /v1/issues/comment {repo, number, body}`); a refusal keeps the draft, a post reads the issue again
+- [x] Resolve sheet: "Your context (optional)" (sent as `context`) and "Also post as a comment on #<n>", on by default as on the Mac; a refused comment is a warning and the launch goes ahead, and a retried Start doesn't post the same context twice
 - [x] Closed-issue filter chip (fetches `?state=closed` on first pick)
 - [x] Issues tab: list → detail (comments) → resolve sheet on the hub-served web app, the same loop browsers and Android get
 - [ ] "Assigned to you" push notifications once APNs lands
