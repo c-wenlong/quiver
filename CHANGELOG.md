@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: issue detail and Resolve from Repositories.** An issue row
+  now opens a sheet with the issue's body and comments (read only, from
+  the hub's `GET /v1/issues/<owner>/<repo>/<n>`), Open on GitHub, and
+  Resolve with agent: harness, model, your context and the first prompt,
+  posted to `POST /v1/issues/resolve`, then the chat opens. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **Remote: a `limit` notification when a session hits its usage
   limit.** The hub and satellites now raise `notify` kind `limit` when
   a Claude Code session writes its rate-limit record ("You've hit your

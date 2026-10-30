@@ -91,8 +91,29 @@ rail; the rail's CI dot is the newest run on the default branch; the
 same empty texts and row layouts (PR state, review and check icons with
 their hover words, issue comments and assignees, run conclusion badges,
 Pages facts, release, tag and branch badges and shas). A PR row opens
-the PR sheet; every other row opens GitHub. Below 960px the rail folds
+the PR sheet and an issue row the issue sheet; every other row opens
+GitHub. Below 960px the rail folds
 into a strip of repo chips under the title.
+
+**Issue sheet** (the Mac app's IssueDetailSheet), from an issue row on
+the dashboard or the focus page. It reads the hub's
+`GET /v1/issues/<owner>/<repo>/<n>` (`remote/issues.py`: `gh issue view`
+behind the same one-minute cache) and shows the title, number, author
+and age, labels and assignees, the body and every comment as Markdown,
+each comment with a link to it on GitHub. The footer has Resolve with
+agent (off for a closed issue), Open on GitHub, Fetch again and Done.
+Comments are read only: the hub has no route that posts one, so the
+Mac's composer has no web twin yet.
+
+Resolve with agent opens the Mac's ResolveIssueSheet as a panel in the
+sheet: where it starts (`quiver/issue-<n>`, a worktree off the default
+branch on the hub), the harness, the shared Model menu
+(`static/model-menu.js`), Your context (optional) and the first prompt,
+prefilled with the hub's `suggested_prompt` (emptied, the hub writes
+it). Start posts `POST /v1/issues/resolve` with `{repo, number, harness,
+prompt, context?, model?}` and follows the launch as Open in session
+does: the chat opens once the session shows up. The Mac's "Also post as
+a comment" switch is left out for the same reason as the composer.
 
 **Focus page** (`repo=owner/name`, the hash route
 `#/repositories?repo=owner/name`, opened from a repo header's expand
