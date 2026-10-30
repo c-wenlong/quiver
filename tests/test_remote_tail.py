@@ -171,6 +171,19 @@ class TestJsonlTailSource(unittest.TestCase):
         self._write([_claude_user("next")])
         self.assertEqual(src.poll()[0]["text"], "next")
 
+    def test_a_deeply_nested_record_is_skipped(self):
+        deep = ("[" * 100_000).encode()
+        with open(self.path, "ab") as fh:
+            fh.write(deep + b"\n")
+        self._write([_claude_user("after")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        self.assertEqual([m["text"] for m in src.poll()], ["after"])
+
+    def test_skipping_a_vanished_oversized_record_does_not_raise(self):
+        src = tail.JsonlTailSource(self.path, "claude")
+        self.path.unlink(missing_ok=True)
+        self.assertEqual(src._skip_oversized(), src.offset + tail._MAX_CHUNK)
+
     def test_truncate_to_a_prefix_emits_nothing_until_appends(self):
         # A file cut in place to a strict prefix of what was read
         # (copytruncate before the next write lands) holds no new

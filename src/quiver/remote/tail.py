@@ -635,7 +635,7 @@ class JsonlTailSource:
                 continue
             try:
                 rec = json.loads(raw.decode("utf-8", errors="replace"))
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if isinstance(rec, dict):
                 out.extend(decode_record(self.tool_name, rec))
@@ -648,6 +648,7 @@ class JsonlTailSource:
         multi-MB single line can't starve everything appended after it.
         """
         offset = self.offset + _MAX_CHUNK
+        size = offset
         try:
             size = self.path.stat().st_size
             with open(self.path, "rb") as fh:
