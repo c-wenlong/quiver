@@ -1,0 +1,29 @@
+{
+  "note": "Made-up session logs read by both ActivityParityTests.swift and tests/test_webapp_calendar_sources.py: each source's per-session blocks (ActivityBlocks.make, before project grouping) over the range, sorted by session then start. A Pi session id is its file path, given here relative to the source's root.",
+  "range": [1786320000, 1786406400],
+  "gap": 1800,
+  "sources": {
+    "pi": {
+      "root": "pi/agent/sessions",
+      "account": "/made-up/.pi",
+      "blocks": [
+        {"session": "--work-b--/1786276800_bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl", "cwd": "/work/b",
+         "start": 1786319400, "end": 1786320600, "responses": 2},
+        {"session": "--work-pi--/1786350600_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl", "cwd": "/work/pi",
+         "start": 1786350720, "end": 1786350840, "responses": 2},
+        {"session": "--work-pi--/1786350600_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl", "cwd": "/work/pi",
+         "start": 1786354800.5, "end": 1786356300, "responses": 2}
+      ]
+    },
+    "droid": {
+      "root": "droid/sessions",
+      "account": "/made-up/.factory",
+      "blocks": [
+        {"session": "11111111-2222-3333-4444-555555555555", "cwd": "/work/app",
+         "start": 1786351036.298, "end": 1786351200, "responses": 2},
+        {"session": "22222222-2222-3333-4444-555555555555", "cwd": null,
+         "start": 1786362300, "end": 1786365000, "responses": 3}
+      ]
+    }
+  }
+}

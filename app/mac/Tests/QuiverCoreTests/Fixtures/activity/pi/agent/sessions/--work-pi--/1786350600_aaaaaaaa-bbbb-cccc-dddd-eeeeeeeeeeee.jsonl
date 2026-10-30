@@ -1,0 +1,12 @@
+{"type":"session","id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","timestamp":"2026-08-10T08:30:00.000Z","cwd":"/work/pi"}
+{"type":"session","cwd":"/work/second-session-line"}
+{"type":"model_change","timestamp":"2026-08-10T08:31:00.000Z"}
+{"type":"message","timestamp":"2026-08-10T08:32:00.000Z"}
+not json
+[1,2]
+{"type":"message"}
+{"type":"message","timestamp":"2026-08-10T16:34:00+08:00"}
+{"type":"thinking_level_change","timestamp":"2026-08-10T09:00:00.000Z"}
+{"type":"message","timestamp":"2026-08-10T09:40:00.5Z"}
+{"type":"message","timestamp":"2026-08-10T10:05:00Z"}
+{"type":"message","timestamp":"2026-08-10T23:00:00.000Z"}
