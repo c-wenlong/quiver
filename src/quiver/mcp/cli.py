@@ -49,7 +49,7 @@ from quiver.mcp.secrets import load_secrets
 from quiver.mcp.secrets import redact as redact_secrets
 from quiver.mcp.secrets import resolve as resolve_secrets
 from quiver.mcp.secrets import scrub_args, scrub_url
-from quiver.mcp.secrets import set_secret
+from quiver.mcp.secrets import remove_secret, set_secret
 from quiver.mcp.secrets import unresolved_names
 from quiver.paths import atomic_write_text, CONFIG_DIR, MCP_SOURCE_FILE
 from quiver.mcp.formats import (
@@ -1846,10 +1846,13 @@ def cmd_secret(args):
         return 0
     # Under --json stdout is one document, so refusals go to stderr.
     refusal = error_stream(json_view)
+    if args and args[0] == "remove":
+        return _secret_remove(args[1:], json_view, refusal)
     if not args or args[0] != "set":
         if args:
             print(f"Unknown secret command: {args[0]}", file=refusal)
-        print(f"Usage: {c('cyan', 'swe mcp secret set NAME')}", file=refusal)
+        print(f"Usage: {c('cyan', 'swe mcp secret set NAME')} | "
+              f"{c('cyan', 'swe mcp secret remove NAME')}", file=refusal)
         return 1
     rest = args[1:]
     if len(rest) != 1 or rest[0].startswith("-"):
@@ -1865,14 +1868,36 @@ def cmd_secret(args):
         value = sys.stdin.read()
     if value.endswith("\n"):
         value = value[:-1]
+    # Whether the name already held a value, so a caller that stored it
+    # for a step that then failed (the app's Add server) knows whether
+    # removing it again restores the store.
+    replaced = name in load_secrets()
     try:
         path, created = set_secret(name, value)
     except ValueError as exc:
         print(c("red", str(exc)), file=refusal)
         return 1
     if json_view:
-        return emit({"name": name, "path": str(path), "created": created})
+        return emit({"name": name, "path": str(path), "created": created,
+                     "replaced": replaced})
     print(f"Saved {name} to {path}")
+    return 0
+
+
+def _secret_remove(rest, json_view, refusal):
+    """``swe mcp secret remove NAME``: drop a stored value."""
+    if len(rest) != 1 or rest[0].startswith("-"):
+        print(f"Usage: {c('cyan', 'swe mcp secret remove NAME')}", file=refusal)
+        return 1
+    name = rest[0]
+    try:
+        removed = remove_secret(name)
+    except ValueError as exc:
+        print(c("red", str(exc)), file=refusal)
+        return 1
+    if json_view:
+        return emit({"name": name, "removed": removed})
+    print(f"Removed {name}" if removed else f"No value stored for {name}")
     return 0
 
 
@@ -2337,6 +2362,7 @@ MCP_HELP = {
 
     "secret": f"""\
   {c('cyan', 'swe mcp secret set NAME')}       Store a ${'{'}NAME{'}'} value in ~/.quiver/secrets/mcp/.api_keys
+  {c('cyan', 'swe mcp secret remove NAME')}    Drop a stored value
 
   mcp.json keeps ${'{'}NAME{'}'} references; the values live in the secrets
   file, mode 600 and gitignored. Sync refuses to write a harness config

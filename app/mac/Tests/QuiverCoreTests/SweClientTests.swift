@@ -275,6 +275,23 @@ func fixture(_ name: String) throws -> Data {
             try await SweClient(runner: runner).mcpSecretSet(name: "A", value: "")
         }
     }
+
+    @Test func theResultSaysWhetherAValueWasReplaced() async throws {
+        let fresh = CommandResult(status: 0, stdout: Data(
+            #"{"schema":1,"data":{"name":"A","path":"/x","created":false,"replaced":false}}"#.utf8), stderr: "")
+        let set = try await SweClient(runner: FakeRunner(fresh)).mcpSecretSet(name: "A", value: "v")
+        #expect(set.replaced == false)
+        // An older swe says nothing, which must not read as "new".
+        let old = try await SweClient(runner: FakeRunner(reply)).mcpSecretSet(name: "MY_TOKEN", value: "v")
+        #expect(old.replaced == nil)
+    }
+
+    @Test func removeCallsSecretRemove() async throws {
+        let runner = FakeRunner(CommandResult(status: 0, stdout: Data(
+            #"{"schema":1,"data":{"name":"A","removed":true}}"#.utf8), stderr: ""))
+        #expect(try await SweClient(runner: runner).mcpSecretRemove(name: "A"))
+        #expect(runner.calls == [["mcp", "secret", "remove", "A", "--json"]])
+    }
 }
 
 @Suite struct McpServerSecretsMissingTests {

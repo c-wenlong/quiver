@@ -495,6 +495,27 @@ final class PrimitiveHome {
         #expect(!FileManager.default.fileExists(atPath: outside.appending(path: "go.md").path))
     }
 
+    /// A missing path ending in ".." used to loop forever; the missing
+    /// rest of a path now lands where its ".." takes it.
+    @Test func aMissingPathsDotsApplyOnTopOfItsExistingAncestor() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir("plugin")
+        let real = FolderOwners.trimmed(FolderOwners.realPath(root.path))
+        let parent = (real as NSString).deletingLastPathComponent
+        #expect(PrimitiveOwnership.resolvedAncestor(of: root.path + "/new/..") == real)
+        #expect(PrimitiveOwnership.resolvedAncestor(of: root.path + "/a/b/../c") == real + "/a/c")
+        #expect(PrimitiveOwnership.resolvedAncestor(of: root.path + "/new/../../out") == parent + "/out")
+    }
+
+    @Test func aNameThatIsntPlainIsRefused() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir("plugin")
+        for name in ["../../escape", "a/b", "..", ""] {
+            #expect(throws: Error.self) { try PrimitiveParts.create(.command, named: name, in: root) }
+        }
+        #expect(!FileManager.default.fileExists(atPath: t.home.appending(path: "escape.md").path))
+    }
+
     @Test func trashingASymlinkEscapeIsRefused() throws {
         let t = try PrimitiveHome()
         let root = try t.dir("plugin")

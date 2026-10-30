@@ -36,6 +36,15 @@ final class KeychainHubStoreTests: XCTestCase {
         XCTAssertEqual(loaded.hubs.map(\.credential.credential), ["c1", "c2"], "each hub keeps its own credential")
     }
 
+    func testSavingAgainReplacesTheCredentialInPlace() {
+        XCTAssertTrue(store.saveCredential(hub("mac", "old")))
+        XCTAssertTrue(store.saveCredential(hub("mac", "new")))
+        var list = HubList()
+        list.adopt(hub("mac"))
+        store.saveIndex(list)
+        XCTAssertEqual(store.load().hubs.map(\.credential.credential), ["new"])
+    }
+
     func testDeletingOneHubKeepsTheOther() {
         var list = HubList()
         list.adopt(hub("mac"))

@@ -824,10 +824,12 @@ class OpencodeSource:
 
     def _open(self) -> sqlite3.Connection | None:
         try:
+            # as_uri() percent-encodes the path: a raw "?" or "#" in a
+            # home folder name would end the file: URI early.
             return sqlite3.connect(
-                f"file:{self.db_path}?mode=ro", uri=True
+                Path(self.db_path).absolute().as_uri() + "?mode=ro", uri=True
             )
-        except sqlite3.Error:
+        except (sqlite3.Error, ValueError):
             return None
 
     def _role_for(self, conn: sqlite3.Connection, message_id: str) -> str:
@@ -1135,8 +1137,9 @@ def _devin_token(session_id: str) -> tuple | None:
     """Devin's newest message row and chain head for one session."""
     path = Path(os.path.expanduser(DEVIN_DB))
     try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
-    except sqlite3.Error:
+        conn = sqlite3.connect(path.absolute().as_uri() + "?mode=ro",
+                               uri=True, timeout=1.0)
+    except (sqlite3.Error, ValueError):
         return None
     try:
         rows = conn.execute(
@@ -1205,6 +1208,8 @@ class Tailer:
                 source.start_near_end()
         self.next_poll_at = 0.0
         self._pending_save = False
+        # (source, state) as the last poll left them; see ``poll``.
+        self._polled: tuple | None = None
         # Whether the last poll moved the source (bytes, rows or
         # fingerprints read), with or without a message to show: a
         # turn-ending record that decodes to nothing still moves it.
@@ -1250,9 +1255,15 @@ class Tailer:
         (duplicates, recoverable) instead of skipping messages forever.
         """
         self.next_poll_at = now + self.interval(active, hot)
-        before = self.source.state()
+        # The state the last poll left is this poll's "before", unless
+        # the source was replaced since (a resume moved the transcript):
+        # one state() per poll, not two.
+        last = self._polled
+        before = last[1] if last and last[0] is self.source \
+            else self.source.state()
         out = self.source.poll()
         after = self.source.state()
+        self._polled = (self.source, after)
         self.moved = bool(out) or after != before
         # A source can move without emitting (records that decode to
         # nothing, an opencode row still streaming), so compare the

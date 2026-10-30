@@ -714,8 +714,12 @@ class TestOrigin(_Base):
                        "created": True})), \
              patch("quiver.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")):
-            yield
-            self._wait()
+            try:
+                yield
+            finally:
+                # Even when the test fails: the launch thread must end
+                # while the patches still stand, or it runs for real.
+                self._wait()
 
     def _resolve(self):
         status, data = self.srv.request(

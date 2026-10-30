@@ -155,7 +155,7 @@ const GhUI = (() => {
    * fields typed into it) before its own read came back 401 again. */
   function gate(page) {
     stopPoll(page);
-    renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    renderGate();
   }
 
   function hashParams() {
