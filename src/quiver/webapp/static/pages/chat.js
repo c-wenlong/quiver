@@ -505,9 +505,9 @@ const SessionChat = (() => {
      The code a transcript shows — shell commands, tool arguments, file
      bodies and fenced blocks — tokenised by a small hand-rolled scanner
      (the web app has no build step, so no highlighter library). The same
-     rules live in src/quiver/remote/web/app.js and, in Swift, in
+     rules live, in Swift, in
      app/mac/Sources/QuiverCore/Syntax/SyntaxHighlight.swift; keep the
-     three in step. Token classes live in chat.css, their colours in
+     two in step. Token classes live in chat.css, their colours in
      styles.css's --tk-* variables (Theme.swift's syntax* colours). */
 
   const tkPattern = (k, src, boundary, flags) => ({ k, r: new RegExp(src, flags || "y"), b: !!boundary });

@@ -77,7 +77,7 @@ function renderHooks() {
 async function renderHooksList() {
   const p = hooksPage, gen = routeGen, mine = ++p.seq;
   if (!p.data) {
-    document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(false)}
+    document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(true)}
       <div class="card"><p class="empty">Reading hooks…</p></div></div>`;
     bindHooksHeader();
   } else {
