@@ -983,6 +983,19 @@ class _Handler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, code: str, message: str) -> None:
         self._send_json(status, protocol.error(code, message))
 
+    def _refuse_unless_attached(self, row: dict) -> bool:
+        """Answer 409 not_attached for a session the hub only observes.
+
+        Returns True when it refused, so the caller returns at once.
+        """
+        if row.get("ownership") == protocol.OWNERSHIP_ATTACHED:
+            return False
+        self._send_error(
+            409, "not_attached",
+            "session is observed: read-only until attached",
+        )
+        return True
+
     # -- request body bookkeeping -------------------------------------
     #
     # ``_unread`` is how many body bytes of the current request are still
@@ -2275,11 +2288,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._queue_action(key, row)
                 return
             if action in {"message", "approval"}:
-                if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-                    self._send_error(
-                        409, "not_attached",
-                        "session is observed: read-only until attached",
-                    )
+                if self._refuse_unless_attached(row):
                     return
                 if action == "message":
                     self._send_message(key, row)
@@ -2571,11 +2580,7 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
         if action != "attach" and action != "control":
-            if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-                self._send_error(
-                    409, "not_attached",
-                    "session is observed: read-only until attached",
-                )
+            if self._refuse_unless_attached(row):
                 return
         if action == "attachments":
             upload = self._read_upload()
@@ -2676,11 +2681,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "model": a_model or "", "effort": a_effort or "",
                 })
             else:
-                if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-                    self._send_error(
-                        409, "not_attached",
-                        "session is observed: read-only until attached",
-                    )
+                if self._refuse_unless_attached(row):
                     return
                 fields = {"ctl": op, "value": cmd.get("value") or ""}
                 if "mode" in cmd:
@@ -2934,11 +2935,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if op == "steer":
             # Sending now is a write: the same rules as a steer message.
-            if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-                self._send_error(
-                    409, "not_attached",
-                    "session is observed: read-only until attached",
-                )
+            if self._refuse_unless_attached(row):
                 return
             if state.sendq.pending(steer_key) >= MAX_SEND_BACKLOG:
                 self._send_error(
@@ -3072,11 +3069,7 @@ class _Handler(BaseHTTPRequestHandler):
         if op == "kill" or (op == "detach" and mode != "when_idle"):
             # A later detach or kill replaces a pending when_idle one.
             self._state.detaches.cancel(key, f"replaced by {op} {mode}")
-        if row.get("ownership") != protocol.OWNERSHIP_ATTACHED:
-            self._send_error(
-                409, "not_attached",
-                "session is observed: read-only until attached",
-            )
+        if self._refuse_unless_attached(row):
             return
         if op == "detach" and mode == "when_idle":
             self._detach_when_idle(key)
