@@ -27,6 +27,14 @@ import Testing
         #expect(report.findings.map(\.harness) == [nil, nil])
     }
 
+    /// Run state and errors are keyed by id, so two findings whose check
+    /// and message only differ in where they split must not share one.
+    @Test func findingIdsKeepCheckAndMessageApart() {
+        let a = DoctorReport.Finding(check: "ab", severity: .error, message: "c")
+        let b = DoctorReport.Finding(check: "a", severity: .error, message: "bc")
+        #expect(a.id != b.id)
+    }
+
     /// An off-PATH finding names its harness, so the page can show its logo.
     @Test func aFindingAboutOneHarnessNamesIt() async {
         let offPath = Data(#"""
@@ -102,6 +110,19 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
             return
         }
         #expect(report.findings.map(\.check) == ["new"])
+    }
+
+    /// A load cancelled with its page puts the previous state back: left
+    /// at .loading, the spinner and isBusy stayed on for good.
+    @Test func aCancelledLoadDoesNotSpinForever() async throws {
+        let runner = StuckRunner()
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let task = Task { await model.load() }
+        while runner.started == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        task.cancel()
+        await task.value
+        #expect(model.state == .idle)
+        #expect(!model.isBusy)
     }
 }
 

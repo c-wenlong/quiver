@@ -505,10 +505,18 @@ extension SweClient {
 
     /// `swe mcp secret set NAME` with the value on stdin: never in argv,
     /// logs or the error text, where it would leak.
-    public func mcpSecretSet(name: String, value: String) async throws {
-        let _: McpSecretSetResult = try await call(
-            ["mcp", "secret", "set", name, "--json"],
-            input: Data((value + "\n").utf8))
+    @discardableResult
+    public func mcpSecretSet(name: String, value: String) async throws -> McpSecretSetResult {
+        try await call(["mcp", "secret", "set", name, "--json"],
+                       input: Data((value + "\n").utf8))
+    }
+
+    /// `swe mcp secret remove NAME`: drops a stored value. True when one
+    /// was there.
+    @discardableResult
+    public func mcpSecretRemove(name: String) async throws -> Bool {
+        let result: McpSecretRemoveResult = try await call(["mcp", "secret", "remove", name, "--json"])
+        return result.removed
     }
 
     /// Adds `spec` to the hub, and to each of `harnesses` when asked.
@@ -533,6 +541,15 @@ public struct McpSecretSetResult: Decodable, Sendable, Equatable {
     public let name: String
     public let path: String
     public let created: Bool
+    /// Whether the name held a value before. Nil from a swe too old to
+    /// say, which a caller undoing the set must read as true.
+    public let replaced: Bool?
+}
+
+/// `swe mcp secret remove --json`.
+public struct McpSecretRemoveResult: Decodable, Sendable, Equatable {
+    public let name: String
+    public let removed: Bool
 }
 
 /// What `swe mcp add` writes, before it becomes argv.

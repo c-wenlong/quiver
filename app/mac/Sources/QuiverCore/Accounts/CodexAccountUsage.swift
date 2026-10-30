@@ -152,7 +152,9 @@ public final class CodexAccountUsage {
         lastHomes = homes
         await recompute()
         while !Task.isCancelled {
-            await refresh(homes: homes())
+            // Not refresh(homes:): that would pin `lastHomes` to this
+            // pass's list, and Refresh would miss an account added later.
+            await fetchAll(homes())
             do {
                 try await Task.sleep(for: .seconds(Self.interval))
             } catch { return }
@@ -163,7 +165,7 @@ public final class CodexAccountUsage {
     /// `force` just documents that this is the user asking, not the
     /// six-hour timer; both refetch every account.
     public func refresh(force: Bool) async {
-        await refresh(homes: lastHomes(), force: force)
+        await fetchAll(lastHomes())
     }
 
     /// The swe path changed in Settings: the "too old" verdict was about
@@ -172,7 +174,7 @@ public final class CodexAccountUsage {
         requestGeneration += 1
         fetching.removeAll()
         sweTooOld = false
-        await refresh(homes: lastHomes(), force: true)
+        await fetchAll(lastHomes())
     }
 
     /// Rebuild `sections` from the cached entries and the ledger, for
@@ -229,6 +231,10 @@ public final class CodexAccountUsage {
     /// the session and logs once.
     public func refresh(homes: [String], force: Bool = false) async {
         lastHomes = { homes }
+        await fetchAll(homes)
+    }
+
+    private func fetchAll(_ homes: [String]) async {
         guard !sweTooOld else { return }
         requestGeneration += 1
         let generation = requestGeneration

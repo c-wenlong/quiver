@@ -41,7 +41,7 @@ private struct OverviewContent: View {
                 .iconButton()
                 .disabled(model.isLoading)
                 .keyboardShortcut("r", modifiers: .command)
-                .help("Read new usage from the harness logs (⌘R)")
+                .hoverTip("Read new usage from the harness logs (⌘R)", replacesLabel: false)
         } content: {
             if let error = model.error {
                 ErrorCard(message: error)
@@ -345,13 +345,15 @@ private struct TotalCard: View {
             RollingText(text: cost, font: Self.figureFont, color: NSColor(Theme.accent), up: up)
                 .overlay {
                     if totals.unpricedTokens > 0 {
+                        // The tip goes on the button, as CopyButton's
+                        // does: on the label its tap pinned the tip and
+                        // the button never opened Pricing.
                         Button { app.selection = .pricing } label: {
                             Image(systemName: "info.circle")
                                 .foregroundStyle(Theme.textSecondary)
-                                .hoverTip("\(UsageFormat.tokens(totals.unpricedTokens)) tokens from models with no list price aren't in this total: \(totals.unpricedModels.sorted().joined(separator: ", "))")
                         }
                         .buttonStyle(.plain)
-                        .help("See unpriced models on the Pricing page")
+                        .hoverTip("\(UsageFormat.tokens(totals.unpricedTokens)) tokens from models with no list price aren't in this total: \(totals.unpricedModels.sorted().joined(separator: ", ")). Click to see them on the Pricing page.")
                         .offset(x: RollingText.width(of: cost, font: Self.figureFont) / 2 + 14)
                     }
                 }
@@ -370,7 +372,8 @@ private struct TotalCard: View {
         .padding(.vertical, 12)
     }
 
-    // The AppKit fonts behind `Theme.caption`, `.display` and `.figure`.
+    // The AppKit fonts behind `Theme.caption` and `.figure`, and the 72 pt
+    // display size the total is drawn at.
     static var captionDigitsFont: NSFont { Theme.nsFont(size: 12, monospacedDigits: true) }
     static var displayFont: NSFont { Theme.nsFont(size: 72, weight: .bold, monospacedDigits: true) }
     static var figureFont: NSFont { Theme.nsFont(size: 20, weight: .bold, monospacedDigits: true) }
@@ -530,9 +533,9 @@ private struct BreakdownCard: View {
                     // An account with no logo keeps the square, so the names line up.
                     if withLogos {
                         HarnessIcon(harness: row.harness ?? "", size: 16)
-                            .help(row.harness.map { HarnessMark($0).name } ?? row.label)
+                            .hoverTip(row.harness.map { HarnessMark($0).name } ?? row.label)
                     }
-                    Text(row.label).lineLimit(1).truncationMode(.middle).help(row.home)
+                    Text(row.label).lineLimit(1).truncationMode(.middle).hoverTip(row.home, replacesLabel: false)
                     Spacer()
                     Text(UsageFormat.tokens(row.totals.totalTokens)).foregroundStyle(Theme.textSecondary)
                     Text(UsageFormat.dollars(row.totals.costUSD)).foregroundStyle(Theme.accent)
@@ -543,17 +546,6 @@ private struct BreakdownCard: View {
                 if row != shown.last { Divider().overlay(Theme.border) }
             }
         }
-    }
-}
-
-/// `rowHover` under the pointer.
-private struct RowHover: ViewModifier {
-    @State private var hovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(hovering ? Theme.rowHover : .clear)
-            .onHover { hovering = $0 }
     }
 }
 

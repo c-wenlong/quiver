@@ -33,7 +33,8 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, home_path
+from quiver.webapp.pages.doctor import blocked_now
 from quiver.webapp.pages.skills import _inside, read_text
 
 # ``swe hooks new`` writes one hub file and reads the registry; serialize
@@ -42,7 +43,7 @@ _WRITE_LOCK = threading.Lock()
 
 
 def get(ctx, args: dict) -> dict:
-    home = Path(ctx.home) if ctx.home is not None else Path.home()
+    home = home_path(ctx)
     if args.get("hook"):
         return detail(ctx, home, args)
     return listing(ctx, home)
@@ -52,19 +53,15 @@ def post(ctx, action: str, body: dict) -> dict:
     if action == "new":
         if not isinstance(body, dict):
             raise PageError(422, "bad_body", "Send a JSON object.")
-        return _new(ctx, _home(ctx), body)
+        return _new(ctx, home_path(ctx), body)
     force = {"link": False, "replace": True}.get(action)
     if force is None:
         raise PageError(404, "unknown_action", f"unknown hooks action: {action}")
     from quiver.webapp.pages.doctor import run_init_now
 
-    home = _home(ctx)
+    home = home_path(ctx)
     error = run_init_now(home, force=force)
     return {"ran": action, "error": error, **listing(ctx, home)}
-
-
-def _home(ctx) -> Path:
-    return Path(ctx.home) if ctx.home is not None else Path.home()
 
 
 # -- the list ------------------------------------------------------------
@@ -141,21 +138,9 @@ def listing(ctx, home: Path) -> dict:
         "findings": findings,
         "check_error": check_error,
         "warning": warning,
-        "blocked": _blocked_now(home),
+        "blocked": blocked_now(home),
         "harnesses": _harnesses(registry, rows),
     }
-
-
-def _blocked_now(home: Path) -> list[str]:
-    """The paths ``swe init --force`` would replace, as the Doctor and
-    AGENTS.md pages list them; a check read that fails offers nothing."""
-    from quiver.init.commands import run_init
-    from quiver.webapp.pages.doctor import blocked_paths
-
-    try:
-        return blocked_paths(run_init(home, check_only=True, quiet=True), home)
-    except Exception:  # noqa: BLE001 - the list still shows without it
-        return []
 
 
 # -- one hook -------------------------------------------------------------
@@ -182,6 +167,9 @@ def detail(ctx, home: Path, args: dict) -> dict:
     row = matches[0]
     source = Path(row.source)
     exists = source.exists()
+    # A foreign hook's command can name any file on disk; a paired
+    # device reads its contents (header or text) only under home.
+    readable = _inside(source, home)
     return {
         "machine": ctx.machine.get("name"),
         "home": str(home),
@@ -193,12 +181,12 @@ def detail(ctx, home: Path, args: dict) -> dict:
             "command": d.command,
             "file": str(d.settings),
         } for d in row.declared],
-        "summary": script_summary(source) if source.is_file() else "",
+        "summary": script_summary(source) if readable and source.is_file() else "",
         "exists": exists,
         "is_dir": source.is_dir(),
         # HookScript.editable: the source resolves inside the hooks root.
         "editable": exists and _inside(source, _paths.hooks_dir_for(home)),
-        "text": read_text(source),
+        "text": read_text(source) if readable else None,
     }
 
 

@@ -219,6 +219,9 @@ def _poll(store: LedgerStore, home: Path | None = None, *, fetch=None,
         account_key = account_id or account_home
         for event in events:
             changed += int(store.upsert(record(event, account_key, account_home)))
+        # Commit before the next account's fetch: a write left open across
+        # that network call holds the lock every page scan needs.
+        store.db.commit()
         if account_id is not None:
             seen.add(account_id)
             progress["profiles"][account_home] = account_id

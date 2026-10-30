@@ -45,6 +45,7 @@ import signal
 import subprocess
 import threading
 import time
+import weakref
 from pathlib import Path
 
 from quiver.paths import atomic_write_text, remote_dir_for
@@ -137,6 +138,24 @@ def _registry_lock(home: Path | None):
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
+# One lock per session key around attach, detach and keep, taken before
+# the registry lock: an attach holds it across its pane's boot, so a
+# second attach (or a detach) of the same key waits for that one
+# instead of the registry lock being held for the whole boot. Held
+# weakly, like the journal's: a lock lives while a caller holds it.
+_ATTACH_LOCKS: "weakref.WeakValueDictionary[str, threading.RLock]" = \
+    weakref.WeakValueDictionary()
+_ATTACH_LOCKS_LOCK = threading.Lock()
+
+
+def _attach_lock(session_key: str) -> threading.RLock:
+    with _ATTACH_LOCKS_LOCK:
+        lock = _ATTACH_LOCKS.get(session_key)
+        if lock is None:
+            lock = _ATTACH_LOCKS[session_key] = threading.RLock()
+        return lock
+
+
 def _pane_lock(name: str) -> threading.Lock:
     with _PANE_LOCKS_LOCK:
         return _PANE_LOCKS.setdefault(name, threading.Lock())
@@ -216,10 +235,6 @@ def supervised(home: Path | str | None) -> dict[str, dict]:
     return entries
 
 
-def supervised_keys(home: Path | str | None) -> set[str]:
-    return set(supervised(Path(home) if home is not None else None))
-
-
 def mark(home: Path | None, session_key: str, meta: dict) -> dict:
     with _registry_lock(home):
         _mark_locked(home, session_key, meta)
@@ -246,6 +261,12 @@ def _unmark_locked(home: Path | None, session_key: str) -> None:
 
 def meta_for(home: Path | None, session_key: str) -> dict | None:
     return _load_registry(home).get(session_key)
+
+
+def registry(home: Path | None) -> dict[str, dict]:
+    """Every supervised entry as stored, read once: ``meta_for`` for a
+    caller looking up many keys (no tmux liveness check)."""
+    return _load_registry(home)
 
 
 def launch_tmux(
@@ -276,7 +297,14 @@ def launch_tmux(
         args += ["-e", f"{key}={value}"]
     if cwd:
         args += ["-c", cwd]
-    args += [binary, *argv[1:]]
+    command = [binary, *argv[1:]]
+    if len(command) == 1:
+        # tmux hands a lone command argument to default-shell -c, which
+        # is the PATH rebuild above, and splits a binary path with a
+        # space in it. Two or more arguments are exec'd as given, so a
+        # bare launch goes through env.
+        command = ["/usr/bin/env", binary]
+    args += command
     try:
         if _tmux(*args).returncode != 0:
             return None
@@ -589,9 +617,10 @@ def attach(
 
     The phone offers Attach only when the session looks idle; this
     server-side re-check is the one that actually prevents the race —
-    a session can go active between list and tap. The whole handoff —
-    already-attached check, writer replacement, registry write — runs
-    under the registry lock so concurrent attaches cannot split it.
+    a session can go active between list and tap. The checks run under
+    the registry lock, the tmux launch and boot outside it, and the
+    registry write under it again; the key's attach lock spans all
+    three, so concurrent attaches of one key cannot split the handoff.
 
     ``model``/``effort`` are the same pick a launch takes: checked
     against the resolved channel (``channel_tuning_error``), typed into
@@ -600,136 +629,202 @@ def attach(
     ``turn/start`` overrides, serve's model object — can carry it.
     """
     flags = resume_flags(session)
-    with _registry_lock(home):
-        current = _load_registry(home).get(session_key)
-        if current is not None:
-            # Idempotent — but a pick is a request for the session to
-            # run that value, and a live pane's launch-time apply can't
-            # be redone: a pick differing from the recorded one is
-            # refused rather than silently dropped.
-            changed = [op for op, want in
-                       (("model", model), ("effort", effort))
-                       if want and want != str(current.get(op) or "")]
-            if changed:
-                ops = " and ".join(f"/{op}" for op in changed)
-                return False, (
-                    f"already attached; {ops} can only be picked on a "
-                    "fresh attach — detach the session and attach again")
-            return True, "already attached"
-        # A tmux session kept running by an earlier detach is taken back
-        # as it is, mid-turn or not: launching here would start a second
-        # run of the same session next to it.
-        adopted = _adopt_kept_locked(home, session_key, session,
-                                     model=model, effort=effort)
-        if adopted is not None:
-            return adopted
-        if status == "active":
-            return False, "session is mid-turn; try again when it is idle"
-        if last_append_at is not None and \
-                time.time() - last_append_at < ATTACH_IDLE_S:
+    # One attach per key at a time: a second tap waits here and then
+    # sees "already attached". The registry lock is held only for the
+    # checks and the final write, not across the pane's boot (up to
+    # ATTACH_BOOT_S), which held every other attach, detach, keep and
+    # the catalog's registry read meanwhile.
+    with _attach_lock(session_key):
+        with _registry_lock(home):
+            ready = _attach_checks_locked(
+                home, session_key, session, flags,
+                last_append_at=last_append_at, status=status, mode=mode,
+                model=model, effort=effort)
+        if isinstance(ready[0], bool):
+            return ready
+        meta, writers = ready
+        return _attach_tmux(home, session_key, session, flags, meta,
+                            writers, model=model, effort=effort)
+
+
+def _already_attached(
+    current: dict, model: str | None, effort: str | None,
+) -> tuple[bool, str]:
+    """The answer to an attach of a key that already has an entry.
+
+    Idempotent — but a pick is a request for the session to run that
+    value, and a live pane's launch-time apply can't be redone: a pick
+    differing from the recorded one is refused rather than silently
+    dropped.
+    """
+    changed = [op for op, want in (("model", model), ("effort", effort))
+               if want and want != str(current.get(op) or "")]
+    if changed:
+        ops = " and ".join(f"/{op}" for op in changed)
+        return False, (
+            f"already attached; {ops} can only be picked on a "
+            "fresh attach — detach the session and attach again")
+    return True, "already attached"
+
+
+def _attach_checks_locked(
+    home: Path | None,
+    session_key: str,
+    session: Session,
+    flags: list[str],
+    *,
+    last_append_at: float | None,
+    status: str,
+    mode: str,
+    model: str | None,
+    effort: str | None,
+):
+    """``attach``'s checks, under the registry lock: ``(ok, note)``
+    when the attach is settled here (refused, idempotent, adopted, or
+    an API channel marked), else ``(meta, writers)`` for a tmux launch.
+    """
+    current = _load_registry(home).get(session_key)
+    if current is not None:
+        return _already_attached(current, model, effort)
+    # A tmux session kept running by an earlier detach is taken back
+    # as it is, mid-turn or not: launching here would start a second
+    # run of the same session next to it.
+    adopted = _adopt_kept_locked(home, session_key, session,
+                                 model=model, effort=effort)
+    if adopted is not None:
+        return adopted
+    if status == "active":
+        return False, "session is mid-turn; try again when it is idle"
+    if last_append_at is not None and \
+            time.time() - last_append_at < ATTACH_IDLE_S:
+        return False, (
+            "transcript is still moving; try again when it is idle"
+        )
+    # The cached status/append time is seconds-stale; the
+    # transcript's own mtime is not. Stat it so a turn that started
+    # after the last poll still blocks the attach.
+    from quiver.remote import tail
+
+    transcript = tail.resolve_jsonl_path(session)
+    try:
+        if transcript is not None and \
+                time.time() - transcript.stat().st_mtime < ATTACH_IDLE_S:
             return False, (
                 "transcript is still moving; try again when it is idle"
             )
-        # The cached status/append time is seconds-stale; the
-        # transcript's own mtime is not. Stat it so a turn that started
-        # after the last poll still blocks the attach.
-        from quiver.remote import tail
+    except OSError:
+        pass
+    if not flags:
+        return False, f"{session.tool_name} cannot be resumed"
+    # Tier-A only when the harness binary is actually here —
+    # an opencode session on a box without `opencode` still
+    # gets the tmux channel.
+    mode = resolve_mode(session, mode)
+    if mode == "headless" and session.tool_name != "claude":
+        return False, "headless attach only supports claude"
+    if mode == "serve" and session.tool_name != "opencode":
+        return False, "serve attach only supports opencode"
+    if mode == "appserver" and session.tool_name != "codex":
+        return False, "appserver attach only supports codex"
+    if mode not in ATTACH_MODES:
+        return False, f"unknown attach mode {mode}"
+    binary = _MODE_BINARY.get(mode)
+    if binary and shutil.which(binary) is None:
+        return False, f"{binary} is not installed"
+    blocked = channel_tuning_error(mode, session.tool_name,
+                                   model, effort)
+    if blocked:
+        return False, blocked
 
-        transcript = tail.resolve_jsonl_path(session)
-        try:
-            if transcript is not None and \
-                    time.time() - transcript.stat().st_mtime < ATTACH_IDLE_S:
-                return False, (
-                    "transcript is still moving; try again when it is idle"
-                )
-        except OSError:
-            pass
-        if not flags:
-            return False, f"{session.tool_name} cannot be resumed"
-        # Tier-A only when the harness binary is actually here —
-        # an opencode session on a box without `opencode` still
-        # gets the tmux channel.
-        mode = resolve_mode(session, mode)
-        if mode == "headless" and session.tool_name != "claude":
-            return False, "headless attach only supports claude"
-        if mode == "serve" and session.tool_name != "opencode":
-            return False, "serve attach only supports opencode"
-        if mode == "appserver" and session.tool_name != "codex":
-            return False, "appserver attach only supports codex"
-        if mode not in ATTACH_MODES:
-            return False, f"unknown attach mode {mode}"
-        binary = _MODE_BINARY.get(mode)
-        if binary and shutil.which(binary) is None:
-            return False, f"{binary} is not installed"
-        blocked = channel_tuning_error(mode, session.tool_name,
-                                       model, effort)
-        if blocked:
-            return False, blocked
+    meta = {
+        "mode": mode,
+        "tool_name": session.tool_name,
+        "session_id": session.session_id,
+        "cwd": session.path or "",
+        "attached_at": time.time(),
+    }
+    for field, value in (("model", model), ("effort", effort)):
+        if value:
+            meta[field] = value
+    if mode in {"headless", "serve", "appserver"}:
+        # The original terminal still owns a writer process — stop
+        # it before claiming the session or both sides write. The
+        # API channel itself is spawned lazily by the injector on
+        # first write, so nothing else to start here.
+        _stop_local_writers(session)
+        _mark_locked(home, session_key, meta)
+        return True, f"attached ({mode})"
 
-        meta = {
-            "mode": mode,
-            "tool_name": session.tool_name,
-            "session_id": session.session_id,
-            "cwd": session.path or "",
-            "attached_at": time.time(),
-        }
-        for field, value in (("model", model), ("effort", effort)):
-            if value:
-                meta[field] = value
-        if mode in {"headless", "serve", "appserver"}:
-            # The original terminal still owns a writer process — stop
-            # it before claiming the session or both sides write. The
-            # API channel itself is spawned lazily by the injector on
-            # first write, so nothing else to start here.
-            _stop_local_writers(session)
-            _mark_locked(home, session_key, meta)
-            return True, f"attached ({mode})"
+    # tmux mode: stand the replacement up BEFORE killing the original,
+    # so a failed handoff leaves the human's session running rather
+    # than stopped with nothing to show for it. List the original's
+    # pids first: the replacement carries the same binary and resume
+    # flags, so a scan after launch would SIGTERM it too.
+    return meta, _local_writer_pids(session)
 
-        # tmux mode: stand the replacement up BEFORE killing the
-        # original, so a failed handoff leaves the human's session
-        # running rather than stopped with nothing to show for it.
-        # List the original's pids first: the replacement carries the
-        # same binary and resume flags, so a scan after launch would
-        # SIGTERM it too.
-        writers = _local_writer_pids(session)
-        binary = launch_tool_name(session.tool_name)
-        name = launch_tmux(
-            session_key, [binary, *flags], session.path or None,
-            env=account_env(session),
-        )
-        if name is None:
-            taken = tmux_name(session_key)
-            if tmux_alive(taken):
-                # launch_tmux never binds to a session it did not start.
-                return False, (
-                    f"tmux session {taken} already exists and is not "
-                    f"supervised; close it (tmux kill-session -t {taken}) "
-                    "and attach again"
-                )
+
+def _attach_tmux(
+    home: Path | None,
+    session_key: str,
+    session: Session,
+    flags: list[str],
+    meta: dict,
+    writers: list[int],
+    *,
+    model: str | None,
+    effort: str | None,
+) -> tuple[bool, str]:
+    """``attach``'s tmux launch, outside the registry lock (the caller
+    holds the key's attach lock). The entry is written under the lock
+    at the end, unless another process attached the key meanwhile.
+    """
+    binary = launch_tool_name(session.tool_name)
+    name = launch_tmux(
+        session_key, [binary, *flags], session.path or None,
+        env=account_env(session),
+    )
+    if name is None:
+        taken = tmux_name(session_key)
+        if tmux_alive(taken):
+            # launch_tmux never binds to a session it did not start.
             return False, (
-                f"tmux is not available, or {binary} exited right "
-                "after launch"
+                f"tmux session {taken} already exists and is not "
+                f"supervised; close it (tmux kill-session -t {taken}) "
+                "and attach again"
             )
-        # A resume in a folder claude has not trusted opens on the trust
-        # gate with "No, exit" selected: the tailer read it as an
-        # approval and the phone's next Enter quit claude. Get past it
-        # before anyone can write to the pane.
-        settled = boot_pane(name, timeout=ATTACH_BOOT_S)
-        if settled is None:
+        return False, (
+            f"tmux is not available, or {binary} exited right "
+            "after launch"
+        )
+    # A resume in a folder claude has not trusted opens on the trust
+    # gate with "No, exit" selected: the tailer read it as an
+    # approval and the phone's next Enter quit claude. Get past it
+    # before anyone can write to the pane.
+    settled = boot_pane(name, timeout=ATTACH_BOOT_S)
+    if settled is None:
+        kill(name)
+        return False, f"{binary} did not finish starting under tmux"
+    if not tmux_alive(name):
+        return False, f"{binary} exited while starting under tmux"
+    if (model or effort) and not _send_launch_controls(
+            name, model, effort, before=settled):
+        kill(name)
+        return False, (
+            "attached under tmux but the launch controls could not "
+            "be delivered — attach again or send them by hand")
+    meta["tmux"] = name
+    with _registry_lock(home):
+        current = _load_registry(home).get(session_key)
+        if current is not None:
+            # Another process attached the key while this pane booted
+            # (in-process attaches wait on the key's lock): theirs
+            # stands, this one goes, answered as any attach of an
+            # attached key is (a different pick is refused).
             kill(name)
-            return False, f"{binary} did not finish starting under tmux"
-        if not tmux_alive(name):
-            return False, f"{binary} exited while starting under tmux"
-        if (model or effort) and not _send_launch_controls(
-                name, model, effort, before=settled):
-            kill(name)
-            return False, (
-                "attached under tmux but the launch controls could not "
-                "be delivered — attach again or send them by hand")
-        meta["tmux"] = name
+            return _already_attached(current, model, effort)
         _stop_local_writers(session, writers)
         _mark_locked(home, session_key, meta)
-        return True, f"attached under tmux {name}"
+    return True, f"attached under tmux {name}"
 
 
 def _writer_targets(session: Session) -> list[str]:
@@ -834,9 +929,11 @@ def detach(home: Path | None, session_key: str) -> bool:
     """attached → observed: kill the tmux session, drop the registry row.
 
     The whole read-kill-write sequence holds the registry lock so a
-    concurrent attach cannot interleave and resurrect the entry.
+    concurrent attach cannot interleave and resurrect the entry, and
+    the key's attach lock first, so a detach sent while an attach is
+    still booting its pane acts on the finished attach.
     """
-    with _registry_lock(home):
+    with _attach_lock(session_key), _registry_lock(home):
         meta = _load_registry(home).get(session_key)
         killed = True
         if meta and meta.get("mode") == "tmux":
@@ -949,9 +1046,10 @@ def keep(home: Path | None, session_key: str) -> tuple[bool, str]:
     different one under a reused name. The kept row is written first;
     if removing the supervised row then fails, the kept one is taken
     back and the keep fails, and ``_reconcile_locked`` settles whatever
-    a crash in between leaves.
+    a crash in between leaves. Waits out an attach of the key still
+    booting its pane, as ``detach`` does.
     """
-    with _registry_lock(home):
+    with _attach_lock(session_key), _registry_lock(home):
         _reconcile_locked(home)
         entries = _load_registry(home)
         meta = entries.get(session_key)
@@ -1155,7 +1253,8 @@ def pending_launch(home: Path | None) -> bool:
         try:
             data = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            # Mid-write or corrupt: adopt_pending deletes it next pass.
+            # Mid-write or corrupt: adopt_pending drops it once it has
+            # stayed unreadable past its grace period.
             return True
         launched = float(data.get("launched_at") or 0) \
             if isinstance(data, dict) else 0.0
@@ -1330,7 +1429,7 @@ def launch_new(
     *,
     known_ids: list[str] | None = None,
     launch_id: str = "",
-    binary: str | None = None,
+    binary: str,
     model: str | None = None,
     effort: str | None = None,
 ) -> tuple[bool, str, str | None]:
@@ -1343,8 +1442,9 @@ def launch_new(
     so a pre-existing same-cwd session can never be claimed as ours.
     ``launch_id`` rides the marker into the supervised entry, so the hub
     can tell the phone which session its launch became. ``binary`` is the
-    harness's registry command (``cursor`` runs as ``cursor-agent``);
-    without it the session tool name is the binary. ``model`` goes on
+    harness's registry command (``cursor`` runs as ``cursor-agent``),
+    from ``catalog.launch_command``; it is required so no caller falls
+    back to guessing it from the tool name (#510). ``model`` goes on
     the harness's command line (``launch_model.model_argv``, per
     harness.json ``capabilities.model``); ``effort`` is typed into the
     pane once it is up. ``fresh_launch_error`` names what a harness
@@ -1357,7 +1457,6 @@ def launch_new(
     blocked = fresh_launch_error(tool_name, model, effort)
     if blocked:
         return False, blocked, None
-    binary = binary or launch_tool_name(tool_name)
     if not binary or not shutil.which(binary):
         return False, f"{tool_name} is not installed on this machine", None
     if not cwd or not os.path.isdir(cwd):
@@ -1381,7 +1480,7 @@ def launch_new(
     try:
         folder = _pending_dir(home)
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{name}.json").write_text(json.dumps({
+        atomic_write_text(folder / f"{name}.json", json.dumps({
             "tmux": name,
             "tool_name": tool_name,
             "cwd": cwd or "",
@@ -1454,7 +1553,7 @@ def launch_fork(
             return False, fork_busy_note(source.tool_name), None
         try:
             marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({
+            atomic_write_text(marker, json.dumps({
                 "tmux": name,
                 "tool_name": source.tool_name,
                 "cwd": cwd,
@@ -1627,6 +1726,18 @@ def _prompt_unsent(pane: str, prompt: str) -> bool:
     return bool(head) and head in box
 
 
+# An unreadable pending marker younger than this may still be mid-write.
+_PENDING_UNREADABLE_GRACE_S = 60.0
+
+
+def _drop_if_stale(marker: Path, now: float) -> None:
+    try:
+        if now - marker.stat().st_mtime > _PENDING_UNREADABLE_GRACE_S:
+            marker.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def adopt_pending(
     home: Path | None,
     rows: list[tuple[str, Session, str]],
@@ -1652,7 +1763,10 @@ def adopt_pending(
             loaded.append(
                 (marker, json.loads(marker.read_text(encoding="utf-8"))))
         except (OSError, ValueError):
-            marker.unlink(missing_ok=True)
+            # Markers are written atomically now, but one from an older
+            # build may be caught mid-write: only a marker that has
+            # stayed unreadable a while is corrupt and safe to drop.
+            _drop_if_stale(marker, now)
     # Ids a fork named up front belong to that fork alone: no other
     # same-folder launch may claim them by creation time.
     claimed = {str(p.get("expect_id")) for _m, p in loaded

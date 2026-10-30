@@ -10,10 +10,12 @@ second, then every pinned repo — so a bare ``swe gh pr`` is the dashboard.
 
 import json
 import re
+import sys
 import time
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 
 from quiver import paths
 from quiver.console import c, sanitize, sanitize_document, truncate
@@ -413,6 +415,10 @@ def _gh_paginated(path: str, limit: int) -> gh.GhResult:
     ``--limit=200``. Pages are pulled explicitly — never
     ``--paginate``, which would fetch the endpoint's *entire* history —
     and a short page means the listing ended.
+
+    A later page that fails keeps the rows already read, but the answer
+    says so: ``ok`` with ``error`` set means partial, and the callers
+    mark the listing ``partial`` rather than pass it off as complete.
     """
     items: list = []
     per_page = min(limit, 100)
@@ -423,7 +429,9 @@ def _gh_paginated(path: str, limit: int) -> gh.GhResult:
             ["api", f"{path}{sep}per_page={per_page}&page={page}"])
         if result.status != "ok":
             if items:
-                break  # later page failed: keep what we already have
+                # A later page failed: keep what we already have.
+                return gh.GhResult("ok", data=items[:limit], error=(
+                    f"page {page} failed: {result.error or result.status}"))
             return result
         batch = result.data if isinstance(result.data, list) else []
         items += batch
@@ -445,7 +453,10 @@ def _repo_result(repo: str, key: str, result: gh.GhResult,
                     "error": "gh returned an unexpected reply"}
         rows = [shape(item) for item in result.data
                 if isinstance(item, dict)]
-        return {"repo": repo, "status": "ok", key: rows}
+        out = {"repo": repo, "status": "ok", key: rows}
+        if result.error:  # rows from the pages that answered
+            out.update(partial=True, error=result.error)
+        return out
     return {"repo": repo, "status": result.status, key: [],
             "error": result.error or result.status}
 
@@ -559,12 +570,15 @@ def _fetch_inbox(limit: int, fetch_all: bool = False) -> dict:
     if result.status != "ok":
         return {"status": result.status, "notifications": [],
                 "error": result.error or result.status}
-    return {
+    out = {
         "status": "ok",
         "notifications": [_notification_row(i)
                           for i in (result.data or [])
                           if isinstance(i, dict)],
     }
+    if result.error:  # rows from the pages that answered
+        out.update(partial=True, error=result.error)
+    return out
 
 
 # ------------------------------------------------------------------ rendering
@@ -1465,7 +1479,8 @@ _ISSUE_ONE = ("view", "comment", "worktree")
 def _cmd_issue(rest: list[str], json_view: bool) -> int:
     """``swe gh issue [list]`` lists; ``view|comment|worktree <N|url>``
     act on one issue (``issues.py`` holds the shared shaping)."""
-    parsed = _parse_common(rest, json_view, extra=frozenset({"--body"}))
+    parsed = _parse_common(rest, json_view,
+                           extra=frozenset({"--body", "--body-file"}))
     if parsed is None:
         return 1
     opts, pos = parsed
@@ -1479,7 +1494,8 @@ def _cmd_issue(rest: list[str], json_view: bool) -> int:
     sub = pos[0]
     err = error_stream(json_view)
     if len(pos) != 2:
-        extra = " --body=<text>" if sub == "comment" else ""
+        extra = (" --body=<text> | --body-file=<path|->"
+                 if sub == "comment" else "")
         print(c("red", f"Usage: swe gh issue {sub} <number|url>{extra}"),
               file=err)
         return 1
@@ -1491,7 +1507,8 @@ def _cmd_issue(rest: list[str], json_view: bool) -> int:
     if not opts["repo"] and "/issues/" in pos[1]:
         # The URL names its repo; --repo still wins when given.
         opts["repo"] = pos[1]
-    if sub != "comment" and opts["body"] is not None:
+    if sub != "comment" and (opts["body"] is not None
+                             or opts["body-file"] is not None):
         print(c("red", "--body goes with swe gh issue comment"), file=err)
         return 1
     if sub == "view":
@@ -1577,7 +1594,10 @@ def _cmd_issue_view(number: int, opts: dict, json_view: bool) -> int:
 
 def _cmd_issue_comment(number: int, opts: dict, json_view: bool) -> int:
     """Post ``--body`` as a comment. gh reads the body from stdin, so any
-    text survives; ``--body=`` itself keeps everything after its ``=``."""
+    text survives; ``--body=`` itself keeps everything after its ``=``.
+    ``--body-file=-`` reads the body from our own stdin instead (a path
+    reads that file), so a caller never puts the text on argv, where
+    every process on the machine can read it."""
     def blocked(env, repo, msg):
         emit({**_env_emit(env), "repo": repo, "status": env.status
               if env.status != "ok" else "error", "issue": number,
@@ -1587,6 +1607,23 @@ def _cmd_issue_comment(number: int, opts: dict, json_view: bool) -> int:
     if repo is None:
         return 1
     body = opts["body"] or ""
+    body_file = opts.get("body-file")
+    if body_file is not None:
+        msg = None
+        if opts["body"] is not None:
+            msg = "Pass --body or --body-file, not both"
+        else:
+            try:
+                body = (sys.stdin.read() if body_file == "-" else
+                        Path(body_file).expanduser().read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                where = "stdin" if body_file == "-" else body_file
+                msg = f"Can't read {where}: {exc}"
+        if msg:
+            print(c("red", f"  {msg}"), file=error_stream(json_view))
+            if json_view:
+                blocked(env, repo, msg)
+            return 1
     if not body.strip():
         msg = "The comment is empty: pass --body=<text>"
         print(c("red", f"  {msg}"), file=error_stream(json_view))

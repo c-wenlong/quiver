@@ -189,6 +189,24 @@ class TestFeedPoll(unittest.TestCase):
         count = self.store.db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
         self.assertEqual(count, 1)
 
+    def test_no_write_is_held_across_the_next_accounts_fetch(self):
+        accounts_dir = self.home / ".quiver" / "accounts"
+        accounts_dir.mkdir(parents=True)
+        (accounts_dir / "profiles.json").write_text(json.dumps({"profiles": [
+            {"id": "p1", "vendor": "cursor", "isDefault": False}]}))
+        open_during_fetch = []
+
+        def fetch(state_db, since, now):
+            open_during_fetch.append(self.store.db.in_transaction)
+            n = len(open_during_fetch)
+            return "ok", [_event(conv=f"conv-{n}")], f"acct-{n}"
+
+        feed.poll(self.store, self.home, now=T0, fetch=fetch)
+        # The first account's rows were written before the later fetches.
+        self.assertGreater(len(open_during_fetch), 1)
+        self.assertEqual(open_during_fetch, [False] * len(open_during_fetch))
+        self.assertFalse(self.store.db.in_transaction)
+
     def test_switched_account_reads_its_own_window(self):
         home = str(self.default_home)
         self.store.set_meta(feed._PROGRESS_KEY, json.dumps({
@@ -382,6 +400,57 @@ class TestLookalikeCleanup(unittest.TestCase):
         self.assertTrue(self.store.upsert(corrected))
         self.assertEqual(self.store.db.execute(
             "SELECT input FROM events WHERE key = ?", (rec.key,)).fetchone()[0], 1100)
+
+
+
+class TestPageReadsAndTheFeedConnection(unittest.TestCase):
+    """A page read on the shared connection must not pin a WAL snapshot.
+
+    The pricing reads fill a temp ``thresholds`` table, and that DELETE
+    once opened an implicit transaction no read path ever closed. The
+    feed round then committed on its own connection, so the page
+    connection's next write (the scan's ``scanned_at``) had to upgrade a
+    stale snapshot: SQLite answers ``database is locked`` at once, and
+    with the transaction still open every later scan failed the same way
+    until the hub restarted."""
+
+    def setUp(self):
+        from quiver.webapp.api import WebApp
+        self.home = Path(tempfile.mkdtemp())
+        self.webapp = WebApp(self.home, download_prices=False)
+        self.addCleanup(self.webapp.close)
+
+    def test_a_feed_commit_after_a_page_read_leaves_the_next_scan_working(self):
+        from quiver.webapp.api import WebApp
+        # Hold the round back so it lands after the page's read, the
+        # order the wedged hub's WAL shows (scan, read, feed commit).
+        with mock.patch.object(WebApp, "_kick_feed"):
+            self.webapp.overview("month", None)
+        self.assertFalse(self.webapp._store.db.in_transaction)
+        self.webapp._poll_feed()
+        self.assertEqual(self.webapp._feed_notes, [])
+        for _ in range(2):  # the wedge was permanent: every scan failed
+            self.webapp.overview("month", None, rescan=True)
+            self.webapp.sessions([], "hub", {}, rescan=True)
+
+    def test_a_failed_scan_ends_its_transaction(self):
+        import sqlite3
+
+        from quiver.webapp import api
+
+        def fails(store, home):
+            store.set_meta("probe", "1")  # opens the implicit transaction
+            raise sqlite3.OperationalError("database is locked")
+
+        with mock.patch.object(api, "scan", fails), \
+                mock.patch.object(api.WebApp, "_kick_feed"):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.webapp.overview("month", None)
+        # Rolled back: nothing half-written, no snapshot left pinned for
+        # the next request to trip over.
+        self.assertFalse(self.webapp._store.db.in_transaction)
+        self.assertIsNone(self.webapp._store.meta("probe"))
+        self.webapp.overview("month", None, rescan=True)
 
 
 if __name__ == "__main__":

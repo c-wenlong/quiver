@@ -105,6 +105,62 @@ import Testing
         #expect(ticket.expiresInS == 300)
     }
 
+    /// A slower mint can't land over a newer one, and a mint answering
+    /// after the sheet closed shows nothing.
+    @Test func onlyTheNewestMintLands() async throws {
+        func pair(_ token: String) -> CommandResult {
+            .init(status: 0, stdout: Data(#"""
+            {"schema": 1, "data": {"host": "h", "port": 1, "token": "\#(token)", "name": null,
+             "url": "http://h:1/app/#pair=\#(token)", "deep_link": "quiver://pair?token=\#(token)",
+             "expires_in_s": 300}}
+            """#.utf8), stderr: "")
+        }
+        let runner = SequencedRunner([(.milliseconds(400), pair("old")), (.milliseconds(10), pair("new"))])
+        let model = RemoteModel(swe: SweClient(runner: runner))
+        async let first: Void = model.mintTicket()
+        try? await Task.sleep(for: .milliseconds(50))
+        model.dismissTicket()
+        async let second: Void = model.mintTicket()
+        _ = await (first, second)
+        #expect(model.ticket?.token == "new")
+        #expect(!model.pairing)
+
+        let late = SequencedRunner([(.milliseconds(200), pair("late"))])
+        let closed = RemoteModel(swe: SweClient(runner: late))
+        async let mint: Void = closed.mintTicket()
+        try? await Task.sleep(for: .milliseconds(50))
+        closed.dismissTicket()
+        _ = await mint
+        #expect(closed.ticket == nil)
+
+        // An older mint failing while the newer one runs leaves the
+        // spinner on and no error up.
+        let failing = SequencedRunner([(.milliseconds(50), .init(status: 1, stdout: Data(), stderr: "boom")),
+                                       (.milliseconds(1500), pair("fresh"))])
+        let racing = RemoteModel(swe: SweClient(runner: failing))
+        async let older: Void = racing.mintTicket()
+        try? await Task.sleep(for: .milliseconds(10))
+        async let newer: Void = racing.mintTicket()
+        await older
+        #expect(racing.pairing)
+        #expect(racing.pairError == nil)
+        await newer
+        #expect(!racing.pairing)
+        #expect(racing.ticket?.token == "fresh")
+    }
+
+    /// A load cancelled with its page puts the previous status back
+    /// instead of spinning for good.
+    @Test func aCancelledLoadDoesNotSpinForever() async throws {
+        let runner = StuckRunner()
+        let model = RemoteModel(swe: SweClient(runner: runner))
+        let task = Task { await model.load() }
+        while runner.started == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        task.cancel()
+        await task.value
+        #expect(model.status == .idle)
+    }
+
     @Test func theCountdownCountsDownFromMinting() async throws {
         let pair = Data(#"""
         {"schema": 1, "data": {"host": "h", "port": 1, "token": "t", "name": null,
