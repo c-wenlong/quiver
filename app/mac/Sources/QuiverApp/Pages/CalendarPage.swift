@@ -1073,8 +1073,10 @@ private struct MiniMonth: View {
                 Spacer()
                 Button { shiftMonth(-1) } label: { Image(systemName: "chevron.up") }
                     .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                    .accessibilityLabel("Previous month")
                 Button { shiftMonth(1) } label: { Image(systemName: "chevron.down") }
                     .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                    .accessibilityLabel("Next month")
             }
             // Weekday initials above a muted ISO-week column.
             HStack(spacing: 0) {
