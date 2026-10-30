@@ -342,5 +342,45 @@ class TestShellWord(unittest.TestCase):
         self.assertEqual(self.word(""), "''")
 
 
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestHarnessMark(unittest.TestCase):
+    """Fmt.mark and Fmt.logo, ported from the Mac's HarnessMark and
+    HarnessIcons: every shipped logo draws, aliases and second accounts
+    draw their base harness's, and a harness with no logo keeps its name
+    as the word."""
+
+    def fmt(self, expr):
+        src = FORMAT_JS.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify(" + expr + "));\n"
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_every_shipped_logo_draws(self):
+        files = sorted(p.name for p in FORMAT_JS.parent.glob("harness-*.svg"))
+        ids = [f[len("harness-"):-len(".svg")].removesuffix("-color") for f in files]
+        drawn = self.fmt(json.dumps(ids) + ".map((id) => (Fmt.logo(id).match(/src=\"\\/app\\/([^\"]+)\"/) || [])[1] || null)")
+        self.assertEqual(drawn, files)
+
+    def test_marks_like_the_mac(self):
+        out = self.fmt("['claude', 'claude-desktop', 'grok-bot', 'devin-cloud', 'codex-acc2', 'qwen', 'zed']"
+                       ".map((id) => Fmt.mark(id))")
+        self.assertEqual(out, [
+            {"icon": "claude", "word": "CLI", "name": "Claude Code"},
+            {"icon": "claude", "word": "Desktop", "name": "Claude Desktop"},
+            {"icon": "grok", "word": None, "name": "Grok Bot"},
+            {"icon": "devin", "word": "Cloud", "name": "Devin cloud"},
+            {"icon": "codex", "word": "acc2", "name": "Codex (acc2)"},
+            {"icon": "qwen", "word": None, "name": "Qwen"},
+            {"icon": None, "word": "Zed", "name": "Zed"},
+        ])
+        logos = self.fmt("[Fmt.logo('claude-desktop'), Fmt.logo('codex-acc2'), Fmt.logo('copilot'), Fmt.logo('zed')]")
+        self.assertIn("harness-claude-color.svg", logos[0])
+        self.assertIn('alt="Codex (acc2)"', logos[1])
+        self.assertIn('class="logo mono" src="/app/harness-copilot.svg"', logos[2])
+        self.assertEqual(logos[3], '<span class="logo" aria-hidden="true"></span>')
+        self.assertEqual(self.fmt("Fmt.harnessName('codex-acc2')"), "Codex (acc2)")
+
+
 if __name__ == "__main__":
     unittest.main()
