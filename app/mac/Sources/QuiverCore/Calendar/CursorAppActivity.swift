@@ -19,11 +19,14 @@ public struct CursorAppActivity: ActivityProviding {
             harness: "cursor",
             index: index,
             files: {
-                Dictionary(uniqueKeysWithValues: userDataDirs().compactMap { dir in
+                // Two account roots can name one database (an extra
+                // profile pointed at the app's own folder, a path listed
+                // twice); uniqueKeysWithValues trapped on that.
+                Dictionary(userDataDirs().compactMap { dir in
                     let db = dir.appending(path: "User/globalStorage/state.vscdb")
                     guard let stamp = Self.stamp(db) else { return nil }
                     return (db.path, stamp)
-                })
+                }, uniquingKeysWith: { first, _ in first })
             },
             parse: { try Self.parse(database: $0) })
     }
