@@ -64,6 +64,9 @@ _POST_TIMEOUT_S = 5.0
 # The approval prompt is a convenience, not a record — enough to decide,
 # short enough that a lock screen shows it whole.
 _PROMPT_CAP = 280
+# The decisions the push's action buttons send — all an action token
+# may answer with (the hub refuses anything else under one).
+ACTION_DECISIONS = frozenset({"allow", "deny", "always"})
 
 
 def _config_path(home: Path | None) -> Path:
@@ -388,11 +391,14 @@ class Notifier:
         self._post(cfg, payload)
 
     def _session_title(self, key: str) -> str:
+        """The notification title's prefix. A session title is often
+        the first prompt, so it runs the secret-redactor, before the
+        cut so a half-truncated token can't slip past the patterns."""
         row = self._state.catalog.row_for(key) if key else None
         if row:
             title = str(row.get("title") or "").strip()
             if title:
-                return title[:60]
+                return _tr._redact_secrets(title)[:60]
             cwd = str(row.get("cwd") or "")
             if cwd:
                 return cwd.rstrip("/").rsplit("/", 1)[-1] or cwd
