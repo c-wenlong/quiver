@@ -224,7 +224,7 @@ final class LaunchFlow {
         do {
             accepted = try await post()
         } catch {
-            phase = .failed((error as? HubError)?.message ?? error.localizedDescription)
+            phase = .failed(error.localizedDescription)
             return nil
         }
         launchId = accepted.launchId
