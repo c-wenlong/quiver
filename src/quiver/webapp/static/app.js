@@ -125,6 +125,26 @@ function pageHeader(title, subtitle, actions = "") {
     <div class="page-actions">${actions}</div></div>`;
 }
 
+/* A page's sheet, made once on document.body so a repaint of #panel
+ * behind it (a reply landing, a poll) can't take it away. It belongs to
+ * the view that opened it: route() closes it on every navigation, which
+ * fires its close handlers, so a page never finds it open again later. */
+function bodySheet(id, className, label = "") {
+  let sheet = document.getElementById(id);
+  if (sheet) return sheet;
+  sheet = document.createElement("dialog");
+  sheet.id = id;
+  sheet.className = className;
+  if (label) sheet.setAttribute("aria-label", label);
+  sheet.dataset.routeSheet = "";
+  document.body.appendChild(sheet);
+  return sheet;
+}
+
+function closeRouteSheets() {
+  for (const sheet of document.querySelectorAll("dialog[data-route-sheet][open]")) sheet.close();
+}
+
 /* Only a device the hub can't place reaches this: the owner's own tailnet
  * devices are let in without pairing. The card is the old remote page's
  * pair view: ask the tailnet for a code the owner approves elsewhere, or
@@ -132,6 +152,8 @@ function pageHeader(title, subtitle, actions = "") {
  * explains a credential the hub refused; with none stored the card says
  * the device needs pairing, unless ``always`` keeps the message. */
 function renderGate(message, always = false) {
+  // A page's open sheet would stay modal above the gate.
+  closeRouteSheets();
   const lead = credential() || always ? message
     : "This device isn't signed in to the hub owner's Tailscale account, so it needs pairing.";
   document.getElementById("panel").innerHTML = `<div class="page"><div class="card gate">
@@ -367,7 +389,9 @@ function route() {
     id = "overview";
     history.replaceState(null, "", "#/overview");
   }
-  // A response still in flight belongs to the page left behind.
+  // A response still in flight belongs to the page left behind, and so
+  // does any sheet it opened.
+  closeRouteSheets();
   routeGen++;
   overview.gen++;
   sessionsPage.gen++;
