@@ -1434,9 +1434,9 @@ def _sync(args, report: dict | None):
 
         for name in selected:
             server = source_servers[name]
-            if remote_ok and gateway_defaults.runs_on_gateway(server, gateway):
+            on_gateway = remote_ok and gateway_defaults.runs_on_gateway(server, gateway)
+            if on_gateway:
                 server = gateway_defaults.entry_for(name, gateway["port"])
-                via_gateway.append(name)
             if not remote_ok and server_type(server) == "http":
                 unsupported.append(name)
                 continue
@@ -1449,9 +1449,14 @@ def _sync(args, report: dict | None):
                     updated.append(name)
                 else:
                     skipped.append(name)
+                    continue
             else:
                 target_servers[name] = converted
                 added.append(name)
+            if on_gateway:
+                # Only what this run wrote: a skipped entry keeps whatever
+                # the target already had.
+                via_gateway.append(name)
 
         # --only/--except or a picker deselection narrowed the run.
         narrowed = (
@@ -1499,10 +1504,8 @@ def _sync(args, report: dict | None):
             parts.append(
                 f"{len(pruned)} {'would prune' if dry_run else 'pruned'}{names}"
             )
-        if via_gateway and (added or updated):
-            on_gateway = [n for n in via_gateway if n in added or n in updated]
-            if on_gateway:
-                parts.append(f"{len(on_gateway)} through the gateway")
+        if via_gateway:
+            parts.append(f"{len(via_gateway)} through the gateway")
         if unsupported:
             parts.append(f"{len(unsupported)} remote left out ({', '.join(unsupported)}): "
                          f"{get_tool_config(target).get('label', target)} {LOCAL_ONLY_NOTE}")

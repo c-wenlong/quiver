@@ -58,12 +58,14 @@ INIT_TIMEOUT_S = 180.0
 # shorter, so this only frees a request nobody is waiting for any more.
 REQUEST_TIMEOUT_S = 1800.0
 MAX_BODY = 32 * 1024 * 1024
-# A server's stderr log starts over past this size.
+# A server's stderr log starts over once it would pass this size.
 MAX_LOG = 5 * 1024 * 1024
 # Restart backoff for a server that keeps exiting soon after it starts.
 BACKOFF_MIN_S = 2.0
 BACKOFF_MAX_S = 60.0
 HEALTHY_AFTER_S = 60.0
+# How long a stopped server's group gets between SIGTERM and SIGKILL.
+KILL_GRACE_S = 5.0
 # How often a request may re-read mcp.json and the secrets file.
 RELOAD_EVERY_S = 2.0
 
@@ -89,6 +91,21 @@ PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INTERNAL_ERROR = -32603
+
+
+def _signal_group(pgid: int, sig: int) -> bool:
+    """Signal a process group; False when it has no members left."""
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # a member we can't signal is still a member
+    return True
+
+
+def _group_alive(pgid: int) -> bool:
+    return _signal_group(pgid, 0)
 
 
 def _error(msg_id, code: int, message: str) -> dict:
@@ -209,28 +226,52 @@ class Backend:
         env = dict(os.environ)
         env.update({str(k): str(v) for k, v in (self.spec.get("env") or {}).items()})
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        path = self.log_dir / f"{self.name}.log"
-        try:
-            # A server that logs every call would fill the disk over months.
-            fresh = path.stat().st_size > MAX_LOG
-        except OSError:
-            fresh = False
-        log = open(path, "wb" if fresh else "ab")
-        try:
-            log.write(f"\n--- {datetime.now().isoformat(timespec='seconds')} "
-                      f"starting {self.name}\n".encode())
-            log.flush()
-            # Its own process group, so stopping it also stops whatever a
-            # wrapper (uv run, go run, sh -c) started under it.
-            proc = self._popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=log, env=env, cwd=str(Path.home()),
-                               start_new_session=True)
-        finally:
-            log.close()
+        # Its own process group, so stopping it also stops whatever a
+        # wrapper (uv run, go run, sh -c) started under it.
+        proc = self._popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, env=env, cwd=str(Path.home()),
+                           start_new_session=True)
         child = _Child(proc)
         threading.Thread(target=self._read, args=(child,), daemon=True,
                          name=f"mcp-gateway-{self.name}").start()
+        threading.Thread(target=self._log, args=(proc.stderr,), daemon=True,
+                         name=f"mcp-gateway-{self.name}-log").start()
         return child
+
+    def _log(self, stderr) -> None:
+        """Copy the server's stderr to its log, starting over past MAX_LOG.
+
+        Checked on every write, not only at start: a noisy server that stays
+        up for months would otherwise fill the disk.
+        """
+        path = self.log_dir / f"{self.name}.log"
+        try:
+            log = open(path, "ab")
+        except OSError:
+            log = None
+        try:
+            if log is not None:
+                log.write(f"\n--- {datetime.now().isoformat(timespec='seconds')} "
+                          f"starting {self.name}\n".encode())
+                log.flush()
+            for line in stderr:
+                if log is None:
+                    continue  # still drain it, or the server blocks on a full pipe
+                if log.tell() + len(line) > MAX_LOG:
+                    log.seek(0)
+                    log.truncate()
+                    log.write(b"--- log started over: it reached its size limit\n")
+                log.write(line)
+                log.flush()
+        except (OSError, ValueError):
+            pass
+        finally:
+            if log is not None:
+                log.close()
+            try:
+                stderr.close()
+            except OSError:
+                pass
 
     def _read(self, child: _Child) -> None:
         for line in child.proc.stdout:
@@ -296,11 +337,15 @@ class Backend:
             self._child = child
             try:
                 result = self._handshake(child, protocol)
-            except RuntimeError:
+            except (RuntimeError, OSError) as exc:
                 self._kill(child)
                 self._child = None
                 self._note_failure(0)
-                raise
+                if isinstance(exc, RuntimeError):
+                    raise
+                # The server exited before it could read the handshake.
+                self.last_error = f"exited before initialize ({exc})"
+                raise RuntimeError(f"{self.name}: {self.last_error}") from exc
             self._init_result = result
             return child, result
 
@@ -326,20 +371,31 @@ class Backend:
         return _plain_capabilities(response["result"])
 
     def _kill(self, child: _Child) -> None:
+        """Stop the server's whole process group, not just its leader.
+
+        A wrapper (uv run, go run) can exit while the real server it
+        started lives on, so the group is signalled even when the leader
+        is gone, and waited on until no member is left.
+        """
         proc = child.proc
-        if proc.poll() is not None:
-            return
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except OSError:
+        if not _signal_group(proc.pid, signal.SIGTERM) and proc.poll() is None:
             proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                proc.kill()
+        deadline = time.monotonic() + KILL_GRACE_S
+        while time.monotonic() < deadline:
+            proc.poll()  # reap the leader, or the group never empties
+            if not _group_alive(proc.pid):
+                return
+            time.sleep(0.05)
+        _signal_group(proc.pid, signal.SIGKILL)
+        if proc.poll() is None:
+            proc.kill()
+        # Killed members linger until their parent (or launchd) reaps them.
+        deadline = time.monotonic() + KILL_GRACE_S
+        while time.monotonic() < deadline:
+            proc.poll()
+            if not _group_alive(proc.pid):
+                return
+            time.sleep(0.05)
 
     def stop(self) -> None:
         with self._start_lock:
@@ -407,7 +463,7 @@ SpecLoader = Callable[[], tuple[dict, dict]]
 
 def load_hub_specs() -> tuple[dict, dict]:
     """``({name: resolved spec}, {name: why it can't run})`` for shared servers."""
-    from quiver.mcp.cli import get_hub_servers, get_mcp_handler
+    from quiver.mcp.cli import MCP_SOURCE_FILE, get_mcp_handler, load_json
     from quiver.mcp.gateway import is_shared
     from quiver.mcp.secrets import load_secrets, resolve, unresolved_names
 
@@ -415,7 +471,12 @@ def load_hub_specs() -> tuple[dict, dict]:
     handler = get_mcp_handler("quiver")
     specs: dict[str, dict] = {}
     problems: dict[str, str] = {}
-    for name, raw in get_hub_servers().items():
+    # load_json raises on a file it can't parse: the caller keeps the
+    # servers it has rather than reading that as "nothing is shared".
+    servers = (load_json(MCP_SOURCE_FILE) or {}).get("mcpServers") or {}
+    if not isinstance(servers, dict):
+        raise ValueError("mcp.json: mcpServers is not an object")
+    for name, raw in servers.items():
         if not is_shared(raw):
             continue
         canonical = handler.parse(raw)
@@ -449,6 +510,7 @@ class Gateway:
         self._lock = threading.Lock()
         self.backends: dict[str, Backend] = {}
         self.problems: dict[str, str] = {}
+        self.load_error: str | None = None
         self._stamp: tuple | None = None
         self._checked = 0.0
         # (session, client id) -> gateway id, for notifications/cancelled.
@@ -477,7 +539,16 @@ class Gateway:
             if not force and stamp == self._stamp:
                 return
             self._stamp = stamp
-            specs, self.problems = self._load()
+            try:
+                specs, problems = self._load()
+            except Exception as exc:  # noqa: BLE001 - any bad read keeps the last good set
+                # A half-written or broken mcp.json must not stop every
+                # running server. Keep them, say why, and read again once
+                # the file changes.
+                self.load_error = f"cannot read the hub, keeping the last good servers: {exc}"
+                return
+            self.load_error = None
+            self.problems = problems
             stale = []
             for name, backend in list(self.backends.items()):
                 if specs.get(name) != backend.spec:
@@ -506,7 +577,8 @@ class Gateway:
         rows = [b.status() for b in backends]
         rows += [{"name": n, "state": "error", "pid": None, "uptime_s": None,
                   "starts": 0, "error": why} for n, why in sorted(problems.items())]
-        return {"version": __version__, "pid": os.getpid(), "servers": rows}
+        return {"version": __version__, "pid": os.getpid(), "servers": rows,
+                "error": self.load_error}
 
     # -- one message ---------------------------------------------------------
 
@@ -576,6 +648,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _send(self, status: int, body: bytes = b"", content_type: str = "application/json",
               headers: dict | None = None) -> None:
+        if status >= 400:
+            # An error can come before the body was read. Left on a kept-
+            # alive connection, those bytes would be parsed as the next
+            # request, so a refused page could smuggle a tool call in.
+            self.close_connection = True
+            headers = {**(headers or {}), "Connection": "close"}
         self.send_response(status)
         if body or status != HTTPStatus.ACCEPTED:
             self.send_header("Content-Type", content_type)
@@ -647,9 +725,17 @@ class _Handler(BaseHTTPRequestHandler):
         if backend is None:
             self._json(HTTPStatus.NOT_FOUND, {"error": "no such shared server"})
             return
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if ctype != "application/json":
+            # MCP clients always send JSON; a form or text/plain POST is
+            # the one shape a web page can send without a preflight.
+            self._json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "Content-Type must be application/json"})
+            return
         try:
             length = int(self.headers.get("Content-Length") or "")
         except ValueError:
+            length = -1
+        if length < 0:
             self._json(HTTPStatus.LENGTH_REQUIRED, {"error": "Content-Length required"})
             return
         if length > MAX_BODY:

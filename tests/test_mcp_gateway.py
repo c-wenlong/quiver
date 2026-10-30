@@ -55,8 +55,17 @@ class GatewayHelpersTest(unittest.TestCase):
         # Still ours after uninstall, so discover never pulls it into the hub.
         self.assertTrue(gateway.matches_hub("gh", hub, {"url": "http://127.0.0.1:9100/mcp/gh"}, settings))
         self.assertFalse(gateway.matches_hub("gh", hub, {"url": "http://127.0.0.1:9100/mcp/other"}, settings))
-        self.assertFalse(gateway.matches_hub("gh", {"command": "node", "args": ["s.js"]},
+        # A URL left from before an unshare or a port change is still ours:
+        # importing it would swap the hub's command for a dead URL.
+        self.assertTrue(gateway.matches_hub("gh", {"command": "node", "args": ["s.js"]},
+                                            {"url": "http://127.0.0.1:9100/mcp/gh"}, settings))
+        self.assertTrue(gateway.matches_hub("gh", hub, {"url": "http://127.0.0.1:7000/mcp/gh"}, settings))
+        # Only over a hub command, and only a loopback /mcp/<name> URL.
+        self.assertFalse(gateway.matches_hub("gh", {"url": "https://api.example/mcp"},
                                              {"url": "http://127.0.0.1:9100/mcp/gh"}, settings))
+        for url in ("http://127.0.0.1:9100/mcp/gh/x", "http://localhost:9100/mcp/gh",
+                    "http://127.0.0.1:port/mcp/gh", "http://127.0.0.1:9100/gh"):
+            self.assertFalse(gateway.matches_hub("gh", hub, {"url": url}, settings), url)
 
     def test_looks_stateful(self):
         self.assertTrue(gateway.looks_stateful("dv__playwright", {"command": "node"}))
@@ -208,6 +217,299 @@ class GatewayServerTest(unittest.TestCase):
         rows = {r["name"]: r for r in self.gateway.status()["servers"]}
         self.assertEqual(rows["broken"]["error"], "no value for TOKEN")
         self.assertEqual(rows["fake"]["state"], "idle")
+
+
+class GatewayHardeningTest(GatewayServerTest):
+    """The review's findings: smuggled requests, bad lengths, stray
+    processes, pipe errors, unreadable hubs and unbounded logs."""
+
+    def raw(self, data: bytes) -> bytes:
+        import socket
+
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as sock:
+            sock.sendall(data)
+            chunks = []
+            while True:
+                try:
+                    chunk = sock.recv(65536)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+
+    def test_a_refused_request_cannot_smuggle_a_second_one(self):
+        inner = json.dumps({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                            "params": {"name": "echo", "arguments": {}}}).encode()
+        smuggled = (f"POST /mcp/fake HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
+                    f"Content-Type: application/json\r\nContent-Length: {len(inner)}\r\n\r\n").encode() + inner
+        outer = (f"POST /mcp/fake HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
+                 f"Origin: https://evil.example\r\nContent-Type: text/plain\r\n"
+                 f"Content-Length: {len(smuggled)}\r\n\r\n").encode() + smuggled
+        reply = self.raw(outer)
+        self.assertEqual(reply.count(b"HTTP/1.1 "), 1, reply)
+        self.assertIn(b"403", reply.split(b"\r\n", 1)[0])
+        self.assertIn(b"Connection: close", reply)
+        self.assertEqual(self.gateway.backends["fake"].starts, 0)
+
+    def test_only_json_bodies_with_a_real_length(self):
+        status, _, _ = self.request(INIT, headers={"Content-Type": "text/plain"})
+        self.assertEqual(status, 415)
+        reply = self.raw((f"POST /mcp/fake HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
+                          "Content-Type: application/json\r\nContent-Length: -1\r\n\r\n{}").encode())
+        self.assertIn(b"411", reply.split(b"\r\n", 1)[0])
+        self.assertEqual(self.gateway.backends["fake"].starts, 0)
+
+    def test_an_unreadable_hub_keeps_the_running_servers(self):
+        pid = self.payload(self.call("echo"))["pid"]
+
+        def broken():
+            raise ValueError("Expecting value: line 1 column 1")
+
+        self.gateway._load = broken
+        self.gateway.reload(force=True)
+        self.assertEqual(self.payload(self.call("echo"))["pid"], pid)
+        self.assertIn("keeping the last good servers", self.gateway.status()["error"])
+        self.gateway._load = lambda: (dict(self.specs), {})
+        self.gateway.reload(force=True)
+        self.assertIsNone(self.gateway.status()["error"])
+
+    def test_a_pipe_error_in_the_handshake_is_a_json_rpc_error(self):
+        import io
+
+        class Pipe:
+            closed = False
+
+            def write(self, data):
+                raise BrokenPipeError("gone")
+
+            def flush(self):
+                pass
+
+            def close(self):
+                self.closed = True
+
+        class Proc:
+            pid = 2 ** 22 + 12345  # no such process group
+            stdin = Pipe()
+            stdout = io.BytesIO()
+            stderr = io.BytesIO()
+
+            def poll(self):
+                return 1
+
+            def wait(self, timeout=None):
+                return 1
+
+            def terminate(self):
+                pass
+
+            kill = terminate
+
+        backend = gateway_server.Backend("dead", {"command": "x"}, pathlib.Path(self.tmp.name),
+                                         popen=lambda *a, **k: Proc())
+        body = backend.call({"jsonrpc": "2.0", "id": 4, "method": "tools/list"}, "2025-06-18")
+        self.assertEqual(body["id"], 4)
+        self.assertIn("exited before initialize", body["error"]["message"])
+
+    def test_stopping_reaches_the_whole_process_group(self):
+        # The leader (a wrapper) exits at once; one member ignores SIGTERM.
+        proc = subprocess.Popen(
+            ["sh", "-c", "sleep 60 & (trap '' TERM; exec sleep 61) & echo $!; wait"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+        stubborn = int(proc.stdout.readline())
+        child = gateway_server._Child(proc)
+        backend = gateway_server.Backend("g", {"command": "sh"}, pathlib.Path(self.tmp.name))
+        with patch.object(gateway_server, "KILL_GRACE_S", 0.5):
+            backend._kill(child)
+        self.assertFalse(gateway_server._group_alive(proc.pid))
+        with self.assertRaises(ProcessLookupError):
+            os.kill(stubborn, 0)
+        proc.wait()
+        child.close()
+
+    def test_the_log_starts_over_at_its_limit(self):
+        import io
+
+        backend = gateway_server.Backend("noisy", {"command": "x"}, pathlib.Path(self.tmp.name))
+        stream = io.BytesIO(b"".join(b"line %04d of noise\n" % i for i in range(500)))
+        with patch.object(gateway_server, "MAX_LOG", 1000):
+            backend._log(stream)
+        text = (pathlib.Path(self.tmp.name) / "noisy.log").read_bytes()
+        self.assertLessEqual(len(text), 1000)
+        self.assertIn(b"log started over", text)
+        self.assertIn(b"line 0499", text)
+
+
+class GatewayCommandsInProcessTest(unittest.TestCase):
+    """The command handlers, run in-process against a throwaway HOME."""
+
+    def setUp(self):
+        from quiver.mcp import cli as mcp_cli
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = pathlib.Path(self.tmp.name)
+        self.hub = self.home / ".quiver" / "mcp.json"
+        self.hub.parent.mkdir(parents=True)
+        self.hub.write_text(json.dumps({"mcpServers": {
+            "api": {"command": sys.executable, "args": [str(FAKE)], "env": {"T": "${API_TOKEN}"}},
+            "nokey": {"command": "node", "args": ["n.js"], "env": {"T": "${MISSING}"}, "shared": True},
+            "web": {"url": "https://mcp.example.com/mcp", "shared": True},
+            "dv__playwright": {"command": "node"},
+        }}) + "\n")
+        secrets = self.home / ".quiver" / "secrets" / "mcp"
+        secrets.mkdir(parents=True)
+        (secrets / ".api_keys").write_text("export API_TOKEN='tok'\n")
+        for p in (patch.dict(os.environ, {"HOME": str(self.home)}),
+                  patch.object(mcp_cli, "MCP_SOURCE_FILE", self.hub)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_cmd(self, *args):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        from quiver.mcp.gateway_commands import cmd_gateway
+
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cmd_gateway(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def hub_data(self):
+        return json.loads(self.hub.read_text())
+
+    def test_share_unshare_and_refusals(self):
+        self.assertEqual(self.run_cmd("share", "api")[0], 0)
+        self.assertIs(self.hub_data()["mcpServers"]["api"]["shared"], True)
+        code, out, _ = self.run_cmd("share", "api")
+        self.assertIn("already shared", out)
+        self.assertEqual(self.run_cmd("share")[0], 1)
+        self.assertEqual(self.run_cmd("share", "ghost")[0], 1)
+        self.assertEqual(self.run_cmd("share", "dv__playwright")[0], 1)
+        self.assertEqual(self.run_cmd("unshare", "api")[0], 0)
+        self.assertNotIn("shared", self.hub_data()["mcpServers"]["api"])
+        self.assertEqual(self.run_cmd("bogus")[0], 1)
+        self.assertIn("swe mcp gateway share", self.run_cmd("help")[1])
+
+    def test_load_hub_specs(self):
+        self.run_cmd("share", "api")
+        specs, problems = gateway_server.load_hub_specs()
+        self.assertEqual(specs["api"]["env"], {"T": "tok"})
+        self.assertEqual(problems, {"nokey": "no value for MISSING", "web": "not a stdio server"})
+        self.hub.write_text("{ not json")
+        with self.assertRaises(Exception):
+            gateway_server.load_hub_specs()
+
+    def test_status_text_and_json(self):
+        from quiver.mcp import gateway_commands as gc
+
+        self.run_cmd("share", "api")
+        live = {"error": "cannot read the hub, keeping the last good servers: bad",
+                "servers": [{"name": "api", "state": "running", "pid": 42, "uptime_s": 9,
+                             "starts": 1, "error": None},
+                            {"name": "nokey", "state": "error", "pid": None, "uptime_s": None,
+                             "starts": 0, "error": "no value for MISSING"}]}
+        with patch.object(gc, "_fetch", return_value=live), \
+                patch.object(gc.launchd, "loaded_pid", return_value=(True, 7)):
+            code, out, _ = self.run_cmd("status")
+            self.assertEqual(code, 0)
+            self.assertIn("running on http://127.0.0.1:8478", out)
+            self.assertIn("pid 42, up 9s", out)
+            self.assertIn("no value for MISSING", out)
+            self.assertIn("keeping the last good servers", out)
+            code, out, _ = self.run_cmd("status", "--json")
+            rows = {r["name"]: r for r in json.loads(out)["data"]["servers"]}
+            self.assertEqual(rows["api"]["pid"], 42)
+        with patch.object(gc, "_fetch", return_value=None):
+            code, out, _ = self.run_cmd()
+            self.assertIn("not installed", out)
+            self.assertIn("down", out)
+
+    def test_install_and_uninstall(self):
+        from quiver.mcp import gateway_commands as gc
+
+        installed = {}
+
+        def fake_install(program, log_path, path_env, label):
+            installed.update(program=program, label=label)
+            return self.home / "agent.plist"
+
+        with patch.object(gc.sys, "platform", "darwin"), \
+                patch.object(gc, "gateway_program", return_value=(["swe", "mcp", "gateway", "serve", "--port=9300"], None)), \
+                patch.object(gc.launchd, "install", side_effect=fake_install), \
+                patch.object(gc, "_fetch", return_value={"ok": True}):
+            code, out, _ = self.run_cmd("install", "--port=9300")
+        self.assertEqual(code, 0)
+        self.assertEqual(installed["label"], gc.LABEL)
+        self.assertIn("answering on http://127.0.0.1:9300", out)
+        self.assertEqual(self.hub_data()["gateway"], {"enabled": True, "port": 9300})
+        with patch.object(gc.sys, "platform", "darwin"), \
+                patch.object(gc.launchd, "uninstall", return_value=True):
+            code, out, _ = self.run_cmd("uninstall")
+        self.assertEqual(code, 0)
+        self.assertIn("swe mcp sync quiver --all", out)
+        self.assertIs(self.hub_data()["gateway"]["enabled"], False)
+        with patch.object(gc.sys, "platform", "linux"):
+            self.assertEqual(self.run_cmd("install")[0], 1)
+        with patch.object(gc.sys, "platform", "darwin"), \
+                patch.object(gc, "gateway_program", return_value=([], "no swe here")):
+            code, _, err = self.run_cmd("install")
+        self.assertEqual((code, "no swe here" in err), (1, True))
+
+    def test_gateway_program_always_names_the_port(self):
+        from quiver.mcp import gateway_commands as gc
+
+        with patch.object(gc.launchd, "bundled_swe", return_value=pathlib.Path("/Apps/swe")), \
+                patch.object(gc, "_supports_gateway", return_value=True):
+            program, err = gc.gateway_program(gateway.DEFAULT_PORT)
+        self.assertIsNone(err)
+        self.assertEqual(program, ["/Apps/swe", "mcp", "gateway", "serve", f"--port={gateway.DEFAULT_PORT}"])
+        swe = self.home / "Desktop" / "swe"
+        swe.parent.mkdir()
+        swe.write_text("#!/bin/sh\n")
+        swe.chmod(0o755)
+        with patch.object(gc.launchd, "bundled_swe", return_value=None), \
+                patch.object(gc, "_supports_gateway", return_value=True), \
+                patch.object(gc.sys, "argv", [str(swe)]):
+            program, err = gc.gateway_program(9300)
+        self.assertEqual(program, [])
+        self.assertIn("~/Desktop", err)
+
+    def test_serve_runs_until_interrupted_and_stops_servers(self):
+        import io
+
+        from quiver.mcp import gateway_commands as gc
+
+        class Stub:
+            def serve_forever(self):
+                raise KeyboardInterrupt
+
+            def server_close(self):
+                pass
+
+        self.run_cmd("share", "api")
+        out = io.StringIO()
+        previous = gateway_server.signal.getsignal(gateway_server.signal.SIGTERM)
+        try:
+            with patch.object(gateway_server, "make_server", return_value=Stub()):
+                self.assertEqual(gateway_server.serve(9300, self.home / "logs", out=out), 0)
+        finally:
+            gateway_server.signal.signal(gateway_server.signal.SIGTERM, previous)
+        self.assertIn("shared: api", out.getvalue())
+        self.assertIn("MCP gateway stopped", out.getvalue())
+        with patch.object(gateway_server, "serve", return_value=0) as serve:
+            self.assertEqual(self.run_cmd("serve", "--port=9301")[0], 0)
+        self.assertEqual(serve.call_args[0][0], 9301)
+        with patch.object(gateway_server, "serve", side_effect=OSError("in use")):
+            code, _, err = self.run_cmd("serve")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot bind", err)
 
 
 def _env(home: pathlib.Path) -> dict:

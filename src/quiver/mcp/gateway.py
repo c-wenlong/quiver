@@ -84,24 +84,38 @@ def entry_for(name: str, port: int) -> dict:
     return {"url": url_for(name, port)}
 
 
-def is_gateway_entry(name: str, canonical, settings: dict) -> bool:
-    """Whether a harness's canonical definition is this gateway's URL."""
-    return (isinstance(canonical, dict) and not canonical.get("command")
-            and canonical.get("url") == url_for(name, settings["port"]))
+def is_gateway_entry(name: str, canonical, settings: dict | None = None) -> bool:
+    """Whether a harness's canonical definition is a gateway URL for ``name``.
+
+    Any loopback port counts, not just today's: a harness can still hold
+    the URL from before a port change, until it is synced again.
+    """
+    if not isinstance(canonical, dict) or canonical.get("command"):
+        return False
+    url = canonical.get("url")
+    if not isinstance(url, str):
+        return False
+    head = f"http://{HOST}:"
+    if not url.startswith(head):
+        return False
+    port, sep, path = url[len(head):].partition("/")
+    return port.isdigit() and sep == "/" and "/" + path == PATH_PREFIX + name
 
 
 def matches_hub(name: str, hub_server, canonical, settings: dict) -> bool:
     """Whether a harness's definition is what sync writes for the hub's.
 
-    That is the hub's own definition, or the gateway URL when the hub
-    shares the server. ``discover`` uses it so a synced gateway URL never
-    reads as an edit to pull back into the hub, even after ``uninstall``
-    and before the harness is synced back: the hub would then hold a URL
-    that points at itself.
+    That is the hub's own definition, or a gateway URL for a hub server
+    that has a command. ``discover`` uses it so a synced gateway URL never
+    reads as an edit to pull back into the hub. That holds after
+    ``unshare``, ``uninstall`` or a port change too, until the harness is
+    synced back: importing the URL would replace the command with a URL
+    that points at the gateway, which runs that very command.
     """
     if without_flags(hub_server) == canonical:
         return True
-    return is_shared(hub_server) and is_gateway_entry(name, canonical, settings)
+    return (isinstance(hub_server, dict) and bool(hub_server.get("command"))
+            and is_gateway_entry(name, canonical, settings))
 
 
 def looks_stateful(name: str, server) -> bool:

@@ -123,10 +123,9 @@ def gateway_program(port: int) -> tuple[list[str], str | None]:
             return [], (f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent from "
                         "reading. Install Quiver.app (app/mac/script/install-app.sh) and "
                         "run install again: the agent then runs the app's bundled swe.")
-    program = [swe, "mcp", "gateway", "serve"]
-    if port != gw.DEFAULT_PORT:
-        program.append(f"--port={port}")
-    return program, None
+    # Always spelled out: an agent left to read the port from mcp.json
+    # could start before install saves the new one and bind the old.
+    return [swe, "mcp", "gateway", "serve", f"--port={port}"], None
 
 
 def _install(args: list[str]) -> int:
@@ -262,7 +261,7 @@ def gateway_status() -> dict:
                      **{k: row.get(k) for k in ("state", "pid", "uptime_s", "starts", "error")}})
     return {"enabled": settings["enabled"], "port": settings["port"],
             "installed": installed, "pid": pid, "reachable": live is not None,
-            "servers": rows}
+            "error": (live or {}).get("error"), "servers": rows}
 
 
 def _status(args: list[str]) -> int:
@@ -278,6 +277,8 @@ def _status(args: list[str]) -> int:
     else:
         head = c("dim", "not installed")
     print(f"\n  {c('bold', 'MCP gateway')}  {head}")
+    if status["error"]:
+        print(c("yellow", f"  {status['error']}"))
     if status["enabled"] != status["installed"] and sys.platform == "darwin":
         note = ("sync points harnesses here, but no LaunchAgent runs it: swe mcp gateway install"
                 if status["enabled"] else "installed, but sync still writes commands; "
