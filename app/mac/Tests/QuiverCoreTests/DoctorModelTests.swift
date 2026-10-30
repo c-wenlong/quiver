@@ -195,7 +195,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
 
     @Test func setupAndDiscoverWaitForTheRegistryGate() async throws {
         for action in [DoctorReport.Finding.Action.setup, .discover] {
-            let runner = RoutingRunner([
+            let runner = ScriptedRunner([
                 (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
                 (["setup"], .init(status: 0, stdout: Data(#"{"schema": 1, "data": {"applied": {}}}"#.utf8), stderr: "")),
                 (["harness", "discover"], .init(status: 0, stdout: Data("ok".utf8), stderr: "")),
