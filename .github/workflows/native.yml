@@ -94,6 +94,41 @@ jobs:
         timeout-minutes: 25
         run: script/test.sh
 
+  ios-unit:
+    # The iPhone app's unit tests had no job at all. The UI test target
+    # needs a paired hub, so only QuiverRemoteTests runs here, on the
+    # first available iPhone simulator of the image's Xcode.
+    name: iOS app unit tests
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: app/ios
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Generate the project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Unit tests
+        timeout-minutes: 30
+        run: |
+          # An iPhone on the newest iOS runtime: older runtimes' devices
+          # can be listed as available with their runtime gone.
+          udid="$(xcrun simctl list devices available --json | jq -r '
+            .devices | to_entries
+            | map(select(.key | test("SimRuntime.iOS-")))
+            | sort_by(.key | capture("iOS-(?<a>[0-9]+)-(?<b>[0-9]+)")
+                | [(.a | tonumber), (.b | tonumber)])
+            | last | .value | map(select(.name | startswith("iPhone")))
+            | .[0].udid')"
+          test -n "$udid" && [ "$udid" != null ]
+          xcodebuild -project QuiverRemote.xcodeproj -scheme QuiverRemote \
+            -destination "id=$udid" -derivedDataPath build-sim \
+            -only-testing:QuiverRemoteTests test
+
   nix:
     # Same derivation check release.yml runs on a tag.  Here it keeps the
     # flake honest on main: its checkPhase runs the unittest suite in the
