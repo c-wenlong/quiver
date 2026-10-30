@@ -231,6 +231,13 @@ class TestBrands(unittest.TestCase):
         other = _brands.brand_for("mystery")
         self.assertEqual((other["color"], other["logo"]), ("#45454b", None))
 
+    def test_the_table_mirrors_the_swift_one_row_for_row(self):
+        import re
+        swift = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources"
+                 / "QuiverCore" / "Models" / "ModelBrands.swift").read_text()
+        ids = re.findall(r'\.init\(id: "([^"]+)"', swift)
+        self.assertEqual([b[0] for b in _brands.BRANDS], ids)
+
     def test_an_alias_names_and_brands_an_opaque_id(self):
         # Devin logs Claude Haiku 4.5 as MODEL_PRIVATE_11; the bundled
         # supplement aliases it, so the row takes Anthropic's brand.

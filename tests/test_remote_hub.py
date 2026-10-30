@@ -35,6 +35,9 @@ class _Server:
         )
         # No tailnet in tests; cases that need an identity stub it.
         self.state.whois = lambda ip: None
+        # Nor the network: pages price from the bundled LiteLLM snapshot
+        # instead of downloading the live list on the first ledger read.
+        self.state.webapp.download_prices = False
         self.state.catalog.refresh()
         self.state.tail_manager.sync(self.state.catalog.tail_rows())
         self.server = make_server(self.state, "127.0.0.1", 0)
@@ -3391,6 +3394,44 @@ class TestSSE(HubBase):
                     break
             self.assertIn("message.appended", lines)
             self.assertTrue(got_live)
+        finally:
+            conn.close()
+
+    def test_cursor_ahead_of_a_wiped_journal_resyncs(self):
+        # The client last saw seq 500; the journal was wiped and holds
+        # one event. It must hear journal.truncated, and a new event
+        # (seq 2, under its old cursor) must still reach it.
+        auth = self.auth()
+        key = "claude:s1"
+        self.srv.state.emit(key, protocol.event(
+            "message.appended", key, "mbp",
+            protocol.message("assistant", "after wipe")))
+        head = self.srv.state.journal.last_seq(key)
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5)
+        try:
+            conn.request("GET", f"/v1/sessions/{key}/events?last=500",
+                         headers=auth)
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            seen = []
+            got_live = False
+            for _ in range(100):
+                line = resp.readline().decode()
+                if not line:
+                    break
+                seen.append(line)
+                if "journal.caught-up" in line:
+                    self.srv.state.emit(key, protocol.event(
+                        "message.appended", key, "mbp",
+                        protocol.message("assistant", "live")))
+                if '"live"' in line:
+                    got_live = True
+                    break
+            text = "".join(seen)
+            self.assertIn(
+                f'{{"type": "journal.truncated", "seq": {head}}}', text)
+            self.assertTrue(got_live, text)
         finally:
             conn.close()
 
