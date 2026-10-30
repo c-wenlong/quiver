@@ -207,7 +207,7 @@ public final class ComputeModel {
     /// Who to look for. Runs on page appear and on Refresh, not per tick.
     public func loadMatchers() async {
         managedPIDs = await managedPIDLoader()
-        managedPIDsLoadedAt = .now
+        managedPIDsLoadedAt = clock()
         do {
             matchers = try await matcherLoader()
             matchersLoaded = true
@@ -225,9 +225,9 @@ public final class ComputeModel {
     public func refresh() async {
         request += 1
         let mine = request
-        if managedPIDsLoadedAt.map({ Date.now.timeIntervalSince($0) > 60 }) ?? true {
+        if managedPIDsLoadedAt.map({ clock().timeIntervalSince($0) > 60 }) ?? true {
             managedPIDs = await managedPIDLoader()
-            managedPIDsLoadedAt = .now
+            managedPIDsLoadedAt = clock()
         }
         let sampled = await takeSample()
         guard mine == request else { return }
@@ -381,7 +381,7 @@ public final class ComputeModel {
         if limits.autoClean
             && (managedPIDsLoadedAt.map { now.timeIntervalSince($0) >= 60 } ?? true) {
             managedPIDs = await managedPIDLoader()
-            managedPIDsLoadedAt = .now
+            managedPIDsLoadedAt = clock()
             if replaced(generation) { return }
         }
         let freshEnough = sampledAt.map { now.timeIntervalSince($0) <= trendInterval.seconds / 2 } ?? false
@@ -472,7 +472,7 @@ public final class ComputeModel {
             for pid in order where !seen.contains(pid) && (allowed?.contains(pid) ?? true)
                 && signaller.signal(pid, force ? SIGKILL : SIGTERM) {
                 seen.insert(pid)
-                if !force, let started = startedAt[pid] { signalledAt[pid] = (at: .now, startedAt: started) }
+                if !force, let started = startedAt[pid] { signalledAt[pid] = (at: clock(), startedAt: started) }
             }
         }
     }
@@ -501,7 +501,8 @@ public final class ComputeModel {
 
     /// Republish every list from the last sample, with the limits as they
     /// now stand: this is what makes a changed threshold reflag at once.
-    private func republish(at now: Date = .now) {
+    private func republish(at now: Date? = nil) {
+        let now = now ?? clock()
         let order = matchers.map(\.harness)
         usages = ComputeSummary.usages(byHarness: attribution.byHarness, cpu: cpu, order: order)
 
