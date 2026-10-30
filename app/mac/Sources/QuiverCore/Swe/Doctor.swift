@@ -14,7 +14,9 @@ public struct DoctorReport: Decodable, Sendable, Equatable {
     public struct Finding: Decodable, Sendable, Equatable, Identifiable {
         public enum Severity: String, Decodable, Sendable { case error, warning, info }
 
-        public var id: String { check + message }
+        /// Check and message joined by a NUL, which neither contains, so
+        /// "ab"+"c" and "a"+"bc" never share run state (as the web does).
+        public var id: String { check + "\u{0}" + message }
         public let check: String
         public let severity: Severity
         public let message: String
@@ -154,11 +156,15 @@ public final class DoctorModel {
     public func load() async {
         generation += 1
         let mine = generation
+        // A cancelled load (the page closed) puts this back rather than
+        // leaving the spinner, and `isBusy`, on for good.
+        let before = state == .loading ? .idle : state
         state = .loading
         let next: Loadable<DoctorReport>
         do {
             next = .loaded(try await swe.doctor())
         } catch is CancellationError {
+            if mine == generation { state = before }
             return
         } catch {
             next = .failed(error.localizedDescription)

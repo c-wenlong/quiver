@@ -19,6 +19,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.test_webapp import app_js_function
+
 PAGES = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages"
 
 # The shared prelude: DOM stub, the globals app.js/manage.js/format.js
@@ -129,6 +131,7 @@ globalThis.registerPage = (id, r) => { PAGES[id] = r; };
 globalThis.esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+globalThis.safeHref = (u) => (/^(https?:\/\/|mailto:)/i.test(String(u || "").trim()) ? esc(String(u).trim()) : "");
 globalThis.icon = () => "";
 globalThis.pageHeader = () => "";
 globalThis.renderGate = () => {};
@@ -164,7 +167,12 @@ const picked = (sel) => { const o = sel && optionsOf(sel).find((x) => x[0] === s
 const choose = (sel, label) => { sel.value = optionsOf(sel).find((x) => x[1] === label)[0]; sel.onchange(); };
 """
 
+STUB += app_js_function("currentRoute")
+
 MENU_JS = (Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/model-menu.js")
+
+# Writes go through app.js's own send(), over the stubbed fetch.
+STUB += app_js_function("apiSend") + "const apiPost = (path, body) => apiSend(\"POST\", path, body);\n"
 
 # The four harnesses every flow offers: claude and codex take a model
 # pick and have recent models, gemini takes none, and pi is what an old

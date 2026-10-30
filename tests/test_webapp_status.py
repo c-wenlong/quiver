@@ -11,7 +11,9 @@ import copy
 import datetime
 import http.client
 import json
+import shutil
 import ssl
+import subprocess
 import tempfile
 import threading
 import time
@@ -26,6 +28,7 @@ from quiver.status.parsers import Component
 from quiver.webapp.pages import status as status_page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "status"
 EPOCH = 1_791_720_000.0  # the Swift tests' usageEpoch, 2026-10-11
@@ -589,8 +592,8 @@ class TestPayload(PollerBase):
         json.dumps(body)
 
     def test_only_web_links_reach_an_href(self):
-        self.assertIsNone(status_page._link("javascript:alert(1)"))
-        self.assertEqual(status_page._link("https://x.test/i"), "https://x.test/i")
+        self.assertIsNone(status_page.web_url("javascript:alert(1)"))
+        self.assertEqual(status_page.web_url("https://x.test/i"), "https://x.test/i")
 
     def test_carries_the_hub_clock(self):
         self.assertEqual(status_page.payload([], now=EPOCH)["server_time"], EPOCH)
@@ -639,7 +642,6 @@ class TestRoute(HubBase):
     def test_page_assets_are_served(self):
         status, data = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("status"', data)
         self.assertIn(b".status-grid", self.srv.request("GET", "/app/pages.css")[1])
         for logo in ("harness-openai.svg", "harness-copilot.svg", "harness-npm.svg",
                      "harness-vercel.svg", "harness-cloudflare-color.svg"):
@@ -886,6 +888,60 @@ class TestTrackRoute(HubBase):
         self.assertIsNotNone(linear)
         self.assertEqual(linear["group"], "infrastructure")
         self.assertTrue(linear["custom"])
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestLateWriteGate(unittest.TestCase):
+    """pages/status.js under node: a Track or Untrack reply that answers
+    401 after the browser left Service status shows no gate over the page
+    it moved to; on the page it does."""
+
+    def gates_after_untrack(self, hash_):
+        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/status.js"
+        prelude = ("globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
+                   "const gates = []; function renderGate(m) { gates.push(m); }\n"
+                   "function registerPage() {}\n" + app_js_function("currentRoute")
+                   + "const apiPost = async () => ({ status: 401, data: null });\n")
+        body = "statusUntrack('x').then(() => process.stdout.write(String(gates.length)));\n"
+        done = subprocess.run(["node", "-e", prelude + page.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return int(done.stdout)
+
+    def test_only_on_the_page(self):
+        self.assertEqual(self.gates_after_untrack("#/overview"), 0)
+        self.assertEqual(self.gates_after_untrack("#/status"), 1)
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestRelativeTime(unittest.TestCase):
+    """Fmt.relative, the one copy of Foundation's named relative time that
+    Service status and Settings' device rows show."""
+
+    def test_named_past_times(self):
+        fmt = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/format.js"
+        now = 1_800_000_000
+        ages = [0, 30, 5 * 60, 3 * 3600, 26 * 3600, 9 * 86400, -120]
+        src = (fmt.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify("
+               + json.dumps(ages) + f".map((a) => Fmt.relative({now} - a, {now}))));\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        # A hub clock ahead of the browser (-120) still reads as now.
+        self.assertEqual(json.loads(done.stdout), ["now", "30 seconds ago", "5 minutes ago", "3 hours ago",
+                                                  "yesterday", "last week", "now"])
+
+    def test_tokens_pick_the_unit_after_rounding(self):
+        # The same cases as the Mac app's UsageFormatTests: never "1000K".
+        fmt = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/format.js"
+        counts = [0, 950, 12_340, 1_000_000, 999_949, 999_950, 999_950_000, 999_999_999_999]
+        src = (fmt.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify("
+               + json.dumps(counts) + ".map((n) => Fmt.tokens(n))));\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout),
+                         ["0", "950", "12.3K", "1M", "999.9K", "1M", "1B", "1000B"])
 
 
 if __name__ == "__main__":

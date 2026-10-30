@@ -157,6 +157,9 @@ final class AppModel {
             hub = Self.localHub(swe: swe)
             others = OtherLimitsModel(swe: swe, extraAccounts: extraAccountsProvider,
                                       issues: issues)
+            // A new model starts at swe's five minutes; keep the window
+            // Settings chose, as start() and its watcher set it.
+            others.cacheTTL = limits.refreshFreshSeconds
             Task { await others.load() }
             doctor = DoctorModel(swe: swe)
             // The "swe too old" verdicts were about the old build.

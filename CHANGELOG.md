@@ -9,6 +9,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote: a `limit` notification when a session hits its usage
+  limit.** The hub and satellites now raise `notify` kind `limit` when
+  a Claude Code session writes its rate-limit record ("You've hit your
+  session limit · resets 9:30am") or a Codex turn ends with
+  `usage_limit_exceeded`. The ntfy push carries the harness's own line,
+  so the lock screen says when work can resume, and Claude Code's carry
+  `resets_at` and `window`. It rings once per limit: old records read
+  during backfill and retries into the same limit stay quiet. Other
+  harnesses don't raise it yet
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
+- **Web app: the session's model in the chat header and Sessions
+  list.** The chat's header shows the model of the transcript's newest
+  reply after the folder, and each Sessions row names it first in its
+  details line, ahead of the ledger's other models (the ledger's own
+  spelling of the same model isn't repeated). The provider path and the
+  8-digit date stamp are dropped, as on the phone:
+  `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
+  `claude-opus-4-5`. Nothing shows when the hub doesn't know it. An
+  open chat reads the hub's row again when a turn ends and when the
+  tab becomes visible, so the header follows a model that first
+  appears with the opening reply or changes elsewhere. The
+  page's rows (`/v1/app/sessions`) now carry the hub's `model` as the
+  catalog read it, so the page has no second transcript reader. Display
+  only: the web app doesn't switch models. Part of
+  [#643](https://github.com/c-wenlong/quiver/issues/643).
+
+- **Mac app: approve pair requests in Settings › Remote.** A "Pending
+  requests" group under Paired devices lists the phones asking to pair
+  over Tailscale, with each one's name, tailnet node, login and how long
+  it has waited, a code field for the 6 digits the phone shows, and
+  Approve / Deny. It reads `swe remote devices --requests --json` every
+  3 seconds, only while the section is on screen, and an approval
+  refreshes the device list. This covers a hub on the same Mac; a hub on
+  another machine is [#681](https://github.com/c-wenlong/quiver/issues/681).
+  `swe remote devices --approve=<code>` and `--deny=<code>` gain
+  `--request-id=<id>`, which holds the code to that one request, as the
+  hub's HTTP route already did: a code typed against one row never
+  decides another, and five wrong approve codes deny it. The app always
+  sends it.
+  Part of [#522](https://github.com/c-wenlong/quiver/issues/522).
+
+- **Web app: `@` file completion in the chat composer.** Typing `@` at
+  the start of the box or after a space opens the composer's menu with
+  files and folders under the session's folder, from the hub's
+  `GET /v1/sessions/{key}/files` route, the same list the iPhone's `@`
+  menu shows. It uses the `/` menu's box and keys (arrows, Enter or Tab
+  to pick, Escape to close) and the iPhone's token rules: an `@` inside
+  a word (an email) opens nothing, a path with spaces is quoted
+  (`@"My Documents/notes.txt"`), a file goes in as `@path ` and a
+  folder as `@path/` so the menu stays open inside it. Searches wait
+  120 ms after the last keystroke, and a newer query drops an older
+  answer. A satellite session's refusal and an older hub's 404 are
+  worded in the menu
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
+- **Compute: auto clean orphaned processes, on the Mac and the web app.**
+  The Compute settings gain an "Auto clean" switch (Mac: the cleanup
+  sheet, web: the settings gear): while it is on, an orphan tree older
+  than the "Orphans count as old after" age gets one SIGTERM, deepest
+  member first, through the same kill plan and guards a manual Quit
+  runs — never pid 1, the app or its ancestors, and a pid only while it
+  is still the recorded process. A nested "Force quit" switch shows only
+  while auto clean is on and sends SIGKILL to a marked tree still alive
+  ten seconds later. On the web, the switches live in the hub's
+  `config.json` (the `compute` section, so `swe config` reads them too),
+  a `POST /v1/app/compute/settings` route writes them, and the background
+  sampler starts at hub boot while the switch is on, so cleanup runs
+  with no browser open. A signalled orphan shows a "Quitting" badge.
+
 - **Remote iPhone app: switch a session's model from the chat.** On a
   session attached through tmux whose harness takes `/model <id>`
   (Claude Code and Codex; the row's `model_modes` says so), the chat's
@@ -278,6 +348,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Remote: the unused `compaction` event type is gone from the
+  protocol.** Compactions have always reached clients as
+  `message.appended` with `kind: "compaction"`; the separate
+  `compaction` event in `EVENT_TYPES`, docs/json-contracts.md and
+  docs/remote-control.md was never emitted. The hub still accepts one
+  from an older satellite
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
 - **`--hub` clones around the state a machine already has.** `swe init
   --hub` and `swe setup --hub` used to refuse any `~/.quiver` with files
   in it, and the app, the remote hub and plain `swe` runs all write
@@ -415,6 +493,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own tools. Which harness gets which is harness.json
   `capabilities.attachments.at_refs`, over a fallback table in
   `remote/attachments.py`
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
+- **Remote: queue-mode sends wait for idle on satellites too.** A
+  `queue`-mode message to a session on another machine used to fail
+  with "session is mid-turn; steer to write anyway" whenever that
+  session was busy. `swe remote agent` now parks it on a lane of its
+  own, as the hub does: it waits until the turn ends (up to 30 min,
+  then fails honestly) and for the attachment pulls it names, while
+  steers and their pulls go ahead. A send the agent stops before
+  delivering replays on restart.
+  The hub's and the satellite's idle wait both probe with the tailer's
+  activity time, so a turn that started since the last catalog refresh
+  no longer reads as "interrupted" and gets a queued send typed into it
   ([#516](https://github.com/c-wenlong/quiver/issues/516)).
 
 - **The Mac app's Model menu keeps your pick across a harness round

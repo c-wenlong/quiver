@@ -293,7 +293,7 @@ private struct ServerRow: View {
                     if showHealth, let health = server.health {
                         Circle().fill(healthColor(health)).frame(width: Theme.statusDot, height: Theme.statusDot)
                             .padding(.top, 4)
-                            .help(server.detail ?? "Healthy")
+                            .hoverTip(server.detail ?? "Healthy")
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 5) {
@@ -377,13 +377,13 @@ private struct Cell: View {
                     .frame(width: 20, height: 20)
                     .background(Theme.subtle, in: .rect(cornerRadius: 5))
                     .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border, lineWidth: 1))
-                    .help("Definition \(variantLetter(group))")
+                    .hoverTip("Definition \(variantLetter(group))")
             } else {
                 Image(systemName: "checkmark").font(Theme.font(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
             }
         } else {
-            Text("—").foregroundStyle(Theme.borderStrong).help("Not in \(HarnessMark(harness).name)")
+            Text("—").foregroundStyle(Theme.borderStrong).hoverTip("Not in \(HarnessMark(harness).name)")
         }
     }
 }

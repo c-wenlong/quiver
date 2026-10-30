@@ -24,8 +24,10 @@ import secrets
 import signal
 import socket
 import sqlite3
+import sys
 import threading
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from email.utils import formatdate
 from pathlib import Path
@@ -130,10 +132,18 @@ MAX_SAT_PENDING = 2000
 # /v1/folders lists at most this many subfolders of one folder.
 FOLDER_LIST_CAP = 500
 
-# The unauthenticated pair routes (/v1/pair, /v1/pair/request) allow
-# this many attempts per source IP per window.
+# The unauthenticated pair routes (/v1/pair, /v1/pair/request, and the
+# owner-identity path of /v1/pair/requests*) allow this many attempts
+# per source IP per window.
 _PAIR_ATTEMPT_MAX = 5
 _PAIR_ATTEMPT_S = 600
+# A background loop that keeps failing logs its traceback at most this
+# often per loop step, so a stuck step shows in the unit log without
+# flooding it every 250 ms.
+_LOOP_ERROR_LOG_S = 300.0
+# The catalog loop drops expired pair requests (and any uncollected
+# credential on them) at most this often.
+_PAIR_PRUNE_S = 60.0
 
 # A launch the phone started stays answerable at /v1/launches/<id> this
 # long; past it the tmux pane has long since been adopted or abandoned.
@@ -147,8 +157,12 @@ APPROVAL_TTL_S = 86400
 # Event types a satellite may journal via /v1/agent/events:
 # protocol.EVENT_TYPES plus the two agent→hub bookkeeping types the
 # phone never sends. Anything else is dropped, not journaled.
+# ``compaction`` left EVENT_TYPES (nothing ever emitted it; compactions
+# are ``message.appended`` with that kind) but an older satellite's
+# build still lists it, so the hub keeps taking it rather than start
+# refusing a type it used to accept.
 _SAT_EVENT_TYPES = protocol.EVENT_TYPES | {
-    "session.launched", "command.result",
+    "session.launched", "command.result", "compaction",
 }
 
 # Per-type ``data.kind`` vocabularies for the events that carry one.
@@ -221,6 +235,18 @@ class HubState:
         # Satellite presence: command-stream subscribers are the online
         # signal — a sleeping MacBook just drops offline until it dials in.
         self._sat_subs: dict[str, int] = {}
+        # Each satellite stream connects and disconnects on its own
+        # request thread. The lock also spans the online/offline write
+        # and event, so a disconnect racing a connect can't persist the
+        # flags out of order.
+        self._sat_subs_lock = threading.Lock()
+        # (machine, session key) -> command id of its last queued
+        # ``tail``, so a chat reopened (or an SSE reconnecting) while
+        # the satellite is offline queues one tail, not one per GET.
+        self._sat_tail_cmds: dict[tuple[str, str], str] = {}
+        # Spans queue_tail's check, enqueue and record, so two opens at
+        # once can't both queue. Taken before ``_cmd_lock``, never under.
+        self._sat_tail_lock = threading.Lock()
         self._cmd_seq = 0
         # Guards ``_cmd_seq`` and every piece of satellite ack
         # bookkeeping below — command streams, result uploads and
@@ -268,11 +294,14 @@ class HubState:
         self.owner_retry = None
         self._owner_tried_at = 0.0
         # Unauthenticated pair-route rate limits: ip → timestamps, one
-        # bucket per route so token tries and request floods don't
-        # share a budget. One lock guards both.
+        # bucket per route so token tries, request floods and owner-
+        # identity approvals don't share a budget. One lock guards all.
         self._pair_req_times: dict[str, list[float]] = {}
         self._pair_ex_times: dict[str, list[float]] = {}
+        self._pair_dec_times: dict[str, list[float]] = {}
         self._pair_req_lock = threading.Lock()
+        self._loop_error_at: dict[str, float] = {}
+        self._pair_pruned_at = 0.0
         # Host values this hub answers to — the owner-identity approval
         # path requires one, and the unauthenticated routes answer only
         # these (filled by serve() from the bind host + whois); empty
@@ -286,19 +315,22 @@ class HubState:
         # with the real tailnet client, so loopback requests carrying
         # them are read as that client. Off, the headers are ignored.
         self.trust_proxy = False
-        # session key -> request_id for every approval.requested that has
-        # not yet been answered — local panes and satellites both flow
-        # through emit(), so the inbox sees them uniformly.
+        # session key -> request_id of its newest approval.requested
+        # that has not yet been answered — local panes and satellites
+        # both flow through emit(), so the inbox sees them uniformly.
+        # Derived from ``_approval_at`` by ``_sync_pending_approval``.
         self.pending_approvals: dict[str, str] = {}
         # One-shot, minutes-lived bearer tokens the ntfy action buttons
         # send instead of a device credential (notify.ApprovalTokens).
         self.approval_tokens = notify.ApprovalTokens()
-        # When each pending approval was requested: entries expire on
+        # session key -> {request_id: requested_at} for every open
+        # approval. A Codex app-server holds overlapping approvals, so
+        # resolving one must leave the others pending. Entries expire on
         # APPROVAL_TTL_S, since a dead satellite or killed pane can
         # never emit the approval.resolved that would clear them.
         # ``_approval_lock`` covers both dicts — the expiry sweep and
         # emit's updates run on different request threads.
-        self._approval_at: dict[str, float] = {}
+        self._approval_at: dict[str, dict[str, float]] = {}
         self._approval_lock = threading.Lock()
         # launch_id -> {machine, harness, cwd, state, key, note,
         # created_at} for every POST /v1/sessions. ``state`` goes pending
@@ -421,16 +453,20 @@ class HubState:
             rid = str((event.get("data") or {}).get("request_id") or "")
             if rid:
                 with self._approval_lock:
-                    self.pending_approvals[key] = rid
-                    self._approval_at[key] = time.time()
+                    self._approval_at.setdefault(key, {})[rid] = time.time()
+                    self._sync_pending_approval(key)
         elif etype == "approval.resolved":
-            with self._approval_lock:
-                self.pending_approvals.pop(key, None)
-                self._approval_at.pop(key, None)
-            # Retire only the resolved request's token — a different
-            # still-pending request on the session (a Codex app-server
-            # holds approvals independently) keeps its buttons live.
+            # Retire only the resolved request — a different still-
+            # pending request on the session (a Codex app-server holds
+            # approvals independently) stays in the inbox and keeps its
+            # buttons live. A resolve naming no request clears them all.
             rid = str((event.get("data") or {}).get("request_id") or "")
+            with self._approval_lock:
+                if rid:
+                    (self._approval_at.get(key) or {}).pop(rid, None)
+                else:
+                    self._approval_at.pop(key, None)
+                self._sync_pending_approval(key)
             self.approval_tokens.drop(key, rid)
         elif etype in {"session.launched", "command.result"}:
             data = event.get("data") or {}
@@ -482,10 +518,22 @@ class HubState:
         """
         with self._approval_lock:
             cutoff = time.time() - APPROVAL_TTL_S
-            for key, at in list(self._approval_at.items()):
-                if at <= cutoff:
-                    self._approval_at.pop(key, None)
-                    self.pending_approvals.pop(key, None)
+            for key, open_ in list(self._approval_at.items()):
+                for rid, at in list(open_.items()):
+                    if at <= cutoff:
+                        del open_[rid]
+                self._sync_pending_approval(key)
+
+    def _sync_pending_approval(self, key: str) -> None:
+        """Point ``pending_approvals[key]`` at the session's newest open
+        request, or drop both entries when none is left. Caller holds
+        ``_approval_lock``."""
+        open_ = self._approval_at.get(key)
+        if open_:
+            self.pending_approvals[key] = max(open_, key=open_.__getitem__)
+        else:
+            self._approval_at.pop(key, None)
+            self.pending_approvals.pop(key, None)
 
     # -- GitHub notifications ---------------------------------------------
     # The catalog polls ``fetch_github`` on its refresh cadence and feeds
@@ -580,10 +628,30 @@ class HubState:
     def sat_journal_key(machine_id: str) -> str:
         return f"_sat_{machine_id}"
 
+    def _own_journal_keys(self) -> list[str]:
+        """Journals the sweep must leave: the global stream, each paired
+        satellite's command queue (its agent's cursor counts on that
+        queue's seqs), and every satellite session still listed. Those
+        have no tailer or cursor here, and the agent that tails them
+        doesn't know to backfill a journal the hub dropped."""
+        keys = [GLOBAL_KEY] + [
+            self.sat_journal_key(mid)
+            for mid in catalog_mod.load_machines(self.home)
+        ]
+        keys += [
+            str(row.get("key") or "") for row in self.catalog.rows()
+            if row.get("remote")
+        ]
+        return keys
+
     def machine_online(self, mid: str) -> bool:
         return self._sat_subs.get(mid, 0) > 0 or mid == self.machine_id
 
     def sat_connected(self, mid: str) -> None:
+        with self._sat_subs_lock:
+            self._sat_connected(mid)
+
+    def _sat_connected(self, mid: str) -> None:
         first = self._sat_subs.get(mid, 0) == 0
         self._sat_subs[mid] = self._sat_subs.get(mid, 0) + 1
         if first:
@@ -599,6 +667,10 @@ class HubState:
             )
 
     def sat_disconnected(self, mid: str) -> None:
+        with self._sat_subs_lock:
+            self._sat_disconnected(mid)
+
+    def _sat_disconnected(self, mid: str) -> None:
         left = max(0, self._sat_subs.get(mid, 0) - 1)
         self._sat_subs[mid] = left
         if left:
@@ -632,7 +704,8 @@ class HubState:
         A result acks only its own seq: the floor mirrors the agent's
         contiguous done floor, so it climbs ``_sat_done`` one
         consecutive seq at a time — a control finishing while an
-        earlier message still runs in ``_work_q`` leaves it put, and
+        earlier message still runs on the agent's send queue leaves it
+        put, and
         the pending count keeps covering the commands a restart still
         owes the satellite. ``?last=`` resets it on connect; an id the
         map doesn't know (a hub-local result, or a command queued
@@ -656,6 +729,23 @@ class HubState:
             # A map entry at or under the floor can never move it.
             for cid in [c for c, s in seqs.items() if s <= floor]:
                 del seqs[cid]
+
+    def queue_tail(self, mid: str, session_key: str, status: str) -> None:
+        """Ask a satellite to tail ``session_key``, unless a tail for it
+        is already queued and not yet acked."""
+        with self._sat_tail_lock:
+            with self._cmd_lock:
+                cid = self._sat_tail_cmds.get((mid, session_key))
+                if cid and cid in self._sat_cmd_seqs.get(mid, {}):
+                    return
+            cmd = self.queue_command(
+                mid, "tail", session_key, {"status": status})
+            if cmd is None:
+                return
+            if len(self._sat_tail_cmds) > 4096:
+                self._sat_tail_cmds.clear()
+            self._sat_tail_cmds[(mid, session_key)] = str(
+                (cmd.get("data") or {}).get("command_id") or "")
 
     def queue_command(
         self, mid: str, op: str, session_key: str, data: dict
@@ -705,6 +795,29 @@ class HubState:
             )
         return written
 
+    def _log_loop_error(self, step: str) -> None:
+        """From an ``except`` in a background loop: print the traceback
+        to stderr (the launchd/systemd log), at most once per
+        _LOOP_ERROR_LOG_S for each step. The loop carries on."""
+        now = time.monotonic()
+        last = self._loop_error_at.get(step)
+        if last is not None and now - last < _LOOP_ERROR_LOG_S:
+            return
+        self._loop_error_at[step] = now
+        print(f"swe remote hub: {step} failed (kept running):",
+              file=sys.stderr)
+        traceback.print_exc()
+
+    def _prune_pair_requests(self) -> None:
+        now = time.time()
+        if now - self._pair_pruned_at < _PAIR_PRUNE_S:
+            return
+        self._pair_pruned_at = now
+        try:
+            pairing.prune_requests(self.home)
+        except Exception:
+            self._log_loop_error("pair request prune")
+
     def _catalog_loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -742,11 +855,12 @@ class HubState:
                 rows, as_of = self.catalog.tail_snapshot()
                 self.tail_manager.sync(rows, as_of=as_of)
                 supervise.reap_kept(self.home, self.catalog.session_for)
+                self._prune_pair_requests()
                 # GitHub last: a slow ``gh`` must never hold up adoption
                 # or tail sync, which don't need it.
                 self.catalog.poll_github()
             except Exception:
-                pass
+                self._log_loop_error("catalog refresh")
             self._catalog_wake.wait(catalog_mod.REFRESH_INTERVAL_S)
             self._catalog_wake.clear()
 
@@ -807,14 +921,19 @@ class HubState:
             try:
                 self.tail_manager.tick()
             except Exception:
-                pass
+                self._log_loop_error("tail tick")
             sweeps += 1
             if sweeps >= 1200:  # ~5 min at a 250 ms tick
                 sweeps = 0
                 try:
                     attachments.sweep(self.home)
                 except Exception:
-                    pass
+                    self._log_loop_error("attachment sweep")
+                try:
+                    self.tail_manager.sweep_stale(
+                        self.journal, keep=self._own_journal_keys())
+                except Exception:
+                    self._log_loop_error("journal sweep")
             # A write to a session (tail_manager.wake) cuts this short.
             self.tail_manager.wait(0.25)
 
@@ -882,7 +1001,22 @@ class _Handler(BaseHTTPRequestHandler):
         self._must_close = False
         self._body_cache = _UNSET
         self._device_row = None
-        super().handle_one_request()
+        self._sent_headers = None
+        try:
+            super().handle_one_request()
+        except (ConnectionResetError, BrokenPipeError):
+            # The client went away; nothing to answer and nothing to log.
+            self.close_connection = True
+        except Exception:
+            # A route bug. Answer 500 if nothing went out yet, so the
+            # client sees an error instead of a dropped connection.
+            traceback.print_exc()
+            self.close_connection = True
+            if self._sent_headers is None:
+                try:
+                    self._send_error(500, "internal", "the hub hit an error")
+                except OSError:
+                    pass
 
     def parse_request(self) -> bool:
         if not super().parse_request():
@@ -980,7 +1114,7 @@ class _Handler(BaseHTTPRequestHandler):
         # no other site may frame a hub page, sniff a body into a script
         # or learn the hub's URL from a referrer. A route that sets its
         # own policy (page previews) keeps it.
-        sent = getattr(self, "_sent_headers", set())
+        sent = getattr(self, "_sent_headers", None) or set()
         for name, value in _SECURITY_HEADERS:
             if name.lower() not in sent:
                 self.send_header(name, value)
@@ -1060,13 +1194,25 @@ class _Handler(BaseHTTPRequestHandler):
         node = self._approver_node(self._state.whois_cached(self._client_ip()))
         return f"tailnet:{node}" if node else None
 
+    def _client_device(self) -> str | None:
+        """The paired device behind the bearer, unless it is a satellite.
+
+        A satellite credential is a machine's, for /v1/agent/* only.
+        Any pair token can mint one, so without this it would carry
+        every phone power: launch agents, approve pair requests, read
+        API keys through /v1/app."""
+        device_id = self._device()
+        if device_id is not None and (
+                (self._device_row or {}).get("role") == "satellite"):
+            return None
+        return device_id
+
     def _caller(self, path: str) -> str | None:
         """The paired device, else the owner's own device. Satellite
         routes stay bearer-only: a satellite is a paired machine."""
-        device_id = self._device()
-        if device_id is None and not path.startswith("/v1/agent/"):
-            device_id = self._owner_device()
-        return device_id
+        if path.startswith("/v1/agent/"):
+            return self._device()
+        return self._client_device() or self._owner_device()
 
     def _scoped_approval_device(self, path: str) -> str | None:
         """A minted ntfy action token as caller identity.
@@ -1077,6 +1223,10 @@ class _Handler(BaseHTTPRequestHandler):
         presentation — a mismatched ``request_id`` is a failed spend,
         not a free probe — so a topic reader holding it can answer
         exactly the one prompt it was minted for and nothing else.
+
+        The buttons only ever send allow, deny or always, so that is
+        all the token can answer with: a menu row number (which could
+        pick any option of a digit menu) burns it and is refused.
         """
         prefix = "/v1/sessions/"
         suffix = "/approval"
@@ -1090,6 +1240,11 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._read_body() or {}
         rid = str(body.get("request_id") or "")
         if not self._state.approval_tokens.consume(token, key, rid):
+            return None
+        decision = body.get("decision")
+        # A list is unhashable: check the type before ``in``.
+        if not isinstance(decision, str) or (
+                decision not in notify.ACTION_DECISIONS):
             return None
         # The approval route never reads the device id back; non-None
         # is the whole grant.
@@ -1105,6 +1260,29 @@ class _Handler(BaseHTTPRequestHandler):
         if not row or row.get("role") != "satellite":
             return None
         return row
+
+    def _require_satellite(self) -> bool:
+        """The agent routes' first gate: a satellite credential. Sends
+        the 403 and returns False for anything else."""
+        if self._agent_row() is None:
+            self._send_error(
+                403, "forbidden", "agent routes need a satellite credential"
+            )
+            return False
+        return True
+
+    def _require_machine(
+        self, device_id: str, mid: str | None, *, bind: bool = False
+    ) -> bool:
+        """``_agent_machine_ok`` as a gate: sends the 403 and returns
+        False when ``mid`` is missing or not this credential's machine."""
+        if mid is None or not self._agent_machine_ok(
+                device_id, mid, bind=bind):
+            self._send_error(
+                403, "forbidden", "credential is bound to another machine"
+            )
+            return False
+        return True
 
     def _agent_machine_ok(
         self, device_id: str, mid: str, *, bind: bool = False
@@ -1197,6 +1375,16 @@ class _Handler(BaseHTTPRequestHandler):
             return ""
         return str((peer or {}).get("node_name") or "")
 
+    def _local_host_gate(self) -> bool:
+        """``_local_host_ok`` as a gate: sends the 403 and returns False
+        for a Host this hub doesn't answer to."""
+        if self._local_host_ok():
+            return True
+        self._send_error(
+            403, "bad_origin", "request blocked by origin policy"
+        )
+        return False
+
     def _local_host_ok(self) -> bool:
         """The DNS-rebinding gate on the unauthenticated routes: once
         ``allowed_hosts`` names the addresses this hub answers to, a
@@ -1222,11 +1410,41 @@ class _Handler(BaseHTTPRequestHandler):
             bucket[ip] = times
         return True
 
-    def _pair_request(self) -> None:
-        if not self._local_host_ok():
+    def _approver_ok(self) -> bool:
+        """Auth for the pair-approval routes: a paired bearer, or the
+        owner's tailnet identity. Sends the refusal and returns False.
+
+        Every check that needs no subprocess runs first, so a caller
+        that can't pass them never forks ``tailscale whois``; the
+        identity path is rate-limited like the other unauthenticated
+        pair routes, and its lookup goes through the whois cache."""
+        if self._client_device() is not None:
+            if self._bad_origin():
+                self._send_error(
+                    403, "bad_origin", "request blocked by origin policy"
+                )
+                return False
+            return True
+        if (self.headers.get("X-Quiver-Pair") or "") != "1":
+            # Without the header the identity path can't pass at all.
+            self._send_error(401, "unauthorized", "pair this device first")
+            return False
+        if self._bad_origin() or not self._identity_ok():
             self._send_error(
                 403, "bad_origin", "request blocked by origin policy"
             )
+            return False
+        if not self._attempt_ok(self._state._pair_dec_times):
+            self._send_error(429, "rate_limited", "too many pair attempts")
+            return False
+        peer = self._state.whois_cached(self._client_ip())
+        if self._approver_node(peer) is None:
+            self._send_error(401, "unauthorized", "pair this device first")
+            return False
+        return True
+
+    def _pair_request(self) -> None:
+        if not self._local_host_gate():
             return
         # Rate limit BEFORE the whois fork — a flood must not spawn a
         # subprocess per request.
@@ -1263,24 +1481,17 @@ class _Handler(BaseHTTPRequestHandler):
                 403, "bad_origin", "request blocked by origin policy"
             )
             return
-        device_id = self._device()
+        if not self._approver_ok():
+            return
         # The peer's node decides self-approval no matter how the
-        # caller proved itself — bearer or owner identity alike.
-        peer = self._state.whois(self._client_ip())
+        # caller proved itself — bearer or owner identity alike. A
+        # cached miss is re-checked: with no node the self-approval
+        # check can't run, and the caller is already authenticated.
+        ip = self._client_ip()
+        peer = self._state.whois_cached(ip) or self._state.whois(ip)
         node_id = (
             str(peer.get("node_id") or "") or None
         ) if peer else None
-        if device_id is None and self._approver_node(peer) is None:
-            self._send_error(401, "unauthorized",
-                             "pair this device first")
-            return
-        if self._bad_origin() or (
-            device_id is None and not self._identity_ok()
-        ):
-            self._send_error(
-                403, "bad_origin", "request blocked by origin policy"
-            )
-            return
         body = self._read_body() or {}
         code = str(body.get("code") or "")
         rid = body.get("request_id")
@@ -1331,6 +1542,13 @@ class _Handler(BaseHTTPRequestHandler):
             replay, truncated = self._state.journal.read_since(
                 journal_key, after_seq
             )
+            last = self._state.journal.last_seq(journal_key)
+            if after_seq > last:
+                # A cursor from before the journal was wiped: nothing
+                # replays, and every new event (seq <= the old cursor)
+                # would be dropped as already delivered. Restart the
+                # client at the journal's head and tell it to refetch.
+                replay, truncated, after_seq = [], True, last
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")
@@ -1479,10 +1697,7 @@ class _Handler(BaseHTTPRequestHandler):
         args = parse_qs(parsed.query)
 
         if path == "/v1/status":
-            if not self._local_host_ok():
-                self._send_error(
-                    403, "bad_origin", "request blocked by origin policy"
-                )
+            if not self._local_host_gate():
                 return
             # A reachability check only: machine id, version and uptime
             # tell the whole tailnet more than a caller needs.
@@ -1495,10 +1710,7 @@ class _Handler(BaseHTTPRequestHandler):
         # The requester's poll is unauthenticated — the request id +
         # poll secret it carries are the capability.
         if path.startswith("/v1/pair/request/"):
-            if not self._local_host_ok():
-                self._send_error(
-                    403, "bad_origin", "request blocked by origin policy"
-                )
+            if not self._local_host_gate():
                 return
             rid = unquote(path[len("/v1/pair/request/"):])
             secret = str((args.get("secret") or [""])[0])
@@ -1514,18 +1726,7 @@ class _Handler(BaseHTTPRequestHandler):
         # Approving devices get in two ways: a paired bearer, or the
         # tailnet login that owns this hub node.
         if path == "/v1/pair/requests":
-            peer = self._state.whois(self._client_ip())
-            device_id = self._device()
-            if device_id is None and self._approver_node(peer) is None:
-                self._send_error(401, "unauthorized",
-                                 "pair this device first")
-                return
-            if self._bad_origin() or (
-                device_id is None and not self._identity_ok()
-            ):
-                self._send_error(
-                    403, "bad_origin", "request blocked by origin policy"
-                )
+            if not self._approver_ok():
                 return
             self._send_json(
                 200, {"requests": pairing.list_requests(self._state.home)}
@@ -1671,7 +1872,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/pulls":
             # pulls.py: every pinned repo's open PRs, behind the gh cache.
-            self._send_json(*pulls_mod.list(self._state, args))
+            self._send_json(*pulls_mod.list_view(self._state, args))
             return
 
         if path.startswith("/v1/pulls/"):
@@ -1687,7 +1888,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/issues":
             # issues.py: every pinned repo's open issues, behind the cache.
-            self._send_json(*issues_mod.list(self._state, args))
+            self._send_json(*issues_mod.list_view(self._state, args))
             return
 
         if path.startswith("/v1/issues/"):
@@ -1713,11 +1914,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/commands":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             mid = str((args.get("machine") or [""])[0])
             if not mid:
@@ -1725,22 +1922,14 @@ class _Handler(BaseHTTPRequestHandler):
                     422, "bad_command", "machine is required"
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid):
                 return
             after = self._sse_after(args)
             self._agent_stream(mid, after, device_id=device_id)
             return
 
         if path.startswith("/v1/agent/attachments/"):
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             stem = path[len("/v1/agent/attachments/"):]
             key_part, _sep, ref = stem.rpartition("/")
@@ -1748,14 +1937,7 @@ class _Handler(BaseHTTPRequestHandler):
             # The staged key is hub-scoped ``local@mid``; the pull must
             # stay inside the machine this credential speaks for.
             _local, key_mid = protocol.split_remote_key(key)
-            if (
-                key_mid is None
-                or not self._agent_machine_ok(device_id, key_mid)
-            ):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, key_mid):
                 return
             self._pull_attachment(key, unquote(ref))
             return
@@ -1784,9 +1966,9 @@ class _Handler(BaseHTTPRequestHandler):
                 elif row.get("remote") and row.get("machine_id"):
                     # A satellite session has no local Session to tail —
                     # ask its agent to start one instead.
-                    self._state.queue_command(
-                        str(row["machine_id"]), "tail", key,
-                        {"status": str(row.get("status") or "")},
+                    self._state.queue_tail(
+                        str(row["machine_id"]), key,
+                        str(row.get("status") or ""),
                     )
             if sep and action == "events":
                 after = self._sse_after(args)
@@ -1823,10 +2005,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/v1/pair":
-            if not self._local_host_ok():
-                self._send_error(
-                    403, "bad_origin", "request blocked by origin policy"
-                )
+            if not self._local_host_gate():
                 return
             # Same per-source cap as /v1/pair/request: the 192-bit
             # token isn't brute-forceable, but a flood shouldn't get
@@ -1910,11 +2089,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/register":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             body = self._read_body()
             machine = (body or {}).get("machine") or {}
@@ -1931,11 +2106,7 @@ class _Handler(BaseHTTPRequestHandler):
                     403, "forbidden", "cannot register the hub machine"
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid, bind=True):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid, bind=True):
                 return
             catalog_mod.upsert_machine(
                 self._state.home,
@@ -1945,11 +2116,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/catalog":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             body = self._read_body()
             if body is None:
@@ -1963,11 +2130,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "machine_id and rows are required",
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid):
                 return
             # Snapshot ownership before the merge so attach/detach done
             # on the satellite surfaces as an event the clients react to.
@@ -2006,11 +2169,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/usage":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             body = self._read_body()
             if body is None:
@@ -2022,11 +2181,7 @@ class _Handler(BaseHTTPRequestHandler):
                     422, "bad_command", "machine_id is required"
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid):
                 return
             try:
                 usage_mod.save_satellite(self._state.home, mid, body)
@@ -2040,11 +2195,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/events":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             body = self._read_body()
             if body is None:
@@ -2062,11 +2213,7 @@ class _Handler(BaseHTTPRequestHandler):
                     422, "bad_command", "events must be a list"
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid):
                 return
             accepted = self._accept_agent_events(mid, events)
             self._send_json(200, {"ok": True, "accepted": accepted})
@@ -2281,7 +2428,13 @@ class _Handler(BaseHTTPRequestHandler):
         machine = cmd["machine"] or state.machine_id
         harness, cwd = cmd["harness"], cmd["cwd"]
         if machine != state.machine_id:
-            row = catalog_mod.load_machines(state.home).get(machine) or {}
+            row = catalog_mod.load_machines(state.home).get(machine)
+            if row is None:
+                # No satellite by that id would ever drain the queue:
+                # the launch would sit pending in a fresh journal.
+                self._send_error(404, "unknown_machine",
+                                 f"no machine {machine} on this hub")
+                return
             # A satellite older than the launchable field reports none;
             # it checks its own registry when the command arrives.
             offered = row.get("launchable")
@@ -2406,13 +2559,13 @@ class _Handler(BaseHTTPRequestHandler):
         asleep — results arrive later as ``command.result`` events.
         """
         if action == "queue":
-            # A satellite never parks a queue-mode send: it delivers on
-            # arrival or refuses a busy session, so there is nothing
-            # waiting here to steer or remove.
+            # A satellite parks a queue-mode send on its own machine
+            # until the session is idle; the hub holds nothing to list,
+            # steer or remove.
             self._send_error(
                 409, "queue_unsupported",
-                "sends to another machine's session don't wait on the "
-                "hub; there is nothing queued to steer or remove",
+                "sends to another machine's session wait on that "
+                "machine; they can't be steered or removed from here",
             )
             return
         if action != "attach" and action != "control":
@@ -2466,8 +2619,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(429, "backlog_full",
                                  "machine is too far behind")
                 return
-            # Same shape as the local 202; waiting is always false —
-            # the satellite re-reads status and decides for itself.
+            # Same shape as the local 202. ``waiting`` stays false: the
+            # satellite waits for idle itself, and a client that saw
+            # ``waiting`` would park the send in its tray, whose Edit /
+            # Send now / Remove act on the hub's queue, which holds
+            # nothing for another machine's session.
             self._send_json(202, {
                 "ok": True, "queued": True,
                 "client_id": cmd["client_id"], "waiting": False,
@@ -2602,7 +2758,8 @@ class _Handler(BaseHTTPRequestHandler):
         session = self._state.catalog.session_for(key)
         # The row's status can lag a just-finished turn — reclassify now
         # so ``waiting`` and the first poll don't trust a stale read.
-        status = self._fresh_status(session, str(row.get("status") or ""))
+        status = self._fresh_status(
+            session, str(row.get("status") or ""), key)
         client_id = cmd["client_id"]
         state = self._state
         waiting = cmd["mode"] == "queue" and status == "active"
@@ -2675,7 +2832,7 @@ class _Handler(BaseHTTPRequestHandler):
             # object itself can go stale mid-wait (the status classifier
             # times out against session.timestamp), so re-fetch it too.
             current = state.catalog.session_for(key) or session
-            live = self._fresh_status(current, status)
+            live = self._fresh_status(current, status, key)
             deadline = time.monotonic() + QUEUE_WAIT_MAX_S
             while live == "active" and time.monotonic() < deadline:
                 send.wake.wait(QUEUE_POLL_S)
@@ -2685,7 +2842,7 @@ class _Handler(BaseHTTPRequestHandler):
                     fail("hub restarted; message not sent")
                     return
                 current = state.catalog.session_for(key) or session
-                live = self._fresh_status(current, status)
+                live = self._fresh_status(current, status, key)
             if live == "active":
                 fail("session stayed busy for 30 min; message not sent")
                 return
@@ -2704,7 +2861,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         def job() -> None:
             current = state.catalog.session_for(key) or session
-            live = self._fresh_status(current, status)
+            live = self._fresh_status(current, status, key)
             self._deliver(key, cmd["client_id"], current, cmd, live)
 
         def cancel() -> None:
@@ -2817,9 +2974,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(409, "not_waiting", self._GONE_NOTES.get(
                 gone, "that message is no longer queued"))
 
-    def _fresh_status(self, session, fallback: str) -> str:
-        """Reclassify one session now; the catalog row can be stale."""
+    def _fresh_status(self, session, fallback: str, key: str = "") -> str:
+        """Reclassify one session now; the catalog row can be stale.
+
+        The catalog's session can carry an activity time minutes old
+        for a turn that just started, which the probe reads as
+        "interrupted"; the tailer knows the transcript moved since.
+        """
         try:
+            if key:
+                session = self._state.tail_manager.fresh_session(
+                    key, session)
             got = self._state.status_of([session])
         except Exception:
             return fallback
@@ -2950,7 +3115,7 @@ class _Handler(BaseHTTPRequestHandler):
             row = state.catalog.row_for(key) or {}
             session = state.catalog.session_for(key)
             fallback = str(row.get("status") or "")
-            return self._fresh_status(session, fallback) \
+            return self._fresh_status(session, fallback, key) \
                 if session is not None else fallback
 
         def fire() -> tuple[bool, str]:
@@ -3181,22 +3346,19 @@ class _Handler(BaseHTTPRequestHandler):
         before = _int_arg(args.get("before"), 0)
         limit = _int_arg(args.get("limit"), 500)
         limit = max(1, min(limit, 2000))
-        events, _trunc = self._state.journal.read_since(key, 0)
-        messages = [
-            cleaned for ev in events
-            if ev.get("type") == "message.appended"
-            and (cleaned := injected_mod.clean_event(ev)) is not None
-        ]
-        if before:
-            messages = [m for m in messages if m.get("seq", 0) < before]
+        # One past the page tells whether an older page exists, without
+        # reading the rest of the journal.
+        messages = self._state.journal.read_tail(
+            key, limit + 1, before_seq=before, keep=_served_message,
+        )
+        has_more = len(messages) > limit
         tail_events = messages[-limit:]
         self._send_json(200, {
             "session": key,
             "messages": tail_events,
             "next_before": tail_events[0]["seq"]
-            if len(messages) > len(tail_events) and tail_events
-            else None,
-            "has_more": len(messages) > len(tail_events),
+            if has_more and tail_events else None,
+            "has_more": has_more,
         })
 
     def _usage_machines(self, own: dict) -> list[dict]:
@@ -3269,10 +3431,19 @@ class _Handler(BaseHTTPRequestHandler):
             return
         name = path[len("/app/"):] or "index.html"
         if name in {"pages.js", "pages.css"}:
+            body, etag = webapp_pages.bundled(name[len("pages"):])
+            if webapp_pages.etag_matches(
+                    self.headers.get("If-None-Match"), etag):
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                return
             self._send_body(
-                webapp_pages.bundle(name[len("pages"):]),
+                body,
                 "text/javascript; charset=utf-8" if name.endswith(".js")
                 else "text/css; charset=utf-8",
+                etag=etag,
             )
             return
         if not webapp_static.is_asset_name(name):
@@ -3315,7 +3486,7 @@ class _Handler(BaseHTTPRequestHandler):
         if body is None:
             self._send_error(400, "bad_body", "unreadable JSON body")
             return
-        name = str(body.get("name") or "").strip()[:80]
+        name = pairing.clean_name(body.get("name"))
         if not pairing.update_device(
             self._state.home, device_id, display_name=name or None
         ):
@@ -3391,6 +3562,10 @@ class _Handler(BaseHTTPRequestHandler):
         except (OSError, ValueError, sqlite3.Error) as exc:
             self._send_error(503, "page_unavailable", str(exc))
             return
+        except Exception as exc:  # a page bug: answer, don't drop the socket
+            traceback.print_exc()
+            self._send_error(500, "page_failed", type(exc).__name__)
+            return
         self._send_json(200, body)
 
     def _page_get(self, name: str, args, device_id: str | None) -> None:
@@ -3416,11 +3591,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._page_call(page.post, self._page_context(device_id), action, body)
 
-    def _send_body(self, body: bytes, ctype: str) -> None:
+    def _send_body(self, body: bytes, ctype: str,
+                   etag: str | None = None) -> None:
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-cache")
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -3495,6 +3673,14 @@ def _parse_multipart(ctype: str, body: bytes) -> tuple[str, bytes | None]:
     except Exception:
         pass
     return "", None
+
+
+def _served_message(ev: dict) -> dict | None:
+    """A ``message.appended`` journal event as ``/messages`` serves it
+    (cleaned), or None for any other event or one cleaning drops."""
+    if ev.get("type") != "message.appended":
+        return None
+    return injected_mod.clean_event(ev)
 
 
 def _int_arg(values, default: int) -> int:
@@ -3714,6 +3900,20 @@ def serve(state: HubState, host: str, port: int,
     state.catalog.on_github_alert = state._github_alert
     state.start()
     server = make_server(state, host, port)
+    # Auto clean quits orphans without a browser ever opening Compute:
+    # its switch is hub state, so the background sampler starts at boot
+    # while it is on rather than wait for a page request.
+    from quiver.webapp import compute as webapp_compute
+    try:
+        # A settings read that fails means off: it can never keep the
+        # hub from serving.
+        auto_clean = webapp_compute.supported() \
+            and webapp_compute.clean_settings(state.home)["enabled"]
+    except (OSError, ValueError, TypeError, AttributeError):
+        auto_clean = False
+    if auto_clean:
+        webapp_compute.model().home = state.home or Path.home()
+        webapp_compute.start_ticker()
     # Only a hub that owns the port may say where it is: a second copy
     # that fails to bind must not overwrite the running one's address.
     save_hub_config(state.home, host, port, public_url)

@@ -27,6 +27,8 @@ PROTOCOL_VERSION = 1
 # ``command.result`` to an optimistic bubble it already drew.
 _CLIENT_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
+# A compaction is not an event type of its own: it arrives as
+# ``message.appended`` with ``kind: "compaction"`` (see MESSAGE_KINDS).
 EVENT_TYPES = frozenset(
     {
         "message.appended",
@@ -34,7 +36,6 @@ EVENT_TYPES = frozenset(
         "session.status",
         "approval.requested",
         "approval.resolved",
-        "compaction",
         "machine.online",
         "machine.offline",
         "notify",
@@ -104,11 +105,6 @@ NOTIFY_KINDS = frozenset({"needs_you", "finished", "error", "limit"})
 OWNERSHIP_ATTACHED = "attached"
 OWNERSHIP_OBSERVED = "observed"
 
-# Satellite-facing command envelope ops (hub → satellite journal).
-COMMAND_OPS = frozenset(
-    {"message", "approval", "control", "attach", "launch", "attachment"}
-)
-
 # Hub-scoped session keys for satellite rows: ``tool:sid@machine``.
 REMOTE_SEP = "@"
 
@@ -135,6 +131,14 @@ def session_key(tool_name: str, session_id: str, path: str = "") -> str:
         digest = hashlib.sha1((path or "").encode("utf-8")).hexdigest()[:12]
         sid = f"path-{digest}"
     return f"{tool_name}:{sid}"
+
+
+def url_host(host: str) -> str:
+    """``host`` as a URL's authority spells it: an IPv6 literal goes in
+    brackets (once), or ``::1:8477`` can't be told from its port."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
 
 
 def key_slug(key: str) -> str:

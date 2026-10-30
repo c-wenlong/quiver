@@ -64,6 +64,9 @@ _POST_TIMEOUT_S = 5.0
 # The approval prompt is a convenience, not a record — enough to decide,
 # short enough that a lock screen shows it whole.
 _PROMPT_CAP = 280
+# The decisions the push's action buttons send — all an action token
+# may answer with (the hub refuses anything else under one).
+ACTION_DECISIONS = frozenset({"allow", "deny", "always"})
 
 
 def _config_path(home: Path | None) -> Path:
@@ -238,21 +241,10 @@ class ApprovalTokens:
         with self._lock:
             self._drop(key, request_id)
 
-    def drop_session(self, key: str) -> None:
-        """Retire every token minted for ``key`` — e.g. the session
-        detached, so none of its approval buttons can act."""
-        with self._lock:
-            self._drop_key(key)
-
     def _drop(self, key: str, request_id: str) -> None:
         self._tokens = {
             t: e for t, e in self._tokens.items()
             if not (e["key"] == key and e["request_id"] == request_id)
-        }
-
-    def _drop_key(self, key: str) -> None:
-        self._tokens = {
-            t: e for t, e in self._tokens.items() if e["key"] != key
         }
 
     def _prune(self, now: float) -> None:
@@ -274,6 +266,8 @@ class Notifier:
     def __init__(self, state, base_url: str, *, subscribe_key: str) -> None:
         self._state = state
         self._base = base_url.rstrip("/")
+        # One stderr line per outage, not one per push.
+        self._post_warned = False
         self._subscribe_key = subscribe_key
         self._stop = state._stop
         self._q: queue.Queue | None = None
@@ -349,13 +343,21 @@ class Notifier:
         label = _NOTIFY_KIND_TITLES.get(kind)
         if label is None:
             return
-        priority = 4 if kind in ("needs_you", "error") else 3
+        priority = 4 if kind in ("needs_you", "error", "limit") else 3
+        # A limit carries the harness's own line ("You've hit your
+        # session limit · resets 9:30am"), which says when work resumes.
+        message = ""
+        if kind == "limit":
+            message = _tr._redact_secrets(
+                str(data.get("message") or ""))[:_PROMPT_CAP]
+        tag = {"error": "rotating_light", "limit": "hourglass"}.get(
+            kind, "bell")
         self._post(cfg, {
             "topic": cfg["topic"],
             "title": f"{title}: {label.lower()}",
-            "message": "",
+            "message": message,
             "priority": priority,
-            "tags": ["rotating_light" if kind == "error" else "bell"],
+            "tags": [tag],
         })
 
     def _github(self, cfg: dict, data: dict) -> None:
@@ -388,11 +390,14 @@ class Notifier:
         self._post(cfg, payload)
 
     def _session_title(self, key: str) -> str:
+        """The notification title's prefix. A session title is often
+        the first prompt, so it runs the secret-redactor, before the
+        cut so a half-truncated token can't slip past the patterns."""
         row = self._state.catalog.row_for(key) if key else None
         if row:
             title = str(row.get("title") or "").strip()
             if title:
-                return title[:60]
+                return _tr._redact_secrets(title)[:60]
             cwd = str(row.get("cwd") or "")
             if cwd:
                 return cwd.rstrip("/").rsplit("/", 1)[-1] or cwd
@@ -426,5 +431,17 @@ class Notifier:
         token = cfg.get("ntfy_token")
         if token:
             req.add_header("Authorization", f"Bearer {token}")
-        with urllib.request.urlopen(req, timeout=_POST_TIMEOUT_S):
-            pass
+        # The bundled python.org build has no CA store: agent._urlopen
+        # retries a certificate failure against the OS bundle.
+        from quiver.remote.agent import _urlopen
+
+        try:
+            with _urlopen(req, _POST_TIMEOUT_S):
+                pass
+        except Exception as exc:
+            if not self._post_warned:
+                self._post_warned = True
+                _warn(f"push failed ({exc}); later failures stay quiet "
+                      "until one succeeds")
+            raise
+        self._post_warned = False

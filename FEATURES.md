@@ -22,10 +22,11 @@ Status words:
 
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
-| Overview | yes | yes | part | Mac and Web: tokens, cost, harness split, daily activity, top models. iOS: the Usage tab has limits and spend; harness split, daily activity and top models are missing |
-| Sessions | yes | yes | yes | Web: "Copy resume command" instead of Resume, no Devin-cloud or account-profile rows yet. iOS: the hub's remote sessions grouped by machine and folder |
-| Session chat | yes | yes | yes | Transcript, composer (Queue/Steer/Stop), approvals. Web renders its own chat page (`static/pages/chat.js`); iOS observe and attach is the app's core. Web and iOS: link cards under replies and a locked Preview of `.html`/`.svg` files a tool call wrote (web: a no-permission `<iframe sandbox>` plus a `default-src 'none'` policy; iOS: a script-off web view with network rules); iOS opens links in an in-app browser, the web in a new tab. Mac: neither yet |
-| Calendar | yes | yes | - | |
+| Overview | yes | yes | part | Mac and Web: tokens, cost, harness split, daily activity, top models, seven periods. The Mac's breakdown tab is "By account", the web's "By harness". iOS: the Usage tab has spend by harness and a daily cost chart over Today, 7 and 30 days; top models, quick figures, the heatmap, the daily table and the 90-day, 365-day and all-time periods are missing |
+| Sessions | yes | yes | yes | Mac: this machine's sessions only (`swe session --json`), no satellite rows. Web: "Copy resume command" instead of Resume, no Devin-cloud or account-profile rows yet, accidental sessions always hidden. iOS: the hub's remote sessions grouped by machine and folder; no tool, window, project or model filters, no tokens or cost |
+| Session pin, rename, fork | - | - | yes | The hub's `/pin`, `/title` and `/fork` routes; only iOS calls them |
+| Session chat | yes | yes | yes | Transcript, composer (Queue/Steer/Stop), approvals. iOS: no Queue/Steer toggle (a queued message's Send now steers), a tray to edit or remove queued messages, and only Allow/Deny/Always on approvals, not the pane's numbered menu rows. Web and iOS: `/` completion and the `@` file menu (files under the session's folder, hub-machine sessions only); the Mac has `/` completion but no `@` menu. Web renders its own chat page (`static/pages/chat.js`); iOS observe and attach is the app's core. Web and iOS: link cards under replies and a locked Preview of `.html`/`.svg` files a tool call wrote (web: a no-permission `<iframe sandbox>` plus a `default-src 'none'` policy; iOS: a script-off web view with network rules); iOS opens links in an in-app browser, the web in a new tab. Mac: neither yet |
+| Calendar | yes | part | - | Web: ledger harnesses only (Claude Code, Codex, Devin, Grok Bot, OpenCode); the Mac also draws Pi, Droid, Freebuff, Cursor app and Devin cloud activity. The web always hides accidental sessions; the Mac follows the setting. Mac-only: the side panel's Usage section, per-account remaining % plus dashed reset-time markers on the grid |
 | Pricing | yes | yes | - | |
 
 ## GitHub
@@ -33,29 +34,30 @@ Status words:
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
 | Repositories | yes | yes | - | |
-| Pull requests | yes | yes | yes | Mac and Web: inside Repositories, with merge, rerun and "Open in session". iOS: own tab and detail page |
-| Issues, resolve with agent | yes | yes | yes | iOS: own tab plus a Resolve sheet; Mac: detail sheet and ResolveIssueSheet. All sheets carry the model picker prefilled with the last-used model (#914); on the Mac and the web it is a menu of the harness's `recent_models` plus Other… (web: Harness default first, `static/model-menu.js`) |
-| Tasks | yes | yes | yes | Mac: sidebar page with the same filters, groups, state stepper, sessions and link/unlink |
-| Inbox | yes | yes | yes | Pending decisions. iOS badges count only "Waiting on you"; dismissals live on the hub per device |
+| Pull requests | yes | yes | part | Mac and Web: inside Repositories, with merge, rerun and "Open in session". iOS: own tab and detail page with Open in session and Open on GitHub, no merge, auto-merge or rerun; only iOS has the Mine and Review requested filters |
+| Issues, resolve with agent | yes | part | yes | Web: an issue row links to github.com; there is no issue detail or comment view, and Resolve exists only from a Tasks detail. iOS: own tab plus a Resolve sheet, no comment composer; Mac: detail sheet with comments and ResolveIssueSheet. All sheets carry the model picker prefilled with the last-used model (#914); on the Mac and the web it is a menu of Harness default, the harness's `recent_models`, then Other… (web: `static/model-menu.js`) |
+| Tasks | yes | yes | part | Mac: sidebar page with the same filters, groups, state stepper, sessions and link/unlink. Mac and Web have the Repositories rail and five-row groups (#941, #942); iOS doesn't |
+| GitHub notifications | yes | yes | part | Mac and Web: the Inbox page, Unread/All and mark read; Mac also posts banners. iOS: a GitHub group inside its Inbox tab, which can't mark threads read |
+| Needs you (pending decisions) | - | - | yes | iOS Inbox tab: Waiting on you, Errors, GitHub, Finished today, cleared per device on the hub; badges count only "Waiting on you". Mac and Web have no view of it yet |
 
 ## Manage
 
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
-| Accounts | yes | part | - | Web: limit cards per starred harness and machine. Quiver account profiles, history and Open app / Terminal are Mac-only. A failed read's "Action needed" state, Fix sheet and banner are Mac-only too; web cards still word only `no_reading`, not `issue.remedy` |
+| Accounts | yes | part | part | Web: limit cards per starred harness and machine. Quiver account profiles, history and Open app / Terminal are Mac-only. A failed read's "Action needed" state, Fix sheet and banner are Mac-only too; web cards still word only `no_reading`, not `issue.remedy`. iOS: the Usage tab's Limits section shows the same limit cards per harness and machine |
 | Harnesses | yes | yes | - | Web: star, archive, restore, edit, detect, add |
-| Compute | yes | yes | planned | Read-only on web. iOS P9 wants the Compute samplers carried over the hub |
+| Compute | yes | part | planned | Web: auto clean writes the hub's config; Quit, Clean up and fan control stay Mac-only. iOS P9 wants the Compute samplers carried over the hub |
 
 ## Primitives
 
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
-| Plugins | yes | yes | - | |
-| Skills | yes | yes | - | |
-| AGENTS.md | yes | yes | - | |
+| Plugins | yes | part | - | Web: no rename or Add marketplace |
+| Skills | yes | part | - | Web: no frontmatter edits |
+| AGENTS.md | yes | part | - | Web: read and link, no editing |
 | MCP servers | yes | yes | - | |
 | Hooks | yes | yes | - | |
-| Models | yes | yes | - | |
+| Models | yes | part | - | Web: no Artificial Analysis benchmarks (the hub holds no AA key), and each logged name is its own row |
 
 ## System
 
@@ -63,12 +65,13 @@ Status words:
 | --- | --- | --- | --- | --- |
 | Menu bar | yes | - | - | Mac-only by design |
 | Widgets | yes | - | - | Mac-only by design |
-| Notifications | yes | - | part | Mac: limit resets and 90% crossings. iOS: ntfy today, APNs planned |
+| Notifications | yes | - | - | Mac: limit resets and 90% crossings, and GitHub notification banners. iOS: the app has no notification code; the hub posts to ntfy (`remote/notify.py`) and the ntfy app delivers it. APNs planned |
 | Service status | yes | yes | - | |
-| Settings | yes | yes | part | iOS carries the pairing and notification subset |
+| Settings | yes | yes | part | iOS: the hub chip menu holds switch hub, devices, Console, Refresh and Unpair; no notification settings |
 | Doctor | yes | yes | - | Mac: a Settings section; web: `#/doctor`, no sidebar entry |
 | First-run setup | yes | yes | - | Web: `#/setup` |
-| API keys | yes | yes | - | Settings › Providers on both |
+| API keys | yes | part | - | Settings › Providers on both. Web: no key check, rename, move, custom providers or coding plans |
+| Fan control, Clean up, updates, Report a bug | yes | - | - | Mac-only by design |
 
 ## Remote control
 
@@ -77,13 +80,14 @@ hosts the hub; the web app and the iOS app are its clients.
 
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
-| Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval |
+| Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval. Web: Approve/Deny in Settings › Integrations; iOS: type the code. Mac: Settings › Remote › Pending requests approves or denies a code for a hub on the same Mac (`swe remote devices --requests`, polled while shown); a hub on another machine is #681 |
 | Devices list and revoke | yes | yes | yes | Mac and Web: Settings. iOS: under the hub chip menu |
 | Launch a new session | yes | yes | yes | All three: machine, folder and harness pickers, first prompt, launch poll, then the chat opens. All sheets carry the model picker prefilled with the last-used model (`last_models`/`last_model`, #914); on all three it is a menu of Harness default, the harness's `recent_models` newest first, then Other… (web: `static/model-menu.js`; iOS: `ModelSelection`) |
-| Session model (show and switch) | - | - | yes | Hub rows carry `model`, the newest reply's model, and `model_modes` (#643). iOS shows the model in the chat header and the session list, and the chat's menu has a Model submenu (recent models plus Other…) on sessions attached through a channel in `model_modes` (tmux for Claude Code and Codex); the header shows "→ id" until the transcript catches up (`ModelSwitch`). The API channels can't switch yet (#643 box 4). Mac and Web don't show it yet |
-| Machine switcher | - | - | planned | iOS P4: one machine today |
+| Session model (show and switch) | - | part | yes | Hub rows carry `model`, the newest reply's model, and `model_modes` (#643). iOS shows the model in the chat header and the session list, and the chat's menu has a Model submenu (recent models plus Other…) on sessions attached through a channel in `model_modes` (tmux for Claude Code and Codex); the header shows "→ id" until the transcript catches up (`ModelSwitch`). The API channels can't switch yet (#643 box 4). The web app shows the model (never switches it): the chat header after the folder and the Sessions row, as `Fmt.modelName` in `static/format.js` spells it, the same rule as iOS `ModelLabel.short`. The Mac does not show it yet |
+| Machine switcher | - | - | yes | iOS: switch between paired hubs, a machine picker in the launch sheet, sessions and limits grouped by machine. Web: each hub serves its own web app |
+| SSH console | - | - | yes | iOS-only by design: a shell to the hub machine over tailnet sshd, usable when the hub is down |
 | Machine vitals | yes | yes | planned | Compute page on Mac and Web; iOS P9 carries the samples over the hub |
-| Push notifications | - | - | part | ntfy today; APNs planned |
+| Push notifications | - | - | - | The hub's ntfy posts reach the ntfy app, not Quiver; APNs planned |
 
 ## Ported logic
 
@@ -94,17 +98,20 @@ owes the other the same change; say so in the row's Notes until it is paid.
 
 | Logic | Swift | Python and JS |
 | --- | --- | --- |
-| Usage ledger: scan, store, pricing, overview figures, per-session joins | `app/mac/Sources/QuiverCore/Ledger/` | `src/quiver/ledger/` |
+| Usage ledger: scan, store, pricing, overview figures, per-session joins | `app/mac/Sources/QuiverCore/Ledger/` | `src/quiver/ledger/`. Owed by Python: price history (Swift charges each event the rate its entry had then; Python prices every event at today's rate, so Mac and web dollars differ after a price change), and Swift's resume rules (middle-sample fingerprint, ctime check, append-only resume) |
 | Model brands table (names, colours, logos, keywords, patterns) | `app/mac/Sources/QuiverCore/Models/ModelBrands.swift` | `src/quiver/webapp/pages/_brands.py` |
-| Sessions rows and filters | `Sessions.swift`, `SessionFilter.swift` | `src/quiver/webapp/sessions.py` |
+| Sessions rows and filters | `Sessions.swift`, `SessionFilter.swift` | `src/quiver/webapp/sessions.py`. Owed by Swift: `ledger_covers` (Python keeps Cline `taskHistory.json`-only and Droid no-settings rows visible; the Mac hides them as accidental) and the per-thread Codex usage merge. Search text: the Mac matches account, the web machine |
 | Models page usage figures | `ModelsModel.swift` | `src/quiver/webapp/pages/models.py` |
 | Calendar figures | `CalendarPage.swift` and its model | `src/quiver/webapp/pages/calendar.py` |
+| Grok Bot roster read: which persistence blob is the roster (base32 key ending `.roster.last-roster`), only each row's `id` and `name`, "Subagent" for `sand-subagent-` ids | `app/mac/Sources/QuiverCore/Calendar/GrokBotRoster.swift` | `src/quiver/webapp/pages/calendar.py` (`_grok_names`, `session_title`). Differs by design: the Mac remembers names in its own `~/.quiver/data/grok-bot-names.json` and titles a Bot missing from a non-empty roster "Deleted Bot (<short id>)"; the web never reads the Mac app's store, so a deleted Bot titles by its id |
 | API key file and store | `APIKeysFile`, `APIKeysStore` | `src/quiver/providers/keyfile.py` |
 | MCP redaction and the managed server repo | `McpRedaction`, `SecretText.maskingKeys`, `McpServerRepo` | `src/quiver/webapp/pages/mcp.py` |
 | Plugin drift severity | `CatalogPlugin.worstDrift` | `src/quiver/webapp/pages/plugins.py` |
 | OpenCode model naming | `openCodeModel` | `src/quiver/ledger/parsers.py` |
+| Session model on screen: drop the provider path and the 8-digit date stamp | `ModelLabel.short` (`app/ios/Sources/QuiverRemote/Hub/Models.swift`; the Mac is owed its own) | `src/quiver/webapp/static/format.js` (`Fmt.modelName`) |
 | Page preview targets and link cards: which tool calls get Preview, path to the route's relative one, which links get a card | `app/ios/Sources/QuiverRemote/Hub/PagePreview.swift`, `Views/LinkCards.swift` (iOS only) | `src/quiver/webapp/static/pages/chat.js` (`pageFiles`, `relativePath`, `linkUrls`) |
-| Chat rendering: Markdown, diffs, tool cards, syntax highlighting | `QuiverCore/Syntax/SyntaxHighlight.swift` + `Hub/ToolDiff.swift` (`ToolDisplay`) under the Mac chat views; iOS has `ToolDiff`/`ToolArgs` and is owed highlighting | `src/quiver/webapp/static/pages/chat.js` (`md`, `hl`, `readableArgs`, `renderDiff`) |
+| Tasks list rules: filters, groups, state stepper | `QuiverCore/Tasks/Tasks.swift`; iOS `Hub/TasksModel.swift` | `src/quiver/webapp/static/pages/tasks.js` |
+| Chat rendering: Markdown, diffs, tool cards, syntax highlighting | `QuiverCore/Syntax/SyntaxHighlight.swift` + `Hub/ToolDiff.swift` (`ToolDisplay`) under the Mac chat views; iOS has `ToolDiff`/`ToolArgs` and is owed highlighting. Readable args differ: the Mac's pretty JSON sorts keys, chat.js keeps insertion order, and iOS writes `key: value` lines | `src/quiver/webapp/static/pages/chat.js` (`md`, `hl`, `readableArgs`, `renderDiff`) |
 
 The iOS app shares only the protocol DTOs with the Mac app today; its
 decoding lives on the hub. So a Swift-side bug repeats on iOS only where

@@ -105,6 +105,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--requests", "List pending pair requests"),
         ("--approve=", "Approve a pair request by its 6-digit code"),
         ("--deny=", "Deny a pair request by its 6-digit code"),
+        ("--request-id=", "Hold --approve/--deny to one pending request"),
         ("--json", "Print the device list as JSON"),
     ],
     "remote attach": [
@@ -317,6 +318,9 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     "mcp secret set": [
         ("--json", "Machine-readable output"),
     ],
+    "mcp secret remove": [
+        ("--json", "Machine-readable output"),
+    ],
     "mcp add": [
         ("--to=", "Also write these harnesses"),
         ("--env=", "Env pair KEY=VALUE (repeatable)"),
@@ -481,6 +485,7 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "discover": "mcp discover", "sync": "mcp sync", "doctor": "mcp doctor",
         "list": "mcp list", "ls": "mcp list", "status": "mcp status",
         "secret": "mcp secret set", "secret set": "mcp secret set",
+        "secret remove": "mcp secret remove",
         "add": "mcp add", "remove": "mcp remove",
     },
     "gh": {
@@ -626,6 +631,7 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
     ],
     ("mcp", "secret"): [
         ("set", "Store a ${NAME} value from stdin"),
+        ("remove", "Drop a stored ${NAME} value"),
     ],
     ("plugins", "marketplace"): [
         ("add", "Register a plugin marketplace"),
