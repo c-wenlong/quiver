@@ -9,9 +9,10 @@
  * context menu), and the PR sheet opens a PR in a session: the hub
  * checks its head out (swe gh pr worktree) and starts a harness there
  * (POST /v1/sessions), then the chat opens. An issue row opens the
- * Mac app's IssueDetailSheet: the issue's body and comments (read only)
- * from the hub's GET /v1/issues/<o>/<r>/<n>, Open on GitHub, and its
- * ResolveIssueSheet as a panel (POST /v1/issues/resolve). */
+ * Mac app's IssueDetailSheet: the issue's body and comments from the
+ * hub's GET /v1/issues/<o>/<r>/<n>, a comment box (POST
+ * /v1/issues/comment), Open on GitHub, and its ResolveIssueSheet as a
+ * panel (POST /v1/issues/resolve). */
 "use strict";
 
 /* The iOS Pull requests page's Mine and Review requested filters
@@ -1584,9 +1585,10 @@ const PrFilter = (() => {
   /* ---------------------------------------------------------- issue sheet */
 
   /* IssueDetailSheet: what GET /v1/issues/<o>/<r>/<n> answers (title,
-   * labels, body, every comment), Open on GitHub, and Resolve with
-   * agent, which opens ResolveIssueSheet's form as a panel in the sheet.
-   * Comments are read only: the hub has no route that posts one. */
+   * labels, body, every comment), the comment box, Open on GitHub, and
+   * Resolve with agent, which opens ResolveIssueSheet's form as a panel
+   * in the sheet. A comment posts through the hub's own gh login (POST
+   * /v1/issues/comment), as the Mac's posts through gh on the Mac. */
   function issueSheetEl() {
     let dlg = document.getElementById("gh-issue-sheet");
     if (!dlg) {
@@ -1603,7 +1605,8 @@ const PrFilter = (() => {
 
   function openIssue(repo, number) {
     page.issue = { repo, number: String(number), data: null, status: 0, seq: 0, busy: false,
-      resolve: null }; // the Resolve panel while it is open
+      resolve: null, // the Resolve panel while it is open
+      comment: { draft: "", posting: false, error: null } }; // the comment box
     const dlg = issueSheetEl();
     paintIssue();
     if (!dlg.open) dlg.showModal();
@@ -1678,11 +1681,11 @@ const PrFilter = (() => {
     const closed = issue && issue.state !== "open";
     // Typing survives a repaint (a refetch landing mid-word).
     const carets = {};
-    for (const id of ["gh-resolve-prompt", "gh-resolve-context", "gh-resolve-model-other"]) {
+    for (const id of ["gh-resolve-prompt", "gh-resolve-context", "gh-resolve-model-other", "gh-issue-comment"]) {
       const el = dlg.querySelector("#" + id);
       if (el && document.activeElement === el) carets[id] = [el.selectionStart, el.selectionEnd];
     }
-    dlg.innerHTML = `<div class="sheet-body">${content}${resolvePanel(s, issue)}
+    dlg.innerHTML = `<div class="sheet-body">${content}${composer(s, issue)}${resolvePanel(s, issue)}
       <div class="gh-sheet-actions">
         ${issue && !s.resolve ? `<button type="button" class="gh-button gh-primary" id="gh-resolve-open"${closed ? " disabled" : ""}
           title="${closed ? "This issue is closed." : "Start an agent on this issue in its own worktree"}">${ico("terminal")}<span>Resolve with agent</span></button>` : ""}
@@ -1695,8 +1698,70 @@ const PrFilter = (() => {
     dlg.querySelector("#gh-issue-done").onclick = () => dlg.close();
     const open = dlg.querySelector("#gh-resolve-open");
     if (open) open.onclick = () => openResolve(s, issue);
+    bindComposer(dlg, s, carets);
     bindResolve(dlg, s, issue, carets);
     GhUI.bindSetup(() => loadIssue(true));
+  }
+
+  /* The Mac sheet's comment box, under the thread: Return breaks the
+   * line, Cmd or Ctrl+Return posts. Off while the Resolve panel is open,
+   * which has its own "Also post as a comment". */
+  function composer(s, issue) {
+    const c = s.comment;
+    if (!issue || s.resolve) return "";
+    const d = s.data || {};
+    const login = d.github && d.github.login;
+    const off = c.posting ? " disabled" : "";
+    return `<div class="gh-composer" role="group" aria-label="Add a comment">
+      <div class="gh-composer-row">
+        <textarea class="field gh-session-prompt" id="gh-issue-comment" rows="2" aria-label="Comment"
+          placeholder="Add context for whoever picks this up, you or an agent…"${off}>${esc(c.draft)}</textarea>
+        <button type="button" class="gh-button" id="gh-issue-comment-post" title="Post this comment on GitHub (⌘↩)"${
+          c.posting || !c.draft.trim() ? " disabled" : ""}>${c.posting ? "Posting…" : "Comment"}</button>
+      </div>
+      <div class="caption gh-muted">Posts to GitHub as ${login ? esc(login) : "the hub's gh account"}, through gh on ${
+        d.machine ? esc(d.machine) : "the hub"}. Markdown works.</div>
+      ${c.error ? `<div class="caption gh-danger-text" role="alert">${esc(c.error)}</div>` : ""}
+    </div>`;
+  }
+
+  function bindComposer(dlg, s, carets) {
+    const box = dlg.querySelector("#gh-issue-comment");
+    const btn = dlg.querySelector("#gh-issue-comment-post");
+    if (!box || !btn) return;
+    const c = s.comment;
+    const caret = carets["gh-issue-comment"];
+    if (caret) { box.focus(); box.setSelectionRange(caret[0], caret[1]); }
+    // No repaint per keystroke: only the button follows the text.
+    box.oninput = () => { c.draft = box.value; btn.disabled = c.posting || !c.draft.trim(); };
+    box.onkeydown = (e) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); postComment(s); }
+    };
+    btn.onclick = () => postComment(s);
+  }
+
+  /* POST /v1/issues/comment, then read the issue again (the hub dropped
+   * its cached copy) so the thread lists the new comment. */
+  async function postComment(s) {
+    const c = s.comment;
+    const text = c.draft;
+    if (!text.trim() || c.posting) return;
+    c.posting = true;
+    c.error = null;
+    paintIssue();
+    const { status, data } = await GhUI.post("/v1/issues/comment",
+      { repo: s.repo, number: Number(s.number), body: text });
+    if (page.issue !== s) return;
+    c.posting = false;
+    if (status !== 200) {
+      c.error = GhUI.failMessage(status, data);
+      paintIssue();
+      const box = document.getElementById("gh-issue-comment");
+      if (box) box.focus();
+      return;
+    }
+    if (c.draft === text) c.draft = "";
+    loadIssue(false);
   }
 
   /* ResolveIssueSheet's form: where it starts, the harness, the Model
@@ -1727,11 +1792,14 @@ const PrFilter = (() => {
       <label class="caption gh-muted" for="gh-resolve-context">Your context (optional)</label>
       <textarea class="field gh-session-prompt" id="gh-resolve-context" rows="2"
         placeholder="Anything the agent should know that the issue doesn't say."${off}>${esc(x.context)}</textarea>
+      <label class="gh-check caption gh-muted"><input type="checkbox" id="gh-resolve-post"${x.postContext ? " checked" : ""}${off}>
+        <span>Also post as a comment on #${esc(issue.number)}</span></label>
       <label class="caption gh-muted" for="gh-resolve-prompt">First prompt</label>
       <textarea class="field gh-session-prompt" id="gh-resolve-prompt" rows="5"
         placeholder="The hub writes one from the issue when this is empty."${off}>${esc(x.prompt)}</textarea>
       <div class="caption gh-muted">It runs under tmux on the hub. The chat opens once the session shows up.</div>
       ${closed && !x.started ? '<div class="caption gh-danger-text" role="alert">This issue is closed.</div>' : ""}
+      ${x.commentWarning ? `<div class="caption gh-warning-text" role="status">${esc(x.commentWarning)}</div>` : ""}
       ${x.error ? `<div class="caption gh-danger-text" role="alert">${esc(x.error)}</div>` : ""}
       ${x.note ? `<div class="caption" role="status">${esc(x.note)}</div>` : ""}
       <div class="gh-confirm-buttons">
@@ -1754,6 +1822,8 @@ const PrFilter = (() => {
     ModelMenu.bind(dlg, x.model, recentModels(x), "gh-resolve-model", paintIssue);
     const context = dlg.querySelector("#gh-resolve-context");
     if (context) context.oninput = () => { x.context = context.value; };
+    const post = dlg.querySelector("#gh-resolve-post");
+    if (post) post.onchange = () => { x.postContext = post.checked; };
     const prompt = dlg.querySelector("#gh-resolve-prompt");
     if (prompt) prompt.oninput = () => { x.prompt = prompt.value; x.edited = true; };
     for (const [id, caret] of Object.entries(carets)) {
@@ -1772,7 +1842,8 @@ const PrFilter = (() => {
 
   async function openResolve(s, issue) {
     const x = { harnesses: null, harness: null, model: ModelMenu.fresh(), phase: null, error: null,
-      note: null, started: false, context: "", prompt: issue.suggested_prompt || "", edited: false };
+      note: null, started: false, context: "", prompt: issue.suggested_prompt || "", edited: false,
+      postContext: true, posted: null, commentWarning: null };
     s.resolve = x;
     paintIssue();
     const ctx = document.getElementById("gh-resolve-context");
@@ -1786,9 +1857,19 @@ const PrFilter = (() => {
     paintIssue();
   }
 
+  /* The Mac's IssueResolve.postsComment: the context posts only when it
+   * holds text, the box is ticked, and that text didn't already post (a
+   * Start retried after a failed launch must not comment twice). */
+  function postsComment(context, ticked, posted) {
+    const text = String(context || "").trim();
+    return !!ticked && !!text && text !== String(posted || "").trim();
+  }
+
   /* POST /v1/issues/resolve: the hub clones or reuses the mirror, makes
    * the issue's worktree and starts the harness there; the launch it
-   * answers with is followed like Open in session's. */
+   * answers with is followed like Open in session's. With "Also post as
+   * a comment" ticked the context goes to POST /v1/issues/comment first;
+   * a failed comment is a warning, and the launch goes ahead. */
   async function startResolve(s) {
     const x = s.resolve;
     if (!x || x.phase || x.started || !x.harness) return;
@@ -1796,7 +1877,19 @@ const PrFilter = (() => {
     if (!issue || issue.state !== "open") return;
     const alive = () => page.issue === s && s.resolve === x;
     const say = (fields) => { Object.assign(x, fields); if (alive()) paintIssue(); };
-    say({ phase: "Starting…", error: null, note: null });
+    say({ phase: "Starting…", error: null, note: null, commentWarning: null });
+    const context = x.context.trim();
+    if (postsComment(context, x.postContext, x.posted)) {
+      say({ phase: "Posting…", note: "Posting your context to GitHub…" });
+      const posted = await GhUI.post("/v1/issues/comment", { repo: s.repo, number: Number(s.number), body: context });
+      if (!alive()) return;
+      if (posted.status === 200) x.posted = context;
+      else {
+        const why = GhUI.failMessage(posted.status, posted.data);
+        x.commentWarning = `Couldn't post your context to GitHub: ${why}${/[.!?]$/.test(why) ? "" : "."} The agent still gets it in the prompt.`;
+      }
+      say({ phase: "Starting…", note: null });
+    }
     const body = { repo: s.repo, number: Number(s.number), harness: x.harness, prompt: x.prompt.trim() };
     if (x.context.trim()) body.context = x.context.trim();
     const h = pickedHarness(x);

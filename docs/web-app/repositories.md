@@ -114,8 +114,14 @@ behind the same one-minute cache) and shows the title, number, author
 and age, labels and assignees, the body and every comment as Markdown,
 each comment with a link to it on GitHub. The footer has Resolve with
 agent (off for a closed issue), Open on GitHub, Fetch again and Done.
-Comments are read only: the hub has no route that posts one, so the
-Mac's composer has no web twin yet.
+
+Under the thread sits the Mac's comment box: Return breaks the line,
+Cmd or Ctrl+Return or Comment posts (Comment is off while the box is
+blank). It posts `POST /v1/issues/comment {repo, number, body}`, which
+the hub sends through its own `gh` login (the caption names that login
+and the hub machine), then reads the issue again, so the thread lists
+the new comment. A refusal shows under the box and keeps the draft.
+The box hides while the Resolve panel is open.
 
 Resolve with agent opens the Mac's ResolveIssueSheet as a panel in the
 sheet: where it starts (`quiver/issue-<n>`, a worktree off the default
@@ -124,8 +130,12 @@ branch on the hub), the harness, the shared Model menu
 prefilled with the hub's `suggested_prompt` (emptied, the hub writes
 it). Start posts `POST /v1/issues/resolve` with `{repo, number, harness,
 prompt, context?, model?}` and follows the launch as Open in session
-does: the chat opens once the session shows up. The Mac's "Also post as
-a comment" switch is left out for the same reason as the composer.
+does: the chat opens once the session shows up. "Also post as a
+comment on #<n>", ticked by default as on the Mac, posts the context
+through `POST /v1/issues/comment` first. A refused comment shows as a
+warning ("The agent still gets it in the prompt") and the launch goes
+ahead, and a Start retried after a failed launch doesn't post the same
+context twice.
 
 **Focus page** (`repo=owner/name`, the hash route
 `#/repositories?repo=owner/name`, opened from a repo header's expand

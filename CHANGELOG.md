@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: comment on an issue, and post your Resolve context as a
+  comment.** The issue sheet in Repositories now has the Mac's comment
+  box under the thread (Cmd or Ctrl+Return posts), and the Resolve
+  panel has "Also post as a comment on #<n>", ticked by default. Both
+  post through the hub's `gh` login with `POST /v1/issues/comment`. A
+  context comment that fails is a warning; the launch still goes ahead.
+  Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
 - **Hub: `POST /v1/issues/comment` posts an issue comment.** The body
   `{repo, number, body}` goes through the hub's own `gh` login, the way
   the Mac's composer posts through `swe gh issue comment`, with the text
