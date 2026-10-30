@@ -76,7 +76,6 @@ class TestWebAppRoutes(HubBase):
 APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
 
 
-@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestSessionUsage(unittest.TestCase):
     """by_session groups the whole ledger: once per scan and price list."""
 
@@ -97,7 +96,24 @@ class TestSessionUsage(unittest.TestCase):
             app.session_usage()
             self.assertEqual(grp.call_count, 3)
 
+    def test_a_feed_round_drops_the_cached_usage(self):
+        # The Cursor feed writes usage rows without a scan: the next
+        # read must group again.
+        from unittest.mock import patch
 
+        from quiver.webapp import api
+
+        app = WebApp(None, download_prices=False)
+        app._store, app._catalog, app._scanned_at = object(), object(), 1.0
+        with patch.object(api, "by_session", side_effect=lambda s, c: {}) as grp, \
+                patch.object(api, "LedgerStore"), patch.object(api.feed, "poll"):
+            app.session_usage()
+            app._poll_feed()
+            app.session_usage()
+        self.assertEqual(grp.call_count, 2)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestSetupOffer(unittest.TestCase):
     """app.js's first-run offer, run under node with the browser stubbed:
     each case is a fresh page load at ``hash``."""

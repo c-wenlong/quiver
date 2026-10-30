@@ -87,6 +87,8 @@ class WebApp:
             notes.append(f"cursor feed: {exc}")
         with self._lock:
             self._feed_notes = notes
+            # The round may have written usage rows: group them again.
+            self._usage = None
 
     def overview(self, period: str, tz_name: str | None, rescan: bool = False) -> dict:
         with self._lock:
