@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iOS app: the overview's top models, quick figures, heatmap and
+  daily table, over all seven periods.** The Usage tab's Spend half
+  now offers This month, 90 days, 365 days and All time beside Today,
+  7 and 30 days, in a chip row that scrolls sideways. Under the
+  harness split it shows the Mac's active days, tokens a day and
+  busiest day, the top five models with the harnesses that ran them
+  and their share, an activity heatmap with as many recent weeks as
+  the phone fits (tap a day for its tokens and cost), and the daily
+  table (date, total, input, output, cached, spend), newest ten days
+  first, then 30 more a tap. All of it comes from the `GET /v1/app/overview`
+  payload the tab already read. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **iOS app: answer an approval with the pane's own menu rows.** When
   the hub reads the agent's numbered menu ("1. Approve once", "2.
   Always allow in this project", ...), the chat's approval card lists

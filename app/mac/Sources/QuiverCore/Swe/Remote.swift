@@ -115,13 +115,6 @@ extension SweClient {
         try await call(["remote", "pair"] + (name.map { ["--name=\($0)"] } ?? []) + ["--json"])
     }
 
-    public func remoteDevices() async throws -> [RemoteStatus.Device] {
-        struct DeviceList: Decodable { let devices: [RemoteStatus.Device] }
-        let list: DeviceList = try await call(
-            ["remote", "devices", "--json"], allowFailure: true)
-        return list.devices
-    }
-
     @discardableResult
     public func remoteRevoke(_ deviceID: String) async throws -> Bool {
         let result: RemoteRevokeResult = try await call(
