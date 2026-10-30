@@ -518,14 +518,28 @@ def _fetch_codex() -> RateLimitInfo | None:
     )
 
     data = _fetch_json(req)
-    if data is None:
+    if not isinstance(data, dict):
         return None
 
-    rate_limit = data.get("rate_limit") or {}
-    primary = rate_limit.get("primary_window") or {}
+    rate_limit = data.get("rate_limit")
+    rate_limit = rate_limit if isinstance(rate_limit, dict) else {}
+    primary = rate_limit.get("primary_window")
+    primary = primary if isinstance(primary, dict) else {}
 
-    used_percent = primary.get("used_percent", 0)
-    limit_reached = rate_limit.get("limit_reached", False)
+    # Coerced the way every other fetcher does: the reply is passed to the
+    # table renderer as is, and a string percent there raised TypeError out
+    # of `swe list`, while a "false" string read as a reached limit.
+    try:
+        raw_used = float(primary.get("used_percent") or 0)
+    except (TypeError, ValueError, OverflowError):
+        raw_used = 0.0
+    used_percent = (int(round(min(100.0, max(0.0, raw_used))))
+                    if math.isfinite(raw_used) else 0)
+    limit_reached = rate_limit.get("limit_reached") is True
+    try:
+        window_seconds = max(0, int(primary.get("limit_window_seconds") or 0))
+    except (TypeError, ValueError, OverflowError):
+        window_seconds = 0
     reset_at = primary.get("reset_at", 0)
     if isinstance(reset_at, str):
         # Codex's API returns reset_at as a numeric epoch today, but
@@ -542,8 +556,8 @@ def _fetch_codex() -> RateLimitInfo | None:
             reset_at = 0.0
     else:
         reset_at = 0.0
-    window_seconds = primary.get("limit_window_seconds", 0)
-    plan_type = data.get("plan_type") or "—"
+    plan_type = data.get("plan_type")
+    plan_type = plan_type if isinstance(plan_type, str) and plan_type else "—"
 
     return RateLimitInfo(
         tool_name="codex",
