@@ -398,9 +398,14 @@ const out = {};
   q("#ns-start").onclick();
   await tick();
   out.waiting = [ns.phase, !!release];
+  // A browser fires the close event a task after close(): the poll's
+  // answer can land in between.
+  const onclose = d.onclose;
+  d.close = function () { this.open = false; };
   d.close();
   release();
   await tick();
+  onclose();
   out.hash = location.hash;
   out.phase = ns.phase;
   out.routeSheet = "routeSheet" in d.dataset || "data-route-sheet" in d.attrs;

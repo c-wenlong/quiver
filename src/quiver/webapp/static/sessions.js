@@ -1437,6 +1437,9 @@ async function openNewSession() {
 async function nsStart() {
   if (!nsReady()) return;
   const mine = ++ns.seq;
+  // The sheet's close event (which bumps ns.seq) runs a task later, so
+  // a reply landing in between checks the sheet itself too.
+  const live = () => mine === ns.seq && nsSheetEl().open;
   ns.phase = "starting";
   ns.message = "";
   nsPaint();
@@ -1445,7 +1448,7 @@ async function nsStart() {
   const model = ModelMenu.value(ns.model);
   if (nsModelOk(nsMachine()) && model) body.model = model;
   const { status, data } = await apiPost("/v1/sessions", body);
-  if (mine !== ns.seq) return;
+  if (!live()) return;
   if (status === 401) {
     nsSheetEl().close();
     return renderGate();
@@ -1457,7 +1460,7 @@ async function nsStart() {
   }
   ns.phase = "waiting";
   nsPaint();
-  const launch = await followLaunch(data, () => mine === ns.seq);
+  const launch = await followLaunch(data, live);
   if (!launch) return;
   if (launch.state === "started") {
     ns.phase = "started";
