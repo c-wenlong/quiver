@@ -842,7 +842,7 @@ struct PluginDetailView: View {
             .opacity(0)
             .accessibilityHidden(true))
         .alert("Unsaved changes", isPresented: $leaving) {
-            Button("Save All") { saveAllAndLeave() }
+            Button("Save all") { saveAllAndLeave() }
             Button("Discard", role: .destructive) { onBack() }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -1080,7 +1080,7 @@ struct SkillDetailView: View {
             .opacity(0)
             .accessibilityHidden(true))
         .alert("Unsaved changes", isPresented: $leaving) {
-            Button("Save All") { saveAllAndLeave() }
+            Button("Save all") { saveAllAndLeave() }
             Button("Discard", role: .destructive) { onBack() }
             Button("Cancel", role: .cancel) {}
         } message: {
