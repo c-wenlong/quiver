@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: a tray for queued messages in the chat.** A Queue-mode
+  send made while the agent works now waits in a tray above the
+  composer, as on the iPhone, instead of a "Queued until the agent is
+  idle" bubble. Each row can be edited (its text goes into the box and
+  Send becomes Save), removed, or sent now into the running turn;
+  Remove all asks first. The hub holds the sends, so the tray comes
+  back when the chat reopens, with sends queued, edited or removed on
+  another device ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+- **Web app: issue detail and Resolve from Repositories.** An issue row
+  now opens a sheet with the issue's body and comments (read only, from
+  the hub's `GET /v1/issues/<owner>/<repo>/<n>`), Open on GitHub, and
+  Resolve with agent: harness, model, your context and the first prompt,
+  posted to `POST /v1/issues/resolve`, then the chat opens. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **iOS app: the overview's top models, quick figures, heatmap and
   daily table, over all seven periods.** The Usage tab's Spend half
   now offers This month, 90 days, 365 days and All time beside Today,
@@ -417,6 +432,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also tries `/api/compat/summary.json`, the path Cursor's new host
   serves.
 
+- **Mac app: the `@` file menu in the session chat.** Typing `@` in the
+  chat's prompt box lists files under the session's folder, as the web
+  app and the iPhone app do: the arrows move the highlight, Return or
+  Tab picks, Escape closes. A file goes in as `@path `, a folder as
+  `@path/` with the menu still open to pick inside it, and a path with
+  spaces is quoted. Sessions on a satellite say file search isn't
+  available there. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **Mac app: Mine and Review requested pull request filters.** The
+  Repositories dashboard's and a repo focus page's Pull requests tab
+  now offer All, Mine and Review requested with counts, as the iOS and
+  web apps do. Mine compares the `gh` login with each PR's author, so
+  it covers the focus page's merged and closed PRs too; Review
+  requested reads `swe gh pr status` per repo. A filter hides while
+  its flag is unknown instead of guessing
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 ### Changed
 
 - **Mac app: less CPU while idle.** The trend sampler no longer reads
@@ -743,6 +776,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the warning text can be selected to copy either out.
 
 ### Security
+
+- **Remote: revoking a lost phone works when it shares the owner's
+  tailnet login.** The owner's own tailnet devices get in without
+  pairing, and Revoke refused their `tailnet:<node>` ids, so a lost
+  phone signed in to the owner's Tailscale account walked straight back
+  in through Safari. The hub now records those sign-ins
+  (`tailnet_signins.json`), lists them in `GET /v1/devices`, web
+  Settings ("Signed in through Tailscale") and `swe remote devices`, and
+  `POST /v1/devices/revoke` / `swe remote devices --revoke=tailnet:<node>`
+  revoke one: that node gets no owner identity, and devices paired from
+  it are signed out, until a pair request from it is approved again.
+  Revoking a device paired through a tailnet request revokes its node
+  too. The owner's other devices keep working
+  ([#966](https://github.com/c-wenlong/quiver/issues/966)).
 
 - **Mac app: the fan helper is checked against Quiver's own signature
   before it runs as root.** The one-time install copied

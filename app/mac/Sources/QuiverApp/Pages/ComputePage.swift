@@ -376,7 +376,7 @@ private struct HarnessCard: View {
             Spacer(minLength: 8)
             Text("\(ComputeSummary.bytes(usage.memoryBytes)) · CPU \(ComputePage.cpu(usage.cpuPercent))% "
                  + "· \(usage.processCount) \(usage.processCount == 1 ? "process" : "processes") "
-                 + "· \(usage.threads) threads · running for \(ComputeSummary.duration(usage.runningSince.distance(to: .now)))")
+                 + "· \(ComputeSummary.threads(usage.threads)) · running for \(ComputeSummary.duration(usage.runningSince.distance(to: .now)))")
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
                 .lineLimit(1).truncationMode(.tail)
             Image(systemName: expanded ? "chevron.up" : "chevron.down")
@@ -426,7 +426,7 @@ private struct ProcessRowView: View {
                     if row.flags.contains(.overMemory) { Badge("Over \(ComputeSummary.bytes(limit))") }
                     if row.flags.contains(.busy) { Badge("Busy") }
                 }
-                Text("PID \(row.sample.pid) · \(row.sample.threads) threads · running for "
+                Text("PID \(row.sample.pid) · \(ComputeSummary.threads(row.sample.threads)) · running for "
                      + ComputeSummary.duration(row.sample.startedAt.distance(to: .now)))
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
             }
@@ -452,6 +452,9 @@ private struct ProcessRowView: View {
             .menuStyle(.borderlessButton)
             .accessibilityLabel("More for \(row.sample.name)")
         }
+        // The web app's 9px: without it each name sat on the hairline
+        // above, where orphan rows (10pt) had room.
+        .padding(.vertical, 9)
         .help(row.sample.commandLine)
         .alert(row.isMain ? "Quit \(UsageFormat.harness(harness))?" : "Quit \(row.sample.name)?",
                isPresented: $confirmingQuit) {

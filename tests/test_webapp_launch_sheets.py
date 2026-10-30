@@ -343,6 +343,128 @@ fetchRoutes.push(
 """
 
 
+# repositories.js: an issue row's sheet (GET /v1/issues/<o>/<r>/<n>), its
+# body and comments, then Resolve with agent's panel: the same walk,
+# posting /v1/issues/resolve, and the chat opening once the launch lands.
+ISSUE_FLOW = HARNESSES + r"""
+const out = {};
+const lastQ = {};
+const qsa = panel.querySelectorAll.bind(panel);
+panel.querySelectorAll = (sel) => (lastQ[sel] = qsa(sel));
+const click = (attr, value) => lastQ[`[data-${attr}]`].find((e) => e.attrs[`data-${attr}`] === value).onclick();
+const ISSUE = { number: 5, title: "Fix the bug", state: "open", author: "amy", labels: ["bug"],
+  assignees: ["bob"], url: "https://github.com/o/r/issues/5", body: "It **breaks** on save.",
+  created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-02T00:00:00Z",
+  comments: [{ author: "cat", body: "Same here", created_at: "2026-10-02T00:00:00Z",
+    url: "https://github.com/o/r/issues/5#issuecomment-1" }],
+  branch: "quiver/issue-5", worktree: "/w/o-r-5", suggested_prompt: "Resolve issue #5 in o/r." };
+apiAnswers.push(
+  ["/v1/app/repositories?harnesses=1", { status: 200, data: { machine: "hub", harnesses } }],
+  ["/v1/issues/o/r/5", { status: 200, data: { machine: "hub", github: { status: "ok" },
+    repo: "o/r", status: "ok", issue: ISSUE, fetched_at: 0 } }],
+  ["/v1/app/repositories", { status: 200, data: { machine: "hub", github: { status: "ok" },
+    repos: [{ name: "o/r" }], boards: { "o/r": { surfaces: {
+      pull_requests: { status: "ok", pull_requests: [] },
+      issues: { status: "ok", issues: [{ number: 5, title: "Fix the bug", state: "open", author: "amy",
+        labels: [], assignees: [], comments: 1, updated_at: null, url: ISSUE.url }] },
+      runs: { status: "ok", runs: [] } } } } } }],
+  ["/v1/launches/", { status: 200, data: { state: "started", key: "k9" } }]);
+fetchRoutes.push(["/v1/issues/resolve", { status: 409, body: { error: { code: "unsupported_launch_option",
+  message: "codex cannot take a model pick at launch" } } }]);
+(async () => {
+  location.hash = "#/repositories";
+  PAGES.repositories();
+  await tick();
+  click("tab", "issues");
+  out.rowIsButton = /<button type="button" class="gh-row" data-issue="5" data-repo="o\/r">/.test(panel.innerHTML);
+  click("issue", "5");
+  await tick();
+  const d = created.get("gh-issue-sheet");
+  out.sheetOpened = !!d && d.open;
+  const q = (s) => d.querySelector(s);
+  out.body = d._html.includes("It <strong>breaks</strong> on save.");
+  out.comment = d._html.includes("Same here") && d._html.includes("Comments · 1");
+  out.github = d._html.includes('href="https://github.com/o/r/issues/5"');
+  out.noComposer = !/<textarea/.test(d._html);
+  const harness = (h) => { q("#gh-resolve-harness").value = h; q("#gh-resolve-harness").onchange(); };
+  q("#gh-resolve-open").onclick();
+  await tick();
+  out.promptPrefill = q("#gh-resolve-prompt").value;
+  out.shown = !!q("#gh-resolve-model");
+  out.options = labels(q("#gh-resolve-model"));
+  out.prefill = picked(q("#gh-resolve-model"));
+  out.noBox = !q("#gh-resolve-model-other");
+  harness("gemini");
+  out.hides = !q("#gh-resolve-model");
+  harness("claude");
+  out.reprefill = picked(q("#gh-resolve-model"));
+  choose(q("#gh-resolve-model"), "sonnet");
+  out.recentKept = (harness("claude"), picked(q("#gh-resolve-model")));
+  harness("codex");
+  out.foreignRedefault = picked(q("#gh-resolve-model"));
+  harness("pi");
+  out.oldHubOptions = labels(q("#gh-resolve-model"));
+  harness("codex");
+  choose(q("#gh-resolve-model"), "Other…");
+  out.boxFocused = !!activeEl && activeEl.id === "gh-resolve-model-other";
+  q("#gh-resolve-model-other").value = "  my-model "; q("#gh-resolve-model-other").oninput();
+  harness("claude"); harness("codex");
+  out.dirtyPick = picked(q("#gh-resolve-model"));
+  out.dirtyKept = q("#gh-resolve-model-other") && q("#gh-resolve-model-other").value;
+  q("#gh-resolve-context").value = " Use the new API. "; q("#gh-resolve-context").oninput();
+  q("#gh-resolve-start").onclick();
+  await tick();
+  const post = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").pop();
+  out.post = post && post.body;
+  out.postModel = post && post.body.model;
+  out.errorShown = d._html.includes("cannot take a model pick");
+  // A fresh panel defaults again; an explicit Harness default survives
+  // a switch and sends no key; a cleared prompt is left to the hub.
+  q("#gh-resolve-cancel").onclick();
+  await tick();
+  q("#gh-resolve-open").onclick();
+  await tick();
+  harness("codex");
+  out.freshPrefill = picked(q("#gh-resolve-model"));
+  choose(q("#gh-resolve-model"), "Harness default");
+  out.boxGone = !q("#gh-resolve-model-other");
+  harness("claude");
+  out.clearedKept = picked(q("#gh-resolve-model"));
+  q("#gh-resolve-prompt").value = "  "; q("#gh-resolve-prompt").oninput();
+  fetchRoutes.length = 0;
+  fetchRoutes.push(["/v1/issues/resolve", { status: 202, body: { launch_id: "L1", state: "pending" } }]);
+  q("#gh-resolve-start").onclick();
+  await tick();
+  const post2 = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").pop();
+  out.emptyHasNoModel = !("model" in (post2 && post2.body || {}));
+  out.blankPrompt = post2 && post2.body.prompt;
+  out.noContext = !("context" in (post2 && post2.body || {}));
+  out.chat = location.hash;
+  out.closed = !d.open;
+  // Closed since the panel opened: Fetch again turns Start off and a
+  // press posts nothing.
+  location.hash = "#/repositories";
+  PAGES.repositories();
+  await tick();
+  click("tab", "issues");
+  click("issue", "5");
+  await tick();
+  q("#gh-resolve-open").onclick();
+  await tick();
+  apiAnswers.unshift(["/v1/issues/o/r/5", { status: 200, data: { machine: "hub", github: { status: "ok" },
+    repo: "o/r", status: "ok", issue: { ...ISSUE, state: "closed" }, fetched_at: 0 } }]);
+  q("[data-issue-refresh]").onclick();
+  await tick();
+  out.closedStartOff = q("#gh-resolve-start").disabled && d._html.includes("This issue is closed.");
+  const before = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").length;
+  q("#gh-resolve-start").onclick();
+  await tick();
+  out.closedNoPost = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").length === before;
+  process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
 # sessions.js's New session sheet: machine + harness chips over
 # /v1/machines rows (``model_at_launch``/``recent_models`` live there,
 # not on a harnesses list), posting /v1/sessions. The model row is drawn
@@ -541,6 +663,29 @@ class TestLaunchModelMenu(unittest.TestCase):
         self.assertEqual(out["freshPrefill"], "gpt-5-codex")
         self.assertTrue(out["boxGone"])
         self.assertTrue(out["errorShown"], "the refusal should show in the sheet")
+
+    def test_repositories_resolve_issue(self):
+        out = self.run_flow("repositories.js", ISSUE_FLOW)
+        self.assert_walk(out)
+        self.assertTrue(out["rowIsButton"], "an issue row opens the sheet, not github.com")
+        self.assertTrue(out["sheetOpened"])
+        self.assertTrue(out["body"], "the body renders as markdown")
+        self.assertTrue(out["comment"])
+        self.assertTrue(out["github"], "Open on GitHub stays")
+        self.assertTrue(out["noComposer"], "comments are read only")
+        self.assertEqual(out["promptPrefill"], "Resolve issue #5 in o/r.")
+        self.assertEqual(out["post"], {"repo": "o/r", "number": 5, "harness": "codex",
+                                       "prompt": "Resolve issue #5 in o/r.",
+                                       "context": "Use the new API.", "model": "my-model"})
+        self.assertTrue(out["errorShown"], "the refusal should show in the sheet")
+        self.assertEqual(out["freshPrefill"], "gpt-5-codex")
+        self.assertTrue(out["boxGone"])
+        self.assertEqual(out["blankPrompt"], "")
+        self.assertTrue(out["noContext"])
+        self.assertEqual(out["chat"], "#/sessions?chat=k9")
+        self.assertTrue(out["closed"])
+        self.assertTrue(out["closedStartOff"], "a refetch finding the issue closed turns Start off")
+        self.assertTrue(out["closedNoPost"])
 
     def test_sessions_new_session(self):
         out = self.run_node(STUB + MENU_JS.read_text(encoding="utf-8") + "\n"

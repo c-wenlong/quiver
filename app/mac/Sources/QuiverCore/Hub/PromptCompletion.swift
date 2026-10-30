@@ -3,8 +3,8 @@ import Observation
 
 // The prompt box's `/` menu. Positions are Character offsets into the
 // draft; `nil` as a cursor means the end of the text. The iPhone app's
-// `PromptCompletion.swift` (app/ios) holds the same logic beside the
-// `@` menu this one doesn't port yet.
+// `PromptCompletion.swift` (app/ios) holds the same logic; the `@` menu
+// is in `MentionCompletion.swift`.
 
 /// Converts between the draft's Character offsets and its indices.
 public enum Caret {

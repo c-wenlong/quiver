@@ -1068,6 +1068,11 @@ import Testing
     }
 
     /// The figures follow the Mac's locale; only the words are pinned.
+    @Test func oneThreadIsSingular() {
+        #expect(ComputeSummary.threads(1) == "1 thread")
+        #expect(ComputeSummary.threads(28) == "28 threads")
+    }
+
     @Test func theTotalsLineCountsProcessesInWords() {
         let zero = ComputeSummary.percent(0)
         #expect(ComputeSummary.totalsLine(.init()) == "0 KB across 0 processes · CPU \(zero)% · 0 threads")

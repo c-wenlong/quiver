@@ -131,6 +131,13 @@ public struct HubClient: Sendable {
         try await send(request("GET", Self.sessionPath(key, "commands")))
     }
 
+    /// Paths under the session's working folder matching `query`, for
+    /// the prompt box's `@` menu. Hub-machine sessions only: a
+    /// satellite's session answers `files_unavailable`.
+    public func files(_ key: String, query: String, limit: Int = MentionSearch.limit) async throws -> FilesResponse {
+        try await send(request("GET", Self.sessionPath(key, "files"), query: ["q": query, "limit": "\(limit)"]))
+    }
+
     /// `interrupt` stops the agent's turn. Returns true when the hub
     /// queued it for a satellite (202), whose `command.result` follows.
     @discardableResult
