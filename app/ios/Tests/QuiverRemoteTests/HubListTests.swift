@@ -142,4 +142,14 @@ final class HubListTests: XCTestCase {
         XCTAssertEqual(app.hubs.hubs.map(\.baseURL.host), ["mac", "server"])
         XCTAssertEqual(app.hub?.baseURL.host, "server")
     }
+
+    @MainActor
+    func testACancelledRefreshDoesntReadAsOffline() async {
+        let app = AppModel(hub: hub("mac"))
+        let refresh = Task { await app.refresh() }
+        refresh.cancel()
+        await refresh.value
+        XCTAssertEqual(app.connection, .connecting, "a cancel isn't the hub being unreachable")
+        XCTAssertNil(app.loadError)
+    }
 }
