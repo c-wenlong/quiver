@@ -1117,17 +1117,17 @@ final class ChatModel {
     private(set) var attachQueued = false
     private(set) var attachError: String?
 
+    /// Through `AppModel.attach`, as the list's swipe does: an answer
+    /// from a hub the phone has since left is dropped, and the attach
+    /// cancels a `when_idle` detach still waiting on the turn.
     func attach() async {
-        guard let client = hubClient else { return }
+        // hubClient is nil once the chat's hub is no longer on screen.
+        guard let app, hubClient != nil else { return }
         attaching = true
         attachError = nil
         defer { attaching = false }
         do {
-            if try await client.control(key, op: "attach") {
-                attachQueued = true
-            } else {
-                app?.patch(key, ownership: "attached")
-            }
+            if try await app.attach(key) { attachQueued = true }
         } catch {
             attachError = (error as? HubError)?.message ?? "Attach failed"
         }
