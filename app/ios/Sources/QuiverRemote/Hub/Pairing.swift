@@ -258,7 +258,9 @@ struct PairLink: Equatable {
             parts.query = fragment
             let q = Self.query(parts.queryItems)
             guard let token = q["pair"], !token.isEmpty else { return nil }
-            guard let base = URL(string: "\(url.scheme!)://\(host):\(url.port ?? Hub.defaultPort)") else { return nil }
+            // No port on an https link is 443 (`tailscale serve`), not the hub's own.
+            let port = url.port.map { ":\($0)" } ?? (url.scheme == "https" ? "" : ":\(Hub.defaultPort)")
+            guard let base = URL(string: "\(url.scheme!)://\(host)\(port)") else { return nil }
             self.baseURL = base
             self.token = token
             self.name = q["name"]?.isEmpty == false ? q["name"] : nil
@@ -286,7 +288,9 @@ func hubURL(from input: String) -> URL? {
     guard !trimmed.isEmpty else { return nil }
     let withScheme = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
     guard var parts = URLComponents(string: withScheme), let host = parts.host, !host.isEmpty else { return nil }
-    if parts.port == nil { parts.port = Hub.defaultPort }
+    // An https address with no port is 443, `tailscale serve` in front of
+    // the hub; only plain http means the hub's own port.
+    if parts.port == nil, parts.scheme != "https" { parts.port = Hub.defaultPort }
     parts.path = ""
     parts.query = nil
     parts.fragment = nil
