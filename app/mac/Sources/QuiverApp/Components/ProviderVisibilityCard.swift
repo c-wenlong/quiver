@@ -85,11 +85,17 @@ private struct ProviderRow: View {
             }
             .opacity(row.isInstalled || !checked ? 1 : 0.4)
             Spacer()
-            Toggle(row.provider.name, isOn: Binding(get: { row.isEnabled }, set: { toggle($0) }))
+            let onOff = Toggle(row.provider.name, isOn: Binding(get: { row.isEnabled }, set: { toggle($0) }))
                 .toggleStyle(AccentSwitchStyle())
                 .labelsHidden()
                 .disabled(!row.isInstalled)
-                .help(row.isInstalled ? "" : "Install \(row.provider.name) to show it")
+            // A plain tooltip, and only on a missing provider's locked
+            // switch: a hover tip's tap would take the row's click.
+            if row.isInstalled {
+                onOff
+            } else {
+                onOff.help("Install \(row.provider.name) to show it")
+            }
         }
         .padding(.horizontal, 8)
         .frame(height: 44)
