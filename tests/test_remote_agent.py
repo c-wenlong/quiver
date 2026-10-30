@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import socket
 import struct
 import tempfile
@@ -261,6 +262,18 @@ class TestRemoteCatalog(unittest.TestCase):
                          {"claude": "opus", "codex": "gpt-5"})
         self.assertEqual(catalog_mod.last_used_models(
             Path(tempfile.mkdtemp())), {})
+
+    def test_app_prefs_follow_the_current_home(self):
+        # Bound to Path.home() at import, the path ignored a HOME set
+        # later (a test home, a hub started for another user's home).
+        import plistlib
+        home = Path(tempfile.mkdtemp())
+        prefs = home / catalog_mod._APP_PREFS_REL
+        prefs.parent.mkdir(parents=True)
+        prefs.write_bytes(plistlib.dumps({"providerOrder": ["codex"]}))
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            order, _off = catalog_mod._provider_visibility()
+        self.assertEqual(order, ["codex"])
 
     def _launchable(self, reg, prefs=None, on_path=None):
         import plistlib
