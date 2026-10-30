@@ -74,6 +74,8 @@ const CFmt = {
     while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
     return `${value.toLocaleString("en-US", { maximumFractionDigits: units[i][1] })} ${units[i][0]}`;
   },
+  /* "1 thread", "28 threads", as in ComputeSummary.threads. */
+  threads(n) { return `${n} ${n === 1 ? "thread" : "threads"}`; },
   /* Whole percent once it is two digits, one decimal below it. */
   percent(p) {
     const digits = p >= 10 ? 0 : 1;
@@ -219,7 +221,7 @@ function computeTop(d) {
   const t = d.totals;
   const machine = machineLine(d);
   const n = t.process_count;
-  return `<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${n} ${n === 1 ? "process" : "processes"} · CPU ${CFmt.percent(t.cpu_percent)}% · ${t.threads} threads</p>${
+  return `<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${n} ${n === 1 ? "process" : "processes"} · CPU ${CFmt.percent(t.cpu_percent)}% · ${CFmt.threads(t.threads)}</p>${
     machine ? `<p class="caption num compute-machine">${machine}</p>` : ""}`;
 }
 
@@ -291,7 +293,7 @@ function harnessCard(usage) {
   const flagged = (r) => r.memory_bytes > limit || r.busy;
   const hiddenFlagged = all ? 0 : rows.slice(COMPUTE_VISIBLE_ROWS).filter(flagged).length;
   const n = usage.process_count;
-  const figures = `${CFmt.bytes(usage.memory_bytes)} · CPU ${CFmt.percent(usage.cpu_percent)}% · ${n} ${n === 1 ? "process" : "processes"} · ${usage.threads} threads · running for ${CFmt.duration(nowS() - usage.running_since)}`;
+  const figures = `${CFmt.bytes(usage.memory_bytes)} · CPU ${CFmt.percent(usage.cpu_percent)}% · ${n} ${n === 1 ? "process" : "processes"} · ${CFmt.threads(usage.threads)} · running for ${CFmt.duration(nowS() - usage.running_since)}`;
   let body = "";
   if (expanded) {
     body = `<div class="compute-rows">${shown.map((r) => processRow(r, limit)).join("")}${hidden ? `
@@ -311,7 +313,7 @@ function processRow(r, limit) {
   const badges = (r.memory_bytes > limit ? badge(`Over ${CFmt.bytes(limit)}`) : "") + (r.busy ? badge("Busy") : "");
   return `<div class="compute-row" title="${esc(r.command_line)}">
     <div class="compute-main"><div class="compute-name"><span class="ellipsis">${esc(r.name)}</span>${badges}</div>
-      <div class="caption num">PID ${r.pid} · ${r.threads} threads · running for ${CFmt.duration(nowS() - r.started_at)}</div></div>
+      <div class="caption num">PID ${r.pid} · ${CFmt.threads(r.threads)} · running for ${CFmt.duration(nowS() - r.started_at)}</div></div>
     <span class="caption num compute-mem">${CFmt.bytes(r.memory_bytes)}</span>
     <span class="caption num compute-cpu">${r.cpu_percent == null ? "–" : `${CFmt.percent(r.cpu_percent)}%`}</span>
   </div>`;

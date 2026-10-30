@@ -497,7 +497,12 @@ public enum ComputeSummary {
     public static func totalsLine(_ totals: ComputeModel.Totals) -> String {
         let count = totals.processCount
         return "\(bytes(totals.memoryBytes)) across \(count) \(count == 1 ? "process" : "processes") "
-            + "· CPU \(percent(totals.cpuPercent))% · \(totals.threads) threads"
+            + "· CPU \(percent(totals.cpuPercent))% · \(threads(totals.threads))"
+    }
+
+    /// "1 thread", "28 threads".
+    public static func threads(_ count: Int) -> String {
+        "\(count) \(count == 1 ? "thread" : "threads")"
     }
 
     /// Whole percent once it is two digits, one decimal below it.
