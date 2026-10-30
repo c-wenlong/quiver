@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only: the Mac doesn't switch models. Part of
   [#643](https://github.com/c-wenlong/quiver/issues/643).
 
+
+- **iOS app: comment on an issue, and post your Resolve context as a
+  comment.** The issue page has the Mac's comment box under the thread,
+  and the Resolve sheet gains "Your context (optional)", now sent with
+  the resolve, and "Also post as a comment on #<n>", on by default.
+  Both post through the hub's `gh` login with `POST /v1/issues/comment`.
+  A context comment that fails is a warning; the launch still goes
+  ahead. Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
 - **Web app: the Cursor app on the Calendar.** The hub reads each Cursor
   account's `state.vscdb` (the app's own folder and every extra Cursor
   profile's) as the Mac app does, so editor chats show as blocks with
@@ -176,8 +184,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   8-digit date stamp are dropped, as on the phone:
   `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
   `claude-opus-4-5`. Nothing shows when the hub doesn't know it. An
-  open chat reads the hub's row again when a turn ends and when the
-  tab becomes visible, so the header follows a model that first
+  open chat reads the hub's row again when a turn ends (twice more, six
+  seconds apart, while the hub's catalog still holds the old model) and
+  when the tab becomes visible, so the header follows a model that first
   appears with the opening reply or changes elsewhere. The
   page's rows (`/v1/app/sessions`) now carry the hub's `model` as the
   catalog read it, so the page has no second transcript reader. Display

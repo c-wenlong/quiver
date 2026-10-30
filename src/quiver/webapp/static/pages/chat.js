@@ -2700,27 +2700,33 @@ const SessionChat = (() => {
    * once at open and no event carries the model, so one that first
    * appears with the opening reply, or changes from another client or
    * the terminal, would show as it was until a reopen. A failed read, or
-   * a hub that doesn't know the model, leaves the header as it is. One
-   * read at a time; returns the model now shown. */
-  let modelRead = null;
-  function refreshModel() {
-    if (modelRead || !chat.key || !chat.row) return modelRead || Promise.resolve("");
+   * a hub that doesn't know the model, leaves the header as it is.
+   *
+   * The hub answers /v1/sessions from a catalog it rebuilds every 10
+   * seconds, and a turn's end can reach the stream before that, so one
+   * read may still hold the old model. Until the model differs, it reads
+   * again after each of MODEL_RETRY_MS. A newer call takes over from one
+   * still waiting. Returns the model now shown. */
+  const MODEL_RETRY_MS = [6000, 6000];
+  let modelCall = 0;
+  async function refreshModel() {
+    if (!chat.key || !chat.row) return "";
     const gen = chat.gen;
-    modelRead = (async () => {
-      try {
-        const { status, data } = await api("/v1/sessions");
-        if (gen !== chat.gen || status !== 200 || !data) return "";
-        const row = (data.sessions || []).find((r) => r.key === chat.key);
-        if (row && row.model && chat.row && row.model !== chat.row.model) {
-          chat.row.model = row.model;
-          paintBar();
-        }
-        return (chat.row && chat.row.model) || "";
-      } finally {
-        modelRead = null;
+    const call = ++modelCall;
+    for (let i = 0; ; i++) {
+      const { status, data } = await api("/v1/sessions");
+      if (gen !== chat.gen || call !== modelCall) break;
+      const row = status === 200 && data && (data.sessions || []).find((r) => r.key === chat.key);
+      if (row && row.model && chat.row && row.model !== chat.row.model) {
+        chat.row.model = row.model;
+        paintBar();
+        break;
       }
-    })();
-    return modelRead;
+      if (i >= MODEL_RETRY_MS.length) break;
+      await new Promise((resolve) => setTimeout(resolve, MODEL_RETRY_MS[i]));
+      if (gen !== chat.gen || call !== modelCall) break;
+    }
+    return (gen === chat.gen && chat.row && chat.row.model) || "";
   }
 
   /* The catalog row: ownership, attachable and status as the hub has them

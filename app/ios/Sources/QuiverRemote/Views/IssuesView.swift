@@ -213,9 +213,9 @@ struct IssueGlyph: View {
 
     var body: some View {
         Image(systemName: state == "open" ? "exclamationmark.circle" : "checkmark.circle")
-            .font(.system(size: 15))
+            .font(Theme.rowIcon)
             .foregroundStyle(state == "open" ? Theme.accentFill : Theme.textMuted)
-            .frame(width: 20)
+            .iconColumn(20)
             .accessibilityLabel(state == "open" ? "Open" : "Closed")
     }
 }
@@ -254,7 +254,7 @@ struct IssueRowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
         }
         .padding(.vertical, Theme.rowVertical)
         .padding(.horizontal, Theme.rowHorizontal)
