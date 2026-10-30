@@ -151,15 +151,17 @@ import Testing
         #expect(model.codes == ["r2": "34"])
     }
 
-    @Test func pollingStopsWhenCancelled() async throws {
+    @Test(.timeLimit(.minutes(1))) func pollingStopsWhenCancelled() async throws {
         let runner = PollCountingRunner(reply: Self.noRequests)
         let model = PairRequestsModel(swe: SweClient(runner: runner))
         let task = Task { await model.poll(every: .milliseconds(10)) }
         #expect(await runner.calls.reach(2))
         task.cancel()
         // Once poll returns it can call swe no more, so its ending is the
-        // whole check; the bound fails a poll that ignores cancellation.
-        #expect(await withinTimeout { await task.value; return true })
+        // whole check. The time limit fails a poll that ignores
+        // cancellation (a task group racing a deadline would wait on it
+        // forever).
+        await task.value
         #expect(model.loaded)
     }
 

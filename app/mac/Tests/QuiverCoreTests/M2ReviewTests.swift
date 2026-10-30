@@ -129,7 +129,7 @@ import Testing
 
 @MainActor
 @Suite struct AccountsKeepFreshTests {
-    @Test func anOpenPageKeepsReloadingUntilItCloses() async throws {
+    @Test(.timeLimit(.minutes(1))) func anOpenPageKeepsReloadingUntilItCloses() async throws {
         let home = try TempDir()
         let usage = CountedUsage()
         let model = AccountsModel(store: ProfileStore(root: home.url.appending(path: "a"), userHome: home.url),
@@ -140,8 +140,9 @@ import Testing
         task.cancel()
         // Each load's fetches run in a task group it awaits, so once
         // keepFresh returns no fetch can follow: its ending is the whole
-        // check. The bound fails a loop that ignores cancellation.
-        #expect(await withinTimeout { await task.value; return true })
+        // check. The time limit fails a loop that ignores cancellation
+        // (a task group racing a deadline would wait on it forever).
+        await task.value
         withExtendedLifetime(home) {}
     }
 }
