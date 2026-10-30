@@ -457,7 +457,7 @@ everything else lives under the domain command that owns it.
 
 ```
 swe <verb>                          top level: shortcuts and one-shot commands
-  list · info · add · edit · remove · use · check · doctor · install
+  init · list · info · add · edit · remove · use · check · doctor · install
   discover                          alias for `swe harness discover`
   tags · aliases · models · autocomplete · bug · version · help
 
@@ -471,6 +471,7 @@ swe <domain> <verb>                 domains: everything else
   report     daily · weekly · followups · followup · warnings
   skills     list · tree · link · unlink · move · new · discover · hub · catalog · scope
   session    use · index
+  setup      harnesses · providers · mcp · skills · report · check
   config     get · set · unset · edit · check · setup
   hooks      list · info · new · edit · enable · disable · delete · check · sync
   gh         pr · issue · run · inbox · repo · board · sync · pages · releases · tags · branches
