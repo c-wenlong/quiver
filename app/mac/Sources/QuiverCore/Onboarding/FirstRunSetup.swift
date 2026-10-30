@@ -65,10 +65,37 @@ public struct SetupPreview: Decodable, Sendable, Equatable {
         }
     }
 
+    /// `swe setup --json`'s `hub`: whether `~/.quiver` can still take a
+    /// clone of the user's hub repo, and what `--hub` just cloned.
+    public struct Hub: Decodable, Sendable, Equatable {
+        public struct Marketplace: Decodable, Sendable, Hashable {
+            public let harness: String
+            public let marketplace: String
+            /// Why it couldn't be registered; nil when it was.
+            public let error: String?
+        }
+
+        public struct Cloned: Decodable, Sendable, Equatable {
+            /// Without credentials: swe strips them before printing.
+            public let url: String
+            public let path: String
+            public let marketplaces: [Marketplace]
+        }
+
+        /// No hub in `~/.quiver` yet (no AGENTS.md, no .git), so the sheet
+        /// offers its hub URL field.
+        public let canClone: Bool
+        /// The public demo hub to fork; nil until it exists.
+        public let demoUrl: String?
+        public let cloned: Cloned?
+    }
+
     public let harness: [Harness]
     public let mcp: [Server]
     /// Missing from an swe older than the setup sheet.
     public let instructions: Instructions?
+    /// Missing from an swe older than `swe setup --hub`.
+    public let hub: Hub?
 }
 
 /// What `swe setup --apply --json` did.
@@ -113,6 +140,22 @@ extension SweClient {
     /// `swe setup --json`: a preview, nothing written.
     public func setupPreview() async throws -> SetupPreview {
         try await call(["setup", "--json", "--non-interactive"])
+    }
+
+    /// What `swe setup --hub` may take: `git ls-remote` (30 s), the clone
+    /// (600 s), then registering the hub's marketplaces.
+    static let hubCloneTimeout: Duration = .seconds(720)
+
+    /// `swe setup --hub=<url> --json --non-interactive`: clone the user's
+    /// hub repo as `~/.quiver`, then the preview of what setup would do
+    /// with it. A refusal (a hub already there, a URL git can't reach, a
+    /// timeout) exits 1 with the reason on stderr and no document, which the
+    /// error carries. A clone that worked but whose preview then failed also
+    /// exits 1, with the document (its `hub.cloned` set) still on stdout, so
+    /// that one is read rather than reported as a failed clone.
+    public func cloneHub(url: String) async throws -> SetupPreview {
+        try await call(["setup", "--hub=" + url, "--json", "--non-interactive"],
+                       allowFailure: true, timeout: Self.hubCloneTimeout)
     }
 
     /// `swe setup --apply --json`: register what was found, import MCP
@@ -172,6 +215,12 @@ public final class FirstRunSetupModel {
     public var selected: Set<String> = []
     public var start: Start = .seed
     public private(set) var applying = false
+    /// The links step's hub field: what's typed, a clone running, why the
+    /// last one failed, and what the last one cloned.
+    public var hubURL = ""
+    public private(set) var cloning = false
+    public private(set) var hubError: String?
+    public private(set) var cloned: SetupPreview.Hub.Cloned?
     public private(set) var outcome: SetupOutcome?
     public private(set) var applyError: String?
     /// The picks the last setup run starred. Changing them after going
@@ -211,6 +260,62 @@ public final class FirstRunSetupModel {
         }
     }
 
+    /// What swe setup says beside its hub prompt (`FORK_NOTE` in
+    /// src/quiver/init/hub.py); the web Setup page says the same.
+    public static let hubForkNote =
+        "Fork a hub repo first (or use it as a template for a private copy), then paste your fork's URL."
+
+    /// Offer the hub field: the preview says `~/.quiver` has no hub yet,
+    /// and setup hasn't run (after it, the shared AGENTS.md is there).
+    public var offersHub: Bool {
+        guard case .loaded(let found) = preview, outcome == nil else { return false }
+        return found.hub?.canClone == true
+    }
+
+    /// Clone the typed hub repo with `swe setup --hub`, then take the
+    /// preview it answers with: from then on the step shows the cloned
+    /// hub (its AGENTS.md, nothing to adopt). A failure keeps the URL to
+    /// fix, says why, and reads the machine again, so the sheet shows
+    /// what is on disk whichever way the run ended.
+    public func cloneHub() async {
+        let url = hubURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty, !cloning, !applying else { return }
+        cloning = true
+        hubError = nil
+        defer { cloning = false }
+        // A preview load still in flight must not replace the clone's.
+        generation += 1
+        let run = generation
+        do {
+            let found = try await swe().cloneHub(url: url)
+            guard run == generation else { return }
+            preview = .loaded(found)
+            start = Self.defaultStart(found.instructions)
+            cloned = found.hub?.cloned
+            hubURL = ""
+        } catch is CancellationError {
+            return
+        } catch {
+            let message = error.localizedDescription
+            let chosen = start
+            await load()
+            // The reload resets the start to its default; keep the one the
+            // user picked while the new preview still offers it.
+            if case .loaded(let found) = preview, Self.offers(chosen, found.instructions) {
+                start = chosen
+            }
+            hubError = message
+        }
+    }
+
+    /// Whether `start` is a choice this preview still offers: the starter
+    /// file always, a file only while it is an adopt candidate.
+    static func offers(_ start: Start, _ instructions: SetupPreview.Instructions?) -> Bool {
+        guard case .file(let path) = start else { return true }
+        guard let instructions, !instructions.agentsFileCustomised else { return false }
+        return instructions.adoptCandidates.contains { $0.path == path }
+    }
+
     /// Your own instructions beat the starter file: the first real file
     /// found (Claude's comes first in swe's order) starts the shared one,
     /// unless AGENTS.md already has your text.
@@ -235,6 +340,7 @@ public final class FirstRunSetupModel {
     /// setup left alone, keep you there to read about them, and a second
     /// Continue moves on.
     public func next(order: [String]) async {
+        guard !cloning else { return }
         if step == .links && needsApply {
             await apply(order: order)
             if applyError != nil || outcome?.needsReading == true { return }
