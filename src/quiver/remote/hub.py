@@ -3772,6 +3772,13 @@ def serve(state: HubState, host: str, port: int,
     state.catalog.on_github_alert = state._github_alert
     state.start()
     server = make_server(state, host, port)
+    # Auto clean quits orphans without a browser ever opening Compute:
+    # its switch is hub state, so the background sampler starts at boot
+    # while it is on rather than wait for a page request.
+    from quiver.webapp import compute as webapp_compute
+    if webapp_compute.supported() and webapp_compute.clean_settings(state.home)["enabled"]:
+        webapp_compute.model().home = state.home or Path.home()
+        webapp_compute.start_ticker()
     # Only a hub that owns the port may say where it is: a second copy
     # that fails to bind must not overwrite the running one's address.
     save_hub_config(state.home, host, port, public_url)

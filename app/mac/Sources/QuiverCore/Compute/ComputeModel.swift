@@ -75,6 +75,11 @@ public final class ComputeModel {
 
     public static let temperatureLinesKey = "computeTemperatureLines"
 
+    /// Auto clean's grace: a force-cleaned orphan gets this long to exit
+    /// after its SIGTERM before the SIGKILL follows. Ten seconds lets a
+    /// dev server flush and close while still catching the stuck ones.
+    public static let autoCleanGrace: TimeInterval = 10
+
     /// Runs with each tick's temperatures; AppModel points it at the fan
     /// threshold, so the rule works whether or not the page is open.
     public var onTemperature: (@MainActor (TemperatureReading) -> Void)?
@@ -136,6 +141,12 @@ public final class ComputeModel {
     /// plus the process's start time, so a pid the OS has handed to a new
     /// process is not mistaken for the one that was signalled.
     private var signalledAt: [Int32: (at: Date, startedAt: Date)] = [:]
+    /// Auto clean's own ledger, by orphan root pid: the tree as it was
+    /// when SIGTERM went out, when it went out, and whether the grace
+    /// escalation to SIGKILL already ran. The recorded start times do the
+    /// same work as in `signalledAt`: a pid the OS recycled answers for a
+    /// different process and is judged again on its own age.
+    private var cleaned: [Int32: (tree: OrphanTree, at: Date, forced: Bool)] = [:]
     /// Tickets refreshes so a slower earlier one can never republish.
     private var request = 0
     private var trendTask: Task<Void, Never>?
@@ -256,6 +267,38 @@ public final class ComputeModel {
         cpu = meter.update(sampled.table, at: sampled.at)
         attribution = ProcessAttribution.attribute(sampled.table, matchers: matchers,
                                                    managedPIDs: managedPIDs)
+        autoClean(at: sampled.at)
+    }
+
+    /// The auto clean switch, run over every accepted sample — the page's
+    /// refreshes and the trend tick alike, so it works with the page
+    /// closed. An orphan tree older than `limits.orphanAge` gets one
+    /// SIGTERM, through the same kill plan and guards a manual Quit uses;
+    /// a tree already signalled is left alone. With `autoCleanForce` a
+    /// marked tree whose members are still alive `autoCleanGrace` later
+    /// gets SIGKILL once. Marks prune once nothing in the tree answers
+    /// the recorded start times, so a tree that died — or a pid the OS
+    /// handed to somebody new — is forgotten.
+    private func autoClean(at now: Date) {
+        guard limits.autoClean else { return }
+        for tree in attribution.orphans
+        where now.timeIntervalSince(tree.root.startedAt) > limits.orphanAge {
+            guard cleaned[tree.root.pid]?.tree.root.startedAt != tree.root.startedAt else { continue }
+            signal([.orphanTree(tree)], force: false, in: samples)
+            cleaned[tree.root.pid] = (tree: tree, at: now, forced: false)
+        }
+        let ancestors = selfAncestors(in: samples)
+        for (pid, mark) in Array(cleaned) {
+            let order = ComputeSummary.killOrder(for: .orphanTree(mark.tree), in: samples,
+                                                 selfPID: selfPID, ancestors: ancestors)
+            if order.isEmpty {
+                cleaned[pid] = nil
+            } else if limits.autoCleanForce, !mark.forced,
+                      now.timeIntervalSince(mark.at) >= Self.autoCleanGrace {
+                signal([.orphanTree(mark.tree)], force: true, in: samples)
+                cleaned[pid] = (tree: mark.tree, at: mark.at, forced: true)
+            }
+        }
     }
 
     // MARK: Trends
