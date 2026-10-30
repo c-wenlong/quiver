@@ -329,7 +329,6 @@ function onHarnessesPage() {
   return currentRoute() === "harnesses";
 }
 
-/* app.js's api() only reads; writes send JSON with the same headers. */
 /* ------------------------------------------------- Harnesses: the sheets */
 
 /* The Mac app's three sheets as one <dialog>: the row editor (HarnessEditor),
