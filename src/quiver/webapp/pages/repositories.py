@@ -152,9 +152,9 @@ def surface(home, repo: str, key: str, limit, refresh: bool = False) -> dict:
 def pull_request(home, repo: str, ref: str, refresh: bool = False) -> dict:
     """``swe gh pr view <N> --repo=<repo> --json``: the probe first, as
     swe does, then the detail fields the sheet draws."""
-    number = str(ref or "").strip().lstrip("#")
-    if not number.isdigit():
-        raise PageError(400, "bad_pr", "pr must be a pull request number")
+    # The writes' check: canonical digits, so "007" and "7" share one
+    # cache entry and a long or non-ASCII digit string never reaches int().
+    number = _pr_number_arg(str(ref or "").strip().lstrip("#"), status=400)
     env = G.probe(home, refresh=refresh)
     if env.status != "ok":
         return {"github": G.env_payload(env), "repo": None,
@@ -418,16 +418,17 @@ def _pinned_arg(home, raw) -> str:
         raise
 
 
-def _pr_number_arg(number) -> str:
-    """A write's PR ``number``, as canonical digits, else a 422."""
+def _pr_number_arg(number, status: int = 422) -> str:
+    """A PR ``number`` as canonical digits, else ``status`` (a write's
+    422; the detail read answers 400)."""
     if isinstance(number, bool) or not isinstance(number, (int, str)):
-        raise PageError(422, "bad_pr", "number must be a pull request number")
+        raise PageError(status, "bad_pr", "number must be a pull request number")
     number = str(number).strip()
     # Nine digits is far past any real PR, and keeps int() off strings
     # long enough to trip Python's digit limit.
     if (not number.isdigit() or not number.isascii() or len(number) > 9
             or int(number) < 1):
-        raise PageError(422, "bad_pr", "number must be a pull request number")
+        raise PageError(status, "bad_pr", "number must be a pull request number")
     return str(int(number))
 
 

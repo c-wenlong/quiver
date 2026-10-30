@@ -519,6 +519,14 @@ return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
         self.assertEqual(out, f'<p>see <a href="{url}" target="_blank" rel="noopener">{url}</a>'
                               " and <strong>bold</strong></p>")
 
+    def test_writes_go_through_app_js_apipost(self):
+        """chat.js has a send() of its own (the composer's): its requests
+        must reach app.js's apiPost, not call that handler again."""
+        out = self.run_js(
+            "const calls = []; globalThis.apiPost = async (path, body) => { calls.push([path, body]); return { status: 200, data: {} }; };"
+            " const r = await T.post('/v1/sessions/k/send', { text: 'hi' }); return { calls, status: r.status };")
+        self.assertEqual(out, {"calls": [["/v1/sessions/k/send", {"text": "hi"}]], "status": 200})
+
     def test_markdown_escapes_then_restores_code_and_bold(self):
         out = self.run_js(
             "return [T.md('<img src=x onerror=alert(1)> **bold** `a<b`'),"
@@ -1051,10 +1059,6 @@ return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
         self.assertEqual(out["newest"], ["new"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 SESSIONS_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/sessions.js"
 
 
@@ -1168,3 +1172,7 @@ class TestTranscriptSearchBox(unittest.TestCase):
         """, {"status": 0, "data": None})
         self.assertEqual(out["kept"], ["k1"])
         self.assertIn("Couldn't reach transcript search", out["note"])
+
+
+if __name__ == "__main__":
+    unittest.main()
