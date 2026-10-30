@@ -313,7 +313,13 @@ public struct HubClient: Sendable {
                             guard let env = try? HubWire.decoder.decode(HubEnvelope.self, from: Data(payload.utf8))
                             else { continue }
                             if env.type == "journal.truncated" {
-                                continuation.yield(.truncated)
+                                // The hub restarts the stream at `seq`: our
+                                // cursor when its ring dropped events past it,
+                                // its head when the journal was wiped under it.
+                                // Take it even when lower, or every reconnect
+                                // asks from the old cursor again.
+                                if let seq = env.seq { cursor = seq }
+                                continuation.yield(.truncated(seq: env.seq))
                                 continue
                             }
                             if env.type == "journal.caught-up" { continue }
@@ -336,8 +342,10 @@ public struct HubClient: Sendable {
 
 public enum HubStreamEvent: Sendable {
     case connected, disconnected, unauthorized
-    /// The journal dropped events past the cursor: reload history.
-    case truncated
+    /// The journal dropped events past the cursor (or was wiped under
+    /// it): reload history and follow on from `seq`, the hub's restart
+    /// point, which can be lower than the cursor.
+    case truncated(seq: Int?)
     case event(HubEnvelope)
 }
 

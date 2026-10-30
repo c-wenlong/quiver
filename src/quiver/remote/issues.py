@@ -89,7 +89,7 @@ def _number_arg(raw) -> int | None:
 
 # ------------------------------------------------------------------ reads
 
-def list(state, args) -> tuple[int, dict]:
+def list_view(state, args) -> tuple[int, dict]:
     """``GET /v1/issues``: every pinned repo's issues.
 
     ``{repos: [{name, status, issues, error?}], machine, machine_id,
