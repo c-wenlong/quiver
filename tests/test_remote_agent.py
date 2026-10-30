@@ -1600,6 +1600,40 @@ class TestAgentEdges(unittest.TestCase):
         self.assertIsNotNone(
             attachments.resolve(self.home, "claude:k", "r.png"))
 
+    def test_when_idle_detach_drops_staged_files_once_it_fires(self):
+        # The deferred detach keeps the files while it waits (and if it
+        # is cancelled), drops them when its detach succeeds, keeps them
+        # when it fails.
+        ag = self._agent()
+        sess = _session()
+        ag.catalog.session_for = lambda k: sess
+        key = "claude:k"
+        attachments.place(self.home, key, "r.png", b"png")
+        supervise.mark(self.home, key, {"mode": "tmux", "tmux": "qv-x"})
+        scheduled = {}
+
+        def schedule(k, **kw):
+            scheduled.update(kw)
+            return True
+
+        def staged():
+            return attachments.resolve(self.home, key, "r.png")
+
+        with patch.object(ag.detaches, "schedule", side_effect=schedule):
+            ok, _n, _d = ag._detach_when_idle(key, sess)
+        self.assertTrue(ok)
+        self.assertIsNotNone(staged())  # waiting
+        scheduled["report"](False, "cancelled", True)
+        self.assertIsNotNone(staged())  # cancelled
+        fake = MagicMock()
+        fake.control.return_value = inject.InjectResult(False, "no")
+        with patch.object(inject, "injector_for", return_value=fake):
+            self.assertFalse(scheduled["fire"]()[0])
+            self.assertIsNotNone(staged())  # failed detach
+            fake.control.return_value = inject.InjectResult(True, "ok")
+            self.assertTrue(scheduled["fire"]()[0])
+        self.assertIsNone(staged())
+
     def test_execute_approval_and_control_and_error(self):
         ag = self._agent()
         sess = _session()
