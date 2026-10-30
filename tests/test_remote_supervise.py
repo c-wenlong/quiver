@@ -1,6 +1,7 @@
 """supervise.py: tmux lifecycle, pending-launch adoption, priming."""
 
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -545,9 +546,21 @@ class TestAdoptPending(unittest.TestCase):
     def test_corrupt_marker_removed(self):
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
-        (folder / "bad.json").write_text("{not json")
+        bad = folder / "bad.json"
+        bad.write_text("{not json")
+        old = time.time() - supervise._PENDING_UNREADABLE_GRACE_S - 5
+        os.utime(bad, (old, old))
         self.assertEqual(supervise.adopt_pending(self.home, []), [])
-        self.assertFalse((folder / "bad.json").exists())
+        self.assertFalse(bad.exists())
+
+    def test_young_unreadable_marker_kept(self):
+        # Read mid-write: deleting it would strand the launch for a
+        # day. A marker this young is skipped, not removed.
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "half.json").write_text('{"tmux": "q-')
+        self.assertEqual(supervise.adopt_pending(self.home, []), [])
+        self.assertTrue((folder / "half.json").exists())
 
     def test_no_pending_dir_returns_empty(self):
         self.assertEqual(supervise.adopt_pending(self.home, []), [])
