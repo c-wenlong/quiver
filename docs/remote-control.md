@@ -855,8 +855,9 @@ bad_body` for unreadable JSON, `422 bad_repo` for a missing or malformed
 when `body` is not a string or is blank, `422 comment_too_long` past
 GitHub's own 65,536 characters, `404 not_pinned` for a repo the hub
 doesn't pin (so a client can't post anywhere else the hub's login
-reaches), and `409 gh_unavailable` or `gh_auth_required` from a fresh
-`gh auth status`. The body is trimmed first, as the Mac's composer
+reaches), and from a fresh `gh auth status` `409 gh_unavailable` (no
+`gh`), `gh_auth_required` (signed out) or `gh_upstream_error` (the check
+itself failed or timed out, so nothing says the account is signed out). The body is trimmed first, as the Mac's composer
 trims it. `gh` refusing answers `404 unknown_issue` (no such issue) or
 `502 comment_failed` with `gh`'s words. Success is `200 {ok, github,
 repo, number, comment: {author, body, created_at, url}, machine,
