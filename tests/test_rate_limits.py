@@ -4311,7 +4311,7 @@ class CursorFetcherTest(unittest.TestCase):
         string, and the fetcher's exception dropped the whole reading."""
         from quiver.harness.rate_limits import _fetch_cursor
 
-        for profile in ('["google-oauth2|user_01TEST"]', '"x"', "7"):
+        for profile in ('["google-oauth2|user_01TEST"]', '"x"', "7", "{not json"):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as tmp:
                 db = self._state_db(tmp, "cursor-safe-storage:v1:blob", email="me@work.com")
                 connection = sqlite3.connect(db)
