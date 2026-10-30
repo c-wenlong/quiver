@@ -94,13 +94,11 @@ struct InboxPage: View {
                 }
             }
         }
-        .task(id: app.swePath) {
-            await model.loadInbox(swe: app.swe)
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
-                await model.loadInbox(swe: app.swe, force: true)
-            }
-        }
+        // GitHubNotifier polls the inbox every minute for the app's whole
+        // life; a second loop here doubled the swe runs, and its replies,
+        // landing out of step with the notifier's, could put back a row
+        // marked read meanwhile. The page only catches up when stale.
+        .task(id: app.swePath) { await model.loadInbox(swe: app.swe) }
     }
 }
 

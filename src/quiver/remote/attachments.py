@@ -47,6 +47,32 @@ def _safe_name(name: str) -> str:
     return cleaned[:80] or "file"
 
 
+def _private_dir(folder: Path) -> None:
+    """``folder`` (and the inbox above it) at 0700: phone uploads are
+    the user's screenshots and files, not for other local accounts."""
+    for path in (folder.parent, folder):
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # One made before modes were set keeps its old ones; tighten it
+        # before anything new is written inside.
+        if path.stat().st_mode & 0o077:
+            os.chmod(path, 0o700)
+
+
+def _write_private(folder: Path, name: str, data: bytes) -> Path:
+    """Write ``data`` to ``folder/name`` created 0600, in a 0700 folder.
+
+    The mode is set on the descriptor before any byte is written, so the
+    file is never readable by others, even one replaced in place.
+    """
+    _private_dir(folder)
+    target = folder / name
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        os.fchmod(fh.fileno(), 0o600)
+        fh.write(data)
+    return target
+
+
 def stage(
     home: Path | None,
     session_key: str,
@@ -70,13 +96,11 @@ def stage(
         name = name[: _NAME_MAX - len(suffix)] + suffix
     folder = inbox_dir(home, session_key)
     try:
-        folder.mkdir(parents=True, exist_ok=True)
         # The random segment keeps two same-named uploads in one second
         # from overwriting each other (phone photo batches all call
         # themselves image.png).
         ref = f"{int(time.time())}-{secrets.token_hex(3)}-{name}"
-        target = folder / ref
-        target.write_bytes(data)
+        target = _write_private(folder, ref, data)
     except OSError as exc:
         return None, f"could not stage file: {exc}"
     return {
@@ -108,9 +132,7 @@ def place(
         return None, "bad ref"
     folder = inbox_dir(home, session_key)
     try:
-        folder.mkdir(parents=True, exist_ok=True)
-        target = folder / name
-        target.write_bytes(data)
+        target = _write_private(folder, name, data)
     except OSError as exc:
         return None, f"could not stage file: {exc}"
     return {"ref": name, "name": name, "path": str(target),

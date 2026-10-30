@@ -181,6 +181,39 @@ import Testing
         #expect(h.transport.requests.count == 3)
     }
 
+    /// A forced refresh that arrives while a non-forced call is still
+    /// looking up the credential must not take that call's cached answer.
+    @Test(.timeLimit(.minutes(1))) func aForcedCallDoesNotJoinANonForcedOne() async throws {
+        let h = UsageHarness()
+        let user = ClaudeKeychain.currentAccount
+        h.secrets.set(service: "Claude Code-credentials", account: user, claudeCredentialsJSON())
+        let secrets = GatedSecrets(h.secrets)
+        let clock = h.clock
+        let service = UsageService(transport: h.transport, secrets: secrets, files: h.files,
+                                   cacheURL: h.cacheURL, now: { clock.now })
+        h.transport.reply(200, body: try fixture("claude-usage"))
+        let first = await service.usage(for: claudeKey, force: true)
+        try #require(first.fetchedAt == usageEpoch)
+
+        h.clock.advance(60)
+        secrets.close()
+        let background = Task { await service.usage(for: claudeKey, force: false) }
+        let deadline = Date().addingTimeInterval(10)
+        while !secrets.isHolding, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try #require(secrets.isHolding)
+        h.transport.reply(200, body: try fixture("claude-usage"))
+        // The forced call must find the background one still in flight.
+        let overlapped = AsyncStream<Void>.makeStream()
+        await service.setOnFindsInFlight { overlapped.continuation.yield() }
+        let forced = Task { await service.usage(for: claudeKey, force: true) }
+        for await _ in overlapped.stream { break }
+        secrets.open()
+
+        #expect(await background.value.fetchedAt == usageEpoch)
+        #expect(await forced.value.fetchedAt == usageEpoch.addingTimeInterval(60))
+        #expect(h.transport.requests.count == 2)
+    }
+
     @Test func aNetworkFailureReturnsTheLastReadingWithItsOriginalTime() async throws {
         let (h, first) = try await harnessWithReading()
         h.clock.advance(3 * 60 * 60)
@@ -423,5 +456,39 @@ final class SlowTransport: HTTPTransport {
         calls.withLock { $0 += 1 }
         try await Task.sleep(for: .milliseconds(100))
         return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+}
+
+/// Holds every keychain lookup while closed, then answers from `inner`.
+final class GatedSecrets: SecretReading, @unchecked Sendable {
+    private let inner: FakeSecrets
+    private let lock = NSLock()
+    private var closed = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    init(_ inner: FakeSecrets) { self.inner = inner }
+
+    var isHolding: Bool { lock.withLock { !waiting.isEmpty } }
+
+    func close() { lock.withLock { closed = true } }
+
+    func open() {
+        let parked = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            closed = false
+            defer { waiting = [] }
+            return waiting
+        }
+        parked.forEach { $0.resume() }
+    }
+
+    func genericPassword(service: String, account: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            let park = lock.withLock { () -> Bool in
+                if closed { waiting.append(continuation) }
+                return closed
+            }
+            if !park { continuation.resume() }
+        }
+        return await inner.genericPassword(service: service, account: account)
     }
 }

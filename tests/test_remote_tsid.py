@@ -40,6 +40,11 @@ class TestWhois(unittest.TestCase):
             ["/x/tailscale", "whois", "--json", "100.66.1.2"],
         )
 
+    def test_json_that_is_not_an_object_is_no_answer(self):
+        for body in ("null", "[]", "42", '"x"'):
+            out, _ = self._run(_cp(stdout=body))
+            self.assertIsNone(out, body)
+
     def test_tagged_node_gets_no_login(self):
         import json
         data = json.loads(_WHOIS)

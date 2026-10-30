@@ -218,6 +218,19 @@ private struct CleanupLimitsView: View {
                        detail: "A process using more memory than this is flagged, and can be suggested for clean-up.") {
                 SelectMenu(options: memoryOptions, selection: memory, width: 120)
             }
+            SettingsDivider()
+            SettingRow(title: "Auto clean",
+                       detail: "Orphans older than the age above get a quit signal, without asking.") {
+                SettingSwitch(title: "Auto clean", isOn: autoClean)
+            }
+            if app.compute.limits.autoClean {
+                SettingsDivider()
+                SettingRow(title: "Force quit",
+                           detail: "An orphan still running \(Int(ComputeModel.autoCleanGrace)) seconds "
+                               + "after its quit signal is force quit.") {
+                    SettingSwitch(title: "Force quit", isOn: autoCleanForce)
+                }
+            }
         }
         .onAppear {
             let (value, unit) = OrphanAgeUnit.split(app.compute.limits.orphanAge)
@@ -257,6 +270,16 @@ private struct CleanupLimitsView: View {
     private var memory: Binding<UInt64> {
         Binding(get: { app.compute.limits.memoryBytes },
                 set: { app.compute.limits.memoryBytes = $0 })
+    }
+
+    private var autoClean: Binding<Bool> {
+        Binding(get: { app.compute.limits.autoClean },
+                set: { app.compute.limits.autoClean = $0 })
+    }
+
+    private var autoCleanForce: Binding<Bool> {
+        Binding(get: { app.compute.limits.autoCleanForce },
+                set: { app.compute.limits.autoCleanForce = $0 })
     }
 
     private var memoryOptions: [(value: UInt64, title: String)] {
@@ -431,6 +454,7 @@ private struct ProcessRowView: View {
             }
             .menuIndicator(.hidden)
             .menuStyle(.borderlessButton)
+            .accessibilityLabel("More for \(row.sample.name)")
         }
         .help(row.sample.commandLine)
         .alert(row.isMain ? "Quit \(UsageFormat.harness(harness))?" : "Quit \(row.sample.name)?",
@@ -645,7 +669,7 @@ private struct CleanupSheet: View {
             if expanded.contains(group.id) {
                 VStack(spacing: 0) {
                     ForEach(group.items) { item in
-                        CleanupRow(item: item, showsHarness: false,
+                        CleanupRow(item: item,
                                    isOn: selected.contains(item.id),
                                    quitting: quitting.contains(item.id),
                                    stillThere: stillThere[item.id]) {
@@ -713,6 +737,7 @@ private struct CleanupSheet: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .disabled(working)
+                .accessibilityLabel("Select every \(group.harness.map(UsageFormat.harness) ?? "orphaned") process")
         }
     }
 
@@ -742,10 +767,9 @@ private struct CleanupRow: View {
     /// The Quit / result column, so the toggle's replacement holds its place.
     static let statusWidth: CGFloat = 76
 
+    /// Always inside a harness group, whose header already says whose it
+    /// is: no icon and no "(Codex)" suffix on the row.
     var item: CleanupItem
-    /// Inside a harness group the header already says whose it is: no
-    /// icon and no "(Codex)" suffix on every row.
-    var showsHarness = true
     var isOn: Bool
     var quitting: Bool
     var stillThere: Bool?
@@ -760,8 +784,8 @@ private struct CleanupRow: View {
             var words = [(tree.root.arguments[0] as NSString).lastPathComponent]
             words += tree.root.arguments.dropFirst().prefix(2)
             return words.joined(separator: " ")
-        case .process(let sample, let harness):
-            return showsHarness ? "\(sample.name) (\(UsageFormat.harness(harness)))" : sample.name
+        case .process(let sample, _):
+            return sample.name
         }
     }
 
@@ -789,14 +813,10 @@ private struct CleanupRow: View {
                 Toggle(isOn: Binding(get: { isOn }, set: { _ in toggle() })) { EmptyView() }
                     .labelsHidden()
                     .frame(width: 20)
+                    .accessibilityLabel("Select \(name)")
             }
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    if showsHarness, case .process(_, let harness) = item.kind {
-                        HarnessIcon(harness: harness, size: 14)
-                    }
-                    Text(name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                }
+                Text(name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(item.reason).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
             }

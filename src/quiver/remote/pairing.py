@@ -27,6 +27,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.remote.protocol import url_host
 
 # A pairing token is worthless within minutes of `swe remote pair`.
 TOKEN_TTL_S = 300
@@ -34,13 +35,10 @@ TOKEN_TTL_S = 300
 # A device row's ``role`` is what its credential may do. ``phone`` is
 # the default — and the effective role of every row minted before roles
 # existed: session routes only. ``satellite`` may use ``/v1/agent/*``,
-# pinned to one ``machine_id`` at its first register. ``actions`` is
-# the ntfy action-button row: approval POSTs, never agent routes.
-DEVICE_ROLES = frozenset({"phone", "satellite", "actions"})
-
-# Roles a ``/v1/pair`` body may claim. ``actions`` is never wire-
-# claimable — the hub writes those rows itself for ntfy action buttons.
-PAIR_ROLES = DEVICE_ROLES - {"actions"}
+# pinned to one ``machine_id`` at its first register. These are the
+# roles a ``/v1/pair`` body may claim. (Old hubs also wrote ``actions``
+# rows for ntfy buttons; notify.retire_action_credential revokes them.)
+PAIR_ROLES = frozenset({"phone", "satellite"})
 
 _DEVICES_BASENAME = "devices.json"
 _TOKENS_BASENAME = "pair_tokens.json"
@@ -133,6 +131,8 @@ def _save_devices(home: Path | None, devices: dict[str, dict]) -> None:
 META_KEYS = ("kind", "model", "client", "os")
 _META_FIELD_KEYS = META_KEYS + ("node_name",)
 _MAX_META_LEN = 120
+# A device name the pairing client sends is cut to this, like a rename.
+MAX_NAME_LEN = 80
 
 # Darwin major → Apple OS, for CFNetwork UAs that name no platform.
 # Both families share one kernel; the product token picks the map.
@@ -237,6 +237,11 @@ def client_meta(user_agent: str) -> dict:
     return meta
 
 
+def clean_name(name: object) -> str:
+    """A client-sent device name, trimmed and length-capped; "" if none."""
+    return str(name or "").strip()[:MAX_NAME_LEN]
+
+
 def clean_device_meta(fields: dict | None) -> dict:
     """The explicit ``device`` map a client posts: known keys only,
     trimmed and length-capped; ``kind`` becomes a lowercase token so
@@ -317,7 +322,8 @@ def pair_url(host: str, port: int, token: str, name: str = "",
              scheme: str = "http") -> str:
     """The form a phone browser can open directly: the web app's
     ``#pair=`` handler trades the token for a device credential."""
-    out = f"{scheme}://{host}:{port}/app/#pair={quote(token, safe='')}"
+    out = (f"{scheme}://{url_host(host)}:{port}/app/"
+           f"#pair={quote(token, safe='')}")
     if name:
         out += f"&name={quote(name, safe='')}"
     return out
@@ -371,6 +377,7 @@ def exchange(
     home_path = Path(home) if home is not None else None
     if not token:
         return None
+    name = clean_name(name)
     with _state_lock(home_path):
         if not _consume_token(home_path, token):
             return None
@@ -564,6 +571,7 @@ def request_pair(
     minted into the device when it's approved — the requester supplied
     it, not the approver."""
     home_path = Path(home) if home is not None else None
+    name = clean_name(name)
     with _state_lock(home_path):
         now = time.time()
         node_id = str(peer.get("node_id") or "")
@@ -612,15 +620,34 @@ def request_pair(
     }
 
 
+def _load_live_requests(home_path: Path | None, now: float) -> list[dict]:
+    """The request rows, with expired ones dropped from disk too — an
+    approved row's plaintext credential leaves with its row. Caller
+    holds ``_state_lock``."""
+    rows = _load_requests(home_path)
+    kept = _prune_requests(rows, now)
+    if len(kept) != len(rows):
+        _save_requests(home_path, kept)
+    return kept
+
+
+def prune_requests(home: Path | str | None = None) -> None:
+    """Drop expired request rows. The hub runs this on a timer so an
+    approved credential the phone never collected doesn't sit in
+    pair_requests.json until some other pairing call happens by."""
+    home_path = Path(home) if home is not None else None
+    if not requests_file(home_path).exists():
+        return
+    with _state_lock(home_path):
+        _load_live_requests(home_path, time.time())
+
+
 def list_requests(home: Path | str | None = None) -> list[dict]:
     """Pending, unexpired requests — never codes or secrets."""
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         now = time.time()
-        rows = _load_requests(home_path)
-        kept = _prune_requests(rows, now)
-        if len(kept) != len(rows):
-            _save_requests(home_path, kept)
+        kept = _load_live_requests(home_path, now)
     return [
         {
             "request_id": r["request_id"],
@@ -646,6 +673,20 @@ def approve_request(
     with _state_lock(home_path):
         now = time.time()
         rows = _prune_requests(_load_requests(home_path), now)
+        pending = [r for r in rows if r.get("status") == "pending"]
+        if request_id is None and pending and not any(
+            hmac.compare_digest(str(r.get("code") or ""), str(code))
+            for r in pending
+        ):
+            # A code with no request id is checked against every pending
+            # row, so a miss is a strike against each: otherwise guessing
+            # without an id would never hit the five-strike limit.
+            for row in pending:
+                row["attempts"] = row.get("attempts", 0) + 1
+                if row["attempts"] >= MAX_CODE_ATTEMPTS:
+                    row["status"] = "denied"
+            _save_requests(home_path, rows)
+            return None
         for row in rows:
             if row.get("status") != "pending":
                 continue
@@ -720,7 +761,7 @@ def poll_request(
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         now = time.time()
-        rows = _load_requests(home_path)
+        rows = _load_live_requests(home_path, now)
         for i, row in enumerate(rows):
             if row.get("request_id") != request_id:
                 continue

@@ -77,7 +77,7 @@ function renderHooks() {
 async function renderHooksList() {
   const p = hooksPage, gen = routeGen, mine = ++p.seq;
   if (!p.data) {
-    document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(false)}
+    document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(true)}
       <div class="card"><p class="empty">Reading hooks…</p></div></div>`;
     bindHooksHeader();
   } else {
@@ -85,7 +85,7 @@ async function renderHooksList() {
   }
   const { status, data } = await api("/v1/app/hooks");
   if (gen !== routeGen || mine !== p.seq) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) return pageError(hooksHeader(false), status, data, renderHooks);
   p.data = data;
   paintHooks();
@@ -252,10 +252,9 @@ async function renderHookDetail(name, harness, tier) {
   if (tier) q.set("tier", tier);
   const { status, data } = await api(`/v1/app/hooks?${q}`);
   if (gen !== routeGen || mine !== p.seq) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
-    const msg = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    const msg = failText(status, data);
     document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(false)}${hkBack()}
       <div class="card"><p class="error">${esc(msg)}</p></div></div>`;
     bindHooksHeader();
@@ -320,7 +319,7 @@ async function hooksRun(action) {
   const { status, data } = await apiPost(`/v1/app/hooks/${action}`, {});
   p.running = null;
   if (status === 401) {
-    if (hooksOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (hooksOnRoute()) renderGate();
     return;
   }
   if (status === 200 && data) {
@@ -329,8 +328,7 @@ async function hooksRun(action) {
     p.data = data;
     p.actionError = data.error || null;
   } else {
-    p.actionError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.actionError = failText(status, data);
   }
   if (!hooksOnRoute()) return;
   if (new URLSearchParams((location.hash.split("?")[1]) || "").get("hook")) renderHooks();
@@ -347,22 +345,19 @@ function hkNameProblem(name) {
   return HK_NAME_RULE.test(name) ? null : "Letters, digits, '_' and '-', starting with a letter or digit";
 }
 
-/* The sheet lives on document.body, so a list or detail repaint behind
- * it (the refresh that lands after it was opened) cannot close it. A
- * close repaints the list: a created hook's row should be there when
- * Done closes the success view. */
+/* The sheet lives on document.body (bodySheet), so a list or detail
+ * repaint behind it (the refresh that lands after it was opened) cannot
+ * close it. A close repaints the list: a created hook's row should be
+ * there when Done closes the success view. */
 function hkNewSheet() {
-  let sheet = document.getElementById("hk-new-sheet");
-  if (sheet) return sheet;
-  sheet = document.createElement("dialog");
-  sheet.id = "hk-new-sheet";
-  sheet.className = "sheet hk-new-sheet";
-  sheet.setAttribute("aria-label", "New hook");
-  sheet.addEventListener("close", () => {
-    if (hooksOnRoute() && !new URLSearchParams((location.hash.split("?")[1]) || "").get("hook")
-        && hooksPage.data) paintHooks();
-  });
-  document.body.appendChild(sheet);
+  const made = !document.getElementById("hk-new-sheet");
+  const sheet = bodySheet("hk-new-sheet", "sheet hk-new-sheet", "New hook");
+  if (made) {
+    sheet.addEventListener("close", () => {
+      if (hooksOnRoute() && !new URLSearchParams((location.hash.split("?")[1]) || "").get("hook")
+          && hooksPage.data) paintHooks();
+    });
+  }
   return sheet;
 }
 
@@ -420,7 +415,7 @@ async function createHook(sheet) {
   if (current) sheet.dataset.working = "";
   if (status === 401) {
     if (current) sheet.close();
-    if (hooksOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (hooksOnRoute()) renderGate();
     return;
   }
   // The script exists whatever happened to the form: show it in the list.
@@ -433,8 +428,7 @@ async function createHook(sheet) {
     $("hk-new-create").textContent = "Create";
     $("hk-new-create").disabled = false;
     const err = $("hk-new-error");
-    err.textContent = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    err.textContent = failText(status, data);
     err.hidden = false;
     return;
   }

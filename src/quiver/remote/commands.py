@@ -173,7 +173,7 @@ def _bindable(host: str, port: int) -> str | None:
 
 
 def _probe(host: str, port: int, timeout: float = 3.0) -> dict | None:
-    url = f"http://{host}:{port}/v1/status"
+    url = f"http://{protocol.url_host(host)}:{port}/v1/status"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -259,7 +259,7 @@ def _cmd_serve(flags: dict) -> int:
     # Timestamped and flushed: the log is often a file, and a hub killed
     # by a restart otherwise leaves no trace of when it ran.
     print(
-        f"{_stamp()}  remote hub on {c('cyan', f'http://{host}:{port}')} "
+        f"{_stamp()}  remote hub on {c('cyan', f'http://{protocol.url_host(host)}:{port}')} "
         f"as {c('bold', state.machine['name'])} ({state.machine_id})",
         flush=True,
     )

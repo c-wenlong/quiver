@@ -286,6 +286,7 @@ enum PairTarget: String, CaseIterable, Identifiable {
 private struct DeviceRow: View {
     var device: RemoteStatus.Device
     var model: RemoteModel?
+    @State private var confirmingRevoke = false
 
     var body: some View {
         SettingRow(title: title,
@@ -296,12 +297,16 @@ private struct DeviceRow: View {
             if model?.revoking.contains(device.id) == true {
                 ProgressView().controlSize(.small)
             } else {
-                Button("Revoke") {
-                    Task { await model?.revoke(device) }
-                }
-                .secondaryButton()
-                .hoverTip("Sign this device out of the hub")
+                Button("Revoke") { confirmingRevoke = true }
+                    .secondaryButton()
+                    .hoverTip("Sign this device out of the hub")
             }
+        }
+        .confirmationDialog("Revoke \(title)?", isPresented: $confirmingRevoke) {
+            Button("Revoke", role: .destructive) { Task { await model?.revoke(device) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It is signed out of the hub at once and has to pair again to reconnect.")
         }
     }
 

@@ -163,9 +163,6 @@ class TestScan(unittest.TestCase):
         self.assertIn("codex:rollout-1:2026-10-03T10:00:00Z", keys)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestDatabaseSources(unittest.TestCase):
     """OpenCode and Devin read through scan(), against minimal schemas."""
@@ -261,3 +258,30 @@ class TestDatabaseSources(unittest.TestCase):
         path.write_text("not a database")
         result = scan(self.store, self.home)
         self.assertEqual(len(result.errors), 1)
+
+
+class TestReadsLeaveNoTransaction(unittest.TestCase):
+    """The pricing reads fill a temp table; that write must not leave
+    the connection inside a transaction holding a read snapshot."""
+
+    def test_groups_and_session_groups_end_their_transaction(self):
+        path = Path(tempfile.mkdtemp()) / "l.sqlite"
+        store = LedgerStore(path)
+        self.addCleanup(store.close)
+        store.upsert(_rec("k", 5))
+        store.db.commit()
+        store.groups(None, None, {"m": 1})
+        self.assertFalse(store.db.in_transaction)
+        store.session_groups({"m": 1})
+        self.assertFalse(store.db.in_transaction)
+        # Another connection commits; this one can still write.
+        other = LedgerStore(path)
+        other.set_meta("x", "1")
+        other.db.commit()
+        other.close()
+        store.set_meta("y", "1")
+        store.db.commit()
+
+
+if __name__ == "__main__":
+    unittest.main()

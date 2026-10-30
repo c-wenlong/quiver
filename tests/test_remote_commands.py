@@ -69,6 +69,13 @@ class TestPair(unittest.TestCase):
 
 
 class TestStatus(unittest.TestCase):
+    def setUp(self):
+        # Without --host, status reads the saved hub.json; keep it from
+        # reading the real ~/.quiver.
+        patcher = patch.object(commands, "load_hub_config", return_value={})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_unreachable_hub(self):
         home = Path(tempfile.mkdtemp())
         with patch("quiver.remote.commands._probe", return_value=None), \
@@ -522,6 +529,26 @@ class TestProbeAndPair(unittest.TestCase):
                    side_effect=urllib.error.URLError("down")):
             self.assertIsNone(commands._probe("h", 1))
 
+    def test_probe_brackets_an_ipv6_host(self):
+        # "http://::1:8477" doesn't parse; the literal needs brackets,
+        # once, whether or not the caller already added them.
+        seen = []
+
+        def urlopen(url, timeout=None):
+            seen.append(url)
+            raise OSError("no hub")
+
+        with patch("urllib.request.urlopen", side_effect=urlopen):
+            for host in ("::1", "[::1]", "fd7a:115c::1", "100.64.0.1", "h"):
+                commands._probe(host, 8477)
+        self.assertEqual(seen, [
+            "http://[::1]:8477/v1/status",
+            "http://[::1]:8477/v1/status",
+            "http://[fd7a:115c::1]:8477/v1/status",
+            "http://100.64.0.1:8477/v1/status",
+            "http://h:8477/v1/status",
+        ])
+
     def test_pair_without_qrencode(self):
         with patch("quiver.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"), \
@@ -742,9 +769,6 @@ class TestTailscaleIp(unittest.TestCase):
             self.assertEqual(commands.catalog_mod.tailscale_ip(), "")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 _PEER = {
     "node_name": "test-iphone.tail0000.ts.net",
@@ -957,3 +981,7 @@ class TestUnwritableHome(unittest.TestCase):
                           side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 _run(["devices"])
+
+
+if __name__ == "__main__":
+    unittest.main()

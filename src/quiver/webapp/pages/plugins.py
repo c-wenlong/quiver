@@ -27,7 +27,7 @@ import threading
 import time
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, home_path
 
 # The app's SnapshotLoader maxAge for both models.
 CACHE_TTL_S = 60.0
@@ -69,7 +69,7 @@ def get(ctx, args: dict) -> dict:
     view = args.get("view") or "health"
     if view not in VIEWS:
         raise PageError(400, "bad_view", f"view must be one of {', '.join(VIEWS)}")
-    home = ctx.home or Path.home()
+    home = home_path(ctx)
     body, built_at = cached(view, home, refresh=args.get("refresh") == "1")
     return {**body, "view": view, "built_at": built_at,
             "machine": (ctx.machine or {}).get("name")}
@@ -83,9 +83,35 @@ def cached(view: str, home: Path, refresh: bool = False, now=time.time) -> tuple
         hit = _cache.get(key)
         if hit is not None and not refresh and now() - hit[1] < CACHE_TTL_S:
             return hit
+        if refresh and view == "explore":
+            _drop_catalog(home)
         body = health(home) if view == "health" else explore(home)
         _cache[key] = (body, now())
         return _cache[key]
+
+
+# ``build_catalog`` walks every marketplace and plugin folder; Explore and
+# the Skills page's placement both need it, so they share one read.
+_catalog_lock = threading.Lock()
+
+
+def shared_catalog(home: Path, now=time.time) -> dict:
+    """``build_catalog(home)``, read at most once per ``CACHE_TTL_S``."""
+    from quiver.plugins.catalog import build_catalog
+
+    key = ("catalog", str(home))
+    with _catalog_lock:
+        hit = _cache.get(key)
+        if hit is not None and now() - hit[1] < CACHE_TTL_S:
+            return hit[0]
+        built = build_catalog(home)
+        _cache[key] = (built, now())
+        return built
+
+
+def _drop_catalog(home: Path) -> None:
+    with _catalog_lock:
+        _cache.pop(("catalog", str(home)), None)
 
 
 def clear_cache() -> None:
@@ -93,6 +119,9 @@ def clear_cache() -> None:
         with _locks[view]:
             for key in [k for k in _cache if k[0] == view]:
                 del _cache[key]
+    with _catalog_lock:
+        for key in [k for k in _cache if k[0] == "catalog"]:
+            del _cache[key]
 
 
 # ---------------------------------------------------------------- Health
@@ -147,7 +176,7 @@ def post(ctx, action: str, body: dict) -> dict:
     if action == "plugin":
         return _plugin_action(ctx, body)
     ids = [_fix_id(body.get("id"))] if action == "fix" else _fix_ids(body.get("ids"))
-    home = ctx.home or Path.home()
+    home = home_path(ctx)
     if not _WRITE_LOCK.acquire(blocking=False):
         raise PageError(409, "busy", "A fix is already running. Wait for it, then refresh.")
     try:
@@ -192,7 +221,7 @@ def _plugin_action(ctx, body: dict) -> dict:
     for value in (verb, ref, harness):
         if not isinstance(value, str) or not value or len(value) > ID_MAX:
             raise PageError(422, "bad_action", "verb, ref and harness must name an action the page shows")
-    home = ctx.home or Path.home()
+    home = home_path(ctx)
     if not _WRITE_LOCK.acquire(blocking=False):
         raise PageError(409, "busy", "A plugin change is already running. Wait for it, then refresh.")
     try:
@@ -278,6 +307,11 @@ def _invalidate(home: Path) -> None:
     before the fix cannot land after this and keep its old answer."""
     for view in VIEWS:
         with _locks[view]:
+            if view == "explore":
+                # Under Explore's lock, before its answer goes: a read
+                # waiting on the lock must not rebuild from the old
+                # catalog. The Skills page's placement reads it too.
+                _drop_catalog(home)
             _cache.pop((view, str(home)), None)
 
 
@@ -403,9 +437,7 @@ def _error(error: dict, home: Path) -> dict:
 def explore(home: Path) -> dict:
     """The Explore tab's data: the catalog's plugins once, keyed by ref,
     and the sources, marketplaces and rows that place them."""
-    from quiver.plugins.catalog import build_catalog
-
-    catalog = build_catalog(home)
+    catalog = shared_catalog(home)
     names = display_names(home)
     plugins: dict = {}
     for market in catalog["marketplaces"]:
