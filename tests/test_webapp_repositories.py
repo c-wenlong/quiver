@@ -860,7 +860,10 @@ class TestPrWorktree(_Base):
     def test_checkouts_of_one_repo_wait_for_each_other(self):
         # Two PRs of one repo share its mirror's FETCH_HEAD: the second
         # checkout must not start until the first has finished.
-        lock = G.mirror_lock(self.home, "O/A")
+        # The one mirror lock table lives in manage; a differently
+        # cased name is the same mirror.
+        from quiver.github import manage
+        lock = manage._mirror_lock(manage.mirror_path("O/A", self.home))
         lock.acquire()
         done = []
         worker = threading.Thread(target=lambda: done.append(
