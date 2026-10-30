@@ -147,7 +147,11 @@ def _install_entry(entries) -> dict:
     """
     if isinstance(entries, dict):
         entries = [entries]
-    rows = [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+    # Only records that say where the install is count, before the scope
+    # is chosen: a malformed user record must not hide a valid project one.
+    rows = [e for e in entries if isinstance(e, dict)
+            and isinstance(e.get("installPath"), str) and e["installPath"]
+            ] if isinstance(entries, list) else []
     if not rows:
         return {}
     return next((e for e in rows if e.get("scope") == "user"), rows[0])

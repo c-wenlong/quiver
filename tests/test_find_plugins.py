@@ -11,6 +11,7 @@ swe find, but a plugin has no file sitting in a harness root, so:
 """
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -188,6 +189,17 @@ class MalformedRecordTest(_NoRegistry, unittest.TestCase):
             self.assertEqual(got["b@dv"].version, "2.0")
             self.assertEqual(got["b@dv"].path, Path(tmp) / "u")
 
+    def test_a_malformed_user_record_does_not_hide_a_valid_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _claude_home(
+                tmp, enabled={},
+                installs={"b@dv": [
+                    {"scope": "project", "version": "0.9", "installPath": tmp + "/p"},
+                    {"scope": "user", "version": "2.0", "installPath": []},
+                ]})
+            got = discover_plugins(home)[0]
+            self.assertEqual((got.version, got.path), ("0.9", Path(tmp) / "p"))
+
     def test_a_home_relative_install_path_is_expanded(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _claude_home(tmp, enabled={},
@@ -208,9 +220,15 @@ class MalformedRecordTest(_NoRegistry, unittest.TestCase):
             })
             (home / "mk").mkdir()
             (home / "github").mkdir()
-            with mock.patch("os.getcwd", return_value=str(home)):
+            # A real chdir: relative paths resolve against the process's
+            # working directory, which patching os.getcwd does not move.
+            cwd = os.getcwd()
+            os.chdir(home)
+            try:
                 self.assertEqual(_marketplace_sources(home, "claude"),
                                  {"here": home / "mk"})
+            finally:
+                os.chdir(cwd)
 
 
 class ScopeTest(unittest.TestCase):
