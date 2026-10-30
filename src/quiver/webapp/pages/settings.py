@@ -80,7 +80,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from quiver import __version__
-from quiver.webapp.pages import PageError, web_url
+from quiver.webapp.pages import PageError, tilde, web_url
 from quiver.webapp.pages._secrets import mask
 
 ACTIONS = ("pair", "revoke", "session_search", "sync", "key_set", "key_remove", "key_value")
@@ -521,9 +521,4 @@ def _home(ctx) -> Path:
 
 def _display(path: Path, home: Path) -> str:
     """``path`` with the hub's home written as ``~``."""
-    s, h = str(path), str(home)
-    if s == h:
-        return "~"
-    if s.startswith(h.rstrip("/") + "/"):
-        return "~" + s[len(h.rstrip("/")):]
-    return s
+    return tilde(path, home)

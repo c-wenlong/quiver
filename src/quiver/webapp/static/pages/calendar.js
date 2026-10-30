@@ -132,7 +132,7 @@
     const { status, data } = await api(`/v1/app/calendar?${q}`);
     if (gen !== routeGen || mine !== S.gen) return;
     S.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return renderGate();
     if (status !== 200 || !data) {
       S.data = null;
       return pageError(header(), status, data, () => render("calendar"));

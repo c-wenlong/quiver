@@ -37,9 +37,20 @@ final class GitHubHistory: @unchecked Sendable {
 
     init(url: URL) {
         do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700])
+            // Titles and bodies from private repos: the folder 0700 and
+            // the database 0600 before SQLite opens it, since its -wal and
+            // -shm take the database file's mode. One an older build made
+            // 0644 is tightened, its side files too.
+            try PrivateFile.folder(url.deletingLastPathComponent())
+            let manager = FileManager.default
+            if !manager.fileExists(atPath: url.path) {
+                manager.createFile(atPath: url.path, contents: nil,
+                                   attributes: [.posixPermissions: 0o600])
+            }
+            for path in [url.path, url.path + "-wal", url.path + "-shm"]
+            where manager.fileExists(atPath: path) {
+                try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+            }
             let db = try SQLiteDatabase(url: url)
             try db.execute("""
                 PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;

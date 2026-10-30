@@ -932,6 +932,17 @@ class TestRelativeTime(unittest.TestCase):
         self.assertEqual(json.loads(done.stdout), ["now", "30 seconds ago", "5 minutes ago", "3 hours ago",
                                                   "yesterday", "last week", "now"])
 
+    def test_tokens_pick_the_unit_after_rounding(self):
+        # The same cases as the Mac app's UsageFormatTests: never "1000K".
+        fmt = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/format.js"
+        counts = [0, 950, 12_340, 1_000_000, 999_949, 999_950, 999_950_000, 999_999_999_999]
+        src = (fmt.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify("
+               + json.dumps(counts) + ".map((n) => Fmt.tokens(n))));\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout),
+                         ["0", "950", "12.3K", "1M", "999.9K", "1M", "1B", "1000B"])
+
 
 if __name__ == "__main__":
     unittest.main()

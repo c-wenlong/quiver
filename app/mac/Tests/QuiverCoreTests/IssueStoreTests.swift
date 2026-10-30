@@ -185,6 +185,34 @@ import Testing
         #expect(!renamed.shouldNotify)
         #expect(renamed.issue.message.hasSuffix("(Day job)"))
     }
+
+    /// A file this build can't read (cut off, from a newer build, or with
+    /// a status it doesn't know) reads empty, and no write replaces it:
+    /// writing back the empty list would lose every issue.
+    @Test(arguments: [
+        #"{"version": 1, "issues": {"cursor/auth-required": {"id": "cursor/auth-requ"#,
+        #"{"version": 2, "issues": {}, "added_later": true}"#,
+        #"{"version": 1, "issues": {"x/new": {"id": "x/new", "harness": "x", "status": "brand-new", "firstSeen": 1, "lastSeen": 1, "occurrences": 1, "resolved": false}}}"#,
+    ])
+    func aFileThisBuildCantReadIsNeverOverwritten(_ text: String) throws {
+        let store = tempStore()
+        try Data(text.utf8).write(to: store.url)
+        #expect(store.all().isEmpty)
+        let outcome = store.record(harness: "cursor", status: .authRequired, remedy: remedy())
+        #expect(!outcome.shouldNotify)
+        #expect(outcome.issue.id == "cursor/auth-required")
+        store.markNotified("cursor/auth-required")
+        store.resolve(harness: "cursor")
+        store.resolveMissing(starred: [], accounts: [:])
+        #expect(try String(contentsOf: store.url, encoding: .utf8) == text)
+    }
+
+    @Test func aBlankFileReadsEmptyAndTakesTheFirstWrite() throws {
+        let store = tempStore()
+        try Data("\n".utf8).write(to: store.url)
+        #expect(store.record(harness: "cursor", status: .authRequired, remedy: nil).shouldNotify)
+        #expect(store.open().map(\.id) == ["cursor/auth-required"])
+    }
 }
 
 /// What each surface makes of a status: the card's "Action needed" line
