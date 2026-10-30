@@ -11,6 +11,66 @@
  * (POST /v1/sessions), then the chat opens. */
 "use strict";
 
+/* The iOS Pull requests page's Mine and Review requested filters
+ * (PullsModel.swift's PullFilter) over the dashboard's open PRs. The
+ * flags come from GET /v1/pulls (remote/pulls.py): ``mine`` and
+ * ``review_requested`` on each open PR, null when the hub couldn't read
+ * them. A filter is offered only while its flag is known for every PR
+ * the list shows, so a failed ``gh pr status`` hides it rather than
+ * hiding PRs on a guess. */
+const PrFilter = (() => {
+  const FILTERS = [
+    { id: "all", title: "All", flag: null },
+    { id: "mine", title: "Mine", flag: "mine" },
+    { id: "review", title: "Review requested", flag: "review_requested" },
+  ];
+  const flagName = (id) => (FILTERS.find((f) => f.id === id) || FILTERS[0]).flag;
+
+  /* GET /v1/pulls's answer as repo (lower case) -> number -> row, or
+   * null when it has no flags to give (gh blocked, a bad answer). A repo
+   * whose read failed maps to null. */
+  function index(data) {
+    if (!data || data.env_blocked || !Array.isArray(data.repos)) return null;
+    const out = {};
+    for (const r of data.repos) {
+      if (!r || typeof r.name !== "string") continue;
+      let rows = null;
+      if (r.status === "ok") {
+        rows = {};
+        for (const pr of r.pulls || []) if (pr && pr.number != null) rows[pr.number] = pr;
+      }
+      out[r.name.toLowerCase()] = rows;
+    }
+    return out;
+  }
+
+  /* One PR's flag: true, false, or null when unknown (no answer, the
+   * repo's read failed, the PR newer than the answer, or a null flag). */
+  function flagOf(flags, repo, number, flag) {
+    const rows = flags && flags[String(repo).toLowerCase()];
+    const pr = rows && rows[number];
+    const v = pr ? pr[flag] : null;
+    return typeof v === "boolean" ? v : null;
+  }
+
+  /* Whether filter ``id`` can be offered over ``lists``, [[repo, prs]]:
+   * its flag is known for every PR in them. */
+  function offered(flags, id, lists) {
+    const flag = flagName(id);
+    if (!flag) return true;
+    if (!flags) return false;
+    return lists.every(([repo, prs]) => prs.every((pr) => flagOf(flags, repo, pr.number, flag) !== null));
+  }
+
+  /* Whether ``pr`` in ``repo`` passes filter ``id``. */
+  function includes(flags, id, repo, pr) {
+    const flag = flagName(id);
+    return !flag || flagOf(flags, repo, pr.number, flag) === true;
+  }
+
+  return { FILTERS, index, flagOf, offered, includes };
+})();
+
 (() => {
   const ico = GhUI.ico;
 
@@ -31,6 +91,9 @@
   const page = {
     data: null, error: null, loading: false,
     tab: "pulls", shown: null, filter: "",
+    // The Pull requests tab's Mine / Review requested pick, and the flags
+    // GET /v1/pulls gave for it (PrFilter.index; null until it answers).
+    prFilter: "all", flags: null, flagsSeq: 0,
     expanded: new Set(), openQuiet: new Set(),
     focus: null, sheet: null, observer: null, seq: 0,
     add: null, // the Add repository sheet's state while it is open
@@ -121,7 +184,58 @@
     const state = surfaceState(boardOf(repo), key);
     if (state.kind !== "loaded") return null;
     if (key === "pages") return state.rows ? 1 : 0;
-    return filtered(state, key, query(), showsAllRows(repo)).rows.length;
+    return prFiltered(repo, key, filtered(state, key, query(), showsAllRows(repo))).rows.length;
+  }
+
+  /* The open PRs each listed repo shows under the search, as
+   * PrFilter.offered wants them; repos still loading or failed have none. */
+  function prLists() {
+    return listedRepos().map((p) => {
+      const state = filtered(surfaceState(boardOf(p.name), "pull_requests"), "pull_requests", query(), showsAllRows(p.name));
+      return [p.name, state.kind === "loaded" ? state.rows : []];
+    });
+  }
+
+  /* The PR filter in force: the pick, while the Pull requests tab shows
+   * and its flag is known for every listed PR; else All. */
+  function prFilterNow() {
+    if (page.tab !== "pulls" || page.prFilter === "all") return "all";
+    return PrFilter.offered(page.flags, page.prFilter, prLists()) ? page.prFilter : "all";
+  }
+
+  /* A loaded pull_requests state narrowed to the PR filter in force. */
+  function prFiltered(repo, key, state, id = prFilterNow()) {
+    if (key !== "pull_requests" || state.kind !== "loaded" || id === "all") return state;
+    return { kind: "loaded", rows: state.rows.filter((pr) => PrFilter.includes(page.flags, id, repo, pr)) };
+  }
+
+  /* All / Mine / Review requested with their counts, each offered only
+   * while its flag is known; nothing when only All would show. */
+  function prFilterBar() {
+    if (page.tab !== "pulls") return "";
+    const lists = prLists();
+    const shown = PrFilter.FILTERS.filter((f) => PrFilter.offered(page.flags, f.id, lists));
+    if (shown.length < 2) return "";
+    const now = prFilterNow();
+    return `<div class="tabs gh-pr-filter" role="radiogroup" aria-label="Which pull requests to list">${shown.map((f) => {
+      const n = lists.reduce((sum, [repo, prs]) => sum + prs.filter((pr) => PrFilter.includes(page.flags, f.id, repo, pr)).length, 0);
+      const on = f.id === now;
+      return `<button type="button" class="tab${on ? " selected" : ""}" role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}"
+        data-pr-filter="${f.id}">${f.title} <span class="num">${n}</span></button>`;
+    }).join("")}</div>`;
+  }
+
+  /* GET /v1/pulls for the flags, while the Pull requests tab shows. Only
+   * the newest read lands; a failed one clears the flags, which hides
+   * the filter rather than leaving stale picks. */
+  async function loadFlags(refresh = false) {
+    const gen = routeGen;
+    const seq = ++page.flagsSeq;
+    const { status, data } = await api(`/v1/pulls${refresh ? "?refresh=1" : ""}`);
+    if (gen !== routeGen || seq !== page.flagsSeq || !onDashboard()) return;
+    if (status === 401) return;
+    page.flags = status === 200 ? PrFilter.index(data) : null;
+    GhUI.keepFocus("gh-search", paintDashboard);
   }
 
   /* The rail's CI dot: the newest run on the default branch (or the
@@ -309,7 +423,8 @@
     const key = tabOf(tabId).key;
     const raw = surfaceState(surfaces, key);
     if (key === "pages") return pagesPanel(raw);
-    const state = filtered(raw, key, opts.query, opts.unfiltered);
+    // opts.prFilter: the dashboard's Mine / Review requested pick.
+    const state = prFiltered(repo, key, filtered(raw, key, opts.query, opts.unfiltered), opts.prFilter || "all");
     if (state.kind === "loading") return loadingCard("Fetching…", false);
     if (state.kind === "failed") return errorCard(state.message, false);
     const rows = state.rows;
@@ -357,6 +472,7 @@
     const pinGen = page.pinGen;
     page.loading = true;
     GhUI.keepFocus("gh-search", paintDashboard);
+    if (page.tab === "pulls") loadFlags(refresh);
     const { status, data } = await api(`/v1/app/repositories${refresh ? "?refresh=1" : ""}`);
     if (gen !== routeGen || seq !== page.seq) return;
     page.loading = false;
@@ -395,10 +511,14 @@
     </div>`;
     const error = [page.pinError, page.actionError, page.error].filter(Boolean).map((e) => errorCard(e)).join("");
     const repos = listedRepos().filter((p) => rowCount(p.name, page.tab) !== 0);
+    const prFilter = prFilterNow();
     let list;
     if (!repos.length) {
       const place = page.shown || "your pinned repos";
-      const text = query() ? `Nothing matches "${query()}".` : {
+      const text = query() ? `Nothing matches "${query()}".` : prFilter !== "all" ? {
+        mine: `None of the open pull requests in ${place} are yours.`,
+        review: `No open pull request in ${place} asks for your review.`,
+      }[prFilter] : {
         pulls: `No open pull requests in ${place}.`, issues: `No open issues in ${place}.`,
         actions: `No workflow runs in ${place}.`, pages: `${place} has no GitHub Pages site.`,
         releases: `No releases in ${place}.`, tags: `No tags in ${place}.`, branches: `No branches in ${place}.`,
@@ -417,11 +537,11 @@
             </span>
           </div>
           <div class="gh-surface${last ? " last" : ""}">${surfaceHtml(pin.name, page.tab, boardOf(pin.name), {
-            query: query(), unfiltered: showsAllRows(pin.name), preview: 5, expandKey: `${pin.name}:${page.tab}`,
+            query: query(), unfiltered: showsAllRows(pin.name), preview: 5, expandKey: `${pin.name}:${page.tab}`, prFilter,
           })}</div>`;
       }).join("")}</div>`;
     }
-    return `${toolbar}${error}${list}`;
+    return `${toolbar}${prFilterBar()}${error}${list}`;
   }
 
   function railHtml() {
@@ -655,7 +775,28 @@
     bindRefresh(() => renderDashboard(true));
     GhUI.bindSetup(() => renderDashboard(true));
     for (const tab of panel.querySelectorAll("[data-tab]")) {
-      tab.onclick = () => { page.tab = tab.dataset.tab; paintDashboard(); };
+      tab.onclick = () => {
+        page.tab = tab.dataset.tab;
+        paintDashboard();
+        if (page.tab === "pulls") loadFlags();
+      };
+    }
+    for (const btn of panel.querySelectorAll("[data-pr-filter]")) {
+      const pick = (id) => {
+        page.prFilter = id;
+        paintDashboard();
+        const sel = document.querySelector('#panel [data-pr-filter][aria-checked="true"]');
+        if (sel) sel.focus();
+      };
+      btn.onclick = () => pick(btn.dataset.prFilter);
+      btn.onkeydown = (e) => {
+        // radiogroup: arrows move to the next or previous offered filter
+        if (!e.key.startsWith("Arrow")) return;
+        e.preventDefault();
+        const ids = [...panel.querySelectorAll("[data-pr-filter]")].map((b) => b.dataset.prFilter);
+        const step = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
+        pick(ids[(ids.indexOf(btn.dataset.prFilter) + step + ids.length) % ids.length]);
+      };
     }
     for (const row of panel.querySelectorAll("[data-shown]")) {
       row.onclick = () => {

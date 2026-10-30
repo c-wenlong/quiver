@@ -94,6 +94,18 @@ Pages facts, release, tag and branch badges and shas). A PR row opens
 the PR sheet; every other row opens GitHub. Below 960px the rail folds
 into a strip of repo chips under the title.
 
+**Mine / Review requested** (the iOS Pull requests page's filters). On
+the Pull requests tab the page also reads the hub's `GET /v1/pulls`,
+whose open PRs carry `mine` and `review_requested` (`gh pr status`),
+and shows All, Mine and Review requested with counts under the tabs. A
+pick narrows the list and the rail's counts, and repos with nothing left
+fold under "N quiet". A filter shows only while its flag is known for
+every PR the list shows: a `null` flag (a failed `gh pr status`), a PR
+newer than that answer, `gh` blocked or a failed read hides it, and the
+list falls back to All rather than hide PRs on a guess. The focus page,
+which lists PRs in every state, has no such filter, since `/v1/pulls`
+flags only open ones.
+
 **Focus page** (`repo=owner/name`, the hash route
 `#/repositories?repo=owner/name`, opened from a repo header's expand
 icon). Every surface in every state, fetched together at the app's

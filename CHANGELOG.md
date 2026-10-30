@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Mine and Review requested pull request filters.** The
+  Repositories dashboard's Pull requests tab now offers All, Mine and
+  Review requested with counts, as the iOS app does, from the flags the
+  hub's `GET /v1/pulls` puts on each open PR. A filter hides while the
+  hub can't say (a failed `gh pr status`) instead of guessing. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **Remote: a `limit` notification when a session hits its usage
   limit.** The hub and satellites now raise `notify` kind `limit` when
   a Claude Code session writes its rate-limit record ("You've hit your

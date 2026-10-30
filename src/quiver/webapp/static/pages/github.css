@@ -71,6 +71,8 @@ a.icon-button { color: inherit; }
 .gh-tab.selected { color: var(--text-primary); border-bottom-color: var(--text-primary); }
 .gh-search { flex: 0 1 260px; min-width: 120px; height: 32px; margin-bottom: 5px; }
 .gh-toolbar-spin { margin-bottom: 13px; }
+/* The Pull requests tab's All / Mine / Review requested, under the tabs. */
+.gh-pr-filter { align-self: flex-start; max-width: 100%; margin-top: -6px; }
 
 /* The rows box: a header per repo, its rows under it. */
 .gh-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--card-radius); overflow: hidden; }
