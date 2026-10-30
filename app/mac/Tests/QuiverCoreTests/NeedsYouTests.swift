@@ -171,18 +171,8 @@ extension HubStubbed {
         let post = try #require(HubStub.requests.last)
         #expect(post.httpMethod == "POST")
         #expect(post.url?.path == "/v1/inbox/dismiss")
-        var data = post.httpBody ?? Data()
-        if data.isEmpty, let stream = post.httpBodyStream {
-            stream.open()
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            while stream.hasBytesAvailable {
-                let n = stream.read(&buffer, maxLength: buffer.count)
-                guard n > 0 else { break }
-                data.append(buffer, count: n)
-            }
-            stream.close()
-        }
-        let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let body = try #require(
+            try JSONSerialization.jsonObject(with: HubStub.bodyData(post)) as? [String: Any])
         #expect(body["key"] as? String == "claude:a")
         #expect(body["last_active_at"] as? Double == 3.5)
     }

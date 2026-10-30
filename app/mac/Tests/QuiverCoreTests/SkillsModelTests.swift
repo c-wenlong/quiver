@@ -4,18 +4,35 @@ import Testing
 
 /// Replies by command: the first rule whose words start the call wins.
 /// Records every call, so a test can check what was run and in what order.
+/// The rules and the log sit behind a lock: a model's child tasks can call
+/// while the test reads `calls` or swaps a rule.
 final class ScriptedRunner: CommandRunning, @unchecked Sendable {
-    var rules: [(prefix: [String], reply: CommandResult)]
-    private(set) var calls: [[String]] = []
+    private let lock = NSLock()
+    private var stored: [(prefix: [String], reply: CommandResult)]
+    private var log: [[String]] = []
 
-    init(_ rules: [(prefix: [String], reply: CommandResult)]) { self.rules = rules }
+    var rules: [(prefix: [String], reply: CommandResult)] {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+    var calls: [[String]] { lock.withLock { log } }
+
+    init(_ rules: [([String], CommandResult)]) {
+        stored = rules.map { (prefix: $0.0, reply: $0.1) }
+    }
+
+    /// Puts a rule ahead of the others, so it answers from the next call on.
+    func set(_ prefix: [String], _ reply: CommandResult) {
+        lock.withLock { stored.insert((prefix: prefix, reply: reply), at: 0) }
+    }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        calls.append(arguments)
-        for rule in rules where arguments.starts(with: rule.prefix) {
-            return rule.reply
+        lock.withLock {
+            log.append(arguments)
+            let rule = stored.first { arguments.starts(with: $0.prefix) }
+            return rule?.reply ?? CommandResult(
+                status: 1, stdout: Data(), stderr: "unscripted: \(arguments.joined(separator: " "))")
         }
-        return CommandResult(status: 1, stdout: Data(), stderr: "unscripted: \(arguments.joined(separator: " "))")
     }
 }
 

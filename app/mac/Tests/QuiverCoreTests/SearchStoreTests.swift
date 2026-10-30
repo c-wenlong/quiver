@@ -26,15 +26,6 @@ import Testing
         return try statement.step() ? statement.text(0) : nil
     }
 
-    private func ftsMatches(_ store: SearchStore, _ query: String) throws -> [Int64] {
-        let statement = try store.db.prepare(
-            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid")
-        statement.bind([.text(query)])
-        var ids: [Int64] = []
-        while try statement.step() { ids.append(statement.int(0)) }
-        return ids
-    }
-
     private let fields = SearchSessionFields(
         agent: "claude", sessionID: "abc-123", filePath: "/t/one.jsonl",
         title: "chat", cwd: "/work", cwdKey: "/work",
@@ -146,9 +137,9 @@ import Testing
         #expect(try store.db.scalar("SELECT count(*) FROM messages_fts") == 3)
 
         // The FTS rowid is the messages row id, so a hit names the message row.
-        let hits = try ftsMatches(store, "hello")
+        let hits = try store.ftsRowIDs("hello")
         #expect(hits.count == 1)
-        let worldHits = try ftsMatches(store, "world")
+        let worldHits = try store.ftsRowIDs("world")
         #expect(hits == worldHits)
         let messageID = try store.db.scalar("SELECT id FROM messages WHERE role = 'user'")
         #expect(hits[0] == messageID)
@@ -224,7 +215,7 @@ import Testing
         #expect(try store.sessionRow(old) == nil)
         #expect(try store.sessionRow(fresh) != nil)
         #expect(try store.db.scalar("SELECT count(*) FROM messages") == 2)
-        #expect(try ftsMatches(store, "hello").count == 1)
+        #expect(try store.ftsRowIDs("hello").count == 1)
 
         // A stale expectation does not swap sessions.
         #expect(try store.replaceSession(
