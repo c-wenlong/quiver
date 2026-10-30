@@ -126,6 +126,64 @@ class WatcherTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "callback failed"):
             watcher.watch(self.home, on_result=fail)
 
+    def test_failed_write_retries_without_source_or_output_edits(self):
+        self.output.write_text("last good")
+        original = os.replace
+        failures = 0
+
+        def transient_failure(*args):
+            nonlocal failures
+            failures += 1
+            if failures == 1:
+                raise OSError("disk full")
+            return original(*args)
+
+        results, errors = [], []
+        with patch.object(watcher.os, "replace", side_effect=transient_failure):
+            self.run_watch([None] * 15, results=results.append, errors=errors.append)
+        self.assertEqual(failures, 2)
+        self.assertEqual(results, [True])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("disk full", str(errors[0]))
+        self.assertIn("first", self.output.read_text())
+
+    def test_repeat_failures_retry_on_delay_without_spam_and_success_clears_retry(self):
+        original = watcher.build
+        attempts = []
+
+        def fail_then_recover(home):
+            attempts.append(watcher.time.monotonic())
+            if len(attempts) <= 3:
+                raise watcher.InstructionError("disk full")
+            return original(home)
+
+        results, errors = [], []
+        with patch.object(watcher, "build", side_effect=fail_then_recover):
+            self.run_watch([None] * 40, results=results.append, errors=errors.append)
+        self.assertEqual(attempts, [0.0, 5.0, 10.0, 15.0])
+        self.assertEqual(results, [True])
+        self.assertEqual(len(errors), 1)
+
+    def test_retry_due_during_edits_waits_for_debounce(self):
+        original = watcher.build
+        attempts = []
+
+        def fail_once(home):
+            attempts.append(watcher.time.monotonic())
+            if len(attempts) == 1:
+                raise watcher.InstructionError("disk full")
+            return original(home)
+
+        with patch.object(watcher, "build", side_effect=fail_once):
+            self.run_watch([
+                *([None] * 8),
+                lambda: self.chapter.write_text("second"),
+                lambda: self.chapter.write_text("third"),
+                None, None,
+            ])
+        self.assertEqual(attempts, [0.0, 5.5])
+        self.assertIn("third", self.output.read_text())
+
     def test_supported_symlink_directory_chapter_edits_are_detected(self):
         physical = self.directory / "physical"
         physical.mkdir()

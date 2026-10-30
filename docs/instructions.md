@@ -52,6 +52,9 @@ missing, stale or the source is invalid. Use it in a hub's validation checks.
 `watch` builds immediately and rebuilds after source edits. It reports
 invalid source without replacing the previous valid output, and continues
 watching so a corrected source can build. Press Ctrl-C to stop.
+Failed builds also retry every five seconds without a file edit, so a
+temporary write failure can recover. Repeated identical errors print once
+until a build succeeds.
 
 The watcher uses the Python standard library, with no extra package needed.
 It polls the index, listed chapter files and generated output; unlisted

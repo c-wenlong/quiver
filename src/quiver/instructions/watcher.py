@@ -14,6 +14,7 @@ from .compiler import (
 
 POLL_INTERVAL = 0.5
 SETTLE_INTERVAL = 0.5
+RETRY_INTERVAL = 5.0
 
 
 def _fingerprint(path: Path) -> bytes:
@@ -43,15 +44,17 @@ def watch(home: Path | None = None, *,
     """Build immediately, then rebuild after changes settle until interrupted.
 
     Errors leave the last good output intact. A repeated identical error is
-    reported once until a successful build resets it. Callbacks own all output;
+    reported once until a successful build resets it. Failed builds retry after
+    a bounded delay even when no file changes. Callbacks own all output;
     KeyboardInterrupt and callback exceptions propagate to the caller.
     """
     require_supported_platform()
     output = agents_file_for(home)
     last_error: tuple[type[Exception], str] | None = None
+    retry_at: float | None = None
 
     def attempt() -> tuple[bytes, bytes]:
-        nonlocal last_error
+        nonlocal last_error, retry_at
         source_state = source_fingerprint(home)
         try:
             changed = build(home)
@@ -60,8 +63,10 @@ def watch(home: Path | None = None, *,
             if error != last_error and on_error is not None:
                 on_error(exc)
             last_error = error
+            retry_at = time.monotonic() + RETRY_INTERVAL
         else:
             last_error = None
+            retry_at = None
             if on_result is not None:
                 on_result(changed)
         return source_state, _fingerprint(output)
@@ -72,10 +77,13 @@ def watch(home: Path | None = None, *,
     while True:
         time.sleep(POLL_INTERVAL)
         current = source_fingerprint(home), _fingerprint(output)
+        now = time.monotonic()
         if current == observed:
             pending = None
+            if retry_at is not None and now >= retry_at:
+                observed = attempt()
         elif current != pending:
-            pending, changed_at = current, time.monotonic()
-        elif time.monotonic() - changed_at >= SETTLE_INTERVAL:
+            pending, changed_at = current, now
+        elif now - changed_at >= SETTLE_INTERVAL:
             observed = attempt()
             pending = None
