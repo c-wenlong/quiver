@@ -86,6 +86,11 @@ final class ChatModel {
     private(set) var live = false
     private(set) var loading = true
     private(set) var loadError: String?
+    /// A backfill was cancelled before it landed (the chat closed while
+    /// it ran): no error to show, but the next start must reload, since a
+    /// `journal.truncated` may already have moved `cursor` past history
+    /// this chat never got.
+    @ObservationIgnored private var backfillCut = false
     /// The hub holds messages older than the oldest one shown.
     private(set) var hasEarlier = false
     private(set) var loadingEarlier = false
@@ -242,7 +247,7 @@ final class ChatModel {
         // menu opens filled; a list kept from an earlier open shows at
         // once and is still refreshed.
         commands.warm()
-        if items.isEmpty || loadError != nil { await backfill(client) }
+        if items.isEmpty || loadError != nil || backfillCut { await backfill(client) }
         guard gen == generation else { return }
         // The tray survives the app closing: the hub holds the sends. Read
         // after history, so the list is no older than what's shown; a send
@@ -414,8 +419,11 @@ final class ChatModel {
                 items.append(ChatItem(id: "approval-\(rid)", kind: .approval(requestId: rid, prompt: "Approval requested", state: .pending)))
             }
             loadError = nil
+            backfillCut = false
         } catch is CancellationError {
-            // The chat closed mid-fetch: nothing failed.
+            // The chat closed mid-fetch: nothing failed, but the history
+            // is still owed.
+            backfillCut = true
         } catch {
             loadError = error.localizedDescription
         }

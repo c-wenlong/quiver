@@ -31,9 +31,12 @@ final class SilentHubStub: URLProtocol {
                          session: URLSession(configuration: config))
     }
 
-    /// Waits until a request reaches the stub, so a cancel lands mid-flight.
-    static func waitForRequest(after before: Int) async throws {
-        while started == before { try await Task.sleep(nanoseconds: 10_000_000) }
+    /// Waits until a request reaches the stub, so a cancel lands
+    /// mid-flight. False after 5 s without one, so a call that never
+    /// sends fails the test instead of hanging it.
+    static func waitForRequest(after before: Int) async throws -> Bool {
+        for _ in 0..<500 where started == before { try await Task.sleep(nanoseconds: 10_000_000) }
+        return started != before
     }
 }
 
@@ -44,8 +47,9 @@ final class HubCancelTests: XCTestCase {
         let client = SilentHubStub.client()
         let before = SilentHubStub.started
         let task = Task { try await client.sessions() }
-        try await SilentHubStub.waitForRequest(after: before)
+        let sent = try await SilentHubStub.waitForRequest(after: before)
         task.cancel()
+        guard sent else { return XCTFail("the request never reached the stub") }
         do {
             _ = try await task.value
             XCTFail("a cancelled request must throw")
@@ -61,9 +65,10 @@ final class HubCancelTests: XCTestCase {
         let model = TasksModel()
         let before = SilentHubStub.started
         let load = Task { await model.load(client: SilentHubStub.client()) }
-        try await SilentHubStub.waitForRequest(after: before)
+        let sent = try await SilentHubStub.waitForRequest(after: before)
         load.cancel()
         await load.value
+        guard sent else { return XCTFail("the load never reached the stub") }
         XCTAssertNil(model.error)
     }
 }
