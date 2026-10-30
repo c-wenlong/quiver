@@ -14,11 +14,21 @@ struct HarnessPicker: View {
     /// The session list, for the names harnesses go by.
     let sessions: [SessionRow]
     var onPick: () -> Void = {}
+    /// A logo's square, 48pt at the default text size; it grows with the
+    /// logo inside it (`HarnessIcon` scales relative to footnote too).
+    @ScaledMetric(relativeTo: .footnote) private var cell: CGFloat = 48
+
+    init(machine: Machine, harness: Binding<String?>, sessions: [SessionRow], onPick: @escaping () -> Void = {}) {
+        self.machine = machine
+        _harness = harness
+        self.sessions = sessions
+        self.onPick = onPick
+    }
 
     var body: some View {
         let offered = NewSessionOptions.harnesses(on: machine)
         GroupLabel(text: "Harness", trailing: harness.map { NewSessionOptions.name($0, on: machine, sessions: sessions) })
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 48, maximum: 48), spacing: 8)], alignment: .leading, spacing: 8) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: cell, maximum: cell), spacing: 8)], alignment: .leading, spacing: 8) {
             ForEach(offered, id: \.self) { h in
                 let selected = h == harness
                 let name = NewSessionOptions.name(h, on: machine, sessions: sessions)
@@ -27,10 +37,10 @@ struct HarnessPicker: View {
                     onPick()
                 } label: {
                     HarnessIcon(harness: h, name: name, size: 24)
-                        .font(.system(size: 10))
+                        .font(Theme.font(size: 10))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
-                        .frame(width: 48, height: 48)
+                        .frame(width: cell, height: cell)
                         .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
                         .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
                             .strokeBorder(selected ? Theme.textPrimary : Theme.border, lineWidth: selected ? 1.5 : 1))
@@ -99,7 +109,7 @@ struct StartsInCard: View {
     var body: some View {
         Card(padding: 0) {
             HStack(spacing: 12) {
-                Image(systemName: icon).font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                Image(systemName: icon).font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Starts in").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     Text(title)
@@ -167,7 +177,7 @@ struct FolderSearchField: View {
         }
         .font(Theme.body)
         .padding(.horizontal, 12)
-        .frame(height: Theme.controlHeight + 4)
+        .scaledMinHeight(Theme.controlHeight + 4)
         .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
     }

@@ -704,6 +704,14 @@ struct IssueComment: Decodable, Hashable {
     let url: String?
 }
 
+/// `POST /v1/issues/comment`: the comment as posted.
+struct IssueCommentReply: Decodable {
+    let ok: Bool?
+    let repo: String?
+    let number: Int?
+    let comment: IssueComment?
+}
+
 // MARK: Tasks (GET /v1/tasks…)
 
 /// `GET /v1/tasks`: the hub's work-item store over the sources' open

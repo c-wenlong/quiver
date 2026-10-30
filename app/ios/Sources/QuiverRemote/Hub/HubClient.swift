@@ -278,16 +278,37 @@ struct HubClient: Sendable {
                                query: refresh ? ["refresh": "1"] : [:]))
     }
 
-    /// `POST /v1/issues/resolve {repo, number, harness, prompt?, model?}`
+    /// `POST /v1/issues/resolve {repo, number, harness, prompt?, context?, model?}`
     /// → a launch on branch `quiver/issue-<n>` in the issue's worktree;
     /// poll `launch(_:)` for the session key, as for `startSession`. An
-    /// empty `prompt` lets the hub build its resolve brief; a nil `model`
-    /// sends no pick.
-    func resolveIssue(repo: String, number: Int, harness: String, prompt: String, model: String? = nil) async throws -> LaunchStatus {
+    /// empty `prompt` lets the hub build its resolve brief; `context`
+    /// joins it as a "Context for this run" block; a nil `model` sends
+    /// no pick.
+    func resolveIssue(repo: String, number: Int, harness: String, prompt: String,
+                      context: String = "", model: String? = nil) async throws -> LaunchStatus {
+        try await send(resolveIssueRequest(repo: repo, number: number, harness: harness,
+                                           prompt: prompt, context: context, model: model))
+    }
+
+    func resolveIssueRequest(repo: String, number: Int, harness: String, prompt: String,
+                             context: String = "", model: String? = nil) -> URLRequest {
         var body: [String: Any] = ["repo": repo, "number": number, "harness": harness]
         if !prompt.isEmpty { body["prompt"] = prompt }
+        if !context.isEmpty { body["context"] = context }
         if let model, !model.isEmpty { body["model"] = model }
-        return try await send(request("POST", "/v1/issues/resolve", body: body))
+        return request("POST", "/v1/issues/resolve", body: body)
+    }
+
+    /// `POST /v1/issues/comment {repo, number, body}`: post a comment on
+    /// the issue through the hub's own `gh` login, as the Mac posts
+    /// through `gh` on the Mac. The hub trims the text and refuses a
+    /// blank one; GitHub's own refusals come back as a 502 in its words.
+    func commentOnIssue(repo: String, number: Int, body: String) async throws -> IssueCommentReply {
+        try await send(commentRequest(repo: repo, number: number, body: body))
+    }
+
+    func commentRequest(repo: String, number: Int, body: String) -> URLRequest {
+        request("POST", "/v1/issues/comment", body: ["repo": repo, "number": number, "body": body])
     }
 
     // MARK: Tasks

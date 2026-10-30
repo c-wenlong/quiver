@@ -220,7 +220,7 @@ struct ToastView: View {
                     dismiss()
                     action()
                 } label: {
-                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.primaryForeground)
+                    Text(title).font(Theme.font(size: 14, weight: .semibold)).foregroundStyle(Theme.primaryForeground)
                         .padding(.horizontal, 6).frame(minHeight: 32).contentShape(.rect)
                 }
                 .buttonStyle(.plain)

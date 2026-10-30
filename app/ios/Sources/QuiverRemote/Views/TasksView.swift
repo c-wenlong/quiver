@@ -132,7 +132,7 @@ struct TasksView: View {
         Card {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 14)).foregroundStyle(Theme.warningText)
+                    .font(Theme.font(size: 14)).foregroundStyle(Theme.warningText)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Can't reach \(source)").font(Theme.control).foregroundStyle(Theme.warningText)
                     Text(inlineCode: "On \(model.machine ?? app.hubName): \(message)")
@@ -209,9 +209,9 @@ struct TaskGlyph: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 15))
+            .font(Theme.rowIcon)
             .foregroundStyle(color)
-            .frame(width: 20)
+            .iconColumn(20)
             .accessibilityLabel(accessibility)
     }
 
@@ -285,7 +285,7 @@ struct TaskRowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
         }
         .padding(.vertical, Theme.rowVertical)
         .padding(.horizontal, Theme.rowHorizontal)

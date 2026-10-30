@@ -92,7 +92,7 @@ struct Badge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12, weight: .medium))
+            .font(Theme.badge)
             .foregroundStyle(tint)
             .lineLimit(1)
             .padding(.horizontal, 8)
@@ -122,7 +122,7 @@ struct FilterChip: View {
             .font(Theme.control)
             .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
             .padding(.horizontal, 12)
-            .frame(height: Theme.controlHeight)
+            .scaledMinHeight(Theme.controlHeight)
             .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(selected ? Theme.borderStrong : Theme.border, lineWidth: 1))
         }
@@ -147,8 +147,9 @@ struct SegmentPicker<Option: Hashable & Identifiable>: View {
                     Text(title(option))
                         .font(Theme.control)
                         .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
+                        .centredWhenWrapped()
                         .frame(maxWidth: .infinity)
-                        .frame(height: Theme.controlHeight - 4)
+                        .scaledMinHeight(Theme.controlHeight - 4)
                         .background(selected ? Theme.segmentSelected : .clear, in: .rect(cornerRadius: Theme.controlRadius - 2))
                         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius - 2)
                             .strokeBorder(selected ? Theme.border : .clear, lineWidth: 1))
@@ -173,11 +174,12 @@ struct PrimaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(compact ? Theme.control : .system(size: 15, weight: .medium))
+            .font(compact ? Theme.control : Theme.button)
             .foregroundStyle(Theme.primaryForeground)
+            .centredWhenWrapped()
             .padding(.horizontal, compact ? 12 : 16)
             .frame(maxWidth: compact ? nil : .infinity)
-            .frame(height: compact ? Theme.controlHeight : Theme.buttonHeight)
+            .scaledMinHeight(compact ? Theme.controlHeight : Theme.buttonHeight)
             .background(Theme.primaryBackground, in: .rect(cornerRadius: compact ? Theme.controlRadius : Theme.blockRadius))
             .opacity(configuration.isPressed ? 0.85 : enabled ? 1 : 0.45)
     }
@@ -190,11 +192,12 @@ struct SecondaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(compact ? Theme.control : .system(size: 15, weight: .medium))
+            .font(compact ? Theme.control : Theme.button)
             .foregroundStyle(destructive ? Theme.dangerText : Theme.textPrimary)
+            .centredWhenWrapped()
             .padding(.horizontal, compact ? 12 : 16)
             .frame(maxWidth: compact ? nil : .infinity)
-            .frame(height: compact ? Theme.controlHeight : Theme.buttonHeight)
+            .scaledMinHeight(compact ? Theme.controlHeight : Theme.buttonHeight)
             .background(configuration.isPressed ? Theme.selected : Theme.card,
                         in: .rect(cornerRadius: compact ? Theme.controlRadius : Theme.blockRadius))
             .overlay(RoundedRectangle(cornerRadius: compact ? Theme.controlRadius : Theme.blockRadius)
@@ -215,7 +218,7 @@ extension View {
             .font(monospaced ? Theme.monoBody : Theme.body)
             .foregroundStyle(Theme.textPrimary)
             .padding(.horizontal, 12)
-            .frame(height: Theme.fieldHeight)
+            .scaledMinHeight(Theme.fieldHeight)
             .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
@@ -387,7 +390,7 @@ struct WorkingClock: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             Text(Self.format(context.date.timeIntervalSince(since)))
         }
-        .font(.system(size: 11))
+        .font(Theme.small)
         .monospacedDigit()
         .foregroundStyle(Theme.textSecondary)
     }
@@ -409,6 +412,14 @@ struct HarnessIcon: View {
     var harness: String?
     var name: String
     var size: CGFloat = 14
+    /// `size` is the logo at the default text size; it grows with the text beside it.
+    @ScaledMetric(relativeTo: .footnote) private var scale: CGFloat = 1
+
+    init(harness: String?, name: String, size: CGFloat = 14) {
+        self.harness = harness
+        self.name = name
+        self.size = size
+    }
 
     /// Other names the same harness goes by (as in QuiverCore's HarnessIcons).
     static let aliases = ["claude-code": "claude", "claude-desktop": "claude", "github-copilot": "copilot",
@@ -427,7 +438,7 @@ struct HarnessIcon: View {
             Image(asset)
                 .resizable()
                 .scaledToFit()
-                .frame(width: size, height: size)
+                .frame(width: size * scale, height: size * scale)
                 .foregroundStyle(Theme.textPrimary)
                 .accessibilityLabel(name)
         } else {
