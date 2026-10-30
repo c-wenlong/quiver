@@ -30,6 +30,8 @@ import Testing
         #expect(c.decodeEntities("&#99999999; then &#65;&#x42;&#X43;") == "&#99999999; then ABC")
         #expect(c.decodeEntities("&bogus; &lt; a & b &#x200b;x") == "&bogus; < a & b x")
         #expect(c.decodeEntities("&hellip;&mdash;&nbsp;&#39;") == "…— '")
+        #expect(c.decodeEntities("&#00000000065;&#x0000000042;") == "AB")
+        #expect(c.decodeEntities("&#; &#x; &amp &#65 x") == "&#; &#x; &amp &#65 x")
     }
 
     /// `href` matches only the attribute named `href`, not `data-href` or

@@ -719,30 +719,30 @@ public enum GitHubMarkdown {
             while let amp = rest.firstIndex(of: "&") {
                 out += rest[..<amp]
                 rest = rest[amp...]
-                // An entity is short; a `;` further on belongs to other text.
-                guard let semi = rest.prefix(12).firstIndex(of: ";") else {
-                    out.append("&")
-                    rest = rest.dropFirst()
-                    continue
+                // `&#` takes every digit that follows (leading zeros
+                // included); a name is letters and digits. Either needs
+                // its `;`, else the `&` is text.
+                let after = rest.dropFirst()
+                let numeric = after.first == "#"
+                let hex = numeric && (after.dropFirst().first == "x" || after.dropFirst().first == "X")
+                let bodyStart = numeric ? after.dropFirst(hex ? 2 : 1) : after
+                let body = bodyStart.prefix { ch in
+                    numeric ? (hex ? ch.isHexDigit : ch.isASCII && ch.isNumber)
+                            : ch.isASCII && (ch.isLetter || ch.isNumber)
                 }
-                let body = rest[rest.index(after: amp)..<semi]
                 var decoded: String?
-                if body.hasPrefix("#") {
-                    let digits = body.dropFirst()
-                    let hex = digits.first == "x" || digits.first == "X"
-                    let number = hex ? digits.dropFirst() : digits
-                    if !number.isEmpty,
-                       number.allSatisfy({ hex ? $0.isHexDigit : $0.isASCII && $0.isNumber }),
-                       let n = UInt32(number, radix: hex ? 16 : 10),
-                       let u = Unicode.Scalar(n) {
-                        decoded = n == 0x200B ? "" : String(Character(u))
+                if !body.isEmpty, body.endIndex < rest.endIndex, rest[body.endIndex] == ";" {
+                    if numeric {
+                        if let n = UInt32(body, radix: hex ? 16 : 10), let u = Unicode.Scalar(n) {
+                            decoded = n == 0x200B ? "" : String(Character(u))
+                        }
+                    } else {
+                        decoded = named[body]
                     }
-                } else {
-                    decoded = named[body]
                 }
                 if let decoded {
                     out += decoded
-                    rest = rest[rest.index(after: semi)...]
+                    rest = rest[rest.index(after: body.endIndex)...]
                 } else {
                     out.append("&")
                     rest = rest.dropFirst()
