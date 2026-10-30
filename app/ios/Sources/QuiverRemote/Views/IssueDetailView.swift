@@ -153,8 +153,8 @@ struct IssueDetailView: View {
                     Text(bits.joined(separator: " · "))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
-                ForEach(labels.prefix(4), id: \.self) { Badge($0) }
-                ForEach(assignees.prefix(2), id: \.self) { Badge("@\($0)") }
+                ForEach(Array(labels.prefix(4).enumerated()), id: \.offset) { Badge($0.element) }
+                ForEach(Array(assignees.prefix(2).enumerated()), id: \.offset) { Badge("@\($0.element)") }
             }
         }
     }
