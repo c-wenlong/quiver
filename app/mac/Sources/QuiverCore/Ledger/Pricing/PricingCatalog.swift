@@ -113,6 +113,7 @@ public struct PricingCatalog: Sendable {
                 }
             }
         }
+        thresholds = Self.thresholds(entries: entries, history: history)
     }
 
     /// Decodes LiteLLM's JSON. Entries that are not priced per token, or are
@@ -307,8 +308,12 @@ public struct PricingCatalog: Sendable {
     }
 
     /// Every long-context threshold any model uses now or used before,
-    /// ascending.
-    var thresholds: [Int] {
+    /// ascending. Worked out once per catalog: the ledger reads it for
+    /// every priced group, and a pass over a few thousand entries each
+    /// time made year and all-time figures pay it tens of thousands of times.
+    private(set) var thresholds: [Int] = []
+
+    private static func thresholds(entries: [String: ModelRates], history: [String: [Span]]) -> [Int] {
         let earlier = history.values.joined().compactMap { $0.rates.longContext?.threshold }
         return Array(Set(entries.values.compactMap { $0.longContext?.threshold } + earlier)).sorted()
     }
@@ -330,6 +335,7 @@ public struct PricingCatalog: Sendable {
             }
             if !converted.isEmpty { copy.history[key] = converted }
         }
+        copy.thresholds = Self.thresholds(entries: copy.entries, history: copy.history)
         return copy
     }
 

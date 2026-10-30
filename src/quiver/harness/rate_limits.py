@@ -518,14 +518,28 @@ def _fetch_codex() -> RateLimitInfo | None:
     )
 
     data = _fetch_json(req)
-    if data is None:
+    if not isinstance(data, dict):
         return None
 
-    rate_limit = data.get("rate_limit") or {}
-    primary = rate_limit.get("primary_window") or {}
+    rate_limit = data.get("rate_limit")
+    rate_limit = rate_limit if isinstance(rate_limit, dict) else {}
+    primary = rate_limit.get("primary_window")
+    primary = primary if isinstance(primary, dict) else {}
 
-    used_percent = primary.get("used_percent", 0)
-    limit_reached = rate_limit.get("limit_reached", False)
+    # Coerced the way every other fetcher does: the reply is passed to the
+    # table renderer as is, and a string percent there raised TypeError out
+    # of `swe list`, while a "false" string read as a reached limit.
+    try:
+        raw_used = float(primary.get("used_percent") or 0)
+    except (TypeError, ValueError, OverflowError):
+        raw_used = 0.0
+    used_percent = (int(round(min(100.0, max(0.0, raw_used))))
+                    if math.isfinite(raw_used) else 0)
+    limit_reached = rate_limit.get("limit_reached") is True
+    try:
+        window_seconds = max(0, int(primary.get("limit_window_seconds") or 0))
+    except (TypeError, ValueError, OverflowError):
+        window_seconds = 0
     reset_at = primary.get("reset_at", 0)
     if isinstance(reset_at, str):
         # Codex's API returns reset_at as a numeric epoch today, but
@@ -542,8 +556,8 @@ def _fetch_codex() -> RateLimitInfo | None:
             reset_at = 0.0
     else:
         reset_at = 0.0
-    window_seconds = primary.get("limit_window_seconds", 0)
-    plan_type = data.get("plan_type") or "—"
+    plan_type = data.get("plan_type")
+    plan_type = plan_type if isinstance(plan_type, str) and plan_type else "—"
 
     return RateLimitInfo(
         tool_name="codex",
@@ -2550,9 +2564,13 @@ def _cursor_email(state_db: str | None, token: str, claims: dict) -> str | None:
     for row in rows:
         profile = row.get("cursorAuth/cachedScopedProfile")
         try:
-            auth_id = json.loads(profile).get("authId") if profile else None
+            parsed = json.loads(profile) if profile else None
         except (ValueError, RecursionError):
-            auth_id = None
+            parsed = None
+        # The row is the editor's to write: JSON that is not an object
+        # (a list, a string) used to raise AttributeError here, which threw
+        # away the whole Cursor reading over a display-only email.
+        auth_id = parsed.get("authId") if isinstance(parsed, dict) else None
         if isinstance(auth_id, str) and auth_id and auth_id == claims.get("sub"):
             return row.get("cursorAuth/cachedEmail")
     return None

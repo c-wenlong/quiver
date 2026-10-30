@@ -1182,5 +1182,44 @@ class TestRevokeThisBrowserScript(unittest.TestCase):
         self.assertEqual(out, {"gates": 1, "cleared": 1, "after": True, "polling": False})
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestRevealedKeysScript(unittest.TestCase):
+    """pages/settings.js under node: a key value the eye revealed is
+    masked again once the page moves to another section or the other
+    Providers tab, so coming back never shows it in plain text."""
+
+    STATIC = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static"
+
+    def test_switching_section_or_tab_masks_revealed_values(self):
+        prelude = (
+            "globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };\n"
+            "globalThis.location = { hash: '#/settings?section=providers' };\n"
+            "globalThis.history = { replaceState(_s, _t, url) { location.hash = url; } };\n"
+            "const button = (data) => ({ dataset: data, onclick: null });\n"
+            "const sectionBtn = button({ section: 'general' }), tabBtn = button({ providersTab: 'harnesses' });\n"
+            "const panel = { querySelector: () => null, querySelectorAll: (sel) =>\n"
+            "  sel === '[data-section]' ? [sectionBtn] : sel === '[data-providers-tab]' ? [tabBtn] : [] };\n"
+            "globalThis.document = { documentElement: { dataset: {} }, head: { appendChild() {} },\n"
+            "  getElementById: (id) => (id === 'panel' ? panel : null), querySelector: () => null,\n"
+            "  createElement: () => ({}), querySelectorAll: () => [] };\n"
+            "const routeGen = 0;\n"
+            "function registerPage() {}\n" + app_js_function("currentRoute"))
+        body = (
+            "let paints = 0; paintSettings = () => { paints++; };\n"
+            "const out = [];\n"
+            "for (const btn of [sectionBtn, tabBtn]) {\n"
+            "  settingsPage.revealed.set('OPENAI_API_KEY', 'sk-test-value');\n"
+            "  const gen = settingsPage.revealGen;\n"
+            "  bindSettings('providers');\n"
+            "  btn.onclick();\n"
+            "  out.push([settingsPage.revealed.size, settingsPage.revealGen > gen]);\n"
+            "}\n"
+            "process.stdout.write(JSON.stringify({ out, paints }));\n")
+        src = prelude + (self.STATIC / "pages/settings.js").read_text(encoding="utf-8") + "\n" + body
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"out": [[0, True], [0, True]], "paints": 2})
+
+
 if __name__ == "__main__":
     unittest.main()
