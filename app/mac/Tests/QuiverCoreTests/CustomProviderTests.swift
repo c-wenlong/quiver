@@ -50,7 +50,8 @@ import Testing
             #expect(CustomProvider.modelsURL(local) != nil, "\(local)")
         }
         for remote in ["http://api.example.com/v1", "http://8.8.8.8/v1",
-                       "http://172.32.0.1/v1", "http://100.128.0.1/v1"] {
+                       "http://172.32.0.1/v1", "http://100.128.0.1/v1",
+                       "http://10.0.0.1.example.com/v1", "http://192.168.1.1.attacker.net/v1"] {
             #expect(CustomProvider.modelsURL(remote) == nil, "\(remote)")
             #expect(CustomProvider.probe(baseURL: remote) == nil, "\(remote)")
         }

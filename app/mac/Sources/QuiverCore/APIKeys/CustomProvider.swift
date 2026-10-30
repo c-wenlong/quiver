@@ -85,8 +85,10 @@ public enum CustomProvider {
             return host == "::1" || host.hasPrefix("fc") || host.hasPrefix("fd")
                 || host.hasPrefix("fe80:")
         }
-        let parts = host.split(separator: ".", omittingEmptySubsequences: false).compactMap { UInt8($0) }
-        guard parts.count == 4 else { return false }
+        // Every label must be an octet: "10.0.0.1.example.com" is a name.
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        let parts = labels.compactMap { UInt8($0) }
+        guard labels.count == 4, parts.count == 4 else { return false }
         switch (parts[0], parts[1]) {
         case (127, _), (10, _), (192, 168), (169, 254): return true
         case (172, 16...31), (100, 64...127): return true
