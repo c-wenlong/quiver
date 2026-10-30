@@ -283,6 +283,23 @@ class TestOpencodeServe(unittest.TestCase):
         inj_b._release(b)
         self.assertTrue(procs[1].killed)
 
+    def test_ready_probe_after_another_waiter_gave_up_is_refused(self):
+        # Waiter B times out and kills the proc while waiter A's probe
+        # is in flight; A must not subscribe to (and send through) it.
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+
+        def probe(base, method, path, payload, timeout=20.0):
+            serves = inject.OpencodeServeInjector._serves
+            for cwd, serve in list(serves.items()):
+                serve.dead = True  # B's cleanup lands mid-probe
+                serves.pop(cwd, None)
+            return (200, b"[]")
+
+        with patch.object(inject, "_serve_call", probe):
+            res = self._injector().send(
+                _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+
     def test_serve_that_never_gets_ready_is_killed(self):
         supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
         self.routes = {"session": (0, b"")}  # never answers

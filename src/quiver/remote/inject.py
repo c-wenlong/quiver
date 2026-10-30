@@ -571,6 +571,10 @@ class OpencodeServeInjector:
                                     timeout=2.0)
             if status != 0:
                 with self._serves_lock:
+                    # Another waiter may have given up on this proc and
+                    # killed it while our probe was in flight.
+                    if serve.dead or self._serves.get(cwd) is not serve:
+                        return None
                     if sid not in serve.subs:
                         serve.refs += 1
                     serve.subs[sid] = (self.key, self.emit, self.machine)
