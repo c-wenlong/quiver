@@ -798,7 +798,7 @@ class TestLaunchModelMenu(unittest.TestCase):
         self.assertEqual(out["untickedContext"], "Not for GitHub")
 
     def test_sessions_new_session(self):
-        out = self.run_node(STUB + MENU_JS.read_text(encoding="utf-8") + "\n"
+        out = self.run_node(STUB + app_js_function("bodySheet") + MENU_JS.read_text(encoding="utf-8") + "\n"
                             + (PAGES.parent / "sessions.js").read_text(encoding="utf-8") + "\n"
                             + SESSIONS_FLOW)
         self.assertTrue(out["sheetOpened"])
