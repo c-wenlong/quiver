@@ -2,7 +2,7 @@
 ``GET /v1/issues/<o>/<r>/<n>`` and ``POST /v1/issues/resolve``.
 
 The reads answer from the same 60-second ``gh`` cache the web app's
-Repositories page uses (``webapp/pages/_github.py``), per pinned repo,
+Repositories page uses (``github/shared.py``), per pinned repo,
 so the phone and the page agree and a slow ``gh`` shows up once. A
 repo's issue rows add ``mine`` (the hub's ``gh`` login authored it) so
 the client filters All/Mine without a second round trip; ``agent_running``
@@ -47,7 +47,7 @@ from quiver.github import issues as gh_issues
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import protocol, sessionmeta, supervise
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 # ``swe gh``'s list cap: open issues per pinned repo in one answer.
 LIST_LIMIT = 50

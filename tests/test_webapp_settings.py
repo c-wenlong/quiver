@@ -590,7 +590,7 @@ class TestGet(_Settings):
 
     def test_github_part(self):
         env = gh.GhEnv(installed=True, authenticated=True, login="octo")
-        with patch("quiver.webapp.pages._github.probe", return_value=env) as probe:
+        with patch("quiver.github.shared.probe", return_value=env) as probe:
             body = settings_page.get(self.ctx(), {"part": "github", "refresh": "1"})
         probe.assert_called_once_with(self.home, refresh=True)
         self.assertEqual(body["github"]["env"]["status"], "ok")
@@ -1039,7 +1039,7 @@ class TestSync(_Settings):
 
     def setUp(self):
         super().setUp()
-        from quiver.webapp.pages import _github as G
+        from quiver.github import shared as G
 
         patcher = patch.object(G, "CACHE", G.TtlCache())
         patcher.start()
@@ -1062,7 +1062,7 @@ class TestSync(_Settings):
     def test_sync_probes_gh_afresh_so_a_switched_account_counts(self):
         from quiver import paths
         from quiver.github import catalog
-        from quiver.webapp.pages import _github as G
+        from quiver.github import shared as G
         from tests.test_webapp_repositories import FakeGh
 
         # The card read the old account a moment ago; gh is now signed in as octo.

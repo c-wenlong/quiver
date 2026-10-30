@@ -20,7 +20,7 @@ from quiver.github import issues as gh_issues
 from quiver.github import pulls as gh_pulls
 from quiver.remote import protocol
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 from tests.test_github_issues import RAW_ISSUE
 from tests.test_remote_pulls import RAW_PR, _row, _pr_status

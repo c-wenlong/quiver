@@ -17,7 +17,7 @@ from quiver.github import gh, manage, repos
 from quiver.github import issues as gh_issues
 from quiver.remote import issues as issues_mod
 from quiver.remote import protocol, sessionmeta
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 from quiver.webapp.pages import repositories
 
 from tests.test_github_issues import RAW_ISSUE
