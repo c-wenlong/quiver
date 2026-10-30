@@ -154,7 +154,7 @@ private func openGeminiIncident() throws -> Data {
             #expect(service.feedURL.scheme == "https")
             #expect(service.pageURL.scheme == "https")
         }
-        #expect(StatusService.all.filter { $0.group == .providers }.map(\.name)
+        #expect(StatusService.all.filter { $0.group.isProvider }.map(\.name)
             == ["Claude", "OpenAI / Codex", "GitHub / Copilot", "Cursor", "Gemini", "Devin"])
     }
 
@@ -187,9 +187,10 @@ private func openGeminiIncident() throws -> Data {
                 #expect(entry.feedURL.path.hasSuffix("summary.json"))
             }
         }
-        // Both group chips must have rows to offer.
-        #expect(StatusCatalogue.all.contains { $0.group == .providers })
-        #expect(StatusCatalogue.all.contains { $0.group == .infrastructure })
+        // Every group chip must have rows to offer.
+        for group in StatusService.Group.allCases {
+            #expect(StatusCatalogue.all.contains { $0.group == group }, "no catalogue rows for \(group)")
+        }
     }
 
     /// The sheet's mark column: every catalogue row and every built-in
@@ -208,15 +209,15 @@ private func openGeminiIncident() throws -> Data {
     /// chips split on the group.
     @Test func filterMatchesGroupNameAndHost() {
         #expect(StatusCatalogue.filter(group: nil, query: "").count == StatusCatalogue.all.count)
-        #expect(StatusCatalogue.filter(group: .providers, query: "")
-            .allSatisfy { $0.group == .providers })
-        #expect(StatusCatalogue.filter(group: .infrastructure, query: "")
-            .allSatisfy { $0.group == .infrastructure })
+        #expect(StatusCatalogue.filter(group: .modelProviders, query: "")
+            .allSatisfy { $0.group == .modelProviders })
+        #expect(StatusCatalogue.filter(group: .services, query: "")
+            .allSatisfy { $0.group == .services })
         #expect(StatusCatalogue.filter(group: nil, query: " docker ")
             .map(\.id) == ["docker"])
         #expect(StatusCatalogue.filter(group: nil, query: "notion-status")
             .map(\.id) == ["notion"])
-        #expect(StatusCatalogue.filter(group: .providers, query: "docker").isEmpty)
+        #expect(StatusCatalogue.filter(group: .modelProviders, query: "docker").isEmpty)
         #expect(StatusCatalogue.filter(group: nil, query: "no such page").isEmpty)
     }
 }
@@ -495,12 +496,12 @@ private func openGeminiIncident() throws -> Data {
             id: "custom-openrouter", name: "OpenRouter",
             pageURL: URL(string: "https://status.openrouter.ai")!,
             feed: .statuspage(URL(string: "https://status.openrouter.ai/api/v2/summary.json")!),
-            group: .providers, isCustom: true)
+            group: .modelProviders, isCustom: true)
         #expect(openRouter.logoID == "openrouter")
         let acme = StatusService(
             id: "custom-acme", name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
             feed: .statuspage(URL(string: "https://status.acme.test/api/v2/summary.json")!),
-            group: .infrastructure, isCustom: true)
+            group: .services, isCustom: true)
         #expect(acme.logoID == nil)
     }
 
@@ -514,17 +515,17 @@ private func openGeminiIncident() throws -> Data {
                 feed: .statuspage(URL(string: "https://\(host)/api/v2/summary.json")!),
                 group: group, isCustom: true)
         }
-        #expect(added("PyPI", "status.python.org", .infrastructure).logoID == "pypi")
-        #expect(added("Sourcegraph", "sourcegraphstatus.com", .providers).logoID == "sourcegraph")
+        #expect(added("PyPI", "status.python.org", .services).logoID == "pypi")
+        #expect(added("Sourcegraph", "sourcegraphstatus.com", .modelProviders).logoID == "sourcegraph")
         // The name match still wins where a brand covers it.
-        #expect(added("Moonshot AI", "status.moonshot.cn", .providers).logoID == "kimi")
+        #expect(added("Moonshot AI", "status.moonshot.cn", .modelProviders).logoID == "kimi")
     }
 }
 
 /// The status pages the user adds: slugs, storage, the model's add/remove
 /// and the sheet's Check button.
 @Suite struct CustomStatusTests {
-    private func customService(_ id: String, _ name: String, _ group: StatusService.Group = .providers)
+    private func customService(_ id: String, _ name: String, _ group: StatusService.Group = .modelProviders)
         -> StatusService {
         let page = URL(string: "https://status.example.com")!
         return StatusService(id: id, name: name, pageURL: page,
@@ -568,7 +569,7 @@ private func openGeminiIncident() throws -> Data {
         let store = CustomStatusServices(defaults: defaults)
         #expect(store.load() == StatusServicePrefs())
         var prefs = StatusServicePrefs()
-        let acme = customService("custom-acme", "Acme", .infrastructure)
+        let acme = customService("custom-acme", "Acme", .services)
         prefs.custom = [acme]
         prefs.hidden = ["vercel"]
         prefs.overrides = ["cursor": .init(pageURL: URL(string: "https://status.x.ai")!,
@@ -598,9 +599,37 @@ private func openGeminiIncident() throws -> Data {
         let store = CustomStatusServices(defaults: defaults)
         defaults.set(Data("<not json".utf8), forKey: CustomStatusServices.defaultsKey)
         #expect(store.load() == StatusServicePrefs())
-        defaults.set(Data(#"[{"id":"custom-x","name":"X","pageURL":"https://x.test","group":"bogus"}]"#.utf8),
+        defaults.set(Data(#"[{"id":"custom-x","name":"X","pageURL":123,"group":"bogus"}]"#.utf8),
                      forKey: CustomStatusServices.defaultsKey)
         #expect(store.load() == StatusServicePrefs())
+    }
+
+    /// Records written before the group split keep their page: a group
+    /// the enum no longer knows maps to the catch-all rather than
+    /// failing the store's decode.
+    @Test func oldAndUnknownGroupsLoadForward() throws {
+        let defaults = TestDefaults("quiver-test")
+        let store = CustomStatusServices(defaults: defaults)
+        defaults.set(Data(#"[{"id":"custom-a","name":"A","pageURL":"https://a.test","group":"providers"},{"id":"custom-b","name":"B","pageURL":"https://b.test","group":"infrastructure"},{"id":"custom-c","name":"C","pageURL":"https://c.test","group":"bogus"},{"id":"custom-d","name":"D","pageURL":"https://status.python.org","group":"providers"}]"#.utf8),
+                     forKey: CustomStatusServices.defaultsKey)
+        let loaded = store.load().custom
+        #expect(loaded.map(\.id) == ["custom-a", "custom-b", "custom-c", "custom-d"])
+        // A catalogue page's group follows the catalogue, not the record.
+        #expect(loaded.map(\.group) == [.modelProviders, .services, .services, .registries])
+    }
+
+    /// Only a pre-split group migrates: one the user picked under the
+    /// new layout survives a restart even when the page is a catalogue
+    /// host the catalogue groups elsewhere.
+    @Test func aChosenGroupSurvivesAReload() throws {
+        let defaults = TestDefaults("quiver-test")
+        let store = CustomStatusServices(defaults: defaults)
+        let groq = StatusService(id: "custom-g", name: "Groq",
+                                 pageURL: URL(string: "https://groqstatus.com")!,
+                                 feed: .statuspage(URL(string: "https://groqstatus.com/api/v2/summary.json")!),
+                                 group: .services, isCustom: true)
+        store.save(StatusServicePrefs(custom: [groq]))
+        #expect(store.load().custom.first?.group == .services)
     }
 
     /// Adding puts the card in its group as unknown until the load fills
@@ -617,13 +646,13 @@ private func openGeminiIncident() throws -> Data {
         let added = await model.add(name: "OpenRouter",
                                     pageURL: URL(string: "https://status.openrouter.ai")!,
                                     feedURL: URL(string: "https://status.openrouter.ai/api/v2/summary.json")!,
-                                    group: .providers)
+                                    group: .modelProviders)
         #expect(added.id.hasPrefix("custom-openrouter-"))
         #expect(added.isCustom)
         #expect(added.feedURL.absoluteString == "https://status.openrouter.ai/api/v2/summary.json")
         #expect(model.services.last == added)
         #expect(memory.saved.custom.map(\.id) == [added.id])
-        #expect(model.groups.first { $0.group == .providers }?.statuses.last?.service == added)
+        #expect(model.groups.first { $0.group == .modelProviders }?.statuses.last?.service == added)
         // The fetch ran: the card is filled, not left unknown.
         #expect(model.statuses.last?.report?.health == .operational)
         #expect(model.statuses.last?.checkedAt == usageEpoch)
@@ -640,7 +669,7 @@ private func openGeminiIncident() throws -> Data {
             store: memory)
         let added = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
                                     feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
-                                    group: .infrastructure)
+                                    group: .services)
         await model.remove(id: "claude")
         #expect(!model.services.contains { $0.id == "claude" })
         #expect(memory.saved.hidden == ["claude"])
@@ -685,7 +714,7 @@ private func openGeminiIncident() throws -> Data {
             store: memory)
         await model.update(id: "cursor", name: "Cursor", pageURL: URL(string: "https://status.cursor.sh")!,
                            feedURL: URL(string: "https://status.cursor.sh/api/v2/summary.json")!,
-                           group: .providers)
+                           group: .modelProviders)
         let edited = try #require(model.services.first { $0.id == "cursor" })
         #expect(edited.pageURL == URL(string: "https://status.cursor.sh"))
         #expect(edited.feedURL == URL(string: "https://status.cursor.sh/api/v2/summary.json"))
@@ -729,7 +758,7 @@ private func openGeminiIncident() throws -> Data {
         await model.update(id: "cursor", name: "Cursor",
                            pageURL: URL(string: "https://status.x.ai/")!,
                            feedURL: URL(string: "https://status.x.ai/api/compat/summary.json")!,
-                           group: .providers)
+                           group: .modelProviders)
         #expect(memory.saved.overrides["cursor"]?.feedURL
             == URL(string: "https://status.x.ai/api/compat/summary.json"))
         // A reload through `applying` keeps the compat feed.
@@ -747,14 +776,14 @@ private func openGeminiIncident() throws -> Data {
             store: memory)
         let added = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
                                     feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
-                                    group: .providers)
+                                    group: .modelProviders)
         await model.update(id: added.id, name: "Acme Two",
                            pageURL: URL(string: "https://status.acme.example")!,
                            feedURL: URL(string: "https://status.acme.example/api/v2/summary.json")!,
-                           group: .infrastructure)
+                           group: .services)
         let edited = try #require(model.services.last)
         #expect(edited.name == "Acme Two")
-        #expect(edited.group == .infrastructure)
+        #expect(edited.group == .services)
         #expect(edited.feedURL.host() == "status.acme.example")
         #expect(memory.saved.custom == [edited])
     }
@@ -792,7 +821,7 @@ private func openGeminiIncident() throws -> Data {
         let model = ServiceStatusModel(service: statusService, store: MemoryStatusStore())
         let first = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
                                     feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
-                                    group: .providers)
+                                    group: .modelProviders)
         #expect(model.statuses.last?.report?.health == .minor)
         await model.remove(id: first.id)
         // The cache file has no entry for the removed id.
@@ -803,7 +832,7 @@ private func openGeminiIncident() throws -> Data {
         #expect(await statusService.cached(for: [first]).first?.report == nil)
         let second = await model.add(name: "Acme", pageURL: URL(string: "https://status.acme.test")!,
                                      feedURL: URL(string: "https://status.acme.test/api/v2/summary.json")!,
-                                     group: .providers)
+                                     group: .modelProviders)
         #expect(second.id != first.id)
     }
 

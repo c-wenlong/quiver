@@ -76,14 +76,14 @@ const Fmt = (() => {
    * dark mode. Keep in step with the files beside this script. */
   const COLOR_LOGOS = new Set(("antgroup arcade browserbase cartesia claude cloudflare codex cohere deepseek "
     + "fireworks gemini honeycomb meta minimax mistral-vibe nvidia opencode perplexity qwen-code sourcegraph "
-    + "statsig stepfun upstage workos").split(" "));
-  const MONO_LOGOS = new Set(("ai21 assemblyai astronomer atlassian augment baseten bitbucket blackbox buildkite "
-    + "cerebras circleci clerk cline codecov contentful convex copilot crates cursor datadog deepgram devin "
+    + "statsig stepfun upstage workos zapier").split(" "));
+  const MONO_LOGOS = new Set(("ai21 anyscale assemblyai astronomer atlassian augment baseten bitbucket blackbox bolt braintrust buildkite "
+    + "cerebras circleci clerk cline clickhouse cockroach codecov contentful convex copilot crates cursor datadog deepgram devin "
     + "digitalocean discord docker droid e2b elevenlabs expo figma flyio freebuff grafana grok groq hashicorp "
-    + "incidentio inngest kilo kimi lambda launchdarkly linear linode lovable mailgun manus maven mongodb morph "
-    + "nebius netlify newrelic ngrok notion npm ona openai pi pinecone poe postman prisma pypi render replit "
-    + "revenuecat rubygems runloop sambanova sanity sentry snyk stability supermemory supabase tailscale tavily "
-    + "temporal travisci twilio upstash vercel warp windsurf writer xiaomimimo yi zai").split(" "));
+    + "incidentio inngest kilo kimi lambda langfuse launchdarkly linear linode loom lovable mailgun make manus maven mongodb morph "
+    + "nebius netlify newrelic ngrok notion npm ona openai pi pinecone planetscale poe postman prefect prisma pypi render replit "
+    + "revenuecat rubygems runloop sambanova sanity semaphore sentry snowflake snyk sonatype stability supermemory supabase tailscale tavily "
+    + "temporal travisci twilio upstash v0 vercel warp windsurf writer xiaomimimo yi zai").split(" "));
   // HarnessIcons.aliases: other names the same harness goes by.
   const ALIASES = { "claude-code": "claude", "github-copilot": "copilot", factory: "droid", qwen: "qwen-code",
     mistral: "mistral-vibe", codebuff: "freebuff", "command-code": "commandcode" };
