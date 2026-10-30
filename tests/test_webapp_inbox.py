@@ -133,6 +133,20 @@ class TestMarkRead(unittest.TestCase):
         again = inbox.get(self.ctx, {})
         self.assertEqual([n["unread"] for n in again["notifications"]], [False, False, False])
 
+    def test_listing_reads_run_off_the_write_lock(self):
+        # The probe and the two listings are reads; holding WRITE_LOCK
+        # over them stalled every other GitHub write on the hub.
+        held = []
+        real = inbox._listing
+
+        def listing(home):
+            held.append(G.WRITE_LOCK.locked())
+            return real(home)
+
+        with patch.object(inbox, "_listing", side_effect=listing):
+            inbox.post(self.ctx, "read", {"ids": ["1"]})
+        self.assertEqual(held, [False])
+
     def test_ids_must_be_ones_the_inbox_lists(self):
         err = self.refused(404, "unknown_notification", {"ids": ["1", "999"]})
         self.assertIn("999", err.message)
