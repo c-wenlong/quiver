@@ -419,6 +419,9 @@ class TestHubWriteRoutes(unittest.TestCase):
             headers={"Authorization": f"Bearer {cred['credential']}"},
         )
         self.assertEqual(status, 422)
+        error = json.loads(data)["error"]
+        self.assertEqual(error["code"], "bad_mode")
+        self.assertIn("opencode", error["message"])
 
     def test_attach_appserver_needs_codex(self):
         srv = _Server(
@@ -432,6 +435,9 @@ class TestHubWriteRoutes(unittest.TestCase):
             headers={"Authorization": f"Bearer {cred['credential']}"},
         )
         self.assertEqual(status, 422)
+        error = json.loads(data)["error"]
+        self.assertEqual(error["code"], "bad_mode")
+        self.assertIn("codex", error["message"])
 
     def test_attachment_staging(self):
         import http.client as hc
@@ -739,8 +745,10 @@ class TestHubWriteRoutes(unittest.TestCase):
         srv.state.emit("claude:a2", protocol.event(
             "approval.requested", "claude:a2", "mbp",
             {"request_id": "req-2", "prompt": "run it?"}))
-        srv.request("POST", "/v1/inbox/dismiss", headers=hdr, body={
-            "key": "claude:a2", "last_active_at": old})
+        status, data = srv.request(
+            "POST", "/v1/inbox/dismiss", headers=hdr,
+            body={"key": "claude:a2", "last_active_at": old})
+        self.assertEqual(status, 200, data)  # the dismissal itself took
         status, data = srv.request("GET", "/v1/inbox", headers=hdr)
         items = json.loads(data)["items"]
         self.assertEqual([i["status"] for i in items], ["approval"])
@@ -803,19 +811,6 @@ class TestHubWriteRoutes(unittest.TestCase):
             "approval.resolved", key, "mbp", {"request_id": "req-A"}))
         self.assertNotIn(key, srv.state.pending_approvals)
         self.assertNotIn(key, srv.state._approval_at)
-
-    def test_inbox_keeps_fresh_approval(self):
-        srv = _Server(sessions=[_session(sid="a4")],
-                      statuses=lambda ss: ["active"])
-        self.addCleanup(srv.stop)
-        cred = srv.pair()
-        hdr = {"Authorization": f"Bearer {cred['credential']}"}
-        srv.state.emit("claude:a4", protocol.event(
-            "approval.requested", "claude:a4", "mbp",
-            {"request_id": "req-4"}))
-        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
-        items = json.loads(data)["items"]
-        self.assertEqual([i["request_id"] for i in items], ["req-4"])
 
     def test_advertise_url_never_wildcard(self):
         from quiver.remote import catalog, hub
@@ -3526,7 +3521,9 @@ class TestGlobalEvents(_ShortHeartbeat, HubBase):
                 buf += chunk
                 if b"journal.caught-up" in buf:
                     break
-            self.assertIn(b"session.status", buf)
+            # The fixture's own sync already put an "active" status on
+            # the global stream: look for this emit's "done".
+            self.assertIn(b'"status": "done"', buf)
         finally:
             conn.close()
 

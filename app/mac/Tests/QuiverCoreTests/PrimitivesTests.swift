@@ -286,7 +286,7 @@ final class PrimitiveHome {
         {
           "name": "eng",
           "repository": {"type": "git", "url": "https://github.com/o/r"},
-          "author": "Kai",
+          "author": "Sam",
           "keywords": ["a", 3]
         }
         """
@@ -296,21 +296,21 @@ final class PrimitiveHome {
         let edited = try fields.apply(to: text)
         #expect(edited.contains(#""version": "1.0.0""#))
         #expect(edited.contains(#""repository": {"type": "git", "url": "https://github.com/o/r"}"#))
-        #expect(edited.contains(#""author": "Kai""#))
+        #expect(edited.contains(#""author": "Sam""#))
         #expect(edited.contains(#""keywords": ["a", 3]"#))
         for key in ["description", "homepage", "license", "email", "url"] {
             #expect(!edited.contains("\"\(key)\": \"\""), "\(key)")
         }
         // A string author stays a string when only its name changes.
         fields = PluginManifestFields(parsing: text)
-        fields.authorName = "Kai Chen"
-        #expect(try fields.apply(to: text).contains(#""author": "Kai Chen""#))
+        fields.authorName = "Sam Lee"
+        #expect(try fields.apply(to: text).contains(#""author": "Sam Lee""#))
         // A string author turning into an object keeps its unchanged name.
         fields = PluginManifestFields(parsing: text)
         fields.authorEmail = "k@x.dev"
         let object = try JSONSerialization.jsonObject(with: Data(try fields.apply(to: text).utf8)) as? [String: Any]
         let author = object?["author"] as? [String: Any]
-        #expect(author?["name"] as? String == "Kai")
+        #expect(author?["name"] as? String == "Sam")
         #expect(author?["email"] as? String == "k@x.dev")
         #expect(author?["url"] == nil)
     }

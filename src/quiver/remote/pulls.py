@@ -33,7 +33,7 @@ from __future__ import annotations
 import threading
 
 from quiver.github import cli as ghcli
-from quiver.github import gh, manage, repos
+from quiver.github import gh, manage
 from quiver.github import pulls as gh_pulls
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import issues as issues_mod
@@ -52,23 +52,11 @@ _preparing: set[tuple[str, int]] = set()
 _preparing_lock = threading.Lock()
 
 
-def _refresh(args) -> bool:
-    """A query dict's ``refresh=1``/``refresh=true``."""
-    return str((args.get("refresh") or [""])[0]) in {"1", "true"}
-
-
-def _repo_arg(owner, name) -> str | None:
-    """``/v1/pulls/<owner>/<repo>/...`` → ``owner/repo``, else None."""
-    return repos.normalize_repo_input(f"{owner}/{name}")
-
-
-def _number_arg(raw) -> int | None:
-    """A path's PR number: canonical digits, at most nine of them."""
-    if (not isinstance(raw, str) or not raw.isdigit()
-            or not raw.isascii() or len(raw) > 9):
-        return None
-    number = int(raw)
-    return number if number >= 1 else None
+# The same path and query readers as ``/v1/issues``: an owner/repo
+# pair, a canonical number of at most nine digits, ``refresh=1``.
+_refresh = issues_mod._refresh
+_repo_arg = issues_mod._repo_arg
+_number_arg = issues_mod._number_arg
 
 
 # ------------------------------------------------------------------ reads
