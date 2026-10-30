@@ -16,6 +16,7 @@ from quiver.mcp import cli as mcp_cli
 from quiver.webapp.pages import PageError, mcp
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 SECRET = "lin_api_SECRETVALUE1234567890"
 
@@ -960,7 +961,7 @@ class TestLeavingForgetsSecrets(unittest.TestCase):
             "globalThis.window = { addEventListener(t, f) { if (t === 'hashchange') listeners.push(f); } };\n"
             "globalThis.localStorage = { getItem() { return null; }, setItem() {} };\n"
             "globalThis.location = { hash: '#/mcp' };\n"
-            "function registerPage() {}\n")
+            "function registerPage() {}\n" + app_js_function("currentRoute"))
         body = (
             "const st = () => ({ revealed: new Map([['TOKEN', 'shh']]), revealGen: 0,"
             " drafts: new Map([['KEY', 'typed']]), replacing: new Set(['KEY']), secretError: 'x' });\n"

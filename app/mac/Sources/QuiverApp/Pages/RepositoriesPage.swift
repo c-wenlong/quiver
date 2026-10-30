@@ -706,10 +706,7 @@ struct RepoSurfaces: View {
                 Button("Open on GitHub") {
                     if let url = URL(string: issue.url), url.isWebURL { openURL(url) }
                 }
-                Button("Copy link") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(issue.url, forType: .string)
-                }
+                Button("Copy link") { copyToPasteboard(issue.url) }
             }
         }
     }

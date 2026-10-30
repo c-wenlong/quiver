@@ -21,6 +21,7 @@ from quiver.webapp.pages import _github as G
 from quiver.webapp.pages import repositories as R
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 OK_ENV = gh.GhEnv(installed=True, authenticated=True, login="octo")
 
@@ -805,7 +806,7 @@ process.stdout.write(JSON.stringify({ runs: runs.map((t) => t - 1000000), stoppe
 """
 
     def test_hidden_ticks_are_skipped_and_a_return_catches_up(self):
-        script = self.SCRIPT.replace("GITHUB_JS", (STATIC / "github.js").read_text())
+        script = self.SCRIPT.replace("GITHUB_JS", app_js_function("currentRoute") + (STATIC / "github.js").read_text())
         done = _node(script)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(json.loads(done.stdout), {"runs": [60000, 170000, 260000], "stopped": True})

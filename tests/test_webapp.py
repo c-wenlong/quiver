@@ -76,6 +76,17 @@ class TestWebAppRoutes(HubBase):
 APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
 
 
+def app_js_function(name: str) -> str:
+    """The source of a top-level ``function name(...)`` in app.js, for node
+    tests that run one page script with app.js's globals stubbed: a page
+    calls the real helper, not a copy that could drift."""
+    import re
+    found = re.search(r"^(?:async )?function %s\(.*?^\}\n" % re.escape(name), APP_JS.read_text(encoding="utf-8"),
+                      re.S | re.M)
+    assert found, name
+    return found.group(0)
+
+
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestSetupOffer(unittest.TestCase):
     """app.js's first-run offer, run under node with the browser stubbed:
