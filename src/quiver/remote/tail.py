@@ -1477,6 +1477,9 @@ class TailManager:
                     self.tailers.pop(key, None)
                     self.statuses.pop(key, None)
                     self._status_at.pop(key, None)
+                    # Under the lock too: the pane watcher raises a card
+                    # only while the tailer is registered, checked here.
+                    self._forget(key)
                 self._probe_due.discard(key)
                 self._probed_at.pop(key, None)
         for key, session, status in wanted:
@@ -1504,6 +1507,20 @@ class TailManager:
             tailer.session = session
             self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=False)
+
+    def _forget(self, key: str) -> None:
+        """Drop what the pane watcher and the attach check kept for a
+        session that left the catalog. A prompt still outstanding is
+        retired with ``approval.resolved``, so a phone's card for it
+        doesn't wait forever on a session that's gone."""
+        self.last_append.pop(key, None)
+        self._approval_checked_at.pop(key, None)
+        outstanding = self._approval_outstanding.pop(key, None)
+        if outstanding is not None:
+            supervise.set_pending_approval(key, None)
+            self._emit_approval(
+                "approval.resolved", key,
+                {"request_id": outstanding[0], "source": "gone"})
 
     def _take_status(
         self,
@@ -1702,6 +1719,10 @@ class TailManager:
             pane = supervise.capture_pane(
                 supervise.channel_name(self.home, key)
             )
+            if key not in self.tailers:
+                # sync dropped the session while its pane was read:
+                # _forget already retired it; don't raise a new card.
+                continue
             if supervise.pane_shows_approval(pane):
                 fp = supervise.approval_fingerprint(pane)
                 outstanding = self._approval_outstanding.get(key)
@@ -1717,22 +1738,25 @@ class TailManager:
                     )
                     outstanding = None
                 if outstanding is None:
-                    rid = f"req-{secrets.token_hex(6)}"
-                    self._approval_outstanding[key] = (rid, fp)
-                    supervise.set_pending_approval(key, rid, fp)
-                    prompt = _approval_prompt_line(pane)
-                    # The menu rows the pane offers, so a client can show
-                    # and answer the real prompt instead of guessing at
-                    # allow/always/deny. Labels are pane text: redact.
-                    options = [
-                        {"n": n, "label": _tr._redact_secrets(label)[:140]}
-                        for n, label in supervise.menu_options(pane)
-                    ]
-                    self._emit_approval(
-                        "approval.requested", key,
-                        {"request_id": rid, "prompt": prompt,
-                         "options": options},
-                    )
+                    with self._status_lock:
+                        if key not in self.tailers:
+                            continue  # dropped since the check above
+                        rid = f"req-{secrets.token_hex(6)}"
+                        self._approval_outstanding[key] = (rid, fp)
+                        supervise.set_pending_approval(key, rid, fp)
+                        prompt = _approval_prompt_line(pane)
+                        # The menu rows the pane offers, so a client can show
+                        # and answer the real prompt instead of guessing at
+                        # allow/always/deny. Labels are pane text: redact.
+                        options = [
+                            {"n": n, "label": _tr._redact_secrets(label)[:140]}
+                            for n, label in supervise.menu_options(pane)
+                        ]
+                        self._emit_approval(
+                            "approval.requested", key,
+                            {"request_id": rid, "prompt": prompt,
+                             "options": options},
+                        )
             else:
                 cur = self._approval_outstanding.pop(key, None)
                 if cur is not None:
