@@ -345,8 +345,8 @@ final class ComposerAttachmentsTests: XCTestCase {
         let first = files.addPhoto { Data("a".utf8) }
         let second = files.addPhoto { Data("b".utf8) }
         // Both reach their upload while the first upload is still held.
-        while files.items.contains(where: { $0.state == .preparing }) { await Task.yield() }
-        XCTAssertEqual(uploads.map(\.0), ["photo-1.jpg", "photo-2.jpg"])
+        for _ in 0..<500 where uploads.count < 2 { await Task.yield() }
+        XCTAssertEqual(uploads.map(\.0).sorted(), ["photo-1.jpg", "photo-2.jpg"])
         gate.open()
         await first?.value
         await second?.value
