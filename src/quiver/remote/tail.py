@@ -38,7 +38,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from quiver.paths import expand_user, remote_dir_for
 from quiver.remote import injected, protocol, supervise
@@ -101,6 +101,11 @@ def _approval_prompt_line(pane: str) -> str:
 
 # How many of the most recent sessions get a live tailer.
 TAIL_MAX_SESSIONS = 100
+
+# A session's journal and cursor files, untouched this long and not
+# being tailed, are deleted by ``TailManager.sweep_stale``. Without it
+# every session ever tailed kept up to 16 MB of journal forever.
+STALE_FILE_AGE_S = 30 * 86_400
 
 # Partial-line safety: never decode more than this many bytes of tail at
 # once; the remainder waits for the next poll.
@@ -1345,6 +1350,10 @@ class TailManager:
         self._status_at: dict[str, float] = {}
         self._probe_due: set[str] = set()
         self._probed_at: dict[str, float] = {}
+        # Orders tailer creation (which reads a key's cursor and asks
+        # whether it has a journal) against ``sweep_stale`` deleting
+        # them; see ``_add_tailer``.
+        self._files_lock = threading.Lock()
 
     def last_append_at(self, key: str) -> float | None:
         return self.last_append.get(key)
@@ -1410,15 +1419,18 @@ class TailManager:
     def _add_tailer(self, key: str, session: Session, source) -> bool:
         """Register a tailer for ``key`` unless another thread got there
         first; two tailers on one session would journal it twice."""
-        tailer = Tailer(
-            key, session, source, self.cursors_dir,
-            self._journal_has(key),
-        )
-        with self._status_lock:
-            if key in self.tailers:
-                return False
-            self.tailers[key] = tailer
-            return True
+        # Under ``_files_lock``: a sweep can't delete this key's journal
+        # and cursor between the tailer reading them and registering.
+        with self._files_lock:
+            tailer = Tailer(
+                key, session, source, self.cursors_dir,
+                self._journal_has(key),
+            )
+            with self._status_lock:
+                if key in self.tailers:
+                    return False
+                self.tailers[key] = tailer
+                return True
 
     def _tailer_items(self) -> list[tuple[str, "Tailer"]]:
         """A snapshot of the tailers, safe to walk while ``ensure``
@@ -1507,6 +1519,62 @@ class TailManager:
             tailer.session = session
             self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=False)
+
+    def sweep_stale(
+        self,
+        journal,
+        keep: Iterable[str] = (),
+        now: float | None = None,
+    ) -> int:
+        """Delete the journal and cursor files of sessions nothing has
+        touched for ``STALE_FILE_AGE_S``; returns how many files went.
+
+        A journal goes once no append and no cursor save has reached it
+        for that long; a cursor goes once its journal is gone too, so a
+        session never keeps one without the other (a cursor alone would
+        resume past history the phone no longer has; a journal alone
+        would skip backfill). Keys being tailed and ``keep`` (the
+        caller's own journals, like the global stream) are never swept.
+        A session that comes back is tailed like a new one: recent
+        history only. Holds ``_files_lock``, so no tailer starts on a
+        key's files while they are being judged and deleted.
+        """
+        with self._files_lock:
+            return self._sweep_stale(journal, keep, now)
+
+    def _sweep_stale(self, journal, keep: Iterable[str],
+                     now: float | None) -> int:
+        now = time.time() if now is None else now
+        cutoff = now - STALE_FILE_AGE_S
+        held = {protocol.key_slug(k) for k in keep}
+        held.update(protocol.key_slug(k) for k, _t in self._tailer_items())
+
+        def fresh(path: Path) -> bool:
+            try:
+                return path.stat().st_mtime >= cutoff
+            except OSError:
+                return False
+
+        def kept(slug: str) -> bool:
+            return slug in held or fresh(self.cursors_dir / f"{slug}.json")
+
+        removed = journal.sweep(cutoff, kept)
+        try:
+            cursors = list(self.cursors_dir.glob("*.json"))
+        except OSError:
+            cursors = []
+        for path in cursors:
+            slug = path.stem
+            if slug in held or fresh(path):
+                continue
+            if (journal.dir / f"{slug}.jsonl").exists():
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed += 1
+        return removed
 
     def _forget(self, key: str) -> None:
         """Drop what the pane watcher and the attach check kept for a
