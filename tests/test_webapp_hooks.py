@@ -191,12 +191,16 @@ class TestDetail(_HooksHome, unittest.TestCase):
     def test_a_foreign_script_outside_home_is_not_read(self):
         # A hooks entry can resolve anywhere on disk; its text must not
         # reach a paired device unless it lives under the hub's home.
-        outside = Path(tempfile.mkdtemp()) / "secret.sh"
-        outside.write_text("#!/bin/sh\nTOKEN=abc\n")
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        outside = Path(folder.name) / "secret.sh"
+        outside.write_text("#!/bin/sh\n# TOKEN=abc in the header\nTOKEN=abc\n")
         (self.home / ".claude" / "hooks" / "ext.sh").symlink_to(outside)
         d = page.get(self.ctx, {"hook": "ext.sh", "harness": "claude"})
         self.assertEqual((d["tier"], d["exists"]), ("foreign", True))
         self.assertIsNone(d["text"])
+        self.assertEqual(d["summary"], "")
+        self.assertNotIn("abc", json.dumps(d))
 
     def test_a_script_that_vanished_reads_as_missing(self):
         # The inventory only ever lists files that exist, so a missing
