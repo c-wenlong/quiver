@@ -9,14 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Mac app: Mine and Review requested pull request filters.** The
-  Repositories dashboard's and a repo focus page's Pull requests tab
-  now offer All, Mine and Review requested with counts, as the iOS and
-  web apps do. Mine compares the `gh` login with each PR's author, so
-  it covers the focus page's merged and closed PRs too; Review
-  requested reads `swe gh pr status` per repo. A filter hides while
-  its flag is unknown instead of guessing
-  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+- **Web app: issue detail and Resolve from Repositories.** An issue row
+  now opens a sheet with the issue's body and comments (read only, from
+  the hub's `GET /v1/issues/<owner>/<repo>/<n>`), Open on GitHub, and
+  Resolve with agent: harness, model, your context and the first prompt,
+  posted to `POST /v1/issues/resolve`, then the chat opens. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
 
 - **iOS app: the overview's top models, quick figures, heatmap and
   daily table, over all seven periods.** The Usage tab's Spend half
@@ -425,6 +423,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edited one reset — from the same one-click list, and the Check probe
   also tries `/api/compat/summary.json`, the path Cursor's new host
   serves.
+
+- **Mac app: Mine and Review requested pull request filters.** The
+  Repositories dashboard's and a repo focus page's Pull requests tab
+  now offer All, Mine and Review requested with counts, as the iOS and
+  web apps do. Mine compares the `gh` login with each PR's author, so
+  it covers the focus page's merged and closed PRs too; Review
+  requested reads `swe gh pr status` per repo. A filter hides while
+  its flag is unknown instead of guessing
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 
 ### Changed
 
