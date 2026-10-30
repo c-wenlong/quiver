@@ -1005,8 +1005,9 @@ class TestMarkdown(unittest.TestCase):
         self.assertNotIn("&quot;\"", html)
 
     def test_autolinks_become_links(self):
-        html = self.render("go <https://y.io/z> or <me_x@ex.io>, not `<https://c.io>`")
+        html = self.render("go <https://y.io/z> or <me_x@ex.io>, not `<https://c.io>`, <https://[2001:db8::1]/a>")
         self.assertIn('<a href="https://y.io/z" target="_blank" rel="noopener">https://y.io/z</a>', html)
+        self.assertIn('<a href="https://[2001:db8::1]/a" target="_blank" rel="noopener">https://[2001:db8::1]/a</a>', html)
         self.assertIn('<a href="mailto:me_x@ex.io" target="_blank" rel="noopener">me_x@ex.io</a>', html)
         self.assertIn("<code>&lt;https://c.io&gt;</code>", html)
 
