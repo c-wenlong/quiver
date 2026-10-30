@@ -1062,7 +1062,10 @@ const SessionChat = (() => {
     return m ? m[1].trim() : "";
   }
 
-  /* A diff's HTML for edit-ish tools, or null for anything else. */
+  /* A diff's HTML for edit-ish tools, or null for anything else. The
+   * args are whatever the agent sent, so a field that isn't a string
+   * (an array content, say) counts as missing rather than reaching
+   * .split. */
   function toolDiff(tool) {
     const name = String(tool.name || "").toLowerCase();
     if (!DIFF_TOOLS.has(name) || !tool.args_full) return null;
@@ -1073,24 +1076,26 @@ const SessionChat = (() => {
     // itself, so the hub's args_full is a JSON string, not an object.
     if (patching && typeof args === "string") return args ? renderPatch(patchFile(args), args) : null;
     if (!args || typeof args !== "object") return null;
-    const file = args.file_path || args.path || args.filename || "";
+    const text = (v) => (typeof v === "string" ? v : "");
+    const isText = (v) => typeof v === "string";
+    const file = text(args.file_path) || text(args.path) || text(args.filename);
     if (name === "write" || name === "notebookedit" || name === "file_edit") {
-      const content = args.content || args.new_source || "";
+      const content = text(args.content) || text(args.new_source);
       return content ? renderDiff(file, "", content) : null;
     }
     if (patching) {
-      const patch = args.patch || args.diff || args.input || tool.args_full;
+      const patch = text(args.patch) || text(args.diff) || text(args.input) || tool.args_full;
       return renderPatch(file || patchFile(patch), patch);
     }
     if (name === "multiedit" && Array.isArray(args.edits)) {
       const parts = args.edits.slice(0, 8)
-        .filter((e) => e && (e.old_string != null || e.new_string != null))
-        .map((e) => renderDiff(file, e.old_string, e.new_string));
+        .filter((e) => e && (isText(e.old_string) || isText(e.new_string)))
+        .map((e) => renderDiff(file, text(e.old_string), text(e.new_string)));
       return parts.length ? parts.join("") : null;
     }
     // edit and friends: {old_string, new_string}
-    if (args.old_string != null || args.new_string != null) {
-      return renderDiff(file, args.old_string || "", args.new_string || "");
+    if (isText(args.old_string) || isText(args.new_string)) {
+      return renderDiff(file, text(args.old_string), text(args.new_string));
     }
     return null;
   }
@@ -2338,8 +2343,19 @@ const SessionChat = (() => {
   }
 
   function showLive(ev) {
-    appendEvent(ev);
+    appendSafely(ev, true);
     remember(ev.seq);
+  }
+
+  /* One event the view can't draw is logged and skipped: it mustn't
+   * stop the history after it, leave the composer on "Loading…", or
+   * break the stream, whose reconnect would replay it again. */
+  function appendSafely(ev, live) {
+    try {
+      appendEvent(ev, live);
+    } catch (err) {
+      console.error("chat: skipped an event it couldn't show", ev && ev.type, ev && ev.seq, err);
+    }
   }
 
   function dropPending() {
@@ -2495,7 +2511,7 @@ const SessionChat = (() => {
       log.innerHTML = "";
       chat.toolCards.clear();
       const messages = data.messages || [];
-      for (const ev of messages) appendEvent(ev, false);
+      for (const ev of messages) appendSafely(ev, false);
       if (messages.length) remember(messages[messages.length - 1].seq);
       for (const card of open) log.appendChild(card);
       scrollBottom();
@@ -2775,7 +2791,7 @@ const SessionChat = (() => {
       return status;
     }
     const messages = data.messages || [];
-    for (const ev of messages) appendEvent(ev, false);
+    for (const ev of messages) appendSafely(ev, false);
     if (messages.length) remember(messages[messages.length - 1].seq);
     else if (loading) loading.outerHTML = '<p class="empty" id="chat-loading">No messages yet.</p>';
     scrollBottom();
@@ -4318,7 +4334,8 @@ const SessionChat = (() => {
       messageBody, send, updateOwnership, restoreUploads,
       mentionToken, insertMention, splitPath, filesError, files, FILES, searchFiles, trackMenus, menu,
       echoes, sendsToTray, mergeQueue, queueNote, trayHtml, posted, takeQueued, echoLeavesTray, sendText,
-      sendNow, removeQueued, removeAllQueued, beginEdit, cancelEdit, saveEdit, loadQueue, commandResult, appendMessage },
+      sendNow, removeQueued, removeAllQueued, beginEdit, cancelEdit, saveEdit, loadQueue, commandResult, appendMessage,
+      backfill, showLive },
   };
 })();
 
