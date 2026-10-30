@@ -86,38 +86,21 @@ final class IssuesModel {
 
 }
 
-/// Grouping and counting for the issues page, pure so tests can feed it
-/// hub rows without an actor.
-enum IssueGrouping {
-    /// The repo sections as the page draws them under `filter`: an
-    /// errored repo keeps its slot with the error to show; a quiet one
-    /// (no matching rows) drops out entirely.
-    static func sections(of repos: [IssueRepo], filter: IssueFilter) -> [IssueSection] {
-        repos.compactMap { repo in
-            guard repo.status == "ok" else {
-                return IssueSection(name: repo.name, rows: nil,
-                                    error: repo.error ?? repo.status ?? "unknown error")
-            }
-            let rows = (repo.issues ?? []).filter(filter.includes)
-            return rows.isEmpty ? nil : IssueSection(name: repo.name, rows: rows, error: nil)
-        }
-    }
-
-    /// `filter`'s matching count across every repo — the filter chips.
-    static func count(_ repos: [IssueRepo], filter: IssueFilter) -> Int {
-        repos.reduce(0) { sum, repo in
-            sum + (repo.issues ?? []).filter(filter.includes).count
-        }
-    }
+extension IssueRepo: RepoListing {
+    var rows: [IssueRow] { issues ?? [] }
 }
 
-/// One section of the issues page: a pinned repo's matching rows, or
-/// the error that dimmed it.
-struct IssueSection: Identifiable {
-    let name: String
-    let rows: [IssueRow]?
-    let error: String?
-    var id: String { name }
+typealias IssueSection = RepoSection<IssueRow>
+
+/// The issues page's sections and chip counts under its filter.
+enum IssueGrouping {
+    static func sections(of repos: [IssueRepo], filter: IssueFilter) -> [IssueSection] {
+        RepoGrouping.sections(of: repos, where: filter.includes)
+    }
+
+    static func count(_ repos: [IssueRepo], filter: IssueFilter) -> Int {
+        RepoGrouping.count(repos, where: filter.includes)
+    }
 }
 
 /// The issues page's row filters: every open issue, the ones the

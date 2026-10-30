@@ -138,6 +138,19 @@ class RegistryRobustnessTest(unittest.TestCase):
                 for p in patches:
                     p.stop()
 
+    def test_alias_map_tolerates_hand_edited_aliases(self):
+        """A nested list here is unhashable, so every name lookup in every
+        command raised TypeError; a bare string read as one alias per
+        letter."""
+        reg = {
+            "claude": {"aliases": "cc"},
+            "codex": {"aliases": [["cx"], {"a": 1}, "", "co"]},
+            "gemini": {"aliases": 7},
+        }
+        self.assertEqual(alias_map(reg), {"claude": "claude", "cc": "claude",
+                                          "codex": "codex", "co": "codex",
+                                          "gemini": "gemini"})
+
     def test_starred_names_tolerates_a_non_numeric_pin(self):
         reg = {
             "alpha": {"command": "a", "state": "starred", "pin": "oops"},

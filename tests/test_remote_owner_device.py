@@ -7,8 +7,10 @@ already uses, so a page on another site can't borrow the identity.
 """
 
 import json
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from quiver.remote import dismissals
@@ -167,8 +169,14 @@ class TestClientAddress(unittest.TestCase):
             self.assertEqual(h._client_ip(), peer)
 
 class TestWhoisCache(unittest.TestCase):
+    def setUp(self):
+        # HubState(None) would write machine.json under the real HOME.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+
     def test_hits_and_misses_expire(self):
-        state = hub_mod.HubState(None)
+        state = hub_mod.HubState(self.home)
         state.whois = MagicMock(side_effect=lambda ip: _PEERS.get(ip))
         clock = [1000.0]
         with patch.object(hub_mod.time, "time", lambda: clock[0]):
@@ -186,7 +194,7 @@ class TestWhoisCache(unittest.TestCase):
 
 
     def test_cache_stays_bounded(self):
-        state = hub_mod.HubState(None)
+        state = hub_mod.HubState(self.home)
         state.whois = lambda ip: None
         for i in range(300):
             state.whois_cached(f"100.64.1.{i}")
@@ -194,7 +202,7 @@ class TestWhoisCache(unittest.TestCase):
         self.assertLessEqual(len(state._whois_ip_locks), 257)
 
     def test_concurrent_callers_share_one_lookup(self):
-        state = hub_mod.HubState(None)
+        state = hub_mod.HubState(self.home)
         started = threading.Event()
         release = threading.Event()
         calls = []

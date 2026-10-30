@@ -1,5 +1,6 @@
 import io
 import json
+import shlex
 import os
 import subprocess
 import tempfile
@@ -662,7 +663,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
         # account's data dir, not the default credentials file.
         self.assertEqual(
             data["remedy"]["command"],
-            f'XDG_DATA_HOME="{tmp}" devin auth login')
+            f"XDG_DATA_HOME={shlex.quote(tmp)} devin auth login")
 
     def test_human_output_prints_the_remedy_steps(self):
         with tempfile.TemporaryDirectory() as tmp:
