@@ -256,10 +256,18 @@ public final class SessionChatModel {
                     self.connection = .reconnecting
                     Task { await self.start() }
                     return
-                case .truncated:
+                case .truncated(let seq):
                     // The journal dropped events past the cursor and now
                     // replays what it kept, oldest first: show the newest
-                    // page instead and follow on from its end.
+                    // page instead and follow on from its end. A journal
+                    // wiped under the cursor restarts lower, at its head:
+                    // the cursor only rises, so take that seq by hand, or
+                    // the follow below asks from the old cursor and the
+                    // hub answers truncated again, over and over.
+                    if let seq, seq < self.cursor {
+                        self.cursor = seq
+                        self.seen = self.seen.filter { $0 <= seq }
+                    }
                     guard let page = try? await client.messages(key, limit: Self.pageSize),
                           gen == self.generation else { continue }
                     self.load(page)

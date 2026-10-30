@@ -389,6 +389,56 @@ extension HubStubbed {
         #expect(chat.items.map(\.id) == ["m1", "approval-r1", "m3", "m4"])
     }
 
+    /// The hub's journal was wiped while we followed seq 500: it answers
+    /// `last=500` with journal.truncated at its head (2). The chat takes
+    /// the newer history and follows on from 2; staying at 500 would get
+    /// truncated back on every follow and never see a new event.
+    @Test func aJournalWipedUnderTheCursorRestartsAtItsHead() async throws {
+        let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let pages = Mutex(0)
+        HubStub.handler = { req in
+            let last = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "last" }?.value
+            switch req.url?.path {
+            case "/v1/sessions": return (200, Data(#"{"sessions": [{"key": "claude:s1"}]}"#.utf8))
+            case "/v1/sessions/claude:s1/messages":
+                let first = pages.withLock { n in n += 1; return n == 1 }
+                return (200, Data((first
+                    ? #"{"messages": [{"type": "message.appended", "seq": 500, "data": {"kind": "assistant", "text": "before"}}], "has_more": false}"#
+                    : #"{"messages": [{"type": "message.appended", "seq": 2, "data": {"kind": "assistant", "text": "after wipe"}}], "has_more": false}"#).utf8))
+            case "/v1/sessions/claude:s1/events":
+                if let last, let n = Int(last), n > 2 {
+                    return (200, Data("""
+                        data: {"type": "journal.truncated", "seq": 2}
+
+                        data: {"type": "journal.caught-up", "seq": 2}
+
+
+                        """.utf8))
+                }
+                return (200, Data("data: {\"type\": \"journal.caught-up\", \"seq\": 2}\n\n".utf8))
+            default: return (404, Data())
+            }
+        }
+        let hub = LocalHub(locator: FakeLocator(address: "127.0.0.1:8477"), store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session(), streamSession: HubStub.session())
+        }
+        let chat = SessionChatModel(key: "claude:s1", hub: hub)
+        defer { chat.stop() }
+        await chat.start()
+        func follows() -> [String] {
+            HubStub.requests.filter { $0.url?.path == "/v1/sessions/claude:s1/events" }
+                .compactMap { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first { $0.name == "last" }?.value }
+        }
+        for _ in 0..<100 where !follows().contains("2") {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(follows().prefix(2) == ["500", "2"])
+        #expect(chat.items.map(\.id) == ["m2"])
+    }
+
     /// The placeholder a waiting approval opens with learns the pane's
     /// menu when the ask replays: options ride `approval.requested`.
     @Test func aWaitingApprovalLearnsItsMenu() async throws {
