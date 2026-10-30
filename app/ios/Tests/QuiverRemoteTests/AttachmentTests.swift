@@ -145,6 +145,9 @@ final class ComposerAttachmentsTests: XCTestCase {
         let gate = Gate()
         let files = model(gate: gate)
         let task = files.addFile(name: "log.txt", data: Data("boom".utf8))
+        XCTAssertEqual(files.items.first?.state, .preparing)
+        XCTAssertTrue(files.blocksSend)
+        await uploadStarted(files)
         XCTAssertEqual(files.items.first?.state, .uploading(0))
         XCTAssertTrue(files.blocksSend)
         XCTAssertEqual(files.refs, [])
@@ -156,9 +159,15 @@ final class ComposerAttachmentsTests: XCTestCase {
         XCTAssertEqual(uploads.map(\.0), ["log.txt"])
     }
 
-    func testProgressOnlyMovesForward() {
+    /// Waits for the first chip to leave "Preparing".
+    private func uploadStarted(_ files: ComposerAttachments) async {
+        while files.items.first?.state == .preparing { await Task.yield() }
+    }
+
+    func testProgressOnlyMovesForward() async {
         let files = model(gate: Gate())
         files.addFile(name: "a.txt", data: Data("a".utf8))
+        await uploadStarted(files)
         let id = files.items[0].id
         files.progressed(id, 0.4)
         XCTAssertEqual(files.items[0].state, .uploading(0.4))
@@ -197,7 +206,7 @@ final class ComposerAttachmentsTests: XCTestCase {
         XCTAssertFalse(files.blocksSend)
     }
 
-    func testTheHubsCapsAreCheckedBeforeUploading() {
+    func testTheHubsCapsAreCheckedBeforeUploading() async {
         let files = model()
         XCTAssertNil(files.addFile(name: "report.docx", data: Data("x".utf8)), "refused from its name, no chip")
         XCTAssertTrue(files.items.isEmpty)
@@ -277,7 +286,6 @@ final class ComposerAttachmentsTests: XCTestCase {
     func testAPickStillLoadingHoldsSendAndASendDropsIt() async {
         let gate = Gate()
         let files = model()
-        var loaded = false
         let task = files.addPhoto {
             await gate.wait()
             return Data("late".utf8)
@@ -288,7 +296,7 @@ final class ComposerAttachmentsTests: XCTestCase {
         files.clear()
         gate.open()
         await task?.value
-        loaded = files.items.isEmpty
+        let loaded = files.items.isEmpty
         XCTAssertTrue(loaded, "a read that finishes after a send doesn't land in the next draft")
         XCTAssertTrue(uploads.isEmpty)
     }
