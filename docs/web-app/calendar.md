@@ -40,8 +40,8 @@ reads it adds), `tests/test_webapp_calendar.py` and
 - **Block details**: hovering a block shows its card (project, account,
   range, active time, responses, tokens and spend, and up to eight
   sessions with their own range, responses, tokens and spend). Blocks
-  from session files (Pi, Factory Droid) have no tokens, so their card
-  stops at responses. A click
+  from session files (Pi, Factory Droid, Freebuff) have no tokens, so
+  their card stops at responses. A click
   opens the session's detail (the Sessions page's sheet) when the block
   has one session, else the project's session list, where each row
   opens its detail. The "+N" chip's card lists the hidden blocks with
@@ -76,6 +76,17 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
    account) is accidental draws nothing; one the ledger has never seen
    stays. The account is `~/.pi` or `~/.factory`. Files are parsed again
    only when their mtime or size changes.
+
+   Freebuff (`FreebuffActivity`): every
+   `<project>/chats/<chat>/run-state.json` under
+   `~/.config/manicode/projects`, account `~/.config/manicode`. The
+   chat folder's name is the session id; each entry of
+   `sessionState.mainAgentState.messageHistory` with a numeric `sentAt`
+   (epoch milliseconds) is a response, and a history holding anything
+   but objects is no session. The folder is the agent's `cwd` or
+   `initialCwd`, else `sessionState.initialCwd`, else the file's own
+   `initialCwd`. The ledger doesn't log Freebuff, so nothing is dropped
+   as accidental.
 5. Blocks regroup by harness, account and project, the key being the
    repository root, so worktrees of one repository merge and same-named
    folders of different ones stay apart, and merge while the next
@@ -134,10 +145,10 @@ listing gets a stand-in row from the ledger, as the app's
 
 ## How it differs from the Mac app
 
-- **Sources**: the ledger's harnesses plus Pi and Factory Droid session
-  files, on the hub machine. The Mac app also reads Freebuff session
-  files, the Cursor editor's own state and Devin cloud sessions, which
-  the web doesn't read yet; a satellite's activity is not shown either.
+- **Sources**: the ledger's harnesses plus Pi, Factory Droid and
+  Freebuff session files, on the hub machine. The Mac app also reads
+  the Cursor editor's own state and Devin cloud sessions, which the web
+  doesn't read yet; a satellite's activity is not shown either.
   The hub keeps its file index in memory and checks the files on every
   read; the Mac's copy in `~/.quiver/cache/calendar` is its own.
 - **Grok Bot titles** come from the names the Mac app remembered in
