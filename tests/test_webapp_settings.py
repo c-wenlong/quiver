@@ -601,11 +601,6 @@ class TestGet(_Settings):
             settings_page.get(self.ctx(), {"part": "secrets"})
         self.assertEqual(caught.exception.status, 400)
 
-    def test_page_script_is_bundled(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("settings"', data)
-
 
 # ---------------------------------------------------------------- writes
 

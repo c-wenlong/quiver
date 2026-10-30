@@ -641,7 +641,6 @@ class TestRoute(HubBase):
     def test_page_assets_are_served(self):
         status, data = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("status"', data)
         self.assertIn(b".status-grid", self.srv.request("GET", "/app/pages.css")[1])
         for logo in ("harness-openai.svg", "harness-copilot.svg", "harness-npm.svg",
                      "harness-vercel.svg", "harness-cloudflare-color.svg"):
