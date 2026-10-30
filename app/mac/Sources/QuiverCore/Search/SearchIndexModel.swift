@@ -12,7 +12,7 @@ import Observation
 /// files — on a short cycle so sessions running now become searchable
 /// within a minute; a poll task keeps the status line
 /// honest — every couple of seconds while a scan runs, slower once it
-/// settles.
+/// settles — and reads the index only while the line is on screen.
 @MainActor
 @Observable
 public final class SearchIndexModel {
@@ -48,6 +48,15 @@ public final class SearchIndexModel {
     /// or a poll that watched the ledger's scan settle. Nil until then, so
     /// a store that only ever read an old index shows no timestamp.
     public private(set) var lastSynced: Date?
+
+    /// Whether Settings is showing the status line. The row sets it on
+    /// appear and disappear; showing it reads the index at once.
+    public var statusVisible = false {
+        didSet {
+            guard statusVisible, !oldValue else { return }
+            Task { await refreshStatus() }
+        }
+    }
 
     /// A scan is running (the ledger's `isLoading`): the resync button
     /// dims while one is.
@@ -257,16 +266,23 @@ public final class SearchIndexModel {
         switch polled {
         case .success(let status):
             lastStatus = status
-            let scanning = overview?.isLoading ?? false
-            // A scan the model didn't kick — the app's own refresh — still
-            // counts as a sync once the poll watches it end.
-            if wasScanning && !scanning { lastSynced = Date() }
-            wasScanning = scanning
+            let scanning = noteScan()
             statusText = statusError
                 ?? Self.statusLine(status, scanning: scanning, synced: lastSynced)
         case .failure(let error):
             statusText = "Couldn't read the index status: \(error.localizedDescription)"
         }
+    }
+
+    /// Watches the ledger's scan without touching the index: a scan the
+    /// model didn't kick (the app's own refresh) still counts as a sync
+    /// once a poll sees it end. Returns whether one is running now.
+    @discardableResult
+    private func noteScan() -> Bool {
+        let scanning = overview?.isLoading ?? false
+        if wasScanning && !scanning { lastSynced = Date() }
+        wasScanning = scanning
+        return scanning
     }
 
     /// Settings' resync: the same full `load(scan:)` enabling kicks, then a
@@ -279,12 +295,19 @@ public final class SearchIndexModel {
 
     /// The status poll: every `pollScanning` while the ledger's scan is in
     /// flight (the `isLoading` signal), `pollSettled` once it is quiet.
+    /// The index's `count(*)` reads only run while the row is on screen;
+    /// on a large index they cost a few percent of a core every poll.
+    /// Hidden, the poll only watches the scan, so `lastSynced` stays true.
     private func startPolling() {
         polling?.cancel()
         polling = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refreshStatus()
                 guard let self else { return }
+                if statusVisible {
+                    await refreshStatus()
+                } else {
+                    noteScan()
+                }
                 do {
                     try await Task.sleep(
                         for: overview?.isLoading ?? false ? pollScanning : pollSettled)

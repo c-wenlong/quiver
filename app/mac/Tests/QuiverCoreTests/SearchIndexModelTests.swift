@@ -102,6 +102,21 @@ import Testing
         #expect(s.model.statusText.contains("0 sessions, 0 messages"))
     }
 
+    @Test func showingTheStatusLineReadsTheIndexAtOnce() async throws {
+        let s = try stack()
+        s.model.enabled = true
+        await s.model.apply()
+        #expect(s.model.statusText.contains("0 sessions"))
+
+        // A row lands while the line is hidden; the poll doesn't read the
+        // index then, so only showing the line can pick it up.
+        _ = try #require(s.model.store).createSession(
+            SearchSessionFields(agent: "claude", filePath: "/t/one.jsonl"))
+        s.model.statusVisible = true
+        let read = await observe { s.model.statusText.contains("1 session,") }
+        #expect(read)
+    }
+
     @Test func disablingDetachesButKeepsTheFiles() async throws {
         let s = try stack()
         s.model.enabled = true
