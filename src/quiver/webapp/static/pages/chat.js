@@ -2653,6 +2653,9 @@ const SessionChat = (() => {
     chat.rail.loading = true;
     chat.rail.error = "";
     paintRail();
+    // sessions.js's pin ledger: a pin chosen while this read was out
+    // isn't undone by it.
+    const mark = typeof pinLedger !== "undefined" ? pinLedger.clock : 0;
     const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
     if (gen !== chat.gen) return;
     chat.rail.loading = false;
@@ -2666,6 +2669,7 @@ const SessionChat = (() => {
       paintRail();
       return;
     }
+    if (typeof pinOverlay === "function") pinOverlay(data.sessions || [], mark);
     const page = railPage();
     if (page) page.data = data; else chat.railData = data;
     paintRail();

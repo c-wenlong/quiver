@@ -15,6 +15,7 @@ from pathlib import Path
 
 from quiver.webapp import sessions
 
+from tests.test_webapp import app_js_function
 from tests.test_webapp_launch_sheets import STUB
 
 STATIC = Path(__file__).resolve().parent.parent / "src" / "quiver" / "webapp" / "static"
@@ -173,6 +174,27 @@ class TestSessionActionRules(unittest.TestCase):
             return { afterStale, early, late, left: pinLedger.choices.size };""")
         self.assertEqual(out, {"afterStale": False, "early": False, "late": True, "left": 0})
 
+    def test_overlapping_refusals_go_back_to_the_saved_pin(self):
+        out = self.run_js("""
+            sessionsPage.data = { sessions: [{ key: "k", title: "T", pinned: false, pinned_at: null }] };
+            const row = () => sessionsPage.data.sessions[0];
+            const pending = [];
+            answer = () => new Promise((r) => pending.push(r));
+            const refuse = { status: 0, data: null };
+            // Pin, then Unpin, before either answers; both fail.
+            const pin = setPinned(row(), true);
+            const unpin = setPinned(row(), false);
+            pending[0](refuse); await pin;
+            pending[1](refuse); await unpin;
+            const bothFailed = row().pinned;
+            // Pin, then Unpin; the pin lands and the unpin fails.
+            const pin2 = setPinned(row(), true);
+            const unpin2 = setPinned(row(), false);
+            pending[2]({ status: 200, data: { title: "T", pinned: true, pinned_at: 42 } }); await pin2;
+            pending[3](refuse); await unpin2;
+            return { bothFailed, pinLanded: [row().pinned, row().pinned_at] };""")
+        self.assertEqual(out, {"bothFailed": False, "pinLanded": [True, 42]})
+
     def test_a_meta_answer_reaches_the_open_chat(self):
         out = self.run_js("""
             const applied = [];
@@ -221,7 +243,9 @@ class TestSessionActionRules(unittest.TestCase):
 # The launch sheets' DOM stub, reading ids off <form>, <span> and <p>
 # too, with the input methods the sheets call.
 SHEET_STUB = (STUB.replace("(input|button|a|div)", "(input|button|a|div|form|span|p)")
-              + "{ const made = makeEl; makeEl = (...a) => Object.assign(made(...a), { select() {} }); }\n"
+              + "{ const made = makeEl; makeEl = (...a) => Object.assign(made(...a), { select() {},"
+              " close() { this.open = false; if (this.onclose) this.onclose(); } }); }\n"
+              + app_js_function("bodySheet")
               + "globalThis.apiPost = async (path, body) => { fetchCalls.push({ path, body });"
               " const r = fetchRoutes.find(([p]) => path.startsWith(p));"
               " const a = r ? r[1] : { status: 404, body: { error: { message: 'unstubbed ' + path } } };"
@@ -326,6 +350,28 @@ class TestSessionActionSheets(unittest.TestCase):
         self.assertEqual(out["hash"], "#/sessions?chat=codex%3Anew")
         self.assertTrue(out["closed"])
         self.assertEqual(out["refused"], ["gemini can't fork a session", False, False, True])
+
+    def test_a_fork_sheet_closed_by_leaving_never_opens_the_chat(self):
+        out = self.run_flow(r"""
+            fetchRoutes.push(["/v1/sessions/codex%3At/fork", { status: 202,
+              body: { ok: true, launch_id: "L9", state: "pending" } }]);
+            let release;
+            globalThis.api = (path) => new Promise((r) => { release = () => r({ status: 200, data: { state: "started", key: "codex:new" } }); });
+            openForkSheet({ key: "codex:t", title: "Trim", harness: "codex", cwd: "/w/app", can_fork: true });
+            const d = created.get("session-action-sheet");
+            d.querySelector("#fork-prompt").value = "go";
+            d.querySelector("#fork-prompt").oninput();
+            d.querySelector("#fork-form").onsubmit({ preventDefault() {} });
+            await tick();
+            // Navigation closes route sheets (app.js closeRouteSheets).
+            d.close();
+            release();
+            await tick();
+            out.hash = location.hash;
+            out.routeSheet = "routeSheet" in d.dataset || "data-route-sheet" in d.attrs;
+        """)
+        self.assertEqual(out["hash"], "")
+        self.assertTrue(out["routeSheet"])
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")

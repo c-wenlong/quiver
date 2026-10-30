@@ -728,26 +728,36 @@ function hasCustomTitle(r) {
  * answered keeps the choice instead of the hub's older answer. */
 const pinLedger = { clock: 0, choices: new Map() };
 
-function pinChoose(key, pinned, now) {
+/* `base` is the row's state the hub last confirmed, which a refusal of
+ * this choice goes back to; a choice made over one still unanswered
+ * keeps that one's base, not its optimistic state. */
+function pinChoose(key, pinned, now, base) {
+  const prior = pinLedger.choices.get(key);
   pinLedger.clock += 1;
-  pinLedger.choices.set(key, { pinned, pinnedAt: pinned ? now : null, version: pinLedger.clock, answeredAt: null });
+  pinLedger.choices.set(key, { pinned, pinnedAt: pinned ? now : null, version: pinLedger.clock, answeredAt: null,
+    base: prior && prior.answeredAt === null ? prior.base : base });
   return pinLedger.clock;
 }
 /* The hub took `version`: false when a newer choice replaced it. */
-function pinAnswered(key, version) {
+function pinAnswered(key, version, meta) {
   const c = pinLedger.choices.get(key);
+  if (c && c.version !== version && c.answeredAt === null && meta) {
+    // An older choice reached the hub: that is the state to go back to
+    // if the newer one is refused.
+    c.base = { pinned: !!meta.pinned, pinned_at: meta.pinned ? meta.pinned_at ?? null : null };
+  }
   if (!c || c.version !== version) return false;
   pinLedger.clock += 1;
   c.answeredAt = pinLedger.clock;
   return true;
 }
-/* The hub refused `version`: true when it was still the latest choice,
- * so the row goes back. */
+/* The hub refused `version`: the state to put the row back to when it
+ * was still the latest choice, else null. */
 function pinRefused(key, version) {
   const c = pinLedger.choices.get(key);
-  if (!c || c.version !== version) return false;
+  if (!c || c.version !== version) return null;
   pinLedger.choices.delete(key);
-  return true;
+  return c.base;
 }
 /* Rows fetched from `mark` (the clock when the fetch started) keep each
  * choice not yet answered by then; choices the fetch reflects go. */
@@ -791,16 +801,17 @@ async function setPinned(row, pinned) {
   const key = row.key;
   const r = sessionRowFor(key) || row;
   const before = { pinned: !!r.pinned, pinned_at: r.pinned_at ?? null };
-  const version = pinChoose(key, pinned, Date.now() / 1000);
+  const version = pinChoose(key, pinned, Date.now() / 1000, before);
   patchMeta(key, { title: r.title, harness_title: r.harness_title, pinned, pinned_at: pinLedger.choices.get(key).pinnedAt });
   repaintList();
   const { status, data } = await apiPost(`/v1/sessions/${encodeURIComponent(key)}/pin`, { pinned });
   if (status === 200 && data) {
-    if (pinAnswered(key, version)) { patchMeta(key, data); repaintList(); }
+    if (pinAnswered(key, version, data)) { patchMeta(key, data); repaintList(); }
     return;
   }
-  if (!pinRefused(key, version)) return;
-  patchMeta(key, { title: r.title, harness_title: r.harness_title, ...before });
+  const base = pinRefused(key, version);
+  if (!base) return;
+  patchMeta(key, { title: r.title, harness_title: r.harness_title, ...base });
   if (status === 401) {
     if (sessionsListVisible()) renderGate();
     return;
@@ -887,15 +898,12 @@ function runSessionAction(action, r) {
   if (action === "fork") return openForkSheet(r);
 }
 
+/* A route sheet (app.js bodySheet): leaving the page closes it. Any
+ * close (Esc, Cancel, navigation) stops the sheet trusting replies, so a
+ * fork's polls can't open its chat from another page. */
 function actionSheetEl() {
-  let sheet = document.getElementById("session-action-sheet");
-  if (sheet) return sheet;
-  sheet = document.createElement("dialog");
-  sheet.id = "session-action-sheet";
-  sheet.className = "sheet";
-  // Esc counts as Cancel: a fork's polls stop trusting their replies.
-  sheet.oncancel = () => { actionSheet.seq++; };
-  document.body.appendChild(sheet);
+  const sheet = bodySheet("session-action-sheet", "sheet");
+  sheet.onclose = () => { actionSheet.seq++; };
   return sheet;
 }
 const actionSheet = { seq: 0 };
