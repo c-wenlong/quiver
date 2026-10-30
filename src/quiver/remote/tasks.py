@@ -517,6 +517,10 @@ def list_view(state, args) -> tuple[int, dict]:
                     pr_read.add(tid)
             if listed.get("fetched_at") is not None:
                 fetched.append(listed["fetched_at"])
+            if listed.get("truncated"):
+                # More open issues than one list reads: say so rather
+                # than pass the first pages off as all of them.
+                body["linear"] = {**body["linear"], "truncated": True}
         else:
             # The probe passed but the fetch failed anyway: say so on
             # the linear block and keep the stored rows' last state.
