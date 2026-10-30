@@ -402,9 +402,12 @@ struct HarnessTile: View {
 extension IssueLaunchFlow {
     /// Once the hub has accepted the launch, cancelling only stops this
     /// sheet waiting: the session starts anyway, so the button says so.
+    /// After the wait gave up unconfirmed there is nothing left to stop,
+    /// and the button only closes.
     var cancelTitle: String {
         switch phase {
         case .waiting, .started: "Stop waiting"
+        case .unconfirmed: "Close"
         default: "Cancel"
         }
     }
