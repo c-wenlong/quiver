@@ -50,13 +50,6 @@ CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
 
 # ── TOML region splitter ─────────────────────────────────────────────
 
-# Recognise [mcp_servers], [mcp_servers.<name>], [mcp_servers.<name>.<subkey>],
-# plus dotted-quoted forms: [mcp_servers."name"] or [mcp_servers.'name'].
-_MCP_HEADER_RE = re.compile(
-    r"^\[mcp_servers(?:\.[A-Za-z0-9_-]+|\"[^\\\"]*\"|'[^']*')*\]"
-)
-
-
 def _is_mcp_header(stripped_line: str) -> bool:
     """True for a ``[mcp_servers…]`` table header (``.``/``]`` next char).
 

@@ -56,7 +56,6 @@ DEFAULT_LIMIT = 50
 SNIPPET_MAX = 512
 # Snippet() is called per returned row; a huge page means hundreds of tiny
 # queries on the same connection. 512 bounds the work and the payload.
-_FTS_SNIPPET_TOKENS = 12
 
 # unicode61 with tokenchars '_.-/+' keeps runs of word characters plus
 # ``_ . - / +`` as one token. ``\w`` already covers ``_``.
