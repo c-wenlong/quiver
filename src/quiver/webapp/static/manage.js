@@ -31,7 +31,7 @@ async function renderHarnesses() {
   }
   const { status, data } = await api("/v1/app/harnesses");
   if (gen !== harnessesPage.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) return pageError(harnessesHeader(), status, data, renderHarnesses);
   harnessesPage.data = data;
   paintHarnesses();
@@ -271,12 +271,11 @@ async function harnessWrite(action, name, extra = {}) {
   // write landed: drop it, so it can't paint the old state over the reply.
   if (status === 200) p.gen++;
   if (status === 401) {
-    if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onHarnessesPage()) renderGate();
     return;
   }
   if (status !== 200 || !data) {
-    p.actionError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.actionError = failText(status, data);
   } else if (p.data) {
     const rows = p.data.harnesses;
     const at = rows.findIndex((h) => h.name === data.name);
@@ -613,8 +612,7 @@ function bindHarnessSheet() {
 }
 
 function sheetFailure(status, data) {
-  return (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  return failText(status, data);
 }
 
 /* The sheet's request: working while it runs, the error in the sheet. A
@@ -630,7 +628,7 @@ async function sheetPost(s, action, body) {
   if (status === 401) {
     s.gated = true;
     closeHarnessSheet(true);
-    if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onHarnessesPage()) renderGate();
     return null;
   }
   // A list read still in flight may predate this write: drop it.
@@ -667,7 +665,7 @@ async function detectScan() {
   if (p.sheet !== s || mine !== s.gen) return;
   if (status === 401) {
     closeHarnessSheet(true);
-    if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onHarnessesPage()) renderGate();
     return;
   }
   if (status !== 200 || !data) {
@@ -747,7 +745,7 @@ async function renderAccounts(_id, refresh = false) {
   // A failed request pauses the clock's repaints, which would otherwise
   // put the old readings back over the error or the pairing steps.
   accountsPage.failed = status !== 200 || !data;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (accountsPage.failed) return pageError(accountsHeader(false), status, data, () => renderAccounts("accounts", true));
   accountsPage.data = data;
   paintAccounts();
@@ -873,8 +871,7 @@ function bindRefresh(render, before) {
 }
 
 function pageError(header, status, data, retry) {
-  const msg = (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+  const msg = failText(status, data, "then refresh");
   document.getElementById("panel").innerHTML = `<div class="page">${header}<div class="card"><p class="error">${esc(msg)}</p></div></div>`;
   bindRefresh(retry);
 }

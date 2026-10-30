@@ -82,7 +82,7 @@ async function mcpLoad(health) {
   mcpPage.loading = false;
   mcpPage.checking = false;
   if (status === 401) {
-    if (mcpOnPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (mcpOnPage()) renderGate();
     return;
   }
   if (status !== 200 || !data) {
@@ -208,8 +208,7 @@ function mcpShell(body) {
 function paintMcp() {
   if (!mcpPage.data) {
     const { status, data } = mcpPage.failure || {};
-    const msg = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+    const msg = failText(status, data, "then refresh");
     return mcpShell(`<div class="card"><p class="error">${esc(msg)}</p></div>`);
   }
   const d = mcpPage.data, p = mcpPage;
@@ -217,7 +216,7 @@ function paintMcp() {
   const parts = [];
   if (p.failure) {
     const { status, data } = p.failure;
-    const msg = (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+    const msg = failText(status, data, "then refresh");
     parts.push(`<div class="card"><p class="error">${esc(msg)}</p></div>`);
   }
   if (p.notice) parts.push(`<div class="card mcp-notice"><p role="status">${mcpSvg("check")}<span>${esc(p.notice)}</span></p></div>`);
@@ -484,8 +483,7 @@ function mcpRequest(s, st) {
  * is stored, and the pair header an owner's tailnet device signs in with). */
 const mcpPost = (action, body) => apiPost(`/v1/app/mcp/${action}`, body);
 
-const mcpFailure = (status, data) => (data && data.error && data.error.message)
-  || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+const mcpFailure = (status, data) => failText(status, data);
 
 /* The list a sync answered with becomes the page's, keeping the health
  * the old list had (the write does not probe). */
@@ -521,7 +519,7 @@ async function mcpPreview(s, thenConfirm) {
   const { status, data } = await mcpPost("preview", request);
   if (mcpPage.sheet !== st) return;
   st.running = false;
-  if (status === 401) { renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { renderGate(); return; }
   if (status !== 200 || !data) {
     st.error = mcpFailure(status, data);
     st.preview = null;
@@ -547,7 +545,7 @@ async function mcpSync(s) {
   const { status, data } = await mcpPost("sync", request);
   st.running = false;
   st.confirming = false;
-  if (status === 401) { renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { renderGate(); return; }
   if (status !== 200 || !data) {
     st.error = mcpFailure(status, data);
     st.preview = null;
@@ -679,7 +677,7 @@ async function mcpSaveSecret(s, name) {
   st.savingSecret = null;
   st.drafts.delete(name);
   if (status === 401) {
-    if (mcpOnPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (mcpOnPage()) renderGate();
     return;
   }
   if (status !== 200 || !data) {
@@ -724,7 +722,7 @@ async function mcpRemove(s) {
   st.running = false;
   st.removing = false;
   if (status === 401) {
-    if (mcpOnPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (mcpOnPage()) renderGate();
     return;
   }
   if (status !== 200 || !data) {
@@ -1327,7 +1325,7 @@ async function mcpAdd() {
   body.vars = [];
   a.working = false;
   if (status === 401) {
-    if (mcpOnPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (mcpOnPage()) renderGate();
     return;
   }
   if (status !== 200 || !data) {

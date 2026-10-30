@@ -2319,7 +2319,7 @@ const SessionChat = (() => {
       if (resp.status === 401) {
         chat.stream = null;
         close();
-        renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+        renderGate();
         return;
       }
       if (resp.status === 404) {
@@ -2570,7 +2570,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     chat.rail.loading = false;
     if (status === 401) {
-      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      renderGate();
       return;
     }
     if (status !== 200 || !data) {
@@ -2666,7 +2666,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     if (rowStatus === 401 || logStatus === 401) {
       close();
-      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      renderGate();
       return;
     }
     if (rowStatus === 404) { setConn("err"); return; }

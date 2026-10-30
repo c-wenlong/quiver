@@ -33,6 +33,15 @@ const safeHref = (url) => {
   return /^(https?:\/\/|mailto:)/i.test(s) ? esc(s) : "";
 };
 
+/* What a failed read or write says: the hub's own message, else its
+ * status, else that it didn't answer. ``next`` ends the offline sentence
+ * ("then refresh"); null leaves just "Couldn't reach the hub." */
+function failText(status, data, next = "then try again") {
+  return (data && data.error && data.error.message)
+    || (status ? `The hub answered ${status}.`
+      : next ? `Couldn't reach the hub. Check the connection, ${next}.` : "Couldn't reach the hub.");
+}
+
 /* status 0 means the hub didn't answer at all (offline, connection lost). */
 async function api(path) {
   let resp;
@@ -125,13 +134,17 @@ function pageHeader(title, subtitle, actions = "") {
     <div class="page-actions">${actions}</div></div>`;
 }
 
+/* The gate's line for a credential the hub refused (a 401), and the
+ * error pages show when a write answers 401. */
+const CREDENTIAL_REFUSED = "The hub doesn't know this browser's credential. It may have been revoked.";
+
 /* Only a device the hub can't place reaches this: the owner's own tailnet
  * devices are let in without pairing. The card is the old remote page's
  * pair view: ask the tailnet for a code the owner approves elsewhere, or
  * paste a token a ``swe remote pair`` or Settings' QR minted. ``message``
  * explains a credential the hub refused; with none stored the card says
  * the device needs pairing, unless ``always`` keeps the message. */
-function renderGate(message, always = false) {
+function renderGate(message = CREDENTIAL_REFUSED, always = false) {
   const lead = credential() || always ? message
     : "This device isn't signed in to the hub owner's Tailscale account, so it needs pairing.";
   document.getElementById("panel").innerHTML = `<div class="page"><div class="card gate">
@@ -432,10 +445,9 @@ async function renderOverview(_id, rescan = false) {
   if (rescan) q.set("rescan", "1");
   const { status, data } = await api(`/v1/app/overview?${q}`);
   if (gen !== overview.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
-    const msg = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then rescan.");
+    const msg = failText(status, data, "then rescan");
     panel.innerHTML = `<div class="page">${overviewHeader(false)}<div class="card"><p class="error">${esc(msg)}</p></div></div>`;
     bindOverviewHeader();
     return;

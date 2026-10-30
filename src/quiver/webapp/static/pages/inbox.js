@@ -85,7 +85,7 @@
       const failed = data.failed || [];
       if (failed.length) inbox.actionError = failed.map((f) => `${f.id}: ${f.error}`).join(" · ");
     } else if (status === 401) {
-      if (onInbox()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      if (onInbox()) renderGate();
       return;
     } else {
       inbox.actionError = GhUI.failMessage(status, data);

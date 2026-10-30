@@ -48,11 +48,10 @@ async function renderDoctor() {
   paintDoctor();
   const { status, data } = await api("/v1/app/doctor");
   if (gen !== routeGen || mine !== p.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
     p.state = "failed";
-    p.error = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.error = failText(status, data);
   } else {
     p.state = "loaded";
     p.data = data;
@@ -246,7 +245,7 @@ async function doctorRun(finding) {
   const { status, data } = await apiPost("/v1/app/doctor/run", { check: finding.check, message: finding.message });
   p.running = null;
   if (status === 401) {
-    if (onDoctorPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onDoctorPage()) renderGate();
     return;
   }
   let error;
@@ -260,8 +259,7 @@ async function doctorRun(finding) {
     p.confirmingReplace = false;
     p.replaceError = null;
   } else {
-    error = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    error = failText(status, data);
   }
   if (error) {
     const still = p.data && p.data.findings.some((f) => doctorId(f) === id);
@@ -285,7 +283,7 @@ async function doctorReplace() {
   const { status, data } = await apiPost("/v1/app/doctor/replace", {});
   p.running = null;
   if (status === 401) {
-    if (onDoctorPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onDoctorPage()) renderGate();
     return;
   }
   if (status === 200 && data && data.report) {
@@ -295,8 +293,7 @@ async function doctorReplace() {
     p.blocked = data.blocked || [];
     p.replaceError = data.error || null;
   } else {
-    p.replaceError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.replaceError = failText(status, data);
   }
   if (!onDoctorPage()) return;
   paintDoctor();
