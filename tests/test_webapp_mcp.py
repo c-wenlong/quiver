@@ -629,6 +629,7 @@ const registerPage = () => {};
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
 const Fmt = {}; const localStorage = { getItem: () => null, setItem() {} };
 const document = { getElementById: () => null };
+const window = { addEventListener() {} };
 let answer; const apiPost = () => new Promise((resolve) => { answer = resolve; });
 """
 
@@ -949,6 +950,39 @@ class TestSyncRoute(_SyncHome, HubBase):
                                         headers=self.auth())
         self.assertEqual(status, 409)
         self.assertEqual(json.loads(data)["error"]["code"], "secrets_missing")
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestLeavingForgetsSecrets(unittest.TestCase):
+    """pages/mcp.js under node: navigating away removes both sheets with
+    #panel and fires no close, so the hashchange handler drops the Add
+    draft and the values a server's sheet revealed or had typed in."""
+
+    def test_leaving_drops_the_add_draft_and_revealed_values(self):
+        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/mcp.js"
+        prelude = (
+            "const listeners = [];\n"
+            "globalThis.window = { addEventListener(t, f) { if (t === 'hashchange') listeners.push(f); } };\n"
+            "globalThis.localStorage = { getItem() { return null; }, setItem() {} };\n"
+            "globalThis.location = { hash: '#/mcp' };\n"
+            "function registerPage() {}\n")
+        body = (
+            "const st = () => ({ revealed: new Map([['TOKEN', 'shh']]), revealGen: 0,"
+            " drafts: new Map([['KEY', 'typed']]), replacing: new Set(['KEY']), secretError: 'x' });\n"
+            "const fire = (hash) => { location.hash = hash; listeners.forEach((f) => f()); };\n"
+            "mcpPage.add = { line: 'npx srv --token=abc' }; mcpPage.sheet = st();\n"
+            "fire('#/mcp?x=1');\n"
+            "const stayed = [mcpPage.add !== null, mcpPage.sheet.revealed.size];\n"
+            "fire('#/overview');\n"
+            "const s = mcpPage.sheet;\n"
+            "process.stdout.write(JSON.stringify({ stayed, add: mcpPage.add, revealed: s.revealed.size,"
+            " drafts: s.drafts.size, replacing: s.replacing.size, gen: s.revealGen, error: s.secretError }));\n")
+        src = prelude + page.read_text(encoding="utf-8") + "\n" + body
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"stayed": [True, 1], "add": None, "revealed": 0, "drafts": 0,
+                                                  "replacing": 0, "gen": 1, "error": None})
 
 
 if __name__ == "__main__":
