@@ -2156,10 +2156,13 @@ const SessionChat = (() => {
          <button type="button" class="tab" data-dec="always">Always</button>
          <button type="button" class="tab deny" data-dec="deny">Deny</button>`) : "";
     // The generic "Approval requested" fallback repeats the role line —
-    // only a real question or context goes under it.
+    // only a real question or context goes under it. The prompt is text
+    // scraped from the agent's pane, so it shows as plain monospace text
+    // with its spacing kept, never as markdown: a link, image or heading
+    // in the pane must not render (as the iOS app shows it).
     const prompt = (msg.text || "").trim();
     const textRow = prompt && prompt !== "Approval requested"
-      ? `<div class="text">${md(msg.text)}</div>` : "";
+      ? `<div class="text approval-prompt">${esc(prompt)}</div>` : "";
     div.innerHTML = `
       <button type="button" class="approval-toggle" hidden aria-expanded="false">
         <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
@@ -3218,7 +3221,7 @@ const SessionChat = (() => {
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
       inlineImagesAsText, inline, taskBox, tableHtml,
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
-      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post, handleFrame,
+      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post, handleFrame, approvalCard,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
