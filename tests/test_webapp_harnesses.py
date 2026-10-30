@@ -74,7 +74,7 @@ class TestRoute(_Registry, HubBase):
         self.assertIn("bad json", data.decode())
 
     def test_page_script_is_served(self):
-        self.assertEqual(self.srv.request("GET", "/app/manage.js")[0], 200)
+        self.assertEqual(self.srv.request("GET", "/manage.js")[0], 200)
 
 
 # ----------------------------------------------------------------- writes
@@ -332,11 +332,11 @@ class TestWriteRoute(_TempRegistry, HubBase):
         self.assertEqual(self.file.read_text(), before)
 
     def test_page_assets_carry_the_writes(self):
-        _, js = self.srv.request("GET", "/app/manage.js")
+        _, js = self.srv.request("GET", "/manage.js")
         self.assertIn(b"/v1/app/harness/", js)
         for action in (b'"edit"', b'"register"', b'"add"', b"view=discover"):
             self.assertIn(action, js)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".harness-archive", css)
         self.assertIn(b".harness-sheet", css)
 

@@ -446,11 +446,11 @@ class TestRoute(_Home, HubBase):
             self.assertIn("message", json.loads(data)["error"])
 
     def test_page_assets_are_served(self):
-        _, js = self.srv.request("GET", "/app/pages.js")
+        _, js = self.srv.request("GET", "/pages.js")
         self.assertIn(b"/v1/app/setup/apply", js)
         # The look step saves where Settings › General reads it.
         self.assertIn(b'"quiver.appearance"', js)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".setup-sheet", css)
 
 

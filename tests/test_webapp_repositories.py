@@ -1030,7 +1030,7 @@ class TestMarkdown(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestBundle(unittest.TestCase):
     def test_both_pages_register_from_the_served_bundle(self):
-        """Each script runs in its own scope in /app/pages.js: GhUI has to
+        """Each script runs in its own scope in /pages.js: GhUI has to
         reach inbox.js and repositories.js as a global."""
         from quiver.webapp import pages
         stubs = (
@@ -1130,9 +1130,9 @@ class TestRoute(HubBase):
         self.assertEqual([r["name"] for r in G.pinned(self.srv.home)], ["o/b"])
 
     def test_page_scripts_are_bundled(self):
-        _, js = self.srv.request("GET", "/app/pages.js")
+        _, js = self.srv.request("GET", "/pages.js")
         self.assertIn(b"const GhUI", js)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".gh-row", css)
 
 

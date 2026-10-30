@@ -76,7 +76,7 @@ public struct PairTicket: Decodable, Sendable, Equatable {
     public let port: Int
     public let token: String
     public let name: String?
-    /// `http://host:port/app/#pair=token` — opens the web app in a phone browser.
+    /// `http://host:port/#pair=token` — opens the web app in a phone browser.
     public let url: String
     /// `quiver://pair?…` — opens the iOS app.
     public let deepLink: String
