@@ -8,10 +8,10 @@ import UserNotifications
 /// banners and repo-board invalidations. The Inbox page's own poll loop
 /// is unchanged — it reads whatever this fetched last.
 ///
-/// Delivery state is the set of notification ids already bannered,
-/// persisted like the limit alerts' state file so a relaunch doesn't
-/// repeat them. The first poll ever only seeds the set — history is
-/// not news.
+/// Delivery state is the set of thread updates already bannered (a
+/// thread's id plus its `updated_at`), persisted like the limit alerts'
+/// state file so a relaunch doesn't repeat them. The first poll ever only
+/// seeds the set — history is not news.
 @MainActor
 @Observable
 final class GitHubNotifier {
@@ -81,26 +81,55 @@ final class GitHubNotifier {
 
         if !primed {
             primed = true
-            for note in notes { record(note.id) }
+            for note in notes { record(Self.key(note)) }
             save()
             return []
         }
 
-        let fresh = notes.filter { $0.unread && !delivered.contains($0.id) }
+        var fresh: [GhNotification] = []
+        var migrated = false
+        for note in notes where note.unread {
+            let key = Self.key(note)
+            if delivered.contains(key) { continue }
+            // Files written before keys carried `updated_at` hold bare ids:
+            // count that thread as seen at its current update, so upgrading
+            // doesn't banner every unread thread again, and drop the bare id
+            // so its next update banners.
+            if forget(note.id) {
+                record(key)
+                migrated = true
+                continue
+            }
+            fresh.append(note)
+        }
         var refreshes: [Task<Void, Never>] = []
         for note in fresh {
-            record(note.id)
+            record(Self.key(note))
             refreshes += model.invalidate(repo: note.repo, swe: swe)
         }
-        if !fresh.isEmpty {
-            if bannersEnabled { await post(fresh) }
+        if !fresh.isEmpty, bannersEnabled { await post(fresh) }
+        if !fresh.isEmpty || migrated {
             trim()
             save()
         }
         return refreshes
     }
 
-    /// Newest ids go last; eviction drops from the front, so an id a
+    /// What a banner is owed for: one update of one thread. GitHub keeps a
+    /// thread's id when new activity lands and only moves `updated_at` and
+    /// marks it unread again, so the id alone would banner a PR once ever.
+    static func key(_ note: GhNotification) -> String {
+        "\(note.id)@\(Int(note.updatedAt.date?.timeIntervalSince1970 ?? 0))"
+    }
+
+    /// Removes `entry` from the delivered set; true when it was there.
+    private func forget(_ entry: String) -> Bool {
+        guard delivered.remove(entry) != nil else { return false }
+        deliveredOrder.removeAll { $0 == entry }
+        return true
+    }
+
+    /// Newest keys go last; eviction drops from the front, so a key a
     /// re-poll could still surface is never the first out.
     private func record(_ id: String) {
         if delivered.insert(id).inserted { deliveredOrder.append(id) }

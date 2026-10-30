@@ -51,11 +51,12 @@ struct GitHubNotifierTests {
 
     private func note(
         _ id: String, repo: String = "o/r", unread: Bool = true,
-        type: String = "PullRequest", reason: String = "review_requested"
+        type: String = "PullRequest", reason: String = "review_requested",
+        updated: String = "2026-10-20T00:00:00Z"
     ) -> String {
         "{\"id\":\"\(id)\",\"repo\":\"\(repo)\",\"title\":\"t\(id)\",\"type\":\"\(type)\","
             + "\"reason\":\"\(reason)\",\"unread\":\(unread),"
-            + "\"updated_at\":\"2026-10-20T00:00:00Z\","
+            + "\"updated_at\":\"\(updated)\","
             + "\"url\":\"https://github.com/\(repo)/pull/1\"}"
     }
 
@@ -67,7 +68,12 @@ struct GitHubNotifierTests {
         scratch.url.appending(path: "quiver-\(UUID().uuidString)")
     }
 
+    /// The thread ids in the state file, each key's `@updated_at` dropped.
     private func deliveredIds(_ quiver: URL) throws -> [String] {
+        try deliveredKeys(quiver).map { String($0.prefix { $0 != "@" }) }
+    }
+
+    private func deliveredKeys(_ quiver: URL) throws -> [String] {
         struct State: Decodable { var delivered: [String] }
         return try JSONDecoder().decode(State.self, from: Data(
             contentsOf: quiver.appending(path: "cache/github-notified.json"))).delivered
@@ -104,6 +110,56 @@ struct GitHubNotifierTests {
         // The same inbox again: nothing new to say.
         await notifier.poll(swe: swe)
         #expect(posts.batches.count == 1)
+    }
+
+    /// GitHub keeps a thread's id when new activity lands and only moves
+    /// `updated_at`: a later review on a PR already bannered banners again.
+    @Test func newActivityOnASeenThreadBannersAgain() async throws {
+        let dir = quiverDir()
+        let posts = Posts()
+        let router = Router([inboxKey: inbox([])])
+        let swe = SweClient(runner: router)
+        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+            posts.batches.append($0)
+        }
+        notifier.bannersEnabled = true
+        await notifier.poll(swe: swe)
+        router.respond(inboxKey, inbox([note("a")]))
+        await notifier.poll(swe: swe)
+        router.respond(inboxKey, inbox([note("a", updated: "2026-10-21T09:30:00Z")]))
+        await notifier.poll(swe: swe)
+        await notifier.poll(swe: swe)
+        #expect(posts.batches.map { $0.map(\.id) } == [["a"], ["a"]])
+    }
+
+    /// A state file from before keys carried `updated_at` holds bare ids.
+    /// Upgrading does not banner those threads again, and the next update
+    /// on one of them does banner.
+    @Test func bareIdsFromAnOlderFileMigrateWithoutBanners() async throws {
+        let dir = quiverDir()
+        let file = dir.appending(path: "cache/github-notified.json")
+        try FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(["delivered": ["a"]]).write(to: file)
+        let posts = Posts()
+        let router = Router([inboxKey: inbox([note("a")])])
+        let swe = SweClient(runner: router)
+        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+            posts.batches.append($0)
+        }
+        notifier.bannersEnabled = true
+        await notifier.poll(swe: swe)
+        #expect(posts.batches.isEmpty)
+        #expect(try deliveredKeys(dir) == [GitHubNotifier.key(try decodedNote("a"))])
+        router.respond(inboxKey, inbox([note("a", updated: "2026-10-22T00:00:00Z")]))
+        await notifier.poll(swe: swe)
+        #expect(posts.batches.map { $0.map(\.id) } == [["a"]])
+    }
+
+    private func decodedNote(_ id: String) throws -> GhNotification {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(GhNotification.self, from: Data(note(id).utf8))
     }
 
     /// A note that arrives already read is not actionable — no banner.
