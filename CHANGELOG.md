@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message carries the uploaded files' refs in `attachments`, which the
   hub turns into `@path` for the harness. A message still needs text
   (the hub requires it); Enter on an empty box with files says so
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
 
 - **Mac app: approve pair requests in Settings › Remote.** A "Pending
   requests" group under Paired devices lists the phones asking to pair
