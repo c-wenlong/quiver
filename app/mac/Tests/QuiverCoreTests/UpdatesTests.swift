@@ -68,13 +68,13 @@ struct BuildInfoTests {
 
 @Suite("Update preferences")
 struct UpdatePreferencesTests {
-    private func freshDefaults() throws -> UserDefaults {
+    private func freshDefaults() -> UserDefaults {
         TestDefaults("UpdatePreferencesTests")
     }
 
     @Test func storedChannelWins() {
         let build = BuildInfo(channel: .dev)
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         #expect(prefs.channel(build: build) == .dev)
         prefs.channelOverride = "prod"
         #expect(prefs.channel(build: build) == .prod)
@@ -84,7 +84,7 @@ struct UpdatePreferencesTests {
 
     @Test func aProdBuildIgnoresAStoredDevOverride() {
         let build = BuildInfo(channel: .prod)
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         prefs.channelOverride = "dev"
         #expect(prefs.channel(build: build) == .prod)
         prefs.channelOverride = "prod"
@@ -95,7 +95,7 @@ struct UpdatePreferencesTests {
 
     @Test func storedCheckoutWinsAndExpandsTilde() {
         let build = BuildInfo(sourcePath: "/nonexistent/path")
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         prefs.checkoutOverride = "~/quiver"
         #expect(prefs.checkout(build: build) == (NSHomeDirectory() + "/quiver"))
     }
@@ -104,7 +104,7 @@ struct UpdatePreferencesTests {
         let temp = try TempDir()
         defer { withExtendedLifetime(temp) {} }
         let dir = temp.url
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         #expect(prefs.checkout(build: BuildInfo(sourcePath: dir.path)) == dir.path)
         #expect(prefs.checkout(build: BuildInfo(sourcePath: nil)) == nil)
         #expect(prefs.checkout(build: BuildInfo(sourcePath: "/definitely/not/here")) == nil)
@@ -235,10 +235,7 @@ struct ReleaseCheckTests {
 
     private struct FakeTransport: HTTPTransport {
         var answer: Result<(Data, Int), Error> = .failure(URLError(.notConnectedToInternet))
-        var calls = 0
         func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-            var copy = self
-            copy.calls += 1
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: try answer.get().1, httpVersion: nil,
                 headerFields: nil)!
