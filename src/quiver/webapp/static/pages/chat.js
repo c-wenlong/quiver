@@ -16,6 +16,8 @@ const SessionChat = (() => {
   const chat = {
     key: null, gen: 0, row: null, rowKnown: false, details: null,
     stream: null, retryTimer: null, retries: 0,
+    // Events held while a resync reads the transcript again, or null.
+    held: null,
     // Live events not yet shown. The hub polls a busy transcript about
     // once a second, so several messages arrive together; they are shown
     // one at a time instead of as a block.
@@ -2359,6 +2361,12 @@ const SessionChat = (() => {
   function handleFrame(key, frame) {
     const ev = parseFrame(frame);
     if (!ev || key !== chat.key) return;
+    // A resync is reading the transcript again: what streams meanwhile
+    // waits for it, so nothing lands above the history it redraws.
+    if (chat.held) {
+      if (ev.type !== "journal.truncated" && ev.type !== "journal.caught-up") chat.held.push(ev);
+      return;
+    }
     const h = chat.history;
     if (h) {
       // Replaying what came before the backfill's last message, only to
@@ -2372,20 +2380,64 @@ const SessionChat = (() => {
         return;
       }
     }
-    if (ev.type === "journal.truncated" && chat.seq) {
-      // The hub's ring dropped events past where this view stopped (a long
-      // disconnect on a busy session): say so rather than look complete.
-      const stick = nearBottom();
-      appendMessage({ kind: "system", text: "Some events were missed while the connection was down, and the hub's journal no longer has them." }, true);
-      if (stick) scrollBottom();
+    if (ev.type === "journal.truncated") {
+      resync(ev.seq);
+      return;
     }
-    if (ev.type === "journal.truncated" || ev.type === "journal.caught-up") {
+    if (ev.type === "journal.caught-up") {
       if (ev.seq && !chat.pending.length) remember(ev.seq);
       return;
     }
     // The cursor advances as each event is shown (showLive), so events
     // still waiting when the stream drops are replayed on reconnect.
     enqueue(ev);
+  }
+
+  /* journal.truncated: the journal no longer holds what this view needs
+   * to carry on from its cursor. Its ring dropped events past where the
+   * view stopped, or it was wiped (hub state reset) and its numbering now
+   * starts below the cursor, which would skip every new event as already
+   * seen. The view adopts the seq the hub sent, lower or not, and reads
+   * the transcript again, as the phone does. The stream stays open; what
+   * arrives meanwhile is held, then applied, except messages the redrawn
+   * history already shows. */
+  async function resync(head) {
+    const gen = chat.gen, key = chat.key;
+    dropPending();
+    chat.held = [];
+    chat.history = null;
+    chat.seq = typeof head === "number" && head >= 0 ? head : 0;
+    const { status, data } = await api(`${sessionPath(key, "messages")}?limit=500`);
+    if (gen !== chat.gen) return;
+    const held = chat.held || [];
+    chat.held = null;
+    if (status === 401) {
+      close();
+      renderGate();
+      return;
+    }
+    const log = $("chat-log");
+    // A failed read leaves the history on screen rather than an error.
+    if (status === 200 && data && log) {
+      // Unanswered approval cards stay, buttons and all: the transcript
+      // has no approvals, and their asks are behind the cursor.
+      const open = [...log.querySelectorAll(".msg.approval:not(.resolved)")];
+      log.innerHTML = "";
+      chat.toolCards.clear();
+      const messages = data.messages || [];
+      for (const ev of messages) appendEvent(ev, false);
+      if (messages.length) remember(messages[messages.length - 1].seq);
+      for (const card of open) log.appendChild(card);
+      scrollBottom();
+    }
+    // Status, ownership, command results and approvals aren't in the
+    // transcript, so they apply whatever their seq.
+    for (const ev of held) {
+      if (ev.type === "message.appended" && typeof ev.seq === "number" && ev.seq <= chat.seq) continue;
+      enqueue(ev);
+    }
+    // An attach or detach may have happened behind the cursor as well.
+    loadRow(gen);
   }
 
   function closeStream() {
@@ -2685,6 +2737,7 @@ const SessionChat = (() => {
 
   function close() {
     chat.gen++;
+    chat.held = null;
     closeStream();
     document.body.classList.remove("chat-open");
     chat.key = null;
@@ -3168,7 +3221,7 @@ const SessionChat = (() => {
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
       inlineImagesAsText, inline, taskBox, tableHtml,
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
-      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post,
+      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post, handleFrame,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
