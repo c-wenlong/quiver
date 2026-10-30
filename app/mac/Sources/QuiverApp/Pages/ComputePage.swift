@@ -93,11 +93,7 @@ struct ComputePage: View {
         }
     }
 
-    private var totalsLine: String {
-        let t = model.totals
-        return "\(ComputeSummary.bytes(t.memoryBytes)) across \(t.processCount) processes "
-            + "· CPU \(Self.cpu(t.cpuPercent))% · \(t.threads) threads"
-    }
+    private var totalsLine: String { ComputeSummary.totalsLine(model.totals) }
 
     /// Whole percent once it is two digits, one decimal below it.
     static func cpu(_ percent: Double) -> String {
