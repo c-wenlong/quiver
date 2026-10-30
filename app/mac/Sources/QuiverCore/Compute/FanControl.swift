@@ -78,26 +78,34 @@ public struct AdministratorInstaller: FanHelperInstalling {
     /// the bundle's copy while the prompt is up), and, when the app is
     /// signed by a team, that the copy carries that team's signature: the
     /// hash only proves the file didn't change during the prompt, not that
-    /// it is the helper Quiver shipped. Then ad-hoc sign it, write the job
-    /// from trusted text as root, and (re)start it. Every check runs on
-    /// the root-owned copy, which nothing running as the user can change.
+    /// it is the helper Quiver shipped. Then ad-hoc sign it, unload the old
+    /// job, move the copy into place, write the job from trusted text as
+    /// root, and start it. Every check runs on the root-owned staged copy,
+    /// which nothing running as the user can change, and the live path
+    /// only changes once the old job can no longer relaunch it.
     /// `team` is nil only for an ad-hoc build, which has no signature to
     /// check against and keeps the hash alone.
     public static func installCommand(executable: String, sha256: String, team: String?,
                                       control: URL) -> String {
-        let tool = shell(FanHelper.installedExecutable), job = shell(FanHelper.installedPlist)
-        let signature = team.map { " && " + signatureCheck(tool: FanHelper.installedExecutable, team: $0) } ?? ""
+        let staged = FanHelper.installedExecutable + ".new"
+        let tool = shell(FanHelper.installedExecutable), new = shell(staged), job = shell(FanHelper.installedPlist)
+        let signature = team.map { " && " + signatureCheck(tool: staged, team: $0) } ?? ""
+        // Everything is checked on a staged copy beside the live one: an
+        // installed KeepAlive job may relaunch its executable at any
+        // moment, so the live path only ever changes to a checked file,
+        // and only once the old job is unloaded.
         return "/bin/mkdir -p /Library/PrivilegedHelperTools"
-            + " && /usr/bin/install -m 755 -o root -g wheel \(shell(executable)) \(tool)"
-            + " && { [ \"$(/usr/bin/shasum -a 256 \(tool) | /usr/bin/cut -d ' ' -f 1)\" = \(shell(sha256)) ]"
-            + " || { /bin/rm -f \(tool); echo 'The fan helper changed during install.' >&2; exit 1; }; }"
+            + " && /usr/bin/install -m 755 -o root -g wheel \(shell(executable)) \(new)"
+            + " && { [ \"$(/usr/bin/shasum -a 256 \(new) | /usr/bin/cut -d ' ' -f 1)\" = \(shell(sha256)) ]"
+            + " || { /bin/rm -f \(new); echo 'The fan helper changed during install.' >&2; exit 1; }; }"
             + signature
-            + " && /usr/bin/codesign --force --sign - \(tool)"
-            + " && /usr/bin/printf '%s' \(shell(FanHelper.plistLine(control: control))) > \(job)"
-            + " && /usr/sbin/chown root:wheel \(job) && /bin/chmod 644 \(job)"
+            + " && /usr/bin/codesign --force --sign - \(new)"
             // A reinstall unloads the old job first; launchd needs a beat
             // before the label can load again.
             + " && { /bin/launchctl bootout system/\(FanHelper.label) 2>/dev/null && /bin/sleep 1; true; }"
+            + " && /bin/mv -f \(new) \(tool)"
+            + " && /usr/bin/printf '%s' \(shell(FanHelper.plistLine(control: control))) > \(job)"
+            + " && /usr/sbin/chown root:wheel \(job) && /bin/chmod 644 \(job)"
             + " && /bin/launchctl bootstrap system \(job)"
     }
 

@@ -438,7 +438,7 @@ import Testing
         let command = AdministratorInstaller.installCommand(
             executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", sha256: "abc123", team: nil,
             control: URL(fileURLWithPath: "/Users/o'neil/.quiver/fan/control.json"))
-        #expect(command.contains(#"/usr/bin/install -m 755 -o root -g wheel '/Users/o'\''neil/Apps/Quiver.app/Contents/MacOS/Quiver' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'"#))
+        #expect(command.contains(#"/usr/bin/install -m 755 -o root -g wheel '/Users/o'\''neil/Apps/Quiver.app/Contents/MacOS/Quiver' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"#))
         // The hash is checked on the root-owned copy, before re-signing
         // changes its bytes.
         let hash = try #require(command.range(of: "/usr/bin/shasum -a 256 '/Library/PrivilegedHelperTools/"))
@@ -466,12 +466,21 @@ import Testing
         let hash = try #require(command.range(of: "/usr/bin/shasum -a 256 "))
         let verify = try #require(command.range(
             of: #"/usr/bin/codesign --verify --strict -R '=identifier "QuiverFanHelper" and anchor apple generic"#
-                + #" and certificate leaf[subject.OU] = "ABCDE12345"' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'"#))
+                + #" and certificate leaf[subject.OU] = "ABCDE12345"' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"#))
         let sign = try #require(command.range(of: "/usr/bin/codesign --force --sign -"))
+        let bootout = try #require(command.range(of: "/bin/launchctl bootout"))
+        let move = try #require(command.range(of: "/bin/mv -f '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"
+            + " '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'"))
         let job = try #require(command.range(of: "/usr/bin/printf '%s'"))
         #expect(hash.lowerBound < verify.lowerBound)
         #expect(verify.lowerBound < sign.lowerBound)
-        #expect(sign.lowerBound < job.lowerBound)
+        // The live executable an old KeepAlive job could relaunch changes
+        // only after every check, and only once that job is unloaded.
+        #expect(sign.lowerBound < bootout.lowerBound)
+        #expect(bootout.lowerBound < move.lowerBound)
+        #expect(move.lowerBound < job.lowerBound)
+        // Nothing but the move writes the live path.
+        #expect(command.components(separatedBy: "'/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'").count == 2)
         #expect(!command.contains("\n"))
         // An ad-hoc build has no team to check against and keeps the hash.
         let adHoc = AdministratorInstaller.installCommand(
