@@ -25,9 +25,18 @@ struct HubError: LocalizedError, Equatable {
     var errorDescription: String? { message }
     var isUnauthorized: Bool { status == 401 }
 
+    static let networkMessage = "Can't reach the hub. Check that Tailscale is on."
+
     static func network(_ error: Error) -> HubError {
-        HubError(status: 0, code: "network",
-                 message: "Can't reach the hub. Check that Tailscale is on.")
+        HubError(status: 0, code: "network", message: networkMessage)
+    }
+
+    /// The message under a "Can't reach the hub" title. The network
+    /// error's first sentence is that title, so only the next step stays
+    /// (the web app's "Check the connection, then try again", worded for
+    /// the tailnet). Any other failure keeps its own words.
+    static func detail(underUnreachableTitle message: String) -> String {
+        message == networkMessage ? "Check that Tailscale is on, then try again." : message
     }
 }
 
@@ -36,8 +45,11 @@ struct HubError: LocalizedError, Equatable {
 struct HubClient: Sendable {
     let baseURL: URL
     let credential: String?
+    /// The session REST calls go through; tests hand in one whose
+    /// protocol is stubbed.
+    var session: URLSession = HubClient.requestSession
 
-    private static let session: URLSession = {
+    static let requestSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.waitsForConnectivity = false
@@ -102,8 +114,15 @@ struct HubClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await Self.session.data(for: req)
+            (data, response) = try await session.data(for: req)
         } catch {
+            // URLSession reports a cancelled task as URLError(.cancelled):
+            // leaving a page is not a hub that can't be reached, so callers
+            // get CancellationError and ignore it.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled
+                || Task.isCancelled {
+                throw CancellationError()
+            }
             throw HubError.network(error)
         }
         let http = response as? HTTPURLResponse
@@ -214,6 +233,32 @@ struct HubClient: Sendable {
         if let model, !model.isEmpty { body["model"] = model }
         return try await send(request("POST", "/v1/pulls/\(Self.repoPath(repo))/\(number)/open",
                                       body: body))
+    }
+
+    /// `POST /v1/app/repositories/merge {repo, number, method, auto}`:
+    /// the web app's merge, which the hub serves to any paired device.
+    /// The hub reads the PR again first and refuses (409) a merge the
+    /// detail page wouldn't offer any more; GitHub's own refusals come
+    /// back as a 502 in its words.
+    func mergePull(repo: String, number: Int, method: MergeMethod, auto: Bool) async throws {
+        _ = try await raw(mergeRequest(repo: repo, number: number, method: method, auto: auto))
+    }
+
+    func mergeRequest(repo: String, number: Int, method: MergeMethod, auto: Bool) -> URLRequest {
+        request("POST", "/v1/app/repositories/merge",
+                body: ["repo": repo, "number": number, "method": method.rawValue, "auto": auto])
+    }
+
+    /// `POST /v1/app/repositories/rerun {repo, run, failed}`: re-run a
+    /// workflow run's failed jobs, or all of them. GitHub decides what
+    /// can re-run; its refusal comes back as a 502 in its words.
+    func rerunRun(repo: String, run: Int, failed: Bool) async throws {
+        _ = try await raw(rerunRequest(repo: repo, run: run, failed: failed))
+    }
+
+    func rerunRequest(repo: String, run: Int, failed: Bool) -> URLRequest {
+        request("POST", "/v1/app/repositories/rerun",
+                body: ["repo": repo, "run": run, "failed": failed])
     }
 
     /// "o/r" as the `/v1/pulls/<owner>/<repo>` path pair, each part

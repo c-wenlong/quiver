@@ -490,6 +490,26 @@ private final class Changes: Sendable {
         #expect(await sync.lastError?.contains("500") == true)
     }
 
+    /// A sessions.json the app can't read (locked, corrupt) is the only
+    /// copy of sessions Devin no longer lists: a sync never writes over it.
+    @Test func anUnreadableStoreIsNeverOverwritten() async throws {
+        for locked in [true, false] {
+            let dir = try TempDir()
+            let file = dir.url.appending(path: "sessions.json")
+            let bytes = Data(locked ? #"{"sessions":[]}"#.utf8 : "not json".utf8)
+            try bytes.write(to: file)
+            if locked { try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path) }
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+            let api = FakeDevinAPI()
+            standardRoutes(api)
+            let sync = sync(api, dir: dir, token: "cog_test")
+            await sync.sync()
+            #expect(await sync.sessions.map(\.id) == ["s1", "s2"])
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            #expect(try Data(contentsOf: file) == bytes, "locked: \(locked)")
+        }
+    }
+
     @Test func noTokenMeansNoRequests() async throws {
         let dir = try TempDir()
         let api = FakeDevinAPI()
@@ -638,8 +658,7 @@ private final class Changes: Sendable {
     }
 
     @Test func accountLabelIsNotAFolder() {
-        let directory = AccountDirectory(profiles: [], paths: { _ in fatalError() },
-                                         home: URL(fileURLWithPath: "/Users/k"))
+        let directory = AccountDirectory.bare
         #expect(directory.label(for: DevinCloud.accountHome) == "Devin cloud")
     }
 }

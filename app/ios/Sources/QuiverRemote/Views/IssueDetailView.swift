@@ -24,7 +24,7 @@ struct IssueDetailView: View {
                 // A failed refresh keeps the issue it already had — the
                 // notice says why it's stale rather than replacing it.
                 if let error {
-                    Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                    Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
                         .font(Theme.caption).foregroundStyle(Theme.warningText)
                         .lineLimit(2)
                 }
@@ -99,6 +99,9 @@ struct IssueDetailView: View {
                 reply = body
                 error = nil
             }
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch {
             guard gen == generation else { return }
             self.error = error.localizedDescription
@@ -290,7 +293,7 @@ struct ResolveIssueSheet: View {
                     startSection(machine)
                 } else {
                     StateCard(icon: "terminal", title: "No machine can start a session",
-                              message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                              message: NewSessionOptions.noMachineMessage(app.machines))
                 }
             }
             .navigationTitle("Resolve issue")
@@ -354,6 +357,8 @@ struct ResolveIssueSheet: View {
             // The worktree is now known, so the last-harness-used
             // default can match it — unless the user already picked.
             if !harnessTouched { harness = defaultHarness() }
+        } catch is CancellationError {
+            // The sheet closed mid-fetch: nothing failed.
         } catch {
             detailNote = error.localizedDescription
         }

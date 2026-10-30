@@ -80,7 +80,9 @@ actor FakeSessionLedger: SessionUsageQuerying {
     /// The next `daily` call captures its rows, then waits for `releaseDaily`.
     private var holdDaily = false
     private var dailyGate: CheckedContinuation<Void, Never>?
-    private(set) var dailyWaiting = false
+    /// Bumped once a held `daily` is parked, so a test waits for it without
+    /// spinning.
+    let dailyParks = CountGate()
     func set(_ rows: [SessionUsage]) { self.rows = rows }
     func setDaily(_ rows: [DailyUsage]) { self.days = rows }
     func holdNextDaily() { holdDaily = true }
@@ -93,8 +95,11 @@ actor FakeSessionLedger: SessionUsageQuerying {
         let result = days
         if holdDaily {
             holdDaily = false
-            dailyWaiting = true
-            await withCheckedContinuation { dailyGate = $0 }
+            let parks = dailyParks
+            await withCheckedContinuation {
+                dailyGate = $0
+                Task { await parks.bump() }
+            }
         }
         return result
     }
@@ -104,11 +109,19 @@ actor FakeSessionLedger: SessionUsageQuerying {
 actor GatedSessionSource: SessionListing {
     let list: SessionList
     private var gate: CheckedContinuation<Void, Never>?
+    /// Whether anything asked for the listing.
     private(set) var waiting = false
+    /// Bumped once a listing is parked, so a test waits for it without
+    /// spinning.
+    let parks = CountGate()
     init(_ list: SessionList) { self.list = list }
     func sessions(days: Int?, limit: Int) async throws -> SessionList {
         waiting = true
-        await withCheckedContinuation { gate = $0 }
+        let parks = self.parks
+        await withCheckedContinuation {
+            gate = $0
+            Task { await parks.bump() }
+        }
         return list
     }
     func release() { gate?.resume(); gate = nil }
@@ -478,7 +491,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         let source = GatedSessionSource(SessionList(sessions: [session("a", "claude", cwd: nil, at: 1_791_699_000)], failures: []))
         let model = SessionsModel(source: source, ledger: FakeSessionLedger(), now: { [now] in now }, calendar: calendar)
         let load = Task { await model.load() }
-        while !(await source.waiting) { await Task.yield() }
+        try #require(await source.parks.reach(1))
         await model.refreshUsage()
         await source.release()
         await load.value
@@ -570,7 +583,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(model.models.first?.tokens == 300)
     }
 
-    @Test func aUsageRefreshMidLoadKeepsItsDailyRows() async {
+    @Test func aUsageRefreshMidLoadKeepsItsDailyRows() async throws {
         let ledger = FakeSessionLedger()
         var stale = UsageTotals()
         stale.inputTokens = 100
@@ -582,7 +595,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         // Hold the load mid-read so a refresh can commit newer daily rows.
         await ledger.holdNextDaily()
         let loading = Task { await model.load() }
-        while !(await ledger.dailyWaiting) { await Task.yield() }
+        try #require(await ledger.dailyParks.reach(1))
         await ledger.setDaily([DailyUsage(day: now, harness: "claude", model: "opus", totals: fresh)])
         await model.refreshUsage()
         await ledger.releaseDaily()

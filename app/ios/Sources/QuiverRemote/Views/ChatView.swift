@@ -425,7 +425,9 @@ private struct ChatItemView: View {
         case .tool(let call, let result):
             ToolCard(call: call, result: result, pages: model.pageTargets(for: call)) { model.previewing = $0 }
         case .approval(let rid, let prompt, let state):
-            ApprovalCard(prompt: prompt, state: state) { decision in Task { await model.decide(rid, decision: decision) } }
+            ApprovalCard(prompt: prompt, state: state, options: model.approvalOptions[rid] ?? []) { decision in
+                Task { await model.decide(rid, decision: decision) }
+            }
         case .compaction:
             HStack(spacing: 8) {
                 Rectangle().fill(Theme.border).frame(height: 1)
@@ -481,7 +483,11 @@ private struct UserBubble: View {
                 .font(Theme.body).foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Theme.selected, in: .rect(cornerRadius: 16))
+                // The Mac app's user bubble: `subtle` with a hairline. In
+                // light mode `selected` is the page's own colour, so a
+                // fill alone left the message with no bubble at all.
+                .background(Theme.subtle, in: .rect(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
                 .opacity(send == .sending ? 0.6 : 1)
             switch send {
             case .sending?: Text("Sending").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
@@ -867,6 +873,8 @@ struct DiffView: View {
 private struct ApprovalCard: View {
     let prompt: String
     let state: ApprovalState
+    /// The pane's menu rows; empty keeps Allow / Always / Deny.
+    let options: [ApprovalOption]
     let decide: (String) -> Void
 
     var body: some View {
@@ -881,7 +889,23 @@ private struct ApprovalCard: View {
             Text(verbatim: prompt).font(Theme.monoBody).foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            if isOpen {
+            if isOpen && !options.isEmpty {
+                // The pane's own rows, so an answer the three buttons
+                // can't name (always in this project, edit, describe)
+                // is still reachable. Its number is the decision.
+                VStack(spacing: 6) {
+                    ForEach(options) { option in
+                        Button { decide(option.n) } label: {
+                            Text(verbatim: ApprovalMenu.buttonTitle(option))
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 6)
+                        }
+                        .buttonStyle(MenuRowButtonStyle())
+                    }
+                }
+                .disabled(state == .submitting)
+            } else if isOpen {
                 HStack(spacing: 8) {
                     Button("Allow") { decide("allow") }.primaryButton(compact: true).frame(maxWidth: .infinity)
                     Button("Always") { decide("always") }.secondaryButton(compact: true).frame(maxWidth: .infinity)
@@ -904,14 +928,25 @@ private struct ApprovalCard: View {
         switch state { case .pending, .submitting, .failed: true; default: false }
     }
 
-    private var title: String {
-        switch state {
-        case .pending, .failed: "Approval needed"
-        case .submitting: "Sending"
-        case .queued: "Queued, waiting for the machine"
-        case .resolved(let d?): d == "deny" ? "Denied" : d == "always" ? "Always allowed" : "Allowed"
-        case .resolved(nil): "Answered"
-        }
+    private var title: String { ApprovalMenu.title(state, options: options) }
+}
+
+/// A menu row answer: the secondary button's hairline and fill, but
+/// left-aligned and as tall as a wrapped label needs.
+private struct MenuRowButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.control)
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(minHeight: Theme.controlHeight)
+            .background(configuration.isPressed ? Theme.selected : Theme.card,
+                        in: .rect(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .strokeBorder(Theme.borderStrong, lineWidth: 1))
+            .opacity(enabled ? 1 : 0.45)
     }
 }
 

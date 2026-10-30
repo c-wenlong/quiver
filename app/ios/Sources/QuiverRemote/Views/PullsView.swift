@@ -24,15 +24,14 @@ struct PullsView: View {
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
             if let error = model.error, !model.repos.isEmpty {
-                Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .lineLimit(2)
             }
             if !model.loaded {
                 LoadingRow(text: "Loading pull requests")
             } else if let error = model.error, model.repos.isEmpty {
-                StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") { Task { await model.load(client: app.client, refresh: true) } }
+                StateCard.unreachable(error) { Task { await model.load(client: app.client, refresh: true) } }
             } else if let blocked = model.envBlocked {
                 StateCard(icon: "exclamationmark.lock", title: "Can't reach GitHub",
                           message: "On \(model.machine ?? app.hubName): \(blocked)")

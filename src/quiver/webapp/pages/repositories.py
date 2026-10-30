@@ -378,8 +378,6 @@ def worktree(ctx, repo: str, number: str) -> dict:
 # ---------------------------------------------------------------- merge
 
 METHODS = ("squash", "rebase", "merge")  # PrDetailSheet's menu, in order
-METHOD_TITLES = {"squash": "Squash and merge", "rebase": "Rebase and merge",
-                 "merge": "Create a merge commit"}
 
 
 PIN_WRITES = {"add": lambda ctx, body: add(ctx, body),

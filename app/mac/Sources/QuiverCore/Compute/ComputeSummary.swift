@@ -482,11 +482,27 @@ public enum ComputeSummary {
         return "\(max(minutes, 0))m"
     }
 
-    /// Physical footprint the way Activity Monitor shows it.
+    /// Physical footprint the way Activity Monitor shows it, except that
+    /// nothing reads "0 KB": the formatter's own "Zero KB" sat oddly in
+    /// a line of figures.
     public static func bytes(_ count: UInt64) -> String {
+        if count == 0 { return "0 KB" }
         let formatter = ByteCountFormatter()
         formatter.countStyle = .memory
         return formatter.string(fromByteCount: Int64(count))
+    }
+
+    /// The line over the trend card: every starred harness's processes
+    /// added up.
+    public static func totalsLine(_ totals: ComputeModel.Totals) -> String {
+        let count = totals.processCount
+        return "\(bytes(totals.memoryBytes)) across \(count) \(count == 1 ? "process" : "processes") "
+            + "· CPU \(percent(totals.cpuPercent))% · \(threads(totals.threads))"
+    }
+
+    /// "1 thread", "28 threads".
+    public static func threads(_ count: Int) -> String {
+        "\(count) \(count == 1 ? "thread" : "threads")"
     }
 
     /// Whole percent once it is two digits, one decimal below it.

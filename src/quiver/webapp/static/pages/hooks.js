@@ -35,12 +35,25 @@ const hkBlocked = (s) => ["conflict", "keep"].includes(s);
 const HK_TIER_TITLE = { shared: "Shared", harness: "Harness", foreign: "Foreign" };
 
 /* HookFinding.kindTitle */
-const HK_FINDING_TITLE = { "declared-missing": "Declared, missing", undeclared: "Undeclared", unlinked: "Unlinked", managed: "Managed" };
+const HK_FINDING_TITLE = { "declared-missing": "Declared, missing", undeclared: "Undeclared", unlinked: "Unlinked", managed: "Managed elsewhere" };
 
 /* `~/…` for a path under the hub's home. */
 function hkPath(path, home) {
   const h = home || (hooksPage.data && hooksPage.data.home) || "";
   return h && path.startsWith(h + "/") ? "~" + path.slice(h.length) : path;
+}
+
+/* HookFinding.displayMessage: home paths as `~/…`, and a managed note cut
+ * to its path, since the badge already says "Managed elsewhere". */
+function hkFindingMessage(f, home) {
+  let text = f.message;
+  const cut = text.indexOf(" — declaration managed elsewhere");
+  if (f.kind === "managed" && cut >= 0) text = text.slice(0, cut);
+  const h = (home || "").replace(/\/$/, "");
+  if (!h) return text;
+  // Only where a path starts: `/backup/Users/k/x` is not under home.
+  const escaped = (h + "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`(?<![^\\s("'])${escaped}`, "g"), "~/");
 }
 
 /* HarnessMarkView: the logo, a word after it when the logo is shared,
@@ -195,7 +208,7 @@ function hkFindingsCard(d) {
     <div class="hk-findings">${d.findings.map((f) => `<div class="hk-finding">
       <span class="badge${f.kind === "managed" ? " hk-dim" : ""}">${esc(HK_FINDING_TITLE[f.kind] || f.kind)}</span>
       ${f.harness ? `<span class="hk-fmark">${hkMark(f.harness)}</span>` : ""}
-      <span class="caption hk-fmsg">${esc(f.message)}</span></div>`).join("")}</div></div>`;
+      <span class="caption hk-fmsg">${esc(hkFindingMessage(f, d.home))}</span></div>`).join("")}</div></div>`;
 }
 
 /* HooksModel.groups: Shared first, Foreign last, harnesses in

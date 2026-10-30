@@ -1259,10 +1259,17 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(self.srv.state.launches[lid]["state"], "started")
 
     def test_static_assets(self):
-        """``/`` and a bookmarked /index.html land on the web app; the
-        icons are the only root assets left (its pages reference them
-        there). The remote PWA's paths are gone."""
-        for path in ("/", "/index.html"):
+        """The web app is the root: ``/`` is its page and its assets sit
+        beside it. The old ``/app/`` paths, and a bookmarked
+        /index.html, redirect to the same name at the root, so pair links
+        minted before #944 keep working (the fragment rides along)."""
+        for path in ("/", "/app.js", "/styles.css", "/harness-devin.svg",
+                     "/icon-192.png", "/icon-512.png"):
+            status, _ = self.srv.request("GET", path)
+            self.assertEqual(status, 200, path)
+        for path, where in (("/app/", "/"), ("/app", "/"), ("/index.html", "/"),
+                            ("/app/app.js", "/app.js"),
+                            ("/app/pages.css", "/pages.css")):
             conn = http.client.HTTPConnection(
                 "127.0.0.1", self.srv.port, timeout=5)
             try:
@@ -1270,15 +1277,27 @@ class TestHubWriteRoutes(unittest.TestCase):
                 resp = conn.getresponse()
                 resp.read()
                 self.assertEqual(resp.status, 301, path)
-                self.assertEqual(
-                    resp.getheader("Location"), "/app/", path)
+                self.assertEqual(resp.getheader("Location"), where, path)
             finally:
                 conn.close()
-        for path in ("/icon-192.png", "/icon-512.png"):
-            status, _ = self.srv.request("GET", path)
-            self.assertEqual(status, 200, path)
-        for path in ("/app.js", "/styles.css", "/manifest.webmanifest",
-                     "/pair", "/harness-claude.svg", "/nope.js"):
+        # A legacy path redirects only to a name the root serves: one that
+        # would put another host in Location is a 404, not a redirect.
+        for path in ("/app//evil.example/", "/app//evil.example", "/app/x/y.js",
+                     "/app/nope.js", "/app/%2e%2e/hub.py"):
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", self.srv.port, timeout=5)
+            try:
+                conn.request("GET", path)
+                resp = conn.getresponse()
+                resp.read()
+                self.assertEqual(resp.status, 404, path)
+                self.assertIsNone(resp.getheader("Location"), path)
+            finally:
+                conn.close()
+        # The remote PWA's paths are gone, and nothing but a known asset
+        # is served at the root.
+        for path in ("/manifest.webmanifest", "/pair", "/nope.js",
+                     "/hub.py", "/pages/chat.js"):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 404, path)
 
@@ -1296,8 +1315,8 @@ class TestHubWriteRoutes(unittest.TestCase):
     def test_every_response_refuses_framing_and_sniffing(self):
         """The app shell, its data, an error and a redirect all carry the
         same policy: no foreign frame, no sniffing, no referrer."""
-        for path, headers in (("/app/", {}), ("/v1/sessions", self.hdr),
-                              ("/v1/sessions", {}), ("/", {})):
+        for path, headers in (("/", {}), ("/v1/sessions", self.hdr),
+                              ("/v1/sessions", {}), ("/app/", {})):
             status, pairs = self._headers(path, headers)
             names = [k.lower() for k, _ in pairs]
             got = dict((k.lower(), v) for k, v in pairs)
@@ -1311,7 +1330,7 @@ class TestHubWriteRoutes(unittest.TestCase):
             self.assertEqual(got["referrer-policy"], "no-referrer", path)
 
     def test_server_header_names_no_python(self):
-        _, pairs = self._headers("/app/")
+        _, pairs = self._headers("/")
         server = dict((k.lower(), v) for k, v in pairs)["server"]
         self.assertEqual(server, "quiver-remote")
 
@@ -3112,7 +3131,7 @@ class TestDeviceList(unittest.TestCase):
             ({"device_id": 7}, 400, "bad_device"),
             ({"device_id": "x" * 65}, 400, "bad_device"),
             ({"device_id": "0123456789abcdef"}, 404, "unknown_device"),
-            ({"device_id": "tailnet:n1"}, 400, "not_paired"),
+            ({"device_id": "tailnet:n1"}, 404, "unknown_device"),
             ({"device_id": other["device_id"]}, 409, "already_revoked"),
         ):
             status, data = self.srv.request(
@@ -3147,7 +3166,7 @@ class TestDeviceList(unittest.TestCase):
 
     def test_revoke_owner_tailnet_device(self):
         # The hub owner's own tailnet sign-in can revoke a paired
-        # device, but its own tailnet: id is a sign-in, not a pairing.
+        # device, and its own tailnet: sign-in too, once confirmed.
         other = self.srv.pair()
         self.srv.state.owner_login = "dev@github"
         self.srv.state.allowed_hosts = {"127.0.0.1"}
@@ -3161,12 +3180,20 @@ class TestDeviceList(unittest.TestCase):
         self.assertEqual(status, 200, data)
         self.assertFalse(json.loads(data)["this_device"])
         status, data = self.srv.request(
+            "POST", "/v1/devices/revoke", {"device_id": "tailnet:nMAC"},
+            headers=hdrs)
+        self.assertEqual(
+            (status, json.loads(data)["error"]["code"]),
+            (409, "confirm_this_device"))
+        status, data = self.srv.request(
             "POST", "/v1/devices/revoke",
             {"device_id": "tailnet:nMAC", "confirm_this_device": True},
             headers=hdrs)
-        self.assertEqual(status, 400)
-        self.assertEqual(
-            json.loads(data)["error"]["code"], "not_paired")
+        self.assertEqual(status, 200, data)
+        self.assertTrue(json.loads(data)["this_device"])
+        # Signed itself out: no owner identity for that node any more.
+        status, _ = self.srv.request("GET", "/v1/devices", headers=hdrs)
+        self.assertEqual(status, 401)
 
 
 class TestServeEntry(unittest.TestCase):

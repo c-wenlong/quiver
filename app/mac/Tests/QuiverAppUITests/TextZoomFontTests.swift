@@ -26,9 +26,13 @@ struct TextZoomFontTests {
     }
 
     @Test func themeSizesFollowTheZoom() {
-        let model = TextZoomModel.shared
-        let saved = model.zoom
-        defer { model.zoom = saved }
+        // A model over a scratch suite stands in for the app's, so the
+        // zoom it saves never lands in the real defaults.
+        let defaults = TestDefaults("textzoom")
+        let saved = TextZoomModel.shared
+        defer { TextZoomModel.shared = saved }
+        let model = TextZoomModel(defaults: defaults)
+        TextZoomModel.shared = model
         model.zoom = 1
         #expect(Theme.scaled(14) == 14)
         model.zoom = 1.5
@@ -41,5 +45,16 @@ struct TextZoomFontTests {
         #expect(!model.canZoomOut)
         model.actualSize()
         #expect(model.isActualSize)
+        #expect(defaults.double(forKey: "textZoom") == TextZoom.standard)
+        #expect(TextZoomModel(defaults: defaults).zoom == TextZoom.standard)
+    }
+
+    @Test func aSavedZoomComesBackClamped() {
+        let defaults = TestDefaults("textzoom")
+        #expect(TextZoomModel(defaults: defaults).zoom == TextZoom.standard)
+        defaults.set(1.5, forKey: "textZoom")
+        #expect(TextZoomModel(defaults: defaults).zoom == 1.5)
+        defaults.set(99.0, forKey: "textZoom")
+        #expect(TextZoomModel(defaults: defaults).zoom == TextZoom.range.upperBound)
     }
 }

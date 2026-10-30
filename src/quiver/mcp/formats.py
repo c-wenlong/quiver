@@ -243,8 +243,19 @@ class DroidMcpFormatHandler(StandardMcpFormatHandler):
         return out
 
 
+class ClaudeMcpFormatHandler(DroidMcpFormatHandler):
+    """Claude Code MCP format (``~/.claude.json``).
+
+    Claude Code skips a ``url`` entry that carries no ``type``: ``claude mcp
+    get`` reports no such server, and the session never connects. Like
+    Droid it needs ``type: http`` (or ``sse``) on every remote server, and
+    a stdio server may leave it off.
+    """
+
+
 _FORMAT_MCP_HANDLERS = {
     "standard": StandardMcpFormatHandler(),
+    "claude": ClaudeMcpFormatHandler(),
     "copilot": CopilotMcpFormatHandler(),
     "opencode": OpencodeMcpFormatHandler(),
     "droid": DroidMcpFormatHandler(),

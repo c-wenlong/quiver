@@ -96,9 +96,25 @@ loopback bind the hub reads the client from the headers serve sets:
 Serve replaces any `X-Forwarded-For` / `Tailscale-User-*` the client sent
 (checked on a live node, 2026-10-23), and the hub reads the headers only
 from loopback peers while `--public-url` is set; on a tailnet-IP bind
-they are ignored. A local process can still forge them, which is no
-worse than today: it can already read `devices.json`. Owner identity
-comes from `whois` of the node's own tailnet IP. The public URL also
+they are ignored. A loopback peer alone isn't serve: any local process,
+another user's included, can dial the same port and write its own
+`X-Forwarded-For`. So the hub believes that header only when the OS says
+the far end of the connection is the Tailscale daemon (`peer.py`): on
+Linux the socket's owner in `/proc/net/tcp` is root; on macOS the pid
+`netstat -anv` names for it runs as root (the Standalone variant's
+system extension, open-source `tailscaled`) or is a binary inside a
+root-owned `/Applications/Tailscale.app` (the App Store variant). The
+answer is kept for the connection, and a request whose peer fails the
+check, or that the check can't place, is read as the loopback client it
+is: no tailnet identity, bearer credentials unaffected.
+`X-Forwarded-Proto` keeps the loopback rule, since it only feeds the
+`Origin` check a local process can pass anyway. Owner identity
+comes from `whois` of the node's own tailnet IP, which also records
+that node: a request `whois` names as this machine's own node never
+counts as the owner's device, because serve's local listener forwards
+any local process (and a direct dial of the tailnet IP arrives) as that
+node, whichever user runs it. A browser on the hub machine pairs like
+any other device. The public URL also
 becomes the ntfy action-button base, and `serve` saves
 `{host, port, public_url}` to `data/remote/hub.json` so `swe remote
 pair` prints `https://` links (the `quiver://` deep link gains
@@ -161,6 +177,7 @@ remote/
   fork.py        # fork a session: per-harness fork command lines, the route
   journal.py     # per-session seq-numbered event log (replay on reconnect)
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
+  peer.py        # is a loopback peer the Tailscale daemon? gates X-Forwarded-For
   files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
   preview.py     # one .html/.svg file from a session's folder (/v1/sessions/{id}/preview)
   agent.py       # satellite daemon: dial hub, run local tail/inject
@@ -327,6 +344,7 @@ POST /v1/sessions/{id}/fork          {prompt?, model?, effort?} new session from
 GET  /v1/issues                      every pinned repo's issues, each row plus `mine` (`?state=open|closed|all`, open default)
 GET  /v1/issues/<o>/<r>/<n>          one issue in full: row + body, comments, branch, worktree, suggested_prompt
 POST /v1/issues/resolve              {repo, number, harness, prompt?, context?, model?, effort?} worktree + agent for a GitHub issue → launch_id
+POST /v1/issues/comment              {repo, number, body} post a comment on a pinned repo's issue as the hub's gh login
 GET  /v1/pulls                       every pinned repo's open PRs, each row plus `mine` and `review_requested`
 GET  /v1/pulls/<o>/<r>/<n>           one PR in full: row + body, per-check runs, reviews, worktree, suggested_prompt
 POST /v1/pulls/<o>/<r>/<n>/open      {harness, prompt?, model?, effort?} detached PR-head worktree + agent → launch_id
@@ -342,7 +360,7 @@ GET  /v1/inbox                       pending decisions; ?done=1 adds finished-to
 GET  /v1/app/overview                the web app's Overview (docs/web-app.md)
 GET  /v1/app/sessions                the web app's Sessions: catalog rows + usage
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
-GET  /app/                           the web app's pages, static; / redirects here, fragment intact
+GET  /                               the web app's page; its assets are flat names beside it (/app.js); /app/… redirects to the same name here, fragment intact
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
 GET  /v1/devices                     every paired device (device_view rows + paired_via + this_device) and the pending pair requests, for the pair-requests-and-devices screen
@@ -355,10 +373,26 @@ POST /v1/ssh/key                     {public_key} ("" clears) → stored on the 
 
 Events: `message.appended`, `message.delta` (tier A only),
 `session.status`, `session.meta` (title, harness_title, pinned,
-pinned_at after a pin or rename), `approval.requested|resolved`, `compaction`,
+pinned_at after a pin or rename), `approval.requested|resolved`,
 `machine.online|offline`, `notify` (needs_you|finished|error|limit;
 `github` for a notification thread that just turned unread — hub-local,
-not a satellite kind).
+not a satellite kind). A compaction has no event of its own: it is a
+`message.appended` with `kind: "compaction"`. The hub still accepts a
+bare `compaction` event from an older satellite.
+
+`limit` comes from the transcript, not the status probe. The tailer
+marks Claude Code's 429 record (`isApiErrorMessage` with `error:
+"rate_limit"`, "You've hit your session limit · resets 9:30am") and a
+Codex `task_complete` whose `error.codex_error_info` is
+`usage_limit_exceeded`; the record still shows in the chat as an
+`error` message. Its notify adds `message` (the harness's line, at most
+280 characters) and, for Claude Code, `resets_at` (epoch seconds) and
+`window` (`five_hour`, `seven_day`, ...) from `quotaLimits`. It rings
+once per limit: a record read more than 10 minutes after it was written
+(backfill) is quiet, and the same limit again in that session (a retry
+into it) stays quiet until its reset time, or for an hour when the
+harness gave none. The ntfy push puts the harness's line in the body.
+Other harnesses don't raise `limit` yet.
 
 `queue|steer` is the OpenAI Remote distinction: queue waits for idle;
 steer injects mid-turn where the channel allows (codex turn input, tmux
@@ -453,10 +487,18 @@ cancel racing the job's start either wins, and nothing is sent, or
 loses with `409 not_waiting` ("that message already went out"); there is
 never both a send and a removal. An unknown `client_id` is `404
 unknown_send`; one that already left (sent, steered, removed, failed) is
-`409 not_waiting` while the hub remembers it (the last 256). Satellite
-sessions never park a queue-mode send on the hub (the satellite delivers
-on arrival or refuses a busy session), so their list is empty and every
-op answers `409 queue_unsupported`.
+`409 not_waiting` while the hub remembers it (the last 256). A
+satellite session's queue-mode send waits on the satellite, not the hub:
+`swe remote agent` runs `message` commands through the same per-session
+`SendQueue`, polls the session's status every 2 s and delivers once the
+turn ends, failing it after 30 min of busy with "session stayed busy for
+30 min; message not sent". Steers go on their own queue and never wait
+behind it. A send the agent is stopped before delivering is not marked
+done, so the hub replays it when the agent comes back. The hub holds
+nothing for those sends, so their list is empty and every op answers
+`409 queue_unsupported`. The `202` for such a send keeps `waiting:
+false`, so a client never parks it in a tray whose actions would act on
+the hub's queue.
 
 `edit` takes a `text` (checked like a message's: a string with more
 than spaces in it, else `422 bad_command`) and replaces the waiting
@@ -797,6 +839,33 @@ stores that as the session's display name (as `POST
 stream only, since an event in the session's own journal before its
 tailer starts would make the tailer skip the first turn.
 
+`POST /v1/issues/comment {repo, number, body}` (`issues.py`) posts
+`body` as a comment on issue `number`, with the hub machine's own `gh`
+login: the web and iPhone issue detail's composer, and their Resolve
+panel's "Also post as a comment" switch, which posts the context before
+the resolve. It goes through the function behind `swe gh issue comment
+--body-file=-` in process, so the text reaches `gh issue comment
+--body-file -` on stdin and never sits in argv, where every process on
+the machine can read it. The caller is gated like every other write
+here: a paired phone or the owner's own tailnet device, never a
+satellite credential. The route refuses before running `gh`: `400
+bad_body` for unreadable JSON, `422 bad_repo` for a missing or malformed
+`owner/name`, `422 bad_issue` for a number that isn't 1 to nine digits
+(a JSON number or a digit string; `true` is not one), `422 bad_comment`
+when `body` is not a string or is blank, `422 comment_too_long` past
+GitHub's own 65,536 characters, `404 not_pinned` for a repo the hub
+doesn't pin (so a client can't post anywhere else the hub's login
+reaches), and from a fresh `gh auth status` `409 gh_unavailable` (no
+`gh`), `gh_auth_required` (signed out) or `gh_upstream_error` (the check
+itself failed or timed out, so nothing says the account is signed out). The body is trimmed first, as the Mac's composer
+trims it. `gh` refusing answers `404 unknown_issue` (no such issue) or
+`502 comment_failed` with `gh`'s words. Success is `200 {ok, github,
+repo, number, comment: {author, body, created_at, url}, machine,
+machine_id}`, and the hub drops the issue's cached detail and the
+repo's issue lists, board and task rows, so the next read lists the
+comment and its new count, even after a failure, since a timed-out
+`gh` may still have posted.
+
 `GET /v1/pulls` (`pulls.py`) lists the open pull requests of every repo
 pinned on the hub (`swe gh repo list`): `{repos: [{name, status, pulls,
 error?}], machine, machine_id, github, env_blocked?, fetched_at}`. Each
@@ -1041,23 +1110,38 @@ harness supports it, an inlined path otherwise. Caps: 20 MB per file,
 image/pdf/text only, swept after 7 days or at session end, whichever
 comes first.
 
-`GET /v1/devices` answers `{devices, requests}` for the phone's
+`GET /v1/devices` answers `{devices, requests, signins}` for the phone's
 pair-requests-and-devices screen: every `devices.json` row as
 `pairing.device_view` serves it (everything but the credential, plus
 `id` and `revoked`), each with `paired_via` and `this_device` marking
-the caller — the owner's tailnet sign-in (`tailnet:<node>`) marks
-nothing, having no row — and `requests` is the same pending-request list
-`GET /v1/pair/requests` serves, codes and secrets never in it. `POST
+the caller; `requests` is the same pending-request list
+`GET /v1/pair/requests` serves, codes and secrets never in it; and
+`signins` lists the owner's tailnet devices the hub let in without
+pairing (`tailnet_signins.json`, 0600, written at most every five
+minutes per node): `{id: "tailnet:<node>", node_name, first_seen_at,
+last_seen_at, revoked, revoked_at, this_device}`, newest first. `POST
 /v1/devices/revoke {device_id}` signs one paired device out
 (`swe remote devices --revoke`'s hub-side twin, shared with the web
 Settings page's `revoke` action in `devices.py`) and answers `{revoked,
-this_device, devices}` with the list refreshed. Refusals: `400
-bad_device`, `400 not_paired` for a `tailnet:` id — a sign-in, not a
-pairing — `404 unknown_device`, `409 already_revoked`, `409
-confirm_this_device` for the caller's own row without
-`confirm_this_device: true` (a stray tap can't lock the phone out), and
-`500 ssh_key_left` when the device is out but its `authorized_keys`
-line stayed.
+this_device, devices, signins}` with the lists refreshed. A
+`tailnet:<node>` id revokes that sign-in: the node gets no owner
+identity (no unpaired access, no owner approval of pair requests) until
+a pair request from it is approved again, and devices paired from it are
+signed out with it. Revoking a device paired through a tailnet request
+revokes its node the same way, every other device paired from it
+included, so a lost phone on the owner's login can't walk back in
+through Safari or a second pairing; open event streams from the node
+close within the usual revocation check. A `tailnet_signins.json` that
+can't be read refuses every node rather than forgetting revocations
+(owner devices then pair like anyone else), and is never rewritten
+until it reads again. `this_device` in the answer, and the
+`confirm_this_device` guard, cover the caller losing its own access
+through its node, not only its exact id. The owner's other nodes are
+untouched. Refusals: `400 bad_device`, `404 unknown_device`, `409
+already_revoked`, `409 confirm_this_device` for the caller's own row or
+sign-in without `confirm_this_device: true` (a stray tap can't lock the
+phone out), and `500 ssh_key_left` when the device is out but its
+`authorized_keys` line stayed.
 
 ## Keeping the hub up — `launchd.py`, `systemd.py`
 
@@ -1111,7 +1195,7 @@ writes-go-through-tested-Python rule.
 every page, component and feature, and the hub work each needs.
 
 Two clients. The web app (`src/quiver/webapp/`, served by the hub under
-`/app/`; `/` redirects there, fragment intact) works in any browser over
+`/`; older `/app/` links redirect there, fragment intact) works in any browser over
 Tailscale: its `#pair=` fragment trades a pair token for the credential
 it keeps in localStorage, and pending pair requests are decided inline
 in Settings › Integrations › Remote. On iPhone the client is native
@@ -1192,9 +1276,12 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   login is how a device joins the tailnet; this feature does not
   re-implement it.
 - Owner devices: a request without a bearer is still let in when its
-  tailnet node belongs to the hub owner's login (not tagged), it sends
+  tailnet node belongs to the hub owner's login (not tagged), isn't the
+  hub machine's own node, it sends
   `X-Quiver-Pair: 1` from an allowed Host, and its `Origin` is the hub's
-  own; the web app at `/app/` relies on this. The `whois` answer is
+  own; the web app at `/` relies on this. Behind `tailscale serve` the
+  node comes from `X-Forwarded-For` only on a connection the OS places
+  in the Tailscale daemon. The `whois` answer is
   cached per IP (60 s, a miss 10 s). Satellite routes stay bearer-only.
 - Pairing: the phone posts `POST /v1/pair/request`; the hub resolves
   its Tailscale node with `tailscale whois <peer ip>` and hands back a
@@ -1208,7 +1295,7 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   `devices.json`
   (0600), revocable per device — Trusted Devices minus biometrics. A
   device can't approve its own request; five wrong codes deny it. The
-  QR/token path (`swe remote pair`, `http://hub/app/#pair=token`; `--app`
+  QR/token path (`swe remote pair`, `http://hub/#pair=token`; `--app`
   swaps in the `quiver://` deep link) stays as the fallback for devices
   `whois` can't identify. Either way, only a tailnet device can reach
   the pairing routes at all.
@@ -1247,7 +1334,9 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
 - Threat model for the README: the hub executes on your machines by
   design; the credential gates the app layer on top of the tailnet —
   per-device revocation is what "revoke my lost phone" means without
-  touching the tailnet.
+  touching the tailnet. That covers a phone on the owner's own tailnet
+  login too: revoking its sign-in (or a device paired from it) refuses
+  the node until it pairs again.
 
 ## Milestones
 

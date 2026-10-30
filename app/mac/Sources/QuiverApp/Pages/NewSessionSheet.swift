@@ -12,6 +12,9 @@ struct NewSessionSheet: View {
 
     /// `GET /v1/machines` and `/v1/sessions`, asked once per open.
     @State private var machines: [HubMachine]?
+    /// Every row the hub listed, the ones that can launch nothing too:
+    /// they say whether an empty `machines` means "update swe".
+    @State private var listedMachines: [HubMachine] = []
     @State private var machinesError: String?
     @State private var sessions: [HubSessionRow] = []
 
@@ -136,7 +139,7 @@ struct NewSessionSheet: View {
             }
             if let machines {
                 if machines.isEmpty {
-                    Text("No machine can start a session. Update swe on the hub.")
+                    Text(NewSessionOptions.noMachineMessage(listedMachines))
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -431,6 +434,7 @@ struct NewSessionSheet: View {
             async let machinesCall = app.hub.withClient { try await $0.machines() }
             async let sessionsCall = app.hub.withClient { try await $0.sessions() }
             let (listed, rows) = try await (machinesCall, sessionsCall)
+            listedMachines = listed
             machines = NewSessionOptions.machines(listed)
             sessions = rows
             machinesError = nil
@@ -451,6 +455,7 @@ struct NewSessionSheet: View {
         } catch is CancellationError {
         } catch {
             machines = []
+            listedMachines = []
             machinesError = (error as? HubError)?.message ?? error.localizedDescription
         }
     }

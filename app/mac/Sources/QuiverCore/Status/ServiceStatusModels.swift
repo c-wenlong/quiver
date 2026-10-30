@@ -124,16 +124,66 @@ public struct ServiceStatus: Sendable, Equatable, Identifiable {
 /// A status page Quiver reads.
 public struct StatusService: Sendable, Hashable, Identifiable {
     public enum Group: String, Sendable, Hashable, CaseIterable, Codable {
-        /// The model providers and tools the harnesses run on. Only these
-        /// reach the menu bar.
-        case providers
-        /// What installing and shipping depends on.
-        case infrastructure
+        /// The model APIs the harnesses run on.
+        case modelProviders
+        /// The agent products and coding platforms built on them.
+        case agentPlatforms
+        /// Hosting, edge and connectivity.
+        case cloud
+        /// Databases and data platforms.
+        case data
+        /// Source control, CI, quality and API tooling.
+        case devtools
+        /// Package registries.
+        case registries
+        /// Monitoring, tracing and incident management.
+        case observability
+        /// Workflow, identity, comms and team tools.
+        case services
+
+        /// Stored records from before the split: a page that read
+        /// "providers" lands under model providers, one that read
+        /// "infrastructure" under services, and anything unknown under
+        /// services rather than failing the record's decode.
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            switch raw {
+            case "providers": self = .modelProviders
+            case "infrastructure": self = .services
+            default: self = Group(rawValue: raw) ?? .services
+            }
+        }
+
+        /// The two provider groups are the only ones that reach the
+        /// menu bar on a minor incident.
+        var isProvider: Bool {
+            self == .modelProviders || self == .agentPlatforms
+        }
 
         public var title: String {
             switch self {
-            case .providers: "AI providers"
-            case .infrastructure: "Infrastructure"
+            case .modelProviders: "Model providers"
+            case .agentPlatforms: "Agent platforms"
+            case .cloud: "Cloud & network"
+            case .data: "Data"
+            case .devtools: "Dev tools & quality"
+            case .registries: "Registries"
+            case .observability: "Observability"
+            case .services: "Services & productivity"
+            }
+        }
+
+        /// The group's name in a picker chip, where `title` won't fit.
+        public var shortTitle: String {
+            switch self {
+            case .modelProviders: "Models"
+            case .agentPlatforms: "Agents"
+            case .cloud: "Cloud"
+            case .data: "Data"
+            case .devtools: "Dev tools"
+            case .registries: "Registries"
+            case .observability: "Monitoring"
+            case .services: "Services"
             }
         }
     }
@@ -174,9 +224,14 @@ public struct StatusService: Sendable, Hashable, Identifiable {
 
     /// The bundled mark for this service, or nil when there is none. A
     /// custom page is matched on its name first ("OpenRouter" finds
-    /// openrouter), then on its id like a built-in page.
+    /// openrouter), then the catalogue entry its page came from, by the
+    /// feed's host — a one-click add lands under a fresh custom id, which
+    /// matches nothing below. Other services match on their id.
     public var logoID: String? {
         if isCustom, let id = APIKeyProviderLogo.logoID(for: name) { return id }
+        if isCustom, let logo = StatusCatalogue.all.first(where: { $0.host == host })?.logoID {
+            return logo
+        }
         if let id = Self.logoIDs[id], HarnessIcons.icon(for: id) != nil { return id }
         // A company's page shows its brand logo (OpenAI's for "openai"),
         // the one every other page draws for that company.
@@ -227,40 +282,40 @@ public struct StatusService: Sendable, Hashable, Identifiable {
     /// redirects to status.claude.com) would fail. Cursor's page moved to
     /// status.x.ai, which serves the Statuspage shape under /api/compat.
     public static let all: [StatusService] = [
-        statuspage("claude", "Claude", "https://status.claude.com", .providers),
-        statuspage("openai", "OpenAI / Codex", "https://status.openai.com", .providers),
-        statuspage("github", "GitHub / Copilot", "https://www.githubstatus.com", .providers),
+        statuspage("claude", "Claude", "https://status.claude.com", .modelProviders),
+        statuspage("openai", "OpenAI / Codex", "https://status.openai.com", .modelProviders),
+        statuspage("github", "GitHub / Copilot", "https://www.githubstatus.com", .agentPlatforms),
         StatusService(id: "cursor", name: "Cursor", pageURL: URL(string: "https://status.x.ai")!,
                       feed: .statuspage(URL(string: "https://status.x.ai/api/compat/summary.json")!),
-                      group: .providers),
+                      group: .agentPlatforms),
         // AI Studio's status page has no JSON behind it; Google Cloud's feed
         // covers the Gemini API on Vertex (renamed "Gemini on Agent Platform").
         StatusService(
             id: "gemini", name: "Gemini", pageURL: URL(string: "https://aistudio.google.com/status")!,
             feed: .googleCloud(URL(string: "https://status.cloud.google.com/incidents.json")!,
                                products: ["Z0FZJAMvEB4j3NbCJs6B", "Vertex Gemini API", "Gemini on Agent Platform"]),
-            group: .providers, note: "Gemini API incidents from Google Cloud's status feed"),
-        statuspage("devin", "Devin", "https://www.devinstatus.com", .providers),
-        statuspage("npm", "npm", "https://status.npmjs.org", .infrastructure),
-        statuspage("vercel", "Vercel", "https://www.vercel-status.com", .infrastructure),
-        statuspage("cloudflare", "Cloudflare", "https://www.cloudflarestatus.com", .infrastructure),
+            group: .modelProviders, note: "Gemini API incidents from Google Cloud's status feed"),
+        statuspage("devin", "Devin", "https://www.devinstatus.com", .agentPlatforms),
+        statuspage("npm", "npm", "https://status.npmjs.org", .registries),
+        statuspage("vercel", "Vercel", "https://www.vercel-status.com", .cloud),
+        statuspage("cloudflare", "Cloudflare", "https://www.cloudflarestatus.com", .cloud),
     ]
 }
 
 /// Short summaries for the menu bar.
 public enum ServiceStatusSummary {
-    /// The worst known state among the providers and any infrastructure
-    /// `affected` names, so the dot beside the line matches it; nil when
-    /// none is known.
+    /// The worst known state among the provider groups and any other
+    /// service `affected` names, so the dot beside the line matches it;
+    /// nil when none is known.
     public static func worst(_ statuses: [ServiceStatus]) -> ServiceHealth? {
         statuses.compactMap { status -> ServiceHealth? in
             guard let health = status.report?.health else { return nil }
-            return status.service.group == .providers || health >= threshold(for: status.service.group)
+            return status.service.group.isProvider || health >= threshold(for: status.service.group)
                 ? health : nil
         }.max()
     }
 
-    /// The providers with an incident, plus infrastructure with a major or
+    /// The providers with an incident, plus other groups with a major or
     /// worse outage (a minor npm or Vercel blip isn't worth the line),
     /// worst first and in catalog order among equals; empty when nothing
     /// clears that bar.
@@ -274,7 +329,7 @@ public enum ServiceStatusSummary {
 
     /// The least a service's state must be to reach the menu line.
     static func threshold(for group: StatusService.Group) -> ServiceHealth {
-        group == .providers ? .minor : .major
+        group.isProvider ? .minor : .major
     }
 
     /// "Claude: minor incident" for every `affected` service, worst first;

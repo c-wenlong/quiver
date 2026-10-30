@@ -1166,9 +1166,6 @@ def cmd_info(args):
     print()
 
 
-_ADD_FIELDS = ("name", "command", "description", "aliases", "tags")
-
-
 def _prompt_field(label: str, default: str = "") -> str:
     """Prompt for one field; Enter keeps the default (shown dim in brackets)."""
     hint = f" {c('dim', '[' + default + ']')}" if default else ""

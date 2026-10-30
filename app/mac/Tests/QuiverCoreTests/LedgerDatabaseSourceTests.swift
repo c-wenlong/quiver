@@ -401,6 +401,9 @@ func execute(_ sql: String, on url: URL) throws {
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
+        // The lock below is held for good, so waiting it out only costs
+        // the test two seconds before the same failure.
+        await ledger.setBusyTimeout(milliseconds: 0)
 
         // A second connection holding an exclusive lock makes every cache
         // operation fail, starting at BEGIN IMMEDIATE.
@@ -414,26 +417,22 @@ func execute(_ sql: String, on url: URL) throws {
         }
     }
 
-    /// The read-write connection waits out a held lock the way both
-    /// read-only ones do — without `sqlite3_busy_timeout` it returned
-    /// SQLITE_BUSY at once.
-    @Test func aWriteConnectionWaitsOutAHeldLock() throws {
+    /// Every connection waits out a held lock for two seconds instead of
+    /// failing at once: without `sqlite3_busy_timeout` the read-write one
+    /// returned SQLITE_BUSY immediately. SQLite reports the setting itself,
+    /// so the test needn't sit out a real two-second wait.
+    @Test func everyConnectionWaitsOutAHeldLock() throws {
         let temp = try TempDir()
         let url = temp.path("held.sqlite")
         try execute("CREATE TABLE seed (id INTEGER)", on: url)
-        let holder = try SQLiteDatabase(url: url)
-        try holder.execute("BEGIN EXCLUSIVE")
-        defer { try? holder.execute("ROLLBACK") }
-
-        let contender = try SQLiteDatabase(url: url)
-        let start = Date()
-        do {
-            try contender.execute("CREATE TABLE t (id INTEGER)")
-            Issue.record("expected SQLITE_BUSY")
-        } catch let error as SQLiteDatabase.Failure {
-            #expect(error.code == SQLITE_BUSY)
-            // It waited out the timeout instead of failing instantly.
-            #expect(Date().timeIntervalSince(start) > 1.0)
+        let connections = [
+            try SQLiteDatabase(),
+            try SQLiteDatabase(url: url),
+            try SQLiteDatabase(readOnly: url),
+            try SQLiteDatabase(readOnlyURI: "file:\(url.path)?mode=ro"),
+        ]
+        for db in connections {
+            #expect(try db.scalar("PRAGMA busy_timeout") == 2_000)
         }
     }
 

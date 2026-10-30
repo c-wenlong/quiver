@@ -1,24 +1,6 @@
 import Foundation
-import Observation
 import Testing
 @testable import QuiverCore
-
-/// Races `wait` against a ten-second deadline: the first to finish wins
-/// and the loser is cancelled. Returns false on timeout so a regression
-/// fails the test instead of hanging the suite.
-@MainActor
-private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> Bool) async -> Bool {
-    await withTaskGroup(of: Bool.self) { group in
-        group.addTask { await wait() }
-        group.addTask {
-            try? await Task.sleep(for: .seconds(10))
-            return false
-        }
-        let winner = await group.next() ?? false
-        group.cancelAll()
-        return winner
-    }
-}
 
 /// The experimental "Session search" switch: the status copy is honest
 /// about counts, enabling attaches an indexer to the ledger and kicks the
@@ -38,18 +20,19 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
     private func stack(
         enabled: Bool = false,
         supported: Bool = true,
-        reconcileInterval: Duration = .seconds(60)
+        reconcileInterval: Duration = .seconds(60),
+        pollSettled: Duration = .seconds(10)
     ) throws -> Stack {
         let temp = try TempDir()
         let ledger = try Ledger(directory: temp.path("data/ledger"))
         let overview = OverviewModel(
             ledger: ledger, roots: { LedgerRoots() }, accountLabel: { $0 })
-        let defaults = UserDefaults(suiteName: "search-index-\(UUID().uuidString)")!
+        let defaults = TestDefaults("search-index")
         defaults.set(enabled, forKey: SearchIndexModel.defaultsKey)
         let model = SearchIndexModel(
             quiver: temp.url, ledger: ledger, overview: overview,
             defaults: defaults, supported: supported,
-            reconcileInterval: reconcileInterval)
+            reconcileInterval: reconcileInterval, pollSettled: pollSettled)
         return Stack(temp: temp, ledger: ledger, overview: overview,
                      defaults: defaults, model: model)
     }
@@ -100,17 +83,16 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
         let s = try stack(enabled: true)
 
         s.model.start()
-        // Waits on start's own apply. Calling apply() here as well raced
-        // it: whichever resumed second attached again, and its scan could
-        // still be running when the status was read ("Indexing").
-        let settled = await withinDeadline {
-            while s.model.indexer == nil || s.overview.completedScans == 0 || s.overview.isLoading {
-                guard !Task.isCancelled else { return false }
-                try? await Task.sleep(for: .milliseconds(10))
-            }
-            return true
+        // Waits on start's own apply, through the models' own change
+        // stream. Calling apply() here as well raced it: whichever resumed
+        // second attached again, and its scan could still be running when
+        // the status was read ("Indexing"). The attach stamps lastSynced
+        // last, once its scan has finished.
+        let settled = await observe {
+            s.model.indexer != nil && s.overview.completedScans > 0
+                && !s.overview.isLoading && s.model.lastSynced != nil
         }
-        #expect(settled)
+        try #require(settled)
 
         #expect(s.model.indexer != nil)
         #expect(s.model.store?.fts5Available == true)
@@ -119,6 +101,49 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
         // with when rather than "Synced:".
         #expect(s.model.statusText.hasPrefix("Last synced "))
         #expect(s.model.statusText.contains("0 sessions, 0 messages"))
+    }
+
+    @Test func showingTheStatusLineReadsTheIndexAtOnce() async throws {
+        let s = try stack()
+        s.model.enabled = true
+        await s.model.apply()
+        #expect(s.model.statusText.contains("0 sessions"))
+
+        // A row lands while the line is hidden; the poll doesn't read the
+        // index then, so only showing the line can pick it up.
+        _ = try #require(s.model.store).createSession(
+            SearchSessionFields(agent: "claude", filePath: "/t/one.jsonl"))
+        s.model.statusVisible = true
+        let read = await observe { s.model.statusText.contains("1 session,") }
+        #expect(read)
+    }
+
+    @Test func onlyAVisibleStatusLinePollsTheIndex() async throws {
+        let s = try stack(enabled: true, pollSettled: .milliseconds(5))
+        // One apply only: flipping `enabled` would start a second, whose
+        // attach reads the index whenever it lands. The attach stamps
+        // lastSynced last, once its scan has finished.
+        s.model.start()
+        #expect(await observe {
+            s.model.indexer != nil && !s.overview.isLoading && s.model.lastSynced != nil
+        })
+
+        // Hidden: the poll keeps ticking but never reads the index.
+        var reads = s.model.statusReads
+        var ticks = s.model.pollTicks
+        #expect(await observe { s.model.pollTicks >= ticks + 3 })
+        #expect(s.model.statusReads == reads)
+
+        // Shown: every tick reads it.
+        s.model.statusVisible = true
+        #expect(await observe { s.model.statusReads >= reads + 3 })
+
+        // Hidden again: the reads stop.
+        s.model.statusVisible = false
+        reads = s.model.statusReads
+        ticks = s.model.pollTicks
+        #expect(await observe { s.model.pollTicks >= ticks + 3 })
+        #expect(s.model.statusReads == reads)
     }
 
     @Test func disablingDetachesButKeepsTheFiles() async throws {
@@ -184,7 +209,7 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
 
     @Test func aMissingLedgerReportsWhy() async throws {
         let temp = try TempDir()
-        let defaults = UserDefaults(suiteName: "search-index-\(UUID().uuidString)")!
+        let defaults = TestDefaults("search-index")
         let model = SearchIndexModel(
             quiver: temp.url, ledger: nil, overview: nil, defaults: defaults)
 
@@ -202,14 +227,8 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
         // Every apply is done here, so the next scan bump is the tick's.
         let scanned = s.overview.completedScans
 
-        // The deadline turns a missing tick into a failure, not a hang.
-        let ticked = await withinDeadline {
-            for await count in Observations({ s.overview.completedScans }) {
-                if Task.isCancelled || count > scanned { return count > scanned }
-            }
-            return false
-        }
-        #expect(ticked)
+        // The timeout turns a missing tick into a failure, not a hang.
+        #expect(await observe { s.overview.completedScans > scanned })
     }
 
     @Test func theKeyNameIsSharedWithTheCLI() {

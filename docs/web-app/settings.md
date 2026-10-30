@@ -59,11 +59,14 @@ badge where its control would be.
   tailnet device keeps working through its Tailscale sign-in.
 - **Signed in through Tailscale**: the hub lets the owner's own tailnet
   devices in without pairing (`ctx.device_id` is `tailnet:<node id>`).
-  Such a browser has no row in the list, so no row says "This device";
-  a line in the card says it is signed in through Tailscale and has
-  nothing to revoke. The hub refuses a revoke of a `tailnet:` id.
+  Such a browser has no row in Paired devices; a line there points to
+  the "Signed in through Tailscale" card, which lists every owner node
+  the hub has let in (`remote.signins`), the browser's own with "This
+  device". Revoke works as for a paired device: the node stops getting
+  in, and any device paired from it is signed out, until a pairing from
+  it is approved again.
 - **Pair a device** mints a token and opens a sheet like the app's: the
-  QR code, a Browser / Quiver app switch (the `/app/#pair=` link or the
+  QR code, a Browser / Quiver app switch (the `/#pair=` link or the
   `quiver://pair` deep link), the app's instructions, the link, Copy
   link, and a countdown that turns into "Expired — mint a new code".
   Closing the sheet reloads the list, so a phone that paired shows up.
@@ -270,13 +273,12 @@ asks. Values are trimmed; error messages name variables, never values.
 
 `POST /v1/app/settings/revoke`, body `{"device_id": "…"}` (plus
 `"confirm_this_device": true` for the device sending it): answers
-`{"revoked", "this_device", "devices"}`, the list in the `get` shape.
+`{"revoked", "this_device", "devices", "signins"}`, the lists in the `get` shape.
 
 | Status | Code | When |
 |---|---|---|
 | 400 | `bad_device` | `device_id` missing, not a string, or over 64 characters |
-| 400 | `not_paired` | a `tailnet:` id: a Tailscale sign-in, not a pairing |
-| 404 | `unknown_device` | no paired device has that id |
+| 404 | `unknown_device` | no paired device or tailnet sign-in has that id |
 | 409 | `already_revoked` | the device is already signed out |
 | 409 | `confirm_this_device` | revoking the sender's own device without `confirm_this_device: true` |
 | 404 | `unknown_action` | any action but `pair`, `revoke`, `session_search`, `sync` and the `key_` ones |

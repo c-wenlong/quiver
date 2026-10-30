@@ -151,16 +151,17 @@ import Testing
         #expect(model.codes == ["r2": "34"])
     }
 
-    @Test func pollingStopsWhenCancelled() async throws {
+    @Test(.timeLimit(.minutes(1))) func pollingStopsWhenCancelled() async throws {
         let runner = PollCountingRunner(reply: Self.noRequests)
         let model = PairRequestsModel(swe: SweClient(runner: runner))
         let task = Task { await model.poll(every: .milliseconds(10)) }
-        while runner.count < 2 { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await runner.calls.reach(2))
         task.cancel()
+        // Once poll returns it can call swe no more, so its ending is the
+        // whole check. The time limit fails a poll that ignores
+        // cancellation (a task group racing a deadline would wait on it
+        // forever).
         await task.value
-        let seen = runner.count
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(runner.count == seen)
         #expect(model.loaded)
     }
 
@@ -173,7 +174,7 @@ import Testing
         await model.refresh()                       // first list call is not held
         runner.holdNextList()
         let stale = Task { await model.refresh() }
-        while !runner.isHolding { try await Task.sleep(for: .milliseconds(2)) }
+        #expect(await runner.gate.arrived())
         let request = model.requests[0]
         model.setCode("123456", for: request)
         #expect(await model.decide(request, approve: true))
@@ -193,7 +194,7 @@ import Testing
         model.setCode("000000", for: request)
         runner.holdNextDecision()
         let pending = Task { await model.decide(request, approve: true) }
-        while !runner.isHolding { try await Task.sleep(for: .milliseconds(2)) }
+        #expect(await runner.gate.arrived())
         model.setCode("123456", for: request)
         runner.release()
         #expect(await pending.value == false)
@@ -213,33 +214,24 @@ import Testing
 }
 
 /// Answers the list and decision calls, and can hold the next one of
-/// either until `release()`, so a test can interleave them.
+/// either at `gate` until `release()`, so a test can interleave them.
 private final class HeldListRunner: CommandRunning, @unchecked Sendable {
     private let lock = NSLock()
     private let list: CommandResult
     private let decision: CommandResult
     private var holdList = false
     private var holdDecision = false
-    private var waiter: CheckedContinuation<Void, Never>?
-    private var released = false
+    /// Where the held call parks; a test holds at most one call.
+    let gate = HoldGate()
 
     init(list: CommandResult, decision: CommandResult) {
         self.list = list
         self.decision = decision
     }
 
-    var isHolding: Bool { lock.withLock { waiter != nil } }
-    func holdNextList() { lock.withLock { holdList = true; released = false } }
-    func holdNextDecision() { lock.withLock { holdDecision = true; released = false } }
-
-    func release() {
-        let waiting = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-            released = true
-            defer { waiter = nil }
-            return waiter
-        }
-        waiting?.resume()
-    }
+    func holdNextList() { lock.withLock { holdList = true } }
+    func holdNextDecision() { lock.withLock { holdDecision = true } }
+    func release() { gate.open() }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
         let isList = arguments.contains("--requests")
@@ -248,31 +240,21 @@ private final class HeldListRunner: CommandRunning, @unchecked Sendable {
             if !isList && holdDecision { holdDecision = false; return true }
             return false
         }
-        if hold {
-            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                let resumeNow = lock.withLock { () -> Bool in
-                    if released { return true }
-                    waiter = c
-                    return false
-                }
-                if resumeNow { c.resume() }
-            }
-        }
+        if hold { try await gate.pass() }
         return isList ? list : decision
     }
 }
 
-/// Counts calls under a lock: the poll loop runs swe off the test's actor.
-private final class PollCountingRunner: CommandRunning, @unchecked Sendable {
-    private let lock = NSLock()
-    private var calls = 0
+/// Counts calls on a gate the test can wait on: the poll loop runs swe
+/// off the test's actor.
+private final class PollCountingRunner: CommandRunning, Sendable {
+    let calls = CountGate()
     private let reply: CommandResult
-    var count: Int { lock.withLock { calls } }
 
     init(reply: CommandResult) { self.reply = reply }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        lock.withLock { calls += 1 }
+        await calls.bump()
         return reply
     }
 }

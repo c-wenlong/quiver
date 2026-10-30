@@ -240,7 +240,7 @@ struct StateCard: View {
                     .font(Theme.rowTitle)
                     .foregroundStyle(tone == .error ? Theme.dangerText : Theme.textPrimary)
                 if let message {
-                    Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    Text(inlineCode: message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let actionTitle, let action {
@@ -249,6 +249,11 @@ struct StateCard: View {
             }
         }
     }
+}
+
+extension Text {
+    /// A hub or app message, its backtick spans drawn as inline code.
+    init(inlineCode message: String) { self.init(Markdown.inlineCode(message)) }
 }
 
 struct LoadingRow: View {
@@ -428,5 +433,14 @@ struct HarnessIcon: View {
         } else {
             Text(name).foregroundStyle(Theme.harness(harness))
         }
+    }
+}
+
+extension StateCard {
+    /// A page whose first load failed, with a way to try again.
+    static func unreachable(_ error: String, retry: @escaping () -> Void) -> StateCard {
+        StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub",
+                  message: HubError.detail(underUnreachableTitle: error), tone: .error,
+                  actionTitle: "Try again", action: retry)
     }
 }
