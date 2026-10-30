@@ -164,14 +164,6 @@ struct SegmentPicker<Option: Hashable & Identifiable>: View {
     }
 }
 
-/// A small coloured mark for the harness, in its Mac-app colour.
-struct HarnessMark: View {
-    var harness: String?
-    var body: some View {
-        RoundedRectangle(cornerRadius: 3).fill(Theme.harness(harness)).frame(width: 3, height: 30)
-    }
-}
-
 // MARK: - Buttons
 
 /// Ink on light, white on dark; never green. Full width at 44pt.
