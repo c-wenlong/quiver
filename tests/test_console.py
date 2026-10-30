@@ -150,9 +150,6 @@ class FillAnsiTest(unittest.TestCase):
         filled = fill_ansi(c("user_bg", "hi"), 10)
         self.assertEqual(10, visible_len(filled))
         self.assertTrue(filled.endswith(COLORS["reset"]))
-        # lpad puts the spaces outside the run, which leaves the row bare
-        # past the last word; that is the bug this exists to avoid.
-        self.assertNotEqual(strip_ansi(lpad(c("user_bg", "hi"), 10)), "")
         self.assertIn(" " * 8 + COLORS["reset"], filled)
 
     def test_a_plain_line_is_padded_on_the_end(self):

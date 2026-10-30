@@ -155,6 +155,15 @@ def _row_for_tool(output, tool_name):
     raise AssertionError(f"No row for {tool_name!r} in output:\n{output}")
 
 
+def _cell(output, tool_name, column):
+    """The raw (still coloured) text of ``tool_name``'s ``column`` cell,
+    located by the header's column order rather than a substring search
+    that another cell could satisfy."""
+    header = next(ln for ln in strip_ansi(output).split("\n") if " NAME " in ln)
+    names = [h.strip() for h in header.split("\u2502")]
+    return _row_for_tool(output, tool_name).split("\u2502")[names.index(column)].strip()
+
+
 def _pin_columns(test):
     """Isolate from the user's saved column set and archive.
 
@@ -205,7 +214,7 @@ class CmdListGhostRowTest(unittest.TestCase):
         self.assertIn("ghost-tool", strip_ansi(row))
         # The promised placeholder for a command-less row, not an empty
         # cell or a probed name.
-        self.assertIn("—", strip_ansi(row))
+        self.assertEqual(strip_ansi(_cell(output, "ghost-tool", "COMMAND")).strip(), "—")
 
 
 class CmdListHeaderTest(unittest.TestCase):
@@ -479,16 +488,12 @@ class CmdListSessColumnTest(unittest.TestCase):
 
     def test_sess_three_states_shift_colors(self):
         output = _run_cmd_list()
-        claude_plain = strip_ansi(_row_for_tool(output, "claude"))
-        codex_plain = strip_ansi(_row_for_tool(output, "codex"))
-        droid_plain = strip_ansi(_row_for_tool(output, "droid"))
-        # claude: positive count 42 → green; the digit "42" must be
-        # somewhere in the row's plain text.
-        self.assertIn("42", claude_plain)
-        # codex: zero count → dim "0"; bare "0" must appear.
-        self.assertIn("0", codex_plain)
-        # droid: absent → dim em-dash; must have "\u2014".
-        self.assertIn("\u2014", droid_plain)
+        # claude: positive count 42 → green.
+        self.assertEqual(_cell(output, "claude", "100d"), c("green", "42"))
+        # codex: zero count → dim "0".
+        self.assertEqual(_cell(output, "codex", "100d"), c("dim", "0"))
+        # droid: absent → dim em-dash.
+        self.assertEqual(_cell(output, "droid", "100d"), c("dim", "\u2014"))
 
 
 class CmdListSortAndFilterTest(unittest.TestCase):
@@ -1320,7 +1325,8 @@ class CmdInfoPrimaryColorTest(unittest.TestCase):
         output = _run_cmd_info()
         plain = strip_ansi(output)
         # Both em-dashes must appear (aliases default + tags fall-through).
-        self.assertIn("\u2014", plain)
+        self.assertRegex(plain, r"Aliases:\s+\u2014")
+        self.assertRegex(plain, r"Tags:\s+\u2014")
 
     def test_cmd_info_unknown_tool_prints_usage(self):
         empty = {"no_such": {"command": "no_such"}}
