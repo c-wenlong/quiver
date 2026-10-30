@@ -122,19 +122,19 @@ struct PullDetailView: View {
     /// Merge or arm auto-merge, then read the PR again: the hub dropped
     /// its cached copy, so the page shows merged or armed. A 409 or 404
     /// means the page was out of date; the error stays and the PR is
-    /// read again so it shows what the hub saw.
+    /// read again so it shows what the hub saw. The buttons stay busy
+    /// until that read lands, so the old picture can't be acted on twice.
     private func merge(_ ask: MergeAsk) async {
         guard let client = app.client, !merging else { return }
         merging = true
         mergeError = nil
+        defer { merging = false }
         do {
             try await client.mergePull(repo: repo, number: number, method: method, auto: ask == .auto)
-            merging = false
             await load(refresh: true)
         } catch is CancellationError {
-            merging = false
+            return
         } catch {
-            merging = false
             mergeError = error.localizedDescription
             if let e = error as? HubError, e.status == 409 || e.status == 404 {
                 await load(refresh: true)
@@ -148,14 +148,14 @@ struct PullDetailView: View {
         guard let client = app.client, !rerunning.contains(run) else { return }
         rerunning.insert(run)
         rerunError = nil
+        // Busy until the fresh read lands, as for a merge.
+        defer { rerunning.remove(run) }
         do {
             try await client.rerunRun(repo: repo, run: run, failed: failed)
-            rerunning.remove(run)
             await load(refresh: true)
         } catch is CancellationError {
-            rerunning.remove(run)
+            return
         } catch {
-            rerunning.remove(run)
             rerunError = error.localizedDescription
         }
     }
@@ -226,6 +226,14 @@ struct PullDetailView: View {
             if PullActions.offersMerge(pr) {
                 mergeControls(pr)
             }
+            // Outside the open-only controls: a merge refused because the
+            // PR closed meanwhile still says why after the re-read.
+            if let mergeError {
+                Text(mergeError).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if let url = pr.url.flatMap(URL.init) {
                 Button { openURL(url) } label: {
                     Label("Open on GitHub", systemImage: "safari")
@@ -278,11 +286,6 @@ struct PullDetailView: View {
             }
             if let note = PullActions.blockNote(pr) {
                 Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-            }
-            if let mergeError {
-                Text(mergeError).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
             }
         }
     }
