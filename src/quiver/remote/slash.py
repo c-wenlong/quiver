@@ -792,7 +792,8 @@ def bound_payload(payload: dict) -> dict | None:
     folders = [(_size(layers), harness, cwd)
                for harness, slot in out["harnesses"].items()
                for cwd, layers in slot["folders"].items()]
-    folders.sort(reverse=True)
+    # Smallest first, so the biggest pops off the end in O(1).
+    folders.sort()
     # Kept up by arithmetic rather than re-serialising the whole payload
     # per dropped folder (quadratic in folders). Exact for json.dumps'
     # default separators: an entry is `key: value`, plus `, ` when it
@@ -801,7 +802,7 @@ def bound_payload(payload: dict) -> dict | None:
     while total > MAX_PAYLOAD_BYTES:
         if not folders:
             return None
-        n, harness, cwd = folders.pop(0)
+        n, harness, cwd = folders.pop()
         entries = out["harnesses"][harness]["folders"]
         total -= _size(cwd) + 2 + n + (2 if len(entries) > 1 else 0)
         del entries[cwd]
