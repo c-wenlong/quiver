@@ -31,17 +31,19 @@ async function renderHarnesses() {
   }
   const { status, data } = await api("/v1/app/harnesses");
   if (gen !== harnessesPage.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) return pageError(harnessesHeader(), status, data, renderHarnesses);
   harnessesPage.data = data;
   paintHarnesses();
 }
 
-function harnessesHeader() {
+/* Detect and Add harness only once the list is painted: paintHarnesses
+ * binds them, so in the loading and error states they would do nothing. */
+function harnessesHeader(actions = false) {
   const where = harnessesPage.data && harnessesPage.data.machine ? ` on ${harnessesPage.data.machine}` : "";
   return pageHeader("Harnesses", `The AI coding CLIs swe knows about${where}. Star the ones you use; archive the ones you've ruled out.`,
-    `<button class="harness-button" data-sheet="detect">Detect</button>
-     <button class="harness-button primary harness-add" data-sheet="add">${harnessIcon("plus")}Add harness</button>
+    `${actions ? `<button class="harness-button" data-sheet="detect">Detect</button>
+     <button class="harness-button primary harness-add" data-sheet="add">${harnessIcon("plus")}Add harness</button>` : ""}
      <button class="icon-button" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
 }
 
@@ -86,7 +88,7 @@ function paintHarnesses() {
         ? "Hide the harnesses you haven't starred" : `Show ${hidden} more you haven't starred`}</button>`;
     }
   }
-  document.getElementById("panel").innerHTML = `<div class="page">${harnessesHeader()}
+  document.getElementById("panel").innerHTML = `<div class="page">${harnessesHeader(true)}
     <div class="stack">
       <div class="filters">
         <select class="field" id="harness-scope" aria-label="Scope">${options(
@@ -271,12 +273,11 @@ async function harnessWrite(action, name, extra = {}) {
   // write landed: drop it, so it can't paint the old state over the reply.
   if (status === 200) p.gen++;
   if (status === 401) {
-    if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onHarnessesPage()) renderGate();
     return;
   }
   if (status !== 200 || !data) {
-    p.actionError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.actionError = failText(status, data);
   } else if (p.data) {
     const rows = p.data.harnesses;
     const at = rows.findIndex((h) => h.name === data.name);
@@ -325,26 +326,10 @@ function repaintHarnesses(fallback) {
 }
 
 function onHarnessesPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "harnesses";
+  return currentRoute() === "harnesses";
 }
 
 /* app.js's api() only reads; writes send JSON with the same headers. */
-async function apiPost(path, body) {
-  let resp;
-  try {
-    resp = await fetch(path, {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return { status: 0, data: null };
-  }
-  let data = null;
-  try { data = await resp.json(); } catch { /* empty body */ }
-  return { status: resp.status, data };
-}
-
 /* ------------------------------------------------- Harnesses: the sheets */
 
 /* The Mac app's three sheets as one <dialog>: the row editor (HarnessEditor),
@@ -613,8 +598,7 @@ function bindHarnessSheet() {
 }
 
 function sheetFailure(status, data) {
-  return (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  return failText(status, data);
 }
 
 /* The sheet's request: working while it runs, the error in the sheet. A
@@ -630,7 +614,7 @@ async function sheetPost(s, action, body) {
   if (status === 401) {
     s.gated = true;
     closeHarnessSheet(true);
-    if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onHarnessesPage()) renderGate();
     return null;
   }
   // A list read still in flight may predate this write: drop it.
@@ -667,7 +651,7 @@ async function detectScan() {
   if (p.sheet !== s || mine !== s.gen) return;
   if (status === 401) {
     closeHarnessSheet(true);
-    if (onHarnessesPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onHarnessesPage()) renderGate();
     return;
   }
   if (status !== 200 || !data) {
@@ -747,7 +731,7 @@ async function renderAccounts(_id, refresh = false) {
   // A failed request pauses the clock's repaints, which would otherwise
   // put the old readings back over the error or the pairing steps.
   accountsPage.failed = status !== 200 || !data;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (accountsPage.failed) return pageError(accountsHeader(false), status, data, () => renderAccounts("accounts", true));
   accountsPage.data = data;
   paintAccounts();
@@ -790,7 +774,7 @@ function paintAccounts() {
 function startAccountsClock() {
   if (accountsPage.timer) return;
   accountsPage.timer = setInterval(() => {
-    const onPage = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "accounts";
+    const onPage = currentRoute() === "accounts";
     if (!onPage) { clearInterval(accountsPage.timer); accountsPage.timer = null; return; }
     if (accountsPage.data && !accountsPage.loading && !accountsPage.failed && !document.hidden) paintAccounts();
   }, 30000);
@@ -873,8 +857,7 @@ function bindRefresh(render, before) {
 }
 
 function pageError(header, status, data, retry) {
-  const msg = (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+  const msg = failText(status, data, "then refresh");
   document.getElementById("panel").innerHTML = `<div class="page">${header}<div class="card"><p class="error">${esc(msg)}</p></div></div>`;
   bindRefresh(retry);
 }

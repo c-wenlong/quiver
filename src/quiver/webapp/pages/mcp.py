@@ -55,14 +55,13 @@ import re
 import secrets
 import shutil
 import subprocess
-import threading
 from contextlib import redirect_stdout
 from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from quiver.mcp.secrets import _SECRET_FLAG_RE
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import CONFIG_LOCK, PageError, tilde
 
 # A health probe HEADs each URL with its own five-second timeout; the whole
 # check gets this long before a server still being probed reads "unknown".
@@ -86,7 +85,8 @@ def get(ctx, args: dict) -> dict:
     if health and pairs:
         for (row, _), (state, detail) in zip(pairs, probe_all(pairs)):
             row["health"], row["detail"] = state, detail
-    folders = folder_scan(_servers_root(ctx), [row for row, _ in pairs])
+    folders = folder_scan(_servers_root(ctx), [row for row, _ in pairs],
+                          home=ctx.home)
     servers = [page_row(row) for row, _ in pairs]
     _add_secrets(servers)
     return {
@@ -176,7 +176,7 @@ NAME_MAX = 200
 # back; two at once could lose one, and the dry run and the write must see
 # the same files. ``_sync`` also prints as it goes, which is captured while
 # this is held (the hub itself never writes to stdout).
-_WRITE_LOCK = threading.Lock()
+_WRITE_LOCK = CONFIG_LOCK  # shared with Skills and Setup
 # Fingerprints are keyed per hub process: the material holds the configs,
 # resolved secrets included, so a bare hash of it could be guessed at
 # offline. A hub restart between Preview and Sync just asks for a new
@@ -394,7 +394,7 @@ def _add(ctx, body: dict) -> dict:
     Secret values are stored only once swe would take the add, and every
     refusal names variables, never their values."""
     from quiver.harness.registry import load_registry_readonly
-    from quiver.mcp.cli import AddRefused, add_conflicts, add_plan, add_server
+    from quiver.mcp.cli import AddRefused, add_conflicts, add_plan, add_server, get_hub_servers
     from quiver.mcp.secrets import load_secrets, render_secret_line, set_secret, unresolved_names
 
     req = _add_request(body)
@@ -460,18 +460,48 @@ def _add(ctx, body: dict) -> dict:
                 raise PageError(409, "add_refused", "\n".join(
                     f"Not adding: no value for {var} (used by {name}). Set it first, or mark it secret here."
                     for var in missing))
-        for ref, value in stored.items():
-            try:
-                set_secret(ref, value)
-            except ValueError as exc:
-                raise PageError(422, "bad_value", f"{ref}: {exc}") from exc
+        # What each name held before, so a failed add puts the store back.
+        before, hub_before = load_secrets(), get_hub_servers().get(name)
         try:
-            report = add_server(name, canonical, targets, force=req["force"])
-        except AddRefused as exc:
-            raise PageError(409, "add_refused", str(exc)) from exc
-        except (OSError, ValueError) as exc:
-            raise PageError(409, "add_failed", str(exc) or exc.__class__.__name__) from exc
+            for ref, value in stored.items():
+                try:
+                    set_secret(ref, value)
+                except ValueError as exc:
+                    raise PageError(422, "bad_value", f"{ref}: {exc}") from exc
+                except OSError as exc:
+                    raise PageError(409, "add_failed", str(exc) or exc.__class__.__name__) from exc
+            try:
+                report = add_server(name, canonical, targets, force=req["force"])
+            except AddRefused as exc:
+                raise PageError(409, "add_refused", str(exc)) from exc
+            except (OSError, ValueError) as exc:
+                raise PageError(409, "add_failed", str(exc) or exc.__class__.__name__) from exc
+        except PageError:
+            # add_server saves the hub before the harness files, so a failed
+            # harness write leaves a hub entry that needs these secrets.
+            if get_hub_servers().get(name) == hub_before:
+                _restore_secrets(stored, before)
+            raise
     return {**report, "page": get(ctx, {})}
+
+
+def _restore_secrets(stored: dict[str, str], before: dict[str, str]) -> None:
+    """Put each name in ``stored`` back to its value in ``before``, or
+    remove it when it had none, so a failed add leaves no secret behind.
+    A name whose value is no longer the one this add wrote changed since,
+    and is left alone."""
+    from quiver.mcp.secrets import load_secrets, remove_secret, set_secret
+    now = load_secrets()
+    for ref, value in stored.items():
+        if now.get(ref) != value:
+            continue
+        try:
+            if ref in before:
+                set_secret(ref, before[ref])
+            else:
+                remove_secret(ref)
+        except (OSError, ValueError):
+            pass
 
 
 def _sync_request(body: dict, needs_fingerprint: bool) -> dict:
@@ -1023,12 +1053,11 @@ def _servers_root(ctx) -> Path:
     return mcp_servers_dir_for(getattr(ctx, "home", None))
 
 
-def _display_path(path: Path) -> str:
-    home = str(Path.home())
-    text = str(path)
-    if text == home or text.startswith(home + os.sep):
-        return "~" + text[len(home):]
-    return text
+def _display_path(path: Path, home: Path | None = None) -> str:
+    """``path`` with ``home`` as ``~``. Harness configs live in the
+    process's home (``mcp_cli`` expands ``~``), so that is the default;
+    the servers folder lives in the hub's own."""
+    return tilde(path, home)
 
 
 def _child_folders(path: Path) -> list[Path]:
@@ -1191,12 +1220,13 @@ def read_git(path: Path) -> dict:
     return parse_git(done.stdout)
 
 
-def folder_scan(root: Path, servers: list[dict]) -> dict:
+def folder_scan(root: Path, servers: list[dict],
+                home: Path | None = None) -> dict:
     """The servers folder as the page shows it: each checkout with its git
     state and the servers that run from it (``used_by``), or why it could
     not be read. ``servers`` is the whole inventory, so a server the page
     filters out still marks its folder as used."""
-    out = {"root": _display_path(root), "exists": root.exists(), "error": None,
+    out = {"root": _display_path(root, home), "exists": root.exists(), "error": None,
            "items": []}
     try:
         found = scan(root)
@@ -1211,7 +1241,7 @@ def folder_scan(root: Path, servers: list[dict]) -> dict:
         out["items"].append({
             "name": folder["name"],
             "group": folder["group"],
-            "path": _display_path(Path(path)),
+            "path": _display_path(Path(path), home),
             "git": git,
             "used_by": usage.get(path, []),
         })

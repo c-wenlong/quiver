@@ -15,6 +15,8 @@ struct PullDetailView: View {
     @State private var error: String?
     @State private var opening = false
     @State private var startedKey: String?
+    /// Bumped per load so a late reply can't overwrite a newer one.
+    @State private var generation = 0
 
     var body: some View {
         PageScroll {
@@ -66,13 +68,26 @@ struct PullDetailView: View {
 
     private func load(refresh: Bool = false) async {
         guard let client = app.client else { return }
+        generation += 1
+        let gen = generation
         do {
             let body = try await client.pull(repo: repo, number: number, refresh: refresh)
-            reply = body
-            error = nil
+            guard gen == generation else { return }
+            (reply, error) = Self.landing(body, over: reply)
         } catch {
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            guard gen == generation else { return }
+            self.error = error.localizedDescription
         }
+    }
+
+    /// What a reply leaves on screen. A `gh` failure answers 200 with
+    /// `pr: null`: the PR already shown stays, and the notice says why
+    /// it's stale, rather than blanking the page for an outage.
+    static func landing(_ body: PullResponse, over shown: PullResponse?) -> (reply: PullResponse?, error: String?) {
+        if body.pr == nil, shown?.pr != nil {
+            return (shown, body.error ?? "GitHub couldn't read the pull request.")
+        }
+        return (body, nil)
     }
 
     // MARK: Sections
@@ -124,7 +139,7 @@ struct PullDetailView: View {
                     Text(bits.joined(separator: " · "))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
-                ForEach(labels.prefix(4), id: \.self) { Badge($0) }
+                ForEach(Array(labels.prefix(4).enumerated()), id: \.offset) { Badge($0.element) }
             }
         }
     }
@@ -272,8 +287,10 @@ struct OpenPullSheet: View {
         NavigationStack {
             PageScroll {
                 if let machine {
-                    startsIn(machine)
-                    harnessSection(machine)
+                    StartsInCard(icon: "arrow.triangle.pull", title: "\(repo)#\(detail.number) worktree",
+                                 trailing: "on \(machine.displayName)")
+                        .padding(.top, 4)
+                    HarnessPicker(machine: machine, harness: $harness, sessions: rows)
                     ModelField(machine: machine, harness: harness,
                                selection: $model,
                                sessions: rows, disabled: flow.busy)
@@ -319,88 +336,24 @@ struct OpenPullSheet: View {
         model.follow(harness, on: machine)
     }
 
-    private func startsIn(_ machine: Machine) -> some View {
-        Card(padding: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "arrow.triangle.pull").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Starts in").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    Text("\(repo)#\(detail.number) worktree")
-                        .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Text("on \(machine.displayName)")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            }
-            .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
-        }
-        .padding(.top, 4)
-    }
-
-    @ViewBuilder private func harnessSection(_ machine: Machine) -> some View {
-        let offered = NewSessionOptions.harnesses(on: machine)
-        GroupLabel(text: "Harness", trailing: harness.map { NewSessionOptions.name($0, on: machine, sessions: rows) })
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 48, maximum: 48), spacing: 8)], alignment: .leading, spacing: 8) {
-            ForEach(offered, id: \.self) { h in
-                let selected = h == harness
-                let name = NewSessionOptions.name(h, on: machine, sessions: rows)
-                Button { harness = h } label: {
-                    HarnessIcon(harness: h, name: name, size: 24)
-                        .font(.system(size: 10))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .frame(width: 48, height: 48)
-                        .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
-                            .strokeBorder(selected ? Theme.textPrimary : Theme.border, lineWidth: selected ? 1.5 : 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(name)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        if let harness, machine.untrackedHarnesses?.contains(harness) == true {
-            Text("Quiver can't read \(NewSessionOptions.name(harness, on: machine, sessions: rows)) sessions yet: it starts, but no chat opens.")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 4)
-        }
-    }
-
     private var promptSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            GroupLabel(text: "First prompt")
-            TextField("Describe the first task", text: $prompt, axis: .vertical)
-                .lineLimit(4...10)
-                .font(Theme.body)
-                .foregroundStyle(Theme.textPrimary)
-                .padding(12)
-                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+        FirstPromptField(prompt: $prompt) {
+            if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Leave it empty and the hub writes the review brief.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 4)
+            }
         }
     }
 
     private func startSection(_ machine: Machine) -> some View {
-        let ready = harness != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // A blank prompt is fine: the hub writes its review brief then.
+        let ready = harness != nil
         return VStack(alignment: .leading, spacing: 8) {
-            Button { launch = Task { await start(machine) } } label: {
-                HStack(spacing: 8) {
-                    if flow.busy { ProgressView().controlSize(.small).tint(Theme.primaryForeground) }
-                    Text(flow.phase == .waiting ? "Waiting for the session" : flow.opening ? "Opening the chat" : flow.busy ? "Starting" : "Start session")
-                }
+            LaunchStartButton(flow: flow, ready: ready,
+                              footnote: "Runs under tmux on \(machine.displayName) in a checkout of the PR's head. The chat opens once the session shows up.") {
+                launch = Task { await start(machine) }
             }
-            .primaryButton()
-            .disabled(!ready || flow.busy)
-            if case .failed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if case .unconfirmed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text("Runs under tmux on \(machine.displayName) in a checkout of the PR's head. The chat opens once the session shows up.")
-                .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
