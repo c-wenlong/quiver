@@ -1909,7 +1909,11 @@ const SessionChat = (() => {
     } else if (ev.type === "session.status") {
       const status = d.status || "";
       // The turn ended (or stopped to ask) without a message to show.
-      if (ev.session === chat.key && status && status !== "active") chat.awaitingReply = false;
+      if (ev.session === chat.key && status && status !== "active") {
+        chat.awaitingReply = false;
+        // A reply just finished: the header's model may be new.
+        if (live) refreshModel();
+      }
       if (chat.row && ev.session === chat.key) {
         chat.row.status = status;
         // An open chat polls nothing: a turn ending here should show the
@@ -2592,6 +2596,33 @@ const SessionChat = (() => {
 
   /* -------------------------------------------------------------- opening */
 
+  /* The model alone, read again from the catalog row. The row is read
+   * once at open and no event carries the model, so one that first
+   * appears with the opening reply, or changes from another client or
+   * the terminal, would show as it was until a reopen. A failed read, or
+   * a hub that doesn't know the model, leaves the header as it is. One
+   * read at a time; returns the model now shown. */
+  let modelRead = null;
+  function refreshModel() {
+    if (modelRead || !chat.key || !chat.row) return modelRead || Promise.resolve("");
+    const gen = chat.gen;
+    modelRead = (async () => {
+      try {
+        const { status, data } = await api("/v1/sessions");
+        if (gen !== chat.gen || status !== 200 || !data) return "";
+        const row = (data.sessions || []).find((r) => r.key === chat.key);
+        if (row && row.model && chat.row && row.model !== chat.row.model) {
+          chat.row.model = row.model;
+          paintBar();
+        }
+        return (chat.row && chat.row.model) || "";
+      } finally {
+        modelRead = null;
+      }
+    })();
+    return modelRead;
+  }
+
   /* The catalog row: ownership, attachable and status as the hub has them
    * now, not as the list had them when it loaded. */
   async function loadRow(gen) {
@@ -3163,8 +3194,10 @@ const SessionChat = (() => {
     if (chat.key && keyFromHash() !== chat.key) close();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && chat.key && chat.opened && !chat.stream) {
-      openStream(chat.gen, resumeSeq());
+    if (document.visibilityState === "visible" && chat.key && chat.opened) {
+      // Back on the tab: a model switched elsewhere meanwhile shows now.
+      refreshModel();
+      if (!chat.stream) openStream(chat.gen, resumeSeq());
     }
   });
 
@@ -3178,7 +3211,7 @@ const SessionChat = (() => {
       diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
-      barSub, railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
+      barSub, refreshModel, railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
       cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat },
   };
 })();

@@ -1220,3 +1220,44 @@ class TestSessionModelShown(unittest.TestCase):
         self.assertEqual(out["remote"], "Codex · /w/app · gpt-5.1-codex · Mac mini")
         self.assertEqual(out["unknown"], "Claude Code · /w/app")
         self.assertEqual(out["none"], "")
+
+    def test_chat_reads_the_model_again_after_a_reply(self):
+        """The row is read once at open and no event carries the model, so
+        a finished turn (and a return to the tab) reads it again."""
+        out = self.run_js("""
+          const T = SessionChat._test;
+          const out = {};
+          T.chat.key = "s1"; T.chat.gen = 3;
+          T.chat.row = { harness: "claude", status: "active" };
+          const answer = (status, sessions) => { globalThis.api = async () => ({ status, data: { sessions } }); };
+          // A hub that fails, or doesn't know the model, leaves the header.
+          answer(503, null);
+          await T.refreshModel();
+          out.failed = T.chat.row.model || "";
+          answer(200, [{ key: "s1" }]);
+          await T.refreshModel();
+          out.unknown = T.chat.row.model || "";
+          // The opening reply names one; only the model is taken.
+          answer(200, [{ key: "s1", model: "claude-opus-4-5-20251101", status: "done" }]);
+          out.first = await T.refreshModel();
+          out.status = T.chat.row.status;
+          // A switch elsewhere changes it.
+          answer(200, [{ key: "s1", model: "claude-sonnet-4-5" }]);
+          out.switched = await T.refreshModel();
+          // An answer landing after the chat moved on is dropped.
+          let release;
+          globalThis.api = () => new Promise((r) => {
+            release = () => r({ status: 200, data: { sessions: [{ key: "s1", model: "late" }] } });
+          });
+          const slow = T.refreshModel();
+          T.chat.gen = 4;
+          release();
+          await slow;
+          out.late = T.chat.row.model;
+          return out;""", with_sessions=False)
+        self.assertEqual(out["failed"], "")
+        self.assertEqual(out["unknown"], "")
+        self.assertEqual(out["first"], "claude-opus-4-5-20251101")
+        self.assertEqual(out["status"], "active")
+        self.assertEqual(out["switched"], "claude-sonnet-4-5")
+        self.assertEqual(out["late"], "claude-sonnet-4-5")
