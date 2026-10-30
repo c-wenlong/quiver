@@ -227,6 +227,9 @@ class HubState:
         # ``tail``, so a chat reopened (or an SSE reconnecting) while
         # the satellite is offline queues one tail, not one per GET.
         self._sat_tail_cmds: dict[tuple[str, str], str] = {}
+        # Spans queue_tail's check, enqueue and record, so two opens at
+        # once can't both queue. Taken before ``_cmd_lock``, never under.
+        self._sat_tail_lock = threading.Lock()
         self._cmd_seq = 0
         # Guards ``_cmd_seq`` and every piece of satellite ack
         # bookkeeping below — command streams, result uploads and
@@ -667,18 +670,19 @@ class HubState:
     def queue_tail(self, mid: str, session_key: str, status: str) -> None:
         """Ask a satellite to tail ``session_key``, unless a tail for it
         is already queued and not yet acked."""
-        with self._cmd_lock:
-            cid = self._sat_tail_cmds.get((mid, session_key))
-            if cid and cid in self._sat_cmd_seqs.get(mid, {}):
-                return
-        cmd = self.queue_command(
-            mid, "tail", session_key, {"status": status})
-        if cmd is not None:
+        with self._sat_tail_lock:
             with self._cmd_lock:
-                if len(self._sat_tail_cmds) > 4096:
-                    self._sat_tail_cmds.clear()
-                self._sat_tail_cmds[(mid, session_key)] = str(
-                    (cmd.get("data") or {}).get("command_id") or "")
+                cid = self._sat_tail_cmds.get((mid, session_key))
+                if cid and cid in self._sat_cmd_seqs.get(mid, {}):
+                    return
+            cmd = self.queue_command(
+                mid, "tail", session_key, {"status": status})
+            if cmd is None:
+                return
+            if len(self._sat_tail_cmds) > 4096:
+                self._sat_tail_cmds.clear()
+            self._sat_tail_cmds[(mid, session_key)] = str(
+                (cmd.get("data") or {}).get("command_id") or "")
 
     def queue_command(
         self, mid: str, op: str, session_key: str, data: dict

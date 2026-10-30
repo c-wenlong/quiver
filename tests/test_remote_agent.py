@@ -752,6 +752,33 @@ class TestAgentRoutes(unittest.TestCase):
                          headers=self.srv.auth)
         self.assertEqual(len(tails()), 2)
 
+    def test_concurrent_opens_queue_a_single_tail(self):
+        self._push_catalog([{"key": "claude:r2", "status": "idle",
+                             "ownership": "observed"}])
+        self.srv.state.catalog.refresh()
+        real_queue = self.srv.state.queue_command
+        gate = threading.Barrier(4)
+
+        def slow_queue(*a, **k):
+            # Widen the check-to-record window the race needs.
+            time.sleep(0.05)
+            return real_queue(*a, **k)
+
+        self.srv.state.queue_command = slow_queue
+
+        def open_():
+            gate.wait()
+            self.srv.state.queue_tail("sat-m1", "claude:r2@sat-m1", "idle")
+
+        threads = [threading.Thread(target=open_) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(
+            len([e for e in replay if e["data"]["op"] == "tail"]), 1)
+
     def test_launch_to_named_machine_queues(self):
         status, data = self.srv.request(
             "POST", "/v1/sessions",
