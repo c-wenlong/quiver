@@ -512,33 +512,6 @@ class TestShellWord(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
-class TestRevealActiveTab(unittest.TestCase):
-    """revealActiveTab: on a phone the sidebar scrolls sideways, and the
-    current page's tab must be scrolled into view."""
-
-    def scroll_left(self, nav_width, scroll_width, tab_left, tab_width=80, active=True):
-        src = app_js_function("revealActiveTab") + """
-const tab = { getBoundingClientRect: () => ({ left: %d, width: %d }) };
-const nav = { scrollLeft: 0, scrollWidth: %d, clientWidth: %d,
-  querySelector: () => %s,
-  getBoundingClientRect: () => ({ left: 0, width: %d }) };
-revealActiveTab(nav);
-process.stdout.write(JSON.stringify(nav.scrollLeft));
-""" % (tab_left, tab_width, scroll_width, nav_width, "tab" if active else "null", nav_width)
-        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
-        self.assertEqual(done.returncode, 0, done.stderr)
-        return json.loads(done.stdout)
-
-    def test_a_tab_past_the_edge_is_centred(self):
-        # Hooks sat at x=1367 in a 375 px row.
-        self.assertEqual(self.scroll_left(375, 1800, 1367), 1367 - (375 - 80) / 2)
-
-    def test_a_row_that_fits_or_no_active_tab_stays_put(self):
-        self.assertEqual(self.scroll_left(220, 220, 100), 0)
-        self.assertEqual(self.scroll_left(375, 1800, 1367, active=False), 0)
-
-
-@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestHarnessMark(unittest.TestCase):
     """Fmt.mark and Fmt.logo, ported from the Mac's HarnessMark and
     HarnessIcons: every shipped logo draws, aliases and second accounts

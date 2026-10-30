@@ -925,7 +925,8 @@ class TestTailManager(unittest.TestCase):
                 mgr.ensure("claude:c", c, "")
             real(tailer, session)
 
-        with patch.object(mgr, "_reresolve", side_effect=reresolve):
+        with patch.object(mgr, "_may_have_moved", return_value=True), \
+             patch.object(mgr, "_reresolve", side_effect=reresolve):
             mgr.sync(rows + [("claude:c", c, "")])
         self.assertEqual(set(mgr.tailers), {"claude:a", "claude:b",
                                             "claude:c"})
@@ -1188,6 +1189,37 @@ class TestTailManager(unittest.TestCase):
                  if e["type"] == "message.appended"]
         self.assertNotIn("stale", texts)
         self.assertIn("b1", texts)
+
+    def test_reresolve_runs_only_when_the_catalog_saw_a_write(self):
+        # Resolving globs every Claude project folder; an idle session
+        # (same timestamp) or one whose tailed file is the newest copy
+        # must not pay for it on every catalog refresh.
+        import os
+        path = self.tmp / "s.jsonl"
+        path.write_text(json.dumps(_claude_user("hi")) + "\n")
+        mtime_ms = path.stat().st_mtime * 1000
+        sess = Session(timestamp=mtime_ms, agent="Claude Code", path="/tmp",
+                       session_id=str(path), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess, "active")])
+        with patch.object(tail, "resolve_jsonl_path",
+                          wraps=tail.resolve_jsonl_path) as resolve:
+            mgr.sync([("claude:s", sess, "active")])  # unchanged
+            with open(path, "a") as fh:
+                fh.write(json.dumps(_claude_user("more")) + "\n")
+            now = path.stat().st_mtime
+            os.utime(path, (now + 5, now + 5))
+            grown = Session(timestamp=(now + 5) * 1000, agent="Claude Code",
+                            path="/tmp", session_id=str(path),
+                            tool_name="claude")
+            mgr.sync([("claude:s", grown, "active")])  # own file is newest
+            self.assertEqual(resolve.call_count, 0)
+            # The catalog saw a write newer than the tailed file: look.
+            newer = Session(timestamp=(now + 60) * 1000, agent="Claude Code",
+                            path="/tmp", session_id=str(path),
+                            tool_name="claude")
+            mgr.sync([("claude:s", newer, "active")])
+            self.assertEqual(resolve.call_count, 1)
 
     def test_ensure_on_demand_tailer_survives_cap(self):
         path = self.tmp / "s.jsonl"
