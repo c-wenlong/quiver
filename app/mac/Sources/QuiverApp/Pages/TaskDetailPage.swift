@@ -265,7 +265,7 @@ struct TaskDetailPage: View {
                 .fixedSize(horizontal: false, vertical: true)
             launchStatus
             HStack(spacing: 8) {
-                Button("Cancel") {
+                Button(flow.cancelTitle) {
                     launchTask?.cancel()
                     panel = nil
                 }

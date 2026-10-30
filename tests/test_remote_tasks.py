@@ -367,6 +367,25 @@ class TestTasksRoute(_Base):
         self.assertEqual(row["state"], "open")
         self.assertIsNone(row["pr"])
 
+    def test_linked_pr_skips_a_forks_pr_listed_first(self):
+        # gh's --head matches the branch name alone: a fork's PR from a
+        # same-named branch can come back first, and a limit of 1 then
+        # hid the repo's own merged PR.
+        fork = {"number": 11, "title": "fork", "state": "OPEN",
+                "headRefName": "quiver/issue-5",
+                "headRepositoryOwner": {"login": "someone-else"}}
+        own = {"number": 9, "title": "mine", "state": "MERGED",
+               "headRefName": "quiver/issue-5",
+               "headRepositoryOwner": {"login": "o"}}
+        with patch("quiver.github.gh.run_json",
+                   return_value=gh.GhResult("ok", data=[fork, own])) as run:
+            answered, pr = tasks_mod.GitHubTasks(
+                self.srv.home)._linked_pr("o/r", 5)
+        args = run.call_args[0][0]
+        self.assertGreater(int(args[args.index("--limit") + 1]), 1)
+        self.assertTrue(answered)
+        self.assertEqual(pr["number"], 9)
+
     def test_linked_session_runs_and_finishes(self):
         tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:s1")
         with self._stubs():

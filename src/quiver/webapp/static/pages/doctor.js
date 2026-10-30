@@ -32,7 +32,6 @@ const DOCTOR_RUNS = {
 const DOCTOR_ICONS = {
   seal: '<path d="m12 2.5 2.2 1.6 2.7-.1.8 2.6 2.2 1.6-.9 2.6.9 2.6-2.2 1.6-.8 2.6-2.7-.1L12 21.5l-2.2-1.6-2.7.1-.8-2.6-2.2-1.6.9-2.6-.9-2.6 2.2-1.6.8-2.6 2.7.1z"/><path d="m8.8 12 2.2 2.2 4.2-4.4"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
-  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
 };
 const doctorIcon = (name) =>
   `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DOCTOR_ICONS[name]}</svg>`;
@@ -305,7 +304,7 @@ async function doctorReplace() {
 }
 
 function onDoctorPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "doctor";
+  return currentRoute() === "doctor";
 }
 
 registerPage("doctor", renderDoctor);

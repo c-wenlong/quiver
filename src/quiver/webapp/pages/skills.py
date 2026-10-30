@@ -16,10 +16,9 @@ skill's folder once symlinks resolve, so no request reads anything else.
 from __future__ import annotations
 
 import os
-import threading
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import CONFIG_LOCK, PageError
 
 # PrimitiveTree.isTextFile: under a megabyte, and UTF-8 with no NUL in
 # its first 8 KB.
@@ -89,9 +88,12 @@ def placement(skills: list[dict], home: Path) -> tuple[list[dict], int, str | No
     ``quiver.plugins.catalog.owners`` decides.
     """
     try:
-        from quiver.plugins.catalog import build_catalog, owners, plugin_dirs
+        from quiver.plugins.catalog import owners, plugin_dirs
+        from quiver.webapp.pages.plugins import shared_catalog
 
-        dirs = plugin_dirs(build_catalog(home))
+        # The Plugins page's read: walking every marketplace per Skills
+        # load cost seconds on a machine with many plugins.
+        dirs = plugin_dirs(shared_catalog(home))
     except Exception as exc:  # the Mac app's CatalogLookup.unavailable
         return [{**s, "plugin": None} for s in skills], 0, str(exc) or exc.__class__.__name__
     placed = []
@@ -329,8 +331,9 @@ REF_MAX = 4096
 # The hub answers each request on its own thread, and every link rewrites
 # skill_links.json; the Mac app runs its swe calls one at a time for the
 # same reason (SkillsModel's SerialGate). Reading the states, checking and
-# writing all happen under it.
-_WRITE_LOCK = threading.Lock()
+# writing all happen under it. Shared with MCP and Setup, whose apply
+# relinks skills too.
+_WRITE_LOCK = CONFIG_LOCK
 
 
 def link_state(root: dict) -> str:
