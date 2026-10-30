@@ -64,6 +64,7 @@ import Testing
 
     @Test func piAssistantMessagesGivePricedEvents() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try piHome(temp, lines:
             """
             {"type":"session","cwd":"/Users/x/proj","timestamp":1759480000000}
@@ -94,6 +95,7 @@ import Testing
 
     @Test func piRescanAppendsOnlyTheNewLine() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try piHome(temp, lines:
             Self.piMessage(id: "a1", ms: 1759480002000, input: 10, output: 10,
                            reasoning: 0, cacheRead: 0, cost: 0.001))
@@ -103,12 +105,9 @@ import Testing
 
         let file = home.appendingPathComponent(
             "agent/sessions/-Users-x-proj/2026-10-03T10-00-00-000Z_aaaa.jsonl")
-        let handle = try FileHandle(forWritingTo: file)
-        try handle.seekToEnd()
-        try handle.write(contentsOf: Data(Self.piMessage(
+        try FileManager.default.append(Self.piMessage(
             id: "a2", ms: 1759480003000, input: 20, output: 20,
-            reasoning: 0, cacheRead: 0, cost: 0.002).utf8))
-        try handle.close()
+            reasoning: 0, cacheRead: 0, cost: 0.002), to: file)
 
         try await ledger.scan(roots: LedgerRoots(piHomes: [home]))
         let events = await ledger.events(in: allTime)
@@ -120,6 +119,7 @@ import Testing
 
     @Test func droidSettingsGiveOneEventAtTheTranscriptsLastStamp() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try droidHome(temp, usage:
             """
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":5000,
@@ -145,6 +145,7 @@ import Testing
 
     @Test func droidRewriteReplacesTheTotals() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try droidHome(temp, usage:
             """
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
@@ -169,6 +170,7 @@ import Testing
 
     @Test func droidAllZeroUsageGivesNoEvent() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try droidHome(temp, usage:
             """
             "inputTokens":0,"outputTokens":0,"cacheReadTokens":0,
@@ -181,6 +183,7 @@ import Testing
 
     @Test func aMalformedFileSkipsWithoutACursor() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try droidHome(temp, usage:
             """
             "inputTokens":100,"outputTokens":20,"cacheReadTokens":0,
@@ -205,6 +208,7 @@ import Testing
 
     @Test func aModelChangeWithTheSameTotalsReImports() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try droidHome(temp, usage:
             """
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
@@ -230,6 +234,7 @@ import Testing
 
     @Test func aSessionNowReportingZeroClearsItsEvent() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try droidHome(temp, usage:
             """
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
@@ -251,6 +256,7 @@ import Testing
 
     @Test func aNewerTranscriptReReadsUnchangedSettings() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try droidHome(temp, usage:
             """
             "inputTokens":1000,"outputTokens":200,"cacheReadTokens":0,
@@ -263,13 +269,10 @@ import Testing
         // The settings file is untouched, but the transcript gained a later
         // line, so the event's timestamp must move.
         let transcript = home.appendingPathComponent("sessions/-Users-x-proj/s1.jsonl")
-        let handle = try FileHandle(forWritingTo: transcript)
-        try handle.seekToEnd()
         // The fixture's last line has no trailing newline, so prepend one.
-        try handle.write(contentsOf: Data(
-            ("\n" + #"{"type":"message","timestamp":"2026-10-03T13:00:00Z","message":{"role":"assistant"}}"#)
-                .utf8))
-        try handle.close()
+        try FileManager.default.append(
+            "\n" + #"{"type":"message","timestamp":"2026-10-03T13:00:00Z","message":{"role":"assistant"}}"#,
+            to: transcript)
         try await ledger.scan(roots: LedgerRoots(droidHomes: [home]))
         let events = await ledger.events(in: allTime)
         #expect(events.count == 1)
@@ -284,6 +287,7 @@ import Testing
              "output_cost_per_token_above_200k_tokens": 1.6e-05, "litellm_provider": "openai"}}
             """.utf8), supplement: PricingSupplement())
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let droid = try droidHome(temp, usage:
             """
             "inputTokens":300000,"outputTokens":100,"cacheReadTokens":0,
@@ -313,6 +317,7 @@ import Testing
 
     @Test func clineReadsTokensInNotUsageInputTokens() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try clineHome(temp, metadata:
             """
             "tokensIn":100,"tokensOut":20,"cacheReads":900,"cacheWrites":5,"totalCost":0.5,
@@ -338,6 +343,7 @@ import Testing
 
     @Test func clineZeroCostFallsBackToTheCatalog() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try clineHome(temp, metadata:
             """
             "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0
@@ -350,6 +356,7 @@ import Testing
 
     @Test func clineNullEndedAtFallsBackToStartedAt() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try clineHome(temp, metadata:
             """
             "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0
@@ -362,6 +369,7 @@ import Testing
 
     @Test func clineRewriteReplacesTheSession() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try clineHome(temp, metadata:
             """
             "tokensIn":100,"tokensOut":20,"cacheReads":0,"cacheWrites":0,"totalCost":0.5
@@ -389,6 +397,7 @@ import Testing
 
     @Test func ledgerActivitySkipsPiDroidAndCline() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let pi = try piHome(temp, lines:
             Self.piMessage(id: "a1", ms: 1759480002000, input: 10, output: 10,
                            reasoning: 0, cacheRead: 0, cost: 0.001))

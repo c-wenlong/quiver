@@ -8,7 +8,6 @@ import shutil
 import stat
 import struct
 import subprocess
-import tempfile
 import threading
 import time
 import unittest
@@ -20,8 +19,10 @@ from quiver.remote import pairing, sshkeys
 from quiver.remote.commands import cmd_remote
 
 try:
+    from _tempdir import temp_dir
     from test_remote_hub import _Server, _session
 except ImportError:  # run as `python3 -m unittest tests.test_remote_sshkeys`
+    from tests._tempdir import temp_dir
     from tests.test_remote_hub import _Server, _session
 
 
@@ -83,7 +84,7 @@ class TestNormalize(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("ssh-keygen"), "needs ssh-keygen")
     def test_fingerprint_matches_ssh_keygen(self):
-        tmp = Path(tempfile.mkdtemp())
+        tmp = temp_dir(self)
         subprocess.run(
             ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f",
              str(tmp / "k")], check=True)
@@ -96,7 +97,7 @@ class TestNormalize(unittest.TestCase):
 
 class TestHostKeys(unittest.TestCase):
     def test_reads_supported_types_only(self):
-        tmp = Path(tempfile.mkdtemp())
+        tmp = temp_dir(self)
         (tmp / "ssh_host_ed25519_key.pub").write_text(_key() + " root@box\n")
         (tmp / "ssh_host_rsa_key.pub").write_text(_key("ssh-rsa") + "\n")
         (tmp / "ssh_host_ecdsa_key.pub").write_text(
@@ -110,7 +111,7 @@ class TestHostKeys(unittest.TestCase):
 
 class TestSync(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.ak = sshkeys.authorized_keys_file(self.home)
 
     def test_off_by_default_and_creates_nothing(self):
@@ -321,7 +322,7 @@ class TestRoutes(unittest.TestCase):
 
 class TestCommand(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         env = patch.dict(os.environ, {"HOME": str(self.home)})
         env.start()
         self.addCleanup(env.stop)

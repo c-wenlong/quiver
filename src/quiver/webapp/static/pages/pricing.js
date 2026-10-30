@@ -2,9 +2,8 @@
  * each one resolves to and where it came from. Ports the Mac app's
  * PricingPage: a row opens its price form (PricingEditSheet), which saves
  * your own price or removes it, POST /v1/app/pricing/save|remove. Also
- * exports the helpers the Models page shares (QuiverPricing).
- * Everything sits in one closure: pages.js is a single script, so a
- * top-level name here could clash with another page's. */
+ * exports the helpers the Models page shares (QuiverPricing), on window:
+ * the bundle runs each page script in its own scope (pages/__init__.py). */
 (() => {
   "use strict";
 
@@ -295,18 +294,9 @@
   }
 
   /* The sheet lives outside the panel, so a repaint landing while it is
-   * open (a rescan, a filter) never throws away what is being typed. */
-  function priceSheet() {
-    let sheet = document.getElementById("qp-sheet");
-    if (!sheet) {
-      sheet = document.createElement("dialog");
-      sheet.className = "sheet qp-sheet";
-      sheet.id = "qp-sheet";
-      sheet.setAttribute("aria-label", "Price");
-      document.body.appendChild(sheet);
-    }
-    return sheet;
-  }
+   * open (a rescan, a filter) never throws away what is being typed. It
+   * is a route sheet (app.js bodySheet): leaving the page closes it. */
+  const priceSheet = () => bodySheet("qp-sheet", "sheet qp-sheet", "Price");
 
   function openPrice(model) {
     const r = modelRow(model), sheet = priceSheet();
@@ -358,11 +348,6 @@
 
   let priceForms = 0;
   const onPricing = () => currentRoute() === "pricing";
-  // The form sits outside the panel, so leaving the page must close it.
-  window.addEventListener("hashchange", () => {
-    const sheet = document.getElementById("qp-sheet");
-    if (sheet && sheet.open && !onPricing()) sheet.close();
-  });
 
   /* The sheet closes once the hub has written and repriced; the page then
    * repaints from its answer, read with the same period and filter. */

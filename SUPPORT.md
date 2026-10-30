@@ -26,14 +26,14 @@ Include that output in any bug report.
 
 - Bug: [bug report](https://github.com/c-wenlong/quiver/issues/new?template=bug_report.yml)
 - Idea or missing harness: [feature request](https://github.com/c-wenlong/quiver/issues/new?template=feature_request.yml)
-- Anything else: [browse open issues](https://github.com/c-wenlong/quiver/issues) first, then open a blank one.
+- Anything else: [browse open issues](https://github.com/c-wenlong/quiver/issues) first. Blank issues are off, so pick whichever of the two forms is closer.
 
-Always say which OS, which Python (`python3 -V`), and which version of quiver (`pip show quiver`) you are on.
+Always say which OS, which Python (`python3 -V`), and which version of quiver (`swe version`) you are on.
 
 ## 4. Security problems do not go in an issue
 
 Do not put vulnerability details in an issue. [SECURITY.md](SECURITY.md) has the
-reporting route, including what to do while private reporting is not yet enabled.
+private reporting route.
 
 ## Response times
 

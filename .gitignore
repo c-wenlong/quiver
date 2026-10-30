@@ -23,6 +23,9 @@ htmlcov/
 
 # OS
 .DS_Store
+# Partial-write temp files some editors and copy tools leave next to the
+# real file (".!12345!name.py").
+.!*!*
 
 # Local user state — never commit these (machine-specific / may contain secrets)
 mcp.json
