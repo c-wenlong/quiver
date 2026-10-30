@@ -102,7 +102,9 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         let runner = RoutingRunner([])
         let model = AgentsModel()
         model.openProject(folder.url)
-        model.document(for: model.projectFiles[0]).text = "changed"
+        let doc = model.document(for: model.projectFiles[0])
+        await model.settled()
+        doc.text = "changed"
         await model.link(swe: SweClient(runner: runner), force: true)
         #expect(runner.calls.isEmpty)
         #expect(model.linkError == AgentsModel.saveFirst)
@@ -150,7 +152,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         #expect(model.hasUnsavedChanges)
     }
 
-    @Test func projectFilesShowWhatExistsAndWhichOneIsALink() throws {
+    @Test func projectFilesShowWhatExistsAndWhichOneIsALink() async throws {
         let folder = try TempFolder()
         _ = try folder.write("AGENTS.md", "project\n")
         try folder.link("CLAUDE.md", to: "AGENTS.md")
@@ -165,11 +167,12 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         let agents = model.document(for: model.projectFiles[0])
         let claude = model.document(for: model.projectFiles[1])
         #expect(agents === claude)
+        await model.settled()
         agents.text = "changed"
         #expect(model.projectHasUnsavedChanges)
     }
 
-    @Test func aDocumentAlwaysWritesTheFileItIsCachedUnder() throws {
+    @Test func aDocumentAlwaysWritesTheFileItIsCachedUnder() async throws {
         let folder = try TempFolder()
         _ = try folder.write("AGENTS.md", "agents\n")
         _ = try folder.write("OTHER.md", "other\n")
@@ -177,49 +180,56 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         let model = AgentsModel()
         model.openProject(folder.url)
         _ = model.document(for: model.projectFiles[1])   // CLAUDE.md first
+        await model.settled()
 
         // The link now points elsewhere; AGENTS.md must still edit AGENTS.md.
         try FileManager.default.removeItem(at: folder.url.appending(path: "CLAUDE.md"))
         try folder.link("CLAUDE.md", to: "OTHER.md")
         model.rescanProject()
         let agents = model.document(for: model.projectFiles[0])
+        let other = model.document(for: model.projectFiles[1])
+        await model.settled()
         #expect(agents.writeURL.lastPathComponent == "AGENTS.md")
         #expect(agents.text == "agents\n")
-        #expect(model.document(for: model.projectFiles[1]).text == "other\n")
+        #expect(other.text == "other\n")
     }
 
-    @Test func checkDiskRereadsOpenProjectFilesAndRescans() throws {
+    @Test func checkDiskRereadsOpenProjectFilesAndRescans() async throws {
         let folder = try TempFolder()
         _ = try folder.write("AGENTS.md", "v1\n")
         let model = AgentsModel()
         model.openProject(folder.url)
         let doc = model.document(for: model.projectFiles[0])
+        await model.settled()
         _ = try folder.write("AGENTS.md", "v2\n")
         _ = try folder.write("CLAUDE.md", "new\n")
-        model.checkDisk()
+        await model.checkDisk()
         #expect(doc.text == "v2\n")
         #expect(model.projectFiles[1].exists)
     }
 
-    @Test func aMissingProjectFileCanBeCreated() throws {
+    @Test func aMissingProjectFileCanBeCreated() async throws {
         let folder = try TempFolder()
         let model = AgentsModel()
         model.openProject(folder.url)
         #expect(model.projectFiles.map(\.exists) == [false, false])
         let doc = model.document(for: model.projectFiles[0])
+        await model.settled()
         doc.text = "# Project\n"
-        #expect(doc.save() == .saved)
+        #expect(await doc.save() == .saved)
         model.rescanProject()
         #expect(model.projectFiles[0].exists)
     }
 
-    @Test func openingAnotherProjectDropsTheOldDocuments() throws {
+    @Test func openingAnotherProjectDropsTheOldDocuments() async throws {
         let one = try TempFolder()
         let two = try TempFolder()
         _ = try one.write("AGENTS.md", "one")
         let model = AgentsModel()
         model.openProject(one.url)
-        model.document(for: model.projectFiles[0]).text = "edit"
+        let doc = model.document(for: model.projectFiles[0])
+        await model.settled()
+        doc.text = "edit"
         model.openProject(two.url)
         #expect(!model.projectHasUnsavedChanges)
         #expect(model.projectFolder == two.url)

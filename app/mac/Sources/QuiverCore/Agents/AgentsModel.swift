@@ -53,7 +53,8 @@ public final class AgentsModel {
             let url = URL(fileURLWithPath: report.agentsFile)
             if global?.url != url {
                 let document = InstructionDocument(url: url)
-                document.load()
+                await document.load()
+                guard mine == generation else { return }
                 global = document
             }
         }
@@ -80,7 +81,7 @@ public final class AgentsModel {
         }
         await load(swe: swe)
         // swe init seeds a missing AGENTS.md; show it unless there are edits.
-        checkDisk()
+        await checkDisk()
     }
 
     /// Why Replace and back up waits.
@@ -122,10 +123,10 @@ public final class AgentsModel {
 
     /// Looks at the disk again: rereads open files that changed with nothing
     /// to lose, flags ones with edits, and notices files created or relinked.
-    public func checkDisk() {
-        global?.checkDisk()
+    public func checkDisk() async {
+        await global?.checkDisk()
         rescanProject()
-        projectDocuments.values.forEach { $0.checkDisk() }
+        for document in projectDocuments.values { await document.checkDisk() }
     }
 
     /// The document for one of `projectFiles`, read on first use.
@@ -136,8 +137,22 @@ public final class AgentsModel {
         let key = InstructionDocument.resolveLinks(file.url).standardizedFileURL
         if let open = projectDocuments[key] { return open }
         let document = InstructionDocument(url: key)
-        document.load()
         projectDocuments[key] = document
+        // Read off the main actor; the editor shows .loading until then.
+        let id = UUID()
+        loads[key] = (id, Task { [weak self] in
+            await document.load()
+            // A reopened project's newer read owns the entry now.
+            if self?.loads[key]?.id == id { self?.loads[key] = nil }
+        })
         return document
+    }
+
+    /// Reads `document(for:)` started and hasn't finished.
+    private var loads: [URL: (id: UUID, task: Task<Void, Never>)] = [:]
+
+    /// Waits for every read `document(for:)` started.
+    public func settled() async {
+        while let next = loads.values.first { await next.task.value }
     }
 }
