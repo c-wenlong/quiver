@@ -162,6 +162,12 @@ def boot_time(proc: Path) -> float:
     return 0.0
 
 
+def ticks() -> int:
+    """``SC_CLK_TCK`` where the OS reports it, 100 elsewhere (the common
+    Linux value, and what the tests use)."""
+    return os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+
+
 def _status_kb(text: str, key: str) -> int | None:
     for line in text.splitlines():
         if line.startswith(key + ":"):
@@ -219,7 +225,7 @@ def read_process(proc: Path, pid: int, boot: float, tick: int) -> Proc | None:
 def read_processes(proc: Path = Path("/proc"), uid: int | None = None) -> list[Proc]:
     """The user's own processes, pid 1 left out, as the Mac's sampler."""
     uid = os.getuid() if uid is None else uid
-    tick = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+    tick = ticks()
     boot = boot_time(proc)
     out: list[Proc] = []
     try:
@@ -390,8 +396,32 @@ def attribute(samples: list[Proc], matchers: list[Matcher], proc: Path = Path("/
 # ---------------------------------------------------------------- auto clean
 
 
-def send_signal(pid: int, sig: int) -> bool:
-    """``os.kill`` as a boolean, the ComputeModel's signaller seam."""
+def send_signal(pid: int, sig: int, started_at: float | None = None,
+                proc: Path = Path("/proc")) -> bool:
+    """``os.kill`` as a boolean, the ComputeModel's signaller seam.
+
+    Through a pidfd where the kernel offers one: the descriptor pins
+    the process the pid meant at open, so the signal can never land on
+    a recycled pid, and re-reading ``stat`` first means a process that
+    already exited is not signalled at all. ``started_at`` is the start
+    time the caller sampled; a pidfd-less kernel falls back to a bare
+    ``os.kill`` — the same window the manual quit paths already run."""
+    if started_at is not None and hasattr(os, "pidfd_open") \
+            and hasattr(os, "pidfd_send_signal"):
+        try:
+            fd = os.pidfd_open(pid)
+        except OSError:
+            return False
+        try:
+            current = read_process(proc, pid, boot_time(proc), ticks())
+            if current is None or current.started_at != started_at:
+                return False
+            os.pidfd_send_signal(fd, sig)
+            return True
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
     try:
         os.kill(pid, sig)
         return True
@@ -401,10 +431,12 @@ def send_signal(pid: int, sig: int) -> bool:
 
 def _clamp_age(seconds) -> int:
     """The field's value clamped into the a-minute-to-a-year range; a
-    missing or unreadable one answers the default."""
+    missing or unreadable one answers the default. ``1e309`` reads as
+    infinity and ``int`` raises ``OverflowError`` on it, so bad numbers
+    must not crash the boot-time settings read."""
     try:
         age = int(seconds)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return DEFAULT_ORPHAN_AGE
     return min(max(age, ORPHAN_AGE_RANGE[0]), ORPHAN_AGE_RANGE[1]) if age > 0 \
         else DEFAULT_ORPHAN_AGE
@@ -428,22 +460,36 @@ def clean_settings(home: Path | None) -> dict:
     }
 
 
-def save_clean_settings(home: Path | None, *, enabled: bool, force: bool,
-                        orphan_age_seconds: int) -> None:
-    """Write the three knobs through ``swe config``'s own path: the file
-    is validated on the way out, so a corrupt ``config.json`` refuses the
-    write instead of being clobbered. Raises ``ConfigurationError``."""
+# The read-modify-write in save_clean_settings holds this lock so two
+# page writes can never interleave a read against a replace.
+_config_lock = threading.Lock()
+
+
+def save_clean_settings(home: Path | None, *, enabled: bool,
+                        force: bool | None = None,
+                        orphan_age_seconds=None) -> None:
+    """Write the knobs through ``swe config``'s own path: the file is
+    validated on the way out, so a corrupt ``config.json`` refuses the
+    write instead of being clobbered. A knob left as ``None`` keeps its
+    saved value, and the fill-in read happens under the same lock as the
+    save, so two hub writes cannot lose each other. Raises
+    ``ConfigurationError`` (and ``OSError`` if the file cannot be
+    written)."""
     from quiver.configuration import load_config, save_config, set_value
     from quiver.paths import config_file_for
 
-    path = config_file_for(home)
-    config = load_config(path)
-    config = set_value(config, "compute.auto_clean", enabled)
-    config = set_value(config, "compute.auto_clean_force", force)
-    config = set_value(config, "compute.orphan_age_seconds",
-                       min(max(int(orphan_age_seconds), ORPHAN_AGE_RANGE[0]),
-                           ORPHAN_AGE_RANGE[1]))
-    save_config(config, path)
+    with _config_lock:
+        path = config_file_for(home)
+        config = load_config(path)
+        saved = clean_settings(home)
+        if force is None:
+            force = saved["force"]
+        age = saved["orphan_age_seconds"] if orphan_age_seconds is None \
+            else _clamp_age(orphan_age_seconds)
+        config = set_value(config, "compute.auto_clean", enabled)
+        config = set_value(config, "compute.auto_clean_force", force)
+        config = set_value(config, "compute.orphan_age_seconds", age)
+        save_config(config, path)
 
 
 def _descendants_of(pid: int, children: dict[int, list[Proc]]) -> list[Proc]:
@@ -816,11 +862,14 @@ class ComputeModel:
     def __init__(self, proc: Path = Path("/proc"), sys_root: Path = Path("/sys"),
                  nvidia=read_nvidia, nvidia_processes=read_nvidia_processes,
                  clock=time.time, self_pid: int | None = None,
-                 signaller=send_signal) -> None:
+                 signaller=None) -> None:
         self.proc, self.sys_root, self.nvidia, self.clock = proc, sys_root, nvidia, clock
         self.nvidia_processes = nvidia_processes
         self.self_pid = os.getpid() if self_pid is None else self_pid
-        self.signaller = signaller
+        # The seam takes (pid, sig, sampled start time); the default pins
+        # the signal through a pidfd against this model's /proc.
+        self.signaller = signaller or (
+            lambda pid, sig, started_at: send_signal(pid, sig, started_at, self.proc))
         self.lock = threading.Lock()
         self.meter = CPUMeter()
         self.history = History()
@@ -875,10 +924,10 @@ class ComputeModel:
             self.sampled_at = at
             self._auto_clean(at)
             if self._signalled:
+                by_pid = {p.pid: p for p in samples}
                 self._signalled = {
                     pid: v for pid, v in self._signalled.items()
-                    if pid in (by_pid := {p.pid: p for p in samples})
-                    and by_pid[pid].started_at == v[1]
+                    if pid in by_pid and by_pid[pid].started_at == v[1]
                 }
             self._sample_machine()
             self._record(at)
@@ -935,15 +984,21 @@ class ComputeModel:
         marked tree whose members are still alive ``AUTOCLEAN_GRACE``
         later gets SIGKILL once. Marks prune once nothing in the tree
         answers the recorded start times, so a tree that died — or a pid
-        handed to somebody new — is forgotten."""
+        handed to somebody new — is forgotten.
+
+        It waits for the matcher list to load: an empty one would read
+        a harness's own helpers as orphans, and auto clean kills what it
+        reads."""
         cfg = clean_settings(self.home)
-        if not cfg["enabled"]:
+        if not cfg["enabled"] or not self.matchers_loaded:
             return
+        marked = self._marked_pids()
         for root, descendants in self.attribution.orphans:
             if now - root.started_at <= cfg["orphan_age_seconds"]:
                 continue
             mark = self._cleaned.get(root.pid)
-            if mark is not None and mark[0] == root.started_at:
+            if (mark is not None and mark[0] == root.started_at) \
+                    or (root.pid, root.started_at) in marked:
                 continue
             self._signal_tree(root, descendants, force=False)
             self._cleaned[root.pid] = (root.started_at, now, (root, descendants), False)
@@ -956,12 +1011,22 @@ class ComputeModel:
                 self._signal_tree(tree[0], tree[1], force=True)
                 self._cleaned[pid] = (started, at, tree, True)
 
+    def _marked_pids(self) -> set[tuple[int, float]]:
+        """Every ``(pid, started_at)`` inside a recorded tree, so a member
+        that outlived its root and reparented into a new orphan is not
+        signalled all over again as the new tree's root."""
+        out: set[tuple[int, float]] = set()
+        for started, _at, (root, descendants), _forced in self._cleaned.values():
+            out.add((root.pid, started))
+            out.update((d.pid, d.started_at) for d in descendants)
+        return out
+
     def _signal_tree(self, root: Proc, descendants: list[Proc], *, force: bool) -> None:
         ancestors = _ancestors(self.self_pid, {p.pid: p for p in self.samples})
         started = {p.pid: p.started_at for p in self.samples}
         sig = signal.SIGKILL if force else signal.SIGTERM
         for pid in kill_order(root, descendants, self.samples, self.self_pid, ancestors):
-            if self.signaller(pid, sig):
+            if self.signaller(pid, sig, started[pid]):
                 self._signalled[pid] = (self.clock(), started[pid])
 
     # ------------------------------------------------------------ payload

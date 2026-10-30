@@ -66,18 +66,14 @@ def post(ctx, action: str, body: dict) -> dict:
         raise PageError(400, "bad_enabled", "enabled must be true or false")
     # Keys the body leaves out keep their saved values, so flipping the
     # switch never silently resets the age the sheet already wrote.
-    saved = compute.clean_settings(
-        Path(ctx.home) if ctx.home is not None else Path.home())
-    force = body.get("force") if "force" in body else saved["force"]
-    force = force is True
-    age = body.get("orphan_age_seconds", saved["orphan_age_seconds"])
-    age = int(age) if isinstance(age, (int, float)) and not isinstance(age, bool) \
-        else saved["orphan_age_seconds"]
+    # ``force`` present is read as "is it the JSON true" so a string
+    # cannot turn it on by accident; the age clamps on the way in.
+    force = body["force"] is True if "force" in body else None
     home = Path(ctx.home) if ctx.home is not None else Path.home()
     try:
         compute.save_clean_settings(home, enabled=enabled, force=force,
-                                    orphan_age_seconds=age)
-    except ConfigurationError as exc:
+                                    orphan_age_seconds=body.get("orphan_age_seconds"))
+    except (ConfigurationError, OSError) as exc:
         raise PageError(409, "config_unwritable", str(exc)) from exc
     if enabled:
         model = compute.model()

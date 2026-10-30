@@ -526,10 +526,12 @@ import Testing
         model.limits.autoClean = true
         model.limits.autoCleanForce = true
         await model.refresh()
-        // The root died on SIGTERM; the child reparented to launchd but
-        // is the same process the recorded tree saw, so the grace
-        // escalation still reaches it.
-        fake.table = [Self.proc(11, 1, path: "/opt/homebrew/bin/node", started: started)]
+        // The root died on SIGTERM; the child reparented to launchd and
+        // is now its own orphan root — but it still sits inside the
+        // recorded tree's mark, so no second SIGTERM goes out and the
+        // mark's grace escalation reaches it instead.
+        fake.table = [Self.proc(11, 1, path: "/opt/homebrew/bin/node",
+                                cwd: "/Users/test/proj", started: started)]
         clock.now = clock.now.addingTimeInterval(ComputeModel.autoCleanGrace + 1)
         await model.refresh()
         #expect(fake.signalled.map(\.1) == [SIGTERM, SIGTERM, SIGKILL])

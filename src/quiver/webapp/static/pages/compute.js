@@ -774,6 +774,15 @@ function openComputeLimits() {
       p.acBusy = false;
       if (status === 200 && data && data.autoclean) {
         if (p.data) p.data.autoclean = data.autoclean;
+        // An age typed while the request was out never reached the hub
+        // (commitAge drops its own write while busy), so send it now —
+        // carrying the switches just saved, not the stale request's.
+        if (hasHub && p.limits.orphanAge !== data.autoclean.orphan_age_seconds) {
+          postClean({ enabled: data.autoclean.enabled === true,
+                      force: data.autoclean.force === true,
+                      orphan_age_seconds: p.limits.orphanAge }, refocus);
+          return;
+        }
       } else {
         p.acError = (data && data.error && data.error.message)
           || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");

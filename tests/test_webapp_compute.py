@@ -442,7 +442,8 @@ class TestAutoClean(_Model):
 
     def _signals(self):
         calls = []
-        self.model.signaller = lambda pid, sig: calls.append((pid, sig)) or True
+        self.model.signaller = \
+            lambda pid, sig, at=None: calls.append((pid, sig)) or True
         return calls
 
     def _config(self, section):
@@ -576,6 +577,28 @@ class TestAutoClean(_Model):
         # A mistyped "yes" reads as off — the switch never fires on a string.
         self.assertEqual((got["enabled"], got["force"]), (False, True))
         self.assertEqual(got["orphan_age_seconds"], compute.DEFAULT_ORPHAN_AGE)
+        # Infinity and NaN in the file answer the default too; int()
+        # raises OverflowError on them, which the boot read must survive.
+        save_config({"compute": {"orphan_age_seconds": 1e309}},
+                    config_file_for(home))
+        self.assertEqual(compute.clean_settings(home)["orphan_age_seconds"],
+                         compute.DEFAULT_ORPHAN_AGE)
+
+    def test_a_tree_member_that_outlives_its_root_is_not_signalled_twice(self):
+        calls = self._signals()
+        self.m.process(201, 200, ["esbuild"], exe="/usr/bin/esbuild", start=60)
+        self._config({"auto_clean": True, "orphan_age_seconds": 3600})
+        self.model.sample()
+        self.assertEqual(calls, [(201, signal.SIGTERM), (200, signal.SIGTERM)])
+        # The root died on SIGTERM; the child is now its own orphan root
+        # but still sits inside the recorded tree's mark, so it is left
+        # for the mark's own bookkeeping instead of another SIGTERM.
+        shutil.rmtree(self.m.proc / "200")
+        self.m.process(201, 1, ["node", "child.js"], exe="/usr/bin/node",
+                       cwd="/home/u/app", start=60)
+        self.now[0] += 10
+        self.model.sample()
+        self.assertEqual(calls, [(201, signal.SIGTERM), (200, signal.SIGTERM)])
 
 
 class TestSettingsPost(_Model):
@@ -631,7 +654,12 @@ class TestSettingsPost(_Model):
 
     def test_the_age_clamps_to_the_field_bounds(self):
         home = Path(tempfile.mkdtemp())
-        with patch.object(compute, "supported", return_value=True):
+        # model and the ticker are patched like the neighbouring tests:
+        # an enabled write starts the real sampler otherwise, and the
+        # real sampler signals the host's real orphans.
+        with patch.object(compute, "supported", return_value=True), \
+                patch.object(compute, "model", return_value=self.model), \
+                patch.object(compute, "start_ticker"):
             body = page.post(self._ctx(home), "settings",
                              {"enabled": True, "orphan_age_seconds": 5})
         self.assertEqual(body["autoclean"]["orphan_age_seconds"], 60)

@@ -279,11 +279,24 @@ public final class ComputeModel {
     /// gets SIGKILL once. Marks prune once nothing in the tree answers
     /// the recorded start times, so a tree that died — or a pid the OS
     /// handed to somebody new — is forgotten.
+    ///
+    /// It waits for the matcher list to load: an empty one would read a
+    /// harness's own helpers as orphans, and auto clean kills what it
+    /// reads.
     private func autoClean(at now: Date) {
-        guard limits.autoClean else { return }
+        guard limits.autoClean, matchersLoaded else { return }
+        // Every pid a recorded tree held, so a member that outlived its
+        // root and reparented into a new orphan is not signalled all
+        // over again as the new tree's root.
+        var marked: [Int32: Date] = [:]
+        for mark in cleaned.values {
+            marked[mark.tree.root.pid] = mark.tree.root.startedAt
+            for descendant in mark.tree.descendants { marked[descendant.pid] = descendant.startedAt }
+        }
         for tree in attribution.orphans
         where now.timeIntervalSince(tree.root.startedAt) > limits.orphanAge {
-            guard cleaned[tree.root.pid]?.tree.root.startedAt != tree.root.startedAt else { continue }
+            guard cleaned[tree.root.pid]?.tree.root.startedAt != tree.root.startedAt,
+                  marked[tree.root.pid] != tree.root.startedAt else { continue }
             signal([.orphanTree(tree)], force: false, in: samples)
             cleaned[tree.root.pid] = (tree: tree, at: now, forced: false)
         }
@@ -359,6 +372,16 @@ public final class ComputeModel {
         // Load the list once ever; a failed load may retry once a minute.
         if !matchersLoaded && (matchersFailedAt.map { now.timeIntervalSince($0) >= 60 } ?? true) {
             await loadMatchers()
+            if replaced(generation) { return }
+        }
+        // Auto clean kills on what attribution says: a launchd-managed
+        // service started after the last load would read as an orphan,
+        // so the managed list keeps the refresh cadence Refresh uses
+        // while the page stays closed.
+        if limits.autoClean
+            && (managedPIDsLoadedAt.map { now.timeIntervalSince($0) >= 60 } ?? true) {
+            managedPIDs = await managedPIDLoader()
+            managedPIDsLoadedAt = .now
             if replaced(generation) { return }
         }
         let freshEnough = sampledAt.map { now.timeIntervalSince($0) <= trendInterval.seconds / 2 } ?? false
