@@ -422,6 +422,57 @@ class TestIssueCli(unittest.TestCase):
         self.assertRegex(comment["created_at"],
                          r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
+    def test_comment_reads_the_body_from_stdin_with_body_file(self):
+        # The app passes --body-file=- so the text never sits on argv,
+        # where any process on the machine can read it.
+        body = "secret plan --json\nline two"
+        with patch("sys.stdin", io.StringIO(body)):
+            rc, out, _ = self._run(
+                ["issue", "comment", "5", "--repo=o/r", "--body-file=-",
+                 "--json"],
+                {"issue comment": _Proc(
+                    stdout="https://github.com/o/r/issues/5#issuecomment-9\n")})
+        self.assertEqual(rc, 0)
+        argv, stdin = self.calls[0]
+        self.assertNotIn(body, " ".join(argv))
+        self.assertEqual(stdin, body)
+        self.assertEqual(self._data(out)["comment"]["body"], body)
+
+    def test_comment_body_file_path_and_conflicts(self):
+        path = self.root / "note.md"
+        path.write_text("from a file", encoding="utf-8")
+        rc, out, _ = self._run(
+            ["issue", "comment", "5", "--repo=o/r", f"--body-file={path}",
+             "--json"],
+            {"issue comment": _Proc(stdout="u\n")})
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.calls[0][1], "from a file")
+        self.calls.clear()
+        for args in ([f"--body-file={path}", "--body=x"],
+                     [f"--body-file={self.root / 'missing.md'}"]):
+            rc, out, _ = self._run(
+                ["issue", "comment", "5", "--repo=o/r", "--json", *args])
+            self.assertEqual(rc, 1)
+            self.assertIsNone(self._data(out)["comment"])
+        self.assertEqual(self.calls, [])
+        rc, _out, _err = self._run(
+            ["issue", "view", "5", "--repo=o/r", "--body-file=-"])
+        self.assertEqual(rc, 1)
+
+    def test_comment_unreadable_stdin_is_an_error_reply(self):
+        class Broken(io.StringIO):
+            def read(self, *args):
+                raise OSError("Is a directory")
+        with patch("sys.stdin", Broken()):
+            rc, out, _ = self._run(
+                ["issue", "comment", "5", "--repo=o/r", "--body-file=-",
+                 "--json"])
+        self.assertEqual(rc, 1)
+        data = self._data(out)
+        self.assertIsNone(data["comment"])
+        self.assertIn("Can't read stdin", data["error"])
+        self.assertEqual(self.calls, [])
+
     def test_comment_empty_body_is_an_error(self):
         for args in (["--body=   "], []):
             rc, out, _ = self._run(
