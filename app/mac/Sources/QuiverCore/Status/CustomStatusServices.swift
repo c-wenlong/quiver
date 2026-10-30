@@ -80,10 +80,13 @@ public final class CustomStatusServices: StatusServiceStoring, @unchecked Sendab
     }
 
     private func service(_ record: Record) -> StatusService {
-        StatusService(id: record.id, name: record.name, pageURL: record.pageURL,
-                      feed: .statuspage(record.feedURL
-                          ?? record.pageURL.appending(path: "api/v2/summary.json")),
-                      group: record.group, isCustom: true)
+        let feed = record.feedURL ?? record.pageURL.appending(path: "api/v2/summary.json")
+        // A page added from the catalogue follows the catalogue's group
+        // when the groups change; a host match is the add sheet's match.
+        let group = StatusCatalogue.all
+            .first(where: { $0.host == feed.host() })?.group ?? record.group
+        return StatusService(id: record.id, name: record.name, pageURL: record.pageURL,
+                             feed: .statuspage(feed), group: group, isCustom: true)
     }
 
     public func load() -> StatusServicePrefs {

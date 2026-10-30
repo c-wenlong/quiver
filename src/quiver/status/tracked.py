@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from quiver.paths import data_dir_for
-from quiver.status.catalog import StatusService
+from quiver.status.catalog import LEGACY_GROUPS, StatusService
 
 try:  # flock keeps two hubs on one home from losing each other's entries
     import fcntl
@@ -55,8 +55,24 @@ def _service(raw: Any) -> StatusService | None:
         return None
     logo = raw.get("logo")
     return StatusService(id=id_, name=name, page_url=page_url, feed_url=feed_url,
-                         group=group, logo=logo if isinstance(logo, str) else None,
+                         group=_group(id_, feed_url, group),
+                         logo=logo if isinstance(logo, str) else None,
                          custom=True)
+
+
+def _group(id: str, feed_url: str, stored: str) -> str:
+    """The group a stored record renders under.
+
+    A page added from the catalogue follows the catalogue's group when
+    the groups change (the store's copy was written at add time); a page
+    stored under a pre-split group name maps forward, so an old record
+    never lands under a heading the page no longer shows."""
+    from quiver.status import catalogue
+    host = feed_url.split("://", 1)[-1].split("/", 1)[0]
+    found = catalogue.entry(id) or next((e for e in catalogue.CATALOGUE if e.host == host), None)
+    if found is not None:
+        return found.group
+    return LEGACY_GROUPS.get(stored, stored)
 
 
 def _load(path: Path) -> list[StatusService]:
