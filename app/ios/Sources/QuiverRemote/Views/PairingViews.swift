@@ -311,7 +311,7 @@ struct PairOfferSheet: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(link.address).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                             .lineLimit(2).truncationMode(.middle)
-                        Text(link.baseURL.scheme == "https" ? "HTTPS" : "Plain HTTP, over your tailnet")
+                        Text(link.baseURL.scheme == "https" ? "HTTPS" : "Plain HTTP, not encrypted")
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer(minLength: 0)

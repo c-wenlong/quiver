@@ -409,15 +409,19 @@ final class AppModel {
     /// The offer stays up on failure so its error shows where they are.
     func acceptPairOffer() async {
         guard let link = pairOffer else { return }
-        offerPairing = true
-        defer { offerPairing = false }
+        let gen = pairingGen
+        offerPairingGen = gen
+        // Only this pair's own mark: a cancelled one finishing late must
+        // not clear the mark of a newer offer's pair still out.
+        defer { if offerPairingGen == gen { offerPairingGen = nil } }
         if await pair(with: link) { pairOffer = nil }
     }
 
     /// The offer's own pair, if one is out, can no longer add the hub. A
     /// Tailscale pairing under way behind the sheet carries on.
     func declinePairOffer() {
-        if offerPairing {
+        if offerPairingGen != nil {
+            offerPairingGen = nil
             pairingGen += 1
             pairing.busy = false
         }
@@ -425,8 +429,9 @@ final class AppModel {
         pairing.error = nil
     }
 
-    /// True while `acceptPairOffer` waits on the hub.
-    @ObservationIgnored private var offerPairing = false
+    /// The `pairingGen` an `acceptPairOffer` pair still waiting on the
+    /// hub started under.
+    @ObservationIgnored private var offerPairingGen: Int?
 
     /// A scanned QR, or a confirmed `pairOffer`. True once the hub is
     /// paired and on screen. A second call while one is out is dropped:
