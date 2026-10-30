@@ -2124,12 +2124,7 @@ const SessionChat = (() => {
       // the optimistic one already drawn (attachments prefix the stored text
       // with "@path ", hence the endsWith). Backfill never dedupes: history
       // replay must not erase a queued bubble.
-      const hit = [...log.querySelectorAll(".msg.user[data-client-id]:not(.failed)")].find((b) => {
-        const t = b.dataset.text;
-        if (!t || (msg.text !== t && !(msg.text || "").endsWith(t))) return false;
-        const sentAt = Number(b.dataset.sentAt || 0);
-        return !msg.ts || !sentAt || msg.ts >= sentAt - 5;
-      });
+      const hit = [...log.querySelectorAll(".msg.user[data-client-id]:not(.failed)")].find((b) => echoesBubble(msg, b));
       if (hit && hit === log.lastElementChild) {
         // Still the newest entry: settle the bubble where it is, so it doesn't
         // leave and come back in. Dropping .pending also tells a late POST
@@ -2492,11 +2487,24 @@ const SessionChat = (() => {
       // Unanswered approval cards stay, buttons and all: the transcript
       // has no approvals, and their asks are behind the cursor.
       const open = [...log.querySelectorAll(".msg.approval:not(.resolved)")];
+      // So do sends the transcript doesn't show yet (still sending, sent
+      // and waiting for their echo, or failed): their result, or a
+      // failed POST, still lands on the bubble.
+      const sends = [...log.querySelectorAll(".msg.user[data-client-id]")];
       log.innerHTML = "";
       chat.toolCards.clear();
       const messages = data.messages || [];
       for (const ev of messages) appendEvent(ev, false);
       if (messages.length) remember(messages[messages.length - 1].seq);
+      // A send the redraw already shows is settled, as a live echo
+      // would; each echo answers one bubble. A failed one never landed.
+      const echoed = messages.filter((ev) => ev.type === "message.appended" && ev.data && ev.data.kind === "user")
+        .map((ev) => ev.data);
+      for (const b of sends) {
+        const i = b.classList.contains("failed") ? -1 : echoed.findIndex((m) => echoesBubble(m, b));
+        if (i >= 0) echoed.splice(i, 1);
+        else log.appendChild(b);
+      }
       for (const card of open) log.appendChild(card);
       scrollBottom();
     }
@@ -3334,6 +3342,15 @@ const SessionChat = (() => {
   function echoes(stored, sent) {
     if (!sent) return false;
     return stored === sent || (stored || "").endsWith(sent);
+  }
+
+  /* A transcript message is an optimistic bubble's echo when its text
+   * matches and it was stored no earlier than the send (give or take
+   * clock skew), so an older identical message isn't taken for it. */
+  function echoesBubble(msg, bubble) {
+    if (!echoes(msg.text, bubble.dataset.text)) return false;
+    const sentAt = Number(bubble.dataset.sentAt || 0);
+    return !msg.ts || !sentAt || msg.ts >= sentAt - 5;
   }
 
   /* Where a send shows before the hub answers: the tray for Queue mode

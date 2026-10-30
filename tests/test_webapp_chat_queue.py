@@ -34,7 +34,12 @@ function el(tag) {
     toggle: (c, on) => { on = on === undefined ? !e._cls.has(c) : !!on; if (on) e._cls.add(c); else e._cls.delete(c); return on; } };
   Object.defineProperty(e, "className", { get: () => [...e._cls].join(" "),
     set: (v) => { e._cls = new Set(String(v).split(/\s+/).filter(Boolean)); } });
-  Object.defineProperty(e, "innerHTML", { get: () => e._html, set: (v) => { e._html = v; e._sub = {}; } });
+  Object.defineProperty(e, "innerHTML", { get: () => e._html, set: (v) => {
+    e._html = v; e._sub = {};
+    // Like the DOM, replacing the markup drops the element children.
+    for (const c of e.children) c.parent = null;
+    e.children = [];
+  } });
   Object.defineProperty(e, "lastElementChild", { get: () => e.children[e.children.length - 1] || null });
   e.appendChild = (c) => { c.parent = e; e.children.push(c); return c; };
   e.remove = () => { if (e.parent) e.parent.children = e.parent.children.filter((x) => x !== e); e.parent = null; };
@@ -420,6 +425,37 @@ class TestQueuedTray(unittest.TestCase):
             return tray();""")
         self.assertEqual(out, [["c1", "same", "waiting", ""]])
 
+
+    def test_a_resync_keeps_the_sends_the_transcript_does_not_show(self):
+        """A truncated journal redraws the log from the transcript: a send
+        still out or failed keeps its bubble (and a later result still
+        lands on it), while one the redraw already shows is settled."""
+        out = self.run_js("""
+            const now = Math.floor(Date.now() / 1000);
+            answer = () => ({ status: 202, data: { waiting: false } });
+            await T.sendText("run it", "steer");
+            answer = () => ({ status: 500, data: { error: { message: "boom" } } });
+            await T.sendText("bad", "steer");
+            answer = () => ({ status: 202, data: { waiting: false } });
+            await T.sendText("echoed", "steer");
+            await T.sendText("again", "steer");
+            const user = (seq, text, ts) => ({ type: "message.appended", seq, data: { kind: "user", text, ts } });
+            globalThis.api = async (path) => path.includes("/messages")
+              ? { status: 200, data: { messages: [user(1, "again", now - 1000), user(2, "echoed", now)] } }
+              : { status: 404, data: null };
+            T.chat.seq = 500;
+            T.handleFrame(T.chat.key, "data: " + JSON.stringify({ type: "journal.truncated", seq: 3 }));
+            await tick();
+            const after = bubbles().map((b) => [b[0] || null, b[1]]);
+            T.commandResult({ op: "message", client_id: "c1", ok: false, note: "nope" });
+            const c1 = ids["chat-log"].children.find((b) => b.dataset.clientId === "c1");
+            return { after, settled: c1 ? [c1.className, c1._sub["send-note"].textContent] : null };""")
+        self.assertEqual([b[0] for b in out["after"]], [None, None, "c1", "c2", "c4"])
+        self.assertIn("pending", out["after"][2][1])
+        self.assertIn("failed", out["after"][3][1])
+        self.assertIn("pending", out["after"][4][1])
+        self.assertEqual(out["settled"][1], "nope")
+        self.assertIn("failed", out["settled"][0])
 
 if __name__ == "__main__":
     unittest.main()
