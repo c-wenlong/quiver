@@ -222,6 +222,29 @@ import Testing
         #expect(grok.isSessionTotal == false)
     }
 
+    @Test func anAbsurdTimestampIsDroppedAndDoesNotMoveThrough() async throws {
+        // 1e30 s would overflow the Int64 millisecond key and, as the
+        // `through` mark, the next poll's `--since`.
+        let temp = try TempDir()
+        let ledger = try Ledger(directory: temp.path("cache"))
+        let file = try progressFile(account, "uid-1", through: 1791700100, in: temp)
+        let absurd = """
+            {"timestamp": 1e30, "model": "composer-1", "kind": "USAGE_EVENT_KIND_INCLUDED",
+             "conversation_id": "conv-x", "headless": false, "input_tokens": 9, "output_tokens": 1,
+             "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": null}
+            """
+        let runner = LockedRunner([
+            (["harness", "usage-events", "cursor"],
+             reply("ok", twoEvents + "," + absurd, accountId: "uid-1")),
+        ])
+        await feed(runner, ledger: ledger, accounts: accts(), progressFile: file).poll()
+        #expect(await ledger.events(in: allTime).count == 2)
+        let saved = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: file)) as! [String: Any]
+        #expect((saved["accounts"] as? [String: [String: Double]])?["uid-1"]?["through"]
+                == 1791700100)
+    }
+
     @Test func anOverlappingRefetchDoesNotDuplicate() async throws {
         let temp = try TempDir()
         let ledger = try Ledger(directory: temp.path("cache"))
