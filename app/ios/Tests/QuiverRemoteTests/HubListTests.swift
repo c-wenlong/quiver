@@ -107,6 +107,21 @@ final class HubListTests: XCTestCase {
     }
 
     @MainActor
+    func testPairingAndUnpairingStoreAndDeleteTheCredential() {
+        let store = MemoryHubStore()
+        let app = AppModel(store: store)
+        app.adopt(hub("mac", "m"))
+        app.adopt(hub("server", "s"))
+        app.stopRefreshing()
+        XCTAssertEqual(store.credentials[hub("mac").id]?.credential, "m")
+        XCTAssertEqual(store.credentials[hub("server").id]?.credential, "s")
+        app.unpair(from: HubClient(baseURL: hub("server").baseURL, credential: "s"))
+        app.stopRefreshing()
+        XCTAssertNil(store.credentials[hub("server").id], "the unpaired hub's credential is gone")
+        XCTAssertEqual(store.credentials[hub("mac").id]?.credential, "m", "the other hub's stays")
+    }
+
+    @MainActor
     func testARefusedCredentialIsDroppedWithoutTellingTheHub() async {
         let app = AppModel(hub: hub("mac"))
         // The hub already refused it; there's nothing to sign out. The
