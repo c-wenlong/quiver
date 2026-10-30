@@ -383,25 +383,25 @@ def _safe_mid(machine_id: str) -> str:
     return f"{safe}-{hashlib.sha256(machine_id.encode()).hexdigest()[:8]}"
 
 
-def drop_legacy_file(folder: Path, machine_id: str) -> None:
-    """Remove a satellite file under its pre-suffix name once it has been
-    written under the new one, so the folder walks don't read it twice."""
-    legacy = _legacy_safe_mid(machine_id)
-    if legacy != _safe_mid(machine_id):
-        try:
-            (folder / f"{legacy}.json").unlink(missing_ok=True)
-        except OSError:
-            pass
+def is_superseded(path: Path, machine_id: str) -> bool:
+    """A file left under the pre-suffix name of ``machine_id`` while the
+    suffixed one exists: read the new one, never both. Nothing is
+    deleted: the old name may be another machine's own file."""
+    stem = _safe_mid(machine_id)
+    return path.stem != stem and (path.parent / f"{stem}.json").exists()
 
 
-# A satellite file no push has refreshed for this long belongs to a
-# machine that is gone (or re-paired under a new id): it is deleted. A
-# machine that wakes later pushes it again.
+# A rows or usage file no push has refreshed for this long belongs to a
+# machine that is gone (or re-paired under a new id): it is skipped, so
+# the hub stops listing it. A machine that wakes later pushes again.
+# (Not the "/" menu files: an agent resends those only on a change.)
 SATELLITE_FILE_MAX_AGE_S = 30 * 86_400
 
 
 def satellite_files(folder: Path, now: float | None = None) -> list[Path]:
-    """The ``*.json`` under ``folder``, deleting the stale ones."""
+    """The ``*.json`` under ``folder`` a push refreshed recently. Stale
+    ones are skipped, not deleted: a push can replace one at any moment
+    and a delete here would race it."""
     now = time.time() if now is None else now
     out = []
     try:
@@ -411,7 +411,6 @@ def satellite_files(folder: Path, now: float | None = None) -> list[Path]:
     for f in files:
         try:
             if now - f.stat().st_mtime > SATELLITE_FILE_MAX_AGE_S:
-                f.unlink(missing_ok=True)
                 continue
         except OSError:
             continue
@@ -453,7 +452,6 @@ def merge_remote_rows(
             path / f"{_safe_mid(machine_id)}.json",
             json.dumps({"rows": out}, indent=1),
         )
-        drop_legacy_file(path, machine_id)
     except OSError:
         pass
     return out
@@ -462,12 +460,14 @@ def merge_remote_rows(
 def load_remote_rows(home: Path | None) -> list[dict]:
     """All persisted satellite rows (``(key, row)``-ready dicts)."""
     out: list[dict] = []
-    # The "/" menus pushed beside the rows age out on the same walk.
-    satellite_files(remote_dir_for(home) / "slash")
     for f in satellite_files(_satellite_dir(home)):
         try:
             rows = json.loads(f.read_text()).get("rows") or []
         except (OSError, ValueError):
+            continue
+        mid = next((str(r.get("machine_id") or "") for r in rows
+                    if isinstance(r, dict)), "")
+        if mid and is_superseded(f, mid):
             continue
         out.extend(r for r in rows if isinstance(r, dict))
     return out

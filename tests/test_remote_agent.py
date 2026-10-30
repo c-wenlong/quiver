@@ -1848,25 +1848,28 @@ class TestCatalogEdge(unittest.TestCase):
         keys = sorted(r["key"] for r in catalog_mod.load_remote_rows(self.home))
         self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
 
-    def test_the_pre_suffix_file_is_dropped_on_write(self):
+    def test_a_pre_suffix_file_is_read_until_superseded_and_never_deleted(self):
         folder = catalog_mod._satellite_dir(self.home)
         folder.mkdir(parents=True)
         (folder / "m_1.json").write_text(json.dumps(
-            {"rows": [{"key": "claude:old@m.1"}]}))
+            {"rows": [{"key": "claude:old@m.1", "machine_id": "m.1"}]}))
+        self.assertEqual([r["key"] for r in catalog_mod.load_remote_rows(self.home)],
+                         ["claude:old@m.1"])
         catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
-        keys = [r["key"] for r in catalog_mod.load_remote_rows(self.home)]
-        self.assertEqual(keys, ["claude:a@m.1"])
+        self.assertEqual([r["key"] for r in catalog_mod.load_remote_rows(self.home)],
+                         ["claude:a@m.1"])
+        # Either write order: "m_1"'s own file is its own, never removed.
+        catalog_mod.merge_remote_rows(self.home, "m_1", [{"key": "claude:b"}])
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        keys = sorted(r["key"] for r in catalog_mod.load_remote_rows(self.home))
+        self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
 
-    def test_stale_satellite_files_are_deleted(self):
-        catalog_mod.merge_remote_rows(self.home, "m1", [{"key": "claude:a"}])
-        usage_mod.save_satellite(self.home, "m1", {"harnesses": []})
-        old = time.time() - catalog_mod.SATELLITE_FILE_MAX_AGE_S - 60
-        for f in (catalog_mod._satellite_dir(self.home) / "m1.json",
-                  usage_mod._satellite_file(self.home, "m1")):
-            os.utime(f, (old, old))
-        self.assertEqual(catalog_mod.load_remote_rows(self.home), [])
-        self.assertEqual(usage_mod.load_satellites(self.home), [])
-        self.assertFalse((catalog_mod._satellite_dir(self.home) / "m1.json").exists())
+    def test_a_menu_saved_under_the_old_name_still_loads(self):
+        from quiver.remote import slash
+        path = slash._sat_file(self.home, "m.1").with_name("m_1.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"harnesses": {}}))
+        self.assertEqual(slash.load_satellite(self.home, "m.1"), {"harnesses": {}})
 
     def test_merge_skips_non_dict_rows(self):
         out = catalog_mod.merge_remote_rows(
