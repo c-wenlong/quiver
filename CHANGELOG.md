@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Compute: auto clean orphaned processes, on the Mac and the web app.**
+  The Compute settings gain an "Auto clean" switch (Mac: the cleanup
+  sheet, web: the settings gear): while it is on, an orphan tree older
+  than the "Orphans count as old after" age gets one SIGTERM, deepest
+  member first, through the same kill plan and guards a manual Quit
+  runs — never pid 1, the app or its ancestors, and a pid only while it
+  is still the recorded process. A nested "Force quit" switch shows only
+  while auto clean is on and sends SIGKILL to a marked tree still alive
+  ten seconds later. On the web, the switches live in the hub's
+  `config.json` (the `compute` section, so `swe config` reads them too),
+  a `POST /v1/app/compute/settings` route writes them, and the background
+  sampler starts at hub boot while the switch is on, so cleanup runs
+  with no browser open. A signalled orphan shows a "Quitting" badge.
+
 - **Remote iPhone app: switch a session's model from the chat.** On a
   session attached through tmux whose harness takes `/model <id>`
   (Claude Code and Codex; the row's `model_modes` says so), the chat's
@@ -409,11 +423,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Remote: queue-mode sends wait for idle on satellites too.** A
   `queue`-mode message to a session on another machine used to fail
   with "session is mid-turn; steer to write anyway" whenever that
-  session was busy. `swe remote agent` now runs `message` commands
-  through the same per-session send queue as the hub: a queued send
-  waits until the turn ends (up to 30 min, then fails honestly), steers
-  skip the wait, and a busy session no longer holds sends to another
-  one. A send the agent stops before delivering replays on restart.
+  session was busy. `swe remote agent` now parks it on a lane of its
+  own, as the hub does: it waits until the turn ends (up to 30 min,
+  then fails honestly) and for the attachment pulls it names, while
+  steers and their pulls go ahead. A send the agent stops before
+  delivering replays on restart.
   The hub's and the satellite's idle wait both probe with the tailer's
   activity time, so a turn that started since the last catalog refresh
   no longer reads as "interrupted" and gets a queued send typed into it

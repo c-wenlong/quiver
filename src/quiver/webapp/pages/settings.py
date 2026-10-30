@@ -80,7 +80,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from quiver import __version__
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, home_path, tilde, web_url
 from quiver.webapp.pages._secrets import mask
 
 ACTIONS = ("pair", "revoke", "session_search", "sync", "key_set", "key_remove", "key_value")
@@ -111,7 +111,7 @@ def get(ctx, args: dict) -> dict:
         return {"remote": _remote(ctx)}
     if part:
         raise PageError(400, "bad_part", f"unknown part: {part}")
-    home = _home(ctx)
+    home = home_path(ctx)
     return {
         "machine": (ctx.machine or {}).get("name"),
         "version": __version__,
@@ -151,7 +151,7 @@ def _session_search(home: Path) -> dict:
 def _set_session_search(ctx, body: dict) -> dict:
     from quiver.sessions import search_writer
 
-    home = _home(ctx)
+    home = home_path(ctx)
     if body.get("resync") is True:
         _kick_pass(home)
         return {"session_search": _session_search(home)}
@@ -350,7 +350,7 @@ def _catalog_row(pid: str, info: dict, set_vars: set[str] | None = None) -> dict
         # The catalogue sheet's "Set" badge: the file covers any variable.
         "has_key": bool(set_vars) and any(v in set_vars for v in env_vars),
         # Only a web link: the page puts it in an href.
-        "url": _web_url(info.get("url")),
+        "url": web_url(info.get("url")),
     }
 
 
@@ -393,7 +393,7 @@ def _key_action(ctx, action: str, body: dict) -> dict:
         status = {"not_found": 404, "changed_on_disk": 409, "duplicate": 409,
                   "unreadable": 409, "unwritable": 500}.get(exc.code, 422)
         raise PageError(status, exc.code, exc.message) from None
-    return {"providers": _providers(ctx, _home(ctx))}
+    return {"providers": _providers(ctx, home_path(ctx))}
 
 
 def _key_value(body: dict) -> str:
@@ -440,12 +440,6 @@ def _fold(text: str) -> str:
     return text.lower().replace(" ", "").replace("_", "")
 
 
-def _web_url(value) -> str | None:
-    if isinstance(value, str) and value.lower().startswith(("https://", "http://")):
-        return value
-    return None
-
-
 def _provider_registry(ctx) -> dict:
     """``load_registry``'s merge of providers.json and the defaults, read
     without saving: a page read must not seed or rewrite the file."""
@@ -474,7 +468,7 @@ def _provider_registry(ctx) -> dict:
 def _github(ctx, refresh: bool = False) -> dict:
     from quiver import paths
     from quiver.github import catalog
-    from quiver.webapp.pages import _github as gh_shared
+    from quiver.github import shared as gh_shared
 
     env = gh_shared.probe(ctx.home, refresh=refresh)
     return {
@@ -490,7 +484,7 @@ def _sync(ctx) -> dict:
     plus ``failed``, the owners that did not list, whose old rows stay."""
     from quiver import paths
     from quiver.github import catalog, gh, manage
-    from quiver.webapp.pages import _github as gh_shared
+    from quiver.github import shared as gh_shared
 
     if not _SYNC_LOCK.acquire(blocking=False):
         raise PageError(409, "busy", "A sync is already running. Wait for it, then try again.")
@@ -521,15 +515,6 @@ def _paths(ctx, home: Path) -> dict:
     }
 
 
-def _home(ctx) -> Path:
-    return Path(ctx.home) if ctx.home is not None else Path.home()
-
-
 def _display(path: Path, home: Path) -> str:
     """``path`` with the hub's home written as ``~``."""
-    s, h = str(path), str(home)
-    if s == h:
-        return "~"
-    if s.startswith(h.rstrip("/") + "/"):
-        return "~" + s[len(h.rstrip("/")):]
-    return s
+    return tilde(path, home)

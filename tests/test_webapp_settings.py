@@ -22,6 +22,7 @@ from quiver.webapp.pages import PageContext, PageError, _qr
 from quiver.webapp.pages import settings as settings_page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 # ---------------------------------------------------------------- QR helpers
 
@@ -589,7 +590,7 @@ class TestGet(_Settings):
 
     def test_github_part(self):
         env = gh.GhEnv(installed=True, authenticated=True, login="octo")
-        with patch("quiver.webapp.pages._github.probe", return_value=env) as probe:
+        with patch("quiver.github.shared.probe", return_value=env) as probe:
             body = settings_page.get(self.ctx(), {"part": "github", "refresh": "1"})
         probe.assert_called_once_with(self.home, refresh=True)
         self.assertEqual(body["github"]["env"]["status"], "ok")
@@ -600,11 +601,6 @@ class TestGet(_Settings):
         with self.assertRaises(PageError) as caught:
             settings_page.get(self.ctx(), {"part": "secrets"})
         self.assertEqual(caught.exception.status, 400)
-
-    def test_page_script_is_bundled(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("settings"', data)
 
 
 # ---------------------------------------------------------------- writes
@@ -882,10 +878,6 @@ class TestOwnerTailnetCaller(_Settings):
         self.assertTrue(reply["ticket"]["token"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestSessionSearch(_Settings):
     def wait_idle(self):
         from quiver.sessions import search_writer
@@ -1047,7 +1039,7 @@ class TestSync(_Settings):
 
     def setUp(self):
         super().setUp()
-        from quiver.webapp.pages import _github as G
+        from quiver.github import shared as G
 
         patcher = patch.object(G, "CACHE", G.TtlCache())
         patcher.start()
@@ -1070,7 +1062,7 @@ class TestSync(_Settings):
     def test_sync_probes_gh_afresh_so_a_switched_account_counts(self):
         from quiver import paths
         from quiver.github import catalog
-        from quiver.webapp.pages import _github as G
+        from quiver.github import shared as G
         from tests.test_webapp_repositories import FakeGh
 
         # The card read the old account a moment ago; gh is now signed in as octo.
@@ -1119,3 +1111,64 @@ class TestSync(_Settings):
         status, _ = self.srv.request("POST", "/v1/app/settings/sync", body={}, headers=headers)
         self.assertEqual(status, 403)
         self.assertEqual(fake.calls(), [])
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestRevokeThisBrowserScript(unittest.TestCase):
+    """pages/settings.js under node, with app.js's real pairForget():
+    revoking this browser's own row drops its credential from
+    localStorage and stops the remote poll; revoking another device
+    leaves both alone. The poll itself stops at its first 401."""
+
+    STATIC = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static"
+
+    def run_js(self, api_status, post_data, body, hash_="#/settings?section=integrations"):
+        app = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        forget = re.search(r"^function pairForget\(\) \{.*?^\}", app, re.S | re.M).group(0)
+        prelude = (
+            "const store = new Map([['quiver.remote', '{\"credential\":\"c\"}']]);\n"
+            "globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v),"
+            " removeItem: (k) => store.delete(k) };\n"
+            "globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
+            "globalThis.document = { documentElement: { dataset: {} }, head: { appendChild() {} },"
+            " getElementById: () => null, createElement: () => ({}), querySelectorAll: () => [] };\n"
+            "let tick = null, cleared = 0, gates = [];\n"
+            "globalThis.setInterval = (fn) => { tick = fn; return 7; };\n"
+            "globalThis.clearInterval = (id) => { if (id === 7) { cleared++; tick = null; } };\n"
+            "const routeGen = 0;\n"
+            "function registerPage() {}\n"
+            "function renderGate(msg) { gates.push(msg); }\n"
+            "function renderSettings() {}\n" + app_js_function("currentRoute") +
+            "const api = async () => ({ status: " + str(api_status) + ", data: null });\n"
+            "const apiPost = async () => ({ status: 200, data: " + post_data + " });\n"
+            + forget + "\n")
+        src = prelude + (self.STATIC / "pages/settings.js").read_text(encoding="utf-8") + "\n" + body
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    REVOKE = ("settingsPage.data = { remote: { devices: [{ id: 'd1', this_device: %s }] } };\n"
+              "settingsPage.setupBusy = true;\nsettingsPollRequests();\n"
+              "settingsRevoke('d1').then(() => process.stdout.write(JSON.stringify("
+              "{ stored: store.has('quiver.remote'), signedOut: !!settingsPage.signedOut,"
+              " polling: settingsPage.reqPoll !== null })));\n")
+
+    def test_revoking_this_browser_forgets_its_credential(self):
+        # Off the page, so the revoke doesn't repaint a DOM this stub lacks.
+        out = self.run_js(200, "{ this_device: true }", self.REVOKE % "true", "#/overview")
+        self.assertEqual(out, {"stored": False, "signedOut": True, "polling": False})
+
+    def test_revoking_another_device_keeps_it(self):
+        out = self.run_js(200, "{ devices: [] }", self.REVOKE % "false", "#/overview")
+        self.assertEqual(out, {"stored": True, "signedOut": False, "polling": True})
+
+    def test_the_poll_stops_at_a_401(self):
+        out = self.run_js(401, "{}", "settingsPollRequests();\n"
+                          "(async () => { await tick(); const after = tick; "
+                          "process.stdout.write(JSON.stringify({ gates: gates.length, cleared, after: after === null,"
+                          " polling: settingsPage.reqPoll !== null })); })();\n")
+        self.assertEqual(out, {"gates": 1, "cleared": 1, "after": True, "polling": False})
+
+
+if __name__ == "__main__":
+    unittest.main()

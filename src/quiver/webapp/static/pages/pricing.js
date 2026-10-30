@@ -97,7 +97,7 @@
     if (rescan) q.set("rescan", "1");
     const { status, data } = await api(`/v1/app/pricing?${q}`);
     if (gen !== routeGen || seq !== state.seq) return;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return renderGate();
     if (status !== 200 || !data) return pageError(header(false), status, data, () => render("pricing"));
     state.data = data;
     state.harness = data.harness_filter || [];
@@ -357,7 +357,7 @@
   }
 
   let priceForms = 0;
-  const onPricing = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "pricing";
+  const onPricing = () => currentRoute() === "pricing";
   // The form sits outside the panel, so leaving the page must close it.
   window.addEventListener("hashchange", () => {
     const sheet = document.getElementById("qp-sheet");
@@ -382,7 +382,7 @@
     if (mine) sheet.dataset.working = "";
     if (status === 401) {
       if (mine) sheet.close();
-      if (onPricing()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      if (onPricing()) renderGate();
       return;
     }
     if (status === 200 && data && data.page) {
@@ -402,8 +402,7 @@
     for (const id of ["qp-remove", "qp-cancel"]) if ($(id)) $(id).disabled = false;
     $("qp-save").disabled = false;
     const err = $("qp-error");
-    err.textContent = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    err.textContent = failText(status, data);
     err.hidden = false;
   }
 

@@ -57,8 +57,10 @@ import Testing
         let (swe, runner) = try client("swe-gh-issue-comment")
         let reply = try await swe.ghIssueComment(repo: "c-wenlong/quiver", number: 816,
                                                  body: "Start with --the Mac app")
+        // The text goes on stdin, never argv, where other processes can read it.
         #expect(runner.calls.last == ["gh", "issue", "comment", "816", "--repo=c-wenlong/quiver",
-                                      "--body=Start with --the Mac app", "--json"])
+                                      "--body-file=-", "--json"])
+        #expect(runner.inputs.last == Data("Start with --the Mac app".utf8))
         #expect(reply.issue == 816)
         #expect(reply.error == nil)
         #expect(reply.comment?.author == "c-wenlong")
@@ -81,6 +83,7 @@ import Testing
     final class Router: CommandRunning, @unchecked Sendable {
         var replies: [String: CommandResult]
         private(set) var calls: [[String]] = []
+        private(set) var inputs: [Data?] = []
         private let lock = NSLock()
         init(_ replies: [String: CommandResult]) { self.replies = replies }
         func run(_ arguments: [String]) async throws -> CommandResult {
@@ -90,7 +93,8 @@ import Testing
             return .init(status: 1, stdout: Data(), stderr: "no route")
         }
         func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
-            try await run(arguments)
+            lock.withLock { inputs.append(input) }
+            return try await run(arguments)
         }
     }
 
@@ -126,7 +130,8 @@ import Testing
         let error = await model.commentOnIssue(repo: "c-wenlong/quiver", number: 816,
                                                body: "  hello  ", swe: SweClient(runner: router))
         #expect(error == nil)
-        #expect(router.calls.first?.contains("--body=hello") == true)
+        #expect(router.calls.first?.contains("--body-file=-") == true)
+        #expect(router.inputs.first == Data("hello".utf8))
         #expect(router.calls.last?.prefix(3) == ["gh", "issue", "view"])
         #expect(!model.commenting(repo: "c-wenlong/quiver", number: 816))
         if case .loaded = model.issueDetails["c-wenlong/quiver#816"] {} else {

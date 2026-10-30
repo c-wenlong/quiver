@@ -27,7 +27,7 @@
     if (rescan) q.set("rescan", "1");
     const { status, data } = await api(`/v1/app/models?${q}`);
     if (gen !== routeGen || seq !== state.seq) return;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return renderGate();
     if (status !== 200 || !data) return pageError(header(false), status, data, () => render("models"));
     state.data = data;
     state.harness = data.harness_filter || [];
@@ -140,7 +140,7 @@
     if (exclude) q.set("exclude", exclude);
     const { status, data } = await api(`/v1/app/models?${q}`);
     if (gen !== routeGen || seq !== state.searchSeq) return;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return renderGate();
     state.search = status === 200 && data
       ? { needle, exclude, matches: data.matches, total: data.total }
       : { needle, exclude, error: (data && data.error && data.error.message)

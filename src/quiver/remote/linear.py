@@ -29,7 +29,7 @@ write-back is a later step, not this one.
 from __future__ import annotations
 
 import json
-import ssl
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -38,14 +38,20 @@ from typing import Any
 
 from quiver import __version__, paths
 from quiver.mcp import secrets as mcp_secrets
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 GRAPHQL_URL = "https://api.linear.app/graphql"
 # Linear personal API keys travel bare in the Authorization header —
 # no Bearer scheme, no OAuth exchange.
 TIMEOUT = 15
-# One page of issues: the same cap `swe gh` puts on a repo's open work.
+# Issues per page: the same cap `swe gh` puts on a repo's open work.
 LIST_LIMIT = 50
+# Pages read per list, newest-updated first, and the time the later
+# pages may take: the phone gives up on /v1/tasks after 15 s. Past
+# either the list says ``truncated`` instead of passing for everything
+# that's open.
+LIST_PAGES = 5
+LIST_BUDGET_S = 8.0
 DEFAULT_KEY_REF = "${LINEAR_API_KEY}"
 
 # A Linear workflow state's ``type`` → the task row's source state.
@@ -65,13 +71,14 @@ _TERMINAL = ("completed", "canceled", "cancelled", "duplicate")
 _VIEWER_QUERY = "query { viewer { displayName email } }"
 
 _LIST_QUERY = """\
-query QuiverTasks($filter: IssueFilter) {
-  issues(first: 50, filter: $filter, orderBy: updatedAt) {
+query QuiverTasks($filter: IssueFilter, $first: Int!, $after: String) {
+  issues(first: $first, after: $after, filter: $filter, orderBy: updatedAt) {
     nodes {
       identifier title url updatedAt
       state { name type }
       team { key }
     }
+    pageInfo { hasNextPage endCursor }
   }
 }
 """
@@ -159,24 +166,6 @@ class GraphQLResult:
     error: str = ""
 
 
-def _urlopen(req: urllib.request.Request, timeout: float):
-    """``urlopen`` that retries a certificate failure once against the
-    OS CA bundle, as ``remote/agent.py``'s does: python.org builds on
-    macOS ship no CA certificates. Verification is never disabled."""
-    try:
-        return urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.URLError as exc:
-        if not isinstance(getattr(exc, "reason", None),
-                          ssl.SSLCertVerificationError):
-            raise
-        from quiver.harness.rate_limits import _verified_context
-
-        ctx = _verified_context()
-        if ctx is None:
-            raise
-        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
-
-
 def _graphql(api_key: str, query: str,
              variables: dict | None = None) -> GraphQLResult:
     """POST one GraphQL operation; never raises."""
@@ -187,6 +176,9 @@ def _graphql(api_key: str, query: str,
         headers={"Authorization": api_key,
                  "Content-Type": "application/json",
                  "User-Agent": f"quiver/{__version__}"})
+    # The agent's urlopen: a certificate failure retries against the OS
+    # CA bundle (python.org builds on macOS ship none), still verified.
+    from quiver.remote.agent import _urlopen
     try:
         with _urlopen(req, TIMEOUT) as resp:
             text = resp.read().decode("utf-8")
@@ -227,7 +219,7 @@ def _graphql(api_key: str, query: str,
 
 class LinearTasks:
     """``TaskSource`` over Linear's GraphQL, behind the same minute
-    cache the ``gh`` reads share (``webapp/pages/_github.py``)."""
+    cache the ``gh`` reads share (``github/shared.py``)."""
 
     def __init__(self, home: Path | str | None, refresh: bool = False):
         self.home = Path(home) if home is not None else None
@@ -299,8 +291,10 @@ class LinearTasks:
     # -------------------------------------------------------------- list
 
     def list(self) -> dict:
-        """``{status, tasks, error?, fetched_at}`` — the assigned and
-        configured-team issues that aren't in a terminal state."""
+        """``{status, tasks, truncated?, error?, fetched_at}`` — the
+        assigned and configured-team issues that aren't in a terminal
+        state, up to ``LIST_PAGES`` pages; ``truncated`` when more
+        remain."""
         value, at = G.CACHE.get(
             ("linear-issues", G.home_key(self.home)), self._list,
             refresh=self.refresh, ok=lambda v: v.get("status") == "ok")
@@ -319,19 +313,33 @@ class LinearTasks:
         if key is None:
             return {"status": "auth-required", "tasks": [],
                     "error": error}
-        result = _graphql(key, _LIST_QUERY,
-                          {"filter": _list_filter(teams)})
-        if result.status != "ok":
-            return {"status": result.status, "tasks": [],
-                    "error": result.error or result.status}
-        issues = result.data.get("issues") \
-            if isinstance(result.data, dict) else None
-        nodes = issues.get("nodes") if isinstance(issues, dict) else []
-        tasks = [{"task": _ref(node), "state": _task_state(node),
-                  "status_name": _status_name(node),
-                  "updated_at": node.get("updatedAt")}
-                 for node in nodes or [] if isinstance(node, dict)]
-        return {"status": "ok", "tasks": tasks}
+        tasks: list[dict] = []
+        after = None
+        deadline = time.monotonic() + LIST_BUDGET_S
+        for page in range(LIST_PAGES):
+            if page and time.monotonic() > deadline:
+                break  # a slow Linear: answer what came back
+            result = _graphql(key, _LIST_QUERY,
+                              {"filter": _list_filter(teams),
+                               "first": LIST_LIMIT, "after": after})
+            if result.status != "ok":
+                return {"status": result.status, "tasks": [],
+                        "error": result.error or result.status}
+            issues = result.data.get("issues") \
+                if isinstance(result.data, dict) else None
+            issues = issues if isinstance(issues, dict) else {}
+            tasks.extend(
+                {"task": _ref(node), "state": _task_state(node),
+                 "status_name": _status_name(node),
+                 "updated_at": node.get("updatedAt")}
+                for node in issues.get("nodes") or []
+                if isinstance(node, dict))
+            info = issues.get("pageInfo")
+            info = info if isinstance(info, dict) else {}
+            after = info.get("endCursor")
+            if not (info.get("hasNextPage") and isinstance(after, str)):
+                return {"status": "ok", "tasks": tasks}
+        return {"status": "ok", "tasks": tasks, "truncated": True}
 
     # -------------------------------------------------------------- get
 

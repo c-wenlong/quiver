@@ -174,6 +174,9 @@ final class LimitsMonitor {
         let content = UNMutableNotificationContent()
         content.title = alert.title
         content.body = alert.body(now: now)
+        // As the test notification plays it, and as the authorization
+        // below asks to.
+        content.sound = .default
         content.threadIdentifier = "limits"
         // One identifier per window and kind: a repeat replaces, never stacks.
         let request = UNNotificationRequest(identifier: "\(alert.reading.id)|\(alert.kind.rawValue)",

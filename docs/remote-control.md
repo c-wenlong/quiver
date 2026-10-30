@@ -755,7 +755,7 @@ apart from the open slot (`tasks.py` shares that one); any other word is
 a `422 bad_state`. One repo's failure stays in its `status`/`error`
 while the others answer; a missing or signed-out `gh` answers
 `env_blocked` before any fetch. The reads share the web app's 60-second
-`gh` cache (`webapp/pages/_github.py`), and a `refresh=1` bypasses it.
+`gh` cache (`github/shared.py`), and a `refresh=1` bypasses it.
 
 `GET /v1/issues/<owner>/<repo>/<n>` answers one issue in full: the row
 plus `body`, `comments`, `branch` (`quiver/issue-<n>`), `worktree`
@@ -817,7 +817,7 @@ status` fails the rows still list, with `review_requested` null rather
 than a guess. One repo's failure stays in its `status`/`error` while
 the others answer; a missing or signed-out `gh` answers `env_blocked`
 before any fetch, the same words `swe gh` stops on. The reads share the
-web app's 60-second `gh` cache (`webapp/pages/_github.py`), so the
+web app's 60-second `gh` cache (`github/shared.py`), so the
 phone, the Repositories page and a `refresh=1` agree.
 
 `GET /v1/pulls/<owner>/<repo>/<n>` answers one PR in full: the list row

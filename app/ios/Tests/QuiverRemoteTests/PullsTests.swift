@@ -104,6 +104,24 @@ final class PullsDecodingTests: XCTestCase {
         XCTAssertTrue(pr.suggestedPrompt?.hasPrefix("Review https://") == true)
     }
 
+    func testAFailedRefreshKeepsThePullShown() throws {
+        let shown = try Hub.decoder.decode(PullResponse.self, from: Data("""
+        {"status": "ok", "pr": {"number": 5, "title": "Fix the thing"}}
+        """.utf8))
+        let outage = try Hub.decoder.decode(PullResponse.self, from: Data("""
+        {"status": "auth-required", "pr": null, "error": "gh isn't signed in"}
+        """.utf8))
+        let kept = PullDetailView.landing(outage, over: shown)
+        XCTAssertEqual(kept.reply?.pr?.title, "Fix the thing")
+        XCTAssertEqual(kept.error, "gh isn't signed in")
+        // With nothing shown yet, the failure is the page.
+        let first = PullDetailView.landing(outage, over: nil)
+        XCTAssertNil(first.reply?.pr)
+        XCTAssertEqual(first.reply?.status, "auth-required")
+        XCTAssertNil(first.error)
+        XCTAssertEqual(PullDetailView.landing(shown, over: nil).reply?.pr?.number, 5)
+    }
+
     func testGitHubTimeParsesBothStampShapes() {
         XCTAssertNotNil(GitHubTime.date("2026-01-02T03:04:05Z"))
         XCTAssertNotNil(GitHubTime.date("2026-01-02T03:04:05.123Z"))
