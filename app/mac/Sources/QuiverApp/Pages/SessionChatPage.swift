@@ -329,7 +329,9 @@ extension ChatEntry {
 /// session is observed, as in the web app. Typing `/` first opens the
 /// command menu: the hub lists what this session's harness will run,
 /// a pick puts the command's text in the box, and Send delivers it as
-/// a plain message the harness expands on arrival.
+/// a plain message the harness expands on arrival. Typing `@` opens the
+/// file menu: paths under the session's folder, a pick puts `@path` in
+/// the box (a folder stays open to pick inside it).
 private struct Composer: View {
     var model: SessionChatModel
     @State private var draft = ""
@@ -337,7 +339,7 @@ private struct Composer: View {
     @State private var selection: TextSelection?
     /// The `/` menu opens only while the box is being typed in.
     @FocusState private var focused: Bool
-    /// The row the arrows lit in the open `/` menu.
+    /// The row the arrows lit in the open `/` or `@` menu.
     @State private var active = 0
     /// Queue waits for the agent's turn to end; Steer writes now.
     @AppStorage("sessionChatSendMode") private var mode = "queue"
@@ -354,6 +356,19 @@ private struct Composer: View {
         focused && model.canSend ? Slash.token(in: draft, cursor: caret) : nil
     }
 
+    /// The `@path` being typed where the caret is, while the box has
+    /// focus and the `/` menu doesn't hold it.
+    private var mention: MentionToken? {
+        focused && model.canSend && slash == nil ? Mention.token(in: draft, cursor: caret) : nil
+    }
+
+    /// The `@` menu's highlighted file, while it's open with rows.
+    private var activeEntry: FileEntry? {
+        let rows = MentionMenuCard.rows(model.mentions)
+        guard !model.commands.isOpen, model.mentions.isOpen, !rows.isEmpty else { return nil }
+        return rows[min(active, rows.count - 1)]
+    }
+
     /// The menu's highlighted command, while it's open with rows.
     private var activeCommand: SlashCommand? {
         let rows = model.commands.matches
@@ -366,6 +381,9 @@ private struct Composer: View {
         VStack(alignment: .leading, spacing: 8) {
             if model.commands.isOpen {
                 SlashCommandMenuCard(menu: model.commands, row: model.row, active: $active) { pick($0) }
+                    .transition(.opacity)
+            } else if model.mentions.isOpen {
+                MentionMenuCard(search: model.mentions, active: $active) { pick($0) }
                     .transition(.opacity)
             }
             HStack(alignment: .bottom, spacing: 8) {
@@ -381,9 +399,9 @@ private struct Composer: View {
                     .disabled(observed)
                     .focused($focused)
                     // Shift-Return always starts a line. With the `/`
-                    // menu open Return or Tab picks, the arrows move
-                    // the highlight and Escape closes it; otherwise
-                    // Return sends.
+                    // or `@` menu open Return or Tab picks, the arrows
+                    // move the highlight and Escape closes it;
+                    // otherwise Return sends.
                     .onKeyPress(.return, phases: .down) { press in
                         if press.modifiers.contains(.shift) {
                             newline()
@@ -399,21 +417,43 @@ private struct Composer: View {
                             case .wait:
                                 break
                             }
+                        } else if model.mentions.isOpen {
+                            switch Slash.ReturnAction.action(
+                                row: activeEntry != nil,
+                                loading: model.mentions.firstLoad
+                            ) {
+                            case .pick:
+                                if let entry = activeEntry { pick(entry) }
+                            case .send:
+                                submit()
+                            case .wait:
+                                break
+                            }
                         } else {
                             submit()
                         }
                         return .handled
                     }
                     .onKeyPress(.tab, phases: .down) { _ in
-                        guard let command = activeCommand else { return .ignored }
-                        pick(command)
+                        if let command = activeCommand {
+                            pick(command)
+                        } else if let entry = activeEntry {
+                            pick(entry)
+                        } else {
+                            return .ignored
+                        }
                         return .handled
                     }
                     .onKeyPress(.upArrow, phases: .down) { _ in move(-1) }
                     .onKeyPress(.downArrow, phases: .down) { _ in move(1) }
                     .onKeyPress(.escape, phases: .down) { _ in
-                        guard model.commands.isOpen else { return .ignored }
-                        model.commands.dismiss()
+                        if model.commands.isOpen {
+                            model.commands.dismiss()
+                        } else if model.mentions.isOpen {
+                            model.mentions.dismiss()
+                        } else {
+                            return .ignored
+                        }
                         return .handled
                     }
                 Button { Task { await model.interrupt() } } label: {
@@ -429,17 +469,25 @@ private struct Composer: View {
             }
         }
         .animation(.easeOut(duration: 0.15), value: model.commands.isOpen)
+        .animation(.easeOut(duration: 0.15), value: model.mentions.isOpen)
         .onChange(of: slash, initial: true) { _, token in
             model.commands.track(token)
             active = 0
         }
+        .onChange(of: mention, initial: true) { _, token in
+            model.mentions.track(token)
+            active = 0
+        }
+        // New results light their first row, as the web app does.
+        .onChange(of: model.mentions.entries) { active = 0 }
     }
 
-    /// An arrow key with the `/` menu open relights its rows; with it
-    /// closed the caret moves as usual.
+    /// An arrow key with the `/` or `@` menu open relights its rows;
+    /// with both closed the caret moves as usual.
     private func move(_ delta: Int) -> KeyPress.Result {
-        let count = model.commands.matches.count
-        guard model.commands.isOpen, count > 0 else { return .ignored }
+        let count = model.commands.isOpen ? model.commands.matches.count
+            : model.mentions.isOpen ? MentionMenuCard.rows(model.mentions).count : 0
+        guard count > 0 else { return .ignored }
         active = (active + delta + count) % count
         return .handled
     }
@@ -449,6 +497,15 @@ private struct Composer: View {
     private func pick(_ command: SlashCommand) {
         guard let token = Slash.token(in: draft, cursor: caret) else { return }
         let next = Slash.insert(command, replacing: token, in: draft)
+        draft = next.text
+        selection = TextSelection(insertionPoint: Caret.index(next.cursor, in: draft))
+    }
+
+    /// The picked path replaces the `@word`: a file's caret lands after
+    /// its space, a folder's after its slash so the menu lists inside it.
+    private func pick(_ entry: FileEntry) {
+        guard let token = Mention.token(in: draft, cursor: caret) else { return }
+        let next = Mention.insert(entry.path, isDir: entry.isDir, replacing: token, in: draft)
         draft = next.text
         selection = TextSelection(insertionPoint: Caret.index(next.cursor, in: draft))
     }

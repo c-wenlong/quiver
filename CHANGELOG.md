@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac app: the `@` file menu in the session chat.** Typing `@` in the
+  chat's prompt box lists files under the session's folder, as the web
+  app and the iPhone app do: the arrows move the highlight, Return or
+  Tab picks, Escape closes. A file goes in as `@path `, a folder as
+  `@path/` with the menu still open to pick inside it, and a path with
+  spaces is quoted. Sessions on a satellite say file search isn't
+  available there ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 - **Remote: a `limit` notification when a session hits its usage
   limit.** The hub and satellites now raise `notify` kind `limit` when
   a Claude Code session writes its rate-limit record ("You've hit your
