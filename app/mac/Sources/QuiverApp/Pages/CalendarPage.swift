@@ -626,7 +626,9 @@ private struct CalendarContent: View {
                 }
             }
             if let nowOffset {
-                Text(now, format: .dateTime.hour().minute())
+                // The axis's own 24-hour clock, not the locale's: a 12-hour
+                // Mac read "1:05 PM" beside a "13:00" axis.
+                Text(Self.hourLabel.string(from: now))
                     .font(Theme.font(size: 9, weight: .medium))
                     .foregroundStyle(Theme.calendarNowText)
                     .padding(.horizontal, 5).padding(.vertical, 2)
