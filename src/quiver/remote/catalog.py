@@ -551,7 +551,6 @@ class Catalog:
         self._github_seen: dict[str, str] | None = None
         self.max_rows = max_rows
         self._rows: list[tuple[str, Session | None, dict, str]] = []
-        self._refreshed_at = 0.0
         # One lock for every write to the rows after they are built:
         # refresh's overlay-and-swap, reapply_meta (pins and titles) and
         # note_status (tail probes). Each takes it for its whole
@@ -567,10 +566,6 @@ class Catalog:
         # is when the current rows' statuses were read.
         self._fresh: dict[str, tuple[str, float]] = {}
         self._status_as_of = 0.0
-
-    @property
-    def refreshed_at(self) -> float:
-        return self._refreshed_at
 
     def refresh(self) -> list[dict]:
         """Re-list sessions, reclassify statuses, rebuild rows."""
@@ -624,7 +619,6 @@ class Catalog:
                     rows[i] = (key, session, row, fresh[0])
             self._rows = rows
             self._status_as_of = started
-            self._refreshed_at = time.time()
         return [row for _key, _s, row, _st in rows]
 
     def note_status(self, key: str, status: str, at: float) -> None:
@@ -679,10 +673,6 @@ class Catalog:
             if k == key:
                 return session
         return None
-
-    def due(self, now: float | None = None) -> bool:
-        now = time.time() if now is None else now
-        return now - self._refreshed_at >= REFRESH_INTERVAL_S
 
     def poll_github(self) -> None:
         """Fetch the unread GitHub listing, store its rows, and fire

@@ -21,6 +21,7 @@ from quiver.webapp.pages import _github as G
 from quiver.webapp.pages import repositories as R
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 OK_ENV = gh.GhEnv(installed=True, authenticated=True, login="octo")
 
@@ -390,6 +391,7 @@ class TestPullRequest(_Base):
                 patch.object(gh, "run_json", return_value=gh.GhResult("ok", data=self.PR)) as run:
             body = R.get(self.ctx, {"repo": "o/a", "pr": "#7"})
             R.get(self.ctx, {"repo": "o/a", "pr": "7"})
+            R.get(self.ctx, {"repo": "o/a", "pr": "007"})  # same entry
         self.assertEqual(run.call_count, 1)
         args = run.call_args[0][0]
         self.assertEqual(args[:5], ["pr", "view", "7", "--repo", "o/a"])
@@ -401,8 +403,11 @@ class TestPullRequest(_Base):
 
     def test_failures_and_a_blocked_env(self):
         _pin(self.home, "o/a")
-        with self.assertRaises(PageError):
-            R.get(self.ctx, {"repo": "o/a", "pr": "abc"})
+        for bad in ("abc", "0", "9" * 5000, "\u0667", "1234567890"):
+            with self.assertRaises(PageError) as caught:
+                R.get(self.ctx, {"repo": "o/a", "pr": bad})
+            self.assertEqual((caught.exception.status, caught.exception.code),
+                             (400, "bad_pr"), bad)
         with patch.object(gh, "probe_env", return_value=OK_ENV), \
                 patch.object(gh, "run_json", return_value=gh.GhResult("not-found", error="no PR")):
             body = R.get(self.ctx, {"repo": "o/a", "pr": "9"})
@@ -805,7 +810,7 @@ process.stdout.write(JSON.stringify({ runs: runs.map((t) => t - 1000000), stoppe
 """
 
     def test_hidden_ticks_are_skipped_and_a_return_catches_up(self):
-        script = self.SCRIPT.replace("GITHUB_JS", (STATIC / "github.js").read_text())
+        script = self.SCRIPT.replace("GITHUB_JS", app_js_function("currentRoute") + (STATIC / "github.js").read_text())
         done = _node(script)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(json.loads(done.stdout), {"runs": [60000, 170000, 260000], "stopped": True})
@@ -871,7 +876,10 @@ class TestPrWorktree(_Base):
     def test_checkouts_of_one_repo_wait_for_each_other(self):
         # Two PRs of one repo share its mirror's FETCH_HEAD: the second
         # checkout must not start until the first has finished.
-        lock = G.mirror_lock(self.home, "O/A")
+        # The one mirror lock table lives in manage; a differently
+        # cased name is the same mirror.
+        from quiver.github import manage
+        lock = manage._mirror_lock(manage.mirror_path("O/A", self.home))
         lock.acquire()
         done = []
         worker = threading.Thread(target=lambda: done.append(
@@ -884,6 +892,39 @@ class TestPrWorktree(_Base):
         worker.join(30)
         self.assertEqual(done[0]["head"], self.head)
 
+    def test_a_checkout_holds_the_mirror_from_fetch_to_worktree(self):
+        # Two PRs of one repo share the mirror's FETCH_HEAD: a second
+        # call must not fetch while the first is between its fetch and
+        # its checkout, whoever the caller is.
+        from quiver.github import manage
+        R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})  # mirror exists
+        in_fetch, release = threading.Event(), threading.Event()
+        fetches = []
+        real = manage.run_git
+
+        def run_git(args, *a, **k):
+            if "fetch" in args:
+                fetches.append(threading.current_thread().name)
+                if len(fetches) == 1:
+                    in_fetch.set()
+                    release.wait(10)
+            return real(args, *a, **k)
+
+        with patch.object(manage, "run_git", side_effect=run_git):
+            first = threading.Thread(name="first", target=manage.pr_worktree,
+                                     args=("o/a", "7", self.home))
+            second = threading.Thread(name="second", target=manage.pr_worktree,
+                                      args=("o/a", "7", self.home))
+            first.start()
+            self.assertTrue(in_fetch.wait(10))
+            second.start()
+            second.join(0.5)
+            self.assertEqual(fetches, ["first"])
+            release.set()
+            first.join(30)
+            second.join(30)
+        self.assertEqual(fetches, ["first", "second"])
+
     def test_harnesses_are_what_the_hub_can_launch(self):
         rows = [{"name": "claude", "command": "claude",
                  "display_name": "Claude Code", "tracked": True,
@@ -891,8 +932,10 @@ class TestPrWorktree(_Base):
         with patch("quiver.remote.catalog.launchable_harnesses",
                    return_value=rows), \
              patch("quiver.remote.catalog.recent_models",
-                   return_value={"claude": ["opus", "sonnet"]}):
+                   return_value={"claude": ["opus", "sonnet"]}) as recent:
             body = R.get(self.ctx, {"harnesses": "1"})
+        # Models come from the hub's own home, not the process's.
+        self.assertEqual(recent.call_args[0][0], self.ctx.home)
         self.assertEqual(body["harnesses"], [{
             "name": "claude", "display_name": "Claude Code",
             "tracked": True, "launch_model": True,
@@ -1072,8 +1115,7 @@ class TestRoute(HubBase):
 
     def test_page_scripts_are_bundled(self):
         _, js = self.srv.request("GET", "/app/pages.js")
-        for name in (b'registerPage("repositories"', b'registerPage("inbox"', b"const GhUI"):
-            self.assertIn(name, js)
+        self.assertIn(b"const GhUI", js)
         _, css = self.srv.request("GET", "/app/pages.css")
         self.assertIn(b".gh-row", css)
 

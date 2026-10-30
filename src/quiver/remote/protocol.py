@@ -104,11 +104,6 @@ NOTIFY_KINDS = frozenset({"needs_you", "finished", "error", "limit"})
 OWNERSHIP_ATTACHED = "attached"
 OWNERSHIP_OBSERVED = "observed"
 
-# Satellite-facing command envelope ops (hub → satellite journal).
-COMMAND_OPS = frozenset(
-    {"message", "approval", "control", "attach", "launch", "attachment"}
-)
-
 # Hub-scoped session keys for satellite rows: ``tool:sid@machine``.
 REMOTE_SEP = "@"
 

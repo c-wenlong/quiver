@@ -87,7 +87,7 @@ const GhUI = (() => {
   /* GhSetupCard, with a line saying which machine's gh it means. */
   function setupCard(status, machine) {
     const title = status === "unavailable"
-      ? "Download gh cli to enable github features." : "Sign in to GitHub to enable github features.";
+      ? "Download the gh CLI to enable GitHub features." : "Sign in to GitHub to enable GitHub features.";
     const command = status === "unavailable" ? "brew install gh" : "gh auth login";
     return `<div class="card gh-setup">
       <div class="gh-setup-title">${ico("terminal")}<span>${esc(title)}</span></div>
@@ -124,7 +124,6 @@ const GhUI = (() => {
    * already running), so only a real read counts as the last one. */
   const POLL_MS = 60000;
   const polls = {};
-  const route = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
   function stopPoll(page) {
     if (!polls[page]) return;
     clearInterval(polls[page].timer);
@@ -133,7 +132,7 @@ const GhUI = (() => {
   function runPoll(page) {
     const entry = polls[page];
     if (!entry) return;
-    if (route() !== page) return stopPoll(page);
+    if (currentRoute() !== page) return stopPoll(page);
     if (document.hidden) return;
     if (entry.fn() !== false) entry.last = Date.now();
   }

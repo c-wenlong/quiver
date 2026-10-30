@@ -283,7 +283,9 @@ class RemoteAgent:
         path = self._cmd_cursor_file()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({
+            # Atomic: a crash mid-write left a torn file that loaded as
+            # no cursor, so the whole backlog replayed and re-ran.
+            atomic_write_text(path, json.dumps({
                 "hub": self.hub,
                 "seq": self._done_cmd_seq,
                 # Done seqs above the contiguous floor — without them a
@@ -310,7 +312,8 @@ class RemoteAgent:
 
     def _save_outbox_ack(self) -> None:
         try:
-            self._outbox_ack_file().write_text(str(self._outbox_ack))
+            # Atomic: a torn file reads as ack 0 and resends the outbox.
+            atomic_write_text(self._outbox_ack_file(), str(self._outbox_ack))
         except OSError:
             pass
 
