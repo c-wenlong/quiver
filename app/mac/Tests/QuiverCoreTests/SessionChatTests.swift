@@ -576,7 +576,10 @@ extension HubStubbed {
         for await event in client.events("claude:held", last: 0) {
             if case .connected = event { break }
         }
+        // The counts bump in tasks of their own, so the close can land
+        // before the open: wait for both, then check nothing else opened.
         #expect(await watch.closed.reach(1))
+        #expect(await watch.opened.reach(1))
         #expect(await watch.opened.count == 1)
     }
 
