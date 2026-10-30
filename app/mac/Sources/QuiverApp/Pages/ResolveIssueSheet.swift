@@ -233,7 +233,7 @@ struct ResolveIssueSheet: View {
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
                 .lineLimit(2)
             Spacer(minLength: 12)
-            Button("Cancel") {
+            Button(flow.cancelTitle) {
                 launch?.cancel()
                 dismiss()
             }
@@ -396,5 +396,16 @@ struct HarnessTile: View {
         .focusRing(cornerRadius: 12)
         .onHover { hovering = $0 }
         .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+extension IssueLaunchFlow {
+    /// Once the hub has accepted the launch, cancelling only stops this
+    /// sheet waiting: the session starts anyway, so the button says so.
+    var cancelTitle: String {
+        switch phase {
+        case .waiting, .started: "Stop waiting"
+        default: "Cancel"
+        }
     }
 }
