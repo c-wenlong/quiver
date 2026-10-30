@@ -390,6 +390,7 @@ class TestPullRequest(_Base):
                 patch.object(gh, "run_json", return_value=gh.GhResult("ok", data=self.PR)) as run:
             body = R.get(self.ctx, {"repo": "o/a", "pr": "#7"})
             R.get(self.ctx, {"repo": "o/a", "pr": "7"})
+            R.get(self.ctx, {"repo": "o/a", "pr": "007"})  # same entry
         self.assertEqual(run.call_count, 1)
         args = run.call_args[0][0]
         self.assertEqual(args[:5], ["pr", "view", "7", "--repo", "o/a"])
@@ -401,8 +402,11 @@ class TestPullRequest(_Base):
 
     def test_failures_and_a_blocked_env(self):
         _pin(self.home, "o/a")
-        with self.assertRaises(PageError):
-            R.get(self.ctx, {"repo": "o/a", "pr": "abc"})
+        for bad in ("abc", "0", "9" * 5000, "\u0667", "1234567890"):
+            with self.assertRaises(PageError) as caught:
+                R.get(self.ctx, {"repo": "o/a", "pr": bad})
+            self.assertEqual((caught.exception.status, caught.exception.code),
+                             (400, "bad_pr"), bad)
         with patch.object(gh, "probe_env", return_value=OK_ENV), \
                 patch.object(gh, "run_json", return_value=gh.GhResult("not-found", error="no PR")):
             body = R.get(self.ctx, {"repo": "o/a", "pr": "9"})
