@@ -598,7 +598,12 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
     revoke = flags.get("--revoke")
     if revoke:
         try:
-            ok = pairing.revoke_device(None, revoke)
+            if revoke.startswith("tailnet:"):
+                # One of the owner's tailnet devices, let in without
+                # pairing: it stops getting in until it pairs again.
+                ok = pairing.revoke_signin(None, revoke[len("tailnet:"):])
+            else:
+                ok = pairing.revoke_device(None, revoke)
         except sshkeys.KeysNotSynced as exc:
             print(c("red", f"revoked {revoke}, but its SSH key is still in "
                            f"~/.ssh/authorized_keys: {exc}"),
@@ -617,13 +622,18 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
               file=error_stream(json_view))
         return 1
     devices = pairing.load_devices()
+    signins = pairing.load_signins()
     if json_view:
+        from quiver.remote import devices as devices_mod
+
         return emit({
             "devices": [
                 pairing.device_view(did, row)
                 for did, row in devices.items()
-            ]
+            ],
+            "signins": devices_mod.signin_rows(None, None),
         })
+    _print_signins(signins)
     if not devices:
         print(c("dim", "no paired devices — swe remote pair"))
         return 0
@@ -641,6 +651,20 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
         detail = f"  {' · '.join(bits)}" if bits else ""
         print(f"  {did}  {label}  {mark}{detail}  last seen {seen_s}")
     return 0
+
+
+def _print_signins(signins: dict) -> None:
+    """The owner's tailnet devices the hub let in without pairing, each
+    revocable with ``--revoke=tailnet:<node>``."""
+    if not signins:
+        return
+    print(c("dim", "signed in through Tailscale (revoke with --revoke=tailnet:<node>):"))
+    for node, row in signins.items():
+        mark = c("red", "revoked") if row.get("revoked_at") else c("green", "active")
+        seen = row.get("last_seen_at")
+        seen_s = time.strftime("%Y-%m-%d %H:%M", time.localtime(seen)) if seen else "never"
+        print(f"  tailnet:{node}  {row.get('node_name') or 'device'}  {mark}  last seen {seen_s}")
+    print(c("dim", "paired devices:"))
 
 
 def _cmd_attach(flags: dict, rest: list[str]) -> int:

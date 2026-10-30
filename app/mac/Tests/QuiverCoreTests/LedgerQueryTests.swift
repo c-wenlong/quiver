@@ -8,6 +8,7 @@ import Testing
     /// connections by path.
     func scannedFixture() async throws -> (TempDir, Ledger) {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let claude = try temp.copyFixture("claude-home")
         let codex = try temp.copyFixture("codex-home")
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
@@ -19,6 +20,7 @@ import Testing
     /// home but those other cards own, all keys from one read.
     @Test func dailyTokensSumChosenHomesOrAllButExcluded() async throws {
         let (temp, ledger) = try await scannedFixture()
+        defer { withExtendedLifetime(temp) {} }
         let home = temp.path("claude-home").path
         let range = DateInterval(start: Date(timeIntervalSince1970: 0), end: Date(timeIntervalSince1970: 4_000_000_000))
         let calendar = Calendar(identifier: .gregorian)

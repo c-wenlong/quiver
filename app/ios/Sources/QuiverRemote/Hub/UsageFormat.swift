@@ -161,15 +161,19 @@ enum UsageFormat {
         return f
     }
 
-    /// "$800", "$1.2K" for a chart axis.
+    /// "$800", "$1.2K" for a chart axis. A week of small spend scales
+    /// the axis to $1, with a tick at $0.50: rounded, that read "$1" twice
+    /// up the axis, so a tick between whole dollars keeps its cents.
     static func usdAxis(_ value: Double) -> String {
-        value >= 1000 ? "$" + tokens(Int(value.rounded())) : "$\(Int(value.rounded()))"
+        if value >= 1000 { return "$" + tokens(Int(value.rounded())) }
+        if value == value.rounded() { return "$\(Int(value))" }
+        return String(format: value < 10 ? "$%.2f" : "$%.1f", value)
     }
 
     /// One bar per day from `start` to `end` (ISO dates, inclusive), with
     /// days the hub left out (no usage) as zero. Oldest first.
     static func dailySeries(_ days: [OverviewResponse.Day], start: String?, end: String?,
-                            timeZone: TimeZone = .current) -> [DailySpend] {
+                            timeZone: TimeZone = .current, maxDays: Int = 1100) -> [DailySpend] {
         // Local midnight, so the chart's own date labels name the same day.
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
@@ -181,12 +185,17 @@ enum UsageFormat {
         var byDay: [Date: OverviewResponse.Day] = [:]
         for day in days { if let d = parse.date(from: day.date) { byDay[d] = day } }
         let known = byDay.keys.sorted()
-        guard let first = start.flatMap(parse.date(from:)) ?? known.first,
+        guard var first = start.flatMap(parse.date(from:)) ?? known.first,
               let last = end.flatMap(parse.date(from:)) ?? known.last, first <= last else { return [] }
+        // All time can run for years: the chart keeps the newest
+        // `maxDays`, so a long ledger never drops this week's bars.
+        if let floor = calendar.date(byAdding: .day, value: -(maxDays - 1), to: last), first < floor {
+            first = floor
+        }
         var out: [DailySpend] = []
         var cursor = first
-        // A malformed range can't loop forever: 400 days is past any period.
-        while cursor <= last, out.count < 400 {
+        // A malformed range can't loop forever.
+        while cursor <= last, out.count < maxDays {
             let day = byDay[cursor]
             out.append(DailySpend(date: cursor, cost: day?.costUsd ?? 0, tokens: day?.tokens ?? 0))
             guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }

@@ -10,6 +10,7 @@ import Testing
     /// message id plus request id only when both exist, over-counts it.
     @Test func eachResponseCountsOnceAcrossStreamingResumesAndSubAgents() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try temp.copyFixture("claude-home")
         let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
@@ -37,6 +38,7 @@ import Testing
 
     @Test func scanningTwiceAddsNothing() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try temp.copyFixture("claude-home")
         let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(claudeHomes: [home]))
@@ -47,6 +49,7 @@ import Testing
 
     @Test func aSubAgentReplaySeenBeforeItsParentGivesWayToTheParent() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try temp.copyFixture("claude-home")
         let ledger = try Ledger(directory: temp.path("cache"))
         // Only the sub-agent transcript exists at first.
@@ -67,6 +70,7 @@ import Testing
 
     @Test func twoAccountHomesAreKeptApart() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let personal = try temp.copyFixture("claude-home", as: "personal")
         let work = temp.path("work/home")
         try FileManager.default.createDirectory(at: work.appendingPathComponent("projects/-tmp-w"), withIntermediateDirectories: true)

@@ -104,7 +104,11 @@ struct TrendChart: View {
         .chartYScale(domain: 0...yTop)
         .chartXAxis {
             if showsXAxis {
-                AxisMarks(values: .automatic(desiredCount: compact ? 4 : 6))
+                AxisMarks(values: .automatic(desiredCount: compact ? 4 : 6)) { value in
+                    AxisGridLine()
+                    AxisTick()
+                    if ChartTimeAxis.labels(value.as(Date.self), in: domain, compact: compact) { AxisValueLabel() }
+                }
             }
         }
         // A compact chart puts its scale on the left, so the icons at the
@@ -188,5 +192,24 @@ struct TrendChart: View {
         .background(Theme.panel, in: .rect(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
         .fixedSize()
+    }
+}
+
+/// The time axis under Compute's trend and temperature charts. Each time
+/// label starts at its tick and runs right, so a tick near the window's
+/// newest edge had its label cut at the plot's trailing edge, down to its
+/// first character ("2" for "21:16"). A tick that close keeps its grid
+/// line and drops its label.
+enum ChartTimeAxis {
+    /// The share of the window at the trailing edge whose ticks go
+    /// unlabelled: about 50pt on the Compute page's chart. The popup's
+    /// narrow chart needs a larger share for the same room.
+    static func edge(compact: Bool) -> Double { compact ? 0.12 : 0.06 }
+
+    static func labels(_ date: Date?, in domain: ClosedRange<Date>, compact: Bool = false) -> Bool {
+        guard let date else { return false }
+        let span = domain.upperBound.timeIntervalSince(domain.lowerBound)
+        guard span > 0 else { return true }
+        return domain.upperBound.timeIntervalSince(date) >= span * edge(compact: compact)
     }
 }

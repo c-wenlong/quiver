@@ -10,7 +10,7 @@ A page named ``skills`` is two files and touches nothing shared:
 - ``quiver/webapp/static/pages/skills.js`` registers the renderer with
   ``registerPage("skills", render)``, and may add
   ``static/pages/skills.css``. The hub serves every page script as one
-  ``/app/pages.js`` and every stylesheet as ``/app/pages.css``, in name
+  ``/pages.js`` and every stylesheet as ``/pages.css``, in name
   order, so no list needs editing.
 
 The sidebar id is the page name, so a page goes live in the sidebar the
@@ -160,7 +160,7 @@ def bundle(suffix: str) -> bytes:
     for path in sorted(STATIC.glob(f"*{suffix}")):
         body = path.read_bytes()
         if suffix == ".js":
-            source = body.decode("utf-8") + f"\n//# sourceURL=/app/pages/{path.name}\n"
+            source = body.decode("utf-8") + f"\n//# sourceURL=/pages/{path.name}\n"
             body = (
                 f"try {{ new Function({_js_string(source)})(); }}\n"
                 f"catch (err) {{ console.error({_js_string('web app page ' + path.name + ' failed to load:')}, err); }}"

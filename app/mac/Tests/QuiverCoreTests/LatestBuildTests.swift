@@ -41,6 +41,18 @@ private final class BuildGate: @unchecked Sendable {
 
 @MainActor
 @Suite struct LatestBuildTests {
+    /// Opens `gate` and waits for the build it held to finish and be
+    /// thrown away, so a check after it sees the drop, not a result still
+    /// on its way. False if no drop comes (the build was published
+    /// instead) within the gate timeout.
+    private func openAndAwaitDrop(_ gate: BuildGate, on build: LatestBuild<some Sendable>) async -> Bool {
+        let drops = CountGate()
+        build.onDrop = { Task { await drops.bump() } }
+        defer { build.onDrop = nil }
+        gate.open()
+        return await drops.reach(1)
+    }
+
     @Test func theWorkRunsOffTheMainThreadAndPublishesOnIt() async {
         let build = LatestBuild<Bool>()
         var published: [Bool] = []
@@ -54,7 +66,7 @@ private final class BuildGate: @unchecked Sendable {
         #expect(!build.isRunning)
     }
 
-    @Test func aSlowOlderBuildNeverOverwritesANewerOne() async {
+    @Test(.timeLimit(.minutes(1))) func aSlowOlderBuildNeverOverwritesANewerOne() async {
         let build = LatestBuild<String>()
         let gate = BuildGate()
         var published: [String] = []
@@ -64,8 +76,7 @@ private final class BuildGate: @unchecked Sendable {
         await build.settled()
         #expect(published == ["new"])
         // The old one finishes late, and is dropped.
-        gate.open()
-        await build.settled()
+        #expect(await openAndAwaitDrop(gate, on: build))
         #expect(published == ["new"])
     }
 
@@ -124,7 +135,7 @@ private final class BuildGate: @unchecked Sendable {
         stuck.open()
     }
 
-    @Test func aCancelledBuildIsNeverPublished() async {
+    @Test(.timeLimit(.minutes(1))) func aCancelledBuildIsNeverPublished() async {
         let build = LatestBuild<Int>()
         let gate = BuildGate()
         var published: [Int] = []
@@ -134,9 +145,10 @@ private final class BuildGate: @unchecked Sendable {
         #expect(!build.isRunning)
         // Nothing left to wait for.
         await build.settled()
-        gate.open()
-        // Let the dropped build finish, then start and settle a new one:
-        // only the new one is published.
+        // The cancelled build finishes and is dropped, unpublished.
+        #expect(await openAndAwaitDrop(gate, on: build))
+        #expect(published.isEmpty)
+        // A new one after it is published as usual.
         build.start({ 2 }) { published.append($0) }
         await build.settled()
         #expect(published == [2])

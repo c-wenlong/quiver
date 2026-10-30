@@ -347,8 +347,8 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
 @MainActor
 @Suite struct HarnessAccountNameModelTests {
     func tempNamesFile() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("quiver-names-\(UUID().uuidString)")
+        usageScratch
+            .appendingPathComponent("names-\(UUID().uuidString)")
             .appendingPathComponent("harness-names.json")
     }
 

@@ -19,9 +19,10 @@ final class GitHubNotifier {
     /// Inbox page is hidden. Off means banners stop; polling still runs so
     /// the inbox, badge and board invalidations stay live.
     var bannersEnabled: Bool {
-        didSet { UserDefaults.standard.set(bannersEnabled, forKey: "githubNotifications") }
+        didSet { defaults.set(bannersEnabled, forKey: "githubNotifications") }
     }
 
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let model: GitHubModel
     @ObservationIgnored private let stateFile: URL
     @ObservationIgnored private let interval: TimeInterval
@@ -41,11 +42,13 @@ final class GitHubNotifier {
     private static let deliveredCap = 500
 
     init(quiver: URL, model: GitHubModel, interval: TimeInterval = 60,
+         defaults: UserDefaults = .standard,
          post: (([GhNotification]) async -> Void)? = nil) {
+        self.defaults = defaults
         self.model = model
         self.interval = interval
         self.post = post ?? { notes in await Self.postToSystem(notes) }
-        bannersEnabled = UserDefaults.standard.object(forKey: "githubNotifications") as? Bool ?? false
+        bannersEnabled = defaults.object(forKey: "githubNotifications") as? Bool ?? false
         stateFile = quiver.appending(path: "cache/github-notified.json")
         let saved = (try? Data(contentsOf: stateFile))
             .flatMap { try? JSONDecoder().decode(State.self, from: $0) }
@@ -69,28 +72,32 @@ final class GitHubNotifier {
     /// One tick: refetch the inbox, banner ids not seen before, and mark
     /// each notified repo's boards stale so the next look refetches —
     /// the row updates from the same poll that produced the banner.
-    func poll(swe: SweClient?) async {
-        guard let swe else { return }
+    /// Returns the board refreshes it started, so a test can wait for them.
+    @discardableResult
+    func poll(swe: SweClient?) async -> [Task<Void, Never>] {
+        guard let swe else { return [] }
         await model.loadInbox(swe: swe, force: true)
-        guard case .loaded(let notes) = model.inbox else { return }
+        guard case .loaded(let notes) = model.inbox else { return [] }
 
         if !primed {
             primed = true
             for note in notes { record(note.id) }
             save()
-            return
+            return []
         }
 
         let fresh = notes.filter { $0.unread && !delivered.contains($0.id) }
+        var refreshes: [Task<Void, Never>] = []
         for note in fresh {
             record(note.id)
-            model.invalidate(repo: note.repo, swe: swe)
+            refreshes += model.invalidate(repo: note.repo, swe: swe)
         }
         if !fresh.isEmpty {
             if bannersEnabled { await post(fresh) }
             trim()
             save()
         }
+        return refreshes
     }
 
     /// Newest ids go last; eviction drops from the front, so an id a

@@ -28,9 +28,8 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
 
 @Suite("Pricing overrides") struct PricingOverridesTests {
     @Test func `an override under the base name prices the effort variants`() throws {
-        var overrides = PricingOverrides(
-            url: FileManager.default.temporaryDirectory
-                .appending(path: "pricing-\(UUID().uuidString).json"))
+        let temp = try TempDir()
+        var overrides = PricingOverrides(url: temp.path("pricing.json"))
         try overrides.set("swe-2", prices: .init(input: 2, output: 4))
         let catalog = try catalog(overrides: overrides.entries)
         for model in ["swe-2", "swe-2-medium", "swe-2-high", "swe-2-max"] {
@@ -40,9 +39,8 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
     }
 
     @Test func `an override beats LiteLLM and lookup reports the source`() throws {
-        var overrides = PricingOverrides(
-            url: FileManager.default.temporaryDirectory
-                .appending(path: "pricing-\(UUID().uuidString).json"))
+        let temp = try TempDir()
+        var overrides = PricingOverrides(url: temp.path("pricing.json"))
         try overrides.set("codex-mini-latest", prices: .init(input: 1, output: 1))
         let catalog = try catalog(
             supplement: ["provider/my-model": ["input_cost_per_token": 9e-6,
@@ -58,9 +56,8 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
     }
 
     @Test func `an override wins under every equivalent name`() throws {
-        var overrides = PricingOverrides(
-            url: FileManager.default.temporaryDirectory
-                .appending(path: "pricing-\(UUID().uuidString).json"))
+        let temp = try TempDir()
+        var overrides = PricingOverrides(url: temp.path("pricing.json"))
         try overrides.set("gpt-4-1", prices: .init(input: 1, output: 2))
         try overrides.set("claude-opus-5-5", prices: .init(input: 9, output: 9))
         let catalog = try PricingCatalog(
@@ -84,9 +81,8 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
     }
 
     @Test func `listLookup answers the price the model would have without overrides`() throws {
-        var overrides = PricingOverrides(
-            url: FileManager.default.temporaryDirectory
-                .appending(path: "pricing-\(UUID().uuidString).json"))
+        let temp = try TempDir()
+        var overrides = PricingOverrides(url: temp.path("pricing.json"))
         try overrides.set("codex-mini-latest", prices: .init(input: 1, output: 1))
         let catalog = try catalog(overrides: overrides.entries)
         // The normal lookup sees the saved price…
@@ -172,8 +168,8 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
     }
 
     @Test func `save then load round-trips, missing file is empty`() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appending(path: "pricing-\(UUID().uuidString).json")
+        let temp = try TempDir()
+        let url = temp.path("pricing.json")
         let empty = PricingOverrides(url: url)
         #expect(empty.models["swe-2"] == nil)
         var overrides = PricingOverrides(url: url)
@@ -182,7 +178,6 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let prices = try #require(again.models["swe-2"])
         #expect(prices.input == 1.25 && prices.output == 5 && prices.cacheRead == 0.1
                 && prices.cacheWrite == 0.5)
-        try? FileManager.default.removeItem(at: url)
     }
 }
 
@@ -460,7 +455,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         try store.upsert(LedgerRecord(key: "t:1", event: event("swe-2", tokens: 1_000_000)))
         let ledger = try Ledger(directory: temp.path("cache"))
         let file = temp.url.appending(path: "config/pricing.json")
-        let firstRead = OSAllocatedUnfairLock(initialState: false)
+        let firstRead = CountGate()
         let builds = OSAllocatedUnfairLock(initialState: 0)
         let release = DispatchSemaphore(value: 0)
         let model = PricingModel(
@@ -470,9 +465,12 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
                 // second save has applied: the older build finishes last,
                 // the order a Cancel-and-save-again can give.
                 let entries = PricingOverrides(url: file).entries
+                // The build is synchronous, so it holds on a semaphore
+                // rather than a gate; the bound only keeps a regression
+                // from hanging the suite.
                 if builds.withLock({ $0 += 1; return $0 }) == 1 {
-                    firstRead.withLock { $0 = true }
-                    _ = release.wait(timeout: .now() + 5)
+                    Task { await firstRead.bump() }
+                    _ = release.wait(timeout: .now() + .seconds(Int(gateTimeout.components.seconds)))
                 }
                 return try PricingCatalog(liteLLM: Data("{}".utf8), overrides: entries)
             },
@@ -481,7 +479,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
                 release.signal()
             })
         async let first: Void = model.save(key: "swe-2", prices: .init(input: 1, output: 1))
-        while !firstRead.withLock({ $0 }) { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await firstRead.reach(1))
         try await model.save(key: "swe-2", prices: .init(input: 5, output: 5))
         try await first
         #expect(await ledger.totals(in: allTime).costUSD == 5)
@@ -770,27 +768,20 @@ extension PricingModelTests {
         _ = temp
     }
 
-    /// Parks the first `slices` call on a continuation the test releases
-    /// by hand, so a superseded load provably sits inside its first
+    /// Parks the first `slices` call after `arm()` at a gate the test
+    /// opens by hand, so a superseded load provably sits inside its first
     /// suspension while its replacement runs to completion.
-    /// The `slices` closure runs off the main actor while the test polls
-    /// from it, so every access goes through the lock.
-    private final class Gate: @unchecked Sendable {
-        private let lock = NSLock()
-        private var _armed = false
-        private var _waiter: CheckedContinuation<Void, Never>?
+    private final class Gate: Sendable {
+        private let armed = OSAllocatedUnfairLock(initialState: false)
+        let hold = HoldGate()
 
-        func arm() { lock.withLock { _armed = true } }
+        func arm() { armed.withLock { $0 = true } }
         /// Disarms and says whether it was armed, in one step.
         func takeArmed() -> Bool {
-            lock.withLock {
-                defer { _armed = false }
-                return _armed
+            armed.withLock {
+                defer { $0 = false }
+                return $0
             }
-        }
-        var waiter: CheckedContinuation<Void, Never>? {
-            get { lock.withLock { _waiter } }
-            set { lock.withLock { _waiter = newValue } }
         }
     }
 
@@ -813,7 +804,7 @@ extension PricingModelTests {
             makeCatalog: { catalog }, apply: { _ in },
             slices: { range in
                 if gate.takeArmed() {
-                    await withCheckedContinuation { gate.waiter = $0 }
+                    try? await gate.hold.pass()
                 }
                 return await ledger.byModelHarness(in: range)
             })
@@ -828,13 +819,10 @@ extension PricingModelTests {
         model.period = .today
         gate.arm()
         let stale = Task { await model.load() }
-        for _ in 0..<500 where gate.waiter == nil {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        let waiter = try #require(gate.waiter, "the first load never parked")
+        try #require(await gate.hold.arrived(1), "the first load never parked")
         model.period = .allTime
         await model.load()
-        waiter.resume()
+        gate.hold.open()
         await stale.value
         #expect(model.harnessFilter == ["codex"])
         #expect(model.groups.flatMap(\.models).map(\.model) == ["gpt-5"])

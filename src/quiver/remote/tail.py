@@ -1803,7 +1803,21 @@ class TailManager:
         that was idle until just now, and the status probe calls a
         mid-turn transcript "interrupted" once that time is over
         ``ACTIVE_WINDOW_S`` old."""
-        session = tailer.session
+        return self._freshen(key, tailer, tailer.session)
+
+    def fresh_session(self, key: str, session: Session) -> Session:
+        """``session`` (a catalog copy) with its last-activity time
+        brought up to date from ``key``'s tailer, for a status probe
+        made outside the tail loop (a queue-mode send's idle wait).
+        Unchanged when nothing tails ``key``."""
+        tailer = self.tailers.get(key)
+        if tailer is None:
+            return session
+        return self._freshen(key, tailer, session)
+
+    def _freshen(
+        self, key: str, tailer: "Tailer", session: Session
+    ) -> Session:
         ts = session.timestamp
         path = getattr(tailer.source, "path", None)
         if path:

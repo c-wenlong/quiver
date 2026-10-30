@@ -838,7 +838,7 @@ final class AppModel {
     /// orphans (ppid 1, a script runner) but are services, not leftovers.
     /// Anything going wrong answers with an empty set.
     private nonisolated static func launchdManagedPIDs() async -> Set<Int32> {
-        await runOffPool { Self.launchdManagedPIDsSync() }
+        await offMain { Self.launchdManagedPIDsSync() }
     }
 
     /// Synchronous so it can block on the child, off the caller's actor.

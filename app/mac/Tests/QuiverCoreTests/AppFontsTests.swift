@@ -38,6 +38,9 @@ import Testing
         }
         let tabular = AppFonts.nsFont(size: 20, weight: .bold, monospacedDigits: true)
         #expect(tabular.familyName == "Geist")
+        // The tabular copy keeps the weight and size asked for.
+        #expect(tabular.fontName == "Geist-Bold")
+        #expect(tabular.pointSize == 20)
         #expect(spread(tabular) < 0.5)
         #expect(spread(AppFonts.nsFont(size: 20, weight: .bold)) > 3)
     }

@@ -258,7 +258,7 @@ struct KeychainHubStore: HubStore {
 
 /// Parses what a pair QR or link carries:
 /// `quiver://pair?host=…&port=…&token=…[&scheme=https][&name=…]` or the browser form
-/// `http://host:port/app/#pair=<token>[&name=…]` (older `/#pair=` links
+/// `http://host:port/#pair=<token>[&name=…]` (older `/app/#pair=` links
 /// parse the same: the fragment is all that matters).
 struct PairLink: Equatable {
     let baseURL: URL

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from quiver.mcp import gateway
 from quiver.mcp.models import ServerRow
 from quiver.mcp.secrets import (
     load_secrets,
     redact as redact_secrets,
+    resolve as resolve_secrets,
     scrub_args,
     scrub_url,
     unresolved_names,
@@ -25,6 +27,16 @@ def transport_of(raw, canonical: dict) -> str:
             and str(raw.get("type", "")).lower() == "sse"):
         return "sse"
     return kind
+
+
+def _gateway_settings() -> dict:
+    from quiver.configuration import CorruptConfigurationError
+    from quiver.mcp.cli import MCP_SOURCE_FILE, load_json
+
+    try:
+        return gateway.settings_of(load_json(MCP_SOURCE_FILE))
+    except CorruptConfigurationError:
+        return gateway.settings_of(None)
 
 
 def _is_url(raw) -> bool:
@@ -72,18 +84,27 @@ def server_inventory(tool_data: dict, include_hub: bool = False) -> list[tuple[d
     # Read once for every server: ``secrets_missing`` is the hub's own
     # ``${NAME}`` references the store cannot satisfy.
     hub = get_hub_servers()
+    gateway_settings = _gateway_settings()
+    hub_handler = get_mcp_handler("quiver")
     seen: dict[str, dict] = {}
     for tool, servers in tool_data.items():
         handler = get_mcp_handler(tool)
         for name, raw in servers.items():
             canonical = handler.parse(raw) if isinstance(raw, dict) else {}
+            ident_raw, ident_canonical = raw, canonical
+            if (gateway.is_shared(hub.get(name))
+                    and gateway.is_gateway_entry(name, canonical, gateway_settings)):
+                # The gateway URL is how sync writes a shared hub server,
+                # so it agrees with a harness holding the command itself.
+                ident_raw = resolve_secrets(gateway.without_flags(hub[name]), secrets)
+                ident_canonical = hub_handler.parse(ident_raw)
             entry = seen.setdefault(
                 name, {"raw": raw, "canonical": canonical, "tools": [],
                        "identities": [], "remote": []})
             entry["tools"].append(tool)
             if canonical.get("url"):
                 entry["remote"].append(tool)
-            entry["identities"].append(identity_of(raw, canonical))
+            entry["identities"].append(identity_of(ident_raw, ident_canonical))
     inventory = []
     for name in sorted(seen):
         entry = seen[name]

@@ -658,15 +658,6 @@ def _path_budget(used: int = 34) -> int:
     return max(16, terminal_width() - used)
 
 
-PREFIX_MEANING = {
-    "dv": "development",
-    "pd": "productivity",
-    "rf": "reference",
-    "so": "social",
-    "sr": "search",
-}
-
-
 def _summarise_mcps(hub, total: int, views, configs, unregistered, stray) -> None:
     """Section tallies for `swe find mcps`."""
     from quiver.find.mcps import PREFIX_UNFILED

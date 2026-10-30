@@ -393,6 +393,20 @@ import Testing
         #expect(NewSessionOptions.folders(on: "m3", sessions: rows).isEmpty)
     }
 
+    /// A hub that answers `launchable: []` is current: updating swe would
+    /// change nothing, so the sheet says to install or turn one on. Only
+    /// a row without the field, or no rows, means swe is too old.
+    @Test func theNoMachineMessageFollowsWhatTheHubReported() {
+        let hub = HubMachine(id: "m1", harnesses: ["claude"], launchable: [])
+        #expect(NewSessionOptions.noMachineMessage([hub])
+                == "No harness can start on the hub: install one there, or turn it on in Settings › Providers.")
+        let satellite = HubMachine(id: "s1", harnesses: [], launchable: [])
+        #expect(NewSessionOptions.noMachineMessage([hub, satellite]).hasPrefix("No harness can start on any machine"))
+        let old = HubMachine(id: "m1", harnesses: [])
+        #expect(NewSessionOptions.noMachineMessage([old]).hasSuffix("Update swe on the hub."))
+        #expect(NewSessionOptions.noMachineMessage([]).hasSuffix("Update swe on the hub."))
+    }
+
     @Test func harnessesPreferLaunchable() {
         let m = HubMachine(id: "m1", harnesses: ["claude"],
                            launchable: ["qwen-code", "claude", "kilo"])
@@ -856,7 +870,10 @@ extension HubStubbed {
 /// keeping the rows it had, and link/unlink writing the store.
 @MainActor
 @Suite struct TasksModelTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// Each test gets its own instance, so its folder goes when the test ends.
+    private let scratch: TempDir
+    private var dir: URL { scratch.url }
+    init() throws { scratch = try TempDir() }
 
     /// The page payload the stub answers — `nonisolated` so the
     /// Sendable request handler can read it.

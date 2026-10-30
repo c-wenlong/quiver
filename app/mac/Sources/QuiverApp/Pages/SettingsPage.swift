@@ -750,6 +750,7 @@ struct SettingRow<Control: View>: View {
                 if let warning {
                     Label {
                         Text(warning).foregroundStyle(Theme.textSecondary)
+                            .textSelection(.enabled)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(danger ? Theme.dangerText : Theme.warningText)

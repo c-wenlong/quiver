@@ -35,7 +35,6 @@ from quiver.table import Table
 _codex_resume_args = codex_resume_args
 _launch_tool_name = launch_tool_name
 _RESUME_FLAGS = RESUME_FLAGS
-_LIMITED_RESUME = LIMITED_RESUME
 
 
 def _help_requested(args: list[str], value_flags: set[str]) -> bool:
@@ -373,8 +372,10 @@ def _print_parser_failures() -> None:
     print()
 
 
-def _relative_time(diff: float) -> str:
-    """A session's age as the listing's short stamp ("3m ago", "Just now")."""
+def relative_time(diff: float) -> str:
+    """A session's age as the listing's short stamp ("3m ago", "Just now").
+
+    The MCP server's recent-sessions tool prints the same stamp."""
     if diff < 60:
         return "Just now"
     if diff < 3600:
@@ -442,7 +443,7 @@ def _build_session_table(sessions, reserve: int = 0, statuses=None) -> Table:
     # grid: a 3-digit "[100]" cell is 5 columns and used to overflow the
     # hardcoded 4, shifting every column after it from row 100 on.
     now = time.time()
-    stamps = [_relative_time(now - (s.timestamp / 1000)) for s in sessions]
+    stamps = [relative_time(now - (s.timestamp / 1000)) for s in sessions]
     # Agent names come out of harness files, so they carry the same
     # escape-sequence risk titles do; the AGENT column is preformatted,
     # which means nothing downstream will clean them again.

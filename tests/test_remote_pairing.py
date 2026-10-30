@@ -79,9 +79,9 @@ class TestPairing(unittest.TestCase):
 
     def test_pair_url_brackets_an_ipv6_host(self):
         self.assertTrue(pairing.pair_url("fd7a::1", 8477, "t").startswith(
-            "http://[fd7a::1]:8477/app/#pair="))
+            "http://[fd7a::1]:8477/#pair="))
         self.assertTrue(pairing.pair_url("[::1]", 8477, "t").startswith(
-            "http://[::1]:8477/app/"))
+            "http://[::1]:8477/"))
     def test_concurrent_exchange_spend_token_once(self):
         # Two racing requests for one token: exactly one mints a device.
         import threading

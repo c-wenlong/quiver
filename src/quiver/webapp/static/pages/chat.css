@@ -425,6 +425,46 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
   background: var(--text-primary); color: var(--card); font-size: 13px; font-weight: 500;
 }
 
+/* The Queued tray (the iPhone's QueuedTray): Queue-mode sends the hub
+ * holds until the agent is idle, straight above the box; past three rows
+ * it scrolls, oldest first. */
+.chat-tray {
+  flex: none; background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; margin-bottom: 8px; padding: 2px 0 4px;
+}
+.tray-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 2px 12px; }
+.tray-all { border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px;
+  padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.tray-all:hover { background: var(--hover); color: var(--text-primary); }
+.tray-all.arming { color: var(--danger-text); }
+.tray-note { padding: 0 12px 4px; font-size: 11px; color: var(--text-muted); }
+.tray-rows { max-height: calc(3 * 40px); overflow-y: auto; }
+.tray-row { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 6px 0 12px; }
+.tray-row.posting .tray-text { opacity: .6; }
+.tray-row.editing .tray-text { color: var(--text-secondary); }
+.tray-mark { flex: none; width: 14px; height: 14px; border-radius: 50%; border: 1.5px dashed var(--text-muted);
+  color: var(--text-secondary); display: grid; place-items: center; }
+.tray-row.editing .tray-mark { border: 0; }
+.tray-mark svg { width: 14px; height: 14px; }
+.tray-mark.spin { border: 1.6px solid var(--text-secondary); border-right-color: transparent;
+  animation: tray-spin .9s linear infinite; }
+@keyframes tray-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tray-mark.spin { animation: none; } }
+.tray-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tray-text { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tray-row-note { flex: none; font-size: 12px; color: var(--danger-text); white-space: nowrap; padding-right: 6px; }
+.tray-row-note.left { color: var(--text-muted); }
+.tray-row-note.sub { padding: 0; overflow: hidden; text-overflow: ellipsis; }
+.tray-btn { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-secondary); cursor: pointer; padding: 0; }
+.tray-btn svg { width: 15px; height: 15px; }
+.tray-btn:hover { background: var(--hover); color: var(--text-primary); }
+.tray-btn:disabled { opacity: .4; cursor: default; background: transparent; }
+/* "Editing a queued message" with Cancel, or why an edit didn't save. */
+.chat-editbar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 0 4px 6px 12px; }
+.edit-note { color: var(--warning-text); }
+
 /* The composer's / menu (the remote PWA's #prompt-menu): the commands the
  * session's harness runs, straight above the box; past six rows it
  * scrolls. An @ token reuses it for files under the session's folder. */

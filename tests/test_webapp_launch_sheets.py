@@ -343,6 +343,214 @@ fetchRoutes.push(
 """
 
 
+# repositories.js: an issue row's sheet (GET /v1/issues/<o>/<r>/<n>), its
+# body, comments and comment box (POST /v1/issues/comment), then Resolve
+# with agent's panel: the same walk, posting /v1/issues/resolve (the
+# context posted as a comment first), and the chat opening once the
+# launch lands.
+ISSUE_SETUP = HARNESSES + r"""
+const out = {};
+const apiCalls = [];
+const api0 = globalThis.api;
+globalThis.api = async (path) => { apiCalls.push(path); return api0(path); };
+const reads = () => apiCalls.filter((p) => p.startsWith("/v1/issues/o/r/5")).length;
+const posts = (path) => fetchCalls.filter((c) => c.path === path);
+const lastQ = {};
+const qsa = panel.querySelectorAll.bind(panel);
+panel.querySelectorAll = (sel) => (lastQ[sel] = qsa(sel));
+const click = (attr, value) => lastQ[`[data-${attr}]`].find((e) => e.attrs[`data-${attr}`] === value).onclick();
+const ISSUE = { number: 5, title: "Fix the bug", state: "open", author: "amy", labels: ["bug"],
+  assignees: ["bob"], url: "https://github.com/o/r/issues/5", body: "It **breaks** on save.",
+  created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-02T00:00:00Z",
+  comments: [{ author: "cat", body: "Same here", created_at: "2026-10-02T00:00:00Z",
+    url: "https://github.com/o/r/issues/5#issuecomment-1" }],
+  branch: "quiver/issue-5", worktree: "/w/o-r-5", suggested_prompt: "Resolve issue #5 in o/r." };
+apiAnswers.push(
+  ["/v1/app/repositories?harnesses=1", { status: 200, data: { machine: "hub", harnesses } }],
+  ["/v1/issues/o/r/5", { status: 200, data: { machine: "hub", github: { status: "ok", login: "octocat" },
+    repo: "o/r", status: "ok", issue: ISSUE, fetched_at: 0 } }],
+  ["/v1/app/repositories", { status: 200, data: { machine: "hub", github: { status: "ok" },
+    repos: [{ name: "o/r" }], boards: { "o/r": { surfaces: {
+      pull_requests: { status: "ok", pull_requests: [] },
+      issues: { status: "ok", issues: [{ number: 5, title: "Fix the bug", state: "open", author: "amy",
+        labels: [], assignees: [], comments: 1, updated_at: null, url: ISSUE.url }] },
+      runs: { status: "ok", runs: [] } } } } } }],
+  ["/v1/launches/", { status: 200, data: { state: "started", key: "k9" } }]);
+fetchRoutes.push(["/v1/issues/resolve", { status: 409, body: { error: { code: "unsupported_launch_option",
+  message: "codex cannot take a model pick at launch" } } }]);
+"""
+
+ISSUE_FLOW = ISSUE_SETUP + r"""
+(async () => {
+  location.hash = "#/repositories";
+  PAGES.repositories();
+  await tick();
+  click("tab", "issues");
+  out.rowIsButton = /<button type="button" class="gh-row" data-issue="5" data-repo="o\/r">/.test(panel.innerHTML);
+  click("issue", "5");
+  await tick();
+  const d = created.get("gh-issue-sheet");
+  out.sheetOpened = !!d && d.open;
+  const q = (s) => d.querySelector(s);
+  out.body = d._html.includes("It <strong>breaks</strong> on save.");
+  out.comment = d._html.includes("Same here") && d._html.includes("Comments · 1");
+  out.github = d._html.includes('href="https://github.com/o/r/issues/5"');
+  // The comment box: off while blank, Cmd+Return posts, a refusal keeps
+  // the draft, a post clears it and reads the issue again.
+  out.composer = !!q("#gh-issue-comment") && q("#gh-issue-comment-post").disabled;
+  out.composerCaption = d._html.includes("Posts to GitHub as octocat, through gh on hub.");
+  fetchRoutes.unshift(["/v1/issues/comment", { status: 502, body: { error: { code: "comment_failed",
+    message: "gh: API rate limit exceeded" } } }]);
+  q("#gh-issue-comment").value = "  Looks fixed on main  "; q("#gh-issue-comment").oninput();
+  out.postOn = !q("#gh-issue-comment-post").disabled;
+  q("#gh-issue-comment").onkeydown({ key: "Enter", preventDefault() {} });
+  await tick();
+  out.plainEnterNoPost = posts("/v1/issues/comment").length === 0;
+  q("#gh-issue-comment").onkeydown({ key: "Enter", metaKey: true, preventDefault() {} });
+  await tick();
+  out.commentPost = posts("/v1/issues/comment").pop().body;
+  out.commentError = d._html.includes("gh: API rate limit exceeded");
+  out.draftKept = q("#gh-issue-comment").value;
+  fetchRoutes.shift();
+  fetchRoutes.unshift(["/v1/issues/comment", { status: 200, body: { ok: true } }]);
+  const before = reads();
+  q("#gh-issue-comment-post").onclick();
+  await tick();
+  out.reread = reads() === before + 1;
+  out.draftCleared = q("#gh-issue-comment").value === "" && !d._html.includes("rate limit");
+  const harness = (h) => { q("#gh-resolve-harness").value = h; q("#gh-resolve-harness").onchange(); };
+  q("#gh-resolve-open").onclick();
+  await tick();
+  out.composerHidden = !q("#gh-issue-comment");
+  out.boxTicked = "checked" in q("#gh-resolve-post").attrs
+    && d._html.includes("Also post as a comment on #5");
+  out.promptPrefill = q("#gh-resolve-prompt").value;
+  out.shown = !!q("#gh-resolve-model");
+  out.options = labels(q("#gh-resolve-model"));
+  out.prefill = picked(q("#gh-resolve-model"));
+  out.noBox = !q("#gh-resolve-model-other");
+  harness("gemini");
+  out.hides = !q("#gh-resolve-model");
+  harness("claude");
+  out.reprefill = picked(q("#gh-resolve-model"));
+  choose(q("#gh-resolve-model"), "sonnet");
+  out.recentKept = (harness("claude"), picked(q("#gh-resolve-model")));
+  harness("codex");
+  out.foreignRedefault = picked(q("#gh-resolve-model"));
+  harness("pi");
+  out.oldHubOptions = labels(q("#gh-resolve-model"));
+  harness("codex");
+  choose(q("#gh-resolve-model"), "Other…");
+  out.boxFocused = !!activeEl && activeEl.id === "gh-resolve-model-other";
+  q("#gh-resolve-model-other").value = "  my-model "; q("#gh-resolve-model-other").oninput();
+  harness("claude"); harness("codex");
+  out.dirtyPick = picked(q("#gh-resolve-model"));
+  out.dirtyKept = q("#gh-resolve-model-other") && q("#gh-resolve-model-other").value;
+  q("#gh-resolve-context").value = " Use the new API. "; q("#gh-resolve-context").oninput();
+  q("#gh-resolve-start").onclick();
+  await tick();
+  const post = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").pop();
+  out.post = post && post.body;
+  out.postModel = post && post.body.model;
+  out.errorShown = d._html.includes("cannot take a model pick");
+  // The ticked context posted first, once: a retried Start doesn't post it again.
+  out.contextComment = posts("/v1/issues/comment").pop().body;
+  out.commentFirst = fetchCalls.indexOf(posts("/v1/issues/comment").pop()) < fetchCalls.indexOf(post);
+  const comments = posts("/v1/issues/comment").length;
+  q("#gh-resolve-start").onclick();
+  await tick();
+  out.noRepost = posts("/v1/issues/comment").length === comments
+    && posts("/v1/issues/resolve").length === 2;
+  // A fresh panel defaults again; an explicit Harness default survives
+  // a switch and sends no key; a cleared prompt is left to the hub.
+  q("#gh-resolve-cancel").onclick();
+  await tick();
+  q("#gh-resolve-open").onclick();
+  await tick();
+  harness("codex");
+  out.freshPrefill = picked(q("#gh-resolve-model"));
+  choose(q("#gh-resolve-model"), "Harness default");
+  out.boxGone = !q("#gh-resolve-model-other");
+  harness("claude");
+  out.clearedKept = picked(q("#gh-resolve-model"));
+  q("#gh-resolve-prompt").value = "  "; q("#gh-resolve-prompt").oninput();
+  fetchRoutes.length = 0;
+  fetchRoutes.push(["/v1/issues/resolve", { status: 202, body: { launch_id: "L1", state: "pending" } }]);
+  q("#gh-resolve-start").onclick();
+  await tick();
+  const post2 = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").pop();
+  out.emptyHasNoModel = !("model" in (post2 && post2.body || {}));
+  out.blankPrompt = post2 && post2.body.prompt;
+  out.noContext = !("context" in (post2 && post2.body || {}));
+  out.chat = location.hash;
+  out.closed = !d.open;
+  // Closed since the panel opened: Fetch again turns Start off and a
+  // press posts nothing.
+  location.hash = "#/repositories";
+  PAGES.repositories();
+  await tick();
+  click("tab", "issues");
+  click("issue", "5");
+  await tick();
+  q("#gh-resolve-open").onclick();
+  await tick();
+  apiAnswers.unshift(["/v1/issues/o/r/5", { status: 200, data: { machine: "hub", github: { status: "ok" },
+    repo: "o/r", status: "ok", issue: { ...ISSUE, state: "closed" }, fetched_at: 0 } }]);
+  q("[data-issue-refresh]").onclick();
+  await tick();
+  out.closedStartOff = q("#gh-resolve-start").disabled && d._html.includes("This issue is closed.");
+  const closedBefore = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").length;
+  q("#gh-resolve-start").onclick();
+  await tick();
+  out.closedNoPost = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").length === closedBefore;
+  process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+# The Resolve panel's "Also post as a comment": a refused comment is a
+# warning and the launch still goes ahead; unticked, nothing posts.
+ISSUE_COMMENT_FLOW = ISSUE_SETUP + r"""
+(async () => {
+  const openPanel = async () => {
+    location.hash = "#/repositories";
+    PAGES.repositories();
+    await tick();
+    click("tab", "issues");
+    click("issue", "5");
+    await tick();
+    const d = created.get("gh-issue-sheet");
+    d.querySelector("#gh-resolve-open").onclick();
+    await tick();
+    return d;
+  };
+  fetchRoutes.length = 0;
+  fetchRoutes.push(["/v1/issues/comment", { status: 502, body: { error: { code: "comment_failed",
+    message: "gh: API rate limit exceeded" } } }],
+    ["/v1/issues/resolve", { status: 202, body: { launch_id: "L1", state: "pending" } }]);
+  let d = await openPanel();
+  d.querySelector("#gh-resolve-context").value = "  Tried a fix  ";
+  d.querySelector("#gh-resolve-context").oninput();
+  d.querySelector("#gh-resolve-start").onclick();
+  await tick();
+  out.failedComment = posts("/v1/issues/comment").pop().body;
+  out.launchedAnyway = posts("/v1/issues/resolve").pop().body.context;
+  out.warning = d._html.includes("Couldn&#39;t post your context to GitHub: gh: API rate limit exceeded. The agent still gets it in the prompt.");
+  out.chat = location.hash;
+  d = await openPanel();
+  d.querySelector("#gh-resolve-context").value = "Not for GitHub";
+  d.querySelector("#gh-resolve-context").oninput();
+  d.querySelector("#gh-resolve-post").checked = false;
+  d.querySelector("#gh-resolve-post").onchange();
+  const comments = posts("/v1/issues/comment").length;
+  d.querySelector("#gh-resolve-start").onclick();
+  await tick();
+  out.untickedNoComment = posts("/v1/issues/comment").length === comments;
+  out.untickedContext = posts("/v1/issues/resolve").pop().body.context;
+  process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
 # sessions.js's New session sheet: machine + harness chips over
 # /v1/machines rows (``model_at_launch``/``recent_models`` live there,
 # not on a harnesses list), posting /v1/sessions. The model row is drawn
@@ -542,6 +750,53 @@ class TestLaunchModelMenu(unittest.TestCase):
         self.assertTrue(out["boxGone"])
         self.assertTrue(out["errorShown"], "the refusal should show in the sheet")
 
+    def test_repositories_resolve_issue(self):
+        out = self.run_flow("repositories.js", ISSUE_FLOW)
+        self.assert_walk(out)
+        self.assertTrue(out["rowIsButton"], "an issue row opens the sheet, not github.com")
+        self.assertTrue(out["sheetOpened"])
+        self.assertTrue(out["body"], "the body renders as markdown")
+        self.assertTrue(out["comment"])
+        self.assertTrue(out["github"], "Open on GitHub stays")
+        self.assertTrue(out["composer"], "the comment box shows, Comment off while blank")
+        self.assertTrue(out["composerCaption"], "it says whose gh posts and where")
+        self.assertTrue(out["postOn"])
+        self.assertTrue(out["plainEnterNoPost"], "Return alone breaks the line")
+        self.assertEqual(out["commentPost"], {"repo": "o/r", "number": 5,
+                                              "body": "  Looks fixed on main  "})
+        self.assertTrue(out["commentError"], "a refused comment says why")
+        self.assertEqual(out["draftKept"], "  Looks fixed on main  ")
+        self.assertTrue(out["reread"], "a posted comment reads the issue again")
+        self.assertTrue(out["draftCleared"])
+        self.assertTrue(out["composerHidden"], "the Resolve panel replaces the comment box")
+        self.assertTrue(out["boxTicked"], "Also post as a comment starts ticked, as on the Mac")
+        self.assertEqual(out["contextComment"], {"repo": "o/r", "number": 5,
+                                                 "body": "Use the new API."})
+        self.assertTrue(out["commentFirst"], "the comment posts before the launch")
+        self.assertTrue(out["noRepost"], "a retried Start doesn't comment twice")
+        self.assertEqual(out["promptPrefill"], "Resolve issue #5 in o/r.")
+        self.assertEqual(out["post"], {"repo": "o/r", "number": 5, "harness": "codex",
+                                       "prompt": "Resolve issue #5 in o/r.",
+                                       "context": "Use the new API.", "model": "my-model"})
+        self.assertTrue(out["errorShown"], "the refusal should show in the sheet")
+        self.assertEqual(out["freshPrefill"], "gpt-5-codex")
+        self.assertTrue(out["boxGone"])
+        self.assertEqual(out["blankPrompt"], "")
+        self.assertTrue(out["noContext"])
+        self.assertEqual(out["chat"], "#/sessions?chat=k9")
+        self.assertTrue(out["closed"])
+        self.assertTrue(out["closedStartOff"], "a refetch finding the issue closed turns Start off")
+        self.assertTrue(out["closedNoPost"])
+
+    def test_repositories_resolve_posts_context_comment(self):
+        out = self.run_flow("repositories.js", ISSUE_COMMENT_FLOW)
+        self.assertEqual(out["failedComment"], {"repo": "o/r", "number": 5, "body": "Tried a fix"})
+        self.assertEqual(out["launchedAnyway"], "Tried a fix")
+        self.assertTrue(out["warning"], "a refused comment warns and the launch goes ahead")
+        self.assertEqual(out["chat"], "#/sessions?chat=k9")
+        self.assertTrue(out["untickedNoComment"])
+        self.assertEqual(out["untickedContext"], "Not for GitHub")
+
     def test_sessions_new_session(self):
         out = self.run_node(STUB + MENU_JS.read_text(encoding="utf-8") + "\n"
                             + (PAGES.parent / "sessions.js").read_text(encoding="utf-8") + "\n"
@@ -564,6 +819,35 @@ class TestLaunchModelMenu(unittest.TestCase):
                          "a folder re-defaulting back re-fills the row")
         self.assertTrue(out["folderNodeKeptOn"],
                         "the folder input is rebuilt when the row returns, so focus is lost")
+
+    def test_sessions_no_machine_note(self):
+        """A hub that answers ``launchable: []`` is current, so the sheet
+        says to install or turn a harness on; only a row without the
+        field (an older hub), or none, says to update swe."""
+        out = self.run_node(STUB + MENU_JS.read_text(encoding="utf-8") + "\n"
+                            + (PAGES.parent / "sessions.js").read_text(encoding="utf-8") + "\n"
+                            + """
+const hub = { id: "m1", harnesses: ["claude"], launchable: [] };
+process.stdout.write(JSON.stringify({
+  current: nsNoMachineNote([hub]),
+  fleet: nsNoMachineNote([hub, { id: "s1", launchable: [] }]),
+  old: nsNoMachineNote([{ id: "m1", harnesses: [] }]),
+  none: nsNoMachineNote([]),
+}));
+""")
+        self.assertEqual(out["current"], "No harness can start on the hub: install one there, "
+                                         "or turn it on in Settings › Providers.")
+        self.assertTrue(out["fleet"].startswith("No harness can start on any machine"))
+        self.assertTrue(out["old"].startswith("No machine can start a session. Update swe on the hub"))
+        self.assertTrue(out["none"].startswith("No machine can start a session. Update swe on the hub"))
+
+    def test_no_harness_note_names_the_settings_section(self):
+        """The web Settings section is "Providers"; "Provider visibility"
+        is only a row inside it on the Mac."""
+        for page in ("tasks.js", "repositories.js"):
+            text = (PAGES / page).read_text(encoding="utf-8")
+            self.assertNotIn("Settings › Provider visibility", text, page)
+            self.assertIn("turn it on in Settings › Providers.", text, page)
 
     def test_menu_rules(self):
         out = self.run_node(STUB + MENU_JS.read_text(encoding="utf-8") + "\n" + MENU_UNIT)

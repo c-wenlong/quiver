@@ -319,11 +319,11 @@ class TestSessionsRoute(HubBase):
         self.assertEqual(len(body["notes"]), 1)
 
     def test_page_script_is_served(self):
-        self.assertEqual(self.srv.request("GET", "/app/sessions.js")[0], 200)
-        status, body = self.srv.request("GET", "/app/pages.js")
+        self.assertEqual(self.srv.request("GET", "/sessions.js")[0], 200)
+        status, body = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
         self.assertIn(b"globalThis.SessionChat", body)
-        status, body = self.srv.request("GET", "/app/pages.css")
+        status, body = self.srv.request("GET", "/pages.css")
         self.assertIn(b".chat-composer", body)
 
 

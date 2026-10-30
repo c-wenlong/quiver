@@ -59,6 +59,7 @@ import Testing
 
     @Test func theWholeHomeCountsEachTurnOnce() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = try temp.copyFixture("codex-home")
         let ledger = try Ledger(directory: temp.path("cache"))
         try await ledger.scan(roots: LedgerRoots(codexHomes: [home]))
@@ -74,6 +75,7 @@ import Testing
 
     @Test func anAppendedRolloutResumesWithItsModelAndTotals() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = temp.path("codex")
         let file = home.appendingPathComponent("sessions/2026/10/04/\(legacySession).jsonl")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)

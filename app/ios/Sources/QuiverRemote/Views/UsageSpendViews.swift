@@ -2,7 +2,9 @@ import Charts
 import SwiftUI
 
 /// The Spend half of the Usage page for one period: cost and tokens, a
-/// daily chart for the multi-day periods, and each harness's share.
+/// daily chart for the multi-day periods, each harness's share, the
+/// quick figures and top models, the activity heatmap (the last weeks,
+/// whatever the period) and the daily table.
 struct SpendSection: View {
     var overview: OverviewResponse
     var period: UsagePeriod
@@ -22,8 +24,8 @@ struct SpendSection: View {
                         Figure(label: "Tokens", value: UsageFormat.tokens(totals?.tokens))
                     }
                     if period != .today {
-                        DailyChart(days: UsageFormat.dailySeries(overview.days ?? [], start: overview.range?.startDay,
-                                                                 end: overview.range?.endDay))
+                        let span = OverviewFormat.chartRange(overview)
+                        DailyChart(days: UsageFormat.dailySeries(overview.days ?? [], start: span.start, end: span.end))
                     }
                     footnote
                 }
@@ -35,6 +37,16 @@ struct SpendSection: View {
                     SpendRow(row: row, name: harnessName(row.harness), share: (row.costUsd ?? 0) / total)
                 }
             }
+            GroupLabel(text: "Quick figures")
+            QuickFiguresCard(overview: overview, harnessName: harnessName)
+        }
+        if let heatmap = overview.heatmap, !(heatmap.days ?? []).isEmpty {
+            GroupLabel(text: "Activity")
+            ActivityHeatmapCard(heatmap: heatmap)
+        }
+        if let days = overview.days, !days.isEmpty {
+            GroupLabel(text: "Daily breakdown", trailing: "\(days.count) active day\(days.count == 1 ? "" : "s")")
+            DailyTable(days: days).id(period)
         }
     }
 

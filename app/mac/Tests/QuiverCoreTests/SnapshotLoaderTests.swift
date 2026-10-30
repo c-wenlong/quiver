@@ -25,13 +25,18 @@ actor MemorySnapshotStore<Content: SnapshotContent>: SnapshotStoring {
 actor PausedReadStore<Content: SnapshotContent>: SnapshotStoring {
     let saved: Content
     private var gate: CheckedContinuation<Void, Never>?
+    /// Bumped once a read is parked, so a test waits for it without spinning.
+    let parks = CountGate()
     init(_ saved: Content) { self.saved = saved }
     func load() async -> Content? {
-        await withCheckedContinuation { gate = $0 }
+        let parks = self.parks
+        await withCheckedContinuation {
+            gate = $0
+            Task { await parks.bump() }
+        }
         return saved
     }
     func save(_ content: Content) async {}
-    var waiting: Bool { gate != nil }
     func release() { gate?.resume(); gate = nil }
 }
 
@@ -41,6 +46,9 @@ actor NamesSource {
     private(set) var calls = 0
     private var gate: CheckedContinuation<Void, Never>?
     private let gated: Bool
+    /// Bumped once a gated fetch is parked, so a test waits for it without
+    /// spinning.
+    let parks = CountGate()
 
     init(_ replies: [Result<Names, Error>], gated: Bool = false) {
         self.replies = replies
@@ -49,12 +57,17 @@ actor NamesSource {
 
     func fetch() async throws -> Names {
         calls += 1
-        if gated { await withCheckedContinuation { gate = $0 } }
+        if gated {
+            let parks = self.parks
+            await withCheckedContinuation {
+                gate = $0
+                Task { await parks.bump() }
+            }
+        }
         try Task.checkCancellation()
         return try (replies.count > 1 ? replies.removeFirst() : replies[0]).get()
     }
 
-    var waiting: Bool { gate != nil }
     func release() { gate?.resume(); gate = nil }
 }
 
@@ -113,7 +126,7 @@ actor NamesSource {
         let loader = loader(clock: TestClock(start))
         // The page opens, then closes while swe is still running.
         let first = Task { await loader.loadIfStale(from: "/bin/swe") { try await source.fetch() } }
-        while await !source.waiting { await Task.yield() }
+        try #require(await source.parks.reach(1))
         first.cancel()
         #expect(loader.isLoading)
         // Reopened before swe answers: it joins the fetch in flight.
@@ -180,7 +193,7 @@ actor NamesSource {
             let store = PausedReadStore(saved)
             let loader = SnapshotLoader(snapshots: store, now: { [start] in start })
             let restoring = Task { await loader.restore() }
-            while await !store.waiting { await Task.yield() }
+            try #require(await store.parks.reach(1))
             await loader.load(from: "/bin/swe") { try live.get() }
             let shown = loader.state
             await store.release()
@@ -249,7 +262,7 @@ actor NamesSource {
         let slow = NamesSource([.success(Names(names: ["slow"]))], gated: true)
         let loader = loader(clock: TestClock(start))
         let first = Task { await loader.load(from: "/bin/swe") { try await slow.fetch() } }
-        while await !slow.waiting { await Task.yield() }
+        try #require(await slow.parks.reach(1))
         let applied = await loader.load(from: "/bin/swe") { Names(names: ["fast"]) }
         #expect(applied)
         await slow.release()
@@ -263,7 +276,7 @@ actor NamesSource {
         let loader = loader(clock: TestClock(start))
         await loader.load(from: "/bin/swe") { Names(names: ["a"]) }
         let refresh = Task { await loader.load(from: "/bin/swe") { try await source.fetch() } }
-        while await !source.waiting { await Task.yield() }
+        try #require(await source.parks.reach(1))
         #expect(names(loader) == ["a"])
         #expect(loader.isLoading)
         await source.release()
