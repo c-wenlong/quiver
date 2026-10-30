@@ -15,7 +15,7 @@ struct AttachButton: View {
             Button { filesShown = true } label: { Label("Files", systemImage: "folder") }
         } label: {
             Image(systemName: "paperclip")
-                .font(.system(size: 17, weight: .medium))
+                .font(Theme.font(size: 17, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: 40, height: 40)
                 .background(Theme.field, in: .circle)
@@ -84,13 +84,13 @@ struct AttachmentChip: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: failed ? "exclamationmark.triangle" : item.isImage ? "photo" : "doc.text")
-                .font(.system(size: 14))
+                .font(Theme.font(size: 14))
                 .foregroundStyle(failed ? Theme.dangerText : Theme.textSecondary)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.name).font(Theme.control).foregroundStyle(Theme.textPrimary)
                     .lineLimit(1).truncationMode(.middle)
-                Text(Self.detail(item)).font(.system(size: 11))
+                Text(Self.detail(item)).font(Theme.font(size: 11))
                     .foregroundStyle(failed ? Theme.dangerText : Theme.textMuted)
                     // A failure's reason and "Tap to retry" both have to show.
                     .lineLimit(failed ? 2 : 1).monospacedDigit()
@@ -98,7 +98,7 @@ struct AttachmentChip: View {
             }
             .frame(maxWidth: 170, alignment: .leading)
             Button(action: onRemove) {
-                Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                Image(systemName: "xmark").font(Theme.font(size: 11, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 32, height: 40)
                     .contentShape(.rect)
