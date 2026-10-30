@@ -81,9 +81,13 @@ public struct HubClient: Sendable {
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: req)
-        } catch is CancellationError {
-            throw CancellationError()
         } catch {
+            // URLSession reports a cancelled task as URLError(.cancelled),
+            // not CancellationError: leaving a page is not a down hub.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled
+                || Task.isCancelled {
+                throw CancellationError()
+            }
             throw HubError.unreachable
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0

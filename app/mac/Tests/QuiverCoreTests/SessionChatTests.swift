@@ -845,3 +845,35 @@ extension HubStubbed {
     }
 }
 }
+
+/// Never answers: a request sits in flight until its task is cancelled.
+final class SilentHubStub: URLProtocol, @unchecked Sendable {
+    static let started = Mutex(0)
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { Self.started.withLock { $0 += 1 } }
+    override func stopLoading() {}
+}
+
+@Suite struct HubClientCancelTests {
+    /// A request cancelled with its task throws CancellationError, not
+    /// "hub unreachable": URLSession wraps the cancel as URLError.cancelled.
+    @Test(.timeLimit(.minutes(1))) func aCancelledRequestIsACancellation() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SilentHubStub.self]
+        let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!, credential: "c",
+                               session: URLSession(configuration: config))
+        let before = SilentHubStub.started.withLock { $0 }
+        let task = Task { try await client.sessions() }
+        while SilentHubStub.started.withLock({ $0 }) == before {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        task.cancel()
+        do {
+            _ = try await task.value
+            Issue.record("a cancelled request must throw")
+        } catch {
+            #expect(error is CancellationError, "\(error)")
+        }
+    }
+}
