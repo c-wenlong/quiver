@@ -324,10 +324,20 @@ fi
 # would only hash its binaries as data, so each is signed as code first.
 # ${arr[@]+...}: bash 3.2 reads a bare empty "${arr[@]}" under set -u as
 # unbound, so the expansion is guarded.
+# The Python executable itself also carries Quiver.entitlements: the hub
+# it runs (a LaunchAgent, so its own responsible process) opens Terminal
+# through osascript for the web app's Sessions page, which the hardened
+# runtime refuses without the Apple Events entitlement. Libraries and
+# extension modules get plain signatures; entitlements mean nothing there.
 find "$bundle/Contents/Resources/swe" -type f | while IFS= read -r file; do
-  if file -b "$file" | grep -q '^Mach-O'; then
-    codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$file" >/dev/null
-  fi
+  kind="$(file -b "$file")"
+  case "$kind" in
+    Mach-O*executable*)
+      codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
+        --entitlements "$here/script/Quiver.entitlements" "$file" >/dev/null ;;
+    Mach-O*)
+      codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$file" >/dev/null ;;
+  esac
 done
 # Embedded frameworks sign inside-out like swe: loose Mach-O files first
 # (Sparkle's Autoupdate, the XPC helpers' binaries), then the nested
@@ -349,10 +359,15 @@ codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
 # helper beside it is signed on its own, like the frameworks above.
 codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
   "$bundle/Contents/MacOS/QuiverFanHelper" >/dev/null
-# Hardened runtime audit for the app itself (see the commit for the full
-# list): the bundled libcrypto is re-signed here with the same identity,
-# which is all library validation asks, so no entitlements file is needed.
-codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$bundle" >/dev/null
+# Hardened runtime audit for the app itself (see commit 5abae68d for the
+# full list): the bundled libcrypto is re-signed here with the same
+# identity, which is all library validation asks. The one exception it
+# needs is Apple Events: Terminal launches go through an osascript child,
+# and TCC charges that event to Quiver as the responsible app, so the
+# hardened runtime refuses it (-1743, no prompt) unless Quiver.entitlements
+# grants com.apple.security.automation.apple-events.
+codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
+  --entitlements "$here/script/Quiver.entitlements" "$bundle" >/dev/null
 
 # Notarize and staple when a `notarytool store-credentials` keychain
 # profile is named. The zip exists only for the submission; stapler
