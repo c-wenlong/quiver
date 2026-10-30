@@ -85,22 +85,32 @@ import Testing
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let pidFile = dir.appending(path: "child.pid")
+        let ready = dir.appending(path: "ready")
         let runner = ProcessRunner(executable: "/bin/sh", environment: env)
-        let task = Task {
-            try await runner.run(["-c", "(trap '' TERM; exec sleep 60) & echo $! > '\(pidFile.path)'; wait"])
-        }
+        // The sleep outlasts the runner's 120 s default bound, so neither
+        // its own exit nor the bound can stand in for a working cancel.
+        let script = "(trap '' TERM; touch '\(ready.path)'; exec sleep 300) & "
+            + "echo $! > '\(pidFile.path)'; wait"
+        let task = Task { try await runner.run(["-c", script]) }
+        // Cancel only once the trap is in place and the pid is written.
         let startDeadline = Date().addingTimeInterval(20)
-        while (try? String(contentsOf: pidFile, encoding: .utf8))?.hasSuffix("\n") != true,
+        while !FileManager.default.fileExists(atPath: ready.path)
+                || (try? String(contentsOf: pidFile, encoding: .utf8))?.hasSuffix("\n") != true,
               Date() < startDeadline {
             try await Task.sleep(for: .milliseconds(25))
         }
         task.cancel()
+        let cancelledAt = Date()
         let grandchild = pid_t(
             (try? String(contentsOf: pidFile, encoding: .utf8))?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        try #require(FileManager.default.fileExists(atPath: ready.path))
         try #require(grandchild != nil && grandchild! > 0)
 
         _ = try? await task.value
+        // The SIGKILL pass comes two seconds after the cancel; the bound
+        // only catches a call left waiting on the pipes.
+        #expect(Date().timeIntervalSince(cancelledAt) < 60)
         // Dead already, but reaped on launchd's schedule: poll the pid.
         let reapDeadline = Date().addingTimeInterval(10)
         while kill(grandchild!, 0) == 0, Date() < reapDeadline {
@@ -171,7 +181,9 @@ import Testing
         let task = Task {
             try await runner.run(
                 ["-c", "(trap '' TERM; exec sleep 60) & echo $! > '\(pidFile.path)'; wait"],
-                input: nil, timeout: .milliseconds(500))
+                // Two seconds, so the trap is in place well before the
+                // deadline's SIGTERM even on a busy runner.
+                input: nil, timeout: .seconds(2))
         }
         // Poll rather than guess when the grandchild exists.
         let startDeadline = Date().addingTimeInterval(10)
