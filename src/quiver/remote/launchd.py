@@ -15,7 +15,8 @@ dies at startup ("Operation not permitted" on ``pyvenv.cfg``). The
 bundle lives in Applications, and the app's own folder access covers it.
 
 Logic only: callers print. ``run`` is injectable so tests never touch
-the real launchctl.
+the real launchctl. ``label`` lets the MCP gateway (``swe mcp gateway
+install``) run as its own agent through the same code.
 """
 
 from __future__ import annotations
@@ -39,8 +40,8 @@ PROTECTED_DIRS = ("Desktop", "Documents", "Downloads", "Library/Mobile Documents
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
-def plist_path(home: Path | None = None) -> Path:
-    return (home or Path.home()) / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+def plist_path(home: Path | None = None, label: str = LABEL) -> Path:
+    return (home or Path.home()) / "Library" / "LaunchAgents" / f"{label}.plist"
 
 
 def bundled_swe(home: Path | None = None) -> Path | None:
@@ -73,7 +74,8 @@ def _domain() -> str:
     return f"gui/{os.getuid()}"
 
 
-def build_plist(program: list[str], log_path: Path, path_env: str) -> dict:
+def build_plist(program: list[str], log_path: Path, path_env: str,
+                label: str = LABEL) -> dict:
     """The LaunchAgent: run ``program`` at login, restart it on exit.
 
     launchd starts agents with a bare PATH, and the hub shells out to
@@ -82,7 +84,7 @@ def build_plist(program: list[str], log_path: Path, path_env: str) -> dict:
     when the process is killed.
     """
     return {
-        "Label": LABEL,
+        "Label": label,
         "ProgramArguments": program,
         "RunAtLoad": True,
         "KeepAlive": True,
@@ -103,18 +105,19 @@ BOOTSTRAP_RETRY_S = 1.5
 def install(program: list[str], log_path: Path, path_env: str,
             home: Path | None = None,
             run: Runner = subprocess.run,
-            sleep: Callable[[float], None] = time.sleep) -> Path:
+            sleep: Callable[[float], None] = time.sleep,
+            label: str = LABEL) -> Path:
     """Write the plist and (re)load it. Reinstalling restarts the hub.
 
     Raises RuntimeError with launchctl's message when loading fails.
     """
-    path = plist_path(home)
+    path = plist_path(home, label)
     path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(plistlib.dumps(build_plist(program, log_path, path_env)))
+    path.write_bytes(plistlib.dumps(build_plist(program, log_path, path_env, label)))
     # bootstrap refuses a label that is already loaded, so unload first;
     # a "not loaded" failure here is the normal first-install case.
-    run(["launchctl", "bootout", f"{_domain()}/{LABEL}"],
+    run(["launchctl", "bootout", f"{_domain()}/{label}"],
         capture_output=True, text=True, stdin=subprocess.DEVNULL)
     for attempt in range(BOOTSTRAP_TRIES):
         res = run(["launchctl", "bootstrap", _domain(), str(path)],
@@ -128,17 +131,18 @@ def install(program: list[str], log_path: Path, path_env: str,
     raise RuntimeError(msg or f"launchctl bootstrap exited {res.returncode}")
 
 
-def uninstall(home: Path | None = None, run: Runner = subprocess.run) -> bool:
+def uninstall(home: Path | None = None, run: Runner = subprocess.run,
+              label: str = LABEL) -> bool:
     """Stop the hub and remove the plist. False when none was installed.
 
     Raises RuntimeError, keeping the plist, when launchctl fails to stop
     a job that is still loaded; a failed bootout of an absent job is
     the normal "nothing to stop" case.
     """
-    path = plist_path(home)
-    res = run(["launchctl", "bootout", f"{_domain()}/{LABEL}"],
+    path = plist_path(home, label)
+    res = run(["launchctl", "bootout", f"{_domain()}/{label}"],
               capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    if res.returncode != 0 and loaded_pid(run)[0]:
+    if res.returncode != 0 and loaded_pid(run, label)[0]:
         msg = (res.stderr or res.stdout or "").strip()
         raise RuntimeError(msg or f"launchctl bootout exited {res.returncode}")
     existed = path.exists()
@@ -147,9 +151,9 @@ def uninstall(home: Path | None = None, run: Runner = subprocess.run) -> bool:
     return existed or res.returncode == 0
 
 
-def loaded_pid(run: Runner = subprocess.run) -> tuple[bool, int | None]:
+def loaded_pid(run: Runner = subprocess.run, label: str = LABEL) -> tuple[bool, int | None]:
     """(loaded, pid): whether launchd holds the agent, and its running pid."""
-    res = run(["launchctl", "print", f"{_domain()}/{LABEL}"],
+    res = run(["launchctl", "print", f"{_domain()}/{label}"],
               capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if res.returncode != 0:
         return False, None
