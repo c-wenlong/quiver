@@ -351,7 +351,6 @@ input.field.ns-query { flex: none; height: 36px; }
 .list-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; }
 .muted { color: var(--text-muted); }
 .warn { color: var(--warning-text); }
-.star { color: var(--warning); }
 code.muted { background: transparent; padding: 0; }
 
 /* Accounts */
