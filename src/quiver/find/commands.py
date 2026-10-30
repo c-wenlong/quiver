@@ -791,7 +791,7 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global",
     # The registered config paths above say how far a sync got. The disk
     # scan is where a config nobody registered hides.
     configs = scan_configs(home, scope=scope)
-    stray = unmanaged(home, hub.servers, scope=scope)
+    stray = unmanaged(home, hub.servers, scope=scope, configs=configs)
     # Compare resolved paths, not harness names: ~/.factory/mcp.json is read
     # under the name "droid", and ~/.gemini has four config files of which
     # quiver reads exactly one.

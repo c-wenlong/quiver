@@ -305,17 +305,22 @@ def scan_configs(home: Path | None = None, scope: str = "all") -> list[FoundConf
 
 
 def unmanaged(home: Path | None = None, hub: dict | None = None,
-              scope: str = "global") -> dict:
+              scope: str = "global",
+              configs: list[FoundConfig] | None = None) -> dict:
     """Servers that exist in some config on disk but not in the hub.
 
     Reported by name, mapped to the configs declaring them, because that is
-    what you need to decide whether to adopt or delete one.
+    what you need to decide whether to adopt or delete one. ``configs`` is
+    a ``scan_configs`` result the caller already holds: the scan walks
+    every dot-directory in home, so it should not run twice per command.
     """
     from quiver.mcp.cli import get_hub_servers
 
     hub_names = set(hub if hub is not None else get_hub_servers())
+    if configs is None:
+        configs = scan_configs(home, scope=scope)
     out: dict[str, list[FoundConfig]] = {}
-    for cfg in scan_configs(home, scope=scope):
+    for cfg in configs:
         for name in cfg.servers:
             if name not in hub_names:
                 out.setdefault(name, []).append(cfg)
