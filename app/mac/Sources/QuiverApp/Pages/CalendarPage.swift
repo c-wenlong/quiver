@@ -21,18 +21,20 @@ struct CalendarPage: View {
 
 /// Where the hour axis's now pill sits against its hour labels.
 enum CalendarHourAxis {
-    /// The pill's reach above and below the current time: 9pt text with
-    /// 2pt padding, drawn 9pt above the line.
+    /// The pill's reach above and below the current time at 100% zoom:
+    /// 9pt text with 2pt padding, drawn 9pt above the line.
     static let pillAbove: CGFloat = 9
     static let pillBelow: CGFloat = 7
-    /// An hour label's height from the top of its hour.
+    /// An hour label's height from the top of its hour at 100% zoom.
     static let labelHeight: CGFloat = 12
 
     /// Whether the pill, centred on `nowOffset` points down the day,
-    /// overlaps `hour`'s label; that label hides while it does.
-    static func pillCovers(hour: Int, nowOffset: CGFloat, hourHeight: CGFloat) -> Bool {
+    /// overlaps `hour`'s label; that label hides while it does. `scale`
+    /// is View › Zoom's factor on the 9pt text: the pill and the labels
+    /// grow with it, the hours do not.
+    static func pillCovers(hour: Int, nowOffset: CGFloat, hourHeight: CGFloat, scale: CGFloat = 1) -> Bool {
         let top = CGFloat(hour) * hourHeight
-        return top < nowOffset + pillBelow && top + labelHeight > nowOffset - pillAbove
+        return top < nowOffset + pillBelow * scale && top + labelHeight * scale > nowOffset - pillAbove * scale
     }
 }
 
@@ -606,6 +608,7 @@ private struct CalendarContent: View {
         // day's.
         let nowOffset = model.days.first(where: { $0.contains(now) })
             .map { Self.hourHeight * CGFloat(now.timeIntervalSince($0.start) / 3600) }
+        let scale = Theme.scaled(9) / 9
         return ZStack(alignment: .topLeading) {
             VStack(spacing: 0) {
                 ForEach(0..<24, id: \.self) { hour in
@@ -616,7 +619,8 @@ private struct CalendarContent: View {
                         // The pill is narrower than the gutter, so a label
                         // it half-covers would show its tail beside it.
                         .opacity(nowOffset.map {
-                            CalendarHourAxis.pillCovers(hour: hour, nowOffset: $0, hourHeight: Self.hourHeight)
+                            CalendarHourAxis.pillCovers(hour: hour, nowOffset: $0, hourHeight: Self.hourHeight,
+                                                        scale: scale)
                         } == true ? 0 : 1)
                         .id("h\(hour)")
                 }
@@ -627,7 +631,7 @@ private struct CalendarContent: View {
                     .foregroundStyle(Theme.calendarNowText)
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(Theme.calendarNow, in: Capsule())
-                    .offset(y: nowOffset - CalendarHourAxis.pillAbove)
+                    .offset(y: nowOffset - CalendarHourAxis.pillAbove * scale)
             }
         }
         .frame(width: Self.axisWidth)
