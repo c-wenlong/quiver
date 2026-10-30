@@ -3,12 +3,18 @@ import Testing
 @testable import QuiverCore
 
 /// `git -C <dir> <args>`, waiting off the cooperative pool the timing
-/// tests share (`offMain`, like the code under test).
+/// tests share (`offMain`, like the code under test). The developer's
+/// global and system git config stay out (hooks, templates,
+/// `commit.gpgsign` would make the commits fail or prompt), and `HOME` is
+/// the temp folder so nothing reads or writes the real one.
 private func runGit(_ args: [String], in dir: URL) async throws {
     let status = await offMain { () -> Int32 in
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", dir.path] + args
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "HOME": dir.path,
+        ]) { _, isolated in isolated }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return -1 }
