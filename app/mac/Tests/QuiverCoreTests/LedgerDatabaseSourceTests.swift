@@ -65,6 +65,21 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(await ledger.events(in: allTime).count == 4)
     }
 
+    @Test func aCorruptHugeCountIsCappedInsteadOfTrapping() async throws {
+        let temp = try TempDir()
+        let db = temp.path("opencode/opencode.db")
+        try makeDatabase("opencode.sql", at: db)
+        try execute("""
+            INSERT INTO message VALUES ('msg_huge', 'ses_1', 1791100010000, 1791100010000,
+              '{"role":"assistant","modelID":"gpt-5.4","time":{"created":1791100010000},"tokens":{"input":9223372036854775000,"output":9223372036854775000,"reasoning":1,"cache":{"read":0,"write":0}}}');
+            """, on: db)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
+        try await ledger.scan(roots: LedgerRoots(openCodeDatabases: [db]))
+        let huge = try #require(await ledger.events(in: allTime).first { $0.inputTokens > 1_000_000 })
+        #expect(huge.inputTokens == JSONValue.maxTokens)
+        #expect(huge.outputTokens == JSONValue.maxTokens)
+    }
+
     /// A build that read only the legacy tables saved a fingerprint for
     /// the database as it stands; the 2.x reader must not take it as
     /// "nothing moved" and skip the rows that build never read.
@@ -138,6 +153,21 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(totals.unpricedModels == ["swe-2-medium"])
         #expect(totals.unpricedTokens == 1_160)
         #expect(totals.costUSD > 0)
+    }
+
+    @Test func aCorruptHugeCountIsCappedInsteadOfTrapping() async throws {
+        let temp = try TempDir()
+        let db = temp.path("devin/cli/sessions.db")
+        try makeDatabase("devin.sql", at: db)
+        try execute("""
+            UPDATE message_nodes SET chat_message = json_set(chat_message, '$.metadata.metrics',
+              json('{"input_tokens":9223372036854775000,"output_tokens":9223372036854775000}')) WHERE node_id = 5;
+            """, on: db)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
+        try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
+        let huge = try #require(await ledger.events(in: allTime).first { $0.inputTokens > 1_000_000 })
+        #expect(huge.inputTokens == JSONValue.maxTokens)
+        #expect(huge.outputTokens == JSONValue.maxTokens)
     }
 
     @Test func aRequestFinishedInPlaceIsCountedOnTheNextScan() async throws {

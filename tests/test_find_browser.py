@@ -446,6 +446,25 @@ class ResizeTest(unittest.TestCase):
         widths = {visible_len(r) for r in rows}
         self.assertEqual(len(widths), 1, f"ragged right edge: {sorted(widths)}")
 
+    def test_the_returned_count_is_the_lines_written(self):
+        """The count is how far the next redraw rewinds. It stayed at the
+        old two-line header's figure after the header became one line, so
+        every redraw climbed one line and ate whatever sat above it."""
+        import io
+        from contextlib import redirect_stdout
+
+        from quiver.find.browser import _render
+
+        many = [Entry(str(i)) for i in range(30)]
+        for entries, ratio in (([Entry("a")], (3, 9, 8)),     # no range line
+                               (many, (3, 9, 8)),             # range line
+                               ([Entry("a")], (2, 3, 5))):    # ratio note
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                drawn = _render([], 0, entries, 0, ["x"], "T", "crumb", 0,
+                                10, 140, ratio)
+            self.assertEqual(drawn, buf.getvalue().count("\r\n"))
+
     def test_widths_are_recomputed_from_the_ratio(self):
         from quiver.find.browser import _pane_widths
 

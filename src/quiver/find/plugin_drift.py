@@ -115,13 +115,9 @@ class SourcePlugin(NamedTuple):
 # The source side: ~/.quiver/plugins
 
 
-def hub_marketplaces(home: Path) -> list[tuple[str, Path]]:
-    """``(name, dir)`` for each ~/.quiver/plugins marketplace with a manifest.
-
-    Independent of the plugins inside: a marketplace whose plugins all come
-    from GitHub or a URL has no local folder for ``quiver_plugins`` to find,
-    and it still needs registering.
-    """
+def _hub_manifests(home: Path) -> list[tuple[str, Path, list]]:
+    """``(name, dir, plugins)`` per ~/.quiver/plugins marketplace whose
+    manifest lists its plugins; the name falls back to the folder's."""
     root = plugins_dir_for(home)
     try:
         market_dirs = sorted(p for p in root.iterdir()
@@ -134,28 +130,26 @@ def hub_marketplaces(home: Path) -> list[tuple[str, Path]]:
         if not isinstance(data, dict) or not isinstance(data.get("plugins"), list):
             continue
         mname = data.get("name")
-        found.append((mname if isinstance(mname, str) and mname else mdir.name, mdir))
+        found.append((mname if isinstance(mname, str) and mname else mdir.name,
+                      mdir, data["plugins"]))
     return found
+
+
+def hub_marketplaces(home: Path) -> list[tuple[str, Path]]:
+    """``(name, dir)`` for each ~/.quiver/plugins marketplace with a manifest.
+
+    Independent of the plugins inside: a marketplace whose plugins all come
+    from GitHub or a URL has no local folder for ``quiver_plugins`` to find,
+    and it still needs registering.
+    """
+    return [(mname, mdir) for mname, mdir, _plugins in _hub_manifests(home)]
 
 
 def quiver_plugins(home: Path) -> list[SourcePlugin]:
     """Every locally sourced plugin in every marketplace under ~/.quiver/plugins."""
-    root = plugins_dir_for(home)
-    try:
-        market_dirs = sorted(p for p in root.iterdir()
-                             if not p.name.startswith(".") and p.is_dir())
-    except OSError:
-        return []
-
     found: list[SourcePlugin] = []
-    for mdir in market_dirs:
-        data = _load_json(mdir / ".claude-plugin" / "marketplace.json")
-        if not isinstance(data, dict) or not isinstance(data.get("plugins"), list):
-            continue
-        mname = data.get("name")
-        if not isinstance(mname, str) or not mname:
-            mname = mdir.name
-        for entry in data["plugins"]:
+    for mname, mdir, entries in _hub_manifests(home):
+        for entry in entries:
             if not isinstance(entry, dict):
                 continue
             name = entry.get("name")

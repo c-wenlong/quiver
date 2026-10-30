@@ -81,6 +81,36 @@ import Testing
         #expect(md.hasSuffix("after"))
     }
 
+    @Test func deepDetailsNestingStopsFoldingAtTheCap() {
+        // Thousands of nested folds used to take minutes to parse (each
+        // level re-scanned ahead for every open and close tag).
+        let depth = 2_000
+        let body = String(repeating: "<details><summary>x</summary>", count: depth)
+            + "deepest" + String(repeating: "</details>", count: depth)
+        var segs = GitHubMarkdown.segments(body)
+        var levels = 0
+        while case .details(_, let inner)? = segs.first {
+            levels += 1
+            segs = inner
+        }
+        #expect(levels == GitHubMarkdown.maxDetailsNesting)
+        guard case .markdown(let text)? = segs.first else {
+            Issue.record("expected prose below the cap"); return
+        }
+        #expect(text.contains("deepest"))
+    }
+
+    @Test func matchingCloseCountsNestingCaseInsensitively() {
+        let s: Substring = "<DETAILS>a<details>b</Details >c</details>tail"
+        let from = s.index(s.startIndex, offsetBy: 9)
+        let end = GitHubMarkdown.matchingClose(in: s, named: "details", from: from)
+        #expect(end.map { String(s[from..<$0.inner]) } == "a<details>b</Details >c")
+        #expect(end.map { String(s[$0.outer...]) } == "tail")
+        #expect(GitHubMarkdown.matchingClose(in: "<details>never", named: "details",
+                                             from: "<details>never".index(
+                                                "<details>never".startIndex, offsetBy: 9)) == nil)
+    }
+
     @Test func detailsBecomesSection() {
         let segs = GitHubMarkdown.segments(
             "intro\n<details>\n<summary>Release notes</summary>\n<p>body here</p>\n</details>\noutro")
