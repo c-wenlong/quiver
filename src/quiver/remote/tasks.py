@@ -101,9 +101,14 @@ def states_file(home: Path | str | None = None) -> Path:
 
 def task_id(task: dict) -> str:
     """A task's canonical id: ``source:kind:scope:ref``, lowercased.
-    ``scope`` is the repo for github, the project anywhere else."""
+    ``scope`` is the repo for github, the project anywhere else. A
+    Notion page id reads in its dashed form however it was spelled, so
+    a link made with a bare id meets the row the source lists."""
     scope = task.get("repo") or task.get("project") or ""
-    return f"{task.get('source')}:{task.get('kind')}:{scope}:{task.get('ref')}".lower()
+    ref = task.get("ref")
+    if task.get("source") == "notion":
+        ref = notion_mod.normalize_id(str(ref or "")) or ref
+    return f"{task.get('source')}:{task.get('kind')}:{scope}:{ref}".lower()
 
 
 def parse_ref(body) -> dict:
@@ -161,6 +166,8 @@ def parse_ref(body) -> dict:
             raise ValueError("task_ref.project must be a string")
         if project:
             task["project"] = project
+        if source == "notion":
+            task["ref"] = notion_mod.normalize_id(ref) or ref
     return task
 
 
@@ -218,14 +225,38 @@ def _load(home: Path | str | None) -> dict[str, dict]:
             if isinstance(session_values, list) else []
         launches = [s for s in launch_values if isinstance(s, str)] \
             if isinstance(launch_values, list) else []
-        out[str(tid)] = {
+        row = {
             "task": dict(entry["task"]),
             "sessions": sessions,
             "launches": launches,
             "created_at": _num(entry.get("created_at")),
             "last_active_at": _num(entry.get("last_active_at")),
         }
+        key = str(tid)
+        if row["task"].get("source") == "notion":
+            # A page linked before refs were normalized sits under its
+            # bare-id key: re-key it, folding into the dashed one.
+            key = task_id(row["task"])
+            row["task"]["ref"] = notion_mod.normalize_id(
+                str(row["task"].get("ref") or "")) or row["task"].get("ref")
+        if key in out:
+            row = _fold(out[key], row)
+        out[key] = row
     return out
+
+
+def _fold(a: dict, b: dict) -> dict:
+    """Two stored entries for one task, as one: links unioned in order,
+    the earliest creation and the latest activity."""
+    return {
+        "task": b["task"] if b["last_active_at"] >= a["last_active_at"]
+        else a["task"],
+        "sessions": list(dict.fromkeys(a["sessions"] + b["sessions"])),
+        "launches": list(dict.fromkeys(a["launches"] + b["launches"])),
+        "created_at": min(a["created_at"] or b["created_at"],
+                          b["created_at"] or a["created_at"]),
+        "last_active_at": max(a["last_active_at"], b["last_active_at"]),
+    }
 
 
 def _num(value) -> float:

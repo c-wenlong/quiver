@@ -165,8 +165,48 @@ class TestIds(unittest.TestCase):
         self.assertEqual(notion.normalize_id(url), DB_ID)
 
     def test_no_id(self):
-        for raw in ("", "Roadmap", None, 5, "abc123"):
+        for raw in ("", "Roadmap", None, 5, "abc123", "https://[broken"):
             self.assertIsNone(notion.normalize_id(raw))
+
+
+class TestRefs(unittest.TestCase):
+    """A Notion page id is one task however it is spelled."""
+
+    def test_parse_ref_and_task_id_use_the_dashed_id(self):
+        bare = {"source": "notion", "kind": "page", "project": "Roadmap",
+                "ref": PAGE_A.replace("-", "").upper()}
+        self.assertEqual(tasks_mod.parse_ref(bare)["ref"], PAGE_A)
+        self.assertEqual(tasks_mod.task_id(bare),
+                         f"notion:page:roadmap:{PAGE_A}")
+        # A ref that isn't an id passes through as before.
+        odd = {**bare, "ref": "not-an-id"}
+        self.assertEqual(tasks_mod.parse_ref(odd)["ref"], "not-an-id")
+
+    def test_a_bare_id_link_from_before_is_rekeyed_and_folded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            bare = {"source": "notion", "kind": "page",
+                    "project": "Roadmap", "ref": PAGE_A.replace("-", "")}
+            dashed = {**bare, "ref": PAGE_A}
+            old_key = f"notion:page:roadmap:{PAGE_A.replace('-', '')}"
+            new_key = f"notion:page:roadmap:{PAGE_A}"
+            path = tasks_mod.tasks_file(home)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"tasks": {
+                old_key: {"task": bare, "sessions": ["claude:a"],
+                          "launches": [], "created_at": 1,
+                          "last_active_at": 5},
+                new_key: {"task": dashed, "sessions": ["claude:b"],
+                          "launches": ["l1"], "created_at": 3,
+                          "last_active_at": 9}}}))
+            rows = tasks_mod._load(home)
+        self.assertEqual(list(rows), [new_key])
+        row = rows[new_key]
+        self.assertEqual(row["sessions"], ["claude:a", "claude:b"])
+        self.assertEqual(row["launches"], ["l1"])
+        self.assertEqual((row["created_at"], row["last_active_at"]),
+                         (1, 9))
+        self.assertEqual(row["task"]["ref"], PAGE_A)
 
 
 class TestSettings(unittest.TestCase):
@@ -581,22 +621,31 @@ class TestGetAndDetail(_Home):
         self.assertEqual((out["state"], out["status_name"]),
                          ("closed", "Archived"))
 
-    def test_page_outside_the_config_still_reads_its_title(self):
+    def test_page_outside_the_config_reads_its_title_but_no_state(self):
         page = _page()
         page["parent"] = {"type": "page_id", "page_id": "x"}
         routes = _routes()
         routes[("GET", f"/pages/{PAGE_A}")] = ok(page)
         out, _r = self._run(routes, lambda s: s.get({"ref": PAGE_A}))
+        # No state: the row keeps its last-known one, never reopens.
         self.assertEqual((out["state"], out["title"]),
-                         ("open", "Ship the roadmap"))
+                         ("", "Ship the roadmap"))
 
-    def test_broken_mapping_falls_back_rather_than_raising(self):
+    def test_broken_mapping_answers_no_state_rather_than_raising(self):
         _config(self.home, _section(databases=[{"id": DB, "properties": {
             "status": "Gone", "owner": "Owner"}}]))
         routes = _routes()
         routes[("GET", f"/pages/{PAGE_A}")] = ok(_page())
         out, _r = self._run(routes, lambda s: s.get({"ref": PAGE_A}))
-        self.assertEqual(out["state"], "open")
+        self.assertEqual(out["state"], "")
+
+    def test_schema_outage_answers_no_state(self):
+        routes = _routes()
+        routes[("GET", f"/pages/{PAGE_A}")] = ok(_page())
+        routes[("GET", f"/databases/{DB_ID}")] = notion.NotionResult(
+            "upstream-error", code=502, error="Notion answered HTTP 502")
+        out, _r = self._run(routes, lambda s: s.get({"ref": PAGE_A}))
+        self.assertEqual(out["state"], "")
 
     def test_missing_page_and_bad_ref_are_none(self):
         routes = {("GET", "/pages/"): notion.NotionResult(
@@ -846,6 +895,20 @@ class TestTasksRoute(unittest.TestCase):
         self.assertEqual(row["state"], "closed")
         self.assertEqual(row["status"], "Shipped")
         self.assertEqual(row["state_source"], "live")
+
+        # The database's schema won't read on a later poll: the page
+        # keeps its last-known closed state instead of reopening.
+        G.CACHE.clear()
+        routes = _routes([])
+        routes[("GET", f"/pages/{PAGE_A}")] = ok(
+            _page(status=("o3", "Shipped")))
+        routes[("GET", f"/databases/{DB_ID}")] = notion.NotionResult(
+            "upstream-error", code=502, error="Notion answered HTTP 502")
+        _s, body = self._get(routes)
+        row = {t["id"]: t for t in body["tasks"]}[
+            f"notion:page:roadmap:{PAGE_A}"]
+        self.assertEqual(row["state"], "closed")
+        self.assertEqual(row["state_source"], "cached")
 
     def test_missing_property_is_a_clear_error_not_a_crash(self):
         _config(self.srv.home, _section(databases=[{

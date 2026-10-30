@@ -130,7 +130,10 @@ def normalize_id(raw) -> str | None:
         return None
     text = raw.strip()
     if "://" in text:
-        text = urllib.parse.urlsplit(text).path
+        try:
+            text = urllib.parse.urlsplit(text).path
+        except ValueError:
+            return None
     found = _UUID.findall(text)
     if not found:
         return None
@@ -573,9 +576,11 @@ class NotionTasks:
                    "title": row["task"]["title"],
                    "url": row["task"]["url"]}
         else:
-            # A page outside the configured databases (moved, or the
-            # mapping broke): its title and link still read.
-            out = {"state": "open", "status_name": "",
+            # A page outside the configured databases (moved), or one
+            # whose schema won't read right now: its title and link
+            # still read, but no state, so the row keeps the last one
+            # its source reported instead of reopening.
+            out = {"state": "", "status_name": "",
                    "title": _page_title(page), "url": page.get("url") or ""}
         if _gone(page):
             out["state"] = "closed"
@@ -787,8 +792,9 @@ def _row(page: dict, mapping: dict, project: str) -> dict:
         else ""
     url = _value(props.get(mapping["url"])) if mapping["url"] else ""
     state, words = _status(page, mapping)
+    raw = str(page.get("id") or "")
     task = {"source": "notion", "kind": "page",
-            "ref": str(page.get("id") or ""),
+            "ref": normalize_id(raw) or raw,
             "title": title or _page_title(page),
             "url": url or page.get("url") or ""}
     if project:
