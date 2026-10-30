@@ -171,6 +171,19 @@ class TestJsonlTailSource(unittest.TestCase):
         self._write([_claude_user("next")])
         self.assertEqual(src.poll()[0]["text"], "next")
 
+    def test_a_deeply_nested_record_is_skipped(self):
+        deep = ("[" * 100_000).encode()
+        with open(self.path, "ab") as fh:
+            fh.write(deep + b"\n")
+        self._write([_claude_user("after")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        self.assertEqual([m["text"] for m in src.poll()], ["after"])
+
+    def test_skipping_a_vanished_oversized_record_does_not_raise(self):
+        src = tail.JsonlTailSource(self.path, "claude")
+        self.path.unlink(missing_ok=True)
+        self.assertEqual(src._skip_oversized(), src.offset + tail._MAX_CHUNK)
+
     def test_truncate_to_a_prefix_emits_nothing_until_appends(self):
         # A file cut in place to a strict prefix of what was read
         # (copytruncate before the next write lands) holds no new
@@ -750,6 +763,56 @@ class TestTailer(unittest.TestCase):
         t = tail.Tailer("k", _session_for(), src, self.tmp, has_journal=True)
         self.assertEqual(t.poll(time.time(), True), [])
 
+    def test_cursor_for_another_path_does_not_replay_history(self):
+        # A resume in another folder moves the transcript: the old
+        # cursor names the old path. It used to leave the offset at 0,
+        # so the whole transcript was journaled again.
+        old = self.tmp / "old.jsonl"
+        old.write_text(json.dumps(_claude_user("a")) + "\n")
+        cursors = self.tmp / "cursors"
+        t1 = tail.Tailer("k", _session_for(),
+                         tail.JsonlTailSource(old, "claude"), cursors, False)
+        t1.poll(time.time(), True)
+        t1.commit_cursor()
+        moved = self.tmp / "moved.jsonl"
+        moved.write_text(json.dumps(_claude_user("a")) + "\n"
+                         + json.dumps(_claude_user("b")) + "\n")
+        src = tail.JsonlTailSource(moved, "claude")
+        t2 = tail.Tailer("k", _session_for(), src, cursors, True)
+        self.assertEqual(t2.poll(time.time(), True), [])
+        with open(moved, "a") as fh:
+            fh.write(json.dumps(_claude_user("c")) + "\n")
+        self.assertEqual([m["text"] for m in t2.poll(time.time(), True)],
+                         ["c"])
+
+    def test_unverified_cursor_without_journal_backfills_recent(self):
+        # No journal yet: a cursor that fails its head check starts
+        # near the end like a first sight, not at byte 0.
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("a")) + "\n")
+        cursors = self.tmp / "cursors"
+        t1 = tail.Tailer("k", _session_for(),
+                         tail.JsonlTailSource(path, "claude"), cursors, False)
+        t1.poll(time.time(), True)
+        t1.commit_cursor()
+        path.write_text("".join(json.dumps(_claude_user(f"m{i}")) + "\n"
+                                for i in range(50)))
+        src = tail.JsonlTailSource(path, "claude")
+        with patch.object(tail, "BACKFILL_BYTES", 200):
+            t2 = tail.Tailer("k", _session_for(), src, cursors, False)
+        self.assertGreater(src.offset, 0)
+        texts = [m["text"] for m in t2.poll(time.time(), True)]
+        self.assertTrue(texts)
+        self.assertNotIn("m0", texts)
+
+    def test_opencode_cursor_for_another_session_is_not_restored(self):
+        src = tail.OpencodeSource(self.tmp / "none.db", "s2")
+        self.assertFalse(src.restore(
+            {"source": "opencode", "session_id": "s1", "cursor": [5, "x"]}))
+        self.assertEqual(src.cursor, (0, ""))
+        self.assertTrue(src.restore(
+            {"source": "opencode", "session_id": "s2", "cursor": [5, "x"]}))
+
     def test_cursor_commits_only_after_emit(self):
         # The cursor must lag the journal write: a crash between poll
         # and commit replays events (duplicates) instead of losing them.
@@ -799,6 +862,46 @@ class TestTailManager(unittest.TestCase):
         n = mgr.tick(time.time())
         self.assertEqual(n, 1)
         self.assertEqual(self.events[-1][1]["data"]["text"], "hi")
+
+    def _jsonl_session(self, name):
+        path = self.tmp / f"{name}.jsonl"
+        path.write_text(json.dumps(_claude_user(name)) + "\n")
+        return Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(path), tool_name="claude")
+
+    def test_ensure_during_sync_does_not_break_the_walk(self):
+        # A phone opening a session calls ensure() on a request thread
+        # while the catalog thread walks the tailers in sync(); inserting
+        # into the dict mid-walk raised RuntimeError and ended the sync.
+        mgr = tail.TailManager(self._emit, "mbp", home=self.tmp,
+                               max_sessions=1)
+        a, b, c = (self._jsonl_session(n) for n in "abc")
+        mgr.ensure("claude:b", b, "")
+        rows = [("claude:a", a, ""), ("claude:b", b, "")]
+        mgr.sync(rows)
+        real = mgr._reresolve
+
+        def reresolve(tailer, session):
+            # The on-demand walk (b is past the cap) is mid-iteration.
+            if session is b and "claude:c" not in mgr.tailers:
+                mgr.ensure("claude:c", c, "")
+            real(tailer, session)
+
+        with patch.object(mgr, "_reresolve", side_effect=reresolve):
+            mgr.sync(rows + [("claude:c", c, "")])
+        self.assertEqual(set(mgr.tailers), {"claude:a", "claude:b",
+                                            "claude:c"})
+
+    def test_racing_inserts_keep_the_first_tailer(self):
+        # sync and ensure both saw no tailer for the key: the second
+        # insert must not replace the first (its cursor and emits).
+        mgr = self._manager()
+        a = self._jsonl_session("a")
+        mgr.ensure("claude:a", a, "")
+        first = mgr.tailers["claude:a"]
+        src = tail.make_source(a)
+        self.assertFalse(mgr._add_tailer("claude:a", a, src))
+        self.assertIs(mgr.tailers["claude:a"], first)
 
     def test_notify_only_on_transition(self):
         sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
