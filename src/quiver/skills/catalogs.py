@@ -140,16 +140,31 @@ def add_skill_catalog(path: str | Path, label: str | None = None) -> dict:
     return new_entry
 
 
+def _same_path(stored: str, wanted: Path | None) -> bool:
+    if wanted is None:
+        return False
+    try:
+        return expand_user(stored).resolve() == wanted
+    except (OSError, RuntimeError):
+        return False
+
+
 def remove_skill_catalog(key: str) -> bool:
-    """Remove by label or path substring; returns True if removed."""
+    """Remove the catalog labelled ``key``, or failing that the one at the
+    path ``key`` names; returns True if one was removed.
+
+    Exact matches only: a substring of a path ("eng" inside
+    ".../engineering/skills") used to remove every catalog it appeared in.
+    """
     catalogs = load_skill_catalogs()
     key_lower = key.lower()
-    kept = [
-        c
-        for c in catalogs
-        if c.get("label", "").lower() != key_lower
-        and key_lower not in c.get("path", "").lower()
-    ]
+    kept = [c for c in catalogs if c.get("label", "").lower() != key_lower]
+    if len(kept) == len(catalogs):
+        try:
+            wanted = resolve_catalog_path(key)
+        except (OSError, RuntimeError):
+            wanted = None
+        kept = [c for c in catalogs if not _same_path(c.get("path", ""), wanted)]
     if len(kept) == len(catalogs):
         return False
     save_skill_catalogs(kept)
