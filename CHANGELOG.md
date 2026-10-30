@@ -603,6 +603,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`swe mcp sync` writes remote servers Claude Code can see.** Claude
+  Code skips an `mcpServers` entry that has a `url` and no `type`
+  (`claude mcp get` says there is no such server), and sync wrote
+  exactly that: a new remote server had no `type`, and overwriting one
+  dropped its `type: http`. Claude Code now has its own format, like
+  Droid's, that stamps `type: http` (or keeps `sse`) on every remote
+  server.
+
 - **Mac app: notarized builds keep Terminal automation.** Open in
   Terminal, account sign-in and session resume drive Terminal and iTerm
   through an `osascript` child, and macOS charges that Apple Event to
