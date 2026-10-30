@@ -292,10 +292,6 @@ struct McpAddServerSheet: View {
                 error = "Two values would be saved as the secret \(twice). Rename one of them."
                 return
             }
-            if let owner = Self.secretOwner(of: secretNames, adding: name, existing: existing) {
-                error = "\(owner.server) already keeps a secret as \(owner.secret). Pick another name for this server."
-                return
-            }
             // The whole spec is built before any secret is stored, so
             // nothing past this point can refuse with secrets left behind.
             let pairs: [(String, String)] = filled.map { variable in
@@ -331,24 +327,6 @@ struct McpAddServerSheet: View {
         } catch {
             self.error = error.localizedDescription
         }
-    }
-}
-
-extension McpAddServerSheet {
-    /// The server other than `name` whose secret one of `names` would
-    /// overwrite: its env and header keys, and a bearer token's TOKEN,
-    /// named the way this sheet names them. Two servers can still share
-    /// one, as `foo-bar` and `foo_bar` both store FOO_BAR_KEY.
-    static func secretOwner(of names: [String], adding name: String,
-                            existing: [McpServer]) -> (secret: String, server: String)? {
-        let wanted = Set(names)
-        for server in existing where server.name != name {
-            for key in server.envKeys + server.headerKeys + ["TOKEN"] {
-                let secret = mcpSecretName(server: server.name, key: key)
-                if wanted.contains(secret) { return (secret, server.name) }
-            }
-        }
-        return nil
     }
 }
 
