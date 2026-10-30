@@ -12,3 +12,58 @@ final class HubErrorTests: XCTestCase {
                        "Can't reach the hub. Check that Tailscale is on.")
     }
 }
+
+/// Never answers: a request sits in flight until its task is cancelled.
+final class SilentHubStub: URLProtocol {
+    private static let lock = NSLock()
+    private static var _started = 0
+    static var started: Int { lock.withLock { _started } }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { Self.lock.withLock { Self._started += 1 } }
+    override func stopLoading() {}
+
+    /// A client whose every request goes to this stub.
+    static func client() -> HubClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SilentHubStub.self]
+        return HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!, credential: "c",
+                         session: URLSession(configuration: config))
+    }
+
+    /// Waits until a request reaches the stub, so a cancel lands mid-flight.
+    static func waitForRequest(after before: Int) async throws {
+        while started == before { try await Task.sleep(nanoseconds: 10_000_000) }
+    }
+}
+
+final class HubCancelTests: XCTestCase {
+    /// URLSession reports a cancelled task as URLError.cancelled; the
+    /// client hands it on as CancellationError, not "Can't reach the hub".
+    func testACancelledRequestIsACancellation() async throws {
+        let client = SilentHubStub.client()
+        let before = SilentHubStub.started
+        let task = Task { try await client.sessions() }
+        try await SilentHubStub.waitForRequest(after: before)
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("a cancelled request must throw")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "\(error)")
+        }
+    }
+
+    /// Leaving the tasks page mid-fetch cancels its load: the page must
+    /// not come back saying the hub can't be reached.
+    @MainActor
+    func testACancelledTasksLoadShowsNoError() async throws {
+        let model = TasksModel()
+        let before = SilentHubStub.started
+        let load = Task { await model.load(client: SilentHubStub.client()) }
+        try await SilentHubStub.waitForRequest(after: before)
+        load.cancel()
+        await load.value
+        XCTAssertNil(model.error)
+    }
+}

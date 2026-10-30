@@ -414,6 +414,8 @@ final class ChatModel {
                 items.append(ChatItem(id: "approval-\(rid)", kind: .approval(requestId: rid, prompt: "Approval requested", state: .pending)))
             }
             loadError = nil
+        } catch is CancellationError {
+            // The chat closed mid-fetch: nothing failed.
         } catch {
             loadError = error.localizedDescription
         }

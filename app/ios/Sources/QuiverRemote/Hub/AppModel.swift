@@ -98,10 +98,11 @@ final class AppModel {
             refreshedAt = Date()
             connection = .online
             loadError = nil
+        } catch is CancellationError {
+            // The app left the screen, or another hub went on it: not a
+            // hub that can't be reached.
+            return
         } catch let error as HubError {
-            // Cancelled (the app left the screen, or another hub went on
-            // it): URLSession's cancel arrives as a network error, which
-            // would flash "Can't reach the hub" for a hub that's fine.
             guard hub == pairedAtStart, !Task.isCancelled else { return }
             if error.isUnauthorized { unpair(from: client); return }
             connection = .offline
