@@ -16,6 +16,7 @@ import Testing
 
     @Test func aFullScanCountsEveryFileItListed() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let claude = try claudeHome(temp, sessions: 3)
         let codex = try temp.copyFixture("codex-home")
         let codexFiles = Ledger.jsonlFiles(under: codex.appendingPathComponent("sessions")).count
@@ -35,6 +36,7 @@ import Testing
 
     @Test func aCappedScanPublishesNothing() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let claude = try claudeHome(temp, sessions: 3)
         let ledger = try Ledger(directory: temp.path("cache"))
         let report = try await ledger.scan(roots: LedgerRoots(claudeHomes: [claude]), recentLimit: 1)
@@ -45,6 +47,7 @@ import Testing
 
     @Test func aCancelledScanClearsItsProgress() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let claude = try claudeHome(temp, sessions: 50)
         let ledger = try Ledger(directory: temp.path("cache"))
         let scan = Task { try await ledger.scan(roots: LedgerRoots(claudeHomes: [claude])) }

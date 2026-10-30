@@ -59,6 +59,24 @@ class TestMcpServerShimWithoutExtra(unittest.TestCase):
         _FakeFastMCP.run.assert_not_called()
 
 
+
+class TestMcpServerMissingExtra(unittest.TestCase):
+    def test_the_install_hint_never_names_the_pypi_package(self):
+        # PyPI's "quiver" is someone else's project: `pip install
+        # quiver[server]` would install it, not the mcp dependency.
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with mock.patch.dict(sys.modules, {"mcp": None, "mcp.server": None,
+                                           "mcp.server.fastmcp": None}):
+            sys.modules.pop("quiver.mcp.server", None)
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                importlib.import_module("quiver.mcp.server")
+        sys.modules.pop("quiver.mcp.server", None)
+        self.assertIn('pip install -e ".[server]"', err.getvalue())
+        self.assertNotIn("pip install quiver[server]", err.getvalue())
+
 @unittest.skipUnless(_have_fastmcp(), "FastMCP (quiver[server]) not installed")
 class TestMcpServerShimWithFastMCP(unittest.TestCase):
     def test_running_shim_as_main_starts_the_real_server(self):

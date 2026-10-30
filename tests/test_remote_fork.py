@@ -2,7 +2,6 @@
 
 import json
 import os
-import tempfile
 import threading
 import time
 import unittest
@@ -15,6 +14,7 @@ from quiver.remote import fork as fork_mod
 from quiver.remote import protocol, supervise
 from quiver.sessions.models import Session
 
+from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server
 
 CODEX_ID = "rollout-2026-10-20T10-55-33-01a1144a-41bf-7123-ae76-1cff676b946f"
@@ -114,7 +114,7 @@ class TestForkCommandLines(unittest.TestCase):
 
 class TestForkRoute(unittest.TestCase):
     def setUp(self):
-        self.proj = tempfile.mkdtemp()
+        self.proj = str(temp_dir(self))
         self.srv = _Hub([
             _session("abc", path=self.proj),
             _session("o1", "opencode", path=self.proj),
@@ -222,8 +222,8 @@ class TestForkRoute(unittest.TestCase):
 
 class TestLaunchFork(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.proj = tempfile.mkdtemp()
+        self.home = temp_dir(self)
+        self.proj = str(temp_dir(self))
 
     def _launch(self, source, argv, prompt="", **kw):
         with patch.object(supervise.shutil, "which", return_value="/x/bin"), \
@@ -302,8 +302,8 @@ class TestOverlappingForks(unittest.TestCase):
     """Harnesses that pick their own id fork one at a time per folder."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.proj = tempfile.mkdtemp()
+        self.home = temp_dir(self)
+        self.proj = str(temp_dir(self))
 
     def _fork(self, source, argv, expect_id="", tmux_up=False):
         names = iter(["qv-a", "qv-b", "qv-c"])
@@ -330,18 +330,29 @@ class TestOverlappingForks(unittest.TestCase):
         ok, _n, _ = self._fork(src, ["codex", "fork", CODEX_THREAD])
         self.assertTrue(ok)
 
+    def _age_markers(self):
+        for marker in supervise._pending_dir(self.home).glob("*.json"):
+            data = json.loads(marker.read_text())
+            data["launched_at"] -= 600
+            marker.write_text(json.dumps(data))
+
     def test_a_stale_marker_with_a_dead_pane_does_not_block(self):
         src = _session("d1", "droid", self.proj)
         self._fork(src, ["droid", "--fork", "d1"])
-        marker = next(supervise._pending_dir(self.home).glob("*.json"))
-        data = json.loads(marker.read_text())
-        data["launched_at"] -= 600
-        marker.write_text(json.dumps(data))
+        self._age_markers()
         ok, _n, _ = self._fork(src, ["droid", "--fork", "d1"])
         self.assertTrue(ok)
-        # ... but a live pane still holds the folder.
-        ok, _n, _ = self._fork(src, ["droid", "--fork", "d1"])
+        # A fresh marker blocks on its own ...
+        ok, note, _ = self._fork(src, ["droid", "--fork", "d1"])
         self.assertFalse(ok)
+        self.assertIn("still waiting", note)
+        # ... and a live pane still holds the folder once every marker
+        # is past the reservation window.
+        self._age_markers()
+        ok, note, _ = self._fork(src, ["droid", "--fork", "d1"],
+                                 tmux_up=True)
+        self.assertFalse(ok)
+        self.assertIn("still waiting", note)
 
     def test_claude_forks_name_their_id_and_never_wait(self):
         src = _session("abc", path=self.proj)
@@ -396,8 +407,8 @@ class TestOverlappingForks(unittest.TestCase):
 
 class TestForkAdoption(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.proj = tempfile.mkdtemp()
+        self.home = temp_dir(self)
+        self.proj = str(temp_dir(self))
         self.folder = supervise._pending_dir(self.home)
         self.folder.mkdir(parents=True)
 
@@ -480,7 +491,7 @@ class TestForkWritersAndSatellites(unittest.TestCase):
 
     def test_a_slow_satellite_fork_does_not_hold_up_later_commands(self):
         ag = agent_mod.RemoteAgent("http://h:1", "cred",
-                                   Path(tempfile.mkdtemp()))
+                                   temp_dir(self))
         release = threading.Event()
         ran = []
 
@@ -507,9 +518,9 @@ class TestForkWritersAndSatellites(unittest.TestCase):
         self.assertEqual(ag._done_cmd_seq, 2)
 
     def test_satellite_executes_fork_op(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         ag = agent_mod.RemoteAgent("http://h:1", "cred", home)
-        src = _session("abc", path=tempfile.mkdtemp())
+        src = _session("abc", path=str(temp_dir(self)))
         ag.catalog._fetch = lambda: [src]
         ag.catalog._status_of = lambda ss: ["done"]
         ag.catalog.refresh()
