@@ -118,9 +118,9 @@ package build, and the attachment job waits for all four:
   hands `app/mac/script/make-dmg.sh` the notarization credentials: it staples
   the `.app`, stages, signs, submits to Apple, and staples the DMG.
   Finally it downloads the Sparkle 2.10.0 tools archive, verifies its
-  pinned SHA-256 before executing anything, signs `appcast.xml` with
-  `SPARKLE_PRIVATE_KEY` piped to `sign_update`'s stdin (never argv, never
-  a file), validates the XML, and uploads a `macos-app` artifact.
+  pinned SHA-256 before executing anything, writes `appcast.xml` with
+  `generate_appcast`, its signing key `SPARKLE_PRIVATE_KEY` piped to
+  `--ed-key-file -` on stdin (never argv, never a file), validates the XML, and uploads a `macos-app` artifact.
 - **`Nix flake build and check`** (Ubuntu) — proves the flake still
   builds on the tag; its checkPhase runs the same unittest suite.
 - **`Verify the wheel on macOS`** — installs the built wheel into a clean
@@ -182,8 +182,8 @@ themselves.
 ## Hard rules — the things that must never happen
 
 - **Never put a signing secret or the Sparkle private key in the tree, on
-  a command line, or in CI logs.** The key reaches `sign_update` on stdin
-  only.
+  a command line, or in CI logs.** The key reaches `generate_appcast` on
+  stdin only.
 - **Never publish a build that skipped notarization.** Gatekeeper will
   refuse it on every user's machine, and the app will not open.
 - **Never move or delete a published tag.** Sparkle asset URLs are
