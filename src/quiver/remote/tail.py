@@ -128,6 +128,21 @@ _HEAD_SAMPLE = 4096
 BACKFILL_BYTES = 2 << 20
 BACKFILL_MESSAGES = 500
 
+# A decoded message carrying this key marks a usage/rate-limit hit; the
+# manager pops it before the message leaves and raises ``notify`` kind
+# ``limit`` from it. Its value is ``{"resets_at": epoch s, "window": ...}``
+# with whatever the harness recorded (either may be missing).
+LIMIT_MARK = "_limit"
+# A limit record older than this when the tailer reads it (backfill of a
+# session seen for the first time, a long-offline satellite) is history:
+# it still shows in the chat but rings nothing.
+LIMIT_FRESH_S = 600.0
+# The same limit (same reset time, or the same text when none is known)
+# rings once per session: again only after its reset time, or after this
+# long when the harness gave none. Retrying into a limit writes a new
+# record per attempt.
+LIMIT_REPEAT_S = 3600.0
+
 # Snapshot stores (no byte cursor) re-read only when something changed;
 # this is how long a "nothing changed" answer is trusted before a full
 # re-read anyway, in case a store writes somewhere the check can't see.
@@ -270,7 +285,17 @@ def _decode_claude(rec: dict) -> list[dict]:
     if rtype == "assistant":
         if rec.get("isApiErrorMessage"):
             text = _tr._clean_text(msg.get("content")) or "API error"
-            return [protocol.message("error", text, ts=ts)]
+            out = protocol.message("error", text, ts=ts)
+            if rec.get("error") == "rate_limit":
+                # "You've hit your session limit · resets 9:30am": the
+                # 429 record Claude Code writes, with ``quotaLimits``
+                # (``resetsAt`` epoch s, ``rateLimitType`` five_hour,
+                # seven_day, ...) on current versions.
+                quota = rec.get("quotaLimits")
+                quota = quota if isinstance(quota, dict) else {}
+                out[LIMIT_MARK] = _limit_info(
+                    quota.get("resetsAt"), quota.get("rateLimitType"))
+            return [out]
         return _decode_blocks("assistant", msg.get("content"), ts)
     if rtype == "summary":
         text = _tr._clean_text(rec.get("summary"))
@@ -281,6 +306,16 @@ def _decode_claude(rec: dict) -> list[dict]:
         text = _tr._clean_text(rec.get("content") or rec.get("text"))
         return [protocol.message("system", text, ts=ts)] if text else []
     return []
+
+
+def _limit_info(resets_at: Any, window: Any) -> dict:
+    info: dict = {}
+    if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool) \
+            and resets_at > 0:
+        info["resets_at"] = float(resets_at)
+    if isinstance(window, str) and window:
+        info["window"] = window
+    return info
 
 
 _CODEX_TEXT_BLOCKS = {"input_text", "output_text", "text"}
@@ -343,6 +378,20 @@ def _decode_codex(rec: dict) -> list[dict]:
     if rtype == "event_msg":
         if ptype == "turn_aborted":
             return [protocol.message("system", "turn interrupted", ts=ts)]
+        if ptype == "task_complete":
+            # A turn that ended on a usage limit carries
+            # ``error: {message, codex_error_info: "usage_limit_exceeded"}``
+            # ("You hit your spend cap ..."); other turn ends are
+            # bookkeeping here.
+            err = payload.get("error")
+            if isinstance(err, dict) \
+                    and err.get("codex_error_info") == "usage_limit_exceeded":
+                text = _tr._clean_text(err.get("message")) \
+                    or "usage limit reached"
+                out = protocol.message("error", text, ts=ts)
+                out[LIMIT_MARK] = {}
+                return [out]
+            return []
         if "compact" in ptype:
             return [protocol.message("compaction", "context compacted", ts=ts)]
         return []
@@ -1439,6 +1488,9 @@ class TailManager:
         self._status_at: dict[str, float] = {}
         self._probe_due: set[str] = set()
         self._probed_at: dict[str, float] = {}
+        # key -> (identity, rang at) of the last ``limit`` notify, so a
+        # retry into the same limit doesn't ring again. Tail thread only.
+        self._limit_seen: dict[str, tuple] = {}
         # Orders tailer creation (which reads a key's cursor and asks
         # whether it has a journal) against ``sweep_stale`` deleting
         # them; see ``_add_tailer``.
@@ -1751,7 +1803,21 @@ class TailManager:
         that was idle until just now, and the status probe calls a
         mid-turn transcript "interrupted" once that time is over
         ``ACTIVE_WINDOW_S`` old."""
-        session = tailer.session
+        return self._freshen(key, tailer, tailer.session)
+
+    def fresh_session(self, key: str, session: Session) -> Session:
+        """``session`` (a catalog copy) with its last-activity time
+        brought up to date from ``key``'s tailer, for a status probe
+        made outside the tail loop (a queue-mode send's idle wait).
+        Unchanged when nothing tails ``key``."""
+        tailer = self.tailers.get(key)
+        if tailer is None:
+            return session
+        return self._freshen(key, tailer, session)
+
+    def _freshen(
+        self, key: str, tailer: "Tailer", session: Session
+    ) -> Session:
         ts = session.timestamp
         path = getattr(tailer.source, "path", None)
         if path:
@@ -1821,6 +1887,32 @@ class TailManager:
             ),
         )
 
+    def _note_limit(self, key: str, msg: dict, info: dict,
+                    now: float) -> None:
+        """Raise ``notify`` kind ``limit`` for a fresh limit record.
+
+        Rings once per limit: a record read long after it was written
+        (backfill) or the same limit again (a retry into it) is quiet.
+        """
+        ts = msg.get("ts")
+        if isinstance(ts, (int, float)) and now - float(ts) > LIMIT_FRESH_S:
+            return
+        resets_at = info.get("resets_at")
+        identity = (info.get("window"), resets_at) if resets_at \
+            else msg.get("text")
+        seen = self._limit_seen.get(key)
+        if seen is not None and seen[0] == identity:
+            quiet_until = resets_at if resets_at \
+                else seen[1] + LIMIT_REPEAT_S
+            if now < quiet_until:
+                return
+        self._limit_seen[key] = (identity, now)
+        data: dict = {"kind": "limit",
+                      "status": self.statuses.get(key, ""),
+                      "message": str(msg.get("text") or "")[:280]}
+        data.update(info)
+        self.emit(key, protocol.event("notify", key, self.machine_id, data))
+
     def _emit_notify(self, key: str, old: str, new: str) -> None:
         # needs_you on a fresh followup, finished on active→done,
         # error whenever a session turns over to error.
@@ -1862,6 +1954,7 @@ class TailManager:
                 tailer.next_poll_at = now + POLL_IDLE_S
                 continue
             for msg in messages:
+                limit = msg.pop(LIMIT_MARK, None)
                 self.emit(
                     key,
                     protocol.event(
@@ -1869,6 +1962,8 @@ class TailManager:
                     ),
                 )
                 n += 1
+                if limit is not None:
+                    self._note_limit(key, msg, limit, now)
             if messages:
                 self.last_append[key] = now
             if tailer.moved:

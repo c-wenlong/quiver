@@ -232,13 +232,102 @@ public final class UpdatesModel {
             self.buildDir = buildDir
             rebuildState = .built(buildDir.appending(path: "Quiver.app"))
         } else {
+            let log = writeFailureLog(stderr: result.stderr, stdout: result.stdout)
             try? FileManager.default.removeItem(at: buildDir)
-            let lines = (result.stderr + "\n" + String(decoding: result.stdout, as: UTF8.self))
-                .split(separator: "\n")
-                .map(String.init)
-                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            rebuildState = .failed(lines.suffix(6).joined(separator: "\n"))
+            rebuildState = .failed(Self.failureSummary(
+                stderr: result.stderr, stdout: result.stdout, log: log))
         }
+    }
+
+    /// A dead build's whole output, written beside the per-build folders
+    /// so removing the build's own folder never takes it down. The
+    /// failure row points here for everything the shown lines left out.
+    private func writeFailureLog(stderr: String, stdout: Data) -> URL? {
+        let url = rebuildDir.appending(path: "last-build.log")
+        let text = "=== stderr ===\n" + stderr + "\n=== stdout ===\n"
+            + String(decoding: stdout, as: UTF8.self)
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch { return nil }
+    }
+
+    /// Terminal styling and hyperlinks a captured log can carry; they
+    /// would show as literal noise in the row.
+    nonisolated private static let ansiPattern =
+        "\\u001B\\[[0-9;:]*[ -/]*[@-~]|\\u001B\\][^\\u0007\\u001B]*(?:\\u0007|\\u001B\\\\)"
+    /// The widest line the warning shows: a failed command echoes every
+    /// file it was given, which would eat the whole row.
+    nonisolated private static let maxFailureLine = 200
+
+    /// The lines of a dead build's output that explain it, plus where
+    /// the full log sits. Lines naming their own errors come first — a
+    /// build's last lines are usually progress counters, which explain
+    /// nothing — and the output's tail stands in when nothing does.
+    nonisolated static func failureSummary(stderr: String, stdout: Data,
+                                           log: URL?, limit: Int = 6) -> String {
+        let stripped = (stderr + "\n" + String(decoding: stdout, as: UTF8.self))
+            .replacingOccurrences(of: ansiPattern, with: "",
+                                  options: .regularExpression)
+        let lines = stripped.split(separator: "\n").map(String.init)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        // Script status lines ("bundle-swe: downloading Python") share
+        // the prefix with the scripts' diagnostics, so they only stand
+        // in when nothing stronger names the failure.
+        let strong = lines.filter(isFailureLine)
+        let errors = strong.isEmpty ? lines.filter(isScriptLine) : strong
+        let picked: [String]
+        if errors.isEmpty {
+            picked = Array(lines.suffix(limit))
+        } else if errors.count <= limit {
+            picked = errors
+        } else {
+            picked = Array(errors.prefix(limit - 1))
+                + ["… \(errors.count - limit) more error lines", errors.last!]
+        }
+        var message = picked.isEmpty
+            ? "The build failed without saying why."
+            : picked.map(shorten).joined(separator: "\n")
+        if let log {
+            message += "\nFull log: " + (log.path as NSString).abbreviatingWithTildeInPath
+        }
+        return message
+    }
+
+    /// Whether a log line names a failure rather than progress: compiler
+    /// and tool `error:`/`fatal:` diagnostics and the usual shell
+    /// complaints — a killed or crashed step, a full disk, a dead
+    /// network.
+    nonisolated static func isFailureLine(_ line: String) -> Bool {
+        let lowered = line.lowercased()
+        return failureMarkers.contains { lowered.contains($0) }
+    }
+
+    /// A build script's own `name:` line. Diagnostics and progress
+    /// chatter wear the same prefix, so these lines are a fallback
+    /// signal, not a strong one.
+    nonisolated static func isScriptLine(_ line: String) -> Bool {
+        let lowered = line.lowercased()
+        return scriptMarkers.contains { lowered.contains($0) }
+    }
+
+    nonisolated private static let failureMarkers = [
+        "error:", "fatal:", "fatal error", "failed",
+        "no such file", "command not found", "permission denied",
+        "not permitted", "couldn't ", "could not ", "no space",
+        "quota exceeded", "read-only file", "killed:",
+        "segmentation fault", "bus error", "timed out",
+        "connection refused", "could not resolve", "network is unreachable",
+    ]
+
+    nonisolated private static let scriptMarkers = [
+        "build-app:", "bundle-swe:", "install-app:",
+    ]
+
+    /// One shown line, cut at `maxFailureLine`.
+    nonisolated static func shorten(_ line: String) -> String {
+        line.count > maxFailureLine ? String(line.prefix(maxFailureLine)) + "…" : line
     }
 
     /// What "Relaunch to update" swaps in. When the finished build was
