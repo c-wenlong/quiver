@@ -1372,7 +1372,16 @@ public final class GitHubModel {
                 storeOwnsBoards = true
             }
             for name in snap.pins.map(\.name) {
-                let seeded = store.board(repo: name)
+                var seeded = store.board(repo: name)
+                // The store also keeps the focus page's every-state
+                // history; the dashboard lists open work only, so a
+                // closed or merged row there must not seed it as open.
+                if case .loaded(let rows) = seeded.pulls {
+                    seeded.pulls = .loaded(rows.filter { $0.state == .open })
+                }
+                if case .loaded(let rows) = seeded.issues {
+                    seeded.issues = .loaded(rows.filter { $0.state == .open })
+                }
                 if seeded != RepoBoard() { boards[name] = seeded }
             }
         } else if let legacy = legacyHistory {

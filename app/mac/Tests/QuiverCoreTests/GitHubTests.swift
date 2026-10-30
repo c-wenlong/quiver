@@ -986,6 +986,45 @@ import Testing
         #expect(prs.map(\.number) == [9, 8, 7])
     }
 
+    /// The store holds the focus page's every-state rows too; a restart
+    /// seeds the open-only dashboard with the open ones alone.
+    @Test func restoreSeedsTheDashboardWithOpenRowsOnly() async {
+        let file = tempSnapshot()
+        let db = tempDB()
+        defer {
+            try? FileManager.default.removeItem(at: file)
+            try? FileManager.default.removeItem(at: db)
+        }
+        let swe = SweClient(runner: router([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
+        ]))
+        let first = GitHubModel(snapshotFile: file, historyFile: db)
+        await first.load(swe: swe)
+        first.saveNow()
+        func pr(_ n: Int, _ state: GhPr.State) -> GhPr {
+            GhPr(number: n, title: "Fix \(n)", state: state, draft: false, author: "me",
+                 branch: "f", base: "main", labels: [], mergeable: .mergeable,
+                 reviewDecision: .approved, checks: .passing, updatedAt: GhTime(Date()),
+                 url: "https://github.com/o/a/pull/\(n)")
+        }
+        func issue(_ n: Int, _ state: GhIssue.State) -> GhIssue {
+            GhIssue(number: n, title: "Bug \(n)", state: state, author: "me", labels: [],
+                    assignees: [], comments: 0, updatedAt: GhTime(Date()),
+                    url: "https://github.com/o/a/issues/\(n)")
+        }
+        let store = GitHubHistory(url: db)
+        store.remember(repo: "o/a", surface: .pulls, rows: [pr(9, .merged), pr(8, .closed), pr(7, .open)])
+        store.remember(repo: "o/a", surface: .issues, rows: [issue(5, .closed), issue(4, .open)])
+
+        let second = GitHubModel(snapshotFile: file, historyFile: db)
+        guard case .loaded(let prs) = second.board(for: "o/a").pulls,
+              case .loaded(let issues) = second.board(for: "o/a").issues else {
+            Issue.record("the store should seed the dashboard"); return
+        }
+        #expect(prs.map(\.number) == [7])
+        #expect(issues.map(\.number) == [4])
+    }
+
     private func tempDB() -> URL {
         FileManager.default.temporaryDirectory
             .appending(path: "gh-history-\(UUID().uuidString).db")
