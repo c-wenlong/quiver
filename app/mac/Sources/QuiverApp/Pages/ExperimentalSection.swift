@@ -180,6 +180,7 @@ private struct SessionSearchRow: View {
                     .plainButton()
                     .disabled(model.isScanning)
                     .help(model.isScanning ? "Indexing now" : "Read every transcript again now")
+                    .accessibilityLabel("Read every transcript again")
                     Spacer(minLength: 4)
                     Button("Clear search data") { Task { await model.clearData() } }
                         .secondaryButton()

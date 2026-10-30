@@ -63,8 +63,6 @@ MAX_READ = 16 * 1024
 MAX_LAYER_ENTRIES = 500
 MAX_PAYLOAD_BYTES = 1 << 20
 
-SOURCES = ("builtin", "user", "project", "skill", "plugin")
-
 # Where the hub keeps each satellite's pushed command lists. Not the
 # catalog's ``satellite/`` folder: that one's ``*.json`` are all rows.
 _SAT_DIR = "slash"
@@ -839,8 +837,16 @@ def save_satellite(home: Path | None, machine_id: str, payload) -> bool:
 
 
 def load_satellite(home: Path | None, machine_id: str) -> dict | None:
+    from quiver.remote.catalog import _legacy_safe_mid
+
+    path = _sat_file(home, machine_id)
+    if not path.exists():
+        # Saved before ids that map lossily got a hash suffix: an agent
+        # resends its menu only on a change, so the old file still
+        # answers until it does.
+        path = path.with_name(f"{_legacy_safe_mid(machine_id)}.json")
     try:
-        data = json.loads(_sat_file(home, machine_id).read_text())
+        data = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None

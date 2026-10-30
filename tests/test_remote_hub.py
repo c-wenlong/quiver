@@ -35,12 +35,18 @@ class _Server:
         )
         # No tailnet in tests; cases that need an identity stub it.
         self.state.whois = lambda ip: None
+        # Nor the network: pages price from the bundled LiteLLM snapshot
+        # instead of downloading the live list on the first ledger read.
+        self.state.webapp.download_prices = False
         self.state.catalog.refresh()
         self.state.tail_manager.sync(self.state.catalog.tail_rows())
         self.server = make_server(self.state, "127.0.0.1", 0)
         self.port = self.server.server_address[1]
+        # shutdown() waits for the next poll; the default 0.5 s is paid by
+        # every test that builds a server.
         self.thread = threading.Thread(
-            target=self.server.serve_forever, daemon=True
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
+            daemon=True
         )
         self.thread.start()
 
@@ -80,10 +86,6 @@ class _Server:
             headers=auth)
         assert status == 200, data
         return auth
-
-
-class TestHub(_Server, unittest.TestCase):
-    pass  # placeholder so _Server isn't collected as a test
 
 
 class HubBase(unittest.TestCase):
@@ -752,12 +754,52 @@ class TestHubWriteRoutes(unittest.TestCase):
         srv.state.emit("claude:a3", protocol.event(
             "approval.requested", "claude:a3", "mbp",
             {"request_id": "req-3", "prompt": "run it?"}))
-        srv.state._approval_at["claude:a3"] = (
-            time.time() - APPROVAL_TTL_S - 1)
+        srv.state._approval_at["claude:a3"] = {
+            "req-3": time.time() - APPROVAL_TTL_S - 1}
         status, data = srv.request("GET", "/v1/inbox", headers=hdr)
         self.assertEqual(json.loads(data)["items"], [])
         self.assertNotIn("claude:a3", srv.state.pending_approvals)
         self.assertNotIn("claude:a3", srv.state._approval_at)
+
+    def test_expiry_drops_only_the_stale_request(self):
+        # One prompt past its TTL, one fresh, same session: the sweep
+        # must keep the fresh one in both maps and in the inbox.
+        srv = _Server(sessions=[_session(sid="a7")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        hdr = {"Authorization": f"Bearer {srv.pair()['credential']}"}
+        key = "claude:a7"
+        for rid in ("req-old", "req-new"):
+            srv.state.emit(key, protocol.event(
+                "approval.requested", key, "mbp",
+                {"request_id": rid, "prompt": "run it?"}))
+        srv.state._approval_at[key]["req-old"] = (
+            time.time() - APPROVAL_TTL_S - 1)
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        items = json.loads(data)["items"]
+        self.assertEqual([i["request_id"] for i in items], ["req-new"])
+        self.assertEqual(srv.state.pending_approvals[key], "req-new")
+        self.assertEqual(set(srv.state._approval_at[key]), {"req-new"})
+
+    def test_overlapping_approvals_resolve_one_at_a_time(self):
+        # A Codex app-server can hold two prompts on one session:
+        # answering A must leave B pending, not clear the session.
+        srv = _Server(sessions=[_session(sid="a6")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        key = "claude:a6"
+        for rid in ("req-A", "req-B"):
+            srv.state.emit(key, protocol.event(
+                "approval.requested", key, "mbp",
+                {"request_id": rid, "prompt": "run it?"}))
+        self.assertEqual(srv.state.pending_approvals[key], "req-B")
+        srv.state.emit(key, protocol.event(
+            "approval.resolved", key, "mbp", {"request_id": "req-B"}))
+        self.assertEqual(srv.state.pending_approvals[key], "req-A")
+        srv.state.emit(key, protocol.event(
+            "approval.resolved", key, "mbp", {"request_id": "req-A"}))
+        self.assertNotIn(key, srv.state.pending_approvals)
+        self.assertNotIn(key, srv.state._approval_at)
 
     def test_inbox_keeps_fresh_approval(self):
         srv = _Server(sessions=[_session(sid="a4")],
@@ -3141,11 +3183,137 @@ class TestServeEntry(unittest.TestCase):
         state.catalog.refresh = lambda: []
         state._adopt_launches = lambda: None
         state._refresh_launchable = lambda: None
-        state.tail_manager.sync = lambda rows, **kw: state._stop.set()
+        # stop() wakes the loop as well; setting only _stop left it to sit
+        # out the whole refresh interval.
+        state.tail_manager.sync = lambda rows, **kw: state.stop()
         with patch("quiver.remote.supervise.reap_kept"):
             state._catalog_loop()
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
         self.assertFalse(state.tail_manager.is_hot("claude:b"))
+
+    def test_satellite_presence_counts_survive_concurrent_streams(self):
+        # Each stream connects/disconnects on its own request thread;
+        # an unlocked read-modify-write lost counts and could leave a
+        # machine flagged online (or offline) for good.
+        import sys
+        state = HubState(Path(tempfile.mkdtemp()))
+        writes = []
+        events = []
+
+        def emit(_key, event):
+            events.append(event["type"] == "machine.online")
+
+        state.emit = emit
+
+        def upsert(_home, row):
+            writes.append(row["online"])
+
+        def stream():
+            for _ in range(300):
+                state.sat_connected("m1")
+                state.sat_disconnected("m1")
+
+        prev = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            with patch.object(hub_mod.catalog_mod, "upsert_machine", upsert):
+                # Daemon threads and a bounded join: a locking bug must
+                # fail the test, not hang the run.
+                threads = [threading.Thread(target=stream, daemon=True)
+                           for _ in range(8)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join(timeout=30)
+        finally:
+            sys.setswitchinterval(prev)
+        self.assertFalse(any(t.is_alive() for t in threads),
+                         "a presence worker never finished")
+        self.assertEqual(state._sat_subs["m1"], 0)
+        self.assertFalse(state.machine_online("m1"))
+        # Flags and events match one for one, alternate online/offline,
+        # and end offline.
+        self.assertEqual(events, writes)
+        self.assertEqual(writes[-1], False)
+        self.assertTrue(all(a != b for a, b in zip(writes, writes[1:])))
+
+    def test_failing_loop_step_logs_once_per_window(self):
+        # A loop step that raises used to vanish without a trace; it
+        # must reach stderr, but not on every 250 ms tick.
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+        ticks = iter(range(3))
+
+        def tick():
+            if next(ticks) == 2:
+                state._stop.set()
+            raise RuntimeError("tick broke")
+
+        state.tail_manager.tick = tick
+        state.tail_manager.wait = lambda _t: None
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            state._tail_loop()
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 1, out)
+        self.assertIn("RuntimeError: tick broke", out)
+
+    def test_loop_error_log_throttles_per_step_and_window(self):
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+
+        def fail(step):
+            try:
+                raise RuntimeError(step)
+            except RuntimeError:
+                state._log_loop_error(step)
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            fail("tail tick")
+            fail("tail tick")          # same window: quiet
+            fail("catalog refresh")    # another step logs in that window
+            # The window passes: the same step logs again.
+            state._loop_error_at["tail tick"] -= hub_mod._LOOP_ERROR_LOG_S + 1
+            fail("tail tick")
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 2, out)
+        self.assertEqual(out.count("catalog refresh failed"), 1, out)
+
+    def test_catalog_loop_prunes_pair_requests_at_most_once_a_minute(self):
+        home = Path(tempfile.mkdtemp())
+        state = HubState(home)
+        r = pairing.request_pair(home, {"node_id": "n1"}, "phone")
+        pairing.approve_request(home, r["code"])
+        rows = pairing._load_requests(home)
+        rows[0]["expires_at"] = time.time() - 1
+        pairing._save_requests(home, rows)
+        # Three loop passes: prune on the first, skip the second (same
+        # minute), prune the third once the last prune is backdated
+        # past the interval.
+        passes = iter(range(3))
+        state.catalog.rows = lambda: []
+        state.catalog.refresh = lambda: []
+        state.catalog.poll_github = lambda: None
+        state._adopt_launches = lambda: None
+        state._refresh_launchable = lambda: None
+        state._catalog_wake.wait = lambda _t: None
+
+        def sync(rows, **kw):
+            if next(passes) == 2:
+                state._pair_pruned_at -= hub_mod._PAIR_PRUNE_S + 1
+                state._stop.set()
+
+        state.tail_manager.sync = sync
+        with patch("quiver.remote.supervise.reap_kept"), \
+             patch("quiver.remote.pairing.prune_requests",
+                   wraps=pairing.prune_requests) as prune:
+            state._catalog_loop()
+        self.assertEqual(prune.call_count, 2)
+        # The uncollected credential left with its expired row.
+        self.assertEqual(pairing._load_requests(home), [])
 
     def test_tail_manager_probes_through_state_status_of(self):
         state = HubState(Path(tempfile.mkdtemp()))
@@ -3157,7 +3325,11 @@ class TestServeEntry(unittest.TestCase):
 
     def test_state_start_stop(self):
         state = HubState(Path(tempfile.mkdtemp()))
-        state.start()
+        # No real session scan or notify config: only the thread
+        # lifecycle is under test.
+        state.catalog._fetch = lambda: []
+        with patch.object(hub_mod.notify, "load_config", return_value={}):
+            state.start()
         try:
             self.assertTrue(state._threads)
             self.assertTrue(all(t.is_alive() for t in state._threads))
@@ -3273,6 +3445,44 @@ class TestSSE(HubBase):
                     break
             self.assertIn("message.appended", lines)
             self.assertTrue(got_live)
+        finally:
+            conn.close()
+
+    def test_cursor_ahead_of_a_wiped_journal_resyncs(self):
+        # The client last saw seq 500; the journal was wiped and holds
+        # one event. It must hear journal.truncated, and a new event
+        # (seq 2, under its old cursor) must still reach it.
+        auth = self.auth()
+        key = "claude:s1"
+        self.srv.state.emit(key, protocol.event(
+            "message.appended", key, "mbp",
+            protocol.message("assistant", "after wipe")))
+        head = self.srv.state.journal.last_seq(key)
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5)
+        try:
+            conn.request("GET", f"/v1/sessions/{key}/events?last=500",
+                         headers=auth)
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            seen = []
+            got_live = False
+            for _ in range(100):
+                line = resp.readline().decode()
+                if not line:
+                    break
+                seen.append(line)
+                if "journal.caught-up" in line:
+                    self.srv.state.emit(key, protocol.event(
+                        "message.appended", key, "mbp",
+                        protocol.message("assistant", "live")))
+                if '"live"' in line:
+                    got_live = True
+                    break
+            text = "".join(seen)
+            self.assertIn(
+                f'{{"type": "journal.truncated", "seq": {head}}}', text)
+            self.assertTrue(got_live, text)
         finally:
             conn.close()
 
@@ -3912,9 +4122,12 @@ class TestStartNotify(unittest.TestCase):
         home = Path(tempfile.mkdtemp())
         state = HubState(home)
         state.catalog._fetch = lambda: []
-        cfg = {"enabled": True, "url": "https://ntfy.sh",
+        cfg = {"enabled": True, "url": "https://ntfy.invalid",
                "topic": "t", "ntfy_token": "x"}
-        with patch.object(notify, "load_config", return_value=cfg):
+        # The notifier thread really runs: nothing it does may reach a
+        # network.
+        with patch.object(notify, "load_config", return_value=cfg), \
+             patch.object(notify.Notifier, "_post"):
             state.start()
             try:
                 names = [t.name for t in state._threads]

@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -359,6 +360,55 @@ class _Model(unittest.TestCase):
 
 
 class TestModel(_Model):
+    def test_nvidia_smi_runs_off_the_lock(self):
+        # Two nvidia-smi calls of up to 3 s each ran under the model's
+        # lock, so every Compute read waited for them.
+        held = []
+
+        def nvidia():
+            held.append(self.model.lock.locked())
+            return None
+
+        self.model.nvidia = nvidia
+        self.model.nvidia_processes = lambda: held.append(
+            self.model.lock.locked())
+        self.model.sample()
+        self.assertEqual(held, [False, False])
+
+    def test_overlapping_samples_run_nvidia_smi_once(self):
+        # A sample paused in nvidia-smi: a second due sample waits for it
+        # and then finds it fresh, while payload reads go on meanwhile.
+        import threading
+        inside, release = threading.Event(), threading.Event()
+        calls = []
+
+        def nvidia():
+            calls.append(1)
+            inside.set()
+            release.wait(10)
+            return None
+
+        self.model.nvidia = nvidia
+        first = threading.Thread(target=self.model.sample)
+        second = threading.Thread(target=self.model.sample)
+        first.start()
+        self.assertTrue(inside.wait(10))
+        second.start()
+        self.model.payload(10)  # the data lock stays free
+        release.set()
+        first.join(10)
+        second.join(10)
+        self.assertEqual(calls, [1])
+        self.assertEqual(len(self.model.history.fine), 1)
+
+    def test_a_fresh_sample_skips_nvidia_smi(self):
+        calls = []
+        self.model.sample()
+        self.model.nvidia = lambda: calls.append(1)
+        self.now[0] += 1.0
+        self.model.sample()  # inside MIN_SAMPLE
+        self.assertEqual(calls, [])
+
     def test_two_samples_make_the_payload(self):
         self.model.sample()
         self.m.process(101, 100, ["claude"], exe="/usr/bin/node", start=200, anon_kb=3 * 1024 * 1024,
@@ -706,10 +756,34 @@ class TestRoute(_Model, HubBase):
         self.assertEqual(body["trend"]["interval"], 3)
         self.assertEqual(body["harnesses"][0]["harness"], "claude")
 
-    def test_page_script_is_bundled(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("compute"', data)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestStoredChoices(unittest.TestCase):
+    """pages/compute.js under node: the tab, interval and Temperature lines
+    kept in localStorage fall back when the page doesn't know them (an
+    unknown tab threw in the chart and stopped the poll)."""
+
+    def choices(self, stored):
+        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/compute.js"
+        prelude = ("const stored = " + json.dumps({f"quiver.compute.{k}": v for k, v in stored.items()}) + ";\n"
+                   "globalThis.localStorage = { getItem: (k) => (k in stored ? stored[k] : null) };\n"
+                   "function registerPage() {}\n")
+        body = ("process.stdout.write(JSON.stringify({ tab: computePage.tab, interval: computePage.interval,"
+                " lines: computePage.lines }));\n")
+        done = subprocess.run(["node", "-e", prelude + script.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_known_choices_are_kept(self):
+        self.assertEqual(self.choices({"tab": "gpu", "interval": "30", "temperatureLines": '["ssd","cpu"]'}),
+                         {"tab": "gpu", "interval": 30, "lines": ["ssd", "cpu"]})
+
+    def test_unknown_choices_fall_back(self):
+        self.assertEqual(self.choices({"tab": "disk", "interval": "7", "temperatureLines": '{"cpu":1}'}),
+                         {"tab": "ram", "interval": 10, "lines": ["cpu", "gpu", "ssd", "battery"]})
+        self.assertEqual(self.choices({"temperatureLines": '["cpu","fan",3]'})["lines"], ["cpu"])
 
     def test_settings_post_writes_the_hub_config(self):
         self.assertEqual(self.srv.request(

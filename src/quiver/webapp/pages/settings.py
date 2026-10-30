@@ -80,7 +80,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from quiver import __version__
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, tilde, web_url
 from quiver.webapp.pages._secrets import mask
 
 ACTIONS = ("pair", "revoke", "session_search", "sync", "key_set", "key_remove", "key_value")
@@ -350,7 +350,7 @@ def _catalog_row(pid: str, info: dict, set_vars: set[str] | None = None) -> dict
         # The catalogue sheet's "Set" badge: the file covers any variable.
         "has_key": bool(set_vars) and any(v in set_vars for v in env_vars),
         # Only a web link: the page puts it in an href.
-        "url": _web_url(info.get("url")),
+        "url": web_url(info.get("url")),
     }
 
 
@@ -440,12 +440,6 @@ def _fold(text: str) -> str:
     return text.lower().replace(" ", "").replace("_", "")
 
 
-def _web_url(value) -> str | None:
-    if isinstance(value, str) and value.lower().startswith(("https://", "http://")):
-        return value
-    return None
-
-
 def _provider_registry(ctx) -> dict:
     """``load_registry``'s merge of providers.json and the defaults, read
     without saving: a page read must not seed or rewrite the file."""
@@ -527,9 +521,4 @@ def _home(ctx) -> Path:
 
 def _display(path: Path, home: Path) -> str:
     """``path`` with the hub's home written as ``~``."""
-    s, h = str(path), str(home)
-    if s == h:
-        return "~"
-    if s.startswith(h.rstrip("/") + "/"):
-        return "~" + s[len(h.rstrip("/")):]
-    return s
+    return tilde(path, home)

@@ -363,7 +363,7 @@
     // A read that began before an unpin or reorder, or lands while one
     // runs, may list the pins as they were: the page's own list wins.
     if (data && data.repos && page.data && (page.mutating || pinGen !== page.pinGen)) data.repos = page.data.repos;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("repositories");
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the app does.
       if (!page.data) return pageError(HEADER(true), status, data, () => renderDashboard(true));
@@ -527,7 +527,7 @@
       if (onDashboard()) renderDashboard(true);
       return;
     } else {
-      page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      page.pinError = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
     }
     if (onDashboard()) paintDashboard();
   }
@@ -561,7 +561,7 @@
       next = page.queuedOrder;
       page.queuedOrder = null;
       if (status !== 200 || !data) {
-        page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+        page.pinError = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
         next = null;
         page.mutating = null;
         page.pinGen++;
@@ -576,7 +576,7 @@
     if (onDashboard()) paintDashboard();
   }
 
-  const onDashboard = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "repositories"
+  const onDashboard = () => currentRoute() === "repositories"
     && !GhUI.hashParams().get("repo");
 
   function bindDrag(panel) {
@@ -774,7 +774,7 @@
       if (onDashboard()) return renderDashboard();
       return;
     }
-    page.actionError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked."
+    page.actionError = status === 401 ? CREDENTIAL_REFUSED
       : GhUI.failMessage(status, data);
     repaintView();
   }
@@ -829,7 +829,7 @@
     const { status, data } = await api(`/v1/app/repositories?${q}${refresh ? "&refresh=1" : ""}`);
     if (gen !== routeGen || page.focus !== f || seq !== f.seq) return;
     f.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("repositories");
     if (status === 404 && data && data.error && data.error.code === "not_pinned") {
       // A link to a repo the hub hasn't pinned: offer the pin itself.
       f.data = null;
@@ -907,7 +907,7 @@
         if (data.repo !== f.repo) { location.hash = `#/repositories?repo=${encodeURIComponent(data.repo)}`; return; }
         return renderFocus(f.repo, true);
       }
-      u.error = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      u.error = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
       paintUnpinned();
     };
   }
@@ -1154,7 +1154,7 @@
       // The page behind the sheet reads the repo again, even if the sheet
       // was closed meanwhile: the hub dropped its cached board, so a
       // merged row leaves the list.
-      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+      const here = currentRoute();
       const focusRepo = GhUI.hashParams().get("repo");
       if (here === "repositories" && !focusRepo) renderDashboard();
       else if (here === "repositories" && page.focus && page.focus.repo === focusRepo) renderFocus(focusRepo);
@@ -1162,7 +1162,7 @@
     if (page.sheet !== s) return;
     s.merging = false;
     if (status === 401) {
-      s.mergeError = "The hub doesn't know this browser's credential. It may have been revoked.";
+      s.mergeError = CREDENTIAL_REFUSED;
     } else if (status !== 200 || !data) {
       s.mergeError = GhUI.failMessage(status, data);
       // A state refusal means the sheet is out of date: read the PR
@@ -1197,7 +1197,7 @@
     if (!d && !s.status) {
       content = loadingCard("Fetching the pull request…", false);
     } else if (s.status === 401) {
-      content = errorCard("The hub doesn't know this browser's credential. It may have been revoked.", false);
+      content = errorCard(CREDENTIAL_REFUSED, false);
     } else if (s.status !== 200 || !d) {
       content = errorCard(GhUI.failMessage(s.status, d), false, '<button type="button" class="gh-button" data-sheet-refresh>Refresh</button>');
     } else if (GhUI.envSetup(d.github)) {
@@ -1464,7 +1464,7 @@
       if (data.status === "ok") { a.results = data.results || []; a.source = data.source; a.error = null; }
       else a.error = data.error || data.status;
     } else {
-      a.error = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      a.error = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
     }
     paintAdd();
   }
@@ -1481,11 +1481,11 @@
     if (status === 200 && data) {
       if (page.data) page.data.repos = data.repos;
       addEl().close();
-      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+      const here = currentRoute();
       if (here === "repositories" && !GhUI.hashParams().get("repo")) renderDashboard();
       return;
     }
-    a.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+    a.pinError = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
     paintAdd();
   }
 
@@ -1628,7 +1628,7 @@
   /* The PR sheet lives on <body>, outside the panel a route repaints, so
    * leaving the page (Back, a sidebar link) has to close it here. */
   window.addEventListener("hashchange", () => {
-    const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+    const here = currentRoute();
     if (here !== "repositories") closeSheets();
     closeRunMenu();
     page.actionError = null;

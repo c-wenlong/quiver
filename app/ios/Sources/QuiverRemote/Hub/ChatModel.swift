@@ -130,7 +130,8 @@ final class ChatModel {
         return app.client
     }
     private var seen = Set<Int>()
-    private var cursor = 0
+    /// The seq the next stream resumes after.
+    private(set) var cursor = 0
     /// Tool call id to the id of its card (ids, not positions: removing a
     /// send bubble would shift positions under a result still to come).
     private var toolCards: [String: String] = [:]
@@ -261,7 +262,12 @@ final class ChatModel {
                 case .connected: self.live = true
                 case .disconnected: self.live = false
                 case .unauthorized: self.app?.unpair(from: client); return
-                case .truncated:
+                case .gone(let error):
+                    self.live = false
+                    self.items.append(ChatItem(id: UUID().uuidString, kind: .system(error.message)))
+                    return
+                case .truncated(let head):
+                    self.adoptJournalHead(head)
                     self.dropPending()
                     await self.backfill(client)
                 case .event(let env): self.enqueue(env)
@@ -409,7 +415,7 @@ final class ChatModel {
             }
             loadError = nil
         } catch {
-            loadError = (error as? HubError)?.message ?? error.localizedDescription
+            loadError = error.localizedDescription
         }
         // The newest page held nothing to show (only results of older
         // calls): fetch back until something does, rather than "No
@@ -463,6 +469,19 @@ final class ChatModel {
     }
 
     // MARK: Events
+
+    /// A `journal.truncated` names where to resume: the journal's head
+    /// after a wipe, or this chat's own cursor when the ring overflowed.
+    /// It wins even below the cursor. A lower head means the journal
+    /// numbers from the start again, so the seqs already seen belong to
+    /// the old journal and must not drop new messages that reuse them,
+    /// even if the backfill that follows fails (the next start retries
+    /// it, as for any failed load).
+    func adoptJournalHead(_ head: Int?) {
+        guard let head else { return }
+        if head < cursor { seen = [] }
+        cursor = head
+    }
 
     func apply(_ env: Envelope) {
         if let seq = env.seq {

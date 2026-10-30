@@ -33,6 +33,35 @@ const safeHref = (url) => {
   return /^(https?:\/\/|mailto:)/i.test(s) ? esc(s) : "";
 };
 
+/* What a failed read or write says: the hub's own message, else its
+ * status, else that it didn't answer. ``next`` ends the offline sentence
+ * ("then refresh"); null leaves just "Couldn't reach the hub." */
+function failText(status, data, next = "then try again") {
+  return (data && data.error && data.error.message)
+    || (status ? `The hub answered ${status}.`
+      : next ? `Couldn't reach the hub. Check the connection, ${next}.` : "Couldn't reach the hub.");
+}
+
+/* A write: ``body`` as JSON with api()'s headers. Never throws; status 0
+ * means the hub didn't answer at all. Every page's POST and DELETE goes
+ * through it (apiPost, GhUI.post). Not plain send(): chat.js has its own. */
+async function apiSend(method, path, body) {
+  let resp;
+  try {
+    resp = await fetch(path, {
+      method,
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { status: 0, data: null };
+  }
+  let data = null;
+  try { data = await resp.json(); } catch { /* empty body */ }
+  return { status: resp.status, data };
+}
+const apiPost = (path, body) => apiSend("POST", path, body);
+
 /* status 0 means the hub didn't answer at all (offline, connection lost). */
 async function api(path) {
   let resp;
@@ -125,13 +154,39 @@ function pageHeader(title, subtitle, actions = "") {
     <div class="page-actions">${actions}</div></div>`;
 }
 
+/* The gate's line for a credential the hub refused (a 401), and the
+ * error pages show when a write answers 401. */
+const CREDENTIAL_REFUSED = "The hub doesn't know this browser's credential. It may have been revoked.";
+
+/* A page's sheet, made once on document.body so a repaint of #panel
+ * behind it (a reply landing, a poll) can't take it away. It belongs to
+ * the view that opened it: route() closes it on every navigation, which
+ * fires its close handlers, so a page never finds it open again later. */
+function bodySheet(id, className, label = "") {
+  let sheet = document.getElementById(id);
+  if (sheet) return sheet;
+  sheet = document.createElement("dialog");
+  sheet.id = id;
+  sheet.className = className;
+  if (label) sheet.setAttribute("aria-label", label);
+  sheet.dataset.routeSheet = "";
+  document.body.appendChild(sheet);
+  return sheet;
+}
+
+function closeRouteSheets() {
+  for (const sheet of document.querySelectorAll("dialog[data-route-sheet][open]")) sheet.close();
+}
+
 /* Only a device the hub can't place reaches this: the owner's own tailnet
  * devices are let in without pairing. The card is the old remote page's
  * pair view: ask the tailnet for a code the owner approves elsewhere, or
  * paste a token a ``swe remote pair`` or Settings' QR minted. ``message``
  * explains a credential the hub refused; with none stored the card says
  * the device needs pairing, unless ``always`` keeps the message. */
-function renderGate(message, always = false) {
+function renderGate(message = CREDENTIAL_REFUSED, always = false) {
+  // A page's open sheet would stay modal above the gate.
+  closeRouteSheets();
   const lead = credential() || always ? message
     : "This device isn't signed in to the hub owner's Tailscale account, so it needs pairing.";
   document.getElementById("panel").innerHTML = `<div class="page"><div class="card gate">
@@ -244,7 +299,7 @@ async function pairExchange(token, name) {
   if (!pairStillLive(gen, rgen)) return;
   const msg = (data && data.error && data.error.message)
     || (status ? `the hub answered ${status}` : "the hub couldn't be reached");
-  renderGate(`The pair link didn't work: ${msg} Mint a fresh one — it lives only minutes.`);
+  renderGate(`The pair link didn't work: ${msg} Mint a fresh one — it lives only minutes.`, true);
 }
 
 /* ── pair by tailnet identity (the asking side of /v1/pair/request) ── */
@@ -346,7 +401,18 @@ function pairHash() {
   const m = hash.match(/#pair=([^&]+)/);
   if (!m) return false;
   const nm = hash.match(/[?&]name=([^&]+)/);
-  pairExchange(decodeURIComponent(m[1]), nm ? decodeURIComponent(nm[1]) : "");
+  let token, name;
+  try {
+    token = decodeURIComponent(m[1]);
+    name = nm ? decodeURIComponent(nm[1]) : "";
+  } catch {
+    // A link cut short mid-escape (#pair=abc%) can't be decoded; left to
+    // throw, it stopped route() and the page stayed blank.
+    renderSidebar("");
+    renderGate("This pair link is damaged: it may have been cut short when it was copied. Copy the whole link, or mint a fresh one.", true);
+    return true;
+  }
+  pairExchange(token, name);
   return true;
 }
 
@@ -358,16 +424,25 @@ function renderSoon(id) {
     <div class="card"><p class="empty">${esc(`Coming to the web app. Ready now: ${ready.join(", ")}.`)}</p></div></div>`;
 }
 
+/* The page the hash names: "#/skills?x=1" is "skills", a bare one
+ * "overview". Pages compare it to their own id to tell whether they are
+ * still the one showing before a late reply paints. */
+function currentRoute() {
+  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+}
+
 function route() {
   if (pairHash()) return;
-  let id = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+  let id = currentRoute();
   // A Mac-only page has nothing to show here, so an old link or a typed
   // #/menubar lands on Overview instead.
   if (MAC_ONLY.has(id)) {
     id = "overview";
     history.replaceState(null, "", "#/overview");
   }
-  // A response still in flight belongs to the page left behind.
+  // A response still in flight belongs to the page left behind, and so
+  // does any sheet it opened.
+  closeRouteSheets();
   routeGen++;
   overview.gen++;
   sessionsPage.gen++;
@@ -432,10 +507,9 @@ async function renderOverview(_id, rescan = false) {
   if (rescan) q.set("rescan", "1");
   const { status, data } = await api(`/v1/app/overview?${q}`);
   if (gen !== overview.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
-    const msg = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then rescan.");
+    const msg = failText(status, data, "then rescan");
     panel.innerHTML = `<div class="page">${overviewHeader(false)}<div class="card"><p class="error">${esc(msg)}</p></div></div>`;
     bindOverviewHeader();
     return;
@@ -527,14 +601,14 @@ function totalCard(d) {
       <div class="total-cost num" id="total-cost">${Fmt.dollars(t.cost_usd)}</div>
       <div class="total-range num" id="total-detail">${esc(rangeCaption(d, overview.scale))}</div>
       ${t.unpriced_tokens ? `<div class="total-range" title="${esc((t.unpriced_models || []).join(", "))}">${Fmt.tokens(t.unpriced_tokens)} tokens from models with no list price aren't in this total</div>` : ""}
-      <div class="harness-row" id="harness-row">${chips}</div>
+      <div class="harness-chips" id="harness-chips">${chips}</div>
     </div>
     <svg class="marbles" id="marbles" preserveAspectRatio="xMidYMax meet"></svg>
   </div>`;
 }
 
 function bindHarnessFocus() {
-  const row = document.getElementById("harness-row");
+  const row = document.getElementById("harness-chips");
   if (!row) return;
   const d = overview.data;
   const reset = () => {
@@ -598,7 +672,7 @@ function drawMarbles() {
   // "1 marble = …" matches what is drawn.
   const shares = overview.data.harnesses.filter((h) => h.tokens > 0);
   overview.scale = Fmt.marbleScale(shares, Math.min(marbleCapacity(), slots.length));
-  const row = document.getElementById("harness-row");
+  const row = document.getElementById("harness-chips");
   const detail = document.getElementById("total-detail");
   if (detail && !(row && row.classList.contains("focusing"))) {
     detail.textContent = rangeCaption(overview.data, overview.scale);

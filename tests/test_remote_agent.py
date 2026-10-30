@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import socket
 import struct
 import tempfile
@@ -12,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from quiver.remote import agent as agent_mod
+from quiver.remote import usage as usage_mod
 from quiver.remote import attachments, catalog as catalog_mod
 from quiver.remote import inject, journal, pairing, protocol, supervise
 from quiver.remote import hub
@@ -36,7 +38,8 @@ class _Hub:
         self.server = make_server(self.state, "127.0.0.1", 0)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(
-            target=self.server.serve_forever, daemon=True
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
+            daemon=True
         )
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.port}"
@@ -261,6 +264,18 @@ class TestRemoteCatalog(unittest.TestCase):
                          {"claude": "opus", "codex": "gpt-5"})
         self.assertEqual(catalog_mod.last_used_models(
             Path(tempfile.mkdtemp())), {})
+
+    def test_app_prefs_follow_the_current_home(self):
+        # Bound to Path.home() at import, the path ignored a HOME set
+        # later (a test home, a hub started for another user's home).
+        import plistlib
+        home = Path(tempfile.mkdtemp())
+        prefs = home / catalog_mod._APP_PREFS_REL
+        prefs.parent.mkdir(parents=True)
+        prefs.write_bytes(plistlib.dumps({"providerOrder": ["codex"]}))
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            order, _off = catalog_mod._provider_visibility()
+        self.assertEqual(order, ["codex"])
 
     def _launchable(self, reg, prefs=None, on_path=None):
         import plistlib
@@ -566,8 +581,19 @@ class TestAgentState(unittest.TestCase):
                 {"ref": "1-shot.png", "hub_key": "claude:s1@m1"})
         self.assertTrue(ok)
         url = get.call_args[0][1]
-        self.assertIn("claude:s1@m1/1-shot.png", url)
+        self.assertIn("claude%3As1%40m1/1-shot.png", url)
         self.assertEqual(staged[0][1], "1-shot.png")
+
+    def test_attachment_pull_quotes_a_key_with_slashes(self):
+        # A session id can be a path: unquoted, its "/" split the route
+        # at the wrong place and "#" ended the URL early.
+        a = self._agent()
+        with patch.object(agent_mod, "_get_bytes", return_value=None) as get:
+            a._execute("droid:/a/b#c", "attachment",
+                       {"ref": "1 shot.png", "hub_key": "droid:/a/b#c@m1"})
+        url = get.call_args[0][1]
+        self.assertEqual(
+            url, "/v1/agent/attachments/droid%3A%2Fa%2Fb%23c%40m1/1%20shot.png")
 
 
 class _AgentHub(_Hub):
@@ -727,6 +753,74 @@ class TestAgentRoutes(unittest.TestCase):
             {"op": "attach", "mode": "tmux"}, headers=self.srv.auth)
         self.assertEqual(status, 202)
 
+    def test_opening_a_satellite_chat_queues_one_tail_until_acked(self):
+        # Each GET of events/messages used to queue another tail, so a
+        # chat left open on an offline satellite filled its backlog.
+        self._push_catalog([{"key": "claude:r1", "status": "idle",
+                             "ownership": "observed"}])
+        self.srv.state.catalog.refresh()
+        key = "claude%3Ar1%40sat-m1"
+
+        def tails():
+            replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+            return [e for e in replay if e["data"]["op"] == "tail"]
+
+        for _ in range(3):
+            status, _ = self.srv.request(
+                "GET", f"/v1/sessions/{key}/messages",
+                headers=self.srv.auth)
+            self.assertEqual(status, 200)
+        self.assertEqual(len(tails()), 1)
+        # Once the satellite acks it, the next open may ask again.
+        self.srv.state._sat_result_acked(
+            self.mid, tails()[0]["data"]["command_id"])
+        self.srv.request("GET", f"/v1/sessions/{key}/messages",
+                         headers=self.srv.auth)
+        self.assertEqual(len(tails()), 2)
+
+    def test_concurrent_opens_queue_a_single_tail(self):
+        self._push_catalog([{"key": "claude:r2", "status": "idle",
+                             "ownership": "observed"}])
+        self.srv.state.catalog.refresh()
+        real_queue = self.srv.state.queue_command
+        gate = threading.Barrier(4)
+
+        def slow_queue(*a, **k):
+            # Widen the check-to-record window the race needs.
+            time.sleep(0.05)
+            return real_queue(*a, **k)
+
+        self.srv.state.queue_command = slow_queue
+
+        def open_():
+            gate.wait()
+            self.srv.state.queue_tail("sat-m1", "claude:r2@sat-m1", "idle")
+
+        threads = [threading.Thread(target=open_) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(
+            len([e for e in replay if e["data"]["op"] == "tail"]), 1)
+
+    def test_queue_tail_backlog_full_records_nothing(self):
+        # A refused queue (backlog full) must not mark a tail pending,
+        # or the next open would never ask again.
+        state = self.srv.state
+        with patch.object(state, "queue_command", return_value=None):
+            state.queue_tail("sat-m1", "claude:r3@sat-m1", "idle")
+        self.assertNotIn(("sat-m1", "claude:r3@sat-m1"), state._sat_tail_cmds)
+
+    def test_queue_tail_map_stays_bounded(self):
+        state = self.srv.state
+        state._sat_tail_cmds.update(
+            {("sat-m1", f"k{i}"): "c0" for i in range(4097)})
+        state.queue_tail("sat-m1", "claude:r4@sat-m1", "idle")
+        self.assertEqual(list(state._sat_tail_cmds),
+                         [("sat-m1", "claude:r4@sat-m1")])
+
     def test_launch_to_named_machine_queues(self):
         status, data = self.srv.request(
             "POST", "/v1/sessions",
@@ -740,6 +834,21 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(replay[0]["data"]["harness"], "claude")
         launch_id = json.loads(data)["launch_id"]
         self.assertEqual(replay[0]["data"]["launch_id"], launch_id)
+
+    def test_launch_to_unknown_machine_is_404(self):
+        # Nothing would ever drain a queue for a machine that never
+        # registered: refuse instead of opening a journal for it.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "nope-m9", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 404, data)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "unknown_machine")
+        replay, _ = self.srv.state.journal.read_since("_sat_nope-m9", 0)
+        self.assertEqual(replay, [])
+        self.assertEqual(self.srv.state.launches, {})
 
     def test_launch_to_named_machine_carries_the_pick(self):
         # The satellite advertises launch-option support on its machine
@@ -1071,6 +1180,8 @@ class TestEndToEnd(unittest.TestCase):
                 sess = _session("r1")
                 agent.catalog._fetch = lambda: [sess]
                 agent.catalog._status_of = lambda ss: ["idle"]
+                # The usage push would fetch real provider quotas.
+                agent._usage_loop = lambda: None
                 fake = MagicMock()
                 fake.send.return_value = inject.InjectResult(True, "sent")
                 mid = agent.machine_id
@@ -1144,10 +1255,6 @@ class TestEndToEnd(unittest.TestCase):
                 self.assertFalse(row["online"])
             finally:
                 srv.stop()
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestAgentEdges(unittest.TestCase):
@@ -1601,15 +1708,17 @@ class TestAgentRouteValidation(unittest.TestCase):
             {"op": "interrupt"}, headers=self.srv.auth)
         self.assertEqual(status, 409)
 
-    def test_launch_unknown_machine_queues_anyway(self):
-        # An unregistered machine still gets the command: it may simply
-        # not have connected yet — the offline queue is the point.
+    def test_launch_to_offline_registered_machine_queues(self):
+        # A registered machine that is offline still gets the command —
+        # the offline queue is the point. Only a never-registered id
+        # is refused (test_launch_to_unknown_machine_is_404).
+        catalog_mod.upsert_machine(self.srv.home, {"id": "ghost"})
         status, data = self.srv.request(
             "POST", "/v1/sessions",
             {"machine": "ghost", "harness": "claude", "cwd": "/x",
              "prompt": "go"},
             headers=self.srv.auth)
-        self.assertEqual(status, 202)
+        self.assertEqual(status, 202, data)
         replay, _ = self.srv.state.journal.read_since("_sat_ghost", 0)
         self.assertEqual(replay[0]["data"]["op"], "launch")
 
@@ -1673,8 +1782,25 @@ class TestAgentLoopEdges(unittest.TestCase):
     def test_save_cmd_cursor_oserror(self):
         ag = self._agent()
         ag._done_cmd_seq = 9
-        with patch.object(Path, "write_text", side_effect=OSError):
+        with patch.object(agent_mod, "atomic_write_text",
+                          side_effect=OSError):
             ag._save_cmd_cursor()  # must not raise
+            ag._save_outbox_ack()
+
+    def test_cursor_and_ack_are_written_atomically(self):
+        # A plain write_text torn by a crash read back as no cursor
+        # (the backlog re-ran) or ack 0 (the outbox was resent).
+        ag = self._agent()
+        ag._done_cmd_seq, ag._outbox_ack = 3, 4
+        real = agent_mod.atomic_write_text
+        with patch.object(agent_mod, "atomic_write_text",
+                          side_effect=real) as write:
+            ag._save_cmd_cursor()
+            ag._save_outbox_ack()
+        self.assertEqual([c[0][0] for c in write.call_args_list],
+                         [ag._cmd_cursor_file(), ag._outbox_ack_file()])
+        b = self._agent()
+        self.assertEqual((b._done_cmd_seq, b._outbox_ack), (3, 4))
 
     def test_command_stream_reads_frames(self):
         ag = self._agent()
@@ -1714,8 +1840,9 @@ class TestAgentLoopEdges(unittest.TestCase):
         ag._register = lambda: None
         ag._push_catalog = lambda: True
         # Loop bodies exit instantly; run() then waits on _stop.
+        # _usage_loop too: its push reads real provider quotas.
         ag._uplink_loop = ag._catalog_loop = ag._tail_loop = \
-            ag._downlink_loop = lambda: None
+            ag._downlink_loop = ag._usage_loop = lambda: None
         t = threading.Thread(target=ag.run, daemon=True)
         t.start()
         time.sleep(0.2)
@@ -1733,6 +1860,56 @@ class TestAgentLoopEdges(unittest.TestCase):
 class TestCatalogEdge(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
+
+    def test_lookups_use_the_index_built_with_the_rows(self):
+        sessions = [_session(f"s{i}") for i in range(300)]
+        cat = catalog_mod.Catalog(self.home, "m1",
+                                  fetch_sessions=lambda: sessions,
+                                  status_of=lambda ss: [""] * len(ss),
+                                  model_of=lambda ss: [""] * len(ss))
+        cat.refresh()
+        self.assertIs(cat.session_for("claude:s299"), sessions[299])
+        self.assertEqual(cat.row_for("claude:s7")["key"], "claude:s7")
+        self.assertIsNone(cat.row_for("claude:nope"))
+        cat.note_status("claude:s5", "active", time.time() + 60)
+        self.assertEqual(cat.row_for("claude:s5")["status"], "active")
+        self.assertEqual(catalog_mod._index_of([("a", 0), ("b", 1), ("a", 2)]),
+                         {"a": 0, "b": 1})
+
+
+    def test_machine_ids_that_map_alike_get_their_own_files(self):
+        # "m.1" and "m_1" both became m_1.json: one satellite's rows
+        # overwrote the other's.
+        self.assertNotEqual(catalog_mod._safe_mid("m.1"),
+                            catalog_mod._safe_mid("m_1"))
+        self.assertEqual(catalog_mod._safe_mid("c92d6398"), "c92d6398")
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        catalog_mod.merge_remote_rows(self.home, "m_1", [{"key": "claude:b"}])
+        keys = sorted(r["key"] for r in catalog_mod.load_remote_rows(self.home))
+        self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
+
+    def test_a_pre_suffix_file_is_read_until_superseded_and_never_deleted(self):
+        folder = catalog_mod._satellite_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "m_1.json").write_text(json.dumps(
+            {"rows": [{"key": "claude:old@m.1", "machine_id": "m.1"}]}))
+        self.assertEqual([r["key"] for r in catalog_mod.load_remote_rows(self.home)],
+                         ["claude:old@m.1"])
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        self.assertEqual([r["key"] for r in catalog_mod.load_remote_rows(self.home)],
+                         ["claude:a@m.1"])
+        # Either write order: "m_1"'s own file is its own, never removed.
+        catalog_mod.merge_remote_rows(self.home, "m_1", [{"key": "claude:b"}])
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        keys = sorted(r["key"] for r in catalog_mod.load_remote_rows(self.home))
+        self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
+
+    def test_a_menu_saved_under_the_old_name_still_loads(self):
+        from quiver.remote import slash
+        path = slash._sat_file(self.home, "m.1").with_name("m_1.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"harnesses": {}}))
+        self.assertEqual(slash.load_satellite(self.home, "m.1"), {"harnesses": {}})
 
     def test_merge_skips_non_dict_rows(self):
         out = catalog_mod.merge_remote_rows(
@@ -1976,6 +2153,42 @@ class TestReviewFixes(unittest.TestCase):
             "data": {"op": "control", "command_id": "c2"},
         }).encode())
         ag._dispatch.assert_called_once()
+
+    def test_slow_ops_leave_the_stream_thread(self):
+        # A launch boots a pane (up to 30 s) and an attachment pull
+        # downloads; inline, every command behind them waited.
+        ag = self._agent()
+        ran = []
+        ag._dispatch = lambda ev: ran.append(ev["data"]["op"])
+        ag._sendq = MagicMock()
+        threads = []
+        with patch.object(agent_mod.threading, "Thread") as thread:
+            thread.side_effect = lambda **kw: threads.append(kw) or MagicMock()
+            for seq, op in enumerate(("launch", "attachment", "message"), 1):
+                ag._handle_frame(json.dumps({
+                    "type": "command", "seq": seq, "session": "claude:a",
+                    "data": {"op": op}}).encode())
+        self.assertEqual(ran, [])  # nothing ran on the stream thread
+        self.assertEqual(len(threads), 1)  # launch: its own thread
+        threads[0]["target"](*threads[0]["args"])
+        queued = ag._sendq.submit.call_args_list
+        self.assertEqual([c[0][0] for c in queued], ["claude:a", "claude:a"])
+        for c in queued:
+            c[0][1]()  # the session queue runs them in submit order
+        self.assertEqual(ran, ["launch", "attachment", "message"])
+        self.assertEqual(ag._done_cmd_seq, 3)
+
+    def test_attach_stays_on_the_stream(self):
+        # Queued behind a headless turn, an attach could run after a
+        # later detach and undo it.
+        ag = self._agent()
+        ag._dispatch = MagicMock()
+        ag._sendq = MagicMock()
+        ag._handle_frame(json.dumps({
+            "type": "command", "seq": 1, "session": "claude:a",
+            "data": {"op": "attach"}}).encode())
+        ag._dispatch.assert_called_once()
+        ag._sendq.submit.assert_not_called()
 
     def test_one_sessions_turn_does_not_hold_another(self):
         # A headless send blocks for its whole turn; a message to a
@@ -2231,3 +2444,7 @@ class TestReviewHubFixes(unittest.TestCase):
         seqs = st._sat_cmd_seqs["sat-m1"]
         self.assertNotIn(first["data"]["command_id"], seqs)
         self.assertEqual(len(seqs), 1)  # the unacked command stays
+
+
+if __name__ == "__main__":
+    unittest.main()

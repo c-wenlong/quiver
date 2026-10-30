@@ -216,10 +216,6 @@ def supervised(home: Path | str | None) -> dict[str, dict]:
     return entries
 
 
-def supervised_keys(home: Path | str | None) -> set[str]:
-    return set(supervised(Path(home) if home is not None else None))
-
-
 def mark(home: Path | None, session_key: str, meta: dict) -> dict:
     with _registry_lock(home):
         _mark_locked(home, session_key, meta)
@@ -1162,7 +1158,8 @@ def pending_launch(home: Path | None) -> bool:
         try:
             data = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            # Mid-write or corrupt: adopt_pending deletes it next pass.
+            # Mid-write or corrupt: adopt_pending drops it once it has
+            # stayed unreadable past its grace period.
             return True
         launched = float(data.get("launched_at") or 0) \
             if isinstance(data, dict) else 0.0
@@ -1337,7 +1334,7 @@ def launch_new(
     *,
     known_ids: list[str] | None = None,
     launch_id: str = "",
-    binary: str | None = None,
+    binary: str,
     model: str | None = None,
     effort: str | None = None,
 ) -> tuple[bool, str, str | None]:
@@ -1350,8 +1347,9 @@ def launch_new(
     so a pre-existing same-cwd session can never be claimed as ours.
     ``launch_id`` rides the marker into the supervised entry, so the hub
     can tell the phone which session its launch became. ``binary`` is the
-    harness's registry command (``cursor`` runs as ``cursor-agent``);
-    without it the session tool name is the binary. ``model`` goes on
+    harness's registry command (``cursor`` runs as ``cursor-agent``),
+    from ``catalog.launch_command``; it is required so no caller falls
+    back to guessing it from the tool name (#510). ``model`` goes on
     the harness's command line (``launch_model.model_argv``, per
     harness.json ``capabilities.model``); ``effort`` is typed into the
     pane once it is up. ``fresh_launch_error`` names what a harness
@@ -1364,7 +1362,6 @@ def launch_new(
     blocked = fresh_launch_error(tool_name, model, effort)
     if blocked:
         return False, blocked, None
-    binary = binary or launch_tool_name(tool_name)
     if not binary or not shutil.which(binary):
         return False, f"{tool_name} is not installed on this machine", None
     if not cwd or not os.path.isdir(cwd):
@@ -1388,7 +1385,7 @@ def launch_new(
     try:
         folder = _pending_dir(home)
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{name}.json").write_text(json.dumps({
+        atomic_write_text(folder / f"{name}.json", json.dumps({
             "tmux": name,
             "tool_name": tool_name,
             "cwd": cwd or "",
@@ -1461,7 +1458,7 @@ def launch_fork(
             return False, fork_busy_note(source.tool_name), None
         try:
             marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({
+            atomic_write_text(marker, json.dumps({
                 "tmux": name,
                 "tool_name": source.tool_name,
                 "cwd": cwd,
@@ -1634,6 +1631,18 @@ def _prompt_unsent(pane: str, prompt: str) -> bool:
     return bool(head) and head in box
 
 
+# An unreadable pending marker younger than this may still be mid-write.
+_PENDING_UNREADABLE_GRACE_S = 60.0
+
+
+def _drop_if_stale(marker: Path, now: float) -> None:
+    try:
+        if now - marker.stat().st_mtime > _PENDING_UNREADABLE_GRACE_S:
+            marker.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def adopt_pending(
     home: Path | None,
     rows: list[tuple[str, Session, str]],
@@ -1659,7 +1668,10 @@ def adopt_pending(
             loaded.append(
                 (marker, json.loads(marker.read_text(encoding="utf-8"))))
         except (OSError, ValueError):
-            marker.unlink(missing_ok=True)
+            # Markers are written atomically now, but one from an older
+            # build may be caught mid-write: only a marker that has
+            # stayed unreadable a while is corrupt and safe to drop.
+            _drop_if_stale(marker, now)
     # Ids a fork named up front belong to that fork alone: no other
     # same-folder launch may claim them by creation time.
     claimed = {str(p.get("expect_id")) for _m, p in loaded

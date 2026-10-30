@@ -620,6 +620,22 @@ class TestOpencodeSource(unittest.TestCase):
         out = src.poll()
         self.assertEqual([m["text"] for m in out], ["more"])
 
+    def test_start_near_end_reads_only_recent_parts(self):
+        # First sight of a long session used to journal all of it.
+        for i in range(5):
+            self._add_part(f"p{i}", 1000 + i, {"type": "text", "text": f"t{i}"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        src.start_near_end(2)
+        self.assertEqual([m["text"] for m in src.poll()], ["t3", "t4"])
+        self._add_part("p5", 1005, {"type": "text", "text": "t5"})
+        self.assertEqual([m["text"] for m in src.poll()], ["t5"])
+
+    def test_start_near_end_on_a_short_session_reads_it_all(self):
+        self._add_part("p1", 1000, {"type": "text", "text": "a"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        src.start_near_end(2)
+        self.assertEqual([m["text"] for m in src.poll()], ["a"])
+
     def test_cursor_persistence(self):
         self._add_part("p1", 1000, {"type": "text", "text": "a"})
         src = tail.OpencodeSource(self.db, "sess1")
@@ -813,6 +829,28 @@ class TestTailer(unittest.TestCase):
         self.assertTrue(src.restore(
             {"source": "opencode", "session_id": "s2", "cursor": [5, "x"]}))
 
+    def test_poll_reads_the_source_state_once(self):
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("a")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        t = tail.Tailer("k", _session_for(), src, self.tmp / "c", False)
+        t.poll(time.time(), True)
+        with patch.object(src, "state", wraps=src.state) as state:
+            t.poll(time.time(), True)
+            self.assertEqual(state.call_count, 1)
+            self.assertFalse(t.moved)
+            with open(path, "a") as fh:
+                fh.write(json.dumps(_claude_user("b")) + "\n")
+            t.poll(time.time(), True)
+            self.assertTrue(t.moved)
+        # A replaced source is read fresh, not compared with the old
+        # one's state: an empty new file reads as not moved.
+        empty = self.tmp / "empty.jsonl"
+        empty.write_text("")
+        t.source = tail.JsonlTailSource(empty, "claude")
+        self.assertEqual(t.poll(time.time(), True), [])
+        self.assertFalse(t.moved)
+
     def test_cursor_commits_only_after_emit(self):
         # The cursor must lag the journal write: a crash between poll
         # and commit replays events (duplicates) instead of losing them.
@@ -904,24 +942,87 @@ class TestTailManager(unittest.TestCase):
         self.assertIs(mgr.tailers["claude:a"], first)
 
     def test_notify_only_on_transition(self):
+        # A first sighting in followup is state, not news, and a repeat
+        # of the same status is nothing; only a change notifies.
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        notify = lambda: [e for _k, e in self.events if e["type"] == "notify"]
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "followup")])
+            mgr.sync([("claude:x", sess, "followup")])
+            self.assertEqual(notify(), [])
+            mgr.sync([("claude:x", sess, "active")])
+            mgr.sync([("claude:x", sess, "followup")])
+            mgr.sync([("claude:x", sess, "followup")])
+        self.assertEqual([e["data"]["kind"] for e in notify()], ["needs_you"])
+
+    def test_an_unresolvable_source_gets_no_tailer(self):
         sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
                        session_id="", tool_name="claude")
         mgr = self._manager()
         with patch.object(tail, "make_source", return_value=None):
-            # Source unresolvable: no tailer, but status transitions still
-            # emit through sync? No — tailer-less keys are skipped.
             mgr.sync([("claude:x", sess, "active")])
-        notify = [ev for evs in self.events for ev in [evs[1]]
-                  if ev["type"] == "notify"]
-        self.assertEqual(notify, [])
+        self.assertNotIn("claude:x", mgr.tailers)
+        self.assertEqual(self.events, [])
 
     def test_removed_session_drops_tailer(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
         sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
                        session_id="", tool_name="claude")
         mgr = self._manager()
-        with patch.object(tail, "make_source", return_value=None):
-            mgr.sync([("claude:x", sess, "")])
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+        self.assertIn("claude:x", mgr.tailers)
+        mgr.sync([])
         self.assertNotIn("claude:x", mgr.tailers)
+        self.assertNotIn("claude:x", mgr.statuses)
+
+    def test_a_gone_session_retires_its_approval_and_state(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+        mgr._approval_outstanding["claude:x"] = ("req-1", "fp")
+        mgr._approval_checked_at["claude:x"] = 1.0
+        mgr.last_append["claude:x"] = 1.0
+        with patch.object(tail.supervise, "set_pending_approval") as pending:
+            mgr.sync([])
+        pending.assert_called_once_with("claude:x", None)
+        resolved = [e for _k, e in self.events if e["type"] == "approval.resolved"]
+        self.assertEqual(resolved[-1]["data"]["request_id"], "req-1")
+        for kept in (mgr._approval_outstanding, mgr._approval_checked_at,
+                     mgr.last_append):
+            self.assertNotIn("claude:x", kept)
+
+    def test_a_session_dropped_mid_pane_read_raises_no_card(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+
+        def capture(_name):
+            mgr.sync([])  # the catalog drops it while the pane is read
+            return "pane"
+
+        with patch.object(tail.supervise, "meta_for", return_value={"mode": "tmux"}), \
+                patch.object(tail.supervise, "channel_name", return_value="qv-1"), \
+                patch.object(tail.supervise, "capture_pane", side_effect=capture), \
+                patch.object(tail.supervise, "pane_shows_approval", return_value=True), \
+                patch.object(tail.supervise, "set_pending_approval"):
+            mgr._poll_approvals(1000.0)
+        self.assertNotIn("claude:x", mgr._approval_outstanding)
+        self.assertEqual([e for _k, e in self.events
+                          if e["type"] == "approval.requested"], [])
 
     def test_notify_transitions(self):
         src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")

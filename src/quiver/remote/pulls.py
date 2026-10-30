@@ -73,7 +73,7 @@ def _number_arg(raw) -> int | None:
 
 # ------------------------------------------------------------------ reads
 
-def list(state, args) -> tuple[int, dict]:
+def list_view(state, args) -> tuple[int, dict]:
     """``GET /v1/pulls``: every pinned repo's open PRs.
 
     ``{repos: [{name, status, pulls, error?}], machine, machine_id,
@@ -334,11 +334,9 @@ def _prepare_and_launch(state, launch_id: str, repo: str, number: int,
         note("Cloning mirror…")
     else:
         note(f"Checking out PR #{number}…")
-    # One checkout at a time per repo mirror — the same table the web
-    # app's worktree action holds, so a phone open and a page open of
-    # two PRs in one repo can't interleave on FETCH_HEAD.
-    with G.mirror_lock(state.home, repo):
-        made = manage.pr_worktree(repo, str(number), state.home)
+    # pr_worktree holds the repo mirror's lock: a phone open and a page
+    # open of two PRs in one repo can't interleave on FETCH_HEAD.
+    made = manage.pr_worktree(repo, str(number), state.home)
     if made.status != "ok":
         return made.error or made.status
     cwd = made.data["path"]

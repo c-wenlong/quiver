@@ -56,20 +56,6 @@ function statusLogo(id, name = "") {
   return `<img class="logo${mono}" src="/app/${file}" alt="">`;
 }
 
-/* Foundation's .relative(presentation: .named): "now", "5 minutes ago",
- * "yesterday". */
-function statusRelative(epoch) {
-  // Every time shown this way is past; a hub clock a little ahead of this
-  // browser's must not read "in 2 minutes".
-  const diff = Math.min(0, epoch - Date.now() / 1000);
-  const abs = Math.abs(diff);
-  const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
-  for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["week", 604800],
-    ["day", 86400], ["hour", 3600], ["minute", 60]]) {
-    if (abs >= size) return rtf.format(Math.trunc(diff / size), unit);
-  }
-  return abs < 1 ? "now" : rtf.format(Math.trunc(diff), "second");
-}
 
 /* .dateTime.day().month(.abbreviated).hour().minute(): "Oct 7, 1:25 PM". */
 function statusWhen(epoch) {
@@ -124,7 +110,10 @@ function statusKeep(data) {
 function statusGate() {
   statusPage.data = null;
   statusPage.loading = false;
-  renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  // A Track or Untrack reply can land after the browser moved on, and
+  // the gate would replace whatever page shows now.
+  if (!statusOnPage()) return;
+  renderGate();
 }
 
 /* A card's reading, or none once it is older than an hour, as the hub
@@ -141,13 +130,12 @@ function statusView(s) {
 }
 
 function statusError(status, data) {
-  return (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+  return failText(status, data, "then refresh");
 }
 
 function statusHeader() {
   const p = statusPage, d = p.data;
-  const checked = d && d.checked_at ? `<span class="caption muted">Checked ${esc(statusRelative(d.checked_at))}</span>` : "";
+  const checked = d && d.checked_at ? `<span class="caption muted">Checked ${esc(Fmt.relative(d.checked_at))}</span>` : "";
   return pageHeader("Service status", "Live status from the official status pages of the services your harnesses use.",
     `${checked}<button class="status-add" id="status-add">${statusIcon("plus")}<span>Add service</span></button>
     <button class="icon-button${p.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh"
@@ -255,7 +243,7 @@ function statusCard(raw) {
 /* True while the status page is the visible one, so a slow POST landing
  * after the browser moved on cannot paint cards over another page. */
 function statusOnPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "status";
+  return currentRoute() === "status";
 }
 
 /* The card's Remove, confirmed inline. The hub's answer is a fresh
@@ -307,7 +295,7 @@ function statusIncident(i) {
   const meta = [];
   if (i.stage) meta.push(i.stage);
   if (i.started_at != null) meta.push(`${i.maintenance ? "began" : "started"} ${statusWhen(i.started_at)}`);
-  if (i.updated_at != null) meta.push(`updated ${statusRelative(i.updated_at)}`);
+  if (i.updated_at != null) meta.push(`updated ${Fmt.relative(i.updated_at)}`);
   const link = safeHref(i.url) ? `<a class="status-incident-link" href="${safeHref(i.url)}" target="_blank" rel="noopener noreferrer"
       title="${esc(i.url)}" aria-label="Open incident">${statusIcon("arrow")}</a>` : "";
   return `<div class="status-incident">
@@ -331,7 +319,7 @@ function statusProblem(s) {
   if (s.problem_until != null) {
     text += ` ${new Date(s.problem_until * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
   }
-  if (s.stale && s.checked_at != null) text += `. Showing the reading from ${statusRelative(s.checked_at)}.`;
+  if (s.stale && s.checked_at != null) text += `. Showing the reading from ${Fmt.relative(s.checked_at)}.`;
   return `<div class="status-problem caption">${statusIcon("warn")}<span>${esc(text)}</span></div>`;
 }
 
@@ -353,7 +341,7 @@ function statusCatalogueDialog() {
   document.body.appendChild(dlg);
   // A sheet belongs to the status page: leaving it closes the sheet.
   window.addEventListener("hashchange", () => {
-    if ((location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] !== "status" && dlg.open) dlg.close();
+    if (currentRoute() !== "status" && dlg.open) dlg.close();
   });
   return dlg;
 }
@@ -504,7 +492,7 @@ function startStatusClock() {
   const p = statusPage;
   if (p.timer) return;
   p.timer = setInterval(() => {
-    const onPage = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "status";
+    const onPage = currentRoute() === "status";
     if (!onPage) { clearInterval(p.timer); p.timer = null; return; }
     if (document.hidden || p.loading || !p.data) return;
     if (Date.now() - p.loadedAt >= 300000) renderStatus("status");

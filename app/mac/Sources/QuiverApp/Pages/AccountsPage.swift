@@ -16,6 +16,9 @@ struct AccountsPage: View {
         Page(title: "Accounts",
              subtitle: "Each account keeps its own sign-in. Open it in its app or a terminal without logging out.") {
             Button("Refresh", systemImage: "arrow.clockwise") {
+                // A refresh is a fresh look: the last action's failure goes.
+                // Other reloads keep it, such as the one after a failed Remove.
+                actionError = nil
                 Task { await reloadAll(force: true, renewExpired: true) }
             }
             .iconButton()
@@ -156,7 +159,7 @@ private struct AccountCard: View {
     @State private var confirmingRemove = false
     @State private var installing: Provider?
     /// Sign in, or Install first when its CLI isn't on PATH.
-    @ViewBuilder func signInItem(name: String, harness: String,
+    @ViewBuilder func signInItem(harness: String,
                                  cli: String?, installed: Bool?,
                                  run: @escaping () -> Void) -> some View {
         if case .install(let h) = AccountSignIn.action(cli: cli, harness: harness, installed: installed) {
@@ -194,7 +197,7 @@ private struct AccountCard: View {
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
                 Spacer()
                 EllipsisMenu {
-                    signInItem(name: profile.name, harness: profile.vendor.rawValue,
+                    signInItem(harness: profile.vendor.rawValue,
                                cli: model.signInCLI(for: profile),
                                installed: app.others.cliInstalled[LaunchPlanner.cliName(for: profile.vendor)]
                                    ?? model.cliOnPath[profile.vendor]) {
@@ -508,7 +511,7 @@ private struct HarnessAccountCard: View {
     @State private var installing: Provider?
     @State private var fixing = false
     /// Sign in, or Install first when its CLI isn't on PATH.
-    @ViewBuilder func signInItem(name: String, harness: String,
+    @ViewBuilder func signInItem(harness: String,
                                  cli: String?, installed: Bool?,
                                  run: @escaping () -> Void) -> some View {
         if case .install(let h) = AccountSignIn.action(cli: cli, harness: harness, installed: installed) {
@@ -559,7 +562,7 @@ private struct HarnessAccountCard: View {
                     // An extra account: its name and folder are the profile's,
                     // so a rename writes profiles.json and Remove deletes them.
                     EllipsisMenu {
-                        signInItem(name: profile.name, harness: profile.vendor.rawValue,
+                        signInItem(harness: profile.vendor.rawValue,
                                    cli: model.signInCLI(for: profile),
                                    installed: app.others.cliInstalled[LaunchPlanner.cliName(for: profile.vendor)]
                                        ?? model.cliOnPath[profile.vendor]) {
@@ -576,7 +579,7 @@ private struct HarnessAccountCard: View {
                     EllipsisMenu {
                         if let login = HarnessAccess.loginCommand(for: row.name) {
                             let cli = AccountSignIn.cli(loginCommand: login)
-                            signInItem(name: row.name, harness: row.name, cli: cli,
+                            signInItem(harness: row.name, cli: cli,
                                        installed: AccountSignIn.installed(
                                            harness: row.name, cli: cli,
                                            cliInstalled: app.others.cliInstalled,
@@ -645,13 +648,16 @@ private struct HarnessAccountCard: View {
         }
         .background { installSheet }
         .background {
-            if row.issue != nil {
+            if let issue = row.issue {
                 // Drawn like installSheet: over the window, no row space.
                 Color.clear.quiverSheet(isPresented: $fixing) {
-                    IssueFixSheet(title: name, issue: row.issue!, perform: perform)
+                    IssueFixSheet(title: name, issue: issue, perform: perform)
                 }
             }
         }
+        // The sheet goes with its issue; left set, `fixing` would open it
+        // again, unasked, the next time this account has one.
+        .onChange(of: row.issue == nil) { _, gone in if gone { fixing = false } }
         .alert("Rename \(row.profile?.name ?? ownName)", isPresented: $renaming) {
             TextField("Name", text: $newName)
             if let profile = row.profile {

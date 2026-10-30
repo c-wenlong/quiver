@@ -158,7 +158,7 @@ function settingsSection() {
 }
 
 function onSettingsPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "settings";
+  return currentRoute() === "settings";
 }
 
 async function renderSettings() {
@@ -184,7 +184,7 @@ async function renderSettings() {
   p.signedOut = false;
   if (status === 401) {
     return signedOut ? renderGate("This browser was signed out of the hub. Pair it again to come back.", true)
-      : renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      : renderGate();
   }
   if (status !== 200 || !data) {
     if (!p.data) return pageError(settingsHeader(), status, data, renderSettings);
@@ -593,17 +593,6 @@ function settingsUptime(seconds) {
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }
 
-/* Foundation's .relative(presentation: .named): "now", "5 minutes ago". */
-function settingsRelative(epoch) {
-  const diff = Math.min(0, epoch - Date.now() / 1000);
-  const abs = Math.abs(diff);
-  const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
-  for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["week", 604800],
-    ["day", 86400], ["hour", 3600], ["minute", 60]]) {
-    if (abs >= size) return rtf.format(Math.trunc(diff / size), unit);
-  }
-  return abs < 1 ? "now" : rtf.format(Math.trunc(diff), "second");
-}
 
 function remoteCards() {
   const d = settingsPage.data;
@@ -701,7 +690,7 @@ async function settingsLoadSetup() {
   p.setupBusy = false;
   p.setup = status === 200 && data
     ? data.remote_setup
-    : { error: (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.") };
+    : { error: failText(status, data, null) };
   if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote();
 }
 
@@ -735,7 +724,7 @@ function deviceRow(dev) {
     if (f) bits.push(f);
   }
   bits.push(dev.id);
-  if (dev.last_seen_at) bits.push(`seen ${settingsRelative(dev.last_seen_at)}`);
+  if (dev.last_seen_at) bits.push(`seen ${Fmt.relative(dev.last_seen_at)}`);
   if (dev.paired_via === "tailscale") bits.push("paired with Tailscale");
   const title = `${esc(name)}${dev.this_device ? ' <span class="badge set-this">This device</span>' : ""}`;
   const busy = p.revoking.has(dev.id);
@@ -883,8 +872,7 @@ async function settingsSetSearch(on) {
   if (status === 200 && data && data.session_search) {
     if (p.data) p.data.session_search = data.session_search;
   } else {
-    p.searchError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+    p.searchError = failText(status, data, null);
   }
   if (!onSettingsPage()) return;
   paintSettings();
@@ -905,8 +893,7 @@ async function settingsSearchAction(body, focus) {
   if (status === 200 && data && data.session_search) {
     if (p.data) p.data.session_search = data.session_search;
   } else {
-    p.searchError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+    p.searchError = failText(status, data, null);
   }
   if (!onSettingsPage()) return;
   paintSettings();
@@ -1116,13 +1103,12 @@ function settingsCloseKey() {
 }
 
 function settingsFailure(status, data) {
-  return (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  return failText(status, data);
 }
 
 function settingsSignedOut(status) {
   if (status !== 401) return false;
-  if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (onSettingsPage()) renderGate();
   return true;
 }
 
@@ -1320,7 +1306,7 @@ async function settingsLoadGithub(refresh) {
   const { status, data } = await api(`/v1/app/settings?part=github${refresh ? "&refresh=1" : ""}`);
   p.githubBusy = false;
   if (status === 200 && data) p.github = data.github;
-  else p.github = { error: (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.") };
+  else p.github = { error: failText(status, data, null) };
   if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote();
 }
 
@@ -1335,13 +1321,13 @@ async function settingsSyncGithub() {
   settingsRepaintRemote("#set-gh-sync");
   const { status, data } = await apiPost("/v1/app/settings/sync", {});
   p.syncing = false;
-  if (status === 401) { if (gen === routeGen && onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { if (gen === routeGen && onSettingsPage()) renderGate(); return; }
   if (status === 200 && data) {
     p.github = data.github;
     const skipped = (data.failed || []).map((f) => (f.owner === "<orgs>" ? "your organizations" : f.owner));
     p.syncError = skipped.length ? `Skipped ${skipped.join(", ")} — their old repos stayed.` : null;
   } else {
-    p.syncError = (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.syncError = failText(status, data);
     // A 409 for gh means the card's own line is out of date: check again.
     if (status === 409 && data && data.error && String(data.error.code || "").startsWith("gh_")) settingsLoadGithub(true);
   }
@@ -1358,9 +1344,9 @@ async function settingsMint() {
   settingsRepaintRemote();
   const { status, data } = await apiPost("/v1/app/settings/pair", {});
   p.minting = false;
-  if (status === 401) { if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { if (onSettingsPage()) renderGate(); return; }
   if (status !== 200 || !data || !data.ticket) {
-    p.pairError = (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.pairError = failText(status, data);
     p.ticket = null;
     settingsStopClock();
   } else {
@@ -1393,7 +1379,7 @@ async function settingsDecide(rid, act, code) {
   settingsRepaintRemote();
   const { status, data } = await apiPost(`/v1/pair/requests/${act}`, { code, request_id: rid });
   p.deciding = null;
-  if (status === 401) { if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { if (onSettingsPage()) renderGate(); return; }
   if (status === 200) {
     // The request is decided: its draft dies with it, and the device
     // and request lists are read again.
@@ -1401,8 +1387,7 @@ async function settingsDecide(rid, act, code) {
     settingsRefreshRemote();
     return;
   }
-  p.decideErrors[rid] = (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  p.decideErrors[rid] = failText(status, data);
   settingsRepaintRemote(`[data-request="${CSS.escape(rid)}"] [data-act="${act}"]`);
 }
 
@@ -1412,7 +1397,7 @@ async function settingsRefreshRemote(focus) {
   settingsRepaintRemote(focus);
   const { status, data } = await api("/v1/app/settings");
   if (gen !== routeGen || mine !== settingsPage.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status === 200 && data) { settingsPage.data = data; settingsRepaintRemote(focus); }
   settingsPollRequests();
 }
@@ -1448,7 +1433,7 @@ function settingsPollRequests() {
     if (status === 401) {
       // The gate's inputs would be wiped by the next tick's gate.
       settingsStopPoll();
-      return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      return renderGate();
     }
     if (status === 200 && data && p.data
         && remoteSig(data.remote) !== remoteSig(p.data.remote)) {
@@ -1487,7 +1472,7 @@ async function settingsRevoke(id) {
     if (onSettingsPage()) renderSettings();
     return;
   }
-  if (status === 401) { if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { if (onSettingsPage()) renderGate(); return; }
   if (status === 200 && data) {
     p.confirming = null;
     p.data.remote.devices = data.devices;
@@ -1497,8 +1482,7 @@ async function settingsRevoke(id) {
     return;
   }
   p.confirming = null;
-  p.revokeErrors[id] = (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  p.revokeErrors[id] = failText(status, data);
   settingsRepaintRemote(`[data-device="${CSS.escape(id)}"] [data-act="revoke"]`);
 }
 
