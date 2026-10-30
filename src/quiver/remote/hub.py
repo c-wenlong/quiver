@@ -3395,41 +3395,25 @@ class _Handler(BaseHTTPRequestHandler):
     # -- static ------------------------------------------------------------
 
     def _serve_static(self, path: str) -> None:
-        if path == "/app" or path.startswith("/app/"):
-            self._serve_webapp(path)
-            return
-        # The web app is the only page now: ``/`` (and a bookmarked
-        # ``/index.html``) lands on it. The fragment survives the
-        # redirect, so an old ``/#pair=<token>`` or ``/#approve`` link
-        # still reaches the app's handlers.
-        if path in {"/", "/index.html"}:
-            self.send_response(301)
-            self.send_header("Location", "/app/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-        # The icons live with the web app's assets; its pages (and the
-        # manifest it may grow) reference them at the root.
-        if path in {"/icon-192.png", "/icon-512.png"}:
-            self._send_asset(webapp_static.STATIC_DIR / path[1:])
-            return
-        self._send_error(404, "not_found", "unknown route")
-
-    def _serve_webapp(self, path: str) -> None:
-        """The web app (``quiver/webapp/static``) under ``/app/``.
-
-        Only a flat file name of a known type is served, so no request
-        can climb out of the folder. The pages fetch ``/v1/app/*`` with
-        the device credential the app's ``#pair=`` handler pairs, which
-        this origin shares.
+        """The web app (``quiver/webapp/static``) at the root: ``/`` is its
+        page and each asset a flat name beside it (``/app.js``,
+        ``/harness-claude.svg``). Every non-API path lands here, and only
+        a flat name of a known type is served, so no request can climb
+        out of the folder or shadow a ``/v1/`` route. The pages fetch
+        ``/v1/app/*`` with the device credential the app's ``#pair=``
+        handler pairs, which this origin shares.
         """
-        if path == "/app":
-            self.send_response(301)
-            self.send_header("Location", "/app/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+        # The app lived under ``/app/`` until #944, and pair links minted
+        # then (``/app/#pair=<token>``) are still out there: send them,
+        # and a page cached with ``/app/…`` asset paths, to the same name
+        # at the root. The fragment survives the redirect.
+        if path == "/app" or path.startswith("/app/"):
+            self._redirect("/" + path[len("/app/"):])
             return
-        name = path[len("/app/"):] or "index.html"
+        if path == "/index.html":
+            self._redirect("/")
+            return
+        name = path[1:] or "index.html"
         if name in {"pages.js", "pages.css"}:
             body, etag = webapp_pages.bundled(name[len("pages"):])
             if webapp_pages.etag_matches(
@@ -3450,6 +3434,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(404, "not_found", "unknown route")
             return
         self._send_asset(webapp_static.STATIC_DIR / name)
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(301)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     # -- paired device self-service --------------------------------------
 

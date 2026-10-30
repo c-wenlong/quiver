@@ -25,7 +25,7 @@ const statusIcon = (name) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STATUS_ICONS[name]}</svg>`;
 
 // The logos the Mac app draws for each page (StatusService.logoID), as
-// shipped in /app/: colour ones as they are, the rest in the text colour.
+// shipped beside the page: colour ones as they are, the rest in the text colour.
 const STATUS_LOGOS = {
   claude: "harness-claude-color.svg", openai: "harness-openai.svg", copilot: "harness-copilot.svg",
   cursor: "harness-cursor.svg", gemini: "harness-gemini-color.svg", devin: "harness-devin.svg",
@@ -77,7 +77,7 @@ function statusLogo(id, name = "") {
     return `<span class="logo status-glyph" aria-hidden="true">${esc(letter.toUpperCase())}</span>`;
   }
   const mono = file.endsWith("-color.svg") ? "" : " mono";
-  return `<img class="logo${mono}" src="/app/${file}" alt="">`;
+  return `<img class="logo${mono}" src="/${file}" alt="">`;
 }
 
 

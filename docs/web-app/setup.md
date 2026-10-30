@@ -3,7 +3,7 @@
 A port of the Mac app's first-run setup sheet (`FirstRunSetupSheet`,
 `QuiverCore/Onboarding/FirstRunSetup.swift`) for the machine the hub runs
 on. Page id `setup`, at `#/setup`; it is not in the sidebar. While the hub
-machine has no shared `~/.quiver/AGENTS.md`, opening a bare `/app/` goes
+machine has no shared `~/.quiver/AGENTS.md`, opening a bare `/` goes
 here once per browser (remembered under `quiver.setup.offered`), and
 Overview shows a **Set up** card linking here. Settings links it too. Files:
 `quiver/webapp/pages/setup.py`, `static/pages/setup.js` and `setup.css`,

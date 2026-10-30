@@ -348,6 +348,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Remote: the web app lives at the hub's root.** `https://<hub>/`
+  is the app and its assets sit beside it (`/app.js`, `/styles.css`),
+  so there is no redirect on the way in. The `/app/…` paths earlier
+  releases served redirect to the same name at the root, fragment
+  intact, so bookmarks and `/app/#pair=` links keep working (#944).
 - **Remote: the unused `compaction` event type is gone from the
   protocol.** Compactions have always reached clients as
   `message.appended` with `kind: "compaction"`; the separate
@@ -394,15 +399,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the popover reads as controls alone.
 
 - **The remote PWA folded into the web app.** The standalone remote
-  client at `/` is gone: `/` now redirects to `/app/` with the fragment
-  intact, so old `/#pair=<token>` and `/#approve` links still land.
+  client at `/` is gone: `/` is now the web app itself, so old
+  `/#pair=<token>` and `/#approve` links land on it directly.
   Browser pairing moved to the web app's gate — "Pair with Tailscale"
   asks for approval like the iPhone app does, and the `#pair=` handler
   trades a token — while Tailscale pair requests are approved inline
   in Settings › Integrations › Remote, which polls for new ones, and
   sessions waiting on an approval are badged "Approval" in the
   Sessions list. `swe remote pair` and the pair QR now hand out
-  `…/app/#pair=<token>` links; the `quiver://pair` deep link, the
+  `…/#pair=<token>` links; the `quiver://pair` deep link, the
   pairing APIs and stored device credentials are unchanged.
 
 - **Flatter Mac app window.** The page now fills the window to its edges

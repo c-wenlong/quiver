@@ -342,7 +342,7 @@ GET  /v1/inbox                       pending decisions; ?done=1 adds finished-to
 GET  /v1/app/overview                the web app's Overview (docs/web-app.md)
 GET  /v1/app/sessions                the web app's Sessions: catalog rows + usage
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
-GET  /app/                           the web app's pages, static; / redirects here, fragment intact
+GET  /                               the web app's page; its assets are flat names beside it (/app.js); /app/… redirects to the same name here, fragment intact
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
 GET  /v1/devices                     every paired device (device_view rows + paired_via + this_device) and the pending pair requests, for the pair-requests-and-devices screen
@@ -1135,7 +1135,7 @@ writes-go-through-tested-Python rule.
 every page, component and feature, and the hub work each needs.
 
 Two clients. The web app (`src/quiver/webapp/`, served by the hub under
-`/app/`; `/` redirects there, fragment intact) works in any browser over
+`/`; older `/app/` links redirect there, fragment intact) works in any browser over
 Tailscale: its `#pair=` fragment trades a pair token for the credential
 it keeps in localStorage, and pending pair requests are decided inline
 in Settings › Integrations › Remote. On iPhone the client is native
@@ -1218,7 +1218,7 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
 - Owner devices: a request without a bearer is still let in when its
   tailnet node belongs to the hub owner's login (not tagged), it sends
   `X-Quiver-Pair: 1` from an allowed Host, and its `Origin` is the hub's
-  own; the web app at `/app/` relies on this. The `whois` answer is
+  own; the web app at `/` relies on this. The `whois` answer is
   cached per IP (60 s, a miss 10 s). Satellite routes stay bearer-only.
 - Pairing: the phone posts `POST /v1/pair/request`; the hub resolves
   its Tailscale node with `tailscale whois <peer ip>` and hands back a
@@ -1232,7 +1232,7 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   `devices.json`
   (0600), revocable per device — Trusted Devices minus biometrics. A
   device can't approve its own request; five wrong codes deny it. The
-  QR/token path (`swe remote pair`, `http://hub/app/#pair=token`; `--app`
+  QR/token path (`swe remote pair`, `http://hub/#pair=token`; `--app`
   swaps in the `quiver://` deep link) stays as the fallback for devices
   `whois` can't identify. Either way, only a tailnet device can reach
   the pairing routes at all.

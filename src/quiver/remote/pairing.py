@@ -322,7 +322,7 @@ def pair_url(host: str, port: int, token: str, name: str = "",
              scheme: str = "http") -> str:
     """The form a phone browser can open directly: the web app's
     ``#pair=`` handler trades the token for a device credential."""
-    out = (f"{scheme}://{url_host(host)}:{port}/app/"
+    out = (f"{scheme}://{url_host(host)}:{port}/"
            f"#pair={quote(token, safe='')}")
     if name:
         out += f"&name={quote(name, safe='')}"

@@ -63,7 +63,7 @@ badge where its control would be.
   a line in the card says it is signed in through Tailscale and has
   nothing to revoke. The hub refuses a revoke of a `tailnet:` id.
 - **Pair a device** mints a token and opens a sheet like the app's: the
-  QR code, a Browser / Quiver app switch (the `/app/#pair=` link or the
+  QR code, a Browser / Quiver app switch (the `/#pair=` link or the
   `quiver://pair` deep link), the app's instructions, the link, Copy
   link, and a countdown that turns into "Expired — mint a new code".
   Closing the sheet reloads the list, so a phone that paired shows up.
