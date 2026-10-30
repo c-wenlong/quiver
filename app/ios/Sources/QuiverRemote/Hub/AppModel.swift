@@ -187,7 +187,7 @@ final class AppModel {
                     sessions[j].pinnedAt = before.pinnedAt
                 }
             }
-            let reason = (error as? HubError)?.message ?? error.localizedDescription
+            let reason = error.localizedDescription
             return "\(pinned ? "Couldn't pin it" : "Couldn't unpin it"). \(reason)"
         }
     }
@@ -492,7 +492,7 @@ final class AppModel {
         } catch {
             guard gen == pairingGen else { return false }
             pairing.busy = false
-            pairing.error = (error as? HubError)?.message ?? error.localizedDescription
+            pairing.error = error.localizedDescription
             return false
         }
     }
@@ -514,7 +514,7 @@ final class AppModel {
         } catch {
             guard gen == pairingGen else { return }
             pairing.busy = false
-            pairing.error = (error as? HubError)?.message ?? error.localizedDescription
+            pairing.error = error.localizedDescription
         }
     }
 
@@ -539,7 +539,7 @@ final class AppModel {
         } catch {
             guard gen == pairingGen else { return }
             pairing.busy = false
-            pairing.error = (error as? HubError)?.message ?? error.localizedDescription
+            pairing.error = error.localizedDescription
         }
     }
 
