@@ -1134,6 +1134,22 @@ function nsMachines() {
       || String(a.name || a.id).localeCompare(String(b.name || b.id)));
 }
 
+/* What the sheet says when no machine can start a session, from every
+ * row the hub listed (NewSessionOptions.noMachineMessage on the Mac). A
+ * row with `launchable` answered: nothing is installed there or every
+ * harness is switched off, so updating swe would change nothing. Only
+ * rows without the field (an older hub), or none at all, mean swe is
+ * too old. */
+function nsNoMachineNote(rows) {
+  if (!rows.some((m) => Array.isArray(m.launchable))) {
+    return "No machine can start a session. Update swe on the hub: a machine offers the harnesses "
+      + "swe lists there, minus the ones switched off in Provider visibility.";
+  }
+  return rows.length > 1
+    ? "No harness can start on any machine: install one, or turn it on in Settings › Providers."
+    : "No harness can start on the hub: install one there, or turn it on in Settings › Providers.";
+}
+
 function nsMachine() {
   return nsMachines().find((m) => m.id === ns.machineId) || null;
 }
@@ -1237,8 +1253,7 @@ function nsPaint() {
     <div class="sheet-title">New session</div>
     ${machineChips}
     ${machines.length && !machine ? '<p class="note">Pick a machine.</p>' : ""}
-    ${!machines.length ? `<p class="note">No machine can start a session. Update swe on the hub: a machine
-      offers the harnesses swe lists there, minus the ones switched off in Provider visibility.</p>` : ""}
+    ${!machines.length ? `<p class="note">${esc(nsNoMachineNote(ns.machines || []))}</p>` : ""}
     <div class="caption">Harness</div>
     ${harnessChips}
     ${untracked ? `<p class="note">Quiver can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
