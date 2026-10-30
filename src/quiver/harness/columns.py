@@ -56,13 +56,23 @@ SESSION_WINDOWS: tuple[int | None, ...] = (7, 30, 100, 365, None)
 DEFAULT_WINDOW = 100
 
 
+def _section() -> dict:
+    """config.json's ``list`` object, or ``{}`` when it is anything else.
+
+    ``swe config set list 5`` is accepted (the validator only knows the
+    report keys), and every ``swe list`` reads this section first.
+    """
+    section = (load_config() or {}).get(_CONFIG_SECTION)
+    return section if isinstance(section, dict) else {}
+
+
 def window_label(days: int | None) -> str:
     return "All" if days is None else f"{days}d"
 
 
 def load_window() -> int | None:
     """The configured session window, or the default when unset."""
-    section = (load_config() or {}).get(_CONFIG_SECTION) or {}
+    section = _section()
     if _WINDOW_KEY not in section:
         return DEFAULT_WINDOW
     value = section[_WINDOW_KEY]
@@ -80,7 +90,7 @@ def save_window(days: int | None) -> int | None:
     if days not in SESSION_WINDOWS:
         days = DEFAULT_WINDOW
     config = dict(load_config() or {})
-    section = dict(config.get(_CONFIG_SECTION) or {})
+    section = dict(_section())
     section[_WINDOW_KEY] = days
     config[_CONFIG_SECTION] = section
     save_config(config)
@@ -98,14 +108,15 @@ def next_window(days: int | None, step: int = 1) -> int | None:
 
 def normalise(keys) -> list[str]:
     """Drop unknown keys, force the locked ones in, keep declared order."""
-    wanted = {k for k in (keys or []) if k in BY_KEY} | set(LOCKED)
+    if not isinstance(keys, (list, tuple, set, frozenset)):
+        keys = []          # a hand-edited string would iterate as letters
+    wanted = {k for k in keys if isinstance(k, str) and k in BY_KEY} | set(LOCKED)
     return [c.key for c in COLUMNS if c.key in wanted]
 
 
 def load_columns() -> list[str]:
     """The configured column set, or the default when unset."""
-    section = (load_config() or {}).get(_CONFIG_SECTION) or {}
-    configured = section.get(_CONFIG_KEY)
+    configured = _section().get(_CONFIG_KEY)
     if not configured:
         return list(DEFAULT_COLUMNS)
     return normalise(configured)
@@ -115,7 +126,7 @@ def save_columns(keys) -> list[str]:
     """Persist a column set, returning what was actually written."""
     resolved = normalise(keys)
     config = dict(load_config() or {})
-    section = dict(config.get(_CONFIG_SECTION) or {})
+    section = dict(_section())
     section[_CONFIG_KEY] = resolved
     config[_CONFIG_SECTION] = section
     save_config(config)

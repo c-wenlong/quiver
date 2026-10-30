@@ -11,6 +11,7 @@ swe find, but a plugin has no file sitting in a harness root, so:
 """
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -134,6 +135,100 @@ class RegistryReadTest(_NoRegistry, unittest.TestCase):
             self.assertEqual(len(got), 1)
             self.assertIsNone(got[0].enabled)
             self.assertEqual(got[0].harness, "cursor")
+
+
+class MalformedRecordTest(_NoRegistry, unittest.TestCase):
+    """Valid JSON of the wrong shape costs its rows, never the command.
+
+    These files belong to claude, droid, cursor and grok; a list where an
+    object belongs used to raise AttributeError out of `swe find plugins`.
+    """
+
+    def _write(self, home: Path, rel: str, data) -> None:
+        path = home / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+
+    def test_wrong_shapes_do_not_raise(self):
+        cases = [
+            (".claude/plugins/installed_plugins.json", []),
+            (".claude/plugins/installed_plugins.json", {"plugins": ["a@dv"]}),
+            (".claude/plugins/installed_plugins.json", {"plugins": {"a@dv": ["x"]}}),
+            (".claude/plugins/installed_plugins.json", {"plugins": {"a@dv": "x"}}),
+            (".claude/settings.json", ["enabledPlugins"]),
+            (".claude/settings.json", {"enabledPlugins": ["a@dv"]}),
+            (".claude/plugins/known_marketplaces.json", ["dv"]),
+            (".claude/plugins/known_marketplaces.json", {"dv": "github"}),
+            (".claude/plugins/known_marketplaces.json", {"dv": {"source": "x"}}),
+            (".factory/plugins/installed_plugins.json", "plugins"),
+            (".cursor/plugins/cache/mk/.claude-plugin/marketplace.json", ["mk"]),
+            (".cursor/plugins/cache/mk/p/.claude-plugin/plugin.json", ["p"]),
+            (".cursor/plugins/cache/mk/p/.claude-plugin/plugin.json", {"name": 3}),
+        ]
+        for rel, data in cases:
+            with self.subTest(rel=rel, data=data), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                (home / ".claude" / "plugins").mkdir(parents=True)
+                self._write(home, rel, data)
+                for p in discover_plugins(home):
+                    self.assertIsInstance(p.name, str)
+
+    def test_a_single_object_record_and_user_scope_are_read(self):
+        """plugin_drift accepts one record object as well as a list, and
+        prefers the user-scope record; the listing now agrees with it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _claude_home(
+                tmp, enabled={"a@dv": True, "b@dv": True},
+                installs={
+                    "a@dv": {"version": "1.0", "installPath": tmp + "/a"},
+                    "b@dv": [{"scope": "project", "version": "0.9", "installPath": tmp + "/p"},
+                             {"scope": "user", "version": "2.0", "installPath": tmp + "/u"}],
+                })
+            got = {p.ref: p for p in discover_plugins(home)}
+            self.assertEqual(got["a@dv"].version, "1.0")
+            self.assertEqual(got["b@dv"].version, "2.0")
+            self.assertEqual(got["b@dv"].path, Path(tmp) / "u")
+
+    def test_a_malformed_user_record_does_not_hide_a_valid_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _claude_home(
+                tmp, enabled={},
+                installs={"b@dv": [
+                    {"scope": "project", "version": "0.9", "installPath": tmp + "/p"},
+                    {"scope": "user", "version": "2.0", "installPath": []},
+                ]})
+            got = discover_plugins(home)[0]
+            self.assertEqual((got.version, got.path), ("0.9", Path(tmp) / "p"))
+
+    def test_a_home_relative_install_path_is_expanded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _claude_home(tmp, enabled={},
+                                installs={"a@dv": [{"installPath": "~/cache/a"}]})
+            got = discover_plugins(home)
+            self.assertEqual(got[0].path, home / "cache" / "a")
+
+    def test_a_github_marketplace_is_not_read_as_a_folder(self):
+        """Its source word ("github") used to be tested as a directory
+        relative to the cwd."""
+        from quiver.find.plugins import _marketplace_sources
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._write(home, ".claude/plugins/known_marketplaces.json", {
+                "gh": {"source": {"source": "github", "repo": "o/r"}},
+                "here": {"source": {"source": "directory", "path": "~/mk"}},
+            })
+            (home / "mk").mkdir()
+            (home / "github").mkdir()
+            # A real chdir: relative paths resolve against the process's
+            # working directory, which patching os.getcwd does not move.
+            cwd = os.getcwd()
+            os.chdir(home)
+            try:
+                self.assertEqual(_marketplace_sources(home, "claude"),
+                                 {"here": home / "mk"})
+            finally:
+                os.chdir(cwd)
 
 
 class ScopeTest(unittest.TestCase):
