@@ -137,6 +137,12 @@ public final class SessionChatModel {
     /// The seq to page back from: the oldest message loaded.
     private var nextBefore: Int?
     private var streamTask: Task<Void, Never>?
+    private var modelTask: Task<Void, Never>?
+    /// Waits between the rereads of the model after a turn ends, past the
+    /// hub's 10 s catalog refresh. Tests pass none, or a sleeper that
+    /// returns at once.
+    var modelRetryDelays: [Duration] = [.seconds(6), .seconds(6)]
+    var modelSleep: @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }
     /// Bumped by every start() and stop(), so a start() still fetching
     /// history doesn't open a stream after the chat was closed.
     private var generation = 0
@@ -252,11 +258,45 @@ public final class SessionChatModel {
         generation += 1
         streamTask?.cancel()
         streamTask = nil
+        modelTask?.cancel()
+        modelTask = nil
         connection = .connecting
         // The prompt box's menu may still be open from before stop();
         // the kept list fills it again at once on the next open.
         commands.reset()
         mentions.reset()
+    }
+
+    /// Reads the hub's row again for the model alone. The chat reads its
+    /// row once on `start()` and no event carries the model, so a model
+    /// that first appears with the opening reply, or changes from another
+    /// client or the terminal, would stay as it was until a reopen.
+    ///
+    /// The hub answers `/v1/sessions` from a catalog it rebuilds every 10
+    /// seconds, and a turn's end can reach the stream before that, so one
+    /// read may still hold the old model. Until the model differs, this
+    /// reads again after each of `modelRetryDelays`. A failed read leaves
+    /// the header as it is.
+    @discardableResult
+    func refreshModel() -> Task<Void, Never> {
+        let gen = generation
+        modelTask?.cancel()
+        let task = Task { [weak self, key] in
+            var later = self?.modelRetryDelays[...] ?? []
+            while true {
+                guard let self, gen == generation, !Task.isCancelled else { return }
+                if let rows = try? await hub.withClient({ try await $0.sessions() }),
+                   gen == generation, !Task.isCancelled,
+                   let model = rows.first(where: { $0.key == key })?.model, row?.model != model {
+                    row?.model = model
+                    return
+                }
+                guard let delay = later.popFirst() else { return }
+                await modelSleep(delay)
+            }
+        }
+        modelTask = task
+        return task
     }
 
     private func follow(_ gen: Int, from last: Int) {
@@ -440,7 +480,11 @@ public final class SessionChatModel {
             let status = env.decode(HubStatusData.self)?.status ?? ""
             row?.status = status
             // The turn ended (or stopped to ask) without a message to show.
-            if !replaying, !status.isEmpty, status != "active" { awaiting.removeAll() }
+            if !replaying, !status.isEmpty, status != "active" {
+                awaiting.removeAll()
+                // A reply just finished: the header's model may be new.
+                refreshModel()
+            }
         case "command.result":
             if let result = env.decode(HubCommandResult.self) { settle(result) }
         case "session.ownership":

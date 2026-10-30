@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac app: the session's model in the chat header and Sessions
+  list.** A session's chat header reads `harness · folder · model`, and
+  each Sessions row names the model of the newest reply first in its
+  details line, ahead of the ledger's other models (the ledger's own
+  spelling of the same model isn't repeated). The provider path and the
+  8-digit date stamp are dropped, as on the phone and the web app:
+  `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
+  `claude-opus-4-5`. The app reads it from this Mac's hub rows
+  (`model`, optional), on the same read that tells which rows open a
+  chat, and the open chat reads its row again when a turn ends (twice
+  more, six seconds apart, while the hub's catalog still holds the old
+  model), so the header follows a model that first appears with the opening reply or
+  changes elsewhere. Nothing shows when the hub doesn't know it. Display
+  only: the Mac doesn't switch models. Part of
+  [#643](https://github.com/c-wenlong/quiver/issues/643).
+
+
 - **iOS app: comment on an issue, and post your Resolve context as a
   comment.** The issue page has the Mac's comment box under the thread,
   and the Resolve sheet gains "Your context (optional)", now sent with
@@ -662,6 +679,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `detail` for it.
 
 ### Fixed
+
+- **MCP gateway: a session's burst of connections is queued, not
+  reset.** A Claude Code session connects to every shared server at
+  once, and the Python 3.13 that Quiver.app bundles queues only 5
+  connections on a listening socket. With 18 shared servers, 13 of 18
+  probes at once got "connection reset" and those servers would fail to
+  connect for that session. The gateway now queues 128.
 
 - **`swe mcp sync` writes remote servers Claude Code can see.** Claude
   Code skips an `mcpServers` entry that has a `url` and no `type`
