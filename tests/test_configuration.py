@@ -135,6 +135,23 @@ class ConfigurationValidationTests(unittest.TestCase):
         self.assertIn("report.session.args", rendered)
         self.assertIn("report.max_workers", rendered)
 
+    def test_non_string_harness_is_an_issue_not_a_crash(self):
+        # `swe config set report.session.harness '["codex"]'` parses to a
+        # list, which is unhashable: the membership test used to raise.
+        for bad in (["codex"], {"name": "codex"}, 3):
+            config = {"report": {"session": {"harness": bad, "model": "m"},
+                                 "writer": {"harness": "codex", "model": "m"}}}
+            rendered = "\n".join(map(str, validate_config(config)))
+            self.assertIn("report.session.harness", rendered)
+            self.assertFalse(report_setup_complete(config))
+
+    def test_check_config_reports_a_non_string_harness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps({"report": {"writer": {"harness": ["claude"]}}}))
+            self.assertIn("report.writer.harness",
+                          "\n".join(map(str, check_config(path))))
+
     def test_secret_keys_and_credential_arguments_are_rejected(self):
         config = {"report": {
             "session": {"harness": "codex", "args": ["--api-key=abc"]},
