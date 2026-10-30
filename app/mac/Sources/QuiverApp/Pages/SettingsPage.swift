@@ -527,8 +527,11 @@ private struct SettingsSectionView: View {
                 let options = CodeEditors.candidates.map {
                     ($0.name, $0.name == "Visual Studio Code" ? "VS Code" : $0.name)
                 }
-                let selection = Binding(get: { app.editor?.name ?? "" },
-                                        set: { app.codeEditor = $0 })
+                // app.editor runs CodeEditors.installed() on each read, and
+                // Tabs reads this per option: pick from the looked-up list.
+                let selection = Binding(get: {
+                    (installed.first { $0.name == app.codeEditor } ?? installed.first)?.name ?? ""
+                }, set: { app.codeEditor = $0 })
                 ViewThatFits(in: .horizontal) {
                     Tabs(options: options, selection: selection,
                          iconImages: editors.icons, disabled: missing)
