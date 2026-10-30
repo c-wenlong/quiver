@@ -421,6 +421,9 @@ final class ChatAttachmentTests: XCTestCase {
         chat.stage("what is this", clientId: "c1", toTray: false, files: ["1730000000-a1b2c3-a.png"])
         let echo = "@/h/.quiver/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-a.png what is this"
         XCTAssertTrue(ChatModel.echoes(echo, "what is this"))
+        let spaced = "@/Volumes/Work Drive/.quiver/data/remote/inbox/0123456789abcdef01234567/1730000000-a1b2c3-a.png what is this"
+        XCTAssertTrue(ChatModel.echoes(spaced, "what is this"))
+        XCTAssertFalse(ChatModel.echoes(spaced, "this"))
         XCTAssertEqual(AttachmentRules.splitEcho(echo).names, ["a.png"])
     }
 }

@@ -649,6 +649,10 @@ final class ChatModel {
     /// device's "please run tests" isn't taken for a waiting "run tests".
     static func echoes(_ echo: String, _ sent: String) -> Bool {
         if echo == sent { return true }
+        // Staged files the hub prefixed, read whole: their home folder can
+        // hold a space, which the word split below would break on.
+        let staged = AttachmentRules.splitEcho(echo)
+        if !staged.names.isEmpty, staged.text == sent { return true }
         guard echo.hasSuffix(" " + sent) else { return false }
         let prefix = echo.dropLast(sent.count)
         return prefix.split(separator: " ", omittingEmptySubsequences: false).dropLast().allSatisfy {
