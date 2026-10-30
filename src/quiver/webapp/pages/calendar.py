@@ -453,7 +453,9 @@ def _grok_names(home: Path | None) -> dict[str, str]:
         return {}
     value = data.get("value") if isinstance(data, dict) else None
     rows = value.get("rows") if isinstance(value, dict) else None
-    return {r["id"]: r["name"] for r in rows or []
+    if not isinstance(rows, list):
+        return {}
+    return {r["id"]: r["name"] for r in rows
             if isinstance(r, dict) and isinstance(r.get("id"), str)
             and isinstance(r.get("name"), str)}
 

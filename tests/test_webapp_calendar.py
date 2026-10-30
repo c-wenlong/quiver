@@ -254,6 +254,12 @@ class TestGrokRoster(unittest.TestCase):
             json.dumps({"value": {"rows": [{"id": "x", "name": "nope"}]}}))
         self.assertEqual(cal._grok_names(self.home), {"b1": "Scout"})
 
+    def test_a_malformed_roster_is_an_empty_map(self):
+        name = f"{self.b32('u.roster.last-roster')}.blob"
+        for body in ('{"value": {"rows": true}}', '{"value": 3}', "[]", "not json"):
+            (self.store / name).write_text(body)
+            self.assertEqual(cal._grok_names(self.home), {}, body)
+
     def test_the_mac_apps_memory_is_not_read(self):
         data = self.home / ".quiver" / "data"
         data.mkdir(parents=True)
