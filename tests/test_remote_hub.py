@@ -874,6 +874,49 @@ class TestHubWriteRoutes(unittest.TestCase):
             [m["data"]["text"] for m in msgs], ["m0", "m1"]
         )
 
+    def test_messages_page_reads_the_journal_tail(self):
+        # A page comes from the end of the journal, not a parse of all
+        # of it; other event types and has_more/next_before still hold.
+        for i in range(5):
+            self.srv.state.emit(
+                "claude:s1",
+                protocol.event(
+                    "message.appended", "claude:s1", "mbp",
+                    protocol.message("assistant", f"m{i}"),
+                ),
+            )
+            self.srv.state.emit(
+                "claude:s1",
+                protocol.event("session.status", "claude:s1", "mbp",
+                               {"state": "idle"}),
+            )
+        with patch.object(
+            self.srv.state.journal, "read_since",
+            side_effect=AssertionError("whole-journal read"),
+        ):
+            status, data = self.srv.request(
+                "GET", "/v1/sessions/claude:s1/messages?limit=2",
+                headers=self.hdr,
+            )
+            self.assertEqual(status, 200)
+            body = json.loads(data)
+            self.assertEqual(
+                [m["data"]["text"] for m in body["messages"]], ["m3", "m4"])
+            self.assertTrue(body["has_more"])
+            self.assertEqual(body["next_before"], body["messages"][0]["seq"])
+            status, data = self.srv.request(
+                "GET",
+                f"/v1/sessions/claude:s1/messages?limit=3"
+                f"&before={body['next_before']}",
+                headers=self.hdr,
+            )
+            body = json.loads(data)
+            self.assertEqual(
+                [m["data"]["text"] for m in body["messages"]],
+                ["m0", "m1", "m2"])
+            self.assertFalse(body["has_more"])
+            self.assertIsNone(body["next_before"])
+
     def test_events_unknown_key_404(self):
         status, _ = self.srv.request(
             "GET", "/v1/sessions/ghost/events", headers=self.hdr
