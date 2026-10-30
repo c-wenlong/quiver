@@ -74,7 +74,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Pull to refresh
 - [x] Swipe to attach or open (Open sits beside attach/detach on a half swipe and is the only right-swipe action on a row that cannot attach)
 - [x] Empty state: "No sessions on this machine yet"
-- [ ] More than one machine: a machine switcher in the hub chip
+- [x] More than one machine: the hub chip's menu switches between paired hubs, and the new-session sheet picks the machine
 - [x] New-session sheet: machine, folder, harness, first prompt
 - [x] Hub: a route to start a session (machine, cwd, harness, prompt): `POST /v1/sessions` answers a `launch_id`, and `GET /v1/launches/<id>` names the session once it is adopted
 
@@ -106,7 +106,8 @@ are server changes in `src/quiver/remote/`.
 
 ### P7. Inbox
 - [x] Groups: Waiting on you (approvals and follow-ups), Errors, unread GitHub notifications, Finished today
-- [ ] Approval rows show the prompt itself and a Review button
+- [x] Approval rows carry a Review button
+- [ ] Approval rows show the prompt itself
 - [x] Clear a row (swipe or long press) and "Clear" in the header, through `POST /v1/inbox/dismiss`
 - [x] Swipe to dismiss a row
 - [x] Tab badge counts only Waiting on you, not every row
@@ -137,7 +138,7 @@ are server changes in `src/quiver/remote/`.
 - [ ] App and hub versions
 
 ### P11. Pull requests
-- [x] Own tab, one section per pinned repo, filter chips with counts: All, Mine, Review requested
+- [x] The GitHub tab's Pull requests side (one tab with an Issues/Pull requests switch, so the tab bar stays at five), one section per pinned repo, filter chips with counts: All, Mine, Review requested
 - [x] PR row: number, title, author, branch, check rollup, review decision, mergeable state, labels, age, draft badge
 - [x] Repo section keeps its `status`/`error` when its fetch fails while the others still list
 - [x] Pull to refresh (`?refresh=1` bypasses the hub's `gh` cache); `env_blocked` shows the `gh` fix on an empty list
@@ -148,7 +149,7 @@ are server changes in `src/quiver/remote/`.
 - [ ] Mine/Review-requested push notifications once APNs lands
 
 ### P12. Issues
-- [x] Own tab beside Pull requests, one section per pinned repo, filter chips with counts: All, Mine
+- [x] The GitHub tab's Issues side, one section per pinned repo, filter chips with counts: All, Mine
 - [x] Issue row: state icon, number, title, author, comments count, labels (≤3), assignees (≤2), age; an "agent running" chip when the hub sends `agent_running` (absent field draws none)
 - [x] Repo section keeps its `status`/`error` when its fetch fails while the others still list
 - [x] Pull to refresh (`?refresh=1` bypasses the hub's `gh` cache); `env_blocked` shows the `gh` fix on an empty list
@@ -172,7 +173,7 @@ source (open → in progress → PR open → merged, or closed), the linked
 session keys and pending launches, `agent_running`, `last_active_at`,
 and per-source env blocks so a missing token explains an empty page.
 
-- [x] Tasks tab between Inbox and Pulls: filter chips (All / Running /
+- [x] Tasks tab between Inbox and GitHub: filter chips (All / Running /
   PR open / Done) with counts, repo-or-project grouped hairline cards,
   rows with a kind glyph + `o/r#5` ref + title + state label, a `●
   Agent` mark on `agent_running`, pull to refresh, and an amber
@@ -198,23 +199,23 @@ and per-source env blocks so a missing token explains an empty page.
 
 ## Components
 
-- [ ] Status dot: active, needs you, error, idle, offline
-- [ ] Session row, and grouped hairline card lists
-- [ ] Filter chip with a count
-- [ ] Hub chip with a connection dot and a menu
-- [ ] Tab bar with icons and a badge
-- [ ] Primary, secondary and destructive buttons at TokenTracker sizes
-- [ ] Text field and code field
-- [ ] Attach card
-- [ ] Composer: segment, Stop, send
-- [ ] Message bubble with send states
-- [ ] Tool card and diff view
-- [ ] Approval card
-- [ ] Thinking card and compaction divider
-- [ ] Pair code display and waiting card
-- [ ] Device row
-- [ ] Empty, loading and error states for every list
-- [ ] Toast for failures that have no bubble to sit on
+- [x] Status dot: active, needs you, error, idle; the hub chip's dot for connected, connecting and offline
+- [x] Session row, and grouped hairline card lists
+- [x] Filter chip with a count
+- [x] Hub chip with a connection dot and a menu
+- [x] Tab bar with icons and a badge
+- [x] Primary, secondary and destructive buttons at TokenTracker sizes
+- [x] Text field and code field
+- [x] Attach card
+- [x] Composer: Stop and send (no Queue/Steer segment, see P6)
+- [x] Message bubble with send states
+- [x] Tool card and diff view
+- [x] Approval card
+- [x] Thinking card and compaction divider
+- [x] Pair code display and waiting card
+- [x] Device row
+- [x] Empty, loading and error states for every list
+- [x] Toast for failures that have no bubble to sit on (the Sessions list's row actions)
 
 ## Features
 
