@@ -898,6 +898,7 @@ class TestMarkdown(unittest.TestCase):
             "global.esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;')"
             ".replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;')"
             ".replace(/'/g, '&#39;');\n"
+            "global.safeHref = (u) => /^(https?:\\/\\/|mailto:)/i.test(String(u || '').trim()) ? esc(String(u).trim()) : '';\n"
             "global.Fmt = { ago: () => '' };\n"
             + (STATIC / "github.js").read_text()
             + "\nprocess.stdout.write(GhUI.markdown(require('fs').readFileSync(0, 'utf8')));"
