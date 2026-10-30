@@ -756,6 +756,33 @@ class TestRoute(_Model, HubBase):
         self.assertEqual(body["trend"]["interval"], 3)
         self.assertEqual(body["harnesses"][0]["harness"], "claude")
 
+    def test_settings_post_writes_the_hub_config(self):
+        self.assertEqual(self.srv.request(
+            "POST", "/v1/app/compute/settings", {"enabled": True})[0], 401)
+        with patch.object(compute, "supported", return_value=True), \
+                patch.object(compute, "model", return_value=self.model), \
+                patch.object(compute, "start_ticker"):
+            status, data = self.srv.request(
+                "POST", "/v1/app/compute/settings",
+                {"enabled": True, "force": True, "orphan_age_seconds": 7200},
+                headers=self.auth())
+        self.assertEqual(status, 200, data)
+        body = json.loads(data)
+        self.assertTrue(body["autoclean"]["enabled"])
+        self.assertTrue(body["autoclean"]["force"])
+        self.assertEqual(body["autoclean"]["orphan_age_seconds"], 7200)
+        cfg = load_config(config_file_for(self.srv.state.home))
+        self.assertEqual(cfg["compute"],
+                         {"auto_clean": True, "auto_clean_force": True,
+                          "orphan_age_seconds": 7200})
+
+    def test_settings_post_rejects_a_bad_body(self):
+        with patch.object(compute, "supported", return_value=True):
+            status, data = self.srv.request(
+                "POST", "/v1/app/compute/settings", {"enabled": "yes"},
+                headers=self.auth())
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(data)["error"]["code"], "bad_enabled")
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
@@ -784,34 +811,6 @@ class TestStoredChoices(unittest.TestCase):
         self.assertEqual(self.choices({"tab": "disk", "interval": "7", "temperatureLines": '{"cpu":1}'}),
                          {"tab": "ram", "interval": 10, "lines": ["cpu", "gpu", "ssd", "battery"]})
         self.assertEqual(self.choices({"temperatureLines": '["cpu","fan",3]'})["lines"], ["cpu"])
-
-    def test_settings_post_writes_the_hub_config(self):
-        self.assertEqual(self.srv.request(
-            "POST", "/v1/app/compute/settings", {"enabled": True})[0], 401)
-        with patch.object(compute, "supported", return_value=True), \
-                patch.object(compute, "model", return_value=self.model), \
-                patch.object(compute, "start_ticker"):
-            status, data = self.srv.request(
-                "POST", "/v1/app/compute/settings",
-                {"enabled": True, "force": True, "orphan_age_seconds": 7200},
-                headers=self.auth())
-        self.assertEqual(status, 200, data)
-        body = json.loads(data)
-        self.assertTrue(body["autoclean"]["enabled"])
-        self.assertTrue(body["autoclean"]["force"])
-        self.assertEqual(body["autoclean"]["orphan_age_seconds"], 7200)
-        cfg = load_config(config_file_for(self.srv.state.home))
-        self.assertEqual(cfg["compute"],
-                         {"auto_clean": True, "auto_clean_force": True,
-                          "orphan_age_seconds": 7200})
-
-    def test_settings_post_rejects_a_bad_body(self):
-        with patch.object(compute, "supported", return_value=True):
-            status, data = self.srv.request(
-                "POST", "/v1/app/compute/settings", {"enabled": "yes"},
-                headers=self.auth())
-        self.assertEqual(status, 400)
-        self.assertEqual(json.loads(data)["error"]["code"], "bad_enabled")
 
 
 if __name__ == "__main__":
