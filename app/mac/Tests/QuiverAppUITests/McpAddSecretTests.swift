@@ -4,7 +4,7 @@ import Testing
 
 /// The add sheet refuses, before any secret is stored, a secret name that
 /// another server's values already live under.
-@Suite struct McpAddSecretTests {
+@Suite @MainActor struct McpAddSecretTests {
     @Test func aSecretAnotherServerKeepsIsRefused() {
         let existing = [McpServer(name: "foo_bar", envKeys: ["API_KEY"], harnesses: ["claude"])]
         let owner = McpAddServerSheet.secretOwner(
