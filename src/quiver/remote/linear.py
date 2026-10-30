@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import ssl
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -46,9 +47,12 @@ GRAPHQL_URL = "https://api.linear.app/graphql"
 TIMEOUT = 15
 # Issues per page: the same cap `swe gh` puts on a repo's open work.
 LIST_LIMIT = 50
-# Pages read per list, newest-updated first. Past that the list says
-# ``truncated`` instead of passing for everything that's open.
+# Pages read per list, newest-updated first, and the time the later
+# pages may take: the phone gives up on /v1/tasks after 15 s. Past
+# either the list says ``truncated`` instead of passing for everything
+# that's open.
 LIST_PAGES = 5
+LIST_BUDGET_S = 8.0
 DEFAULT_KEY_REF = "${LINEAR_API_KEY}"
 
 # A Linear workflow state's ``type`` → the task row's source state.
@@ -327,7 +331,10 @@ class LinearTasks:
                     "error": error}
         tasks: list[dict] = []
         after = None
-        for _page in range(LIST_PAGES):
+        deadline = time.monotonic() + LIST_BUDGET_S
+        for page in range(LIST_PAGES):
+            if page and time.monotonic() > deadline:
+                break  # a slow Linear: answer what came back
             result = _graphql(key, _LIST_QUERY,
                               {"filter": _list_filter(teams),
                                "first": LIST_LIMIT, "after": after})

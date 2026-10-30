@@ -252,6 +252,23 @@ class TestListAndGet(unittest.TestCase):
         self.assertEqual(len(out["tasks"]), linear.LIST_PAGES)
         self.assertTrue(out["truncated"])
 
+    def test_slow_pages_stop_at_the_time_budget(self):
+        clock = [0.0]
+
+        def fake(key, query, variables=None):
+            clock[0] += 5.0  # each page takes 5 s
+            return linear.GraphQLResult("ok", data={"issues": {
+                "nodes": [_node(f"QUI-{clock[0]}")],
+                "pageInfo": {"hasNextPage": True, "endCursor": "c"}}})
+
+        with patch("quiver.remote.linear._graphql", side_effect=fake), \
+                patch("quiver.remote.linear.time.monotonic",
+                      side_effect=lambda: clock[0]):
+            out = linear.LinearTasks(self.home).list()
+        # 0 s start: pages at 5 s and 10 s; the third would start past 8 s.
+        self.assertEqual(len(out["tasks"]), 2)
+        self.assertTrue(out["truncated"])
+
     def test_list_stops_on_the_last_page(self):
         pages = [{"nodes": [_node("QUI-1")],
                   "pageInfo": {"hasNextPage": True, "endCursor": "c1"}},
