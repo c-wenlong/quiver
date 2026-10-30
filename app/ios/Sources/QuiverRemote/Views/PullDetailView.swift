@@ -15,6 +15,8 @@ struct PullDetailView: View {
     @State private var error: String?
     @State private var opening = false
     @State private var startedKey: String?
+    /// Bumped per load so a late reply can't overwrite a newer one.
+    @State private var generation = 0
 
     var body: some View {
         PageScroll {
@@ -66,13 +68,26 @@ struct PullDetailView: View {
 
     private func load(refresh: Bool = false) async {
         guard let client = app.client else { return }
+        generation += 1
+        let gen = generation
         do {
             let body = try await client.pull(repo: repo, number: number, refresh: refresh)
-            reply = body
-            error = nil
+            guard gen == generation else { return }
+            (reply, error) = Self.landing(body, over: reply)
         } catch {
+            guard gen == generation else { return }
             self.error = (error as? HubError)?.message ?? error.localizedDescription
         }
+    }
+
+    /// What a reply leaves on screen. A `gh` failure answers 200 with
+    /// `pr: null`: the PR already shown stays, and the notice says why
+    /// it's stale, rather than blanking the page for an outage.
+    static func landing(_ body: PullResponse, over shown: PullResponse?) -> (reply: PullResponse?, error: String?) {
+        if body.pr == nil, shown?.pr != nil {
+            return (shown, body.error ?? "GitHub couldn't read the pull request.")
+        }
+        return (body, nil)
     }
 
     // MARK: Sections
