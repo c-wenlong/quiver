@@ -9,10 +9,14 @@ const Fmt = (() => {
   }
 
   function tokens(count) {
-    for (const [limit, suffix] of [[1e9, "B"], [1e6, "M"], [1e3, "K"]]) {
-      if (count >= limit) return compact(count / limit) + suffix;
-    }
-    return String(count || 0);
+    const units = [[1e3, "K"], [1e6, "M"], [1e9, "B"]];
+    let unit = -1;
+    units.forEach(([limit], i) => { if (count >= limit) unit = i; });
+    if (unit < 0) return String(count || 0);
+    // The unit after rounding: 999,950 rounds to 1000K, which reads as 1M.
+    while (unit + 1 < units.length
+           && Math.round((count / units[unit][0]) * 10) / 10 >= 1000) unit += 1;
+    return compact(count / units[unit][0]) + units[unit][1];
   }
 
   function dollars(amount) {
