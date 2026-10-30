@@ -370,6 +370,56 @@ class TestQueuedTray(unittest.TestCase):
         self.assertEqual(out, {"input": "my draft", "tray": [["c2", "edited", "waiting", ""]],
                                "editing": None, "note": ""})
 
+    def test_an_edit_saved_after_a_read_began_keeps_its_text(self):
+        out = self.run_js("""
+            await T.sendText("old", "queue");
+            let releaseList;
+            globalThis.api = () => new Promise((r) => { releaseList = r; });
+            const reading = T.loadQueue(1);
+            T.beginEdit("c1");
+            ids["chat-text"].value = "new";
+            answer = () => ({ status: 200, data: { ok: true } });
+            await T.saveEdit();
+            releaseList({ status: 200, data: { sends: [{ client_id: "c1", text: "old" }] } });
+            await reading;
+            const kept = tray()[0][1];
+            // A read that starts after the save takes the hub's text again.
+            globalThis.api = async () => ({ status: 200, data: { sends: [{ client_id: "c1", text: "from elsewhere" }] } });
+            await T.loadQueue(1);
+            return { kept, later: tray()[0][1] };""")
+        self.assertEqual(out, {"kept": "new", "later": "from elsewhere"})
+
+    def test_the_requeue_fallback_cannot_be_cancelled_under_it(self):
+        out = self.run_js("""
+            const input = ids["chat-text"];
+            await T.sendText("queued", "queue");
+            input.value = "my draft";
+            T.beginEdit("c1");
+            input.value = "edited";
+            let releaseCancel;
+            answer = (path, body) => body.op === "edit" ? { status: 422, data: { error: { code: "bad_command" } } }
+              : body.op === "cancel" ? new Promise((r) => { releaseCancel = r; }) : { status: 202, data: { waiting: true } };
+            const saving = T.saveEdit();
+            await tick();
+            // Escape while the fallback's cancel is out does nothing.
+            T.cancelEdit();
+            const during = [T.chat.tray.editingId, T.chat.tray.savingEdit, input.value];
+            releaseCancel({ status: 200, data: { ok: true } });
+            await saving; await tick();
+            return { during, input: input.value, tray: tray().map((q) => q[1]), saving: T.chat.tray.savingEdit };""")
+        self.assertEqual(out, {"during": ["c1", True, "edited"], "input": "my draft",
+                               "tray": ["edited"], "saving": False})
+
+    def test_an_echo_takes_the_row_sent_now_before_an_identical_one(self):
+        out = self.run_js("""
+            await T.sendText("same", "queue");
+            await T.sendText("same", "queue");
+            answer = () => ({ status: 200, data: { ok: true } });
+            await T.sendNow("c2");
+            T.echoLeavesTray("same");
+            return tray();""")
+        self.assertEqual(out, [["c1", "same", "waiting", ""]])
+
 
 if __name__ == "__main__":
     unittest.main()

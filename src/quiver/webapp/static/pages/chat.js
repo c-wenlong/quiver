@@ -3062,6 +3062,9 @@ const SessionChat = (() => {
       // Live echoes that matched no row while a queue list was on its way
       // (`listing`).
       unmatched: [], listing: false,
+      // The edit whose older-hub fallback (remove, then queue again) is
+      // out: its own removal doesn't end the edit.
+      requeueing: null,
       // Ticks when a queue read starts and when a row is staged: a row
       // newer than the read (`since` above its mark) isn't in its answer
       // yet, so the answer can't move it out.
@@ -3106,7 +3109,9 @@ const SessionChat = (() => {
         const i = echoed.findIndex((t) => echoes(t, send.text));
         if (i >= 0) { echoed.splice(i, 1); gone.push(cid); continue; }
       }
-      const text = send.text == null ? (mine ? mine.text : "") : send.text;
+      // An edit saved here after the read began is newer than its text.
+      const text = send.text == null || (mine && (mine.editedAt || 0) > mark)
+        ? (mine ? mine.text : "") : send.text;
       if (mine) queued.push({ ...mine, text, phase: mine.phase === "posting" ? "waiting" : mine.phase });
       else queued.push({ cid, text, phase: "waiting", note: "" });
     }
@@ -3179,7 +3184,7 @@ const SessionChat = (() => {
       if (!entry) continue;
       t[list] = t[list].filter((q) => q !== entry);
       t.settled.add(cid);
-      if (t.editingId === cid) {
+      if (t.editingId === cid && t.requeueing !== cid) {
         t.editingId = null;
         t.draftBeforeEdit = "";
         t.editNote = gone;
@@ -3195,7 +3200,10 @@ const SessionChat = (() => {
   function echoLeavesTray(text) {
     const t = chat.tray;
     for (const list of ["departed", "queued"]) {
-      const entry = t[list].find((q) => echoes(text, q.text));
+      // Two rows can hold the same text: the one sent now is the one that
+      // went out first, else the oldest, as the hub sends them in order.
+      const hits = t[list].filter((q) => echoes(text, q.text));
+      const entry = hits.find((q) => q.phase === "sendingNow") || hits[0];
       if (entry) { takeQueued(entry.cid); return; }
     }
     if (t.listing) t.unmatched.push(text);
@@ -3352,7 +3360,8 @@ const SessionChat = (() => {
 
   function cancelEdit() {
     const t = chat.tray;
-    if (!t.editingId) return;
+    // Not while a save is out: its answer decides what the box holds.
+    if (!t.editingId || t.savingEdit) return;
     t.editingId = null;
     const input = $("chat-text");
     if (input) { input.value = t.draftBeforeEdit; growComposer(); }
@@ -3374,11 +3383,11 @@ const SessionChat = (() => {
     paintTray();
     const err = await queueAction(cid, "edit", text);
     if (gen !== chat.gen) return;
-    t.savingEdit = false;
+    if (!err || !(err.status === 400 || err.status === 422)) t.savingEdit = false;
     if (!err) {
       // The row keeps its place with the new text.
       const row = trayRow(cid);
-      if (row) { row.text = text; row.note = ""; }
+      if (row) { row.text = text; row.note = ""; row.editedAt = ++t.clock; }
       if (t.editingId === cid) cancelEdit();
       paintTray();
       return;
@@ -3386,7 +3395,7 @@ const SessionChat = (() => {
     if (err.status === 401) return renderGate();
     if (err.code === "not_waiting") { editWentOut(cid, text); return; }
     // An older hub can't edit in place: remove the message, then queue
-    // the new text, which lands at the end.
+    // the new text, which lands at the end. It stays saving meanwhile.
     if (err.status === 400 || err.status === 422) { requeueEdit(cid, text, gen); return; }
     t.editNote = queueNote(err.status, err.data);
     paintTray();
@@ -3409,13 +3418,16 @@ const SessionChat = (() => {
     paintTray();
   }
 
+  /* Runs with savingEdit set, so the edit can't be cancelled under it,
+   * and `requeueing` keeps the cancel's own command.result (which can
+   * land before the request answers) from ending the edit. */
   async function requeueEdit(cid, text, gen) {
     const t = chat.tray;
-    // The cancel's own command.result can land first and end the edit
-    // (takeQueued), so the draft from before Edit is kept here.
-    const draft = t.draftBeforeEdit;
+    t.requeueing = cid;
     const err = await queueAction(cid, "cancel");
     if (gen !== chat.gen) return;
+    t.requeueing = null;
+    t.savingEdit = false;
     if (err) {
       if (err.code === "not_waiting") { editWentOut(cid, text); return; }
       t.editNote = queueNote(err.status, err.data);
@@ -3423,10 +3435,10 @@ const SessionChat = (() => {
       return;
     }
     dropQueued(cid);
-    if (t.editingId === cid || t.editingId === null) {
+    if (t.editingId === cid) {
       t.editingId = null;
       const input = $("chat-text");
-      if (input) { input.value = draft; growComposer(); }
+      if (input) { input.value = t.draftBeforeEdit; growComposer(); }
       t.draftBeforeEdit = "";
       t.editNote = "";
     }
