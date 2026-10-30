@@ -63,8 +63,6 @@ MAX_READ = 16 * 1024
 MAX_LAYER_ENTRIES = 500
 MAX_PAYLOAD_BYTES = 1 << 20
 
-SOURCES = ("builtin", "user", "project", "skill", "plugin")
-
 # Where the hub keeps each satellite's pushed command lists. Not the
 # catalog's ``satellite/`` folder: that one's ``*.json`` are all rows.
 _SAT_DIR = "slash"

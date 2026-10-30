@@ -219,6 +219,24 @@ class TestLedgerCoverage(unittest.TestCase):
         (proj / "abc.settings.json").write_text("{}")
         self.assertTrue(self._build(home, "droid", "abc")["trivial"])
 
+    def test_droid_folders_are_listed_once_per_build(self):
+        # A glob per Droid row walked every project folder each time.
+        home = Path(tempfile.mkdtemp())
+        proj = home / ".factory" / "sessions" / "proj"
+        proj.mkdir(parents=True)
+        for sid in ("a", "b", "c"):
+            (proj / f"{sid}.settings.json").write_text("{}")
+        rows = [{"key": f"droid:{sid}", "id": sid, "harness": "droid",
+                 "machine_id": "hub", "cwd": "/w", "last_active_at": 1}
+                for sid in ("a", "b", "c", "gone")]
+        real = Path.glob
+        with patch.object(Path, "glob", autospec=True,
+                          side_effect=lambda self, pat: real(self, pat)) as walk:
+            built = sessions.build(rows, {}, "hub", {}, scanned=True, home=home)
+        self.assertEqual(walk.call_count, 1)
+        self.assertEqual({r["id"]: r["trivial"] for r in built},
+                         {"a": True, "b": True, "c": True, "gone": False})
+
     def test_pi_rows_are_covered_by_definition(self):
         home = Path(tempfile.mkdtemp())
         self.assertTrue(self._build(home, "pi", "anything")["trivial"])
@@ -500,6 +518,14 @@ return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
         out = self.run_js("return T.md(" + json.dumps(f"see {url} and **bold**") + ");")
         self.assertEqual(out, f'<p>see <a href="{url}" target="_blank" rel="noopener">{url}</a>'
                               " and <strong>bold</strong></p>")
+
+    def test_writes_go_through_app_js_apipost(self):
+        """chat.js has a send() of its own (the composer's): its requests
+        must reach app.js's apiPost, not call that handler again."""
+        out = self.run_js(
+            "const calls = []; globalThis.apiPost = async (path, body) => { calls.push([path, body]); return { status: 200, data: {} }; };"
+            " const r = await T.post('/v1/sessions/k/send', { text: 'hi' }); return { calls, status: r.status };")
+        self.assertEqual(out, {"calls": [["/v1/sessions/k/send", {"text": "hi"}]], "status": 200})
 
     def test_markdown_escapes_then_restores_code_and_bold(self):
         out = self.run_js(
@@ -1033,10 +1059,6 @@ return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
         self.assertEqual(out["newest"], ["new"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 SESSIONS_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/sessions.js"
 
 
@@ -1150,3 +1172,7 @@ class TestTranscriptSearchBox(unittest.TestCase):
         """, {"status": 0, "data": None})
         self.assertEqual(out["kept"], ["k1"])
         self.assertIn("Couldn't reach transcript search", out["note"])
+
+
+if __name__ == "__main__":
+    unittest.main()

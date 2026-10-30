@@ -104,8 +104,11 @@ class TestPairing(unittest.TestCase):
         lock = threading.Lock()
 
         def mint():
+            # Only the append is locked: the mints themselves must race
+            # for the test to prove none is lost.
+            tok = pairing.mint_pair_token(self.tmp)
             with lock:
-                tokens.append(pairing.mint_pair_token(self.tmp))
+                tokens.append(tok)
 
         threads = [threading.Thread(target=mint) for _ in range(6)]
         for t in threads:
@@ -120,9 +123,6 @@ class TestPairing(unittest.TestCase):
         }
         self.assertEqual(set(tokens), saved)
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 _PEER = {
@@ -617,3 +617,7 @@ class TestDeviceMetadata(unittest.TestCase):
         self.assertNotIn(
             "display_name", pairing.load_devices(self.tmp)[did]
         )
+
+
+if __name__ == "__main__":
+    unittest.main()

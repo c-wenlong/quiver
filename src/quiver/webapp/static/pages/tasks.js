@@ -90,23 +90,8 @@
     return ref;
   };
 
-  /* GhUI.post only POSTs; the unlink route is a DELETE with the same
-   * JSON shape. Never throws: {status: 0} when the hub is unreachable. */
-  async function del_(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "DELETE",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  // The unlink route is a DELETE with the same JSON shape as a POST.
+  const del_ = (path, body) => apiSend("DELETE", path, body);
 
   /* ----------------------------------------------------------- marks */
 
