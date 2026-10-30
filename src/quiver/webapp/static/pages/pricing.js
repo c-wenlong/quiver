@@ -294,18 +294,9 @@
   }
 
   /* The sheet lives outside the panel, so a repaint landing while it is
-   * open (a rescan, a filter) never throws away what is being typed. */
-  function priceSheet() {
-    let sheet = document.getElementById("qp-sheet");
-    if (!sheet) {
-      sheet = document.createElement("dialog");
-      sheet.className = "sheet qp-sheet";
-      sheet.id = "qp-sheet";
-      sheet.setAttribute("aria-label", "Price");
-      document.body.appendChild(sheet);
-    }
-    return sheet;
-  }
+   * open (a rescan, a filter) never throws away what is being typed. It
+   * is a route sheet (app.js bodySheet): leaving the page closes it. */
+  const priceSheet = () => bodySheet("qp-sheet", "sheet qp-sheet", "Price");
 
   function openPrice(model) {
     const r = modelRow(model), sheet = priceSheet();
@@ -357,11 +348,6 @@
 
   let priceForms = 0;
   const onPricing = () => currentRoute() === "pricing";
-  // The form sits outside the panel, so leaving the page must close it.
-  window.addEventListener("hashchange", () => {
-    const sheet = document.getElementById("qp-sheet");
-    if (sheet && sheet.open && !onPricing()) sheet.close();
-  });
 
   /* The sheet closes once the hub has written and repriced; the page then
    * repaints from its answer, read with the same period and filter. */
