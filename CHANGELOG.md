@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac app: Mine and Review requested pull request filters.** The
+  Repositories dashboard's and a repo focus page's Pull requests tab
+  now offer All, Mine and Review requested with counts, as the iOS and
+  web apps do. Mine compares the `gh` login with each PR's author, so
+  it covers the focus page's merged and closed PRs too; Review
+  requested reads `swe gh pr status` per repo. A filter hides while
+  its flag is unknown instead of guessing
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 - **Mac app: Needs you on the Inbox page.** Above the GitHub
   notifications, the Inbox now lists the sessions this Mac's hub says
   wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the
