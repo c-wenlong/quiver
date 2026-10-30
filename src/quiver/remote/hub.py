@@ -623,7 +623,8 @@ class HubState:
         A result acks only its own seq: the floor mirrors the agent's
         contiguous done floor, so it climbs ``_sat_done`` one
         consecutive seq at a time — a control finishing while an
-        earlier message still runs in ``_work_q`` leaves it put, and
+        earlier message still runs on the agent's send queue leaves it
+        put, and
         the pending count keeps covering the commands a restart still
         owes the satellite. ``?last=`` resets it on connect; an id the
         map doesn't know (a hub-local result, or a command queued
@@ -2376,13 +2377,13 @@ class _Handler(BaseHTTPRequestHandler):
         asleep — results arrive later as ``command.result`` events.
         """
         if action == "queue":
-            # A satellite never parks a queue-mode send: it delivers on
-            # arrival or refuses a busy session, so there is nothing
-            # waiting here to steer or remove.
+            # A satellite parks a queue-mode send on its own machine
+            # until the session is idle; the hub holds nothing to list,
+            # steer or remove.
             self._send_error(
                 409, "queue_unsupported",
-                "sends to another machine's session don't wait on the "
-                "hub; there is nothing queued to steer or remove",
+                "sends to another machine's session wait on that "
+                "machine; they can't be steered or removed from here",
             )
             return
         if action != "attach" and action != "control":
@@ -2436,11 +2437,14 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(429, "backlog_full",
                                  "machine is too far behind")
                 return
-            # Same shape as the local 202; waiting is always false —
-            # the satellite re-reads status and decides for itself.
+            # Same shape as the local 202. ``waiting`` is the hub's
+            # best guess from the row; the satellite re-reads status
+            # and waits for idle itself.
             self._send_json(202, {
                 "ok": True, "queued": True,
-                "client_id": cmd["client_id"], "waiting": False,
+                "client_id": cmd["client_id"],
+                "waiting": (cmd["mode"] == "queue"
+                            and row.get("status") == "active"),
             })
             return
         elif action == "approval":

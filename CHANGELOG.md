@@ -365,6 +365,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote: queue-mode sends wait for idle on satellites too.** A
+  `queue`-mode message to a session on another machine used to fail
+  with "session is mid-turn; steer to write anyway" whenever that
+  session was busy. `swe remote agent` now runs `message` commands
+  through the same per-session send queue as the hub: a queued send
+  waits until the turn ends (up to 30 min, then fails honestly), steers
+  skip the wait, and a busy session no longer holds sends to another
+  one. A send the agent stops before delivering replays on restart
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
 - **The fan rule comes back on its own after the helper stops
   answering.** A fan request the root helper never took used to switch
   the rule off until someone toggled it or set a speed by hand, and a

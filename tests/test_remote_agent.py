@@ -640,8 +640,7 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(status, 202)
         body = json.loads(data)
         self.assertTrue(body["queued"])
-        # Same shape as the local 202; the satellite re-reads status and
-        # decides for itself, so waiting is always false here.
+        # Same shape as the local 202; an idle row isn't waiting.
         self.assertEqual(body["client_id"], "cid-9")
         self.assertFalse(body["waiting"])
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
@@ -1452,8 +1451,8 @@ class TestAgentRouteValidation(unittest.TestCase):
         self.assertEqual(status, 404)
 
     def test_satellite_queue_tray_is_empty_and_actions_409(self):
-        # A satellite delivers or refuses on arrival, so nothing waits
-        # on the hub: the list is empty and an action says why.
+        # A satellite waits for idle on its own machine, so nothing
+        # waits on the hub: the list is empty and an action says why.
         self.srv.request(
             "POST", "/v1/agent/catalog",
             {"machine_id": self.mid, "rows": [
@@ -1846,13 +1845,14 @@ class TestReviewFixes(unittest.TestCase):
     def test_message_op_goes_to_worker(self):
         ag = self._agent()
         ag._dispatch = MagicMock()
+        ag.sendq.submit = MagicMock()
         ag._handle_frame(json.dumps({
-            "type": "command", "seq": 1,
+            "type": "command", "seq": 1, "session": "k",
             "data": {"op": "message", "command_id": "c1"},
         }).encode())
         ag._dispatch.assert_not_called()
-        seq, cmd = ag._work_q.get_nowait()
-        self.assertEqual(seq, 1)
+        # No mode means queue: the session's own key, not the steer one.
+        self.assertEqual(ag.sendq.submit.call_args[0][0], "k")
         # Control ops still run inline.
         ag._handle_frame(json.dumps({
             "type": "command", "seq": 2,
@@ -1908,6 +1908,7 @@ class TestReviewFixes(unittest.TestCase):
         ag._mark_done(6)  # seq 5 still running; 6 is done above floor
         b = self._agent()  # restarted: resumes the stream at ?last=4
         b._dispatch = MagicMock()
+        b.sendq.submit = MagicMock()
         # seq 5's message op parks on the work queue — not done yet.
         b._handle_frame(json.dumps({
             "type": "command", "seq": 5,
@@ -1915,8 +1916,8 @@ class TestReviewFixes(unittest.TestCase):
         b._handle_frame(json.dumps({
             "type": "command", "seq": 6,
             "data": {"op": "control", "command_id": "c6"}}).encode())
-        b._dispatch.assert_not_called()   # 5 waits on _work_q, 6 skipped
-        self.assertEqual(b._work_q.get_nowait()[0], 5)
+        b._dispatch.assert_not_called()   # 5 waits on sendq, 6 skipped
+        b.sendq.submit.assert_called_once()
         self.assertEqual(b._last_cmd_seq, 6)  # wire cursor still moved
         self.assertEqual(b._done_cmd_seq, 4)  # floor waits on seq 5
 
@@ -1958,6 +1959,7 @@ class TestReviewFixes(unittest.TestCase):
         ag = self._agent()
         sess = _session()
         ag.catalog.session_for = lambda k: sess
+        ag.status_of = MagicMock(side_effect=OSError)  # probe fails
         ag.tail_manager.statuses["k"] = "done"   # queue said "active"
         fake = MagicMock()
         fake.send.return_value = inject.InjectResult(True, "ok")
@@ -1966,6 +1968,119 @@ class TestReviewFixes(unittest.TestCase):
             ag._execute("k", "message",
                         {"text": "hi", "status": "active"})
         self.assertEqual(fake.send.call_args[0][2], "done")
+
+
+class TestSatelliteQueueMode(unittest.TestCase):
+    """``queue``-mode sends wait for idle on the satellite, like the hub."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        poll = patch.object(agent_mod, "QUEUE_POLL_S", 0.01)
+        poll.start()
+        self.addCleanup(poll.stop)
+        self.ag = agent_mod.RemoteAgent("http://h:1", "cred", self.home)
+        self.addCleanup(self.ag._stop.set)
+        self.sess = _session()
+        self.ag.catalog.session_for = lambda k: self.sess
+        self.status = "active"
+        self.ag.status_of = lambda sessions: [self.status]
+        self.fake = MagicMock()
+        self.fake.send.return_value = inject.InjectResult(True, "sent")
+        self.patches = [
+            patch.object(supervise, "meta_for", return_value={}),
+            patch.object(inject, "injector_for", return_value=self.fake),
+        ]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _frame(self, seq, mode="queue", key="claude:s1"):
+        self.ag._handle_frame(json.dumps({
+            "type": "command", "seq": seq, "session": key,
+            "data": {"op": "message", "command_id": f"c{seq}",
+                     "client_id": f"cid-{seq}", "text": "hi",
+                     "mode": mode, "status": "active"},
+        }).encode())
+
+    def _wait(self, cond, timeout=5.0):
+        end = time.monotonic() + timeout
+        while not cond():
+            if time.monotonic() > end:
+                self.fail("timed out")
+            time.sleep(0.01)
+
+    def _results(self):
+        with self.ag._outbox_lock:
+            return [e["data"] for e in self.ag.outbox
+                    if e.get("type") == "command.result"]
+
+    def test_queue_send_waits_for_idle_then_delivers(self):
+        self._frame(1)
+        time.sleep(0.1)
+        self.fake.send.assert_not_called()  # mid-turn: still waiting
+        self.assertEqual(self.ag._done_cmd_seq, 0)
+        self.status = "done"
+        self._wait(lambda: self.fake.send.called)
+        self.assertEqual(self.fake.send.call_args[0][1]["mode"], "queue")
+        self.assertEqual(self.fake.send.call_args[0][2], "done")
+        self._wait(lambda: self.ag._done_cmd_seq == 1)
+        [res] = self._results()
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["client_id"], "cid-1")
+
+    def test_steer_skips_the_wait(self):
+        self._frame(1)                 # parked behind the turn
+        self._frame(2, mode="steer")   # its own key, goes at once
+        self._wait(lambda: self.fake.send.called)
+        self.assertEqual(self.fake.send.call_count, 1)
+        self.assertEqual(self.fake.send.call_args[0][1]["mode"], "steer")
+        self._wait(lambda: 2 in self.ag._done_set)
+        self.assertEqual(self.ag._done_cmd_seq, 0)  # 1 still waits
+
+    def test_other_session_is_not_held(self):
+        self.ag.status_of = lambda sessions: [
+            "active" if sessions[0] is self.sess else "done"]
+        other = _session("s2")
+        self.ag.catalog.session_for = (
+            lambda k: other if k == "claude:s2" else self.sess)
+        self._frame(1)
+        self._frame(2, key="claude:s2")
+        self._wait(lambda: self.fake.send.called)
+        self.assertIs(self.fake.send.call_args[0][0], other)
+
+    def test_busy_past_cap_fails_honestly(self):
+        with patch.object(agent_mod, "QUEUE_WAIT_MAX_S", 0.05):
+            self._frame(1)
+            self._wait(lambda: self.ag._done_cmd_seq == 1)
+        self.fake.send.assert_not_called()
+        [res] = self._results()
+        self.assertFalse(res["ok"])
+        self.assertIn("stayed busy", res["note"])
+        self.assertEqual(res["client_id"], "cid-1")
+        self.assertEqual(res["command_id"], "c1")
+
+    def test_stop_leaves_waiting_send_for_replay(self):
+        self._frame(1)
+        time.sleep(0.05)
+        self.ag._stop.set()
+        self.ag.sendq.close()
+        time.sleep(0.1)
+        self.status = "done"
+        time.sleep(0.05)
+        self.fake.send.assert_not_called()
+        self.assertEqual(self.ag._done_cmd_seq, 0)  # replays on restart
+        self.assertEqual(self._results(), [])
+
+    def test_live_status_prefers_fresh_probe(self):
+        self.ag.tail_manager.statuses["claude:s1"] = "active"
+        self.status = "done"
+        self.assertEqual(self.ag._live_status("claude:s1", {}), "done")
+        self.ag.status_of = MagicMock(side_effect=OSError)
+        self.assertEqual(
+            self.ag._live_status("claude:s1", {}), "active")
+        self.ag.catalog.session_for = lambda k: None
+        self.assertEqual(
+            self.ag._live_status("gone", {"status": "idle"}), "idle")
 
 
 class TestReviewHubFixes(unittest.TestCase):
