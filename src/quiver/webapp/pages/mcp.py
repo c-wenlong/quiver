@@ -393,7 +393,7 @@ def _add(ctx, body: dict) -> dict:
     Secret values are stored only once swe would take the add, and every
     refusal names variables, never their values."""
     from quiver.harness.registry import load_registry_readonly
-    from quiver.mcp.cli import AddRefused, add_conflicts, add_plan, add_server
+    from quiver.mcp.cli import AddRefused, add_conflicts, add_plan, add_server, get_hub_servers
     from quiver.mcp.secrets import load_secrets, render_secret_line, set_secret, unresolved_names
 
     req = _add_request(body)
@@ -459,18 +459,48 @@ def _add(ctx, body: dict) -> dict:
                 raise PageError(409, "add_refused", "\n".join(
                     f"Not adding: no value for {var} (used by {name}). Set it first, or mark it secret here."
                     for var in missing))
-        for ref, value in stored.items():
-            try:
-                set_secret(ref, value)
-            except ValueError as exc:
-                raise PageError(422, "bad_value", f"{ref}: {exc}") from exc
+        # What each name held before, so a failed add puts the store back.
+        before, hub_before = load_secrets(), get_hub_servers().get(name)
         try:
-            report = add_server(name, canonical, targets, force=req["force"])
-        except AddRefused as exc:
-            raise PageError(409, "add_refused", str(exc)) from exc
-        except (OSError, ValueError) as exc:
-            raise PageError(409, "add_failed", str(exc) or exc.__class__.__name__) from exc
+            for ref, value in stored.items():
+                try:
+                    set_secret(ref, value)
+                except ValueError as exc:
+                    raise PageError(422, "bad_value", f"{ref}: {exc}") from exc
+                except OSError as exc:
+                    raise PageError(409, "add_failed", str(exc) or exc.__class__.__name__) from exc
+            try:
+                report = add_server(name, canonical, targets, force=req["force"])
+            except AddRefused as exc:
+                raise PageError(409, "add_refused", str(exc)) from exc
+            except (OSError, ValueError) as exc:
+                raise PageError(409, "add_failed", str(exc) or exc.__class__.__name__) from exc
+        except PageError:
+            # add_server saves the hub before the harness files, so a failed
+            # harness write leaves a hub entry that needs these secrets.
+            if get_hub_servers().get(name) == hub_before:
+                _restore_secrets(stored, before)
+            raise
     return {**report, "page": get(ctx, {})}
+
+
+def _restore_secrets(stored: dict[str, str], before: dict[str, str]) -> None:
+    """Put each name in ``stored`` back to its value in ``before``, or
+    remove it when it had none, so a failed add leaves no secret behind.
+    A name whose value is no longer the one this add wrote changed since,
+    and is left alone."""
+    from quiver.mcp.secrets import load_secrets, remove_secret, set_secret
+    now = load_secrets()
+    for ref, value in stored.items():
+        if now.get(ref) != value:
+            continue
+        try:
+            if ref in before:
+                set_secret(ref, before[ref])
+            else:
+                remove_secret(ref)
+        except (OSError, ValueError):
+            pass
 
 
 def _sync_request(body: dict, needs_fingerprint: bool) -> dict:

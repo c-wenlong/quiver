@@ -762,6 +762,67 @@ class TestAdd(_SyncHome, unittest.TestCase):
         error = self.refused(**cmd, targets=[], vars=[secret, {"key": "api.key", "value": "x", "secret": True}])
         self.assertEqual((error.status, error.code), (422, "secret_clash"))
 
+    def test_a_failed_add_puts_the_secret_store_back(self):
+        from quiver.mcp.secrets import load_secrets, set_secret
+        set_secret("KEPT_API_KEY", "old-value-00000000")
+        before = load_secrets()
+        vars_ = [{"key": "API_KEY", "value": self.TOKEN, "secret": True},
+                 {"key": "NEW_KEY", "value": "new-value-00000000", "secret": True}]
+        for exc, code in ((mcp_cli.AddRefused("disk said no"), "add_refused"), (OSError("full"), "add_failed")):
+            with self.subTest(code=code), patch.object(mcp_cli, "add_server", side_effect=exc):
+                with self.assertRaises(PageError) as caught:
+                    self.add(name="kept", kind="command", command=["x"], targets=[], vars=vars_)
+                self.assertEqual(caught.exception.code, code)
+                # The replaced value comes back and the new one is gone.
+                self.assertEqual(load_secrets(), before)
+
+    def test_a_failed_secret_write_puts_the_earlier_ones_back(self):
+        from quiver.mcp import secrets
+        real = secrets.set_secret
+        calls = []
+
+        def flaky(name, value, home=None):
+            calls.append(name)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real(name, value, home)
+
+        vars_ = [{"key": "A_KEY", "value": self.TOKEN, "secret": True},
+                 {"key": "B_KEY", "value": "second-value-0000", "secret": True}]
+        with patch.object(secrets, "set_secret", side_effect=flaky):
+            with self.assertRaises(PageError) as caught:
+                self.add(name="flaky", kind="command", command=["x"], targets=[], vars=vars_)
+        self.assertEqual(caught.exception.code, "add_failed")
+        self.assertEqual(secrets.load_secrets(), {})
+
+    def test_secrets_stay_when_the_hub_was_written_before_a_harness_failed(self):
+        from quiver.mcp.secrets import load_secrets
+        real = mcp_cli.add_server
+
+        def hub_then_fail(name, canonical, targets, **kw):
+            real(name, canonical, [], **kw)
+            raise OSError("harness config is read-only")
+
+        with patch.object(mcp_cli, "add_server", side_effect=hub_then_fail):
+            with self.assertRaises(PageError):
+                self.add(name="half", kind="command", command=["x"], targets=["claude"],
+                         vars=[{"key": "API_KEY", "value": self.TOKEN, "secret": True}])
+        # The hub's ${HALF_API_KEY} still resolves.
+        self.assertEqual(load_secrets()["HALF_API_KEY"], self.TOKEN)
+
+    def test_cleanup_leaves_a_value_that_changed_since(self):
+        from quiver.mcp.secrets import load_secrets, set_secret
+
+        def someone_else_then_fail(*a, **kw):
+            set_secret("RACE_API_KEY", "written-by-another-0")
+            raise OSError("full")
+
+        with patch.object(mcp_cli, "add_server", side_effect=someone_else_then_fail):
+            with self.assertRaises(PageError):
+                self.add(name="race", kind="command", command=["x"], targets=[],
+                         vars=[{"key": "API_KEY", "value": self.TOKEN, "secret": True}])
+        self.assertEqual(load_secrets()["RACE_API_KEY"], "written-by-another-0")
+
     def test_a_secret_another_server_refers_to_is_not_overwritten(self):
         self.add(name="a-b", kind="command", command=["x"], targets=[],
                  vars=[{"key": "TOKEN", "value": "first-value-0000", "secret": True}])
