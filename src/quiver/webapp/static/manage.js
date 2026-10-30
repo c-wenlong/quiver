@@ -596,10 +596,6 @@ function bindHarnessSheet() {
   };
 }
 
-function sheetFailure(status, data) {
-  return failText(status, data);
-}
-
 /* The sheet's request: working while it runs, the error in the sheet. A
  * 401 closes it for the pairing card. Returns the reply, or null; a 401
  * also sets ``gated``, and the caller then leaves the page alone so the
@@ -619,7 +615,7 @@ async function sheetPost(s, action, body) {
   // A list read still in flight may predate this write: drop it.
   if (status === 200) harnessesPage.gen++;
   if (status !== 200 || !data) {
-    s.error = sheetFailure(status, data);
+    s.error = failText(status, data);
     if (harnessesPage.sheet === s) paintHarnessSheet();
     return null;
   }
@@ -654,7 +650,7 @@ async function detectScan() {
     return;
   }
   if (status !== 200 || !data) {
-    s.error = sheetFailure(status, data);
+    s.error = failText(status, data);
   } else {
     // HarnessDiscovery.selection: new matches only, the sure ones ticked.
     s.findings = data.findings.filter((f) => f.status === "new");

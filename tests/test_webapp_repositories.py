@@ -960,6 +960,26 @@ class TestPrWorktree(_Base):
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFailMessage(unittest.TestCase):
+    def test_it_is_app_failtext_ending_then_refresh(self):
+        """GhUI.failMessage says what app.js's failText says. It used to
+        hand back ``data.error`` itself when that had no message, which
+        a page then showed as "[object Object]"."""
+        script = (
+            "global.esc = (s) => String(s); global.Fmt = { ago: () => '' };\n"
+            + app_js_function("failText") + (STATIC / "github.js").read_text()
+            + "\nprocess.stdout.write(JSON.stringify(["
+            "GhUI.failMessage(409, { error: { message: 'Already pinned.' } }),"
+            "GhUI.failMessage(500, { error: { code: 'internal' } }),"
+            "GhUI.failMessage(0, null)]));\nprocess.exit(0);")
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), [
+            "Already pinned.", "The hub answered 500.",
+            "Couldn't reach the hub. Check the connection, then refresh."])
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMarkdown(unittest.TestCase):
     """GhUI.markdown, run under node with the two globals it borrows."""
 

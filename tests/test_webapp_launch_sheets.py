@@ -173,6 +173,8 @@ MENU_JS = (Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/model
 
 # Writes go through app.js's own send(), over the stubbed fetch.
 STUB += app_js_function("apiSend") + "const apiPost = (path, body) => apiSend(\"POST\", path, body);\n"
+# GhUI.failMessage is failText ending "then refresh".
+STUB += app_js_function("failText")
 
 # The four harnesses every flow offers: claude and codex take a model
 # pick and have recent models, gemini takes none, and pi is what an old
