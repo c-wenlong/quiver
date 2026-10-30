@@ -137,31 +137,80 @@ public struct MarkdownFrontmatter: Sendable, Equatable {
 
     /// A YAML scalar's text as the form shows it: a double-quoted value
     /// has its escapes read, a single-quoted one its `''`, and a plain
-    /// value is as written.
-    static func unquote(_ raw: String) -> String {
-        guard raw.count >= 2, let first = raw.first, raw.last == first,
-              first == "\"" || first == "'" else { return raw }
-        let inner = raw.dropFirst().dropLast()
-        if first == "'" { return inner.replacingOccurrences(of: "''", with: "'") }
-        var out = ""
-        var escaped = false
-        for ch in inner {
-            if escaped {
-                switch ch {
-                case "n": out.append("\n")
-                case "t": out.append("\t")
-                case "r": out.append("\r")
-                case "0": out.append("\0")
-                default: out.append(ch)   // \\, \", \/ and the rest
-                }
-                escaped = false
-            } else if ch == "\\" {
-                escaped = true
-            } else {
-                out.append(ch)
-            }
+    /// value is as written. A trailing ` # comment` is not part of it.
+    static func unquote(_ raw: String) -> String { parts(raw).value }
+
+    /// `raw` split into the value YAML reads and the trailing comment it
+    /// ignores (with the blanks before the `#`; "" when there is none). A
+    /// quoted value YAML can't read (unclosed, a bad escape, text after
+    /// the closing quote) comes back whole, so nothing is lost.
+    static func parts(_ raw: String) -> (value: String, comment: String) {
+        // Scalars, not Characters: a combining mark after a quote would
+        // otherwise fuse with it and hide the quote.
+        let chars = Array(raw.unicodeScalars)
+        guard let quote = chars.first, quote == "\"" || quote == "'" else {
+            // Plain: a `#` at the start or after a blank starts a comment
+            // (parseField already took the blank before a leading one).
+            if raw.hasPrefix("#") { return ("", " " + raw) }
+            guard let hash = raw.range(of: #"[ \t]+#"#, options: .regularExpression)
+            else { return (raw, "") }
+            return (String(raw[..<hash.lowerBound]), String(raw[hash.lowerBound...]))
         }
-        return out
+        var out = String.UnicodeScalarView()
+        var i = 1
+        var closed = false
+        while i < chars.count {
+            let ch = chars[i]
+            if ch == quote {
+                if quote == "'", i + 1 < chars.count, chars[i + 1] == "'" {
+                    out.append(quote)
+                    i += 2
+                    continue
+                }
+                closed = true
+                i += 1
+                break
+            }
+            if quote == "\"", ch == "\\" {
+                guard let (text, used) = escape(chars, at: i + 1) else { return (raw, "") }
+                out.append(contentsOf: text.unicodeScalars)
+                i += 1 + used
+                continue
+            }
+            out.append(ch)
+            i += 1
+        }
+        let rest = String(String.UnicodeScalarView(chars[i...]))
+        guard closed else { return (raw, "") }
+        guard rest.isEmpty || rest.range(of: #"^[ \t]+#"#, options: .regularExpression) != nil
+        else { return (raw, "") }
+        return (String(out), rest)
+    }
+
+    /// The text a double-quoted YAML escape stands for, and how many
+    /// characters after the backslash it used; nil when YAML rejects it.
+    private static func escape(_ chars: [Unicode.Scalar], at i: Int) -> (String, Int)? {
+        guard i < chars.count else { return nil }
+        let simple: [Unicode.Scalar: String] = [
+            "0": "\0", "a": "\u{07}", "b": "\u{08}", "t": "\t", "\t": "\t", "n": "\n",
+            "v": "\u{0B}", "f": "\u{0C}", "r": "\r", "e": "\u{1B}", " ": " ",
+            "\"": "\"", "/": "/", "\\": "\\", "N": "\u{85}", "_": "\u{A0}",
+            "L": "\u{2028}", "P": "\u{2029}",
+        ]
+        if let text = simple[chars[i]] { return (text, 1) }
+        let digits: [Unicode.Scalar: Int] = ["x": 2, "u": 4, "U": 8]
+        guard let count = digits[chars[i]], i + count < chars.count,
+              let code = UInt32(String(String.UnicodeScalarView(chars[(i + 1)...(i + count)])), radix: 16)
+        else { return nil }
+        if let scalar = Unicode.Scalar(code) { return (String(scalar), 1 + count) }
+        // A UTF-16 surrogate pair written as two `\u` escapes.
+        guard chars[i] == "u", (0xD800...0xDBFF).contains(code), i + 10 < chars.count,
+              chars[i + 5] == "\\", chars[i + 6] == "u",
+              let low = UInt32(String(String.UnicodeScalarView(chars[(i + 7)...(i + 10)])), radix: 16),
+              (0xDC00...0xDFFF).contains(low),
+              let pair = Unicode.Scalar(0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00))
+        else { return nil }
+        return (String(pair), 11)
     }
 
     /// `value` as a YAML scalar: plain when YAML reads it back as this
@@ -251,9 +300,11 @@ public struct MarkdownFrontmatter: Sendable, Equatable {
             let value = left.remove(at: at).value
             let next = i + 1 < lines.count ? lines[i + 1] : ""
             guard next.isEmpty || !(next.first == " " || next.first == "\t") else { continue }
-            // Unchanged keeps its line, quoting and comment included.
-            guard value != unquote(parsed.value) else { continue }
-            lines[i] = value.isEmpty ? parsed.key + ":" : parsed.key + ": " + scalar(value)
+            // Unchanged keeps its line, quoting and comment included; a
+            // changed value keeps its comment.
+            let (old, comment) = parts(parsed.value)
+            guard value != old else { continue }
+            lines[i] = (value.isEmpty ? parsed.key + ":" : parsed.key + ": " + scalar(value)) + comment
         }
         // Insert before the closing fence: a trailing "" is the newline
         // that already ends the last line, so new keys go ahead of it.

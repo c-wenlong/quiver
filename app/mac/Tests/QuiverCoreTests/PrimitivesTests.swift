@@ -344,6 +344,7 @@ final class PrimitiveHome {
             ("- item", #""- item""#),
             ("say \"hi\"\nthen go", #""say \"hi\"\nthen go""#),
             ("Plain words, fine.", "Plain words, fine."),
+            ("bell\u{07}here", #""bell\u0007here""#),
         ]
         for (typed, written) in cases {
             let edited = MarkdownFrontmatter.update(skill, set: [(key: "description", value: typed)])
@@ -359,8 +360,34 @@ final class PrimitiveHome {
         let fields = MarkdownFrontmatter(text: text)?.fields.map { ($0.key, $0.value) } ?? []
         #expect(fields.map(\.0) == ["name", "description", "kind"])
         #expect(fields[0].1 == "it's")
+        #expect(fields[1].1 == "a: b")
         #expect(fields[2].1 == "x")
         #expect(MarkdownFrontmatter.update(text, set: fields) == text)
+        // A changed value keeps its comment, outside the quotes.
+        let edited = MarkdownFrontmatter.update(text, set: [(key: "description", value: "a: c")])
+        #expect(edited.contains("description: \"a: c\" # note\n"))
+    }
+
+    /// Every YAML escape reads as the text it stands for, a plain value
+    /// drops its comment, and a value YAML can't read shows as written.
+    @Test func yamlEscapesAndCommentsRead() {
+        let cases: [(raw: String, value: String)] = [
+            (#""\u00E9 \x41 \U0001F600 \uD83D\uDE00""#, "\u{E9} A \u{1F600} \u{1F600}"),
+            (#""\e\a\b\v\f\N\_\L\P\ \/""#, "\u{1B}\u{07}\u{08}\u{0B}\u{0C}\u{85}\u{A0}\u{2028}\u{2029} /"),
+            ("plain words # a note", "plain words"),
+            ("#only a note", ""),
+            ("a#b", "a#b"),
+            (#""bad \q escape""#, #""bad \q escape""#),
+            (#""unclosed"#, #""unclosed"#),
+            (#""a" b"#, #""a" b"#),
+            ("'it''s' # c", "it's"),
+        ]
+        for (raw, value) in cases {
+            let text = "---\ndescription: \(raw)\n---\n"
+            #expect(MarkdownFrontmatter(text: text)?.fields.first?.value == value, "\(raw)")
+        }
+        let plain = MarkdownFrontmatter.update("---\nkind: x # c\n---\n", set: [(key: "kind", value: "z")])
+        #expect(plain == "---\nkind: z # c\n---\n")
     }
 }
 
