@@ -40,7 +40,7 @@
     const { status, data } = await api(`/v1/app/inbox${refresh ? "?refresh=1" : ""}`);
     if (gen !== routeGen) return;
     inbox.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("inbox");
     // A mark-read landed while this read was in flight: its rows may be
     // older than the write's answer, so the answer stays on screen.
     if (writes !== inbox.writes && inbox.data && !inbox.data.transport) return paint();
