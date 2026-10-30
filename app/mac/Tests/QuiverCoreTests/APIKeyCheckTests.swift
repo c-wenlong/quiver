@@ -256,46 +256,6 @@ import Testing
     }
 }
 
-/// A counter a test can await: `bump` wakes every caller parked in
-/// `reach(_:)` whose target the count has passed. Checking the count and
-/// parking the caller happen in one actor step, so a `bump` can never
-/// slip between them and leave a waiter stranded. The ten-second cap
-/// fails the test instead of hanging the suite.
-actor CountGate {
-    private var count = 0
-    private var nextID = 0
-    private var waiters: [Int: (target: Int,
-                              cont: CheckedContinuation<Bool, Never>)] = [:]
-
-    func bump() {
-        count += 1
-        let ready = waiters.filter { count >= $0.value.target }
-        for id in ready.keys { waiters[id] = nil }
-        for waiter in ready.values { waiter.cont.resume(returning: true) }
-    }
-
-    /// True once the count reaches `target`, false after ten seconds.
-    func reach(_ target: Int) async -> Bool {
-        await withCheckedContinuation { cont in
-            if count >= target {
-                cont.resume(returning: true)
-                return
-            }
-            nextID += 1
-            let id = nextID
-            waiters[id] = (target, cont)
-            Task { await self.expire(id) }
-        }
-    }
-
-    /// The timeout resumes only its own waiter, and only if a `bump` has
-    /// not already answered it.
-    private func expire(_ id: Int) async {
-        try? await Task.sleep(for: .seconds(10))
-        waiters.removeValue(forKey: id)?.cont.resume(returning: false)
-    }
-}
-
 /// Races `wait` against a ten-second deadline: the first to finish wins
 /// and the loser is cancelled. Returns false on timeout so a regression
 /// fails the test instead of hanging the suite.
@@ -360,26 +320,6 @@ final class GateTransport: HTTPTransport {
     }
 }
 
-/// Counts how many requests run at once.
-final class CountingTransport: HTTPTransport {
-    private let state = Mutex<(inFlight: Int, peak: Int, requests: [URLRequest])>((0, 0, []))
-
-    var peak: Int { state.withLock { $0.peak } }
-    var requests: [URLRequest] { state.withLock { $0.requests } }
-
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        state.withLock { s in
-            s.inFlight += 1
-            s.peak = max(s.peak, s.inFlight)
-            s.requests.append(request)
-        }
-        defer { state.withLock { $0.inFlight -= 1 } }
-        try? await Task.sleep(for: .milliseconds(20))
-        return (Data(), HTTPURLResponse(url: request.url!, statusCode: 200,
-                                        httpVersion: nil, headerFields: nil)!)
-    }
-}
-
 @MainActor
 @Suite struct APIKeyCheckModelTests {
     func model(text: String, transport: HTTPTransport) throws -> APIKeysModel {
@@ -427,8 +367,8 @@ final class CountingTransport: HTTPTransport {
                     .noCheck("Quiver doesn't know how to check this key."))
     }
 
-    @Test func atMostFourChecksRunAtOnce() async throws {
-        let transport = CountingTransport()
+    @Test(.timeLimit(.minutes(1))) func atMostFourChecksRunAtOnce() async throws {
+        let transport = GateTransport()
         let model = try model(text: """
         export OPENAI_API_KEY="sk-fake-A"
         export ANTHROPIC_API_KEY="sk-fake-B"
@@ -439,10 +379,17 @@ final class CountingTransport: HTTPTransport {
         export DEEPSEEK_API_KEY="sk-fake-G"
         """, transport: transport)
         await model.load()
-        await model.checkAll()
-        #expect(transport.requests.count == 7)
-        #expect(transport.peak <= 4)
-        #expect(transport.peak > 1)
+        let all = Task { await model.checkAll() }
+        // Four run at once and hold their slots...
+        #expect(await transport.waitForRequests(4))
+        #expect(transport.inFlight == 4)
+        // ...and the other three start only as those slots free up.
+        transport.release()
+        #expect(await transport.waitForRequests(7))
+        transport.release()
+        await all.value
+        #expect(transport.requestCount == 7)
+        #expect(transport.peak == 4)
         #expect(model.rows.allSatisfy { model.check(for: $0)?.result == .works })
     }
 

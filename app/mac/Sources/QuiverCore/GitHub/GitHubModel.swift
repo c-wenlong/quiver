@@ -338,16 +338,20 @@ public final class GitHubModel {
 
     /// A new notification names a repo whose rows may have moved: drop
     /// its fetch times so the next look refetches, and refresh it now
-    /// when it is the repo on screen.
-    public func invalidate(repo: String, swe: SweClient) {
+    /// when it is the repo on screen. Returns the refreshes it started
+    /// (none when the repo is off screen), so a caller can wait for them.
+    @discardableResult
+    public func invalidate(repo: String, swe: SweClient) -> [Task<Void, Never>] {
         for key in fetched.keys where key.repo == repo { fetched[key] = nil }
         for key in focusFetched.keys where key.repo == repo { focusFetched[key] = nil }
+        var refreshes: [Task<Void, Never>] = []
         if selected == repo {
-            Task { await loadTab(tab, repo: repo, swe: swe) }
+            refreshes.append(Task { await loadTab(tab, repo: repo, swe: swe) })
         }
         if focused == repo {
-            Task { await loadFocusTab(focusTab, repo: repo, swe: swe) }
+            refreshes.append(Task { await loadFocusTab(focusTab, repo: repo, swe: swe) })
         }
+        return refreshes
     }
 
     /// Manual refresh always fetches, even inside the stale window.

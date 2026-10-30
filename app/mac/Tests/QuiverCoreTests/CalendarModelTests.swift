@@ -68,7 +68,6 @@ private struct TogglingActivity: ActivityProviding {
 
     @Test func theWeekRangeStartsOnTheUsersFirstWeekday() async {
         // 14 Oct 2026 is a Wednesday.
-        var mondayFirst = calendar; mondayFirst.firstWeekday = 2
         let week = model(firstWeekday: 2).visibleRange
         #expect(week.start == utc("2026-10-12T00:00:00Z"))
         #expect(week.end == utc("2026-10-19T00:00:00Z"))

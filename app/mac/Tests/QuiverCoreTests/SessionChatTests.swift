@@ -432,11 +432,17 @@ extension HubStubbed {
     /// truncated back on every follow and never see a new event. When the
     /// history fetch fails, it retries before following on: with the
     /// cursor lowered no reconnect would say truncated again.
-    @Test(arguments: [false, true])
+    ///
+    /// The stream reconnects on its own a second after the wipe, which is
+    /// also how long the failed reload backs off, so either can ask from 2
+    /// first. The test waits for the reload itself to land instead of the
+    /// first ask from 2 (which once came before the retry, failing it).
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
     func aJournalWipedUnderTheCursorRestartsAtItsHead(failFirstReload: Bool) async throws {
         let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
         try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
         let pages = Mutex(0)
+        let followed = CountGate()
         HubStub.requests = []
         HubStub.handler = { req in
             let last = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
@@ -451,6 +457,7 @@ extension HubStubbed {
                     ? #"{"messages": [{"type": "message.appended", "seq": 500, "data": {"kind": "assistant", "text": "before"}}], "has_more": false}"#
                     : #"{"messages": [{"type": "message.appended", "seq": 2, "data": {"kind": "assistant", "text": "after wipe"}}], "has_more": false}"#).utf8))
             case "/v1/sessions/claude:s1/events":
+                Task { await followed.bump() }
                 if let last, let n = Int(last), n > 2 {
                     return (200, Data("""
                         data: {"type": "journal.truncated", "seq": 2}
@@ -475,20 +482,25 @@ extension HubStubbed {
                 .compactMap { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?
                     .queryItems?.first { $0.name == "last" }?.value }
         }
-        for _ in 0..<200 where !follows().contains("2") {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        #expect(follows().prefix(2) == ["500", "2"])
-        #expect(chat.items.map(\.id) == ["m2"])
+        // The newer history lands (after one retry when the first fails)...
+        #expect(await observe(until: { chat.items.map(\.id) == ["m2"] }))
         #expect(pages.withLock { $0 } == (failFirstReload ? 3 : 2))
+        // ...and the next follow asks from the head, not from 500 again.
+        #expect(await followed.reach(2))
+        #expect(follows().prefix(2) == ["500", "2"])
     }
 
     /// The stream's own reconnect: after journal.truncated at 2 it asks
     /// from 2 next time, not from the 500 it started at.
+    ///
+    /// A session of its own: a stream an earlier test stopped reading can
+    /// still be reconnecting to claude:s1 (the producer outlives a reader
+    /// that leaves its loop without being cancelled), and its asks would
+    /// land in this test's list.
     @Test func theStreamReconnectsFromATruncatedFramesSeq() async throws {
         HubStub.requests = []
         HubStub.handler = { req in
-            guard req.url?.path == "/v1/sessions/claude:s1/events" else { return (404, Data()) }
+            guard req.url?.path == "/v1/sessions/claude:reconnect/events" else { return (404, Data()) }
             return (200, Data("data: {\"type\": \"journal.truncated\", \"seq\": 2}\n\n".utf8))
         }
         let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!,
@@ -496,7 +508,7 @@ extension HubStubbed {
                                session: HubStub.session(), streamSession: HubStub.session())
         var truncated: [Int?] = []
         var disconnects = 0
-        for await event in client.events("claude:s1", last: 500) {
+        for await event in client.events("claude:reconnect", last: 500) {
             switch event {
             case .truncated(let seq): truncated.append(seq)
             case .disconnected: disconnects += 1
@@ -504,10 +516,9 @@ extension HubStubbed {
             }
             if truncated.count == 2 { break }
         }
-        let lasts = HubStub.requests.compactMap {
-            URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?
-                .queryItems?.first { $0.name == "last" }?.value
-        }
+        let lasts = HubStub.requests.filter { $0.url?.path == "/v1/sessions/claude:reconnect/events" }
+            .compactMap { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "last" }?.value }
         #expect(truncated == [2, 2])
         #expect(disconnects == 1)
         #expect(lasts == ["500", "2"])

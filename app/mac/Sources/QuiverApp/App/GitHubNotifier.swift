@@ -72,28 +72,32 @@ final class GitHubNotifier {
     /// One tick: refetch the inbox, banner ids not seen before, and mark
     /// each notified repo's boards stale so the next look refetches —
     /// the row updates from the same poll that produced the banner.
-    func poll(swe: SweClient?) async {
-        guard let swe else { return }
+    /// Returns the board refreshes it started, so a test can wait for them.
+    @discardableResult
+    func poll(swe: SweClient?) async -> [Task<Void, Never>] {
+        guard let swe else { return [] }
         await model.loadInbox(swe: swe, force: true)
-        guard case .loaded(let notes) = model.inbox else { return }
+        guard case .loaded(let notes) = model.inbox else { return [] }
 
         if !primed {
             primed = true
             for note in notes { record(note.id) }
             save()
-            return
+            return []
         }
 
         let fresh = notes.filter { $0.unread && !delivered.contains($0.id) }
+        var refreshes: [Task<Void, Never>] = []
         for note in fresh {
             record(note.id)
-            model.invalidate(repo: note.repo, swe: swe)
+            refreshes += model.invalidate(repo: note.repo, swe: swe)
         }
         if !fresh.isEmpty {
             if bannersEnabled { await post(fresh) }
             trim()
             save()
         }
+        return refreshes
     }
 
     /// Newest ids go last; eviction drops from the front, so an id a

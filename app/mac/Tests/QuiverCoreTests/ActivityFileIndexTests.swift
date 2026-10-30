@@ -106,10 +106,9 @@ extension ActivityFileIndexTests {
         let dir = try TempDir()
         let good = try file(dir, "good.jsonl", "one")
         let bad = try file(dir, "bad.jsonl", "corrupt")
-        var now = Date(timeIntervalSince1970: 1_000)
         final class Now: @unchecked Sendable { var value: Date
             init(_ d: Date) { value = d } }
-        let clock = Now(now)
+        let clock = Now(Date(timeIntervalSince1970: 1_000))
         let index = ActivityFileIndex(url: dir.url.appending(path: "cache/s.json"),
                                       now: { clock.value })
         let attempts = Count()

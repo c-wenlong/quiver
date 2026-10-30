@@ -33,6 +33,9 @@ public final class LatestBuild<Value: Sendable> {
     private var waiters: [CheckedContinuation<Void, Never>] = []
     /// Called each time a `settled()` caller starts waiting; for tests.
     var onWait: (() -> Void)?
+    /// Called when a superseded build finishes and its result is thrown
+    /// away; for tests, which otherwise can't see a result not arriving.
+    var onDrop: (() -> Void)?
 
     public init() {}
 
@@ -49,7 +52,11 @@ public final class LatestBuild<Value: Sendable> {
         isRunning = true
         Task { [weak self] in
             let value = await offMain(work)
-            guard let self, self.generation == mine else { return }
+            guard let self else { return }
+            guard self.generation == mine else {
+                self.onDrop?()
+                return
+            }
             self.isRunning = false
             publish(value)
             self.wake()
