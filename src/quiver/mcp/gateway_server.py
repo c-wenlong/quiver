@@ -804,6 +804,10 @@ class _Handler(BaseHTTPRequestHandler):
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # A session connects to every shared server at once, and socketserver
+    # in Python 3.13 (what Quiver.app bundles) queues only 5 connections:
+    # on macOS the rest are reset, and those servers fail for that session.
+    request_queue_size = 128
 
     def handle_error(self, request, client_address):
         # A harness closing its connection mid-request is routine, not
