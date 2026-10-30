@@ -1714,6 +1714,9 @@ class TestApprovalWatcher(unittest.TestCase):
         evs = self._approval_events()
         self.assertEqual(evs[-1]["type"], "approval.resolved")
         self.assertEqual(evs[-1]["data"]["source"], "detached")
+        # The id alone, as the request carried it: the hub and the
+        # phone match the resolve to the open card by this string.
+        self.assertEqual(evs[-1]["data"]["request_id"], rid)
         self.assertIsNone(supervise.pending_approval("k1"))
 
     def test_headless_meta_skips_pane_check(self):
