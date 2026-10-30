@@ -727,6 +727,31 @@ class TestAgentRoutes(unittest.TestCase):
             {"op": "attach", "mode": "tmux"}, headers=self.srv.auth)
         self.assertEqual(status, 202)
 
+    def test_opening_a_satellite_chat_queues_one_tail_until_acked(self):
+        # Each GET of events/messages used to queue another tail, so a
+        # chat left open on an offline satellite filled its backlog.
+        self._push_catalog([{"key": "claude:r1", "status": "idle",
+                             "ownership": "observed"}])
+        self.srv.state.catalog.refresh()
+        key = "claude%3Ar1%40sat-m1"
+
+        def tails():
+            replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+            return [e for e in replay if e["data"]["op"] == "tail"]
+
+        for _ in range(3):
+            status, _ = self.srv.request(
+                "GET", f"/v1/sessions/{key}/messages",
+                headers=self.srv.auth)
+            self.assertEqual(status, 200)
+        self.assertEqual(len(tails()), 1)
+        # Once the satellite acks it, the next open may ask again.
+        self.srv.state._sat_result_acked(
+            self.mid, tails()[0]["data"]["command_id"])
+        self.srv.request("GET", f"/v1/sessions/{key}/messages",
+                         headers=self.srv.auth)
+        self.assertEqual(len(tails()), 2)
+
     def test_launch_to_named_machine_queues(self):
         status, data = self.srv.request(
             "POST", "/v1/sessions",

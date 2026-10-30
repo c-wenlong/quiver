@@ -223,6 +223,10 @@ class HubState:
         # Satellite presence: command-stream subscribers are the online
         # signal — a sleeping MacBook just drops offline until it dials in.
         self._sat_subs: dict[str, int] = {}
+        # (machine, session key) -> command id of its last queued
+        # ``tail``, so a chat reopened (or an SSE reconnecting) while
+        # the satellite is offline queues one tail, not one per GET.
+        self._sat_tail_cmds: dict[tuple[str, str], str] = {}
         self._cmd_seq = 0
         # Guards ``_cmd_seq`` and every piece of satellite ack
         # bookkeeping below — command streams, result uploads and
@@ -659,6 +663,22 @@ class HubState:
             # A map entry at or under the floor can never move it.
             for cid in [c for c, s in seqs.items() if s <= floor]:
                 del seqs[cid]
+
+    def queue_tail(self, mid: str, session_key: str, status: str) -> None:
+        """Ask a satellite to tail ``session_key``, unless a tail for it
+        is already queued and not yet acked."""
+        with self._cmd_lock:
+            cid = self._sat_tail_cmds.get((mid, session_key))
+            if cid and cid in self._sat_cmd_seqs.get(mid, {}):
+                return
+        cmd = self.queue_command(
+            mid, "tail", session_key, {"status": status})
+        if cmd is not None:
+            with self._cmd_lock:
+                if len(self._sat_tail_cmds) > 4096:
+                    self._sat_tail_cmds.clear()
+                self._sat_tail_cmds[(mid, session_key)] = str(
+                    (cmd.get("data") or {}).get("command_id") or "")
 
     def queue_command(
         self, mid: str, op: str, session_key: str, data: dict
@@ -1829,9 +1849,9 @@ class _Handler(BaseHTTPRequestHandler):
                 elif row.get("remote") and row.get("machine_id"):
                     # A satellite session has no local Session to tail —
                     # ask its agent to start one instead.
-                    self._state.queue_command(
-                        str(row["machine_id"]), "tail", key,
-                        {"status": str(row.get("status") or "")},
+                    self._state.queue_tail(
+                        str(row["machine_id"]), key,
+                        str(row.get("status") or ""),
                     )
             if sep and action == "events":
                 after = self._sse_after(args)
