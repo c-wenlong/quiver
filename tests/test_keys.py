@@ -226,6 +226,42 @@ class ChecklistWindowTest(unittest.TestCase):
         self.assertIn(" s38 ", text)
         self.assertNotIn(" s0 ", text)
 
+    def test_a_short_pane_gets_no_minimum_rows(self):
+        # Five rows forced into a seven-line pane wrote eight lines.
+        import os
+        from quiver import multiselect
+
+        with patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 7))):
+            self.assertEqual(multiselect._default_height(), 3)
+        with patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 2))):
+            self.assertEqual(multiselect._default_height(), 1)
+
+    def test_the_height_is_measured_again_on_every_redraw(self):
+        import io
+        import os
+        import sys
+        from contextlib import redirect_stdout
+        from quiver import multiselect
+
+        heights = []
+        real = multiselect._render
+
+        def spy(*args):
+            heights.append(args[-1])
+            return real(*args)
+
+        sizes = iter([os.terminal_size((80, 24)), os.terminal_size((80, 12))])
+        with patch.object(multiselect, "_supported", return_value=True), \
+                patch.object(sys, "stdin", **{"fileno.return_value": 0}), \
+                patch("termios.tcgetattr", return_value=[]), \
+                patch("termios.tcsetattr"), patch("tty.setraw"), \
+                patch.object(keys, "read_key", side_effect=["down", "enter"]), \
+                patch("shutil.get_terminal_size", side_effect=lambda **_: next(sizes)), \
+                patch.object(multiselect, "_render", side_effect=spy), \
+                redirect_stdout(io.StringIO()):
+            multiselect.multiselect([multiselect.Choice(f"s{i}", f"s{i}") for i in range(40)])
+        self.assertEqual(heights, [20, 8])
+
     def test_a_short_list_is_drawn_whole(self):
         drawn, text = self._draw(0, n=3)
         self.assertEqual(drawn, 5)

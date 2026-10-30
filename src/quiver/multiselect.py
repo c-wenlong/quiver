@@ -83,10 +83,12 @@ def _window(total: int, cursor: int, height: int | None) -> tuple[int, int]:
 
 def _default_height() -> int:
     """Rows a widget may draw: the terminal less title, footer, range line
-    and the shell prompt that follows."""
+    and the line the caret sits on. Measured on every redraw, so a pane
+    shrunk mid-pick still fits, and never padded up to a minimum, which
+    would overflow a short pane the same way."""
     import shutil
 
-    return max(5, shutil.get_terminal_size(fallback=(80, 24)).lines - 5)
+    return max(1, shutil.get_terminal_size(fallback=(80, 24)).lines - 4)
 
 
 def _render(choices, selected, cursor, title, prev_lines: int,
@@ -150,9 +152,6 @@ def multiselect(choices: list[Choice], selected=None, title="Select",
         print(c("dim", "  not a terminal, nothing changed"))
         return None
 
-    if height is None:
-        height = _default_height()
-
     fd = sys.stdin.fileno()
     cursor, drawn = 0, 0
     with keys.raw_terminal(fd):
@@ -160,7 +159,8 @@ def multiselect(choices: list[Choice], selected=None, title="Select",
         # instead of arriving as loose bytes the reader has to drop.
         sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
         while True:
-            drawn = _render(choices, chosen, cursor, title, drawn, height)
+            rows = height if height is not None else _default_height()
+            drawn = _render(choices, chosen, cursor, title, drawn, rows)
             key = _read_key(fd)
             if key in ("cancel", "escape"):
                 return None
@@ -277,15 +277,13 @@ def statepicker(choices: list[StateChoice], title="Select",
         print(c("dim", "  not a terminal, nothing changed"))
         return None
 
-    if height is None:
-        height = _default_height()
-
     fd = sys.stdin.fileno()
     cursor, drawn = 0, 0
     with keys.raw_terminal(fd):
         sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
         while True:
-            drawn = _state_render(choices, cursor, title, drawn, height)
+            rows = height if height is not None else _default_height()
+            drawn = _state_render(choices, cursor, title, drawn, rows)
             key = _read_state_key(fd)
             if key in ("cancel", "escape"):
                 return None
