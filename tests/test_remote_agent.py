@@ -2642,6 +2642,18 @@ class TestSatelliteQueueMode(unittest.TestCase):
         self.assertTrue(cmd["attachments"][0].endswith("1-ab-shot.png"))
         self.assertEqual(self.fake.send.call_count, 1)  # 1 still waits
 
+    def test_idle_is_checked_after_the_pulls(self):
+        # A steer can start a turn while the queued send's file is
+        # still downloading: the send must wait that turn out too.
+        order = []
+        self.ag._await_pulls = lambda k, d: order.append("pulls") or True
+        real_wait = self.ag._wait_idle
+        self.ag._wait_idle = lambda k, d: order.append("idle") or real_wait(k, d)
+        self.status = "done"
+        self._frame(1)
+        self._wait(lambda: self.fake.send.called)
+        self.assertEqual(order, ["pulls", "idle"])
+
     def test_queued_send_waits_for_its_pull(self):
         pull = threading.Event()
         self.ag._pulls[("claude:s1", "r1")] = pull

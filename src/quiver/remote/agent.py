@@ -653,8 +653,9 @@ class RemoteAgent:
         Attachment pulls and steer sends share the session's lane, in
         order. A ``queue``-mode send gets a lane of its own, as on the
         hub, and waits there until the session is idle, so it never
-        holds a steer or the pull a steer needs. It then waits for the
-        pulls it names. A command the agent stops before running is
+        holds a steer or the pull a steer needs. It first waits for the
+        pulls it names, then for idle. A command the agent stops before
+        running is
         never marked done, so the hub replays it after the restart.
         """
         data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
@@ -684,6 +685,12 @@ class RemoteAgent:
             return
 
         def job() -> None:
+            # Pulls first: they run on the session lane, which never
+            # waits on a turn, so they end soon. The idle check then
+            # sits right before the send; a steer that started a turn
+            # during a download is waited out, not typed into.
+            if not self._await_pulls(key, data):
+                return
             waited = self._wait_idle(key, data)
             if waited == "stopped":
                 return
@@ -692,8 +699,6 @@ class RemoteAgent:
                     key, data, False,
                     "session stayed busy for 30 min; message not sent")
                 self._mark_done(seq, epoch)
-                return
-            if not self._await_pulls(key, data):
                 return
             self._dispatch_then_done(seq, ev, epoch)
 
