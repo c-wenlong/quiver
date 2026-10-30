@@ -170,6 +170,13 @@ public final class GitHubModel {
     private var storeOwnsBoards = false
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
+    /// An inbox read is in flight; a second waits rather than racing it.
+    private var inboxInFlight = false
+    /// A forced refresh asked for while a read ran.
+    private var inboxQueued = false
+    /// Bumped by each read and by marking threads read: only the newest
+    /// read's reply, from after the last mark, lands.
+    private var inboxGeneration = 0
     /// Unread lines in the loaded inbox — the sidebar badge and the
     /// Dock tile both read this. 0 until the first fetch lands and
     /// through `.idle`/`.failed`, which read as "nothing known" rather
@@ -803,9 +810,25 @@ public final class GitHubModel {
 
     /// The GitHub notifications inbox; refetches when stale or forced.
     public func loadInbox(swe: SweClient, force: Bool = false) async {
-        if case .loading = inbox { return }
+        // One read at a time, polls included: two in flight could land out
+        // of order and an older list overwrite a newer one. A forced
+        // refresh asked meanwhile runs once the current read lands.
+        if inboxInFlight {
+            if force { inboxQueued = true }
+            return
+        }
         if !force, case .loaded = inbox,
            let at = inboxFetchedAt, now().timeIntervalSince(at) < staleAfter { return }
+        inboxInFlight = true
+        inboxGeneration += 1
+        let mine = inboxGeneration
+        defer {
+            inboxInFlight = false
+            if inboxQueued {
+                inboxQueued = false
+                Task { await loadInbox(swe: swe, force: true) }
+            }
+        }
         // First read shows the spinner; later polls keep the rows.
         if case .idle = inbox { inbox = .loading }
         let next: Loadable<[GhNotification]>
@@ -824,6 +847,9 @@ public final class GitHubModel {
         } catch {
             next = .failed(error.localizedDescription)
         }
+        // Marking threads read while this ran: the reply predates it and
+        // would bring the read threads back as unread.
+        guard mine == inboxGeneration else { return }
         inbox = next
         if case .loaded(let notes) = next {
             inboxFetchedAt = now()
@@ -1190,6 +1216,8 @@ public final class GitHubModel {
                 if case .loaded(let now) = inbox {
                     snapshotInbox = now
                 }
+                // A poll in flight answers from before this mark.
+                inboxGeneration += 1
                 scheduleSave()
             }
             return nil
