@@ -455,6 +455,7 @@ import Testing
         let before = overview.revision
         let feed = CursorUsageFeed(
             ledger: ledger, swe: { SweClient(runner: runner) }, accounts: { self.accts() },
+            progressFile: temp.url.appending(path: "cache/cursor-feed.json"),
             onIngested: { await overview.reloadAfterLedgerWrite() })
         await feed.poll()
         #expect(overview.revision == before + 1)
