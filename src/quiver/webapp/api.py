@@ -43,18 +43,47 @@ class WebApp:
         # notes surface with the next page's.
         self._feed_thread: threading.Thread | None = None
         self._feed_notes: list[str] = []
+        # The LiteLLM price download (up to 15 s) runs on its own thread
+        # too; pages price from the copy on disk meanwhile. A pricing
+        # write bumps ``_prices_gen`` so a download that started before
+        # it can't put back the old overrides.
+        self._prices_thread: threading.Thread | None = None
+        self._prices_gen = 0
 
     def _ensure(self, rescan: bool) -> None:
         if self._store is None:
             self._store = LedgerStore(ledger_path_for(self.home))
         now = time.time()
         if self._catalog is None or now - self._catalog_at > CATALOG_TTL_S:
-            self._catalog = load_catalog(self.home, download=self.download_prices)
+            if self._catalog is None:
+                self._catalog = load_catalog(self.home, download=False)
             self._catalog_at = now
+            self._kick_prices()
         if rescan or now - self._scanned_at > SCAN_TTL_S:
             self._last_scan = scan(self._store, self.home)
             self._scanned_at = time.time()
         self._kick_feed()
+
+    def _kick_prices(self) -> None:
+        """Refresh the LiteLLM download on a background thread; the
+        caller holds the lock, which the download must never hold."""
+        if not self.download_prices:
+            return
+        if self._prices_thread is not None and self._prices_thread.is_alive():
+            return
+        self._prices_thread = threading.Thread(
+            target=self._refresh_prices, args=(self._prices_gen,),
+            name="ledger-prices", daemon=True)
+        self._prices_thread.start()
+
+    def _refresh_prices(self, gen: int) -> None:
+        try:
+            catalog = load_catalog(self.home, download=True)
+        except Exception:  # offline or unreadable: keep the disk copy
+            return
+        with self._lock:
+            if gen == self._prices_gen:
+                self._catalog = catalog
 
     def _kick_feed(self) -> None:
         """Start a background feed round when the cadence says one is
@@ -136,6 +165,7 @@ class WebApp:
         price list again, so every page prices with the new rates."""
         with self._lock:
             self._catalog = None
+            self._prices_gen += 1
 
     @contextmanager
     def ledger(self, rescan: bool = False):

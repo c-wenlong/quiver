@@ -77,6 +77,56 @@ APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestPriceDownload(unittest.TestCase):
+    """The LiteLLM download must never run under the page lock."""
+
+    def test_download_runs_off_the_page_lock(self):
+        import threading
+        from unittest.mock import patch
+
+        from quiver.webapp import api
+
+        release = threading.Event()
+        calls = []
+
+        def load(home, download=True):
+            calls.append(download)
+            if download:
+                release.wait(10)  # a slow LiteLLM fetch
+                return "downloaded"
+            return "on disk"
+
+        app = WebApp(None, download_prices=True)
+        app._store = object()
+        app._scanned_at = float("inf")  # no scan
+        try:
+            with patch.object(api, "load_catalog", side_effect=load), \
+                    patch.object(app, "_kick_feed"):
+                with app._lock:
+                    app._ensure(False)  # returns before the download
+                self.assertEqual(app._catalog, "on disk")
+                self.assertTrue(app._lock.acquire(timeout=1))
+                app._lock.release()
+                release.set()
+                app._prices_thread.join(5)
+            self.assertEqual(app._catalog, "downloaded")
+            self.assertEqual(calls, [False, True])
+        finally:
+            release.set()
+
+    def test_a_pricing_write_beats_an_older_download(self):
+        from unittest.mock import patch
+
+        from quiver.webapp import api
+
+        app = WebApp(None, download_prices=True)
+        gen = app._prices_gen
+        app.prices_changed()
+        with patch.object(api, "load_catalog", return_value="stale"):
+            app._refresh_prices(gen)
+        self.assertIsNone(app._catalog)
+
+
 class TestSetupOffer(unittest.TestCase):
     """app.js's first-run offer, run under node with the browser stubbed:
     each case is a fresh page load at ``hash``."""
