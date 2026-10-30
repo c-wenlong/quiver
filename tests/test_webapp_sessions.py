@@ -461,6 +461,10 @@ class TestChatScript(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
 
+    def test_reconnects_back_off_to_half_a_minute(self):
+        out = self.run_js("return [0, 1, 2, 3, 4, 5, 9, 60].map(T.retryDelay);")
+        self.assertEqual(out, [2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000])
+
     def test_bare_urls_keep_their_underscores(self):
         """A bare URL goes back after emphasis runs, so `__init__` in a
         path stays in the href and the text, never <strong>."""
