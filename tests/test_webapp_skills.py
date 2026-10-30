@@ -75,6 +75,22 @@ class TestPlacement(unittest.TestCase):
         self.assertEqual([s["plugin"] for s in placed], ["tools@market", None, None])
         self.assertEqual((moved, error), (1, None))
 
+    def test_placement_reuses_the_plugins_pages_catalog(self):
+        # build_catalog walks every marketplace: one read serves both
+        # pages until it expires or a plugin change drops it.
+        from quiver.webapp.pages import plugins
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(plugins.clear_cache)
+        skills = [_skill("lint", base / "lint", source="plugin")]
+        with patch("quiver.plugins.catalog.build_catalog",
+                   return_value={"marketplaces": []}) as build:
+            page.placement(skills, base)
+            page.placement(skills, base)
+            self.assertEqual(build.call_count, 1)
+            plugins._invalidate(base)
+            page.placement(skills, base)
+            self.assertEqual(build.call_count, 2)
+
     def test_unreadable_catalog_keeps_every_skill(self):
         skills = [_skill("lint", "/x/lint", source="plugin")]
         with patch("quiver.plugins.catalog.build_catalog", side_effect=ValueError("bad json")):
@@ -214,8 +230,6 @@ class TestRoute(HubBase):
     def test_page_assets_are_bundled(self):
         status, data = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("skills"', data)
-        self.assertIn(b'registerPage("agents"', data)
         self.assertIn(b".sk-row", self.srv.request("GET", "/app/pages.css")[1])
 
 

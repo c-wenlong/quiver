@@ -215,7 +215,7 @@ private struct CalendarContent: View {
             MiniMonth(model: model)
                 .padding(.bottom, 10)
             Text("Harnesses").font(Theme.font(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary).textCase(.uppercase)
+                .foregroundStyle(Theme.textSecondary)
                 .padding(.bottom, 4)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
@@ -546,9 +546,9 @@ private struct CalendarContent: View {
             if let today = model.days.first(where: { $0.contains(now) }) {
                 Text(now, format: .dateTime.hour().minute())
                     .font(Theme.font(size: 9, weight: .medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.calendarNowText)
                     .padding(.horizontal, 5).padding(.vertical, 2)
-                    .background(.red, in: Capsule())
+                    .background(Theme.calendarNow, in: Capsule())
                     .offset(y: Self.hourHeight * CGFloat(now.timeIntervalSince(today.start) / 3600) - 9)
             }
         }
@@ -690,10 +690,10 @@ private struct DayHeaderRow: View, Equatable {
         let isToday = day.contains(now)
         let number = Text(day.start.formatted(.dateTime.day()))
             .font(Theme.font(size: 12, weight: isToday ? .semibold : .regular))
-            .foregroundStyle(isToday ? .white : .primary)
+            .foregroundStyle(isToday ? Theme.calendarNowText : .primary)
             .lineLimit(1)
             .padding(.horizontal, 5).padding(.vertical, 2)
-            .background(isToday ? Color.red : .clear,
+            .background(isToday ? Theme.calendarNow : .clear,
                         in: RoundedRectangle(cornerRadius: 5))
         switch DayHeaderStyle.forWidth(width) {
         case .inline:
@@ -837,7 +837,7 @@ private struct DayColumn: View, Equatable {
     private func accessibilityLabel(for item: DayColumnGeometry.Item) -> String {
         switch item.kind {
         case .segment(let segment):
-            return "\(segment.block.harness), \(title(segment.block)), "
+            return "\(HarnessMark(segment.block.harness).name), \(title(segment.block)), "
                 + CalendarFormat.range(start: segment.block.start, end: segment.block.end)
         case .overflow(let overflow):
             return "\(overflow.hidden.count) more blocks, "
@@ -862,7 +862,7 @@ private struct DayColumn: View, Equatable {
         }
         if day.contains(now) {
             context.fill(Path(CGRect(x: 0, y: geometry.y(now), width: size.width, height: 1.5)),
-                         with: .color(.red))
+                         with: .color(Theme.calendarNow))
         }
     }
 
@@ -1098,9 +1098,9 @@ private struct MiniMonth: View {
                         Button { model.go(to: day) } label: {
                             Text(day.formatted(.dateTime.day()))
                                 .font(Theme.font(size: 9))
-                                .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
+                                .foregroundStyle(isToday ? Theme.calendarNowText : (inMonth ? .primary : Theme.textMuted))
                                 .frame(maxWidth: .infinity).frame(height: 16)
-                                .background(isToday ? Color.red : .clear, in: Circle())
+                                .background(isToday ? Theme.calendarNow : .clear, in: Circle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -1164,7 +1164,6 @@ private struct HarnessLegend: View {
     /// A full-width toggle row: the content shape and hover wash cover
     /// the name and time too, not just the checkbox.
     private func toggleRow<Label: View>(action: @escaping () -> Void,
-                                      shown: Bool,
                                       @ViewBuilder label: () -> Label) -> some View {
         Button(action: action) {
             label()
@@ -1185,12 +1184,12 @@ private struct HarnessLegend: View {
                 }
                 .buttonStyle(.plain)
                 .help(expanded ? "Collapse accounts" : "Expand accounts")
-                .accessibilityLabel(expanded ? "Collapse \(harness) accounts"
-                                           : "Expand \(harness) accounts")
+                .accessibilityLabel(expanded ? "Collapse \(HarnessMark(harness).name) accounts"
+                                           : "Expand \(HarnessMark(harness).name) accounts")
             } else {
                 Spacer().frame(width: 10)
             }
-            toggleRow(action: { model.toggle(harness) }, shown: !model.isHidden(harness)) {
+            toggleRow(action: { model.toggle(harness) }) {
                 HStack(spacing: 6) {
                     checkbox(shown: !model.isHidden(harness))
                     HarnessIcon(harness: harness, size: 13)
@@ -1210,8 +1209,7 @@ private struct HarnessLegend: View {
         if expanded {
             ForEach(accounts, id: \.self) { home in
                 let shown = !model.isHidden(harness: harness, accountHome: home)
-                toggleRow(action: { model.toggle(harness: harness, accountHome: home) },
-                          shown: shown) {
+                toggleRow(action: { model.toggle(harness: harness, accountHome: home) }) {
                     HStack(spacing: 6) {
                         checkbox(shown: shown)
                         Text(model.accountName(for: home))
@@ -1274,16 +1272,16 @@ private struct MonthCell: View {
                     if isFirst {
                         Text(day, format: .dateTime.month(.wide).day())
                             .font(Theme.font(size: 9, weight: .semibold))
-                            .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
+                            .foregroundStyle(isToday ? Theme.calendarNowText : (inMonth ? .primary : Theme.textMuted))
                             .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(isToday ? Color.red : .clear,
+                            .background(isToday ? Theme.calendarNow : .clear,
                                         in: RoundedRectangle(cornerRadius: 4))
                     } else {
                         Text(day, format: .dateTime.day())
                             .font(Theme.font(size: 9))
-                            .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
+                            .foregroundStyle(isToday ? Theme.calendarNowText : (inMonth ? .primary : Theme.textMuted))
                             .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(isToday ? Color.red : .clear,
+                            .background(isToday ? Theme.calendarNow : .clear,
                                         in: RoundedRectangle(cornerRadius: 4))
                     }
                 }
@@ -1365,10 +1363,6 @@ private struct SessionRow: View {
     /// nil on the read-only hover card.
     var open: (() -> Void)? = nil
 
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
-
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
@@ -1415,10 +1409,6 @@ private struct BlockCard: View {
     var active: TimeInterval
     var shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)]
     var more: Int
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     private var range: String {
         CalendarFormat.range(start: block.start, end: block.end)
@@ -1473,10 +1463,6 @@ private struct OverflowCard: View {
     /// The row under the pointer; stays put when the pointer moves to
     /// the right pane, so the detail never flickers.
     @State private var selected: ActivityBlock?
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     private var shown: ActivityBlock? {
         // A refresh can swap the hidden list under an open card; fall
@@ -1568,10 +1554,6 @@ private struct ProjectSessionsSheet: View {
 
     @Environment(\.dismissSheet) private var dismiss
     @State private var detail: SessionsModel.Row?
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

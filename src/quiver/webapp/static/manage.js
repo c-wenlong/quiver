@@ -327,7 +327,7 @@ function repaintHarnesses(fallback) {
 }
 
 function onHarnessesPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "harnesses";
+  return currentRoute() === "harnesses";
 }
 
 /* app.js's api() only reads; writes send JSON with the same headers. */
@@ -792,7 +792,7 @@ function paintAccounts() {
 function startAccountsClock() {
   if (accountsPage.timer) return;
   accountsPage.timer = setInterval(() => {
-    const onPage = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "accounts";
+    const onPage = currentRoute() === "accounts";
     if (!onPage) { clearInterval(accountsPage.timer); accountsPage.timer = null; return; }
     if (accountsPage.data && !accountsPage.loading && !accountsPage.failed && !document.hidden) paintAccounts();
   }, 30000);

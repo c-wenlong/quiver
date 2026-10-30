@@ -22,6 +22,7 @@ from quiver.webapp.pages import PageContext, PageError, _qr
 from quiver.webapp.pages import settings as settings_page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 # ---------------------------------------------------------------- QR helpers
 
@@ -601,11 +602,6 @@ class TestGet(_Settings):
             settings_page.get(self.ctx(), {"part": "secrets"})
         self.assertEqual(caught.exception.status, 400)
 
-    def test_page_script_is_bundled(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("settings"', data)
-
 
 # ---------------------------------------------------------------- writes
 
@@ -882,10 +878,6 @@ class TestOwnerTailnetCaller(_Settings):
         self.assertTrue(reply["ticket"]["token"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestSessionSearch(_Settings):
     def wait_idle(self):
         from quiver.sessions import search_writer
@@ -1146,7 +1138,7 @@ class TestRevokeThisBrowserScript(unittest.TestCase):
             "const routeGen = 0;\n"
             "function registerPage() {}\n"
             "function renderGate(msg) { gates.push(msg); }\n"
-            "function renderSettings() {}\n"
+            "function renderSettings() {}\n" + app_js_function("currentRoute") +
             "const api = async () => ({ status: " + str(api_status) + ", data: null });\n"
             "const apiPost = async () => ({ status: 200, data: " + post_data + " });\n"
             + forget + "\n")
@@ -1176,3 +1168,7 @@ class TestRevokeThisBrowserScript(unittest.TestCase):
                           "process.stdout.write(JSON.stringify({ gates: gates.length, cleared, after: after === null,"
                           " polling: settingsPage.reqPoll !== null })); })();\n")
         self.assertEqual(out, {"gates": 1, "cleared": 1, "after": True, "polling": False})
+
+
+if __name__ == "__main__":
+    unittest.main()

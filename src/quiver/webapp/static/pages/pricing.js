@@ -357,7 +357,7 @@
   }
 
   let priceForms = 0;
-  const onPricing = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "pricing";
+  const onPricing = () => currentRoute() === "pricing";
   // The form sits outside the panel, so leaving the page must close it.
   window.addEventListener("hashchange", () => {
     const sheet = document.getElementById("qp-sheet");

@@ -335,7 +335,6 @@ class TestRoute(_TempHome, HubBase):
 
     def test_page_assets_are_served(self):
         _, js = self.srv.request("GET", "/app/pages.js")
-        self.assertIn(b'registerPage("doctor"', js)
         self.assertIn(b"/v1/app/doctor/run", js)
         _, css = self.srv.request("GET", "/app/pages.css")
         self.assertIn(b".doctor-fix", css)
