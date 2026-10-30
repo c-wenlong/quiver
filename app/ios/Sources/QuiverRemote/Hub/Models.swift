@@ -570,6 +570,8 @@ struct PullDetail: Decodable {
     let reviewRequests: [String]?
     let createdAt: String?
     let mergedAt: String?
+    /// Set once auto-merge is armed: GitHub merges when checks pass.
+    let autoMerge: PullAutoMerge?
     /// Where the hub's `pr_worktree` puts the checkout — the open
     /// sheet's "Starts in" line before the worktree exists.
     let worktree: String?
@@ -589,6 +591,12 @@ struct CheckRun: Decodable, Hashable {
     /// passing | failing | running | none
     let state: String?
     let url: String?
+}
+
+/// A PR's armed auto-merge: `method` is squash, rebase or merge.
+struct PullAutoMerge: Decodable, Hashable {
+    let method: String?
+    let enabledAt: String?
 }
 
 /// One `latestReviews` entry; `review_requests` decodes as names.
