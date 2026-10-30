@@ -145,6 +145,7 @@ struct EllipsisMenu<Content: View>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("More")
+        .accessibilityLabel("More")
     }
 }
 

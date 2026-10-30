@@ -362,5 +362,34 @@ class TestListRailAndFold(unittest.TestCase):
         self.assertTrue(out["emptyNoRail"])
 
 
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFirstLoadError(unittest.TestCase):
+    """pages/tasks.js under the launch-sheet DOM stub: when the first read
+    fails, the error's header carries the Refresh button its "then
+    refresh" points at, and pageError gets a retry to bind to it."""
+
+    def test_the_error_header_has_refresh(self):
+        from tests.test_webapp_launch_sheets import PAGES, STUB
+        flow = r"""
+let header = null, retry = null;
+globalThis.pageHeader = (t, s, actions = "") => `<h1>${t}</h1>${actions}`;
+globalThis.pageError = (h, status, data, r) => { header = h; retry = r; };
+apiAnswers.push(["/v1/app/tasks", { status: 503, data: null }]);
+(async () => {
+  location.hash = "#/tasks";
+  PAGES.tasks();
+  await tick();
+  process.stdout.write(JSON.stringify({ refresh: /id="page-refresh"/.test(header || ""), retry: typeof retry }));
+  process.exit(0);
+})();
+"""
+        script = (STUB + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "tasks.js").read_text(encoding="utf-8") + "\n" + flow)
+        done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"refresh": True, "retry": "function"})
+
+
 if __name__ == "__main__":
     unittest.main()

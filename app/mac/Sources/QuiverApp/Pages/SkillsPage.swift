@@ -574,7 +574,7 @@ private struct SeenBy: View {
                 }
                 Text("\(harnesses.count) harnesses")
             }
-            .help(harnessNames(harnesses))
+            .hoverTip(harnessNames(harnesses))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(harnesses.count) harnesses: \(harnessNames(harnesses))")
         }
