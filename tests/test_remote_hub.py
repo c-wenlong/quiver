@@ -752,12 +752,32 @@ class TestHubWriteRoutes(unittest.TestCase):
         srv.state.emit("claude:a3", protocol.event(
             "approval.requested", "claude:a3", "mbp",
             {"request_id": "req-3", "prompt": "run it?"}))
-        srv.state._approval_at["claude:a3"] = (
-            time.time() - APPROVAL_TTL_S - 1)
+        srv.state._approval_at["claude:a3"] = {
+            "req-3": time.time() - APPROVAL_TTL_S - 1}
         status, data = srv.request("GET", "/v1/inbox", headers=hdr)
         self.assertEqual(json.loads(data)["items"], [])
         self.assertNotIn("claude:a3", srv.state.pending_approvals)
         self.assertNotIn("claude:a3", srv.state._approval_at)
+
+    def test_overlapping_approvals_resolve_one_at_a_time(self):
+        # A Codex app-server can hold two prompts on one session:
+        # answering A must leave B pending, not clear the session.
+        srv = _Server(sessions=[_session(sid="a6")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        key = "claude:a6"
+        for rid in ("req-A", "req-B"):
+            srv.state.emit(key, protocol.event(
+                "approval.requested", key, "mbp",
+                {"request_id": rid, "prompt": "run it?"}))
+        self.assertEqual(srv.state.pending_approvals[key], "req-B")
+        srv.state.emit(key, protocol.event(
+            "approval.resolved", key, "mbp", {"request_id": "req-B"}))
+        self.assertEqual(srv.state.pending_approvals[key], "req-A")
+        srv.state.emit(key, protocol.event(
+            "approval.resolved", key, "mbp", {"request_id": "req-A"}))
+        self.assertNotIn(key, srv.state.pending_approvals)
+        self.assertNotIn(key, srv.state._approval_at)
 
     def test_inbox_keeps_fresh_approval(self):
         srv = _Server(sessions=[_session(sid="a4")],
