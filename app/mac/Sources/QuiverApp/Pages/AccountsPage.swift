@@ -156,7 +156,7 @@ private struct AccountCard: View {
     @State private var confirmingRemove = false
     @State private var installing: Provider?
     /// Sign in, or Install first when its CLI isn't on PATH.
-    @ViewBuilder func signInItem(name: String, harness: String,
+    @ViewBuilder func signInItem(harness: String,
                                  cli: String?, installed: Bool?,
                                  run: @escaping () -> Void) -> some View {
         if case .install(let h) = AccountSignIn.action(cli: cli, harness: harness, installed: installed) {
@@ -194,7 +194,7 @@ private struct AccountCard: View {
                 if let plan = card.usage?.plan { Badge(planTitle(plan)) }
                 Spacer()
                 EllipsisMenu {
-                    signInItem(name: profile.name, harness: profile.vendor.rawValue,
+                    signInItem(harness: profile.vendor.rawValue,
                                cli: model.signInCLI(for: profile),
                                installed: app.others.cliInstalled[LaunchPlanner.cliName(for: profile.vendor)]
                                    ?? model.cliOnPath[profile.vendor]) {
@@ -508,7 +508,7 @@ private struct HarnessAccountCard: View {
     @State private var installing: Provider?
     @State private var fixing = false
     /// Sign in, or Install first when its CLI isn't on PATH.
-    @ViewBuilder func signInItem(name: String, harness: String,
+    @ViewBuilder func signInItem(harness: String,
                                  cli: String?, installed: Bool?,
                                  run: @escaping () -> Void) -> some View {
         if case .install(let h) = AccountSignIn.action(cli: cli, harness: harness, installed: installed) {
@@ -559,7 +559,7 @@ private struct HarnessAccountCard: View {
                     // An extra account: its name and folder are the profile's,
                     // so a rename writes profiles.json and Remove deletes them.
                     EllipsisMenu {
-                        signInItem(name: profile.name, harness: profile.vendor.rawValue,
+                        signInItem(harness: profile.vendor.rawValue,
                                    cli: model.signInCLI(for: profile),
                                    installed: app.others.cliInstalled[LaunchPlanner.cliName(for: profile.vendor)]
                                        ?? model.cliOnPath[profile.vendor]) {
@@ -576,7 +576,7 @@ private struct HarnessAccountCard: View {
                     EllipsisMenu {
                         if let login = HarnessAccess.loginCommand(for: row.name) {
                             let cli = AccountSignIn.cli(loginCommand: login)
-                            signInItem(name: row.name, harness: row.name, cli: cli,
+                            signInItem(harness: row.name, cli: cli,
                                        installed: AccountSignIn.installed(
                                            harness: row.name, cli: cli,
                                            cliInstalled: app.others.cliInstalled,

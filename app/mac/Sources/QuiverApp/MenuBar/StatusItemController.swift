@@ -669,11 +669,7 @@ private struct PanelOtherRow: View {
 
 /// One limit window on a single line: name, bar, percentage, reset.
 private struct PanelLimitRow: View {
-    /// Shown as its logo before the label; nil for an account's windows,
-    /// whose account line above already has it.
-    var harness: String? = nil
     var label: String
-    var window: String? = nil
     var percent: Double
     var resetsAt: Date?
 
@@ -685,14 +681,10 @@ private struct PanelLimitRow: View {
     var body: some View {
         let whole = Int(percent.rounded())
         HStack(spacing: 8) {
-            HStack(spacing: 4) {
-                if let harness { HarnessIcon(harness: harness, size: 12) }
-                Text(label).font(Theme.caption)
-                    .foregroundStyle(unavailable ? Theme.dangerText : Theme.textPrimary)
-                if let window { Text(window).font(Theme.caption).foregroundStyle(Theme.textSecondary) }
-            }
-            .lineLimit(1)
-            .frame(width: 86, alignment: .leading)
+            Text(label).font(Theme.caption)
+                .foregroundStyle(unavailable ? Theme.dangerText : Theme.textPrimary)
+                .lineLimit(1)
+                .frame(width: 86, alignment: .leading)
             UsageTrack(fraction: percent / 100, color: Theme.usage(whole))
                 .opacity(unavailable ? 0.45 : 1)
             Text(unavailable && asOf == nil ? "—" : "\(whole)%")

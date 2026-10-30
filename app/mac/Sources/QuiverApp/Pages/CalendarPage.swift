@@ -1162,7 +1162,6 @@ private struct HarnessLegend: View {
     /// A full-width toggle row: the content shape and hover wash cover
     /// the name and time too, not just the checkbox.
     private func toggleRow<Label: View>(action: @escaping () -> Void,
-                                      shown: Bool,
                                       @ViewBuilder label: () -> Label) -> some View {
         Button(action: action) {
             label()
@@ -1188,7 +1187,7 @@ private struct HarnessLegend: View {
             } else {
                 Spacer().frame(width: 10)
             }
-            toggleRow(action: { model.toggle(harness) }, shown: !model.isHidden(harness)) {
+            toggleRow(action: { model.toggle(harness) }) {
                 HStack(spacing: 6) {
                     checkbox(shown: !model.isHidden(harness))
                     HarnessIcon(harness: harness, size: 13)
@@ -1208,8 +1207,7 @@ private struct HarnessLegend: View {
         if expanded {
             ForEach(accounts, id: \.self) { home in
                 let shown = !model.isHidden(harness: harness, accountHome: home)
-                toggleRow(action: { model.toggle(harness: harness, accountHome: home) },
-                          shown: shown) {
+                toggleRow(action: { model.toggle(harness: harness, accountHome: home) }) {
                     HStack(spacing: 6) {
                         checkbox(shown: shown)
                         Text(model.accountName(for: home))
@@ -1363,10 +1361,6 @@ private struct SessionRow: View {
     /// nil on the read-only hover card.
     var open: (() -> Void)? = nil
 
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
-
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
@@ -1413,10 +1407,6 @@ private struct BlockCard: View {
     var active: TimeInterval
     var shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)]
     var more: Int
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     private var range: String {
         CalendarFormat.range(start: block.start, end: block.end)
@@ -1471,10 +1461,6 @@ private struct OverflowCard: View {
     /// The row under the pointer; stays put when the pointer moves to
     /// the right pane, so the detail never flickers.
     @State private var selected: ActivityBlock?
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     private var shown: ActivityBlock? {
         // A refresh can swap the hidden list under an open card; fall
@@ -1566,10 +1552,6 @@ private struct ProjectSessionsSheet: View {
 
     @Environment(\.dismissSheet) private var dismiss
     @State private var detail: SessionsModel.Row?
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
