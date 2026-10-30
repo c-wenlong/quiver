@@ -486,8 +486,8 @@
       ${caption ? `<span class="gh-row-sub">${esc(caption)}</span>` : ""}</span>`;
     const body = link
       ? `<a class="gh-note-link" href="${link}">${row}<span class="gh-row-side">${ico("chevronRight", "gh-muted")}</span></a>`
-      : `<span class="gh-note-link">${row}${pr.url
-          ? `<a class="icon-button gh-note-read" style="opacity:1" href="${esc(pr.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>` : ""}</span>`;
+      : `<span class="gh-note-link">${row}${safeHref(pr.url)
+          ? `<a class="icon-button gh-note-read" style="opacity:1" href="${safeHref(pr.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>` : ""}</span>`;
     return `<div class="card tk-card"><div class="card-title">${t.kind === "pull" ? "Pull request" : "Linked pull request"}</div>
       <div class="gh-note">${body}</div></div>`;
   }
@@ -580,7 +580,7 @@
       `${refLabel(t)} · ${where} · ${statusOf(t)}`,
       `<a class="gh-button" href="#/tasks" title="Back to the task list">${ico("chevronLeft")}<span>Tasks</span></a>
        <button class="icon-button${page.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>
-       ${t.url ? `<a class="icon-button" href="${esc(t.url)}" target="_blank" rel="noopener" title="Open on ${t.source === "github" ? "GitHub" : esc(t.source)}" aria-label="Open on ${esc(t.source)}">${ico("external")}</a>` : ""}`);
+       ${safeHref(t.url) ? `<a class="icon-button" href="${safeHref(t.url)}" target="_blank" rel="noopener" title="Open on ${t.source === "github" ? "GitHub" : esc(t.source)}" aria-label="Open on ${esc(t.source)}">${ico("external")}</a>` : ""}`);
   }
 
   function detailContent(t) {
