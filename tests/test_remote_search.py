@@ -25,10 +25,16 @@ def _row(key, sid, title, cwd="/work/x", harness="claude", ago=0.0, remote=False
 class MetadataMatchTest(unittest.TestCase):
     def test_plain_case_insensitive_text(self):
         rows = [_row("k1", "s1", "Fix the LEDGER cursor"), _row("k2", "s2", "call foo( here")]
-        self.assertEqual([r["key"] for r in search.search(rows, "ledger c")["results"]], ["k1"])
+
+        def find(query):
+            # Metadata only: without a home the index under the real
+            # HOME would be searched too.
+            return search.search(rows, query, use_index=False)["results"]
+
+        self.assertEqual([r["key"] for r in find("ledger c")], ["k1"])
         # Regex syntax is just text: no pattern compiles, nothing can stall.
-        self.assertEqual([r["key"] for r in search.search(rows, "foo(")["results"]], ["k2"])
-        self.assertEqual(search.search(rows, "(a|aa)+$")["results"], [])
+        self.assertEqual([r["key"] for r in find("foo(")], ["k2"])
+        self.assertEqual(find("(a|aa)+$"), [])
 
 
 class SearchTest(unittest.TestCase):

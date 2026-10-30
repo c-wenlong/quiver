@@ -11,11 +11,12 @@ at `/` is the client for browsers and other devices.
 
 | Folder | What |
 |---|---|
-| `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` and `/` menus), and the diff and markdown helpers |
+| `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `Attachments` (the composer's picked files), `TasksModel`, `IssuesModel` and `PullsModel` (the Tasks and GitHub tabs' data), `NewSession` (what the launch sheets offer, and the launch poll), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` and `/` menus), and the diff, markdown and page-preview helpers |
 | `Sources/QuiverRemote/Hub/SSH*.swift`, `ConsoleModel.swift` | The console: this phone's SSH key (`SSHIdentity`), the hub's `/v1/ssh` answer and the saved targets (`SSHTarget`), the SwiftNIO SSH shell with pinned host keys (`SSHShell`), and the console's state (`ConsoleModel`) |
 | `Sources/QuiverRemote/Theme/` | The Mac app's theme ported to iOS: the same hex values and roles, cards, list rows, badges, buttons |
-| `Sources/QuiverRemote/Views/` | Welcome and pairing, Sessions, Chat, Inbox, Usage (limits and spend), Pair requests, the QR scanner |
-| `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping and chat event handling |
+| `Sources/QuiverRemote/Views/` | Welcome and pairing, Sessions (with rename, fork and the new-session sheet), Chat, Inbox, Tasks, GitHub (issues and pull requests, their detail pages and launch sheets), Usage (limits and spend), Pair requests and devices, Console, the QR scanner |
+| `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping, chat event handling, the GitHub and Tasks rules, usage formatting and the console |
+| `Tests/QuiverRemoteUITests/` | UI tests for the launch sheets' Model menu; they need a paired hub on the simulator and skip without one |
 
 The look follows the Mac app (`app/mac/Sources/QuiverApp/Theme/Theme.swift`):
 dark and light from the same tokens, sentence case, green only for

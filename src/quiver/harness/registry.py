@@ -107,8 +107,16 @@ def alias_map(tools: dict) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for name, info in tools.items():
         mapping[name] = name
-        for alias in info.get("aliases", []):
-            mapping[alias] = name
+        aliases = info.get("aliases") or []
+        if isinstance(aliases, str):
+            aliases = [aliases]    # hand-typed "cc": one alias, not c and c
+        elif not isinstance(aliases, list):
+            aliases = []
+        for alias in aliases:
+            # A list or object here is unhashable: every command resolving
+            # a name went through this and raised TypeError.
+            if isinstance(alias, str) and alias:
+                mapping[alias] = name
     return mapping
 
 

@@ -59,6 +59,18 @@ def normalise_usage(value: object, fallback: str = "unknown") -> str:
     return text if text in USAGE_LEVELS else fallback
 
 
+def _entry(row) -> dict:
+    """A row's ``archived`` record as a dict, whatever was hand-edited in.
+
+    A bare reason string counts as ``{"reason": ...}``; anything else that
+    is not an object counts as no record at all.
+    """
+    entry = row.get("archived") if isinstance(row, dict) else None
+    if isinstance(entry, str):
+        return {"reason": entry}
+    return entry if isinstance(entry, dict) else {}
+
+
 def load_archive() -> dict[str, dict]:
     """Map of harness name -> {"reason": str, "archived_at": iso8601, "usage": str}.
 
@@ -74,11 +86,7 @@ def load_archive() -> dict[str, dict]:
 
     out: dict[str, dict] = {}
     for name in _registry.archived_names(reg):
-        entry = reg[name].get("archived")
-        if isinstance(entry, str):
-            # Tolerate a bare reason string, in case one is hand-edited in.
-            entry = {"reason": entry}
-        entry = entry if isinstance(entry, dict) else {}
+        entry = _entry(reg[name])
         out[name] = {
             "reason": str(entry.get("reason") or ""),
             "archived_at": str(entry.get("archived_at") or ""),
@@ -132,7 +140,7 @@ def archive(name: str, reason: str = "", when: str | None = None,
     high count can come from one long evaluation rather than real adoption.
     """
     reg = _registry.load_registry()
-    existing = reg.get(name, {}).get("archived") or {}
+    existing = _entry(reg.get(name))
     entry = {
         "reason": reason.strip(),
         "archived_at": when or datetime.now().isoformat(timespec="seconds"),
@@ -164,7 +172,7 @@ def unarchive(name: str) -> dict | None:
     row = reg.get(name)
     if row is None or _registry.state_of(row) != "archived":
         return None
-    entry = row.get("archived") or {}
+    entry = _entry(row)
     _unset_archived(reg, name)
     _registry.save_registry(reg)
     return {

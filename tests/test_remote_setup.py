@@ -229,6 +229,13 @@ class EvaluateTest(unittest.TestCase):
 class ApplyTest(unittest.TestCase):
     """apply drives a fake machine that changes when actions run."""
 
+    def setUp(self):
+        # A move apply records without a ``record`` of its own would go
+        # to the real ~/.quiver/remote/setup-state.json.
+        p = patch.object(setup, "record_move", lambda *_a, **_kw: None)
+        p.start()
+        self.addCleanup(p.stop)
+
     def machine(self, **over):
         self.f = facts(agent_args=["/A/swe", "remote", "serve", "--tailnet"], serve={},
                        https_ok=False, cert=(True, ""), devices=0)
@@ -295,7 +302,9 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(states(report)["hub.service"], setup.FAILED)
 
     def test_recheck_fetches_the_certificate_afresh_once(self):
-        acts = self.machine(agent_args=GOOD_ARGS, serve=SERVE, https_ok=True)
+        # Three gathers (move the hub, set up serve, pair): only the
+        # first fetches afresh.
+        acts = self.machine()
         seen = []
 
         def gather(**kw):
@@ -303,8 +312,7 @@ class ApplyTest(unittest.TestCase):
             return self.f
 
         setup.apply(actions=acts, gather_fn=gather, fresh_cert=True)
-        self.assertEqual(seen[0], True)
-        self.assertTrue(all(v is False for v in seen[1:]))
+        self.assertEqual(seen, [True, False, False])
 
     def test_linux_serve_without_an_operator_gives_the_fix(self):
         acts = self.machine(agent_args=GOOD_ARGS)
