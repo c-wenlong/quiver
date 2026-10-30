@@ -4,17 +4,15 @@ import Testing
 
 /// A home laid out like the real one: `~/.quiver/plugins` for the hub.
 final class PrimitiveHome {
+    private let temp: TempDir
     let home: URL
 
     init() throws {
-        home = FileManager.default.temporaryDirectory
-            .appending(path: "quiver-prim-\(UUID().uuidString)")
-            .resolvingSymlinksInPath()
+        temp = try TempDir()
+        home = temp.url.resolvingSymlinksInPath()
         try FileManager.default.createDirectory(
             at: home.appending(path: ".quiver/plugins"), withIntermediateDirectories: true)
     }
-
-    deinit { try? FileManager.default.removeItem(at: home) }
 
     @discardableResult
     func dir(_ path: String) throws -> URL {
@@ -512,6 +510,24 @@ final class PrimitiveHome {
         #expect(!PrimitiveTree.isTextFile(big))
         let md = try t.write("bin/readme.md", "# ok\n")
         #expect(PrimitiveTree.isTextFile(md))
+    }
+
+    @Test func theCapAppliesToALinksTargetAndAFifoIsNotText() throws {
+        let t = try PrimitiveHome()
+        let big = t.home.appending(path: "bin/big.txt")
+        try FileManager.default.createDirectory(at: big.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try Data(repeating: 0x61, count: 1_100_000).write(to: big)
+        let bigLink = t.home.appending(path: "bin/big-link.txt")
+        try FileManager.default.createSymbolicLink(at: bigLink, withDestinationURL: big)
+        #expect(!PrimitiveTree.isTextFile(bigLink))
+        let md = try t.write("bin/readme.md", "# ok\n")
+        let mdLink = t.home.appending(path: "bin/readme-link.md")
+        try FileManager.default.createSymbolicLink(at: mdLink, withDestinationURL: md)
+        #expect(PrimitiveTree.isTextFile(mdLink))
+        let fifo = t.home.appending(path: "bin/pipe")
+        try #require(mkfifo(fifo.path, 0o600) == 0)
+        #expect(!PrimitiveTree.isTextFile(fifo))
     }
 
     /// The 8 KB sniff can cut a multi-byte character in two; the text is

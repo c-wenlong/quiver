@@ -63,6 +63,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         let secrets = StubSecrets()
         let added = Date(timeIntervalSince1970: 1_791_000_000)
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let credentials = ServiceCredentials(
             secrets: secrets, service: "svc",
             metadataURL: dir.url.appending(path: "config/services.json"),
@@ -81,6 +82,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         final class Clock: @unchecked Sendable { var date = Date(timeIntervalSince1970: 1_791_000_000) }
         let clock = Clock()
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let credentials = ServiceCredentials(
             secrets: secrets, service: "svc",
             metadataURL: dir.url.appending(path: "config/services.json"),
@@ -192,16 +194,16 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 /// ran against, so replacing or removing the key clears it — even while
 /// the request is still flying — and a test refreshes the key's dates.
 @Suite @MainActor struct ServicesModelTests {
-    /// A keychain stub that parks the first read of one account until
-    /// `release` answers it, so a reload can be caught mid-read while a
-    /// save, remove or another reload runs.
+    /// A keychain stub that parks the first read of one account at
+    /// `gate` until `release` answers it, so a reload can be caught
+    /// mid-read while a save, remove or another reload runs. The test
+    /// waits with `gate.arrived()`, which gives up after `gateTimeout`.
     private actor GatedSecrets: SecretStoring {
         var items: [String: String] = [:]
+        nonisolated let gate = HoldGate()
         private var holdAccount: String?
         private var held = false
-        private var gate: CheckedContinuation<String?, Never>?
-        private var entered: CheckedContinuation<Void, Never>?
-        private var parked = false
+        private var answer: String?
 
         func hold(_ account: String) { holdAccount = account }
 
@@ -212,10 +214,8 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         func genericPassword(service: String, account: String) async -> String? {
             if account == holdAccount, !held {
                 held = true
-                parked = true
-                entered?.resume()
-                entered = nil
-                return await withCheckedContinuation { gate = $0 }
+                try? await gate.pass()
+                return answer
             }
             return items[key(service, account)]
         }
@@ -226,15 +226,10 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
             items.removeValue(forKey: key(service, account))
         }
 
-        /// Suspends until the held read has parked.
-        func waitForHold() async {
-            if parked { return }
-            await withCheckedContinuation { entered = $0 }
-        }
         /// Answers the parked read.
         func release(value: String?) {
-            gate?.resume(returning: value)
-            gate = nil
+            answer = value
+            gate.open()
         }
     }
 
@@ -242,31 +237,17 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         try #require(ServiceCredentials.services.first { $0.id == "devin" })
     }
 
-    /// A probe transport that parks `send` until `finish` is called, so
-    /// a test can change the key while the request is in flight.
-    private final class GatedTransport: HTTPTransport, @unchecked Sendable {
-        private var entered: CheckedContinuation<Void, Never>?
-        private var gate: CheckedContinuation<(Data, HTTPURLResponse), Never>?
-        private var isEntered = false
+    /// A probe transport that parks `send` at `gate` until the test
+    /// opens it, then answers 200, so a test can change the key while the
+    /// request is in flight.
+    private final class GatedTransport: HTTPTransport, Sendable {
+        let gate = HoldGate()
 
         func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-            isEntered = true
-            entered?.resume()
-            entered = nil
-            return await withCheckedContinuation { gate = $0 }
-        }
-
-        /// Suspends until `send` was called.
-        func waitForSend() async {
-            if isEntered { return }
-            await withCheckedContinuation { entered = $0 }
-        }
-
-        func finish(status: Int = 200) {
-            gate?.resume(returning: (Data(), HTTPURLResponse(
-                url: URL(string: "https://probe.test")!, statusCode: status,
-                httpVersion: nil, headerFields: nil)!))
-            gate = nil
+            try await gate.pass()
+            return (Data(), HTTPURLResponse(
+                url: URL(string: "https://probe.test")!, statusCode: 200,
+                httpVersion: nil, headerFields: nil)!)
         }
     }
 
@@ -301,6 +282,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func anInFlightProbeCantWriteOverANewerKey() async throws {
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let credentials = ServiceCredentials(
             secrets: StubSecrets(), service: "svc",
             metadataURL: dir.url.appending(path: "config/services.json"))
@@ -311,9 +293,9 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
         // The probe is parked inside the request when the key changes.
         let probe = Task { await model.probe(devin) }
-        await transport.waitForSend()
+        #expect(await transport.gate.arrived())
         await model.set("DEVIN_API_KEY", value: "two")
-        transport.finish(status: 200)
+        transport.gate.open()
         await probe.value
 
         // The 200 answered the old key; showing "Works" for it would be wrong.
@@ -340,6 +322,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func aRemoveDuringReloadKeepsTheNewerStatus() async throws {
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let secrets = GatedSecrets()
         try await secrets.setGenericPassword(
             service: "svc", account: "DEVIN_API_KEY", value: "tok")
@@ -352,7 +335,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         // field's pre-remove status already collected.
         await secrets.hold("DEVIN_ORG_ID")
         let reload = Task { await model.reload() }
-        await secrets.waitForHold()
+        #expect(await secrets.gate.arrived())
         await model.remove("DEVIN_API_KEY")
         await secrets.release(value: nil)
         await reload.value
@@ -363,6 +346,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
 
     @Test func anOlderReloadCannotOverwriteANewerOne() async throws {
         let dir = try TempDir()
+        defer { withExtendedLifetime(dir) {} }
         let secrets = GatedSecrets()
         let credentials = ServiceCredentials(
             secrets: secrets, service: "svc",
@@ -372,7 +356,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         // Round 1 parks on the last field; round 2 finishes first.
         await secrets.hold("ARTIFICIAL_ANALYSIS_API_KEY")
         let old = Task { await model.reload() }
-        await secrets.waitForHold()
+        #expect(await secrets.gate.arrived())
         // Written straight to the store, so no field stamp moves.
         try await secrets.setGenericPassword(
             service: "svc", account: "ARTIFICIAL_ANALYSIS_API_KEY", value: "k")

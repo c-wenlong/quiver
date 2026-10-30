@@ -3,7 +3,6 @@ the catalog merge and unread-transition diff, dismiss and mark-read
 wiring, and the ntfy reason filter."""
 
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +16,7 @@ from quiver.remote.hub import GLOBAL_KEY, HubState
 from quiver.github import shared as G
 from quiver.webapp.pages import inbox as gh_inbox
 
+from tests._tempdir import temp_dir
 from tests.test_remote_hub import HubBase, _session
 from tests.test_webapp_repositories import FakeGh
 
@@ -107,7 +107,7 @@ class _GithubCatalog(unittest.TestCase):
     def _cat(self, github=(), sessions=(), statuses=()):
         wanted = list(statuses) + ["active"] * len(sessions)
         cat = Catalog(
-            Path(tempfile.mkdtemp()), machine_id="mbp",
+            temp_dir(self), machine_id="mbp",
             fetch_sessions=lambda: list(sessions),
             status_of=lambda ss: wanted[:len(ss)],
             fetch_github=lambda: [dict(r) for r in github])
@@ -160,7 +160,7 @@ class TestMerge(_GithubCatalog):
         self.assertLess(ghcli._parse_iso(old), now - INBOX_MAX_AGE_S)
 
     def test_no_feed_no_github_rows(self):
-        cat = Catalog(Path(tempfile.mkdtemp()), machine_id="mbp",
+        cat = Catalog(temp_dir(self), machine_id="mbp",
                       fetch_sessions=list, status_of=lambda ss: [])
         cat.refresh()
         cat.poll_github()
@@ -281,7 +281,7 @@ class TestUnreadRows(unittest.TestCase):
         p = patch.object(G, "CACHE", G.TtlCache())
         p.start()
         self.addCleanup(p.stop)
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def test_unread_rows_shape_and_skip_read(self):
         FakeGh(self, notes=[_raw("1"), _raw("2", unread=False),
@@ -345,7 +345,7 @@ class TestMarkReadUnion(unittest.TestCase):
         p = patch.object(G, "CACHE", G.TtlCache())
         p.start()
         self.addCleanup(p.stop)
-        self.ctx = SimpleNamespace(home=Path(tempfile.mkdtemp()),
+        self.ctx = SimpleNamespace(home=temp_dir(self),
                                    machine={"name": "hub-box"})
 
     def test_an_id_only_the_unread_listing_has_still_marks(self):
@@ -434,7 +434,7 @@ class TestGithubAlert(unittest.TestCase):
     """HubState._github_alert: the reason gate and the notify event."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.state = HubState(self.home)
 
     def _events(self):
@@ -466,7 +466,7 @@ class TestNotifyGithub(unittest.TestCase):
     """notify.py's github branch: wording, click target, the gate."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.state = HubState(self.home)
         self.cfg = {"enabled": True, "url": "https://ntfy.test",
                     "topic": "qw"}

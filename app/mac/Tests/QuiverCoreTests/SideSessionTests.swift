@@ -40,6 +40,7 @@ private let worktree = "/Users/k/ai-engineering/.claude/worktrees/jovial"
 
     @Test func aCalendarBlockTakesTheWorktreeNotTheNotesFolder() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         try store.db.execute("BEGIN IMMEDIATE")
         for (i, event) in (sideSession + [event("2026-10-05T10:00:00Z", cwd: notes, session: "only-notes")])
@@ -58,6 +59,7 @@ private let worktree = "/Users/k/ai-engineering/.claude/worktrees/jovial"
 
     @Test func aSessionsFolderIsTheOneMostOfItsEventsUsed() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
         _ = try await ledger.ingest(sideSession.enumerated().map { LedgerRecord(key: "k\($0)", event: $1) })
         let sessions = await ledger.bySession(in: DateInterval(start: utc("2026-10-05T00:00:00Z"),
@@ -99,6 +101,7 @@ private let worktree = "/Users/k/ai-engineering/.claude/worktrees/jovial"
 
     @Test func childrenMapToTheirParentByTranscriptId() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         try fixture(temp.url)
         let parents = ClaudeDesktopSessions(root: temp.url).parents()
         let side = SessionParent(id: "local_parent", title: "design-systems-repo", kind: .side)
@@ -114,6 +117,7 @@ private let worktree = "/Users/k/ai-engineering/.claude/worktrees/jovial"
 
     @Test func theCacheRereadsOnlyChangedFiles() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         try fixture(temp.url)
         let cache = temp.path("cache/claude-desktop-sessions.json")
         let reader = ClaudeDesktopSessions(root: temp.url, cacheFile: cache)
@@ -156,6 +160,7 @@ private let worktree = "/Users/k/ai-engineering/.claude/worktrees/jovial"
     @Test func aRestoredListCarriesParentsToo() async throws {
         let now = Date(timeIntervalSince1970: 1_791_700_000)
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let file = SessionSnapshotFile(url: temp.path("cache/sessions.json"))
         let session = SessionInfo(id: "cli-side", harness: "claude", agent: "Claude Code", cwd: "/c/x",
                                   title: "side", titleSource: nil, lastActiveAt: now, status: nil, resume: nil)

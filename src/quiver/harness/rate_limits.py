@@ -2564,9 +2564,13 @@ def _cursor_email(state_db: str | None, token: str, claims: dict) -> str | None:
     for row in rows:
         profile = row.get("cursorAuth/cachedScopedProfile")
         try:
-            auth_id = json.loads(profile).get("authId") if profile else None
+            parsed = json.loads(profile) if profile else None
         except (ValueError, RecursionError):
-            auth_id = None
+            parsed = None
+        # The row is the editor's to write: JSON that is not an object
+        # (a list, a string) used to raise AttributeError here, which threw
+        # away the whole Cursor reading over a display-only email.
+        auth_id = parsed.get("authId") if isinstance(parsed, dict) else None
         if isinstance(auth_id, str) and auth_id and auth_id == claims.get("sub"):
             return row.get("cursorAuth/cachedEmail")
     return None

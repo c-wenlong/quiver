@@ -1,7 +1,6 @@
 """tail.py: record decoders, byte-offset source, snapshot diff, manager."""
 
 import json
-import tempfile
 import threading
 import time
 import unittest
@@ -10,6 +9,8 @@ from unittest.mock import patch
 
 from quiver.remote import tail
 from quiver.sessions.models import Session
+
+from tests._tempdir import temp_dir
 
 
 def _claude_user(text):
@@ -115,7 +116,7 @@ class TestDecoders(unittest.TestCase):
 
 class TestJsonlTailSource(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.path = self.tmp / "t.jsonl"
 
     def _write(self, records):
@@ -356,7 +357,7 @@ class TestSnapshotChangeGate(unittest.TestCase):
     """Snapshot stores re-read only when their change token moves."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.store = self.tmp / "store.json"
         self.store.write_text("{}")
 
@@ -477,7 +478,7 @@ class TestDevinBoundedRead(unittest.TestCase):
     def test_result_keeps_its_tool_name_after_its_call_leaves_the_window(self):
         import sqlite3
         from quiver.reports import transcripts as tr
-        tmp = Path(tempfile.mkdtemp())
+        tmp = temp_dir(self)
         db = tmp / "sessions.db"
         conn = sqlite3.connect(db)
         conn.executescript(
@@ -507,7 +508,7 @@ class TestBackfillCap(unittest.TestCase):
     """A session seen for the first time backfills recent history only."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
 
     def test_jsonl_starts_on_a_whole_line_near_the_end(self):
         path = self.tmp / "t.jsonl"
@@ -577,7 +578,7 @@ class TestBackfillCap(unittest.TestCase):
 
 class TestOpencodeSource(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         import sqlite3
         self.db = self.tmp / "opencode.db"
         conn = sqlite3.connect(self.db)
@@ -754,7 +755,7 @@ class TestOpencodeSource(unittest.TestCase):
 
 class TestTailer(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
 
     def test_cursor_round_trip(self):
         path = self.tmp / "t.jsonl"
@@ -881,7 +882,7 @@ def _session_for():
 
 class TestTailManager(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.events = []
 
     def _emit(self, key, ev):
@@ -1423,7 +1424,7 @@ class TestLimitNotify(unittest.TestCase):
     """notify kind ``limit`` from Claude Code and Codex limit records."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.events = []
         self.path = self.tmp / "t.jsonl"
         self.path.write_text("")
@@ -1532,7 +1533,7 @@ class TestSweepStale(unittest.TestCase):
     def setUp(self):
         from quiver.remote.journal import Journal
 
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.journal = Journal(self.tmp)
         self.mgr = tail.TailManager(lambda k, e: None, "mbp", home=self.tmp)
         self.mgr.cursors_dir.mkdir(parents=True, exist_ok=True)
@@ -1636,7 +1637,7 @@ class TestApprovalWatcher(unittest.TestCase):
     """TailManager._poll_approvals: pane prompt → requested/resolved."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.events = []
         self.mgr = tail.TailManager(
             lambda k, ev: self.events.append((k, ev)), "mbp",
@@ -1844,7 +1845,7 @@ class TestTailWake(unittest.TestCase):
     KEY = "claude:s1"
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.events = []
         self.path = self.tmp / "s.jsonl"
         self.path.write_text(json.dumps(_claude_user("old")) + "\n")
@@ -2030,7 +2031,7 @@ class TestStatusProbe(unittest.TestCase):
     KEY = "claude:s1"
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.events = []
         self.noted = []
         self.probed = []
@@ -2249,7 +2250,7 @@ class TestFreshSession(unittest.TestCase):
     """``fresh_session`` brings a catalog copy's activity time up to date."""
 
     def test_fresh_session_uses_tailer_activity(self):
-        tmp = Path(tempfile.mkdtemp())
+        tmp = temp_dir(self)
         path = tmp / "t.jsonl"
         path.write_text("")
         mgr = tail.TailManager(lambda k, ev: None, "mbp", home=tmp)

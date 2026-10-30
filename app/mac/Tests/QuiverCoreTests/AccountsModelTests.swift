@@ -14,9 +14,13 @@ final class FakeUsage: UsageFetching, @unchecked Sendable {
     /// Config homes asked of the no-network cache.
     var cachedRequests: [String] { lock.withLock { recordedCached } }
     private var recordedCached: [String] = []
+    /// When set, every live read parks here first, so a test can look at
+    /// the cards while the fetch is still running.
+    var gate: HoldGate?
 
     func usage(for key: AccountKey, force: Bool, freshFor _: TimeInterval) async -> AccountUsage {
-        lock.withLock {
+        try? await gate?.pass()
+        return lock.withLock {
             recorded.append((key, force))
             return byHome[key.configHome]
                 ?? AccountUsage(status: .signedOut, plan: nil, email: nil, windows: [], fetchedAt: nil, isStale: false)
@@ -510,9 +514,16 @@ final class FakeRunningInstances: RunningInstances {
         usage.cached[home] = AccountUsage(status: .rateLimited(until: .distantFuture),
                                           windows: reading.windows,
                                           fetchedAt: .now, isStale: true)
-        await model.load(force: false)
-        // The cache answered without a keychain read and the card saw it.
+        let gate = HoldGate()
+        usage.gate = gate
+        let load = Task { await model.load(force: false) }
+        // The fetch is parked, so the card shows only what the cache gave.
+        #expect(await gate.arrived())
         #expect(usage.cachedRequests.contains(home))
+        let card = model.cards.first { $0.id == "claude-default" }
+        #expect(card?.usage == usage.cached[home])
+        gate.open()
+        await load.value
     }
 
     @Test(.timeLimit(.minutes(1))) func aSecondPressSkipsAccountsAlreadyRenewing() async throws {
@@ -681,29 +692,28 @@ final class FakeRunningInstances: RunningInstances {
     /// catches a hang. Under full-suite load renew can notice even an
     /// instant exit a second or more late, so a short one would time out
     /// a clean run and report it as a failure.
-    private func cli(_ script: String, timeout: Duration = .seconds(60),
-                     sigtermGrace: Duration = .milliseconds(200))
-        throws -> (dir: URL, renewer: ClaudeSignInRenewer) {
-        let dir = FileManager.default.temporaryDirectory
-            .appending(path: "renew-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    private func cli(_ script: String, in temp: TempDir, timeout: Duration = .seconds(60),
+                     sigtermGrace: Duration = .milliseconds(200)) throws -> ClaudeSignInRenewer {
+        let dir = temp.url
         let executable = dir.appending(path: "claude")
         try script.write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755],
                                               ofItemAtPath: executable.path)
         let path = dir.path
-        return (dir, ClaudeSignInRenewer(
+        return ClaudeSignInRenewer(
             timeout: timeout, sigtermGrace: sigtermGrace,
             command: "claude", workingDirectory: dir,
-            environment: { ["PATH": path] }))
+            environment: { ["PATH": path] })
     }
 
     /// Runs `script` to its own exit and returns renew's answer with the
     /// child, so a test can check the answer came from the exit status
     /// and not from the timeout.
     private func runToExit(_ script: String) async throws -> (renewed: Bool, child: Process) {
-        var (dir, renewer) = try cli(script)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let dir = temp.url
+        var renewer = try cli(script, in: temp)
         let child = ChildBox()
         renewer.launched = { child.set($0, readyAt: nil) }
         let renewed = await renewer.renew(home: dir.path, isDefault: true)
@@ -726,9 +736,11 @@ final class FakeRunningInstances: RunningInstances {
         // marker file proves the trap is in place. A loaded machine can
         // take longer than any fixed timeout to reach that line, so the
         // timeout starts only once the marker shows up.
-        var (dir, renewer) = try cli("#!/bin/sh\ntrap '' TERM\n/usr/bin/touch started\nexec /bin/sleep 60\n",
-                                     timeout: .milliseconds(500), sigtermGrace: .milliseconds(500))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let dir = temp.url
+        var renewer = try cli("#!/bin/sh\ntrap '' TERM\n/usr/bin/touch started\nexec /bin/sleep 60\n",
+                              in: temp, timeout: .milliseconds(500), sigtermGrace: .milliseconds(500))
         let marker = dir.appending(path: "started").path
         let folder = dir
         let child = ChildBox()
