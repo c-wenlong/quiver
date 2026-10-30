@@ -218,6 +218,16 @@ struct RemoteSection: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.bottom, 14)
             } else {
+                if let error = requests.loadError {
+                    // The rows below are the last good answer; say they've
+                    // stopped updating.
+                    Label("Couldn't refresh pair requests: \(error)",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(Theme.caption).foregroundStyle(Theme.warningText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 10)
+                }
                 ForEach(Array(requests.requests.enumerated()), id: \.element.id) { index, request in
                     if index > 0 { SettingsDivider() }
                     PairRequestRow(request: request, model: requests) {

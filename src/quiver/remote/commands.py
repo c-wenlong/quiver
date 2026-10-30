@@ -551,7 +551,7 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
         return 0
     # --request-id holds the code to one row, as the hub's HTTP route
     # does: a code typed against one request never approves another,
-    # and wrong codes count toward that row's lockout.
+    # and wrong approve codes count toward that row's lockout.
     request_id = flags.get("--request-id")
     if request_id == "":
         # Empty would quietly widen the code to every pending row.

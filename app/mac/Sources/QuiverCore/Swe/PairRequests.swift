@@ -34,7 +34,8 @@ public struct PairRequest: Decodable, Sendable, Equatable, Identifiable {
 }
 
 /// `swe remote devices --approve=<code>|--deny=<code> --json`. A code
-/// that matches nothing exits 1 with `{"ok": false}`.
+/// that matches nothing answers `{"ok": false}`: `--approve` exits 1,
+/// `--deny` exits 0, so callers read `ok`, never the exit status.
 public struct PairDecision: Decodable, Sendable, Equatable {
     public let ok: Bool
     public let deviceId: String?
@@ -50,7 +51,8 @@ extension SweClient {
 
     /// Approves or denies one request. `--request-id` holds the code to
     /// that row, so a code typed against one request never decides
-    /// another, and wrong codes count toward that row's lockout.
+    /// another. Wrong approve codes count toward that row's lockout;
+    /// wrong deny codes don't.
     public func remoteDecidePairRequest(_ requestID: String, code: String,
                                         approve: Bool) async throws -> PairDecision {
         let verb = approve ? "--approve" : "--deny"
@@ -159,8 +161,13 @@ public final class PairRequestsModel {
             let result = try await swe.remoteDecidePairRequest(
                 request.id, code: code, approve: approve)
             guard result.ok else {
-                errors[request.id] = "That code doesn't match this request."
-                codes[request.id] = ""
+                // The field stays editable while swe runs. If the user has
+                // already typed a correction, this answer is about a code
+                // that is gone: leave their new one and say nothing.
+                if codes[request.id] == code {
+                    errors[request.id] = "That code doesn't match this request."
+                    codes[request.id] = ""
+                }
                 return false
             }
             // A poll that started before the decision would put the row

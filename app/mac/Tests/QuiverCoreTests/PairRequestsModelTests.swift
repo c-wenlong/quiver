@@ -164,6 +164,43 @@ import Testing
         #expect(model.loaded)
     }
 
+    /// A poll that was already reading when the approval landed must not
+    /// put the approved row back.
+    @Test func aStalePollCantBringBackAnApprovedRow() async throws {
+        let approved = Self.ok(#"{"schema": 1, "data": {"ok": true, "device_id": "d1"}}"#)
+        let runner = HeldListRunner(list: Self.twoRequests, decision: approved)
+        let model = PairRequestsModel(swe: SweClient(runner: runner))
+        await model.refresh()                       // first list call is not held
+        runner.holdNextList()
+        let stale = Task { await model.refresh() }
+        while !runner.isHolding { try await Task.sleep(for: .milliseconds(2)) }
+        let request = model.requests[0]
+        model.setCode("123456", for: request)
+        #expect(await model.decide(request, approve: true))
+        runner.release()
+        await stale.value
+        #expect(model.requests.map(\.id) == ["r2"])
+    }
+
+    /// A rejection that arrives after the user typed a new code leaves the
+    /// new code alone and shows no error about the old one.
+    @Test func aLateRejectionKeepsACorrectedCode() async throws {
+        let rejected = CommandResult(status: 1, stdout: Data(#"{"schema": 1, "data": {"ok": false}}"#.utf8), stderr: "")
+        let runner = HeldListRunner(list: Self.twoRequests, decision: rejected)
+        let model = PairRequestsModel(swe: SweClient(runner: runner))
+        await model.refresh()
+        let request = model.requests[0]
+        model.setCode("000000", for: request)
+        runner.holdNextDecision()
+        let pending = Task { await model.decide(request, approve: true) }
+        while !runner.isHolding { try await Task.sleep(for: .milliseconds(2)) }
+        model.setCode("123456", for: request)
+        runner.release()
+        #expect(await pending.value == false)
+        #expect(model.code(for: request) == "123456")
+        #expect(model.errors["r1"] == nil)
+    }
+
     @Test func ageReadsLikeAClock() {
         let created = Date(timeIntervalSince1970: 1760000000)
         let request = PairRequest(requestId: "r", createdAt: created)
@@ -172,6 +209,56 @@ import Testing
         #expect(PairRequestsModel.age(of: request, at: created.addingTimeInterval(185)) == "3m ago")
         #expect(PairRequestsModel.age(of: request, at: created.addingTimeInterval(7300)) == "2h ago")
         #expect(PairRequestsModel.age(of: PairRequest(requestId: "x"), at: created) == nil)
+    }
+}
+
+/// Answers the list and decision calls, and can hold the next one of
+/// either until `release()`, so a test can interleave them.
+private final class HeldListRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private let list: CommandResult
+    private let decision: CommandResult
+    private var holdList = false
+    private var holdDecision = false
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    init(list: CommandResult, decision: CommandResult) {
+        self.list = list
+        self.decision = decision
+    }
+
+    var isHolding: Bool { lock.withLock { waiter != nil } }
+    func holdNextList() { lock.withLock { holdList = true; released = false } }
+    func holdNextDecision() { lock.withLock { holdDecision = true; released = false } }
+
+    func release() {
+        let waiting = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            released = true
+            defer { waiter = nil }
+            return waiter
+        }
+        waiting?.resume()
+    }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        let isList = arguments.contains("--requests")
+        let hold = lock.withLock { () -> Bool in
+            if isList && holdList { holdList = false; return true }
+            if !isList && holdDecision { holdDecision = false; return true }
+            return false
+        }
+        if hold {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                let resumeNow = lock.withLock { () -> Bool in
+                    if released { return true }
+                    waiter = c
+                    return false
+                }
+                if resumeNow { c.resume() }
+            }
+        }
+        return isList ? list : decision
     }
 }
 

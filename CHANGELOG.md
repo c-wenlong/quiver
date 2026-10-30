@@ -20,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `swe remote devices --approve=<code>` and `--deny=<code>` gain
   `--request-id=<id>`, which holds the code to that one request, as the
   hub's HTTP route already did: a code typed against one row never
-  decides another, and five wrong codes deny it. The app always sends it.
+  decides another, and five wrong approve codes deny it. The app always
+  sends it.
   Part of [#522](https://github.com/c-wenlong/quiver/issues/522).
 
 - **Remote iPhone app: switch a session's model from the chat.** On a
