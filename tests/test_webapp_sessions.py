@@ -1043,7 +1043,7 @@ return div.innerHTML;
         most three, none from code; the card opens a new tab with no
         opener or referrer."""
         out = self.run_js(r"""
-          const urls = (t) => T.linkUrls(t).map((u) => u.href);
+          const urls = (t) => T.linkUrls(T.md(t)).map((u) => u.href);
           return {
             mixed: urls("See [the page](https://www.claude.ai/code/artifact/abc?x=1&y=2) and "
               + "https://example.com, again https://example.com, mailto:a@b.c, `https://code.test/x`\n"
@@ -1052,8 +1052,8 @@ return div.innerHTML;
             none: urls("no links here"),
             host: [T.linkHost(new URL("https://www.claude.ai/x")), T.linkHost(new URL("http://example.com"))],
             path: [T.linkPath(new URL("https://claude.ai/code/x?y=1")), T.linkPath(new URL("https://claude.ai/"))],
-            html: T.linkCardsHtml('Go to https://example.com/a?q="x"'),
-            empty: T.linkCardsHtml("plain"),
+            html: T.linkCardsHtml(T.md('Go to https://example.com/a?q="x"')),
+            empty: T.linkCardsHtml(T.md("plain")),
           };""")
         self.assertEqual(out["mixed"], ["https://www.claude.ai/code/artifact/abc?x=1&y=2", "https://example.com/"])
         self.assertEqual(out["many"], ["https://a.test/1", "https://b.test/2", "https://c.test/3"])
