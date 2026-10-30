@@ -3221,7 +3221,7 @@ const SessionChat = (() => {
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
       inlineImagesAsText, inline, taskBox, tableHtml,
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
-      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post, handleFrame,
+      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post, handleFrame, approvalCard,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,

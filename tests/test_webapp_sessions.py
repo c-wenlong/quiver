@@ -559,6 +559,22 @@ return { during, heldWhileReading, held: T.chat.held, seq: T.chat.seq, log: log.
         self.assertEqual((out["log"], out["kept"], out["seq"]), ("old history", 0, 3))
         self.assertEqual(out["queued"], ["session.status:1", "approval.requested:1", "message.appended:4"])
 
+    def test_an_approval_prompt_is_plain_text(self):
+        """The prompt comes from the agent's pane: links, images, headings
+        and HTML in it show as typed, in monospace with spacing kept."""
+        out = self.run_js(r"""
+const div = { dataset: {}, innerHTML: "", classList: { toggle() {} },
+  querySelector: () => ({ setAttribute() {} }), querySelectorAll: () => [] };
+T.approvalCard(div, { request_id: "r", options: [],
+  text: "# Run it?\n  [click](javascript:alert(1)) ![x](http://evil.test/p.png) <b>hi</b>" });
+return div.innerHTML;
+""")
+        prompt = out[out.index('<div class="text approval-prompt">'):]
+        prompt = prompt[:prompt.index("</div>")]
+        self.assertIn("# Run it?\n  [click](javascript:alert(1)) ![x](http://evil.test/p.png) &lt;b&gt;hi&lt;/b&gt;", prompt)
+        for rendered in ("<a ", "<img", "<h", "<b>", "<strong"):
+            self.assertNotIn(rendered, prompt)
+
     def test_bare_urls_keep_their_underscores(self):
         """A bare URL goes back after emphasis runs, so `__init__` in a
         path stays in the href and the text, never <strong>."""
