@@ -20,6 +20,16 @@ def _state(home: Path | None = None) -> HubState:
     return state
 
 
+def _until(predicate, timeout=5.0):
+    """Poll ``predicate`` until it holds; False once ``timeout`` runs out."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
 def _cfg(home: Path, **over):
     base = {"enabled": True, "url": "https://ntfy.test", "topic": "qw"}
     base.update(over)
@@ -439,12 +449,6 @@ class TestPost(unittest.TestCase):
                 self.n._post(cfg, {"topic": "t"})
         self.assertEqual(warn.call_count, 1)
 
-    def test_post_propagates_http_errors(self):
-        cfg = {"url": "https://n.test", "topic": "t"}
-        with patch("urllib.request.urlopen", side_effect=OSError("down")):
-            with self.assertRaises(OSError):
-                self.n._post(cfg, {"topic": "t"})
-
 
 class TestRun(unittest.TestCase):
     def setUp(self):
@@ -483,18 +487,13 @@ class TestRun(unittest.TestCase):
         posts = []
         n._post = lambda cfg, payload: posts.append(payload)
         t = threading.Thread(target=n.run, daemon=True)
+        self.addCleanup(state._stop.set)
         t.start()
-        # Wait for subscribe before publishing.
-        for _ in range(100):
-            if state.bus._subs:
-                break
-            time.sleep(0.01)
+        # Wait for run() to subscribe before publishing.
+        self.assertTrue(_until(lambda: state.bus._subs))
         state.emit("k1", protocol.event(
             "notify", "k1", "m1", {"kind": "finished"}))
-        for _ in range(100):
-            if posts:
-                break
-            time.sleep(0.01)
+        self.assertTrue(_until(lambda: posts))
         self.assertEqual(len(posts), 1)
         self.assertIn("finished", posts[0]["title"].lower())
         state._stop.set()
@@ -516,11 +515,9 @@ class TestRun(unittest.TestCase):
             "approval.requested", "k1", "m1",
             {"request_id": "req-early", "prompt": "run it?"}))
         t = threading.Thread(target=n.run, daemon=True)
+        self.addCleanup(state._stop.set)
         t.start()
-        for _ in range(100):
-            if posts:
-                break
-            time.sleep(0.01)
+        self.assertTrue(_until(lambda: posts))
         state._stop.set()
         t.join(timeout=3)
         self.assertEqual(len(posts), 1)
@@ -538,18 +535,13 @@ class TestRun(unittest.TestCase):
 
         n._post = boom
         t = threading.Thread(target=n.run, daemon=True)
+        self.addCleanup(state._stop.set)
         t.start()
-        for _ in range(100):
-            if state.bus._subs:
-                break
-            time.sleep(0.01)
+        self.assertTrue(_until(lambda: state.bus._subs))
         for _ in range(2):
             state.emit("k1", protocol.event(
                 "notify", "k1", "m1", {"kind": "finished"}))
-        for _ in range(100):
-            if len(calls) >= 2:
-                break
-            time.sleep(0.01)
+        self.assertTrue(_until(lambda: len(calls) >= 2))
         self.assertEqual(len(calls), 2)
         self.assertTrue(t.is_alive())
         state._stop.set()

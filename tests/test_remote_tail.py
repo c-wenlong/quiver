@@ -377,7 +377,7 @@ class TestSnapshotChangeGate(unittest.TestCase):
             self.assertEqual(src.poll(), [])
             self.assertEqual(len(reads), 1, "polls after the first trust the unchanged token")
             # A write moves the token: the next poll reads and emits it.
-            time.sleep(0.01)
+            # The size changes, so this needs no wait for a new mtime.
             self.store.write_text('{"more": true}')
             out = src.poll()
             self.assertEqual([m["text"] for m in out], ["c"])
@@ -1615,9 +1615,10 @@ class TestSweepStale(unittest.TestCase):
                 target=self.mgr.sweep_stale, args=(self.journal,),
                 kwargs={"now": self.now})
             t.start()
-            started.wait(2)
+            self.assertTrue(started.wait(2))
             self.mgr.ensure("claude:back", sess, "")
-            t.join()
+            t.join(5)
+            self.assertFalse(t.is_alive())
         # The ensure waited for the sweep: both files went first, and
         # the tailer started fresh, so recent history backfills (one
         # started on the doomed journal would skip to the end).
@@ -1642,6 +1643,11 @@ class TestApprovalWatcher(unittest.TestCase):
         # Only the key matters to the watcher; no transcript needed.
         self.mgr.tailers["k1"] = object()
         self._t = time.time()
+        # The watcher records pending prompts in supervise's module-level
+        # dict: start empty and leave nothing for later tests.
+        p = patch.dict(tail.supervise._PENDING_APPROVALS, clear=True)
+        p.start()
+        self.addCleanup(p.stop)
 
     def _poll(self, pane="", meta=None):
         # Each call lands past the PANE_APPROVAL_S throttle window.
@@ -1714,6 +1720,9 @@ class TestApprovalWatcher(unittest.TestCase):
         evs = self._approval_events()
         self.assertEqual(evs[-1]["type"], "approval.resolved")
         self.assertEqual(evs[-1]["data"]["source"], "detached")
+        # The id alone, as the request carried it: the hub and the
+        # phone match the resolve to the open card by this string.
+        self.assertEqual(evs[-1]["data"]["request_id"], rid)
         self.assertIsNone(supervise.pending_approval("k1"))
 
     def test_headless_meta_skips_pane_check(self):

@@ -42,20 +42,29 @@ public struct MarkdownListItem: Equatable, Sendable {
 
 public enum GitHubMarkdown {
 
+    /// How many `<details>` levels fold. A body is untrusted (anyone can
+    /// open an issue), and each level re-scans its inside, so deeper
+    /// blocks render as prose instead of folding further.
+    static let maxDetailsNesting = 16
+
     /// Split `body` into renderable segments, top-level `<details>`
     /// blocks first. Unclosed or malformed blocks stay as text.
     public static func segments(_ body: String) -> [MarkdownSegment] {
+        segments(body, level: 0)
+    }
+
+    private static func segments(_ body: String, level: Int) -> [MarkdownSegment] {
         var out: [MarkdownSegment] = []
         var prose = ""
         var rest = Substring(body)
-        while let range = firstTag(in: rest, named: "details") {
+        while level < maxDetailsNesting, let range = firstTag(in: rest, named: "details") {
             prose += rest[..<range.lowerBound]
             if let end = matchingClose(in: rest, named: "details", from: range.upperBound) {
                 let block = rest[range.upperBound..<end.inner]
                 let (title, inner) = splitSummary(block)
                 flush(&prose, into: &out)
                 out.append(.details(title: inlineMarkdown(title),
-                                    body: segments(String(inner))))
+                                    body: segments(String(inner), level: level + 1)))
                 rest = rest[end.outer...]
             } else {
                 prose += rest[range.lowerBound...]
@@ -338,34 +347,52 @@ public enum GitHubMarkdown {
     /// `<name>` at `from` … its matching `</name>`: `inner` is the end
     /// of the block's content, `outer` the end of the close tag.
     /// Nesting of the same tag counts. Returns nil when unclosed.
+    ///
+    /// One forward pass over the bytes: searching ahead for both the next
+    /// open and the next close at every step made nested blocks cost the
+    /// square of their depth per call, and a hostile body hung the page.
     static func matchingClose(in s: Substring, named name: String,
                               from: String.Index)
         -> (inner: String.Index, outer: String.Index)? {
+        let bytes = s.utf8
+        let tag = Array(name.lowercased().utf8)
+        let lt = UInt8(ascii: "<"), gt = UInt8(ascii: ">"), slash = UInt8(ascii: "/")
         var depth = 1
         var at = from
-        let open = "<" + name, close = "</" + name
-        while at < s.endIndex {
-            if let r = s.range(of: open, options: .caseInsensitive,
-                               range: at..<s.endIndex),
-               r.lowerBound < (s.range(of: close, options: .caseInsensitive,
-                                       range: at..<s.endIndex)?.lowerBound
-                               ?? s.endIndex) {
-                depth += 1
-                at = r.upperBound
+        while let open = bytes[at...].firstIndex(of: lt) {
+            var p = bytes.index(after: open)
+            let closing = p < bytes.endIndex && bytes[p] == slash
+            if closing { p = bytes.index(after: p) }
+            guard let afterName = tagName(tag, in: bytes, at: p) else {
+                at = bytes.index(after: open)
                 continue
             }
-            guard let r = s.range(of: close, options: .caseInsensitive,
-                                  range: at..<s.endIndex) else { return nil }
+            guard closing else {
+                depth += 1
+                at = afterName
+                continue
+            }
             depth -= 1
-            guard let gt = s[r.upperBound...].firstIndex(of: ">") else {
-                return nil
-            }
-            if depth == 0 {
-                return (inner: r.lowerBound, outer: s.index(after: gt))
-            }
-            at = s.index(after: gt)
+            guard let end = bytes[afterName...].firstIndex(of: gt) else { return nil }
+            if depth == 0 { return (inner: open, outer: bytes.index(after: end)) }
+            at = bytes.index(after: end)
         }
         return nil
+    }
+
+    /// The index just past `tag` (lowercase ASCII) when the bytes at `at`
+    /// start with it, compared case-insensitively; nil otherwise.
+    private static func tagName(_ tag: [UInt8], in bytes: Substring.UTF8View,
+                                at: String.Index) -> String.Index? {
+        var q = at
+        for expected in tag {
+            guard q < bytes.endIndex else { return nil }
+            var byte = bytes[q]
+            if byte >= UInt8(ascii: "A") && byte <= UInt8(ascii: "Z") { byte += 32 }
+            guard byte == expected else { return nil }
+            q = bytes.index(after: q)
+        }
+        return q
     }
 
     /// `<summary>title</summary>` out of a `<details>` block's inside;

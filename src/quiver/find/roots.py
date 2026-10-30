@@ -20,6 +20,7 @@ from quiver.paths import home_relative as _short
 from quiver.console import sanitize
 from quiver.find.entries import Entry
 from quiver.find.plugins import Plugin, discover_plugins, filter_plugins
+from quiver.find.summary import plural as _plural
 from quiver.find.tree import (
     SCOPE_GLOBAL,
     SCOPE_LOCAL,
@@ -236,11 +237,6 @@ def _in_scope(path: Path, scope: str, home: Path) -> bool:
     if scope == SCOPE_ALL:
         return True
     return scope_of(path, home) == scope
-
-
-def _plural(n: int, word: str) -> str:
-    suffix = "" if n == 1 else "s"
-    return f"{n} {word}{suffix}"
 
 
 def _by_path(node: Node) -> tuple:

@@ -386,7 +386,10 @@ def _render(parent: list[Entry], parent_cursor: int,
 
     sys.stdout.write("".join(out))
     sys.stdout.flush()
-    return view + 3 + (1 if tail else 0)
+    # Exactly the "\r\n"s written above: the header, the rows, the
+    # optional range line and the footer. One too many and every redraw
+    # rewinds past the top of the widget and eats the line above it.
+    return 1 + view + (1 if tail else 0) + 1
 
 
 def browse(roots: list[Entry], title: str = "") -> int:

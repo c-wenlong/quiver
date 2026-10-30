@@ -93,6 +93,33 @@ class TestStore(unittest.TestCase):
         self.assertIsNone(row["pinned_at"])
 
 
+class _NotedLock:
+    """The catalog's row lock, noting when a second thread queues on it.
+
+    A race test waits for ``contended`` instead of sleeping, so the
+    other thread is known to be blocked on the lock, not merely started.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.contended = threading.Event()
+
+    def __enter__(self):
+        if not self._lock.acquire(blocking=False):
+            self.contended.set()
+            self._lock.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._lock.release()
+
+
+def _note_lock(cat):
+    lock = _NotedLock()
+    cat._meta_lock = cat._lock = lock
+    return lock
+
+
 class TestLimitsAndRaces(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
@@ -137,6 +164,7 @@ class TestLimitsAndRaces(unittest.TestCase):
             status_of=lambda ss: ["idle"] * len(ss))
         cat.refresh()
         key = cat.rows()[0]["key"]
+        lock = _note_lock(cat)
 
         def save_midway():
             cat._after_meta_read = None
@@ -148,7 +176,7 @@ class TestLimitsAndRaces(unittest.TestCase):
             t = threading.Thread(target=request, daemon=True)
             t.start()
             started.append(t)
-            time.sleep(0.2)
+            self.assertTrue(lock.contended.wait(5))
 
         started = []
         cat._after_meta_read = save_midway
@@ -177,6 +205,7 @@ class TestLimitsAndRaces(unittest.TestCase):
         key = cat.rows()[0]["key"]
         verdict["probe"] = lambda: cat.note_status(
             key, "active", time.time() + 1)
+        lock = _note_lock(cat)
 
         def save_midway():
             cat._after_meta_read = None
@@ -188,7 +217,7 @@ class TestLimitsAndRaces(unittest.TestCase):
             t = threading.Thread(target=request, daemon=True)
             t.start()
             started.append(t)
-            time.sleep(0.2)
+            self.assertTrue(lock.contended.wait(5))
 
         started = []
         cat._after_meta_read = save_midway

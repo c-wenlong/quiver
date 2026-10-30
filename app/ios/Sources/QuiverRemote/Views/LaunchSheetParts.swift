@@ -158,15 +158,109 @@ struct LaunchStartButton: View {
     }
 }
 
-/// The folder list's search field, with a clear button while it holds a
-/// search.
-struct FolderSearchField: View {
+/// Where a plain launch starts: "Folder · N recent" with Browse, the
+/// machine's recent folders newest first (the first few, then Show all),
+/// and a search once there are more than fit. New session and a task's
+/// session sheet both use it; the GitHub sheets' worktree is the hub's
+/// choice. Another machine starts folded, with no search.
+struct RecentFolderPicker: View {
+    let machine: Machine
+    /// The sheet's session rows, for the recent folders.
+    let sessions: [SessionRow]
+    let selected: String?
+    /// A launch in flight locks the list with the sheet's other inputs.
+    var disabled = false
+    let browse: () -> Void
+    let pick: (String) -> Void
+
+    @State private var showAll = false
+    @State private var query = ""
+
+    static let shownFirst = 4
+
+    /// The rows under the header: every match while searching or shown
+    /// in full, else the newest `shownFirst`.
+    static func shown(_ folders: [String], query: String, showAll: Bool) -> [String] {
+        let matches = NewSessionOptions.matching(folders, query: query)
+        return isSearching(query) || showAll ? matches : Array(matches.prefix(shownFirst))
+    }
+
+    /// A few folders all show at once, so there's nothing to search; a
+    /// search under way keeps its field.
+    static func offersSearch(folderCount: Int, query: String) -> Bool {
+        isSearching(query) || folderCount > shownFirst
+    }
+
+    private static func isSearching(_ query: String) -> Bool {
+        !query.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    var body: some View {
+        let folders = NewSessionOptions.folders(on: machine.id, sessions: sessions)
+        let searching = Self.isSearching(query)
+        // The fold toggle and Browse sit at the top, so neither needs a
+        // scroll past hundreds of rows.
+        HStack(spacing: 14) {
+            Text(folders.isEmpty ? "Folder" : "Folder · \(folders.count) recent")
+                .font(Theme.groupLabel).foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 8)
+            Button(action: browse) {
+                Label("Browse", systemImage: "folder.badge.magnifyingglass")
+            }
+            .disabled(disabled)
+            if folders.count > Self.shownFirst && !searching {
+                Button(showAll ? "Show fewer" : "Show all") { showAll.toggle() }
+            }
+        }
+        .font(Theme.control)
+        .foregroundStyle(Theme.textPrimary)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+        .padding(.top, 14)
+        .onChange(of: machine.id) {
+            showAll = false
+            query = ""
+        }
+        if folders.isEmpty {
+            StateCard(icon: "folder", title: "No recent folders",
+                      message: "Folders show up here once a session has run in them on \(machine.displayName). Browse to pick any folder.")
+        } else {
+            if Self.offersSearch(folderCount: folders.count, query: query) {
+                SearchField(placeholder: "Search folders", query: $query)
+            }
+            let shown = Self.shown(folders, query: query, showAll: showAll)
+            if shown.isEmpty {
+                Text("No recent folder matches. Browse to find it.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
+            } else {
+                CardList(data: shown.map(FolderPath.init)) { choice in
+                    Button { pick(choice.path) } label: {
+                        FolderRow(path: choice.path, selected: choice.path == selected)
+                    }
+                    .buttonStyle(RowButtonStyle())
+                    .disabled(disabled)
+                }
+            }
+        }
+    }
+}
+
+/// A folder path as an Identifiable, for card lists of folders.
+struct FolderPath: Identifiable {
+    let path: String
+    var id: String { path }
+}
+
+/// A search field with a clear button while it holds a search: the
+/// launch sheets' folder list and the Link a session sheet.
+struct SearchField: View {
+    let placeholder: String
     @Binding var query: String
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
-            TextField("Search folders", text: $query)
+            TextField(placeholder, text: $query)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             if !query.trimmingCharacters(in: .whitespaces).isEmpty {
