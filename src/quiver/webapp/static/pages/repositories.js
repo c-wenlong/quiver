@@ -187,20 +187,32 @@ const PrFilter = (() => {
     return prFiltered(repo, key, filtered(state, key, query(), showsAllRows(repo))).rows.length;
   }
 
-  /* The open PRs each listed repo shows under the search, as
+  /* The open PRs each of ``repos`` shows under the search, as
    * PrFilter.offered wants them; repos still loading or failed have none. */
-  function prLists() {
-    return listedRepos().map((p) => {
+  function prLists(repos) {
+    return repos.map((p) => {
       const state = filtered(surfaceState(boardOf(p.name), "pull_requests"), "pull_requests", query(), showsAllRows(p.name));
       return [p.name, state.kind === "loaded" ? state.rows : []];
     });
   }
 
+  /* Every repo a pick reaches: the list's and the rail's, whose counts
+   * and quiet fold follow the pick too. A filter is offered only when
+   * its flag is known across all of them, so no repo reads as quiet for
+   * want of flags. */
+  function prCoverage() {
+    const names = new Set();
+    return prLists([...listedRepos(), ...visibleRepos()].filter((p) => !names.has(p.name) && names.add(p.name)));
+  }
+
   /* The PR filter in force: the pick, while the Pull requests tab shows
-   * and its flag is known for every listed PR; else All. */
+   * and its flag is known for every PR it reaches; else All. A paint
+   * works it out once (prMemo) instead of once per rail row. */
+  let prMemo = null;
   function prFilterNow() {
+    if (prMemo) return prMemo.now;
     if (page.tab !== "pulls" || page.prFilter === "all") return "all";
-    return PrFilter.offered(page.flags, page.prFilter, prLists()) ? page.prFilter : "all";
+    return PrFilter.offered(page.flags, page.prFilter, prCoverage()) ? page.prFilter : "all";
   }
 
   /* A loaded pull_requests state narrowed to the PR filter in force. */
@@ -213,8 +225,9 @@ const PrFilter = (() => {
    * while its flag is known; nothing when only All would show. */
   function prFilterBar() {
     if (page.tab !== "pulls") return "";
-    const lists = prLists();
-    const shown = PrFilter.FILTERS.filter((f) => PrFilter.offered(page.flags, f.id, lists));
+    const coverage = prCoverage();
+    const shown = PrFilter.FILTERS.filter((f) => PrFilter.offered(page.flags, f.id, coverage));
+    const lists = prLists(listedRepos());
     if (shown.length < 2) return "";
     const now = prFilterNow();
     return `<div class="tabs gh-pr-filter" role="radiogroup" aria-label="Which pull requests to list">${shown.map((f) => {
@@ -759,12 +772,18 @@ const PrFilter = (() => {
     if (page.dragging) { page.repaintAfterDrag = true; return; }
     const d = page.data;
     const rail = d && !GhUI.envSetup(d.github) && pins().length;
-    document.getElementById("panel").innerHTML = `<div class="page gh-page">
-      <div class="gh-dash${rail ? " with-rail" : ""}">
-        <div class="gh-head">${HEADER(!rail)}</div>
-        ${rail ? railHtml() : ""}
-        <div class="gh-body stack">${dashboardContent()}</div>
-      </div>${rail && page.managing ? managerHtml() : ""}</div>`;
+    prMemo = null;
+    prMemo = { now: prFilterNow() };
+    try {
+      document.getElementById("panel").innerHTML = `<div class="page gh-page">
+        <div class="gh-dash${rail ? " with-rail" : ""}">
+          <div class="gh-head">${HEADER(!rail)}</div>
+          ${rail ? railHtml() : ""}
+          <div class="gh-body stack">${dashboardContent()}</div>
+        </div>${rail && page.managing ? managerHtml() : ""}</div>`;
+    } finally {
+      prMemo = null;
+    }
     if (!rail) page.managing = false;
     placeManager();
     bindDashboard();

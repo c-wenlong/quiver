@@ -1196,6 +1196,20 @@ apiAnswers.push(["/v1/pulls", { get status() { return pulls.status; }, get data(
   out.nullChips = chips().map((c) => c[0]);
   out.nullSelected = selected();
   out.nullRows = prRows().length;
+  // o/b's review flags unknown, o/a's known: narrowing the list to o/a
+  // still hides Review requested, or o/b would read as quiet in the rail.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [
+      { number: 1, mine: true, review_requested: false },
+      { number: 2, mine: false, review_requested: true },
+      { number: 3, mine: false, review_requested: false }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: null }] }] } };
+  PAGES.repositories();
+  await tick();
+  click("shown", "o/a");
+  out.scopedChips = chips().map((c) => c[0]);
+  out.scopedMineCount = (chips().find((c) => c[0] === "mine") || [])[2];
+  click("shown", "");
   // A PR the flags don't cover yet (newer than /v1/pulls' cache): no guess, no bar.
   pulls = { status: 200, data: { github: { status: "ok" }, repos: [
     { name: "o/a", status: "ok", pulls: [{ number: 1, mine: true, review_requested: false }] },
@@ -1242,6 +1256,8 @@ class TestPrFilter(unittest.TestCase):
         self.assertEqual(out["nullChips"], ["all", "mine"])
         self.assertEqual(out["nullSelected"], "all")
         self.assertEqual(out["nullRows"], 4)
+        self.assertEqual(out["scopedChips"], ["all", "mine"])
+        self.assertEqual(out["scopedMineCount"], 1)
         self.assertFalse(out["partialBar"])
         self.assertFalse(out["blockedBar"])
         self.assertFalse(out["failedBar"])
