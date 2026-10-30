@@ -38,7 +38,8 @@ class _Hub:
         self.server = make_server(self.state, "127.0.0.1", 0)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(
-            target=self.server.serve_forever, daemon=True
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
+            daemon=True
         )
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.port}"
@@ -1860,6 +1861,22 @@ class TestCatalogEdge(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
 
+    def test_lookups_use_the_index_built_with_the_rows(self):
+        sessions = [_session(f"s{i}") for i in range(300)]
+        cat = catalog_mod.Catalog(self.home, "m1",
+                                  fetch_sessions=lambda: sessions,
+                                  status_of=lambda ss: [""] * len(ss),
+                                  model_of=lambda ss: [""] * len(ss))
+        cat.refresh()
+        self.assertIs(cat.session_for("claude:s299"), sessions[299])
+        self.assertEqual(cat.row_for("claude:s7")["key"], "claude:s7")
+        self.assertIsNone(cat.row_for("claude:nope"))
+        cat.note_status("claude:s5", "active", time.time() + 60)
+        self.assertEqual(cat.row_for("claude:s5")["status"], "active")
+        self.assertEqual(catalog_mod._index_of([("a", 0), ("b", 1), ("a", 2)]),
+                         {"a": 0, "b": 1})
+
+
     def test_machine_ids_that_map_alike_get_their_own_files(self):
         # "m.1" and "m_1" both became m_1.json: one satellite's rows
         # overwrote the other's.
@@ -2136,6 +2153,42 @@ class TestReviewFixes(unittest.TestCase):
             "data": {"op": "control", "command_id": "c2"},
         }).encode())
         ag._dispatch.assert_called_once()
+
+    def test_slow_ops_leave_the_stream_thread(self):
+        # A launch boots a pane (up to 30 s) and an attachment pull
+        # downloads; inline, every command behind them waited.
+        ag = self._agent()
+        ran = []
+        ag._dispatch = lambda ev: ran.append(ev["data"]["op"])
+        ag._sendq = MagicMock()
+        threads = []
+        with patch.object(agent_mod.threading, "Thread") as thread:
+            thread.side_effect = lambda **kw: threads.append(kw) or MagicMock()
+            for seq, op in enumerate(("launch", "attachment", "message"), 1):
+                ag._handle_frame(json.dumps({
+                    "type": "command", "seq": seq, "session": "claude:a",
+                    "data": {"op": op}}).encode())
+        self.assertEqual(ran, [])  # nothing ran on the stream thread
+        self.assertEqual(len(threads), 1)  # launch: its own thread
+        threads[0]["target"](*threads[0]["args"])
+        queued = ag._sendq.submit.call_args_list
+        self.assertEqual([c[0][0] for c in queued], ["claude:a", "claude:a"])
+        for c in queued:
+            c[0][1]()  # the session queue runs them in submit order
+        self.assertEqual(ran, ["launch", "attachment", "message"])
+        self.assertEqual(ag._done_cmd_seq, 3)
+
+    def test_attach_stays_on_the_stream(self):
+        # Queued behind a headless turn, an attach could run after a
+        # later detach and undo it.
+        ag = self._agent()
+        ag._dispatch = MagicMock()
+        ag._sendq = MagicMock()
+        ag._handle_frame(json.dumps({
+            "type": "command", "seq": 1, "session": "claude:a",
+            "data": {"op": "attach"}}).encode())
+        ag._dispatch.assert_called_once()
+        ag._sendq.submit.assert_not_called()
 
     def test_one_sessions_turn_does_not_hold_another(self):
         # A headless send blocks for its whole turn; a message to a

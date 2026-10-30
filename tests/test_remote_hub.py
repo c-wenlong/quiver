@@ -42,8 +42,11 @@ class _Server:
         self.state.tail_manager.sync(self.state.catalog.tail_rows())
         self.server = make_server(self.state, "127.0.0.1", 0)
         self.port = self.server.server_address[1]
+        # shutdown() waits for the next poll; the default 0.5 s is paid by
+        # every test that builds a server.
         self.thread = threading.Thread(
-            target=self.server.serve_forever, daemon=True
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
+            daemon=True
         )
         self.thread.start()
 

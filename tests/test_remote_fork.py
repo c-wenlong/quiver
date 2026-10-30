@@ -36,7 +36,8 @@ class _Hub:
         self.server = make_server(self.state, "127.0.0.1", 0)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(
-            target=self.server.serve_forever, daemon=True)
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
+            daemon=True)
         self.thread.start()
         token = pairing.mint_pair_token(self.home)
         _status, data = self.request(

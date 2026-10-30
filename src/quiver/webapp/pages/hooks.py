@@ -34,6 +34,7 @@ import threading
 from pathlib import Path
 
 from quiver.webapp.pages import PageError
+from quiver.webapp.pages.doctor import blocked_now
 from quiver.webapp.pages.skills import _inside, read_text
 
 # ``swe hooks new`` writes one hub file and reads the registry; serialize
@@ -141,21 +142,9 @@ def listing(ctx, home: Path) -> dict:
         "findings": findings,
         "check_error": check_error,
         "warning": warning,
-        "blocked": _blocked_now(home),
+        "blocked": blocked_now(home),
         "harnesses": _harnesses(registry, rows),
     }
-
-
-def _blocked_now(home: Path) -> list[str]:
-    """The paths ``swe init --force`` would replace, as the Doctor and
-    AGENTS.md pages list them; a check read that fails offers nothing."""
-    from quiver.init.commands import run_init
-    from quiver.webapp.pages.doctor import blocked_paths
-
-    try:
-        return blocked_paths(run_init(home, check_only=True, quiet=True), home)
-    except Exception:  # noqa: BLE001 - the list still shows without it
-        return []
 
 
 # -- one hook -------------------------------------------------------------
