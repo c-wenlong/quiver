@@ -493,6 +493,40 @@ return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
 """)
         self.assertEqual(out, {"fetches": 3, "hiddenFetches": 1, "delays": [2000, 2000, 4000]})
 
+    def test_a_truncated_journal_takes_its_lower_seq_and_refetches(self):
+        """A hub whose journal was wiped sends journal.truncated with its
+        head below this view's cursor: the view adopts it, reads
+        /messages again, holds what streams meanwhile, then shows only
+        what is newer (and an approval whatever its seq)."""
+        out = self.run_js(r"""
+let answer; const asked = [];
+globalThis.api = (path) => { asked.push(path); return new Promise((r) => { answer = r; }); };
+const els = { "chat-log": { innerHTML: "" } };
+document.getElementById = (id) => els[id] || null;
+globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
+const frame = (ev) => "data: " + JSON.stringify(ev);
+Object.assign(T.chat, { key: "k", gen: 1, seq: 500 });
+T.handleFrame("k", frame({ type: "journal.truncated", seq: 3 }));
+const during = { seq: T.chat.seq, asked: asked.slice(), log: els["chat-log"].innerHTML };
+T.handleFrame("k", frame({ type: "journal.caught-up", seq: 3 }));
+T.handleFrame("k", frame({ type: "message.appended", seq: 2, data: {} }));
+T.handleFrame("k", frame({ type: "approval.requested", seq: 1, data: { request_id: "r" } }));
+T.handleFrame("k", frame({ type: "message.appended", seq: 4, data: {} }));
+const heldWhileReading = T.chat.held.length;
+T.chat.revealTimer = 1;  // keep what is queued in chat.pending, unrevealed
+answer({ status: 200, data: { messages: [] } });
+await new Promise((r) => setImmediate(r));
+return { during, heldWhileReading, held: T.chat.held, seq: T.chat.seq,
+         queued: T.chat.pending.map((e) => e.type + ":" + e.seq) };
+""")
+        self.assertEqual(out["during"]["seq"], 3)
+        self.assertEqual(out["during"]["asked"], ["/v1/sessions/k/messages?limit=500"])
+        self.assertIn("Reloading the transcript", out["during"]["log"])
+        self.assertEqual(out["heldWhileReading"], 3)
+        self.assertIsNone(out["held"])
+        self.assertEqual(out["seq"], 3)
+        self.assertEqual(out["queued"], ["approval.requested:1", "message.appended:4"])
+
     def test_bare_urls_keep_their_underscores(self):
         """A bare URL goes back after emphasis runs, so `__init__` in a
         path stays in the href and the text, never <strong>."""
