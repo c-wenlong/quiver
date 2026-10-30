@@ -67,11 +67,10 @@ struct ModelChartLayoutTests {
                     slices: { _ in [] })
     }
 
-    private func fixtureDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appending(path: "quiver-chart-layout-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Self.llmsFixture.write(to: dir.appending(path: "llms.json"),
+    /// A temp folder holding the fixture; it goes when the caller drops it.
+    private func fixtureDir() throws -> TempDir {
+        let dir = try TempDir()
+        try Self.llmsFixture.write(to: dir.url.appending(path: "llms.json"),
                                    atomically: true, encoding: .utf8)
         return dir
     }
@@ -142,8 +141,8 @@ struct ModelChartLayoutTests {
 
     @Test
     func chartLaysOutFiniteAcrossResizes() async throws {
-        let dir = try fixtureDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let scratch = try fixtureDir()
+        let dir = scratch.url
         let model = makeModel(in: dir)
         await model.load()
         // All 25 fixture models: the columns go narrow, not enormous.
@@ -171,8 +170,9 @@ struct ModelChartLayoutTests {
                 var frame = window.frame
                 frame.size = size
                 window.setFrame(frame, display: true)
+                // Layout runs here, synchronously; a yield after it ran no
+                // layout of its own, only whatever happened to be queued.
                 window.contentView?.layoutSubtreeIfNeeded()
-                await Task.yield()
                 if let content = window.contentView {
                     Self.auditFinite(content, bad: &bad, seen: &seen)
                 }
@@ -182,6 +182,7 @@ struct ModelChartLayoutTests {
         #expect(bad == 0)
         #expect(seen > 0)
         #expect(hosting.bounds.width > 0 && hosting.bounds.height > 0)
+        withExtendedLifetime(scratch) {}
 
         // QUIVER_CHART_SNAPSHOT=<path> renders the tested chart offscreen.
         if let snap = ProcessInfo.processInfo.environment["QUIVER_CHART_SNAPSHOT"],

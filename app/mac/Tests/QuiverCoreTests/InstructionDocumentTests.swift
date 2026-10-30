@@ -238,8 +238,14 @@ final class TempFolder {
         let a = Task { await doc.save() }
         for await _ in held.stream { break }
         doc.text = "two\n"
-        let b = Task { await doc.save() }
-        await Task.yield()
+        // b runs on the main actor, so once it says it started, the test
+        // cannot resume until b's save has suspended: queued behind a.
+        let started = AsyncStream<Void>.makeStream()
+        let b = Task {
+            started.continuation.yield()
+            return await doc.save()
+        }
+        for await _ in started.stream { break }
         gate.continuation.yield()
         #expect(await a.value == .saved)
         #expect(await b.value == .saved)

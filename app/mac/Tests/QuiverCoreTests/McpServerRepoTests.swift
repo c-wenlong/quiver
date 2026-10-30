@@ -24,12 +24,12 @@ private func git(_ args: String..., in dir: URL) async throws {
 
 @Suite struct McpServerRepoTests {
     let fm = FileManager.default
+    /// Each test gets its own instance, so its folder goes when the test
+    /// ends, after any permissions it changed are put back.
+    private let scratch: TempDir
+    init() throws { scratch = try TempDir() }
 
-    private func tempDir() throws -> URL {
-        let url = fm.temporaryDirectory.appending(path: "mcp-repo-\(UUID().uuidString)")
-        try fm.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
+    private func tempDir() throws -> URL { scratch.url }
 
     @discardableResult
     private func mkdir(_ path: String, in root: URL, marker: String? = nil) throws -> URL {

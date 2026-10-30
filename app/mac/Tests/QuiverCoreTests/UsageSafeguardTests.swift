@@ -198,9 +198,7 @@ import Testing
         h.clock.advance(60)
         secrets.close()
         let background = Task { await service.usage(for: claudeKey, force: false) }
-        let deadline = Date().addingTimeInterval(10)
-        while !secrets.isHolding, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
-        try #require(secrets.isHolding)
+        try #require(await secrets.parks.reach(1))
         h.transport.reply(200, body: try fixture("claude-usage"))
         // The forced call must find the background one still in flight.
         let overlapped = AsyncStream<Void>.makeStream()
@@ -324,17 +322,23 @@ import Testing
         #expect((attributes[.posixPermissions] as? Int) == 0o600)
     }
 
-    @Test func concurrentCallsForOneAccountShareOneRequest() async throws {
+    @Test(.timeLimit(.minutes(1))) func concurrentCallsForOneAccountShareOneRequest() async throws {
         let h = UsageHarness()
         h.files.set("\(codexHome)/auth.json", codexAuthJSON())
-        let slow = SlowTransport(body: try fixture("codex-usage"))
+        let slow = HeldUsageTransport(body: try fixture("codex-usage"))
         let clock = h.clock
         let service = UsageService(
             transport: slow, secrets: h.secrets, files: h.files, cacheURL: h.cacheURL, now: { clock.now })
 
-        async let a = service.usage(for: codexKey, force: true)
-        async let b = service.usage(for: codexKey, force: true)
-        let (first, second) = await (a, b)
+        let a = Task { await service.usage(for: codexKey, force: true) }
+        #expect(await slow.gate.arrived(1))
+        // The second call must find the first still in flight.
+        let overlapped = AsyncStream<Void>.makeStream()
+        await service.setOnFindsInFlight { overlapped.continuation.yield() }
+        let b = Task { await service.usage(for: codexKey, force: true) }
+        for await _ in overlapped.stream { break }
+        slow.gate.open()
+        let (first, second) = await (a.value, b.value)
 
         #expect(slow.count == 1)
         #expect(first == second)
@@ -445,16 +449,17 @@ import Testing
     }
 }
 
-/// Answers every request with the same body after a short wait, counting them.
-final class SlowTransport: HTTPTransport {
+/// Answers every request with the same body once `gate` opens, counting them.
+private final class HeldUsageTransport: HTTPTransport {
     private let body: Data
     private let calls = Mutex(0)
+    let gate = HoldGate()
     init(body: Data) { self.body = body }
     var count: Int { calls.withLock { $0 } }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         calls.withLock { $0 += 1 }
-        try await Task.sleep(for: .milliseconds(100))
+        try await gate.pass()
         return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
     }
 }
@@ -468,7 +473,8 @@ final class GatedSecrets: SecretReading, @unchecked Sendable {
 
     init(_ inner: FakeSecrets) { self.inner = inner }
 
-    var isHolding: Bool { lock.withLock { !waiting.isEmpty } }
+    /// Bumped each time a lookup parks, so the test awaits the park.
+    let parks = CountGate()
 
     func close() { lock.withLock { closed = true } }
 
@@ -487,7 +493,12 @@ final class GatedSecrets: SecretReading, @unchecked Sendable {
                 if closed { waiting.append(continuation) }
                 return closed
             }
-            if !park { continuation.resume() }
+            if park {
+                let parks = self.parks
+                Task { await parks.bump() }
+            } else {
+                continuation.resume()
+            }
         }
         return await inner.genericPassword(service: service, account: account)
     }

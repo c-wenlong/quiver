@@ -223,6 +223,10 @@ struct LocalBuildCheckTests {
 
 @Suite("Release check")
 struct ReleaseCheckTests {
+    /// Every temp folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private static let payload = """
         {"tag_name": "v1.1.0",
          "html_url": "https://github.com/c-wenlong/quiver/releases/tag/v1.1.0",
@@ -243,7 +247,7 @@ struct ReleaseCheckTests {
     }
 
     private func tempCache() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appending(path: UUID().uuidString)
             .appending(path: "latest-release.json")
     }
@@ -386,8 +390,12 @@ private struct DeadTransport: HTTPTransport {
 @Suite("Updates model")
 @MainActor
 struct UpdatesModelTests {
+    /// Every temp folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func tempDir(_ name: String = UUID().uuidString) -> URL {
-        let url = FileManager.default.temporaryDirectory.appending(path: name)
+        let url = scratch.url.appending(path: name)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

@@ -23,11 +23,16 @@ final class ScriptedRunner: CommandRunning, @unchecked Sendable {
 final class StuckRunner: CommandRunning, @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
+    private let arrivals = CountGate()
     var started: Int { lock.withLock { count } }
+
+    /// True once `n` calls have started, false after `gateTimeout`.
+    func arrived(_ n: Int = 1) async -> Bool { await arrivals.reach(n) }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
         lock.withLock { count += 1 }
-        try await Task.sleep(for: .seconds(60))
+        await arrivals.bump()
+        try await Task.sleep(for: .seconds(3600))
         return CommandResult(status: 0, stdout: Data(), stderr: "")
     }
 }
@@ -40,7 +45,8 @@ final class TerminatedRunner: CommandRunning, @unchecked Sendable {
 
     func run(_ arguments: [String]) async throws -> CommandResult {
         lock.withLock { count += 1 }
-        while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
+        // Sleeps until cancelled: a cancelled sleep throws at once.
+        try? await Task.sleep(for: .seconds(3600))
         return CommandResult(status: 15, stdout: Data(), stderr: "")
     }
 }
@@ -53,7 +59,12 @@ final class CountingRunner: CommandRunning, @unchecked Sendable {
     private let counts: @Sendable ([String]) -> Bool
     private var inFlight = 0
     private var top = 0
+    private var countedSoFar = 0
     private var log: [[String]] = []
+    /// The first counted call parks here until the test opens it, so a
+    /// second one that slipped past the model's one-at-a-time rule is in
+    /// flight beside it and shows in `peak`, however fast the machine.
+    let firstCounted = HoldGate()
 
     init(counts: @escaping @Sendable ([String]) -> Bool,
          reply: @escaping @Sendable ([String]) -> CommandResult) {
@@ -66,16 +77,37 @@ final class CountingRunner: CommandRunning, @unchecked Sendable {
 
     func run(_ arguments: [String]) async throws -> CommandResult {
         let counted = counts(arguments)
-        lock.withLock {
+        let first = lock.withLock { () -> Bool in
             log.append(arguments)
-            if counted {
-                inFlight += 1
-                top = max(top, inFlight)
-            }
+            guard counted else { return false }
+            inFlight += 1
+            top = max(top, inFlight)
+            countedSoFar += 1
+            return countedSoFar == 1
         }
-        try await Task.sleep(for: .milliseconds(30))
+        if first { try await firstCounted.pass() }
         if counted { lock.withLock { inFlight -= 1 } }
         return reply(arguments)
+    }
+}
+
+/// Answers links and lists, holding the first link at `firstLink` until
+/// the test opens it.
+private final class FirstLinkHeldRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var log: [[String]] = []
+    let firstLink = HoldGate()
+
+    var calls: [[String]] { lock.withLock { log } }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        let isLink = arguments.contains("link")
+        let first = lock.withLock { () -> Bool in
+            log.append(arguments)
+            return isLink && !log.dropLast().contains { $0.contains("link") }
+        }
+        if first { try await firstLink.pass() }
+        return isLink ? ok(#"{"action": "link"}"#) : ok(inventoryJSON)
     }
 }
 
@@ -341,7 +373,7 @@ let inventoryJSON = #"""
         let runner = StuckRunner()
         let model = SkillsModel(swe: SweClient(runner: runner), timeout: .milliseconds(200))
         let load = Task { await model.loadIfStale(for: "/bin/swe") }
-        while runner.started == 0 { await Task.yield() }
+        #expect(await runner.arrived())
         load.cancel()
         #expect(model.inventory == .loading)
         // The next visit joins the load rather than starting another.
@@ -360,18 +392,24 @@ let inventoryJSON = #"""
     }
 
     @Test func linksRunOneAtATime() async throws {
-        let runner = CountingRunner(counts: { $0.contains("link") }, reply: { args in
-            args.contains("link") ? ok(#"{"action": "link"}"#) : ok(inventoryJSON)
-        })
+        let runner = FirstLinkHeldRunner()
         let model = SkillsModel(swe: SweClient(runner: runner))
         await model.load()
         let hermes = try #require(model.roots.first { $0.name == "hermes" })
         let droid = try #require(model.roots.first { $0.name == "droid" })
-        async let a: Void = model.link(hermes)
-        async let b: Void = model.link(droid)
-        _ = await (a, b)
-        #expect(runner.peak == 1)
-        #expect(runner.calls.filter { $0.contains("link") }.count == 2)
+        let a = Task { await model.link(hermes) }
+        #expect(await runner.firstLink.arrived())
+        let b = Task { await model.link(droid) }
+        // The second link has asked (its row is busy) while the first is
+        // still held inside swe.
+        #expect(await observe(until: { model.busy.count == 2 }))
+        runner.firstLink.open()
+        await a.value
+        await b.value
+        // One at a time: the first link's reload lands before the second
+        // link starts, never two links back to back.
+        let tail = runner.calls.dropFirst().map { $0.contains("link") ? "link" : "list" }
+        #expect(tail == ["link", "list", "link", "list"])
     }
 
     @Test func aFailedLoadSaysWhy() async {

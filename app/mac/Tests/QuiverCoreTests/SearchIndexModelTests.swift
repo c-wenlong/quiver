@@ -1,24 +1,6 @@
 import Foundation
-import Observation
 import Testing
 @testable import QuiverCore
-
-/// Races `wait` against a ten-second deadline: the first to finish wins
-/// and the loser is cancelled. Returns false on timeout so a regression
-/// fails the test instead of hanging the suite.
-@MainActor
-private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> Bool) async -> Bool {
-    await withTaskGroup(of: Bool.self) { group in
-        group.addTask { await wait() }
-        group.addTask {
-            try? await Task.sleep(for: .seconds(10))
-            return false
-        }
-        let winner = await group.next() ?? false
-        group.cancelAll()
-        return winner
-    }
-}
 
 /// The experimental "Session search" switch: the status copy is honest
 /// about counts, enabling attaches an indexer to the ledger and kicks the
@@ -100,17 +82,16 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
         let s = try stack(enabled: true)
 
         s.model.start()
-        // Waits on start's own apply. Calling apply() here as well raced
-        // it: whichever resumed second attached again, and its scan could
-        // still be running when the status was read ("Indexing").
-        let settled = await withinDeadline {
-            while s.model.indexer == nil || s.overview.completedScans == 0 || s.overview.isLoading {
-                guard !Task.isCancelled else { return false }
-                try? await Task.sleep(for: .milliseconds(10))
-            }
-            return true
+        // Waits on start's own apply, through the models' own change
+        // stream. Calling apply() here as well raced it: whichever resumed
+        // second attached again, and its scan could still be running when
+        // the status was read ("Indexing"). The attach stamps lastSynced
+        // last, once its scan has finished.
+        let settled = await observe {
+            s.model.indexer != nil && s.overview.completedScans > 0
+                && !s.overview.isLoading && s.model.lastSynced != nil
         }
-        #expect(settled)
+        try #require(settled)
 
         #expect(s.model.indexer != nil)
         #expect(s.model.store?.fts5Available == true)
@@ -202,14 +183,8 @@ private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> B
         // Every apply is done here, so the next scan bump is the tick's.
         let scanned = s.overview.completedScans
 
-        // The deadline turns a missing tick into a failure, not a hang.
-        let ticked = await withinDeadline {
-            for await count in Observations({ s.overview.completedScans }) {
-                if Task.isCancelled || count > scanned { return count > scanned }
-            }
-            return false
-        }
-        #expect(ticked)
+        // The timeout turns a missing tick into a failure, not a hang.
+        #expect(await observe { s.overview.completedScans > scanned })
     }
 
     @Test func theKeyNameIsSharedWithTheCLI() {

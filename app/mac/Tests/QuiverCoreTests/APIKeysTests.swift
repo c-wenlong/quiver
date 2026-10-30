@@ -725,7 +725,7 @@ actor GatedShell: ShellEnvironmentReading {
         return reply
     }
 
-    /// True once a read is parked, false after ten seconds. Checking
+    /// True once a read is parked, false after `gateTimeout`. Checking
     /// the park and parking the caller happen in one actor step, so
     /// the park can never be missed and the caller stranded until the
     /// timeout.
@@ -745,7 +745,7 @@ actor GatedShell: ShellEnvironmentReading {
     /// The timeout resumes only its own waiter, and only if a read has
     /// not already parked.
     private func expire(_ id: Int) async {
-        try? await Task.sleep(for: .seconds(10))
+        try? await Task.sleep(for: gateTimeout)
         parkers.removeValue(forKey: id)?.resume(returning: false)
     }
 

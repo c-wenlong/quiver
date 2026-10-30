@@ -78,17 +78,15 @@ import Testing
     }
 }
 
-/// Replies to each call in turn, after that call's delay.
+/// Replies to each call in turn.
 final class SequencedRunner: CommandRunning, @unchecked Sendable {
     private let lock = NSLock()
-    private var replies: [(Duration, CommandResult)]
+    private var replies: [CommandResult]
 
-    init(_ replies: [(Duration, CommandResult)]) { self.replies = replies }
+    init(_ replies: [CommandResult]) { self.replies = replies }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        let (delay, reply) = lock.withLock { replies.removeFirst() }
-        try await Task.sleep(for: delay)
-        return reply
+        lock.withLock { replies.removeFirst() }
     }
 }
 

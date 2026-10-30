@@ -3,8 +3,11 @@ import Synchronization
 @testable import QuiverCore
 
 /// How long a test waits on a gate before giving up, so a regression
-/// fails the test instead of hanging the suite.
-let gateTimeout: Duration = .seconds(10)
+/// fails the test instead of hanging the suite. A passing test never
+/// waits this long, so it is sized for a starved machine, not a typical
+/// one: with many agents building at once, a full run of the suite has
+/// taken over 18 seconds, and a 10-second bound failed a healthy wait.
+let gateTimeout: Duration = .seconds(60)
 
 /// Counts events (`bump`) and lets a test wait for the count to reach a
 /// target (`reach`). Checking the count and parking the caller happen in
