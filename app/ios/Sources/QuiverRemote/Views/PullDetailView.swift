@@ -15,6 +15,8 @@ struct PullDetailView: View {
     @State private var error: String?
     @State private var opening = false
     @State private var startedKey: String?
+    /// Bumped per load so a late reply can't overwrite a newer one.
+    @State private var generation = 0
 
     var body: some View {
         PageScroll {
@@ -66,13 +68,26 @@ struct PullDetailView: View {
 
     private func load(refresh: Bool = false) async {
         guard let client = app.client else { return }
+        generation += 1
+        let gen = generation
         do {
             let body = try await client.pull(repo: repo, number: number, refresh: refresh)
-            reply = body
-            error = nil
+            guard gen == generation else { return }
+            (reply, error) = Self.landing(body, over: reply)
         } catch {
+            guard gen == generation else { return }
             self.error = (error as? HubError)?.message ?? error.localizedDescription
         }
+    }
+
+    /// What a reply leaves on screen. A `gh` failure answers 200 with
+    /// `pr: null`: the PR already shown stays, and the notice says why
+    /// it's stale, rather than blanking the page for an outage.
+    static func landing(_ body: PullResponse, over shown: PullResponse?) -> (reply: PullResponse?, error: String?) {
+        if body.pr == nil, shown?.pr != nil {
+            return (shown, body.error ?? "GitHub couldn't read the pull request.")
+        }
+        return (body, nil)
     }
 
     // MARK: Sections
@@ -124,7 +139,7 @@ struct PullDetailView: View {
                     Text(bits.joined(separator: " · "))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
-                ForEach(labels.prefix(4), id: \.self) { Badge($0) }
+                ForEach(Array(labels.prefix(4).enumerated()), id: \.offset) { Badge($0.element) }
             }
         }
     }
@@ -377,11 +392,17 @@ struct OpenPullSheet: View {
                 .padding(12)
                 .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+            if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Leave it empty and the hub writes the review brief.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 4)
+            }
         }
     }
 
     private func startSection(_ machine: Machine) -> some View {
-        let ready = harness != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // A blank prompt is fine: the hub writes its review brief then.
+        let ready = harness != nil
         return VStack(alignment: .leading, spacing: 8) {
             Button { launch = Task { await start(machine) } } label: {
                 HStack(spacing: 8) {
