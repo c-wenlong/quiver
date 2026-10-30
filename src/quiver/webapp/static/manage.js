@@ -348,22 +348,16 @@ function bindSheetButtons() {
   }
 }
 
+/* app.js's bodySheet: route() closes it when the page is left. */
 function harnessDialog() {
-  let dlg = document.getElementById("harness-sheet");
-  if (dlg) return dlg;
-  dlg = document.createElement("dialog");
-  dlg.id = "harness-sheet";
-  dlg.className = "sheet harness-sheet";
+  const dlg = bodySheet("harness-sheet", "sheet harness-sheet");
   // Esc closes, except while a save is in flight (the app's sheet can't be
   // dismissed then either).
-  dlg.addEventListener("cancel", (event) => {
+  dlg.oncancel = (event) => {
     event.preventDefault();
     closeHarnessSheet();
-  });
-  dlg.addEventListener("close", () => { harnessesPage.sheet = null; });
-  document.body.appendChild(dlg);
-  // A sheet belongs to the Harnesses page: leaving it closes the sheet.
-  window.addEventListener("hashchange", () => { if (!onHarnessesPage()) closeHarnessSheet(true); });
+  };
+  dlg.onclose = () => { harnessesPage.sheet = null; };
   return dlg;
 }
 

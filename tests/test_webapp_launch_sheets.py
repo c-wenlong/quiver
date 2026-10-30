@@ -189,6 +189,9 @@ const harnesses = [
     launch_model: true, launch_effort: false, last_model: "pi-model" }];
 """
 
+# Sheets on <body> are app.js's bodySheets, closed by route().
+STUB += app_js_function("bodySheet") + app_js_function("closeRouteSheets")
+
 # tasks.js: detail of a github issue, open "New agent session", walk the
 # menu, post, and watch the body and the sheet.
 TASKS_FLOW = HARNESSES + r"""
@@ -279,6 +282,7 @@ fetchRoutes.push(
   await tick();
   const d = created.get("gh-pr-sheet");
   out.sheetOpened = !!d;
+  out.routeSheet = "routeSheet" in d.dataset; // route() closes it on navigation
   const q = (s) => d.querySelector(s);
   const harness = (h) => { q("#gh-session-harness").value = h; q("#gh-session-harness").onchange(); };
   q("#gh-session-open").onclick();
@@ -391,6 +395,7 @@ ISSUE_FLOW = ISSUE_SETUP + r"""
   await tick();
   const d = created.get("gh-issue-sheet");
   out.sheetOpened = !!d && d.open;
+  out.routeSheet = "routeSheet" in d.dataset;
   const q = (s) => d.querySelector(s);
   out.body = d._html.includes("It <strong>breaks</strong> on save.");
   out.comment = d._html.includes("Same here") && d._html.includes("Comments · 1");
@@ -745,6 +750,7 @@ class TestLaunchModelMenu(unittest.TestCase):
         out = self.run_flow("repositories.js", REPOS_FLOW)
         self.assert_walk(out)
         self.assertTrue(out["sheetOpened"])
+        self.assertTrue(out["routeSheet"], "the PR sheet is a bodySheet")
         self.assertEqual(out["postCwd"], "/tmp/wt")
         self.assertEqual(out["freshPrefill"], "gpt-5-codex")
         self.assertTrue(out["boxGone"])
@@ -755,6 +761,7 @@ class TestLaunchModelMenu(unittest.TestCase):
         self.assert_walk(out)
         self.assertTrue(out["rowIsButton"], "an issue row opens the sheet, not github.com")
         self.assertTrue(out["sheetOpened"])
+        self.assertTrue(out["routeSheet"], "the issue sheet is a bodySheet")
         self.assertTrue(out["body"], "the body renders as markdown")
         self.assertTrue(out["comment"])
         self.assertTrue(out["github"], "Open on GitHub stays")
