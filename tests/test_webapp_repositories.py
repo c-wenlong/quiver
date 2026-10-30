@@ -872,7 +872,10 @@ class TestPrWorktree(_Base):
     def test_checkouts_of_one_repo_wait_for_each_other(self):
         # Two PRs of one repo share its mirror's FETCH_HEAD: the second
         # checkout must not start until the first has finished.
-        lock = G.mirror_lock(self.home, "O/A")
+        # The one mirror lock table lives in manage; a differently
+        # cased name is the same mirror.
+        from quiver.github import manage
+        lock = manage._mirror_lock(manage.mirror_path("O/A", self.home))
         lock.acquire()
         done = []
         worker = threading.Thread(target=lambda: done.append(
@@ -884,6 +887,39 @@ class TestPrWorktree(_Base):
         lock.release()
         worker.join(30)
         self.assertEqual(done[0]["head"], self.head)
+
+    def test_a_checkout_holds_the_mirror_from_fetch_to_worktree(self):
+        # Two PRs of one repo share the mirror's FETCH_HEAD: a second
+        # call must not fetch while the first is between its fetch and
+        # its checkout, whoever the caller is.
+        from quiver.github import manage
+        R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})  # mirror exists
+        in_fetch, release = threading.Event(), threading.Event()
+        fetches = []
+        real = manage.run_git
+
+        def run_git(args, *a, **k):
+            if "fetch" in args:
+                fetches.append(threading.current_thread().name)
+                if len(fetches) == 1:
+                    in_fetch.set()
+                    release.wait(10)
+            return real(args, *a, **k)
+
+        with patch.object(manage, "run_git", side_effect=run_git):
+            first = threading.Thread(name="first", target=manage.pr_worktree,
+                                     args=("o/a", "7", self.home))
+            second = threading.Thread(name="second", target=manage.pr_worktree,
+                                      args=("o/a", "7", self.home))
+            first.start()
+            self.assertTrue(in_fetch.wait(10))
+            second.start()
+            second.join(0.5)
+            self.assertEqual(fetches, ["first"])
+            release.set()
+            first.join(30)
+            second.join(30)
+        self.assertEqual(fetches, ["first", "second"])
 
     def test_harnesses_are_what_the_hub_can_launch(self):
         rows = [{"name": "claude", "command": "claude",

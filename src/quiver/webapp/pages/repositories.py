@@ -364,10 +364,9 @@ def worktree(ctx, repo: str, number: str) -> dict:
     repo run one after another. 409 for a missing or signed-out ``gh``,
     502 when git or GitHub fails (the message names the step)."""
     _require_gh(ctx.home)
-    # G.mirror_lock: the phone's open shares this table — one repo's
-    # FETCH_HEAD can't move under either caller's checkout.
-    with G.mirror_lock(ctx.home, repo):
-        made = manage.pr_worktree(repo, number, ctx.home)
+    # pr_worktree holds the mirror's lock, shared with the phone's open:
+    # one repo's FETCH_HEAD can't move under either caller's checkout.
+    made = manage.pr_worktree(repo, number, ctx.home)
     if made.status != "ok":
         _require_gh(ctx.home, fresh=True)
         raise PageError(502, "worktree_failed", made.error)
