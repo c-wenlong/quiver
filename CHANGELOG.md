@@ -33,6 +33,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to GitHub's 65,536 characters. The web and iPhone issue detail build
   their comment composer and Resolve's "Also post as a comment" on it.
   Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **`swe mcp gateway`: one copy of each shared MCP server for every
+  session.** Each harness session started its own copy of every stdio
+  server: with 17 servers, one Claude Code session held 26 processes and
+  about 1.3 GB. `swe mcp gateway share <server...>` marks hub servers
+  that keep no per-session state, `swe mcp gateway install` runs a
+  LaunchAgent that starts each of them once and serves it on
+  `http://127.0.0.1:8478/mcp/<server>`, and `swe mcp sync quiver ...`
+  then writes that URL instead of the command. Measured with 18 shared
+  servers and playwright left per session: one session's MCP processes
+  went from 26 (1,375 MB) to 1 (63 to 85 MB), and the gateway held the
+  shared servers once (25 processes, about 1.3 GB) with one session or
+  four. Browser and REPL servers are refused without `--force`; Claude
+  Desktop keeps the command, since it takes no URL server.
+
 - **Web app: a tray for queued messages in the chat.** A Queue-mode
   send made while the agent works now waits in a tray above the
   composer, as on the iPhone, instead of a "Queued until the agent is
