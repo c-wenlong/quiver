@@ -35,7 +35,6 @@ from quiver.table import Table
 _codex_resume_args = codex_resume_args
 _launch_tool_name = launch_tool_name
 _RESUME_FLAGS = RESUME_FLAGS
-_LIMITED_RESUME = LIMITED_RESUME
 
 
 def _help_requested(args: list[str], value_flags: set[str]) -> bool:

@@ -251,6 +251,13 @@ def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: 
             # catalog row carries it (remote/session_model.py); "" when
             # the hub doesn't know it, so a client shows nothing.
             "model": row.get("model") or "",
+            # The hub's pin and name (remote/sessionmeta.py): "title" is
+            # already the override when there is one, "harness_title" the
+            # harness's own. "can_fork": the harness's CLI can fork it.
+            "harness_title": row.get("harness_title") or "",
+            "pinned": bool(row.get("pinned")),
+            "pinned_at": row.get("pinned_at") if row.get("pinned") else None,
+            "can_fork": bool(row.get("can_fork")),
             "usage": u and {k: v for k, v in u.items() if k != "cwd"},
             "duration_s": (u["last_ts"] - u["first_ts"]) if u else None,
             "trivial": (is_trivial(harness, u, scanned,

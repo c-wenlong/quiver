@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: pin, rename and fork sessions.** Each Sessions row has a
+  More actions button (and a right-click menu) with the iPhone's
+  swipe-left actions: Pin or Unpin, Rename, and Fork where the harness
+  can fork. Pinned rows lead the list in a Pinned group, in the order
+  they were pinned, whatever the time filter. Rename follows the hub's
+  rules (one line, 120 characters) and offers the harness's own name
+  back; Fork takes a first message and opens the new chat once the hub
+  names it. The chat's header has the same menu, and a rename made on
+  another device shows there live
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+- **Mac app: Needs you on the Inbox page.** Above the GitHub
+  notifications, the Inbox now lists the sessions this Mac's hub says
+  wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the
+  iPhone's sections: Waiting on you, Errors and Finished today. A row
+  opens that session's chat; Clear, per row or per section, hides it
+  for this Mac until the session moves again (`POST /v1/inbox/dismiss`),
+  and never offers a pending approval. Nothing extra shows while the
+  hub isn't running
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 - **iOS app: merge, auto-merge and re-run on the pull request
   page.** The detail page has the Mac and web merge controls: a
   strategy menu (Squash and merge, Rebase and merge, Create a merge

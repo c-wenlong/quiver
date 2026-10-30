@@ -16,7 +16,6 @@ from quiver.sessions.engines.common import (
     extract_user_text,
     get_mtime,
     parse_iso_ts,
-    path_from_encoded_dir,
 )
 from quiver.sessions.models import Session
 
@@ -635,7 +634,3 @@ def first_user_title(
     if t in type_values:
         return extract_user_text(data.get("message") or data.get("content") or "")
     return ""
-
-
-def encoded_dash_path(name: str) -> str:
-    return path_from_encoded_dir(name, strip_prefix="-")
