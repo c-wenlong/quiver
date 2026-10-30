@@ -1531,14 +1531,21 @@ class TestAgentEdges(unittest.TestCase):
         from contextlib import redirect_stderr
         ag = self._agent()
         buf = io.StringIO()
-        with patch.object(agent_mod, "_post",
-                          return_value=(403, {"error": "forbidden",
-                                              "message": "no satellite"})):
+        # The hub's error shape (protocol.error).
+        refusal = {"error": {"code": "forbidden",
+                             "message": "agent routes need a satellite "
+                                        "credential"}}
+        with patch.object(agent_mod, "_post", return_value=(403, refusal)):
             with redirect_stderr(buf):
                 self.assertFalse(ag._register())
                 self.assertFalse(ag._register())
-        self.assertEqual(buf.getvalue().count("re-pair"), 1)
-        self.assertIn("--hub", buf.getvalue())
+        out = buf.getvalue()
+        self.assertEqual(out.count("re-pair"), 1)
+        # The hub's own reason, and the command that actually re-pairs a
+        # satellite (`swe remote pair` takes no --hub or --token).
+        self.assertIn("agent routes need a satellite credential", out)
+        self.assertIn("swe remote agent --hub=<url> --token=<token>", out)
+        self.assertNotIn("swe remote pair --hub", out)
         # A later accepted register clears the latch.
         with patch.object(agent_mod, "_post", return_value=(200, {})):
             self.assertTrue(ag._register())

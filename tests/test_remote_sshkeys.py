@@ -175,10 +175,13 @@ class TestSync(unittest.TestCase):
         def slow(home):
             out = real(home)
             if not calls:
-                calls.append(1)
+                calls.append(sshkeys._PROCESS_LOCK.locked())
                 read.set()
                 go.wait(5)
             return out
+
+        def revoked():
+            return pairing.load_devices(self.home)[did].get("revoked_at")
 
         with patch.object(sshkeys, "_desired_lines", slow):
             first = threading.Thread(target=sshkeys.sync, args=(self.home,))
@@ -187,10 +190,16 @@ class TestSync(unittest.TestCase):
             revoke = threading.Thread(
                 target=pairing.revoke_device, args=(self.home, did))
             revoke.start()
-            time.sleep(0.2)
+            # The revoke is saved; its own sync now queues on the lock.
+            deadline = time.monotonic() + 5
+            while not revoked() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(revoked())
             go.set()
             first.join(5)
             revoke.join(5)
+        self.assertFalse(first.is_alive() or revoke.is_alive())
+        self.assertEqual(calls, [True])  # the read ran inside the lock
         self.assertNotIn(did, self.ak.read_text())
 
     def test_installed_means_in_the_file(self):
