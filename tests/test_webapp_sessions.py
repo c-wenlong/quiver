@@ -219,6 +219,24 @@ class TestLedgerCoverage(unittest.TestCase):
         (proj / "abc.settings.json").write_text("{}")
         self.assertTrue(self._build(home, "droid", "abc")["trivial"])
 
+    def test_droid_folders_are_listed_once_per_build(self):
+        # A glob per Droid row walked every project folder each time.
+        home = Path(tempfile.mkdtemp())
+        proj = home / ".factory" / "sessions" / "proj"
+        proj.mkdir(parents=True)
+        for sid in ("a", "b", "c"):
+            (proj / f"{sid}.settings.json").write_text("{}")
+        rows = [{"key": f"droid:{sid}", "id": sid, "harness": "droid",
+                 "machine_id": "hub", "cwd": "/w", "last_active_at": 1}
+                for sid in ("a", "b", "c", "gone")]
+        real = Path.glob
+        with patch.object(Path, "glob", autospec=True,
+                          side_effect=lambda self, pat: real(self, pat)) as walk:
+            built = sessions.build(rows, {}, "hub", {}, scanned=True, home=home)
+        self.assertEqual(walk.call_count, 1)
+        self.assertEqual({r["id"]: r["trivial"] for r in built},
+                         {"a": True, "b": True, "c": True, "gone": False})
+
     def test_pi_rows_are_covered_by_definition(self):
         home = Path(tempfile.mkdtemp())
         self.assertTrue(self._build(home, "pi", "anything")["trivial"])
@@ -447,8 +465,10 @@ class TestChatScript(unittest.TestCase):
         prelude = (
             "const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')"
             ".replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');\n"
+            "const safeHref = (u) => /^(https?:\\/\\/|mailto:)/i.test(String(u || '').trim()) ? esc(String(u).trim()) : '';\n"
             "globalThis.window = { addEventListener() {} };\n"
-            "globalThis.document = { addEventListener() {} };\n"
+            "const registered = {};\n"
+            "globalThis.document = { addEventListener(t, f) { registered[t] = f; } };\n"
             "globalThis.location = { hash: '' };\n")
         source = (STATIC / "pages" / "chat.js").read_text(encoding="utf-8")
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
@@ -459,6 +479,117 @@ class TestChatScript(unittest.TestCase):
         done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
+
+    def test_reconnects_back_off_to_half_a_minute(self):
+        out = self.run_js("return [0, 1, 2, 3, 4, 5, 9, 60].map(T.retryDelay);")
+        self.assertEqual(out, [2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000])
+
+    def test_a_hidden_tab_waits_and_showing_it_reconnects(self):
+        """A dropped stream retries on a timer that does nothing while the
+        tab is hidden; showing the tab reconnects at once, and failures in
+        a row wait longer."""
+        out = self.run_js(r"""
+const timers = [], listeners = {};
+let fetches = 0;
+globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+globalThis.clearTimeout = () => {};
+globalThis.fetch = () => { fetches++; return Promise.reject(new Error("down")); };
+globalThis.authHeaders = () => ({});
+document.getElementById = () => null;
+const settle = () => new Promise((r) => setImmediate(r));
+// The visibility handler chat.js registered at load.
+const vis = registered.visibilitychange;
+Object.assign(T.chat, { key: "k", opened: true, gen: 1 });
+T.openStream(1, 0); await settle();
+document.hidden = true; document.visibilityState = "hidden";
+timers[0].fn(); await settle();                       // hidden: no request
+const hiddenFetches = fetches;
+document.hidden = false; document.visibilityState = "visible";
+vis(); await settle();                                // shown: reconnects now
+timers[1].fn(); await settle();                       // visible: the retry runs
+return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
+""")
+        self.assertEqual(out, {"fetches": 3, "hiddenFetches": 1, "delays": [2000, 2000, 4000]})
+
+    RESYNC = r"""
+let answer; const asked = [];
+globalThis.api = (path) => {
+  asked.push(path);
+  if (path === "/v1/sessions") return Promise.resolve({ status: 200, data: { sessions: [] } });
+  return new Promise((r) => { answer = r; });
+};
+const card = { kind: "open approval card" }, appended = [];
+const log = { innerHTML: "old history", querySelectorAll: () => [card], appendChild: (el) => appended.push(el) };
+document.getElementById = (id) => (id === "chat-log" ? log : null);
+globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
+const frame = (ev) => "data: " + JSON.stringify(ev);
+Object.assign(T.chat, { key: "k", gen: 1, seq: 500 });
+T.handleFrame("k", frame({ type: "journal.truncated", seq: 3 }));
+const during = { seq: T.chat.seq, asked: asked.slice(), log: log.innerHTML };
+T.handleFrame("k", frame({ type: "journal.caught-up", seq: 3 }));
+T.handleFrame("k", frame({ type: "session.status", seq: 1, data: {} }));
+T.handleFrame("k", frame({ type: "message.appended", seq: 2, data: {} }));
+T.handleFrame("k", frame({ type: "approval.requested", seq: 1, data: { request_id: "r" } }));
+T.handleFrame("k", frame({ type: "message.appended", seq: 4, data: {} }));
+const heldWhileReading = T.chat.held.length;
+T.chat.revealTimer = 1;  // keep what is queued in chat.pending, unrevealed
+answer(ANSWER);
+await new Promise((r) => setImmediate(r));
+return { during, heldWhileReading, held: T.chat.held, seq: T.chat.seq, log: log.innerHTML,
+         kept: appended.length, asked, queued: T.chat.pending.map((e) => e.type + ":" + e.seq) };
+"""
+
+    def test_a_truncated_journal_takes_its_lower_seq_and_refetches(self):
+        """A hub whose journal was wiped sends journal.truncated with its
+        head below this view's cursor: the view adopts it, reads
+        /messages again, holds what streams meanwhile, then applies all
+        but the messages the redraw shows; an unanswered approval card
+        survives the redraw and the session row is read again."""
+        out = self.run_js(self.RESYNC.replace("ANSWER", "{ status: 200, data: { messages: [] } }"))
+        self.assertEqual(out["during"], {"seq": 3, "asked": ["/v1/sessions/k/messages?limit=500"], "log": "old history"})
+        self.assertEqual(out["heldWhileReading"], 4)
+        self.assertIsNone(out["held"])
+        self.assertEqual(out["seq"], 3)
+        self.assertEqual((out["log"], out["kept"]), ("", 1))
+        self.assertEqual(out["queued"], ["session.status:1", "approval.requested:1", "message.appended:4"])
+        self.assertEqual(out["asked"][-1], "/v1/sessions")
+
+    def test_a_failed_refetch_keeps_the_history(self):
+        out = self.run_js(self.RESYNC.replace("ANSWER", "{ status: 0, data: null }"))
+        self.assertEqual((out["log"], out["kept"], out["seq"]), ("old history", 0, 3))
+        self.assertEqual(out["queued"], ["session.status:1", "approval.requested:1", "message.appended:4"])
+
+    def test_an_approval_prompt_is_plain_text(self):
+        """The prompt comes from the agent's pane: links, images, headings
+        and HTML in it show as typed, in monospace with spacing kept."""
+        out = self.run_js(r"""
+const div = { dataset: {}, innerHTML: "", classList: { toggle() {} },
+  querySelector: () => ({ setAttribute() {} }), querySelectorAll: () => [] };
+T.approvalCard(div, { request_id: "r", options: [],
+  text: "# Run it?\n  [click](javascript:alert(1)) ![x](http://evil.test/p.png) <b>hi</b>" });
+return div.innerHTML;
+""")
+        prompt = out[out.index('<div class="text approval-prompt">'):]
+        prompt = prompt[:prompt.index("</div>")]
+        self.assertIn("# Run it?\n  [click](javascript:alert(1)) ![x](http://evil.test/p.png) &lt;b&gt;hi&lt;/b&gt;", prompt)
+        for rendered in ("<a ", "<img", "<h", "<b>", "<strong"):
+            self.assertNotIn(rendered, prompt)
+
+    def test_bare_urls_keep_their_underscores(self):
+        """A bare URL goes back after emphasis runs, so `__init__` in a
+        path stays in the href and the text, never <strong>."""
+        url = "https://github.com/a/b/blob/main/pkg/__init__.py"
+        out = self.run_js("return T.md(" + json.dumps(f"see {url} and **bold**") + ");")
+        self.assertEqual(out, f'<p>see <a href="{url}" target="_blank" rel="noopener">{url}</a>'
+                              " and <strong>bold</strong></p>")
+
+    def test_writes_go_through_app_js_apipost(self):
+        """chat.js has a send() of its own (the composer's): its requests
+        must reach app.js's apiPost, not call that handler again."""
+        out = self.run_js(
+            "const calls = []; globalThis.apiPost = async (path, body) => { calls.push([path, body]); return { status: 200, data: {} }; };"
+            " const r = await T.post('/v1/sessions/k/send', { text: 'hi' }); return { calls, status: r.status };")
+        self.assertEqual(out, {"calls": [["/v1/sessions/k/send", {"text": "hi"}]], "status": 200})
 
     def test_markdown_escapes_then_restores_code_and_bold(self):
         out = self.run_js(
@@ -1094,9 +1225,60 @@ class TestChatScript(unittest.TestCase):
         self.assertEqual(out["errors"], ["Update the hub to search files from here",
                                          "Can't reach the hub", "Couldn't search files"])
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_mention_search_drops_late_answers(self):
+        """A newer query aborts the older request, and an older answer that
+        lands after the newer one (or after the menu closed) changes
+        nothing."""
+        out = self.run_js("""
+          const els = {
+            "chat-text": { value: "", selectionStart: 0, selectionEnd: 0, disabled: false,
+              setAttribute() {}, removeAttribute() {}, style: {} },
+            "chat-menu": { innerHTML: "", classList: { toggle() {} }, setAttribute() {},
+              querySelector() { return null; } },
+          };
+          document.getElementById = (id) => els[id] || null;
+          Object.defineProperty(document, "activeElement", { get: () => els["chat-text"] });
+          const input = els["chat-text"];
+          const type = (v) => { input.value = v; input.selectionStart = input.selectionEnd = v.length; T.trackMenus(); };
+          const tick = () => new Promise((r) => setTimeout(r, 10));
+          T.FILES.debounce = 0;
+          T.chat.key = "s1";
+          T.chat.row = {};
+          // Each request waits for its own release; the signal is kept.
+          const reqs = {};
+          globalThis.api = (u, opts) => new Promise((r) => {
+            const q = new URLSearchParams(u.split("?")[1]).get("q");
+            reqs[q] = { signal: opts && opts.signal,
+              release: (path) => r({ status: 200, data: { entries: [{ path, kind: "file" }] } }) };
+          });
+          const out = {};
+          type("@a");
+          await tick();
+          type("@ab");
+          await tick();
+          out.oldAborted = reqs.a.signal.aborted;
+          out.newAborted = reqs.ab.signal.aborted;
+          reqs.ab.release("ab.py");
+          await tick();
+          reqs.a.release("a.py");
+          await tick();
+          out.rows = T.menu.rows.map((r) => r.path);
+          out.answered = T.files.answered;
+          // An answer after the menu closed leaves it closed and empty.
+          type("@abc");
+          await tick();
+          type("plain");
+          reqs.abc.release("abc.py");
+          await tick();
+          out.closed = { open: T.menu.open, entries: T.files.entries.length, answered: T.files.answered,
+                         aborted: reqs.abc.signal.aborted };
+          return out;
+        """)
+        self.assertTrue(out["oldAborted"])
+        self.assertFalse(out["newAborted"])
+        self.assertEqual(out["rows"], ["ab.py"])
+        self.assertEqual(out["answered"], "ab")
+        self.assertEqual(out["closed"], {"open": False, "entries": 0, "answered": None, "aborted": True})
 
 
 SESSIONS_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/sessions.js"
@@ -1212,3 +1394,7 @@ class TestTranscriptSearchBox(unittest.TestCase):
         """, {"status": 0, "data": None})
         self.assertEqual(out["kept"], ["k1"])
         self.assertIn("Couldn't reach transcript search", out["note"])
+
+
+if __name__ == "__main__":
+    unittest.main()

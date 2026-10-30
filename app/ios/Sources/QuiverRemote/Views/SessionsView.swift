@@ -142,8 +142,8 @@ struct SessionsView: View {
             Button("Unpair", role: .destructive) { app.unpair() }
         } message: {
             Text(app.hubs.hubs.count > 1
-                 ? "Your other hubs stay paired. You'll need to pair again to see this hub's sessions."
-                 : "You'll need to pair again to see sessions.")
+                 ? "This phone asks the hub to sign it out; if the hub can't be reached, remove it under Pair requests and devices on another device. Your other hubs stay paired."
+                 : "This phone asks the hub to sign it out; if the hub can't be reached, remove it under Pair requests and devices on another device. You'll need to pair again to see sessions.")
         }
     }
 
@@ -262,7 +262,7 @@ struct SessionsView: View {
     private func show(_ t: ListToast) { toast = t }
 
     private static func message(_ error: Error) -> String {
-        (error as? HubError)?.message ?? error.localizedDescription
+        error.localizedDescription
     }
 
     private var filterBar: some View {
@@ -300,6 +300,9 @@ struct SessionRowView: View {
                     Text(status.label).foregroundStyle(waiting ? Theme.warningText : Theme.textSecondary)
                     let when = RelativeTime.short(row.lastActiveAt)
                     if !when.isEmpty { Text("· \(when)") }
+                    if let model = row.modelLabel {
+                        Text("· \(model)").accessibilityLabel("model \(model)")
+                    }
                     if let place { Text("· \(place)").truncationMode(.head) }
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)

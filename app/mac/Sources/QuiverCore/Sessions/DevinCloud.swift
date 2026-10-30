@@ -174,6 +174,7 @@ public actor DevinCloudSync {
         self.now = now
         self.onChanged = onChanged
         self.onStatus = onStatus
+        PrivateFile.tighten(directory.appending(path: "sessions.json"))
         self.snapshot = Self.stored(in: directory)
     }
 
@@ -413,8 +414,9 @@ public actor DevinCloudSync {
 
     private func save() {
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try Self.encoder.encode(snapshot).write(to: directory.appending(path: "sessions.json"), options: .atomic)
+            // Session titles and folders: this user's only.
+            try PrivateFile.write(Self.encoder.encode(snapshot),
+                                  to: directory.appending(path: "sessions.json"))
         } catch {
             Self.log.error("devin cloud: couldn't save sessions.json: \(error.localizedDescription)")
         }

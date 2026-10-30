@@ -558,7 +558,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe init --yes')}              Register every new harness without asking
                                (also the non-terminal default)
   {c('cyan', 'swe init --hub=<git url>')}     Clone your hub repo as ~/.quiver first, then link
-                               (only into a missing or empty ~/.quiver)
+                               (only while ~/.quiver has no hub: no AGENTS.md, no .git)
 
   {c('dim', 'Collision: -n means dry-run here and on swe install, but fetch-fresh-data on swe list.')}
 
@@ -609,10 +609,10 @@ to use their own login state and environment."""
   {c('cyan', 'swe setup --json')}             Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
   {c('cyan', 'swe setup --hub=<git url>')}    Clone your hub repo as ~/.quiver first, then
-                               run any of the above (~/.quiver must be missing or empty)
+                               run any of the above (only while ~/.quiver has no hub yet)
 
-  While ~/.quiver is missing or empty, the wizard first asks for your hub repo's
-  URL; a blank answer starts an empty hub.
+  While ~/.quiver has no hub yet (no AGENTS.md, no .git), the wizard first asks
+  for your hub repo's URL; a blank answer starts an empty hub.
 
   Provider credentials remain external. Use {c('cyan', 'swe providers info <name>')} for the
   expected key file and environment variable; harness OAuth remains harness-owned."""
@@ -687,6 +687,8 @@ to use their own login state and environment."""
   {c('cyan', '--web')}                Open the matching github.com page instead
   {c('cyan', '--body=TEXT')}          issue comment: the comment, as one argument
                           (it reaches gh on stdin, so any text is safe)
+  {c('cyan', '--body-file=PATH|-')}   issue comment: read the comment from a file,
+                          or stdin with -, so it never shows in ps
   {c('cyan', '--json')}               {{schema, data}} envelope; data is
                           {{github: {{status, login}}, results: [...]}} with one
                           entry per repo: ok → rows, else a typed status

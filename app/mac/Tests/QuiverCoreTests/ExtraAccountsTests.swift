@@ -138,6 +138,28 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
         #expect(model.rows[1].accountTitle == "Devin: Work")
     }
 
+    /// A failed poll keeps the last cards, but not one for an account
+    /// removed since: deleting it must take its card away at once.
+    @Test func aRemovedAccountLeavesEvenWhenThePollFails() async {
+        let devin = profile(.devin, "devin-work")
+        let runner = LockedRunner([
+            (["list"], .init(status: 0, stdout: listBody, stderr: "")),
+            (["harness", "usage", "devin"], devinUsage),
+        ])
+        var extras = [(devin, paths("devin-work"))]
+        let model = model(runner) { extras }
+        await model.load()
+        #expect(model.cards.map(\.id) == ["devin", devin.id, "cursor"])
+        #expect(model.rows.map(\.id) == ["devin", devin.id])
+
+        extras = []
+        runner.rules = []
+        await model.load()
+        #expect(model.cards.map(\.id) == ["devin", "cursor"])
+        #expect(model.rows.map(\.id) == ["devin"])
+        #expect(model.note?.hasPrefix("Couldn't refresh") == true)
+    }
+
     @Test func aGoodReadingIsNotRefetchedInsideTheWindow() async {
         let devin = profile(.devin, "devin-work")
         let runner = LockedRunner([

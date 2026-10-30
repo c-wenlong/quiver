@@ -27,6 +27,8 @@ struct IssuesView: View {
     var body: some View {
         let closed = filter == .closed
         let listed = closed ? model.closedRepos : model.repos
+        // The failure of the list on screen; the other chip's is its own.
+        let listError = closed ? model.closedError : model.error
         let sections = IssueGrouping.sections(of: listed, filter: filter)
         PageScroll {
             if model.loaded, model.envBlocked == nil,
@@ -35,7 +37,7 @@ struct IssuesView: View {
             }
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
-            if let error = model.error, !listed.isEmpty {
+            if let error = listError, !listed.isEmpty {
                 Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .lineLimit(2)
@@ -43,15 +45,23 @@ struct IssuesView: View {
             if !model.loaded {
                 LoadingRow(text: "Loading issues")
             } else if closed, model.closedLoaded, model.closedRepos.isEmpty,
-                      let error = model.error {
+                      let error = model.closedError {
                 // A Closed fetch that failed with an empty closed list
                 // must say so — otherwise it reads as "No closed issues".
                 StateCard(icon: "wifi.exclamationmark", title: "Can't load closed issues",
                           message: error, tone: .error,
                           actionTitle: "Try again") { Task { await model.loadClosed(client: app.client, refresh: true) } }
-            } else if let error = model.error, model.repos.isEmpty, model.closedRepos.isEmpty {
+            } else if let error = listError, model.repos.isEmpty, model.closedRepos.isEmpty {
                 StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") { Task { await model.load(client: app.client, refresh: true) } }
+                          actionTitle: "Try again") {
+                    Task {
+                        if closed {
+                            await model.loadClosed(client: app.client, refresh: true)
+                        } else {
+                            await model.load(client: app.client, refresh: true)
+                        }
+                    }
+                }
             } else if let blocked = model.envBlocked {
                 StateCard(icon: "exclamationmark.lock", title: "Can't reach GitHub",
                           message: "On \(model.machine ?? app.hubName): \(blocked)")
@@ -240,7 +250,7 @@ struct IssueRowView: View {
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 if let badges = badges, !badges.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(badges, id: \.self) { Badge($0) }
+                        ForEach(Array(badges.enumerated()), id: \.offset) { Badge($0.element) }
                     }
                 }
             }

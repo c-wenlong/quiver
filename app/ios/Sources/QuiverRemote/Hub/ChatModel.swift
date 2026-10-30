@@ -130,7 +130,8 @@ final class ChatModel {
         return app.client
     }
     private var seen = Set<Int>()
-    private var cursor = 0
+    /// The seq the next stream resumes after.
+    private(set) var cursor = 0
     /// Tool call id to the id of its card (ids, not positions: removing a
     /// send bubble would shift positions under a result still to come).
     private var toolCards: [String: String] = [:]
@@ -261,7 +262,12 @@ final class ChatModel {
                 case .connected: self.live = true
                 case .disconnected: self.live = false
                 case .unauthorized: self.app?.unpair(from: client); return
-                case .truncated:
+                case .gone(let error):
+                    self.live = false
+                    self.items.append(ChatItem(id: UUID().uuidString, kind: .system(error.message)))
+                    return
+                case .truncated(let head):
+                    self.adoptJournalHead(head)
                     self.dropPending()
                     await self.backfill(client)
                 case .event(let env): self.enqueue(env)
@@ -409,7 +415,7 @@ final class ChatModel {
             }
             loadError = nil
         } catch {
-            loadError = (error as? HubError)?.message ?? error.localizedDescription
+            loadError = error.localizedDescription
         }
         // The newest page held nothing to show (only results of older
         // calls): fetch back until something does, rather than "No
@@ -438,14 +444,17 @@ final class ChatModel {
             }
             // A backfill (stream truncated) replaced the history meanwhile.
             guard nextBefore == before else { return false }
-            if prepend(body) { return true }
+            if prepend(body, askedBefore: before) { return true }
         }
         return false
     }
 
     /// Puts an older page in front of what's loaded; returns whether it
-    /// added anything to show.
-    func prepend(_ body: MessagesResponse) -> Bool {
+    /// added anything to show. `askedBefore` is the cursor the page was
+    /// asked with: a page that claims more history but whose cursor
+    /// didn't move back past it would be asked for again forever, so
+    /// history counts as ended there (the Mac's twin, #1177).
+    func prepend(_ body: MessagesResponse, askedBefore: Int? = nil) -> Bool {
         var older: [ChatItem] = []
         var cards: [String: String] = [:]
         for env in body.messages where env.type == "message.appended" {
@@ -459,10 +468,24 @@ final class ChatModel {
         items.insert(contentsOf: older, at: 0)
         hasEarlier = body.hasMore ?? false
         nextBefore = body.nextBefore ?? body.messages.first?.seq
+        if let askedBefore, hasEarlier, (nextBefore ?? askedBefore) >= askedBefore { hasEarlier = false }
         return !older.isEmpty
     }
 
     // MARK: Events
+
+    /// A `journal.truncated` names where to resume: the journal's head
+    /// after a wipe, or this chat's own cursor when the ring overflowed.
+    /// It wins even below the cursor. A lower head means the journal
+    /// numbers from the start again, so the seqs already seen belong to
+    /// the old journal and must not drop new messages that reuse them,
+    /// even if the backfill that follows fails (the next start retries
+    /// it, as for any failed load).
+    func adoptJournalHead(_ head: Int?) {
+        guard let head else { return }
+        if head < cursor { seen = [] }
+        cursor = head
+    }
 
     func apply(_ env: Envelope) {
         if let seq = env.seq {
@@ -482,7 +505,7 @@ final class ChatModel {
             // The turn ended (or stopped to ask) without a message to show.
             if !["", "active"].contains(status) { awaitingReply = false }
         case "session.ownership":
-            app?.patch(key, ownership: env.decode(OwnershipData.self)?.ownership)
+            if let event = env.decode(OwnershipData.self) { app?.patch(key, ownershipEvent: event) }
             attachQueued = false
         case "session.meta":
             // A pin or rename from any device.
@@ -532,6 +555,10 @@ final class ChatModel {
             }
         } else if msg.kind != "tool_result" {
             awaitingReply = false
+        }
+        // History a backfill replays is never a reply to the switch.
+        if !replayingHistory, ["assistant", "thinking", "tool_use"].contains(msg.kind ?? "assistant") {
+            modelSwitch?.noteReply(at: Date(), messageTs: msg.ts)
         }
         Self.add(msg, id: "m\(seq)", to: &items, cards: &toolCards, orphans: &orphanResults)
     }
@@ -663,6 +690,9 @@ final class ChatModel {
             return
         }
         if r.ok == false {
+            // A satellite answers a model switch here, matched by the
+            // client id it echoes; other controls' failures leave it.
+            if modelSwitch?.failed(by: r) == true { modelSwitch = nil }
             items.append(ChatItem(id: UUID().uuidString, kind: .system("\(r.op ?? "Command") failed: \(r.note ?? "unknown error")")))
         }
     }
@@ -1054,6 +1084,45 @@ final class ChatModel {
         }
     }
 
+    // MARK: Model
+
+    /// The switch sent from the Model menu, until the transcript shows
+    /// it (`ModelSwitch` says when that is).
+    private(set) var modelSwitch: ModelSwitch?
+
+    /// The model the header shows as asked for, while the transcript
+    /// hasn't caught up; nil once it has.
+    var pendingModel: String? {
+        guard let modelSwitch, row?.canSwitchModel == true,
+              !modelSwitch.settled(currentModel: row?.model, listRefreshedAt: app?.refreshedAt) else { return nil }
+        return modelSwitch.requested
+    }
+
+    /// The Model menu's entries, newest first.
+    var modelChoices: [String] {
+        guard let row else { return [] }
+        return ModelSwitchOptions.choices(for: row, on: app?.machines.first { $0.id == row.machineId })
+    }
+
+    /// Types `/model <value>` into the session's pane through the hub.
+    /// Picking the model it already runs (with nothing pending) sends
+    /// nothing; an invalid id never leaves the phone.
+    func switchModel(to text: String) async {
+        guard let client = hubClient, let value = ModelSwitchOptions.validValue(text) else { return }
+        if pendingModel == nil, value == row?.model { return }
+        // Pending before the POST: a satellite's failed result can reach
+        // the event stream before the hub's 202 does, and must find the
+        // switch it cancels rather than be overwritten by it.
+        let pending = ModelSwitch(requested: value, from: row?.model, sentAt: Date())
+        modelSwitch = pending
+        do {
+            try await client.control(key, op: "model", value: value, clientId: pending.clientId)
+        } catch {
+            if modelSwitch?.clientId == pending.clientId { modelSwitch = nil }
+            items.append(ChatItem(id: UUID().uuidString, kind: .system((error as? HubError)?.message ?? "Couldn't switch the model")))
+        }
+    }
+
     func interrupt() async {
         guard let client = hubClient else { return }
         do { try await client.control(key, op: "interrupt") } catch {
@@ -1067,17 +1136,17 @@ final class ChatModel {
     private(set) var attachQueued = false
     private(set) var attachError: String?
 
+    /// Through `AppModel.attach`, as the list's swipe does: an answer
+    /// from a hub the phone has since left is dropped, and the attach
+    /// cancels a `when_idle` detach still waiting on the turn.
     func attach() async {
-        guard let client = hubClient else { return }
+        // hubClient is nil once the chat's hub is no longer on screen.
+        guard let app, hubClient != nil else { return }
         attaching = true
         attachError = nil
         defer { attaching = false }
         do {
-            if try await client.control(key, op: "attach") {
-                attachQueued = true
-            } else {
-                app?.patch(key, ownership: "attached")
-            }
+            if try await app.attach(key) { attachQueued = true }
         } catch {
             attachError = (error as? HubError)?.message ?? "Attach failed"
         }

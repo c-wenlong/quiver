@@ -120,7 +120,7 @@ class SetupHubCloneTest(_HubHarness):
         code, out, err = self._run_json(["--apply", f"--hub={src}"])
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
-        self.assertIn("already has files", err)
+        self.assertIn("already has a hub", err)
         self.assertEqual((self.home / ".quiver" / "AGENTS.md").read_text(), "mine\n")
 
 
@@ -214,11 +214,11 @@ class WizardHubStageTest(unittest.TestCase):
         self.assertIn("Cloned good into ~/.quiver", out)
         self.assertIn("mine registered in claude", out)
 
-    def test_a_failure_that_left_files_behind_stops_asking(self):
+    def test_a_failure_that_left_a_hub_behind_stops_asking(self):
         def clone(home, url):
             (home / ".quiver").mkdir()
-            (home / ".quiver" / "x").write_text("x")
-            raise hub_repo.HubError("~/.quiver already has files")
+            (home / ".quiver" / "AGENTS.md").write_text("x")
+            raise hub_repo.HubError("~/.quiver already has a hub")
 
         outcome, _ = self._stage(["bad"], clone)
         self.assertEqual(outcome.status, "attention")

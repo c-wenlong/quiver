@@ -187,6 +187,19 @@ import Testing
         #expect(st == nil)
     }
 
+    @Test func aCarriedStringEndingInABackslashStaysInBounds() {
+        // A row that ends in `\` (a shell continuation inside a carried
+        // docstring) used to step past the chunk and trap.
+        var st: ScanState?
+        _ = SyntaxHighlight.tokens("s = \"\"\"doc", language: "python", state: &st)
+        #expect(st != nil)
+        let toks = SyntaxHighlight.tokens("    foo --bar \\", language: "python", state: &st)
+        #expect(toks.map(\.text).joined() == "    foo --bar \\")
+        #expect(st != nil)
+        let lone = SyntaxHighlight.tokens("\\", language: "python", state: &st)
+        #expect(lone.map(\.text).joined() == "\\")
+    }
+
     @Test func rustAndGo() {
         #expect(kindOf("fn main() { let x = 1; }", "rust", "fn") == .keyword)
         #expect(kindOf("func main() { fmt.Println(1) }", "go", "func") == .keyword)

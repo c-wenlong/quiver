@@ -151,8 +151,10 @@ struct ManifestCard: View {
                 ProgressView()
             }
         }
-        .task {
-            guard document == nil else { return }
+        // Keyed by the file: a card reused for another plugin or skill
+        // reads that one's file, not the first one's again.
+        .task(id: url) {
+            guard document?.url != url else { return }
             let doc = InstructionDocument(url: url)
             doc.load()
             document = doc
@@ -161,19 +163,17 @@ struct ManifestCard: View {
     }
 
     /// Pull the form's fields back out of the document's current text.
+    /// Revert first: the form reads the file's text, not edits a refused
+    /// save left behind, and a revert after an outside change reloads it.
     private func read() {
         guard let document else { return }
+        document.revert()
         fields = PluginManifestFields(parsing: document.text)
         loaded = fields
-        document.revert()
         error = nil
     }
 
-    private func revert() {
-        fields = loaded
-        document?.revert()
-        error = nil
-    }
+    private func revert() { read() }
 
     private func save(overwrite: Bool) {
         guard let document else { return }
@@ -229,7 +229,7 @@ struct FrontmatterCard: View {
                         ForEach(RowFold.visible(Array(fields.indices), limit: Self.foldLimit,
                                                 expanded: showsAll), id: \.self) { i in
                             GridRow {
-                                FieldRow(label: fields[i].key, value: $fields[i].value,
+                                FieldRow(label: fields[i].key, value: Self.value($fields, at: i),
                                          disabled: !editable || fields[i].key == "name")
                             }
                         }
@@ -263,8 +263,10 @@ struct FrontmatterCard: View {
                 ProgressView()
             }
         }
-        .task {
-            guard document == nil else { return }
+        // Keyed by the file: a card reused for another plugin or skill
+        // reads that one's file, not the first one's again.
+        .task(id: url) {
+            guard document?.url != url else { return }
             let doc = InstructionDocument(url: url)
             doc.load()
             document = doc
@@ -272,20 +274,27 @@ struct FrontmatterCard: View {
         }
     }
 
+    /// Field `i`'s value for a row that can outlive it: a reload or revert
+    /// shrinks `fields` while a row built for the old list still reads its
+    /// binding, and `$fields[i]` traps out of range there. Past the end it
+    /// reads empty and drops writes; the row goes with the next update.
+    static func value(_ fields: Binding<[(key: String, value: String)]>, at i: Int) -> Binding<String> {
+        Binding(get: { fields.wrappedValue.indices.contains(i) ? fields.wrappedValue[i].value : "" },
+                set: { if fields.wrappedValue.indices.contains(i) { fields.wrappedValue[i].value = $0 } })
+    }
+
+    /// Revert first: the form reads the file's text, not edits a refused
+    /// save left behind, and a revert after an outside change reloads it.
     private func read() {
         guard let document else { return }
+        document.revert()
         fields = MarkdownFrontmatter(text: document.text)?.fields
             .map { ($0.key, $0.value) } ?? []
         loaded = fields
-        document.revert()
         error = nil
     }
 
-    private func revert() {
-        fields = loaded
-        document?.revert()
-        error = nil
-    }
+    private func revert() { read() }
 
     private func save(overwrite: Bool) {
         guard let document else { return }
@@ -489,6 +498,7 @@ struct PartsCard: View {
                     Image(systemName: "trash").font(Theme.font(size: 11))
                 }
                 .secondaryButton()
+                .accessibilityLabel("Move \(entry.name) to the Trash")
             }
         }
         .padding(.vertical, 3)
@@ -534,33 +544,40 @@ struct PartsCard: View {
             newError = "Use kebab-case: lowercase letters, numbers and dashes."
             return
         }
-        do {
-            let file = try PrimitiveParts.create(kind, named: newName, in: root)
-            newPart = nil
-            newName = ""
-            newError = nil
-            // A folded card could hide the new file, so show every row.
-            showsAll = true
-            selected = file.path
-            reload()
-            onChanged()
-        } catch {
-            newError = error.localizedDescription
+        // create resolves the folder with realpath, which a synced or
+        // stale folder can block: off the main actor, like the walk.
+        let root = root, name = newName
+        Task {
+            switch await offMain({ Result { try PrimitiveParts.create(kind, named: name, in: root) } }) {
+            case .success(let file):
+                newPart = nil
+                newName = ""
+                newError = nil
+                // A folded card could hide the new file, so show every row.
+                showsAll = true
+                selected = file.path
+                reload()
+                onChanged()
+            case .failure(let error):
+                newError = error.localizedDescription
+            }
         }
     }
 
     private func trash() {
         guard let entry = trashEntry else { return }
-        do {
-            try PrimitiveParts.trash(URL(fileURLWithPath: entry.path), inside: root)
-            drafts.remove(under: entry.path)
-            if selected == entry.previewPath { selected = nil }
-            trashEntry = nil
-            reload()
-            onChanged()
-        } catch let failure {
-            error = "Couldn't move \(entry.name) to the Trash: \(failure.localizedDescription)"
-            trashEntry = nil
+        trashEntry = nil
+        let root = root
+        Task {
+            switch await offMain({ Result { try PrimitiveParts.trash(URL(fileURLWithPath: entry.path), inside: root) } }) {
+            case .success:
+                drafts.remove(under: entry.path)
+                if selected == entry.previewPath { selected = nil }
+                reload()
+                onChanged()
+            case .failure(let failure):
+                error = "Couldn't move \(entry.name) to the Trash: \(failure.localizedDescription)"
+            }
         }
     }
 }
@@ -730,6 +747,9 @@ struct PluginDetailView: View {
 
     @State private var name = ""
     @State private var nameError: String?
+    /// The last Codex manifest write; the next waits for it, so two quick
+    /// renames land in the order they were made.
+    @State private var manifestWrite: Task<Void, Never>?
     @State private var drafts = PrimitiveDrafts()
     @State private var leaving = false
     @State private var leaveError: String?
@@ -923,14 +943,23 @@ struct PluginDetailView: View {
         // manifest that exists but cannot be read or written must be
         // reported, or the rename looks saved while the file keeps the
         // old name.
-        guard FileManager.default.fileExists(atPath: codex.path) else { return }
+        // Disk work in the plugin's folder, so off the main actor.
         let shown = trimmed.isEmpty ? plugin.name : trimmed
-        do {
-            let text = try String(contentsOf: codex, encoding: .utf8)
-            let edited = try PluginManifestFields.setCodexDisplayName(shown, in: text)
-            try Data(edited.utf8).write(to: codex, options: .atomic)
-        } catch {
-            nameError = "Renamed, but couldn't update the Codex manifest: \(error.localizedDescription)"
+        let previous = manifestWrite
+        manifestWrite = Task {
+            await previous?.value
+            let failure: String? = await offMain {
+                guard FileManager.default.fileExists(atPath: codex.path) else { return nil }
+                do {
+                    let text = try String(contentsOf: codex, encoding: .utf8)
+                    let edited = try PluginManifestFields.setCodexDisplayName(shown, in: text)
+                    try Data(edited.utf8).write(to: codex, options: .atomic)
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }
+            if let failure { nameError = "Renamed, but couldn't update the Codex manifest: \(failure)" }
         }
     }
 
