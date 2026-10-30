@@ -117,14 +117,14 @@ struct TasksView: View {
     }
 
     private var filterBar: some View {
-        HStack(spacing: 6) {
+        WrappingHStack {
             ForEach(TaskFilter.allCases) { f in
                 FilterChip(title: f.title, count: TaskGrouping.count(model.tasks, filter: f), selected: filter == f) {
                     filter = f
                 }
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 4)
     }
 
@@ -269,8 +269,8 @@ struct TaskRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.tail)
-                HStack(spacing: 6) {
+                    .lineLimit(1, larger: 3).truncationMode(.tail)
+                WrappingHStack(spacing: 6) {
                     if !task.refLabel.isEmpty {
                         Text(task.refLabel)
                     }

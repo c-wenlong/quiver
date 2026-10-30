@@ -70,7 +70,7 @@ Status words:
 | Service status | yes | yes | - | |
 | Settings | yes | yes | part | iOS: the hub chip menu holds switch hub, devices, Console, Refresh and Unpair; no notification settings |
 | Doctor | yes | yes | - | Mac: a Settings section; web: `#/doctor`, no sidebar entry |
-| First-run setup | yes | yes | - | Web: `#/setup` |
+| First-run setup | yes | yes | - | Web: `#/setup`. Hub URL step: `swe setup --hub`, web step 2 (clones on the hub's thread, page polls) |
 | API keys | yes | part | - | Settings › Providers on both. Web: no key check, rename, move, custom providers or coding plans |
 | Fan control, Clean up, updates, Report a bug | yes | - | - | Mac-only by design |
 

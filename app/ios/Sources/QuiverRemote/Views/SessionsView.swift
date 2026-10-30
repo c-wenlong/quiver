@@ -265,14 +265,14 @@ struct SessionsView: View {
     }
 
     private var filterBar: some View {
-        HStack(spacing: 6) {
+        WrappingHStack {
             ForEach(SessionFilter.allCases) { f in
                 FilterChip(title: f.title, count: app.displaySessions.filter(f.includes).count, selected: filter == f) {
                     filter = f
                 }
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 4)
     }
 }
@@ -284,17 +284,22 @@ struct SessionRowView: View {
     var place: String?
     /// A detach is waiting for the current turn to end.
     var detachPending = false
+    @Environment(\.dynamicTypeSize) private var size
 
     var body: some View {
         let status = row.sessionStatus
         let waiting = row.needsYouNow
+        // At accessibility sizes the attached/watching mark leads the
+        // details line instead of taking a column from the title.
+        let markInline = size.isAccessibilitySize
         HStack(spacing: 12) {
             StatusDot(status: status, stale: status.needsYou && !waiting)
             VStack(alignment: .leading, spacing: 3) {
                 Text(row.displayTitle)
                     .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.tail)
-                HStack(spacing: 6) {
+                    .lineLimit(1, larger: 3).truncationMode(.tail)
+                WrappingHStack(spacing: 6) {
+                    if markInline { attachMark }
                     HarnessIcon(harness: row.harness, name: row.harnessName, size: 13)
                     Text(status.label).foregroundStyle(waiting ? Theme.warningText : Theme.textSecondary)
                     let when = RelativeTime.short(row.lastActiveAt)
@@ -312,15 +317,19 @@ struct SessionRowView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: row.isAttached ? "link" : "eye")
-                .font(Theme.font(size: 13))
-                .foregroundStyle(row.isAttached ? Theme.accent : Theme.textMuted)
-                .accessibilityLabel(row.isAttached ? "Attached" : "Watching only")
+            if !markInline { attachMark }
             Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
         }
         .padding(.vertical, Theme.rowVertical)
         .padding(.horizontal, Theme.rowHorizontal)
         .contentShape(.rect)
+    }
+
+    private var attachMark: some View {
+        Image(systemName: row.isAttached ? "link" : "eye")
+            .font(Theme.font(size: 13))
+            .foregroundStyle(row.isAttached ? Theme.accent : Theme.textMuted)
+            .accessibilityLabel(row.isAttached ? "Attached" : "Watching only")
     }
 }
 

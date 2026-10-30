@@ -113,6 +113,9 @@ struct DailyChart: View {
             }
         }
         .frame(height: 120)
+        // The axis labels share a fixed 120pt chart with the bars: past
+        // xxLarge the day numbers ran into each other.
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
         .accessibilityLabel("Cost per day")
     }
 }

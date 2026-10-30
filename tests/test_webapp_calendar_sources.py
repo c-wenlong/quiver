@@ -23,6 +23,8 @@ from tests.test_remote_hub import HubBase
 
 # Shared with app/mac/Tests/QuiverCoreTests/ActivityParityTests.swift.
 FIXTURES = Path(__file__).resolve().parent.parent / "app/mac/Tests/QuiverCoreTests/Fixtures/activity"
+# The Nix build's source tree carries src/ and tests/ but not app/mac/.
+NEEDS_FIXTURES = unittest.skipUnless(FIXTURES.is_dir(), "app/mac/ is not in this source tree")
 # Each source's (listing, parser), as _activity.SOURCES pairs them.
 PARSERS = {s.harness: (s._files, s._parse) for s in _activity.SOURCES}
 
@@ -55,6 +57,7 @@ def _blocks(harness: str, root: Path, account: str, lo: float, hi: float, gap: f
     return cal.file_pieces([(harness, s) for s in sessions], lo, hi, timezone.utc, gap)
 
 
+@NEEDS_FIXTURES
 class TestParity(unittest.TestCase):
     """The same made-up logs and expected blocks the Swift suite reads."""
 
@@ -130,6 +133,7 @@ class TestCursor(unittest.TestCase):
         con.close()
         self.assertTrue(any(d.startswith("SEARCH") and "INDEX" in d for d in plan), plan)
 
+    @NEEDS_FIXTURES
     def test_extra_profiles_add_their_desktop_folder_once(self):
         profiles = [{"id": "c1", "vendor": "cursor", "isDefault": False},
                     {"id": "c2", "vendor": "cursor", "isDefault": True},
@@ -141,6 +145,7 @@ class TestCursor(unittest.TestCase):
         files = _activity.cursor_files([str(self.dir / "a"), str(self.dir / "a")])
         self.assertEqual(list(files), [str(self.dir / "a" / _activity.CURSOR_DB)])
 
+    @NEEDS_FIXTURES
     def test_the_wal_folds_into_the_stamp(self):
         db = _cursor_db(self.dir)
         before = _activity.cursor_stamp(str(db))
@@ -364,6 +369,7 @@ class TestTrivialDrop(unittest.TestCase):
 
 
 class TestRoute(HubBase):
+    @NEEDS_FIXTURES
     def test_file_sources_draw_blocks_with_time_and_responses(self):
         home = self.srv.home
         pi = _write(home / ".pi/agent/sessions/--tmp-pi--/1_a.jsonl",

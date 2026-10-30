@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent stays GitHub-only. Part of
   [#847](https://github.com/c-wenlong/quiver/issues/847).
 
+- **Web app: Setup can start from your hub repo.** While `~/.quiver` on
+  the hub machine has no hub yet, step 2 shows "Start from your hub
+  repo": a URL field, the note "Fork a hub repo first (or use it as a
+  template for a private copy), then paste your fork's URL.", and Clone.
+  `POST /v1/app/setup/hub` runs `swe setup --hub`'s clone on the hub's
+  own thread and answers at once; the page polls `GET
+  /v1/app/setup?hub=1` until it ends, then reads the machine again so
+  the step shows the cloned hub. An existing hub is a 409 `has_hub`,
+  a clone or setup already running a 409 `busy`, and a URL git can't
+  reach or a timeout shows under the field. The URL is only ever kept
+  or shown without its credentials
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
+
 - **Web app: photo and file attachments in the chat composer.** A
   paperclip button, dropping files on the composer, or pasting a
   screenshot adds files to the next message. Each uploads at once
