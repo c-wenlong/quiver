@@ -524,7 +524,7 @@ private struct SummaryStrip: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                if let note { Image(systemName: "info.circle").font(Theme.caption).foregroundStyle(Theme.textSecondary).help(note) }
+                if let note { Image(systemName: "info.circle").font(Theme.caption).foregroundStyle(Theme.textSecondary).hoverTip(note) }
             }
             value.font(Theme.figure).monospacedDigit().foregroundStyle(Theme.textPrimary)
         }
@@ -556,7 +556,7 @@ private struct SessionRow: View {
             // on the title line.
             HStack(alignment: .center, spacing: 12) {
                 HarnessIcon(harness: HarnessMark(s.harness).icon ?? s.harness, size: 16)
-                    .help(HarnessMark(s.harness).name)
+                    .hoverTip(HarnessMark(s.harness).name)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(s.title ?? s.id).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)

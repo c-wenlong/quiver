@@ -298,7 +298,7 @@ private struct MarketplaceCard: View {
                 Image(systemName: "lock.fill")
                     .font(Theme.font(size: 10))
                     .foregroundStyle(Theme.textMuted)
-                    .help("Updates from GitHub would undo edits, so this marketplace is read-only.")
+                    .hoverTip("Updates from GitHub would undo edits, so this marketplace is read-only.")
             }
             Spacer(minLength: 8)
             Text(market.installed == 1 ? "1 installed" : "\(market.installed) installed")
@@ -433,7 +433,7 @@ private struct DriftBadge: View {
         }
         .plainButton(cornerRadius: 999)
         .fixedSize()
-        .help("\(harnessNames(harnesses)): \(state.title.lowercased()). Open Health to fix it.")
+        .hoverTip("\(harnessNames(harnesses)): \(state.title.lowercased()). Open Health to fix it.")
     }
 }
 
@@ -450,7 +450,7 @@ private struct HarnessChip: View {
 
     var body: some View {
         if actions.isEmpty {
-            label.help(help)
+            label.hoverTip(help)
         } else {
             Menu {
                 ForEach(actions) { action in

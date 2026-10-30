@@ -780,7 +780,7 @@ struct PathRow: View {
                 Text("In use: \(displayPath(running)). \(hint)")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     .lineLimit(1).truncationMode(.middle)
-                    .help(running)
+                    .hoverTip(running)
             }
             HStack(spacing: 8) {
                 TextField(placeholder, text: $draft)

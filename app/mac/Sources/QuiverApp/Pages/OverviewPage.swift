@@ -41,7 +41,7 @@ private struct OverviewContent: View {
                 .iconButton()
                 .disabled(model.isLoading)
                 .keyboardShortcut("r", modifiers: .command)
-                .help("Read new usage from the harness logs (⌘R)")
+                .hoverTip("Read new usage from the harness logs (⌘R)")
         } content: {
             if let error = model.error {
                 ErrorCard(message: error)
@@ -530,9 +530,9 @@ private struct BreakdownCard: View {
                     // An account with no logo keeps the square, so the names line up.
                     if withLogos {
                         HarnessIcon(harness: row.harness ?? "", size: 16)
-                            .help(row.harness.map { HarnessMark($0).name } ?? row.label)
+                            .hoverTip(row.harness.map { HarnessMark($0).name } ?? row.label)
                     }
-                    Text(row.label).lineLimit(1).truncationMode(.middle).help(row.home)
+                    Text(row.label).lineLimit(1).truncationMode(.middle).hoverTip(row.home)
                     Spacer()
                     Text(UsageFormat.tokens(row.totals.totalTokens)).foregroundStyle(Theme.textSecondary)
                     Text(UsageFormat.dollars(row.totals.costUSD)).foregroundStyle(Theme.accent)
