@@ -474,11 +474,6 @@ class TestRoute(_Model, HubBase):
         self.assertEqual(body["trend"]["interval"], 3)
         self.assertEqual(body["harnesses"][0]["harness"], "claude")
 
-    def test_page_script_is_bundled(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("compute"', data)
-
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")

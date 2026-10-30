@@ -114,7 +114,7 @@ struct ResolveIssueSheet: View {
                             .lineLimit(1).truncationMode(.middle)
                     }
                     if let worktree = issue.worktree {
-                        Text(Self.abbreviated(worktree))
+                        Text(displayPath(worktree))
                             .font(Theme.font(size: 12, design: .monospaced))
                             .foregroundStyle(Theme.textSecondary)
                             .lineLimit(1).truncationMode(.head)
@@ -355,11 +355,6 @@ struct ResolveIssueSheet: View {
         guard let key, !Task.isCancelled else { return }
         dismiss()
         app.openSessionChat(key: key)
-    }
-
-    private static func abbreviated(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }
 }
 

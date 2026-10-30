@@ -167,6 +167,8 @@ const picked = (sel) => { const o = sel && optionsOf(sel).find((x) => x[0] === s
 const choose = (sel, label) => { sel.value = optionsOf(sel).find((x) => x[1] === label)[0]; sel.onchange(); };
 """
 
+STUB += app_js_function("currentRoute")
+
 MENU_JS = (Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/model-menu.js")
 
 # Writes go through app.js's own send(), over the stubbed fetch.

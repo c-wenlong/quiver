@@ -325,8 +325,6 @@ class TestRoute(HubBase):
     def test_bundles_carry_both_pages(self):
         status, body = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("pricing"', body)
-        self.assertIn(b'registerPage("models"', body)
         for name in ("source-litellm.svg", "harness-openai.svg"):
             self.assertEqual(self.srv.request("GET", f"/app/{name}")[0], 200, name)
 

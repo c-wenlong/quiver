@@ -24,9 +24,16 @@ final class AppModel {
 
     private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private let store: HubStore
+    /// The console's saved targets, one per hub; an unpaired hub's goes.
+    @ObservationIgnored private let sshTargets: SSHTargetStore
+    /// How Unpair tells the hub to sign this phone out; tests swap it.
+    @ObservationIgnored var revokeOnHub: (HubClient, String) async -> Void = { client, deviceId in
+        try? await client.revokeDevice(id: deviceId, confirmThisDevice: true)
+    }
 
-    init(store: HubStore = KeychainHubStore()) {
+    init(store: HubStore = KeychainHubStore(), sshTargets: SSHTargetStore = SSHTargetStore()) {
         self.store = store
+        self.sshTargets = sshTargets
         hubs = store.load()
     }
 
@@ -325,14 +332,32 @@ final class AppModel {
         showHub()
     }
 
-    /// Unpairs the hub on screen and shows the next one, if any. With
-    /// `client`, only if that client still talks to the hub on screen: a
-    /// refused answer from a hub this phone has switched away from must
-    /// not unpair the one it switched to.
-    func unpair(from client: HubClient? = nil) {
+    /// Unpair, from the hub menu: drops the hub on screen and shows the
+    /// next one, if any. The hub is told to sign this phone out as well
+    /// (`POST /v1/devices/revoke`), which ends the credential and takes
+    /// the phone's SSH key out of `authorized_keys`; forgetting only the
+    /// local copy left both working on the hub. Best effort: a hub that
+    /// can't be reached keeps the row, for Pair requests to remove.
+    func unpair() {
+        guard let current = hub, let client else { return }
+        let revoke = revokeOnHub
+        Task { await revoke(client, current.credential.deviceId) }
+        forget(current)
+    }
+
+    /// The hub refused this phone's credential: drops it the same way,
+    /// but only if `client` still talks to the hub on screen. A refused
+    /// answer from a hub this phone has switched away from must not
+    /// unpair the one it switched to.
+    func unpair(from client: HubClient) {
         guard let current = hub else { return }
-        if let client, client.baseURL != current.baseURL || client.credential != current.credential.credential { return }
+        if client.baseURL != current.baseURL || client.credential != current.credential.credential { return }
+        forget(current)
+    }
+
+    private func forget(_ current: PairedHub) {
         store.deleteCredential(current.id)
+        sshTargets.remove(current.id)
         hubs.remove(current.id)
         store.saveIndex(hubs)
         if hub == nil {
