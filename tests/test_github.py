@@ -2103,5 +2103,40 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(opened, ["inbox"])
 
 
+class TestSharedLayer(unittest.TestCase):
+    """The ``gh`` cache, write lock and pins live in ``quiver.github``."""
+
+    def test_remote_and_github_do_not_import_web_pages(self):
+        # quiver.remote's issue, pull, task and Linear routes reached
+        # into the web app's private page module for the shared cache.
+        import ast
+        src = Path(__file__).resolve().parent.parent / "src" / "quiver"
+        offenders = []
+        for folder in ("remote", "github"):
+            for path in sorted((src / folder).glob("*.py")):
+                for node in ast.walk(ast.parse(path.read_text())):
+                    if isinstance(node, ast.ImportFrom) and (
+                            node.module or "").startswith("quiver.webapp.pages"):
+                        names = {a.name for a in node.names}
+                        if node.module.endswith("_github") or "_github" in names:
+                            offenders.append(path.name)
+        self.assertEqual(offenders, [])
+
+    def test_pinned_name_errors(self):
+        from quiver.github import shared
+        from quiver.webapp.pages import PageError, _github as W
+        home = Path(tempfile.mkdtemp())
+        with patch.object(shared, "pinned",
+                          return_value=[{"name": "Acme/Tool"}]):
+            self.assertEqual(shared.pinned_name(home, "acme/tool"), "Acme/Tool")
+            with self.assertRaises(shared.PinError) as bad:
+                shared.pinned_name(home, "not a repo")
+            self.assertEqual(bad.exception.status, 400)
+            with self.assertRaises(PageError) as missing:
+                W.pinned_name(home, "acme/other")
+            self.assertEqual((missing.exception.status,
+                              missing.exception.code), (404, "not_pinned"))
+
+
 if __name__ == "__main__":
     unittest.main()

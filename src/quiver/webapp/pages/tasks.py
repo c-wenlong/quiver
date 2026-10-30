@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from quiver.remote import tasks as tasks_mod
 from quiver.webapp.pages import PageError
-from quiver.webapp.pages import _github as G
+from quiver.webapp.pages import _github as W
 from quiver.webapp.pages.repositories import harnesses
 
 # The catalog fields a session row in the Sessions card draws: the
@@ -34,7 +34,7 @@ _SESSION_FIELDS = ("id", "harness", "agent", "title", "status", "cwd",
 
 
 def get(ctx, args: dict) -> dict:
-    if G.flag(args, "harnesses"):
+    if W.flag(args, "harnesses"):
         return {"harnesses": harnesses(ctx.home),
                 "machine": (ctx.machine or {}).get("name")}
     # The hub's query dict maps each parameter to a list; the page's

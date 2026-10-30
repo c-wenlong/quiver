@@ -39,7 +39,7 @@ from typing import Any
 
 from quiver import __version__, paths
 from quiver.mcp import secrets as mcp_secrets
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 GRAPHQL_URL = "https://api.linear.app/graphql"
 # Linear personal API keys travel bare in the Authorization header —
@@ -235,7 +235,7 @@ def _graphql(api_key: str, query: str,
 
 class LinearTasks:
     """``TaskSource`` over Linear's GraphQL, behind the same minute
-    cache the ``gh`` reads share (``webapp/pages/_github.py``)."""
+    cache the ``gh`` reads share (``github/shared.py``)."""
 
     def __init__(self, home: Path | str | None, refresh: bool = False):
         self.home = Path(home) if home is not None else None

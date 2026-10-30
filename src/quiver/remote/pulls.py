@@ -2,7 +2,7 @@
 ``GET /v1/pulls/<o>/<r>/<n>`` and ``POST /v1/pulls/<o>/<r>/<n>/open``.
 
 The reads answer from the same 60-second ``gh`` cache the web app's
-Repositories page uses (``webapp/pages/_github.py``), per pinned repo,
+Repositories page uses (``github/shared.py``), per pinned repo,
 so the phone and the page agree and a slow ``gh`` shows up once. A
 repo's row adds ``mine`` and ``review_requested`` (from ``gh pr
 status``) so the client can filter without a second round trip.
@@ -39,7 +39,7 @@ from quiver.remote import catalog as catalog_mod
 from quiver.remote import issues as issues_mod
 from quiver.remote import protocol, supervise
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 # ``swe gh``'s list cap: open PRs per pinned repo in one answer.
 LIST_LIMIT = 50
