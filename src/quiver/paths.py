@@ -17,6 +17,7 @@ beats matching the XDG spec here.
 that still has one can be migrated by ``swe init --migrate``.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -395,6 +396,22 @@ def expand_user(value: "str | Path") -> "Path":
     and a ``~user`` that does exist still resolves to its home.
     """
     return Path(os.path.expanduser(str(value)))
+
+
+def read_json_dict(path: "Path") -> dict:
+    """The JSON object in ``path``, or ``{}``.
+
+    For state a later run can rebuild: a missing or unreadable file, bytes
+    that are not UTF-8 or not JSON, and any top-level value other than an
+    object all read as ``{}``. Never use it on a file swe may save back
+    over, where ``{}`` would erase whatever it couldn't parse; that is
+    ``configuration.read_json_object``'s job.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def atomic_write_text(path: "Path", text: str, *, private: bool = False) -> None:
