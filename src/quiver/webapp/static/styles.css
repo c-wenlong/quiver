@@ -237,6 +237,12 @@ code { background: var(--subtle); border-radius: 4px; padding: 1px 4px; font-siz
   .nav-item.soon { display: none; }
   .panel { border-left: 0; border-top: 1px solid var(--border); }
   .page { padding: 24px 16px; }
+  /* The titles keep at least 240px: actions that don't fit beside them
+   * wrap onto their own row instead of squeezing the subtitle to a word
+   * a line or running over the title. */
+  .page-header { flex-wrap: wrap; row-gap: 12px; }
+  .page-header .titles { flex: 1 1 240px; }
+  .page-actions { flex-wrap: wrap; }
   .total-tokens { font-size: 48px; }
 }
 
