@@ -115,6 +115,22 @@ function pageHeader(title, subtitle, actions = "") {
     <div class="page-actions">${actions}</div></div>`;
 }
 
+/* A page's sheet, made once on document.body so a repaint of #panel
+ * behind it (a reply landing, a poll) can't take it away. It belongs to
+ * the view that opened it: route() closes it on every navigation, which
+ * fires its close handlers, so a page never finds it open again later. */
+function bodySheet(id, className, label = "") {
+  let sheet = document.getElementById(id);
+  if (sheet) return sheet;
+  sheet = document.createElement("dialog");
+  sheet.id = id;
+  sheet.className = className;
+  if (label) sheet.setAttribute("aria-label", label);
+  sheet.dataset.routeSheet = "";
+  document.body.appendChild(sheet);
+  return sheet;
+}
+
 /* Only a device the hub can't place reaches this: the owner's own tailnet
  * devices are let in without pairing. The card is the old remote page's
  * pair view: ask the tailnet for a code the owner approves elsewhere, or
@@ -349,7 +365,9 @@ function route() {
     id = "overview";
     history.replaceState(null, "", "#/overview");
   }
-  // A response still in flight belongs to the page left behind.
+  // A response still in flight belongs to the page left behind, and so
+  // does any sheet it opened.
+  for (const sheet of document.querySelectorAll("dialog[data-route-sheet][open]")) sheet.close();
   routeGen++;
   overview.gen++;
   sessionsPage.gen++;

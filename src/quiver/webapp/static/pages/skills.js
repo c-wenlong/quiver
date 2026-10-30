@@ -337,8 +337,7 @@ function newSkillProblem(name) {
 /* NewSkillSheet: swe skills new <name> on the hub, POST
  * /v1/app/skills/new. The sheet stays open on "Created …" with Open it. */
 function openNewSkill() {
-  const sheet = document.getElementById("sk-new-sheet");
-  if (!sheet) return;
+  const sheet = bodySheet("sk-new-sheet", "sheet sk-new-sheet", "New skill");
   const where = (skillsPage.data && skillsPage.data.machine) || "the hub";
   sheet.innerHTML = `<form class="sheet-body" id="sk-new-form" novalidate>
     <div class="sheet-title">New skill</div>
@@ -597,8 +596,7 @@ function paintSkills() {
       ${d.catalog_error ? `<p class="caption">Couldn't read the plugin catalog, so plugin skills stay listed here: ${esc(d.catalog_error)}</p>` : ""}
       ${note}
       <div id="sk-list"></div>
-    </div>
-    <dialog class="sheet sk-new-sheet" id="sk-new-sheet" aria-label="New skill"></dialog></div>`;
+    </div></div>`;
   bindSkillsHeader();
   document.getElementById("sk-harness").onchange = (e) => { p.harness = e.target.value; paintSkillRows(); };
   document.getElementById("sk-source").onchange = (e) => { p.source = e.target.value; paintSkillRows(); };
@@ -736,8 +734,7 @@ function paintSkillDetail(d) {
       ${skillsActionCard()}
       <div class="sk-lock">${skillsLockIcon()}<span>${esc(lock)}</span></div>
       ${header}${fm}${skillsContents(d)}
-    </div>
-    <dialog class="sheet sk-sheet" id="sk-sheet"></dialog></div>`;
+    </div></div>`;
   bindSkillsHeader();
   const fmFold = document.getElementById("sk-fm-fold");
   if (fmFold) fmFold.onclick = () => { p.fmShowsAll = !p.fmShowsAll; paintSkillDetail(d); };
@@ -789,7 +786,7 @@ function skillsContents(d) {
 
 /* PrimitiveFileSheet, read only: the file in a large sheet over the page. */
 async function openSkillFile(d, name) {
-  const sheet = document.getElementById("sk-sheet");
+  const sheet = bodySheet("sk-sheet", "sheet sk-sheet");
   const path = d.skill.path + "/" + name;
   const head = (inner) => `<form method="dialog" class="sheet-body">
     <div class="sk-sheet-head"><div class="titles"><div class="card-title">${esc(name.split("/").pop())}</div>
