@@ -709,17 +709,6 @@ struct KeyDraft: Identifiable {
     var providerID: String? = nil
 }
 
-/// The model dropdown's row-hover fill, as the picker lists get.
-private struct DropdownRowHover: ViewModifier {
-    @State private var hovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(hovering ? Theme.rowHover : .clear)
-            .onHover { hovering = $0 }
-    }
-}
-
 /// Add, change or remove one key. A new key first picks its provider from
 /// the catalog: a known provider fixes the variable name (a pick when it
 /// has several) and offers the page that hands out keys; "Custom provider"
@@ -1129,7 +1118,7 @@ private struct KeyEditor: View {
                         .contentShape(.rect)
                     }
                     .plainButton(cornerRadius: 0)
-                    .modifier(DropdownRowHover())
+                    .modifier(RowHover())
                 }
             }
             .padding(.vertical, 4)
