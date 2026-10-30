@@ -145,6 +145,17 @@ function renderSidebar(current) {
         return `<a class="${cls}" data-page="${id}" href="#/${id}"${title}${id === current ? ' aria-current="page"' : ""}>${icon(id)}<span>${label}</span></a>`;
       }).join("")}
     </div>`).join("");
+  revealActiveTab(nav);
+}
+
+/* On a phone the sidebar is one row that scrolls sideways: centre the
+ * current page's tab in it, or a page past the first few has no visible
+ * tab saying where you are. A sidebar that fits does nothing. */
+function revealActiveTab(nav) {
+  const active = nav.querySelector(".nav-item.active");
+  if (!active || !(nav.scrollWidth > nav.clientWidth)) return;
+  const box = nav.getBoundingClientRect(), tab = active.getBoundingClientRect();
+  nav.scrollLeft += tab.left - box.left - (box.width - tab.width) / 2;
 }
 
 function pageHeader(title, subtitle, actions = "") {
