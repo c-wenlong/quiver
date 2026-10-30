@@ -372,13 +372,15 @@ struct PartsCard: View {
     @State private var newPart: PrimitiveParts.Kind?
     @State private var newName = ""
     @State private var newError: String?
+    /// The create in flight; a New opened since makes its answer stale.
+    @State private var creating: UUID?
     @State private var trashEntry: PrimitiveTree.Entry?
     @State private var error: String?
 
     var body: some View {
         Card(title: "Contents", subtitle: displayPath(root), monoSubtitle: true) {
             if editable && !kinds.isEmpty {
-                NewPartMenu(kinds: kinds) { newError = nil; newPart = $0 }
+                NewPartMenu(kinds: kinds) { creating = nil; newError = nil; newPart = $0 }
             }
         } content: {
             treeContent
@@ -567,19 +569,26 @@ struct PartsCard: View {
         // create resolves the folder with realpath, which a synced or
         // stale folder can block: off the main actor, like the walk.
         let root = root, name = newName
+        let request = UUID()
+        creating = request
         Task {
-            switch await offMain({ Result { try PrimitiveParts.create(kind, named: name, in: root) } }) {
+            let result = await offMain({ Result { try PrimitiveParts.create(kind, named: name, in: root) } })
+            // A New opened while this waited on disk owns the alert now.
+            let current = creating == request
+            if current { creating = nil }
+            switch result {
             case .success(let file):
-                newPart = nil
-                newName = ""
-                newError = nil
                 // A folded card could hide the new file, so show every row.
                 showsAll = true
                 reload()
                 onChanged()
+                guard current else { return }
+                newName = ""
+                newError = nil
                 // Straight into the editor, as picking the file would.
                 present(path: file.path)
             case .failure(let error):
+                guard current else { return }
                 newError = error.localizedDescription
                 newPart = kind
             }
