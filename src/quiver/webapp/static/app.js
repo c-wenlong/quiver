@@ -804,6 +804,14 @@ function bindHeatmap() {
 }
 
 window.addEventListener("hashchange", route);
+// The sidebar turns into a scrolling row at the CSS breakpoint: a window
+// narrowed past it must bring the current tab into view too.
+if (typeof window.matchMedia === "function") {
+  window.matchMedia("(max-width: 720px)").addEventListener("change", () => {
+    const nav = document.getElementById("sidebar");
+    if (nav) revealActiveTab(nav);
+  });
+}
 window.addEventListener("resize", () => {
   if (!overview.data || !document.getElementById("marbles")) return;
   drawMarbles();
