@@ -263,7 +263,7 @@ private struct CommentCard: View {
                     if let url = comment.url.flatMap(URL.init) {
                         Button { openURL(url) } label: {
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                                .font(Theme.font(size: 12)).foregroundStyle(Theme.textMuted)
                         }
                         .buttonStyle(.plain)
                     }

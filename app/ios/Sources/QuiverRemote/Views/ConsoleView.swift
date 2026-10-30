@@ -133,7 +133,7 @@ private struct TerminalSurface: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(console: console) }
 
     func makeUIView(context: Context) -> TerminalView {
-        let view = TerminalView(frame: .zero, font: UIFont.monospacedSystemFont(ofSize: 13, weight: .regular))
+        let view = TerminalView(frame: .zero, font: Theme.terminalFont(context.environment.dynamicTypeSize))
         view.terminalDelegate = context.coordinator
         view.nativeBackgroundColor = UIColor(Theme.code)
         view.nativeForegroundColor = UIColor(Theme.textPrimary)
@@ -144,7 +144,10 @@ private struct TerminalSurface: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: TerminalView, context: Context) {}
+    func updateUIView(_ view: TerminalView, context: Context) {
+        let font = Theme.terminalFont(context.environment.dynamicTypeSize)
+        if view.font.pointSize != font.pointSize { view.font = font }
+    }
 
     @MainActor final class Coordinator: NSObject, TerminalViewDelegate, ConsoleScreen {
         let console: ConsoleModel

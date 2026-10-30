@@ -119,7 +119,7 @@ struct DevicesView: View {
 
     @ViewBuilder private func row(_ device: PairedDevice) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: device.symbol).font(.system(size: 16)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+            Image(systemName: device.symbol).font(Theme.font(size: 16)).foregroundStyle(Theme.textSecondary).iconColumn(20)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(device.label).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
@@ -194,7 +194,7 @@ private struct PairRequestCard: View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
-                    Image(systemName: "iphone.gen3").font(.system(size: 18)).foregroundStyle(Theme.textSecondary).frame(width: 22)
+                    Image(systemName: "iphone.gen3").font(Theme.font(size: 18)).foregroundStyle(Theme.textSecondary).iconColumn(22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(request.name ?? "New device").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                         Text([request.nodeName, request.login, RelativeTime.ago(request.createdAt)]
@@ -206,7 +206,7 @@ private struct PairRequestCard: View {
                 TextField("000 000", text: $code)
                     .keyboardType(.numberPad)
                     .multilineTextAlignment(.center)
-                    .font(.system(size: 20, weight: .medium, design: .monospaced))
+                    .font(Theme.font(size: 20, weight: .medium, design: .monospaced))
                     .tracking(3)
                     .quiverField()
                     .onChange(of: code) { _, new in code = String(new.filter(\.isNumber).prefix(6)) }
