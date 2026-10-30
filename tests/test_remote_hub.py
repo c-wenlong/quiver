@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import protocol
 from quiver.remote import tail
 from quiver.remote.hub import APPROVAL_TTL_S, HubState, make_server
-from quiver.remote import pairing
+from quiver.remote import catalog as catalog_mod, hub as hub_mod, pairing
 from quiver.sessions.models import Session
 
 
@@ -579,6 +579,101 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["status"], "followup")
         self.assertEqual(items[0]["key"], "claude:f1")
+
+    def test_inbox_takes_a_satellite_row_missing_fields(self):
+        """An older satellite may push a row without agent or title; the
+        inbox lists it rather than answering 500."""
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        catalog_mod.merge_remote_rows(srv.home, "sat1", [{
+            "key": "claude:x", "status": "followup",
+            "last_active_at": time.time()}])
+        srv.state.catalog.refresh()
+        cred = srv.pair()
+        status, data = srv.request(
+            "GET", "/v1/inbox",
+            headers={"Authorization": f"Bearer {cred['credential']}"})
+        self.assertEqual(status, 200, data)
+        [item] = [i for i in json.loads(data)["items"]
+                  if i["key"] == "claude:x@sat1"]
+        self.assertIsNone(item["harness"])
+
+    def test_a_route_bug_answers_500_instead_of_dropping(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        with patch.object(srv.state.catalog, "rows",
+                          side_effect=RuntimeError("boom")), \
+                patch("traceback.print_exc"):
+            status, data = srv.request("GET", "/v1/sessions", headers=hdr)
+        self.assertEqual(status, 500)
+        self.assertEqual(json.loads(data)["error"]["code"], "internal")
+        status, _ = srv.request("GET", "/v1/sessions", headers=hdr)
+        self.assertEqual(status, 200)
+
+    def test_a_client_that_hung_up_is_not_logged(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        handle_error = MagicMock()
+        srv.server.handle_error = handle_error
+        with patch("http.server.BaseHTTPRequestHandler.handle_one_request",
+                   side_effect=ConnectionResetError), \
+                patch("traceback.print_exc") as printed:
+            sock = socket.create_connection(("127.0.0.1", srv.port), timeout=5)
+            try:
+                sock.sendall(b"GET /v1/sessions HTTP/1.1\r\nHost: x\r\n\r\n")
+                try:
+                    self.assertEqual(sock.recv(4096), b"")
+                except ConnectionResetError:
+                    pass  # closed with our request unread: also no answer
+            finally:
+                sock.close()
+        printed.assert_not_called()
+        handle_error.assert_not_called()
+
+    def test_a_bug_after_the_headers_sends_no_second_answer(self):
+        """Once a status line is out, a later failure closes the
+        connection instead of appending a 500 to the response."""
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+
+        def half(handler, status, payload):
+            handler.send_response(200)
+            handler.send_header("Content-Length", "2")
+            handler.end_headers()
+            raise RuntimeError("after headers")
+
+        with patch.object(hub_mod._Handler, "_send_json", half), \
+                patch("traceback.print_exc"):
+            sock = socket.create_connection(("127.0.0.1", srv.port), timeout=5)
+            try:
+                sock.sendall(
+                    b"GET /v1/sessions HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                    b"Authorization: Bearer " + cred["credential"].encode()
+                    + b"\r\n\r\n")
+                data = b""
+                while chunk := sock.recv(4096):
+                    data += chunk
+            finally:
+                sock.close()
+        self.assertTrue(data.startswith(b"HTTP/1.1 200"), data[:40])
+        self.assertEqual(data.count(b"HTTP/1.1 "), 1)
+
+    def test_a_page_bug_answers_500_page_failed(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        broken = type("Page", (), {"get": staticmethod(
+            lambda ctx, args: {}["missing"])})
+        with patch("quiver.webapp.pages.load", return_value=broken), \
+                patch("traceback.print_exc"):
+            status, data = srv.request(
+                "GET", "/v1/app/skills",
+                headers={"Authorization": f"Bearer {cred['credential']}"})
+        self.assertEqual(status, 500)
+        self.assertEqual(json.loads(data)["error"]["code"], "page_failed")
 
     def test_inbox_shows_pending_approval_on_active(self):
         # A pane-only prompt leaves the transcript "active" — the inbox

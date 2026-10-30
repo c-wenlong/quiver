@@ -377,7 +377,7 @@ const GhUI = (() => {
       .replace(new RegExp(`!\\[([^\\]]*)\\]\\(${URL_PART}[^)]*\\)`, "g"), (_m, alt, src) => `[${alt || "image"}](${src})`);
   }
 
-  const safeUrl = (url) => /^(https?:\/\/|mailto:)/i.test(url);
+  const safeUrl = (url) => safeHref(url) !== "";
 
   function inline(text) {
     const codes = [];
