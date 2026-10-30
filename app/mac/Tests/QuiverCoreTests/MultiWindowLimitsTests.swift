@@ -101,9 +101,7 @@ private let older = #"""
     }
 
     @Test func savedCursorAutoChoicesMoveToIncludedOnce() {
-        let name = "MultiWindowLimitsTests.\(UUID().uuidString)"
-        let store = UserDefaults(suiteName: name)!
-        store.removePersistentDomain(forName: name)
+        let store = TestDefaults("MultiWindowLimitsTests")
         store.set("cursor|auto", forKey: MenuBarDisplay.Key.watchedLimit)
         store.set(["cursor": ["auto", "api"], "claude": ["auto"]], forKey: MenuBarPopup.Key.hiddenWindows)
         MenuBarMigrations.run(on: store)

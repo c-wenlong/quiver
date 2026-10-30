@@ -388,10 +388,10 @@ final class CountingTransport: HTTPTransport {
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
         let store = APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups"))
-        return APIKeysModel(store: store, shell: FakeShell(environment: [:]),
+        return APIKeysModel.isolated(store: store, shell: FakeShell(environment: [:]),
                             checker: APIKeyChecker(transport: transport),
                             checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
-                            defaults: UserDefaults(suiteName: "keycheck-\(UUID().uuidString)")!)
+                            home: dir)
     }
 
     @Test func checkAllSkipsEmptyValues() async throws {
@@ -542,17 +542,17 @@ final class CountingTransport: HTTPTransport {
         let url = dir.appending(path: ".api_keys")
         try "export GEMINI_API_KEY=\"g\"\nexport OPENAI_API_KEY=\"o\"\nexport NVIDIA_API_KEY=\"n\"\nexport LOOSE_A=\"a\"\n"
             .write(to: url, atomically: true, encoding: .utf8)
-        let defaults = UserDefaults(suiteName: "keycarry-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycarry")
         let cache = APIKeyCheckStore(url: dir.appending(path: "checks.json"))
         let check = APIKeyCheck(result: .works, checkedAt: Date(), value: "v",
                                salt: APIKeyCheckStore.salt(from: defaults))
         cache.save(["GEMINI_API_KEY": check, "OPENAI_API_KEY": check,
                     "NVIDIA_API_KEY": check, "LOOSE_A": check],
                    for: url, currentNames: ["GEMINI_API_KEY", "OPENAI_API_KEY", "NVIDIA_API_KEY", "LOOSE_A"])
-        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
+        let model = APIKeysModel.isolated(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
                                  shell: FakeShell(environment: [:]),
                                  checker: APIKeyChecker(transport: FakeTransport()),
-                                 checkCache: cache, defaults: defaults)
+                                 checkCache: cache, defaults: defaults, home: dir)
         await model.load()
         // GEMINI and GOOGLE share one probe, so the verdict follows the name.
         try await model.update(name: "GEMINI_API_KEY", newName: "GOOGLE_API_KEY", provider: "", value: "g")
@@ -642,13 +642,11 @@ final class CountingTransport: HTTPTransport {
     }
 
     @Test func theSaltIsMadeOnceAndReused() {
-        let suite = "keysalt-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("keysalt")
         let first = APIKeyCheckStore.salt(from: defaults)
         #expect(first.count == 32)
         #expect(APIKeyCheckStore.salt(from: defaults) == first)
-        let other = UserDefaults(suiteName: "keysalt-\(UUID().uuidString)")!
+        let other = TestDefaults("keysalt")
         #expect(APIKeyCheckStore.salt(from: other) != first)
     }
 
@@ -662,12 +660,12 @@ final class CountingTransport: HTTPTransport {
         export XAI_API_KEY="sk-fake-GONE"
         """.write(to: keysURL, atomically: true, encoding: .utf8)
         let cacheURL = dir.appending(path: "api-key-checks.json")
-        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycache")
         func make(_ transport: HTTPTransport) -> APIKeysModel {
-            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+            APIKeysModel.isolated(store: APIKeysStore(url: keysURL, backupDirectory: dir),
                          shell: FakeShell(environment: [:]),
                          checker: APIKeyChecker(transport: transport),
-                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults, home: dir)
         }
         let transport = FakeTransport()
         transport.reply(401)
@@ -706,12 +704,12 @@ final class CountingTransport: HTTPTransport {
         export MYSTERY_TOKEN="abc123"
         """.write(to: keysURL, atomically: true, encoding: .utf8)
         let cacheURL = dir.appending(path: "api-key-checks.json")
-        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycache")
         func make(_ transport: HTTPTransport) -> APIKeysModel {
-            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+            APIKeysModel.isolated(store: APIKeysStore(url: keysURL, backupDirectory: dir),
                          shell: FakeShell(environment: [:]),
                          checker: APIKeyChecker(transport: transport),
-                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults, home: dir)
         }
         let first = make(FakeTransport())
         await first.load()
@@ -741,12 +739,12 @@ final class CountingTransport: HTTPTransport {
         export XAI_API_KEY="sk-4"
         """.write(to: keysURL, atomically: true, encoding: .utf8)
         let cacheURL = dir.appending(path: "api-key-checks.json")
-        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycache")
         func make(_ transport: HTTPTransport) -> APIKeysModel {
-            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+            APIKeysModel.isolated(store: APIKeysStore(url: keysURL, backupDirectory: dir),
                          shell: FakeShell(environment: [:]),
                          checker: APIKeyChecker(transport: transport),
-                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults, home: dir)
         }
         let transport = GateTransport()
         let first = make(transport)
@@ -790,12 +788,12 @@ final class CountingTransport: HTTPTransport {
         try "export OPENAI_API_KEY=\"sk-a\"".write(to: keysA, atomically: true, encoding: .utf8)
         try "export OPENAI_API_KEY=\"sk-b\"".write(to: keysB, atomically: true, encoding: .utf8)
         let cacheURL = dir.appending(path: "api-key-checks.json")
-        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycache")
         func make(_ keysURL: URL, _ transport: HTTPTransport) -> APIKeysModel {
-            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+            APIKeysModel.isolated(store: APIKeysStore(url: keysURL, backupDirectory: dir),
                          shell: FakeShell(environment: [:]),
                          checker: APIKeyChecker(transport: transport),
-                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults, home: dir)
         }
         let transportA = FakeTransport()
         transportA.reply(200)

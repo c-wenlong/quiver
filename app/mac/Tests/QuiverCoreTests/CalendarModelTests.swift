@@ -49,9 +49,7 @@ private struct TogglingActivity: ActivityProviding {
     }
 
     private func freshDefaults() -> UserDefaults {
-        let name = "CalendarModelTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarModelTests")
         return defaults
     }
 
@@ -742,9 +740,7 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
     }
 
     private func freshDefaults() -> UserDefaults {
-        let name = "CalendarCacheTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarCacheTests")
         return defaults
     }
 
@@ -1063,9 +1059,7 @@ private final class LaterReadsFail: ActivityProviding, @unchecked Sendable {
     }
 
     private func freshDefaults() -> UserDefaults {
-        let name = "CalendarSessionCacheTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarSessionCacheTests")
         return defaults
     }
 

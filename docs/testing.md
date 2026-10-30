@@ -117,9 +117,11 @@ Tests use Swift Testing (`@Suite` / `@Test` / `#expect`). Conventions:
   `Tests/QuiverCoreTests/Fixtures/`.
 - Temporary folders come from `TempDir` (`LedgerTestSupport.swift`), which
   removes itself; keep it alive (`withExtendedLifetime`) past any read that
-  opens a file by path. A `UserDefaults(suiteName:)` a test creates must
-  be removed with `removePersistentDomain(forName:)` when it ends, or it
-  stays in `~/Library/Preferences`.
+  opens a file by path. A test that needs a `UserDefaults` suite takes a
+  `TestDefaults` (`TestSupport.swift`), which deletes its plist when the
+  last reference goes; `removePersistentDomain(forName:)` alone leaves an
+  empty plist in `~/Library/Preferences`. A model whose defaults point at
+  the real home (`APIKeysModel`'s shell and rc files) gets a temp one too.
 - Fixtures and test data hold made-up figures and names: the repository
   is public.
 - A new dependency that sleeps or polls takes an injectable clock or a
