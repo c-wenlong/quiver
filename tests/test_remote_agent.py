@@ -727,6 +727,74 @@ class TestAgentRoutes(unittest.TestCase):
             {"op": "attach", "mode": "tmux"}, headers=self.srv.auth)
         self.assertEqual(status, 202)
 
+    def test_opening_a_satellite_chat_queues_one_tail_until_acked(self):
+        # Each GET of events/messages used to queue another tail, so a
+        # chat left open on an offline satellite filled its backlog.
+        self._push_catalog([{"key": "claude:r1", "status": "idle",
+                             "ownership": "observed"}])
+        self.srv.state.catalog.refresh()
+        key = "claude%3Ar1%40sat-m1"
+
+        def tails():
+            replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+            return [e for e in replay if e["data"]["op"] == "tail"]
+
+        for _ in range(3):
+            status, _ = self.srv.request(
+                "GET", f"/v1/sessions/{key}/messages",
+                headers=self.srv.auth)
+            self.assertEqual(status, 200)
+        self.assertEqual(len(tails()), 1)
+        # Once the satellite acks it, the next open may ask again.
+        self.srv.state._sat_result_acked(
+            self.mid, tails()[0]["data"]["command_id"])
+        self.srv.request("GET", f"/v1/sessions/{key}/messages",
+                         headers=self.srv.auth)
+        self.assertEqual(len(tails()), 2)
+
+    def test_concurrent_opens_queue_a_single_tail(self):
+        self._push_catalog([{"key": "claude:r2", "status": "idle",
+                             "ownership": "observed"}])
+        self.srv.state.catalog.refresh()
+        real_queue = self.srv.state.queue_command
+        gate = threading.Barrier(4)
+
+        def slow_queue(*a, **k):
+            # Widen the check-to-record window the race needs.
+            time.sleep(0.05)
+            return real_queue(*a, **k)
+
+        self.srv.state.queue_command = slow_queue
+
+        def open_():
+            gate.wait()
+            self.srv.state.queue_tail("sat-m1", "claude:r2@sat-m1", "idle")
+
+        threads = [threading.Thread(target=open_) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(
+            len([e for e in replay if e["data"]["op"] == "tail"]), 1)
+
+    def test_queue_tail_backlog_full_records_nothing(self):
+        # A refused queue (backlog full) must not mark a tail pending,
+        # or the next open would never ask again.
+        state = self.srv.state
+        with patch.object(state, "queue_command", return_value=None):
+            state.queue_tail("sat-m1", "claude:r3@sat-m1", "idle")
+        self.assertNotIn(("sat-m1", "claude:r3@sat-m1"), state._sat_tail_cmds)
+
+    def test_queue_tail_map_stays_bounded(self):
+        state = self.srv.state
+        state._sat_tail_cmds.update(
+            {("sat-m1", f"k{i}"): "c0" for i in range(4097)})
+        state.queue_tail("sat-m1", "claude:r4@sat-m1", "idle")
+        self.assertEqual(list(state._sat_tail_cmds),
+                         [("sat-m1", "claude:r4@sat-m1")])
+
     def test_launch_to_named_machine_queues(self):
         status, data = self.srv.request(
             "POST", "/v1/sessions",
