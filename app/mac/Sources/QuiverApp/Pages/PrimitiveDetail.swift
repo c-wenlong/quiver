@@ -163,19 +163,17 @@ struct ManifestCard: View {
     }
 
     /// Pull the form's fields back out of the document's current text.
+    /// Revert first: the form reads the file's text, not edits a refused
+    /// save left behind, and a revert after an outside change reloads it.
     private func read() {
         guard let document else { return }
+        document.revert()
         fields = PluginManifestFields(parsing: document.text)
         loaded = fields
-        document.revert()
         error = nil
     }
 
-    private func revert() {
-        fields = loaded
-        document?.revert()
-        error = nil
-    }
+    private func revert() { read() }
 
     private func save(overwrite: Bool) {
         guard let document else { return }
@@ -285,20 +283,18 @@ struct FrontmatterCard: View {
                 set: { if fields.wrappedValue.indices.contains(i) { fields.wrappedValue[i].value = $0 } })
     }
 
+    /// Revert first: the form reads the file's text, not edits a refused
+    /// save left behind, and a revert after an outside change reloads it.
     private func read() {
         guard let document else { return }
+        document.revert()
         fields = MarkdownFrontmatter(text: document.text)?.fields
             .map { ($0.key, $0.value) } ?? []
         loaded = fields
-        document.revert()
         error = nil
     }
 
-    private func revert() {
-        fields = loaded
-        document?.revert()
-        error = nil
-    }
+    private func revert() { read() }
 
     private func save(overwrite: Bool) {
         guard let document else { return }
