@@ -377,7 +377,7 @@ class TestSnapshotChangeGate(unittest.TestCase):
             self.assertEqual(src.poll(), [])
             self.assertEqual(len(reads), 1, "polls after the first trust the unchanged token")
             # A write moves the token: the next poll reads and emits it.
-            time.sleep(0.01)
+            # The size changes, so this needs no wait for a new mtime.
             self.store.write_text('{"more": true}')
             out = src.poll()
             self.assertEqual([m["text"] for m in out], ["c"])
@@ -1615,9 +1615,10 @@ class TestSweepStale(unittest.TestCase):
                 target=self.mgr.sweep_stale, args=(self.journal,),
                 kwargs={"now": self.now})
             t.start()
-            started.wait(2)
+            self.assertTrue(started.wait(2))
             self.mgr.ensure("claude:back", sess, "")
-            t.join()
+            t.join(5)
+            self.assertFalse(t.is_alive())
         # The ensure waited for the sweep: both files went first, and
         # the tailer started fresh, so recent history backfills (one
         # started on the doomed journal would skip to the end).
