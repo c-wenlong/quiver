@@ -412,6 +412,27 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(ModelMatcher.loadLinks(from: url) == ["my-proxy-model": "gpt-6-astra"])
     }
 
+    /// One hand-edited value that isn't a string skips only itself and
+    /// survives the next save; a file that isn't JSON is never replaced.
+    @Test func aBadLinksFileIsNeverSavedAway() throws {
+        let dir = try TempDir()
+        let url = dir.path("config/model-links.json")
+        try FileManager.default.createDirectory(at: dir.path("config"), withIntermediateDirectories: true)
+        try Data(#"{"a": "aa-1", "note": 3}"#.utf8).write(to: url)
+        #expect(ModelMatcher.loadLinks(from: url) == ["a": "aa-1"])
+        try ModelMatcher.saveLinks(["a": "aa-1", "b": "aa-2"], to: url)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        #expect(Set(object.keys) == ["a", "b", "note"])
+        #expect(object["note"] as? Int == 3)
+
+        let cut = Data(#"{"a": "aa-1", "b": "aa"#.utf8)
+        try cut.write(to: url)
+        #expect(ModelMatcher.loadLinks(from: url).isEmpty)
+        #expect(throws: (any Error).self) { try ModelMatcher.saveLinks(["c": "aa-3"], to: url) }
+        #expect(try Data(contentsOf: url) == cut)
+    }
+
     @Test func effortTiesTakeTheHigherIntelligence() {
         let models = [
             aa("Grok 4.7 (high)", slug: "grok-4-7-high", creator: "x-ai", intelligence: 40),
@@ -770,6 +791,20 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(model.unmatched.isEmpty)
         #expect(model.rows.first?.aa?.id == "opus")
         #expect(ModelMatcher.loadLinks(from: dir.path("config/model-links.json"))["my-alias"] == "opus")
+    }
+
+    /// A link added to the file by hand after the page loaded stays when
+    /// the page saves one of its own.
+    @Test func linkingKeepsALinkAddedToTheFileSinceLoad() async throws {
+        let dir = try TempDir()
+        try writeLLMs(dir, [entry("opus", "Claude Opus 5.5", "opus",
+                                 creator: "anthropic", intelligence: 58)])
+        let model = makeModel(dir: dir, slices: [slice("my-alias", "claude", tokens: 10)])
+        await model.load()
+        let url = dir.path("config/model-links.json")
+        try ModelMatcher.saveLinks(["by-hand": "opus"], to: url)
+        try model.link(logged: "my-alias", to: "opus")
+        #expect(ModelMatcher.loadLinks(from: url) == ["by-hand": "opus", "my-alias": "opus"])
     }
 
     @Test func noKeyKeepsTheEmptyStateAndMakesNoRequests() async throws {

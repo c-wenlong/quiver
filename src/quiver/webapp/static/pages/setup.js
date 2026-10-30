@@ -67,12 +67,11 @@ async function load(gen) {
   page.loading = false;
   if (gen !== routeGen) return false;
   if (status === 401) {
-    renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    renderGate();
     return false;
   }
   if (status !== 200 || !data) {
-    page.loadError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    page.loadError = failText(status, data);
     return true;
   }
   page.data = data;
@@ -153,8 +152,7 @@ async function apply() {
     // Harnesses page's copy so it reads them afresh, as the Mac app reloads.
     if (typeof harnessesPage !== "undefined") harnessesPage.data = null;
   } else {
-    page.applyError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    page.applyError = failText(status, data);
   }
 }
 
@@ -438,15 +436,14 @@ async function runInstall(id, via) {
   // result rather than a row still installing.
   const here = onPage();
   if (status === 401) {
-    if (here) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (here) renderGate();
     return;
   }
   if (status === 200 && data && data.setup) {
     page.data = data.setup;
     if (data.error) page.installErrors[id] = data.error;
   } else {
-    page.installErrors[id] = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    page.installErrors[id] = failText(status, data);
   }
   if (!here || !page.wizard) return;
   paint();

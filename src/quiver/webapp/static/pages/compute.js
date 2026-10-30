@@ -124,7 +124,7 @@ async function pollCompute(gen, refresh = false) {
   if (refresh) q.set("refresh", "1");
   const { status, data } = await api(`/v1/app/compute?${q}`);
   if (gen !== routeGen || mine !== p.seq) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
     if (!p.data) {
       pageError(computeHeader(false), status, data, () => renderCompute("compute", true));

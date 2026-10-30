@@ -527,7 +527,7 @@
       if (onDashboard()) renderDashboard(true);
       return;
     } else {
-      page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      page.pinError = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
     }
     if (onDashboard()) paintDashboard();
   }
@@ -561,7 +561,7 @@
       next = page.queuedOrder;
       page.queuedOrder = null;
       if (status !== 200 || !data) {
-        page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+        page.pinError = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
         next = null;
         page.mutating = null;
         page.pinGen++;
@@ -774,7 +774,7 @@
       if (onDashboard()) return renderDashboard();
       return;
     }
-    page.actionError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked."
+    page.actionError = status === 401 ? CREDENTIAL_REFUSED
       : GhUI.failMessage(status, data);
     repaintView();
   }
@@ -907,7 +907,7 @@
         if (data.repo !== f.repo) { location.hash = `#/repositories?repo=${encodeURIComponent(data.repo)}`; return; }
         return renderFocus(f.repo, true);
       }
-      u.error = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      u.error = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
       paintUnpinned();
     };
   }
@@ -1162,7 +1162,7 @@
     if (page.sheet !== s) return;
     s.merging = false;
     if (status === 401) {
-      s.mergeError = "The hub doesn't know this browser's credential. It may have been revoked.";
+      s.mergeError = CREDENTIAL_REFUSED;
     } else if (status !== 200 || !data) {
       s.mergeError = GhUI.failMessage(status, data);
       // A state refusal means the sheet is out of date: read the PR
@@ -1197,7 +1197,7 @@
     if (!d && !s.status) {
       content = loadingCard("Fetching the pull request…", false);
     } else if (s.status === 401) {
-      content = errorCard("The hub doesn't know this browser's credential. It may have been revoked.", false);
+      content = errorCard(CREDENTIAL_REFUSED, false);
     } else if (s.status !== 200 || !d) {
       content = errorCard(GhUI.failMessage(s.status, d), false, '<button type="button" class="gh-button" data-sheet-refresh>Refresh</button>');
     } else if (GhUI.envSetup(d.github)) {
@@ -1464,7 +1464,7 @@
       if (data.status === "ok") { a.results = data.results || []; a.source = data.source; a.error = null; }
       else a.error = data.error || data.status;
     } else {
-      a.error = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      a.error = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
     }
     paintAdd();
   }
@@ -1485,7 +1485,7 @@
       if (here === "repositories" && !GhUI.hashParams().get("repo")) renderDashboard();
       return;
     }
-    a.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+    a.pinError = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
     paintAdd();
   }
 
