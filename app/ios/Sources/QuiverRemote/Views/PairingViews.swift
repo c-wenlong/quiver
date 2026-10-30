@@ -300,9 +300,22 @@ struct BusyOverlay: View {
 /// phone sends, so a link someone else crafted must not do it unseen.
 struct PairOfferSheet: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.dynamicTypeSize) private var size
     let link: PairLink
 
     var body: some View {
+        // Scrolls only when the text size makes it taller than the sheet,
+        // which can then be pulled up to full height too.
+        ViewThatFits(in: .vertical) {
+            offer
+            ScrollView { offer }
+        }
+        .background(Theme.wash)
+        .presentationDetents(size > .large ? [.medium, .large] : [.medium])
+        .interactiveDismissDisabled(app.pairing.busy)
+    }
+
+    private var offer: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Pair with this hub?").font(Theme.sectionTitle).foregroundStyle(Theme.textPrimary)
             Card(padding: 0) {
@@ -344,9 +357,6 @@ struct PairOfferSheet: View {
         .padding(Theme.gutter)
         .padding(.top, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.wash)
-        .presentationDetents([.medium])
-        .interactiveDismissDisabled(app.pairing.busy)
     }
 }
 
