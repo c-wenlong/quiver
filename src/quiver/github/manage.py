@@ -301,16 +301,20 @@ def mirror_path(repo: str, home: Path | None = None) -> Path:
     return mirrors_dir(home) / (repo.replace("/", "__") + ".git")
 
 
-# One lock per mirror path: two first-time resolves of one repo (the hub
-# runs each on its own thread) must not clone into the same folder, nor
-# use it while the other is still cloning.
+# One lock per mirror path, the only table for it: two first-time
+# resolves of one repo (the hub runs each on its own thread) must not
+# clone into the same folder, nor use it while the other is still
+# cloning, and two PR checkouts must not interleave on its FETCH_HEAD.
+# Keyed lowercased: GitHub names are case-insensitive, and so is the
+# mirror folder on a default macOS volume.
 _MIRROR_LOCKS: dict[str, threading.RLock] = {}
 _MIRROR_LOCKS_GUARD = threading.Lock()
 
 
 def _mirror_lock(mirror: Path) -> threading.RLock:
     with _MIRROR_LOCKS_GUARD:
-        return _MIRROR_LOCKS.setdefault(str(mirror), threading.RLock())
+        return _MIRROR_LOCKS.setdefault(str(mirror).lower(),
+                                        threading.RLock())
 
 
 def _ensure_mirror(repo: str,
@@ -347,7 +351,18 @@ def pr_worktree(repo: str, number: str, home: Path | None = None) -> gh.GhResult
     PRs need no fork remote. Asking again fetches the head and returns
     the existing checkout. ``data`` is ``{"path", "head", "created"}``;
     a failure's ``error`` names the step ("Clone failed: …").
+
+    The whole call holds the mirror's lock: two PRs of one repo share
+    its FETCH_HEAD, so a second fetch landing between this one's fetch
+    and checkout would hand it the wrong head. A second caller waits,
+    then reuses the mirror (and the checkout, for the same PR).
     """
+    with _mirror_lock(mirror_path(repo, home)):
+        return _pr_worktree_locked(repo, number, home)
+
+
+def _pr_worktree_locked(repo: str, number: str,
+                        home: Path | None) -> gh.GhResult:
     mirror, failed = _ensure_mirror(repo, home)
     if failed is not None:
         return failed

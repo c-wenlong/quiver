@@ -130,27 +130,6 @@ CACHE = TtlCache()
 # set for the same reason.
 WRITE_LOCK = threading.Lock()
 
-# One checkout at a time per repo mirror, ``(home, repo)``, shared by
-# every caller of ``manage.pr_worktree`` (the Repositories page's
-# worktree action and ``POST /v1/pulls/<o>/<r>/<n>/open``): two PRs of
-# one repo share its mirror and its FETCH_HEAD, so a second fetch
-# landing between the first's fetch and checkout would hand it the
-# wrong head. A clone can take minutes, so these are not WRITE_LOCK;
-# a second caller waits for the first, then reuses its mirror (and its
-# checkout, for the same PR).
-_MIRROR_LOCKS: dict = {}
-_MIRROR_LOCKS_GUARD = threading.Lock()
-
-
-def mirror_lock(home: Path | None, repo: str) -> threading.Lock:
-    """The ``(home, repo)`` checkout lock: hold it over a whole
-    ``manage.pr_worktree`` call so one repo's FETCH_HEAD can't move
-    mid-checkout."""
-    with _MIRROR_LOCKS_GUARD:
-        return _MIRROR_LOCKS.setdefault(
-            (home_key(home), repo.lower()), threading.Lock())
-
-
 def flag(args: dict, name: str) -> bool:
     return str(args.get(name) or "") in {"1", "true"}
 
