@@ -1738,6 +1738,8 @@ def cmd_doctor(args):
         else:
             print(c("red", message))
         return 1
+    from quiver.harness.path_health import is_dir_on_path
+
     home = Path.home()
     probe = _doctor_probe(home)
     tools, env, nvm_dirs = probe.tools, probe.env, probe.nvm_dirs
