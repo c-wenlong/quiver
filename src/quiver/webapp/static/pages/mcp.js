@@ -154,29 +154,15 @@ function mcpGrouped(servers, folders) {
   return { local, remote };
 }
 
-/* HarnessMark: the logo, and a word after it (or alone with no logo). */
-function mcpMark(h) {
-  const has = (id) => Fmt.logo(id).startsWith("<img");
-  const special = { claude: ["claude", "CLI"], "claude-desktop": ["claude", "Desktop"], "devin-cloud": ["devin", "Cloud"] };
-  let logoId = null, word = null, name = Fmt.harnessName(h);
-  if (special[h]) [logoId, word] = special[h];
-  else if (has(h)) logoId = h;
-  else {
-    const dash = h.lastIndexOf("-");
-    const base = dash > 0 ? h.slice(0, dash) : "", suffix = dash > 0 ? h.slice(dash + 1) : "";
-    if (suffix && has(base)) { logoId = base; word = suffix; name = `${Fmt.harnessName(base)} (${suffix})`; }
-    else word = name;
-  }
-  return { logoId, word, name };
-}
-
+/* HarnessMark (Fmt.mark): the logo, and a word after it (or alone with
+ * no logo). */
 function mcpMarkHtml(h) {
-  const m = mcpMark(h);
-  return `<span class="mcp-mark" title="${esc(m.name)}">${m.logoId ? Fmt.logo(m.logoId) : ""}${
+  const m = Fmt.mark(h);
+  return `<span class="mcp-mark" title="${esc(m.name)}">${m.icon ? Fmt.logo(m.icon) : ""}${
     m.word ? `<span>${esc(m.word)}</span>` : ""}</span>`;
 }
 
-const mcpNames = (list) => list.map((h) => mcpMark(h).name).join(", ");
+const mcpNames = (list) => list.map((h) => Fmt.mark(h).name).join(", ");
 
 /* ---------------------------------------------------------------- paint */
 
@@ -277,7 +263,7 @@ function mcpRepoSection(folders) {
 
 function mcpChips(harnesses) {
   return `<div class="mcp-chips"><span class="caption">Compare</span>${harnesses.map((h) => {
-    const on = !mcpPage.hidden.has(h), name = mcpMark(h).name;
+    const on = !mcpPage.hidden.has(h), name = Fmt.mark(h).name;
     return `<button class="mcp-chip${on ? " on" : ""}" data-mcp-chip="${esc(h)}" aria-pressed="${on}"
       title="${esc(on ? `Leave ${name} out of the comparison` : `Compare ${name} too`)}">${on ? mcpSvg("check", "tick") : ""}${mcpMarkHtml(h)}</button>`;
   }).join("")}</div>`;
@@ -334,7 +320,7 @@ function mcpServerRow(s, folders, harnesses, showHealth) {
   }
   const cells = harnesses.map((h) => {
     const g = mcpGroupOf(s, h);
-    if (g < 0) return `<td class="mcp-cell"><span class="mcp-absent" title="${esc(`Not in ${mcpMark(h).name}`)}">—</span></td>`;
+    if (g < 0) return `<td class="mcp-cell"><span class="mcp-absent" title="${esc(`Not in ${Fmt.mark(h).name}`)}">—</span></td>`;
     if (differs) {
       return `<td class="mcp-cell"><span class="mcp-letter${g === 0 ? "" : " other"}" title="Definition ${mcpLetter(g)}">${mcpLetter(g)}</span></td>`;
     }
@@ -420,7 +406,7 @@ function mcpSyncTargets(s, source, harnesses) {
   return { missing, differing };
 }
 
-const mcpSourceName = (src) => (src === "quiver" ? "Quiver hub" : mcpMark(src).name);
+const mcpSourceName = (src) => (src === "quiver" ? "Quiver hub" : Fmt.mark(src).name);
 
 /* McpSyncReport.sentence: "Added to cursor and cline. Updated codex." */
 function mcpSentence(report) {
@@ -703,7 +689,7 @@ const mcpRemovePlaces = (s) => [...s.harnesses, ...(s.in_hub ? ["quiver"] : [])]
 function mcpRemoveConfirm(s) {
   const places = mcpRemovePlaces(s);
   const where = (mcpPage.data && mcpPage.data.machine) || "the hub";
-  const names = places.map((p) => (p === "quiver" ? "Quiver hub" : mcpMark(p).name)).join(", ");
+  const names = places.map((p) => (p === "quiver" ? "Quiver hub" : Fmt.mark(p).name)).join(", ");
   return `<div class="mcp-confirm mcp-remove-confirm" role="group" aria-label="Remove ${esc(s.name)}?">
     <p>Remove ${esc(s.name)}? It goes from ${esc(names)} on ${esc(where)}.</p>
     <pre class="command">swe mcp remove ${esc(mcpShellQuote(s.name))} --from=${esc(mcpShellQuote(places.join(",")))}</pre>
@@ -735,7 +721,7 @@ async function mcpRemove(s) {
   const sheet = document.getElementById("mcp-sheet");
   if (sheet && sheet.open && sheet.dataset.server === s.name) sheet.close();
   if (mcpPage.sheet === st) mcpPage.sheet = null;
-  mcpPage.notice = `Removed ${s.name} from ${data.removed.map((p) => (p === "quiver" ? "Quiver hub" : mcpMark(p).name)).join(", ")}.`;
+  mcpPage.notice = `Removed ${s.name} from ${data.removed.map((p) => (p === "quiver" ? "Quiver hub" : Fmt.mark(p).name)).join(", ")}.`;
   mcpAdopt(data.page);
   if (mcpOnPage()) paintMcp();
 }
@@ -759,7 +745,7 @@ function mcpPlanHtml(plan, done) {
     return bits.length ? `<div class="mcp-plan-line"><span class="caption">${word}</span><span class="mcp-keys">${bits.join("")}</span></div>` : "";
   };
   const rows = plan.harnesses.map((h) => {
-    const mark = mcpMark(h.harness);
+    const mark = Fmt.mark(h.harness);
     const label = {
       add: done ? "Added" : "Gains it",
       replace: done ? "Replaced" : "Replaces its own definition",
@@ -800,7 +786,7 @@ function mcpConfirmHtml(s, st) {
   return `<div class="mcp-confirm" role="group" aria-label="Confirm sync">
     <p class="mcp-confirm-title">${replacing.length ? "Replace their definitions?" : `Write ${n === 1 ? "this file" : `these ${n} files`}?`}</p>
     <p class="caption">Sync writes ${n === 1 ? "this file" : `these ${n} files`}${mcpPage.data.machine ? ` on ${esc(mcpPage.data.machine)}` : ""}:</p>
-    <ul class="mcp-confirm-files">${writes.map((h) => `<li><code>${esc(h.path)}</code><span class="caption">${esc(mcpMark(h.harness).name)}: ${
+    <ul class="mcp-confirm-files">${writes.map((h) => `<li><code>${esc(h.path)}</code><span class="caption">${esc(Fmt.mark(h.harness).name)}: ${
       h.outcome === "replace" ? `replaces its own ${esc(s.name)}` : `adds ${esc(s.name)}`}${h.creates ? ", creates the file" : ""}</span></li>`).join("")}</ul>
     ${replacing.length ? `<p class="caption">${esc(mcpNames(replacing))} will get ${esc(mcpSourceName(st.source))}'s definition of ${esc(s.name)} instead of their own.</p>` : ""}
     <div class="sheet-actions">
@@ -820,8 +806,8 @@ function mcpOpenSheet(s) {
   const groups = mcpGroups(s);
   const fact = (label, value) => `<div class="field-row"><span class="caption">${esc(label)}</span><span>${value}</span></div>`;
   const marks = (list) => `<span class="mcp-marks">${list.map((h) => {
-    const m = mcpMark(h);
-    return `<span class="mcp-mark">${m.logoId ? Fmt.logo(m.logoId) : ""}<span>${esc(m.name)}</span></span>`;
+    const m = Fmt.mark(h);
+    return `<span class="mcp-mark">${m.icon ? Fmt.logo(m.icon) : ""}<span>${esc(m.name)}</span></span>`;
   }).join("")}</span>`;
   const health = s.health
     ? `${mcpHealthDot(s)}<span class="caption">${esc(s.detail || "Healthy")}</span>` : "";
@@ -853,9 +839,9 @@ function mcpOpenSheet(s) {
       form += `<p class="caption">${st.source === "quiver" ? "Every harness already has this server." : "Every harness already has this definition."}</p>`;
     }
     const toggle = (h, replaces) => {
-      const m = mcpMark(h);
+      const m = Fmt.mark(h);
       const label = replaces ? `${m.name}, replaces its own definition` : m.name;
-      return `<label class="mcp-target">${m.logoId ? Fmt.logo(m.logoId) : `<span class="mcp-logo-gap"></span>`}<span class="mcp-target-name">${esc(m.name)}</span>${
+      return `<label class="mcp-target">${m.icon ? Fmt.logo(m.icon) : `<span class="mcp-logo-gap"></span>`}<span class="mcp-target-name">${esc(m.name)}</span>${
         replaces ? `<span class="caption">replaces its own definition</span>` : ""}<input type="checkbox" class="mcp-switch" role="switch" data-mcp-target="${esc(h)}"${
         replaces ? ` data-replaces="1"` : ""} aria-label="${esc(label)}"${st.chosen.has(h) ? " checked" : ""}${st.running || st.done ? " disabled" : ""}></label>`;
     };
@@ -1137,16 +1123,16 @@ function mcpAddHtml() {
       <div class="mcp-add-picker-top"><button type="button" class="mcp-sheet-button" data-mcp-add-all="active">All active</button>
         <button type="button" class="mcp-sheet-button" data-mcp-add-all="none">None</button></div>
       ${d.harnesses.map((h) => {
-        const m = mcpMark(h);
+        const m = Fmt.mark(h);
         const why = mcpAddWhyNot(a, h);
-        return `<label class="mcp-target">${m.logoId ? Fmt.logo(m.logoId) : `<span class="mcp-logo-gap"></span>`}<span class="mcp-target-name">${esc(m.name)}</span>
+        return `<label class="mcp-target">${m.icon ? Fmt.logo(m.icon) : `<span class="mcp-logo-gap"></span>`}<span class="mcp-target-name">${esc(m.name)}</span>
           ${why ? `<span class="caption">${esc(why)}</span>` : ""}
           <span class="mcp-spacer"></span><input type="checkbox" class="mcp-switch" role="switch" data-mcp-add-target="${esc(h)}" aria-label="${esc(m.name)}"${
             a.targets.has(h) && !why ? " checked" : ""}${dis || why ? " disabled" : ""}></label>`;
       }).join("")}</div>` : "";
   const left = d.harnesses.filter((h) => mcpAddWhyNot(a, h));
   const leftNote = left.length && !a.picking
-    ? `<p class="caption warn">${esc(left.map((h) => `${mcpMark(h).name}: ${mcpAddWhyNot(a, h)}`).join(" · "))}</p>` : "";
+    ? `<p class="caption warn">${esc(left.map((h) => `${Fmt.mark(h).name}: ${mcpAddWhyNot(a, h)}`).join(" · "))}</p>` : "";
   const placesHtml = `<hr class="mcp-rule"><div class="card-title">Where</div>
     <div class="mcp-add-where"><div><div>Add to</div><div class="caption">Always saved to the Quiver hub too</div></div>
       <button type="button" class="field mcp-add-face" id="mcp-add-pick" aria-expanded="${a.picking}"${dis}>${esc(face)} ${mcpSvg(a.picking ? "up" : "down")}</button></div>
@@ -1339,7 +1325,7 @@ async function mcpAdd() {
     mcpPage.add = null;
     if (sheet && sheet.open) sheet.close();
   }
-  const places = ["Quiver hub", ...data.targets.map((t) => mcpMark(t.name).name)];
+  const places = ["Quiver hub", ...data.targets.map((t) => Fmt.mark(t.name).name)];
   mcpPage.notice = `${data.hub === "replaced" ? "Replaced" : "Added"} ${data.name} in ${places.join(", ")}.`;
   mcpAdopt(data.page);
   if (mcpOnPage()) paintMcp();

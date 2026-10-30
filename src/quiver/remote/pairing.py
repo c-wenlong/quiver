@@ -621,15 +621,34 @@ def request_pair(
     }
 
 
+def _load_live_requests(home_path: Path | None, now: float) -> list[dict]:
+    """The request rows, with expired ones dropped from disk too — an
+    approved row's plaintext credential leaves with its row. Caller
+    holds ``_state_lock``."""
+    rows = _load_requests(home_path)
+    kept = _prune_requests(rows, now)
+    if len(kept) != len(rows):
+        _save_requests(home_path, kept)
+    return kept
+
+
+def prune_requests(home: Path | str | None = None) -> None:
+    """Drop expired request rows. The hub runs this on a timer so an
+    approved credential the phone never collected doesn't sit in
+    pair_requests.json until some other pairing call happens by."""
+    home_path = Path(home) if home is not None else None
+    if not requests_file(home_path).exists():
+        return
+    with _state_lock(home_path):
+        _load_live_requests(home_path, time.time())
+
+
 def list_requests(home: Path | str | None = None) -> list[dict]:
     """Pending, unexpired requests — never codes or secrets."""
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         now = time.time()
-        rows = _load_requests(home_path)
-        kept = _prune_requests(rows, now)
-        if len(kept) != len(rows):
-            _save_requests(home_path, kept)
+        kept = _load_live_requests(home_path, now)
     return [
         {
             "request_id": r["request_id"],
@@ -655,6 +674,20 @@ def approve_request(
     with _state_lock(home_path):
         now = time.time()
         rows = _prune_requests(_load_requests(home_path), now)
+        pending = [r for r in rows if r.get("status") == "pending"]
+        if request_id is None and pending and not any(
+            hmac.compare_digest(str(r.get("code") or ""), str(code))
+            for r in pending
+        ):
+            # A code with no request id is checked against every pending
+            # row, so a miss is a strike against each: otherwise guessing
+            # without an id would never hit the five-strike limit.
+            for row in pending:
+                row["attempts"] = row.get("attempts", 0) + 1
+                if row["attempts"] >= MAX_CODE_ATTEMPTS:
+                    row["status"] = "denied"
+            _save_requests(home_path, rows)
+            return None
         for row in rows:
             if row.get("status") != "pending":
                 continue
@@ -729,7 +762,7 @@ def poll_request(
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         now = time.time()
-        rows = _load_requests(home_path)
+        rows = _load_live_requests(home_path, now)
         for i, row in enumerate(rows):
             if row.get("request_id") != request_id:
                 continue
