@@ -39,8 +39,11 @@ struct McpAddServerSheet: View {
     @State private var showToken = false
     @State private var variables: [Variable] = [Variable()]
     @State private var targets: Set<String> = []
-    /// "Add to" took its defaults: once, when the inventory is first there.
+    /// "Add to" took its defaults: once, when an inventory is first there.
     @State private var seeded = false
+    /// The last inventory the model loaded, kept through a refresh that
+    /// fails: the Replace gate must not lose the existing servers.
+    @State private var known: McpInventory?
     @State private var force = false
     @State private var working = false
     @State private var error: String?
@@ -48,10 +51,11 @@ struct McpAddServerSheet: View {
     /// Read live from the MCP model, not handed in when the sheet opens: a
     /// card's body doesn't follow its presenter's later state, so a sheet
     /// opened while the page was still loading kept "0 of 0 harnesses".
-    private var inventory: McpInventory? {
+    private var live: McpInventory? {
         if case .loaded(let inventory) = app.mcp.state { return inventory }
         return nil
     }
+    private var inventory: McpInventory? { live ?? known }
     private var harnesses: [String] { inventory?.harnesses ?? [] }
     /// The harnesses the grid compares: the "Add to" defaults.
     private var active: [String] {
@@ -115,10 +119,14 @@ struct McpAddServerSheet: View {
         }
         .sheetScaffold(width: 640)
         .background(Theme.panel)
-        .onChange(of: active, initial: true) { _, active in
-            guard !seeded, !active.isEmpty else { return }
+        .onChange(of: live, initial: true) { _, live in
+            guard let live else { return }
+            known = live
+            // Defaults once, from the first inventory there, even one with
+            // nothing active; never over a choice already made.
+            guard !seeded else { return }
             seeded = true
-            targets = Set(active)
+            if targets.isEmpty { targets = Set(active) }
         }
     }
 
