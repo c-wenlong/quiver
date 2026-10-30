@@ -27,7 +27,6 @@ from datetime import date, datetime, timedelta, tzinfo
 from pathlib import Path
 
 from quiver.ledger.overview import Priced, zone
-from quiver.ledger.sessions import by_session
 from quiver.paths import data_dir_for, quiver_dir_for
 from quiver.remote import catalog as catalog_mod
 from quiver.sessions.parsers import codex_thread_id
@@ -493,7 +492,7 @@ def get(ctx, args: dict) -> dict:
         priced = Priced(store, catalog, tz)
         rows = store.activity_events(render_start - LOOKOUT_S, render_end + LOOKOUT_S,
                                      list(CALENDAR_HARNESSES))
-        usage = by_session(store, catalog)
+        usage = ctx.state.webapp.session_usage()
         scanned_at = store.meta("scanned_at")
     pieces = [p for p in session_pieces(rows, priced)
               if is_real(p["harness"], usage.get((p["harness"], p["session"])))]

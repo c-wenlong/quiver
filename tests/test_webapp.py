@@ -77,6 +77,27 @@ APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestSessionUsage(unittest.TestCase):
+    """by_session groups the whole ledger: once per scan and price list."""
+
+    def test_reused_until_the_next_scan_or_prices(self):
+        from unittest.mock import patch
+
+        from quiver.webapp import api
+
+        app = WebApp(None, download_prices=False)
+        app._store, app._catalog, app._scanned_at = object(), object(), 1.0
+        with patch.object(api, "by_session", side_effect=lambda s, c: {}) as grp:
+            app.session_usage()
+            app.session_usage()
+            self.assertEqual(grp.call_count, 1)
+            app._scanned_at = 2.0
+            app.session_usage()
+            app._catalog = object()
+            app.session_usage()
+            self.assertEqual(grp.call_count, 3)
+
+
 class TestSetupOffer(unittest.TestCase):
     """app.js's first-run offer, run under node with the browser stubbed:
     each case is a fresh page load at ``hash``."""

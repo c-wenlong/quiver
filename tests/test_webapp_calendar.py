@@ -307,7 +307,7 @@ class TestRoute(HubBase):
         self.assertEqual(status, 200, data)
 
     def test_an_unreadable_ledger_is_a_503(self):
-        with patch("quiver.webapp.pages.calendar.by_session", side_effect=OSError("disk gone")):
+        with patch("quiver.webapp.api.by_session", side_effect=OSError("disk gone")):
             status, _ = self.srv.request("GET", "/v1/app/calendar", headers=self.auth())
         self.assertEqual(status, 503)
 
