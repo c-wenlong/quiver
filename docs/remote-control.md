@@ -1199,9 +1199,12 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
 - Pairing: the phone posts `POST /v1/pair/request`; the hub resolves
   its Tailscale node with `tailscale whois <peer ip>` and hands back a
   6-digit code + a poll secret. A second device — or the hub's own
-  shell — approves it (`swe remote devices --approve=<code>`, the
-  web app's Settings › Integrations › Remote on another browser, or
-  any already-paired device). Approving mints a stored credential in
+  shell — approves it (`swe remote devices --approve=<code>`, the Mac
+  app's Settings › Integrations › Remote › Pending requests when the
+  hub runs on that Mac, the web app's Settings › Integrations › Remote
+  on another browser, or any already-paired device). `--request-id=<id>`
+  holds a CLI code to one request, as the HTTP route's `request_id`
+  does; the Mac app always sends it. Approving mints a stored credential in
   `devices.json`
   (0600), revocable per device — Trusted Devices minus biometrics. A
   device can't approve its own request; five wrong codes deny it. The
