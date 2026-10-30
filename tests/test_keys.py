@@ -198,6 +198,40 @@ class LayeringTest(unittest.TestCase):
                 self.assertNotIn("quiver", stripped, line)
 
 
+class ChecklistWindowTest(unittest.TestCase):
+    """A sync picker can list forty servers: drawn whole, it outgrows the
+    terminal, which scrolls, and the next redraw's rewind lands short."""
+
+    def _draw(self, cursor, n=40, height=10):
+        import io
+        from contextlib import redirect_stdout
+        from quiver import multiselect
+        from quiver.console import strip_ansi
+
+        rows = [multiselect.Choice(f"s{i}", f"s{i}") for i in range(n)]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            drawn = multiselect._render(rows, set(), cursor, "T", 0, height)
+        return drawn, strip_ansi(buf.getvalue())
+
+    def test_a_long_list_draws_only_the_window(self):
+        drawn, text = self._draw(0)
+        # title + 10 rows + range line + footer, and exactly that many lines
+        self.assertEqual(drawn, 13)
+        self.assertEqual(text.count("\r\n"), drawn)
+        self.assertIn("1–10 of 40", text)
+
+    def test_the_window_follows_the_cursor(self):
+        _, text = self._draw(38)
+        self.assertIn(" s38 ", text)
+        self.assertNotIn(" s0 ", text)
+
+    def test_a_short_list_is_drawn_whole(self):
+        drawn, text = self._draw(0, n=3)
+        self.assertEqual(drawn, 5)
+        self.assertNotIn(" of ", text)
+
+
 class WidgetCancelTest(unittest.TestCase):
     """A bare Esc cancels both checklist widgets, same as q and Ctrl-C.
 
