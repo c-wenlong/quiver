@@ -53,7 +53,8 @@ final class AppModel {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refresh()
+                // Nil once the model is gone: the loop ends with it.
+                guard await self?.refresh() != nil else { return }
                 try? await Task.sleep(for: .seconds(15))
             }
         }
@@ -91,12 +92,15 @@ final class AppModel {
             connection = .online
             loadError = nil
         } catch let error as HubError {
-            guard hub == pairedAtStart else { return }
+            // Cancelled (the app left the screen, or another hub went on
+            // it): URLSession's cancel arrives as a network error, which
+            // would flash "Can't reach the hub" for a hub that's fine.
+            guard hub == pairedAtStart, !Task.isCancelled else { return }
             if error.isUnauthorized { unpair(from: client); return }
             connection = .offline
             loadError = error.message
         } catch {
-            guard hub == pairedAtStart else { return }
+            guard hub == pairedAtStart, !Task.isCancelled else { return }
             connection = .offline
         }
         loadedOnce = true
