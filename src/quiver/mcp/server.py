@@ -47,40 +47,9 @@ def get_recent_sessions(limit: int = 10, agent: str = None, directory_path: str 
 
     snippets: dict[str, str] = {}
     if search:
-        search_ids = None
-        home = Path.home()
-        if search_index.available(home):
-            hits = search_index.search(
-                home,
-                search,
-                limit=max(limit, search_index.DEFAULT_LIMIT),
-                agents=search_index.tool_names_for(agent),
-            )
-            if hits:
-                search_ids = {h.session_id for h in hits if h.session_id}
-                hit_by_key = {
-                    key: h
-                    for h in hits
-                    for key in search_index.match_keys(h.session_id)
-                }
-                for s in sessions:
-                    if not s.session_id:
-                        continue
-                    hit = next(
-                        (
-                            hit_by_key[k]
-                            for k in search_index.match_keys(s.session_id)
-                            if k in hit_by_key
-                        ),
-                        None,
-                    )
-                    if hit is not None:
-                        search_ids.add(s.session_id)
-                        snippets[s.session_id] = hit.snippet
-                sessions.extend(search_index.resolve_hit_sessions(hits, sessions))
-                for h in hits:
-                    if h.session_id:
-                        snippets.setdefault(h.session_id, h.snippet)
+        search_ids, best = search_index.merge_hits(
+            Path.home(), search, sessions, limit=limit, agent_filter=agent)
+        snippets = {sid: hit.snippet for sid, hit in best.items()}
         sessions = SessionQuery(
             search=search,
             search_ids=frozenset(search_ids) if search_ids else None,
