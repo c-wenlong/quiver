@@ -816,7 +816,9 @@
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the other pages do.
       if (!page.data) {
-        return pageError(pageHeader("Tasks", "The issues and pull requests your agents are on."),
+        // The error says "then refresh", so the header carries the button.
+        return pageError(pageHeader("Tasks", "The issues and pull requests your agents are on.",
+          `<button class="icon-button" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>`),
           status, data, () => load(true));
       }
       page.error = GhUI.failMessage(status, data);
