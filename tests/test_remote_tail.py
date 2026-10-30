@@ -1643,6 +1643,11 @@ class TestApprovalWatcher(unittest.TestCase):
         # Only the key matters to the watcher; no transcript needed.
         self.mgr.tailers["k1"] = object()
         self._t = time.time()
+        # The watcher records pending prompts in supervise's module-level
+        # dict: start empty and leave nothing for later tests.
+        p = patch.dict(tail.supervise._PENDING_APPROVALS, clear=True)
+        p.start()
+        self.addCleanup(p.stop)
 
     def _poll(self, pane="", meta=None):
         # Each call lands past the PANE_APPROVAL_S throttle window.
