@@ -70,6 +70,23 @@ private struct NoHTTP: HTTPTransport {
         }
     }
 
+    /// Tightening only takes access away: a file its owner locked stays
+    /// locked (a store must still fail to read it, not overwrite it), and
+    /// a read-only one stays read-only.
+    @Test func tighteningNeverAddsAccess() throws {
+        let dir = try TempDir()
+        let folder = dir.path("private")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for (before, after) in [(0o000, 0o000), (0o400, 0o400), (0o644, 0o600), (0o640, 0o600), (0o604, 0o600)] {
+            let file = folder.appending(path: "f\(before)")
+            try Data("x".utf8).write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: before], ofItemAtPath: file.path)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+            PrivateFile.tighten(file)
+            #expect(try Self.mode(file) == after, "\(String(before, radix: 8))")
+        }
+    }
+
     /// An old loose file is tightened when its store opens, not only at
     /// the next save.
     @Test func storesTightenOldFilesWhenTheyOpen() async throws {
