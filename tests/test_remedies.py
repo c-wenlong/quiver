@@ -62,13 +62,25 @@ class RemedyTableTest(unittest.TestCase):
 class AccountRemedyTest(unittest.TestCase):
     def test_a_login_fix_targets_the_accounts_own_files(self):
         devin = remedy_for_account("devin", SIGNED_OUT, "/acct")
-        self.assertEqual(devin["command"], 'XDG_DATA_HOME="/acct" devin auth login')
+        self.assertEqual(devin["command"], "XDG_DATA_HOME=/acct devin auth login")
         self.assertIn("isn't signed in", devin["summary"])
         stale = remedy_for_account("devin", AUTH_REQUIRED, "/acct")
         self.assertIn("rejected", stale["summary"])
         cursor = remedy_for_account("cursor", AUTH_REQUIRED, "/acct")
         self.assertEqual(cursor["kind"], "open-app")
-        self.assertIn('--user-data-dir="/acct"', cursor["command"])
+        self.assertIn("--user-data-dir=/acct", cursor["command"])
+
+    def test_the_account_dir_is_shell_quoted(self):
+        """Interpolated inside double quotes, a `"` ended the string and a
+        `$(...)` or backtick in the path ran when the command did."""
+        import shlex
+
+        hostile = '/acct/it"s $(touch x) `id`'
+        for name in ("devin", "cursor"):
+            with self.subTest(harness=name):
+                command = remedy_for_account(name, SIGNED_OUT, hostile)["command"]
+                words = shlex.split(command)
+                self.assertTrue(any(w.endswith("=" + hostile) for w in words), words)
 
     def test_an_outage_or_permission_keeps_the_generic_fix(self):
         for name in ("devin", "cursor"):

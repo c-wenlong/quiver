@@ -1391,6 +1391,43 @@ class CodexFetcherTest(unittest.TestCase):
                 self.assertEqual(info.plan_type, "plus")
                 self.assertEqual(info.window_seconds, 604800)
 
+    def test_fetch_codex_coerces_malformed_numbers(self):
+        """A string percent reached the table renderer as is and raised
+        TypeError out of `swe list`; a "false" string read as a reached
+        limit. Codex now coerces like every other fetcher."""
+        from quiver.harness.rate_limits import _fetch_codex
+
+        auth_data = {"tokens": {"access_token": "fake-token"}}
+        cases = [
+            ({"limit_reached": "false", "primary_window": {
+                "used_percent": "45.6", "limit_window_seconds": "604800"}},
+             (46, False, 604800)),
+            ({"limit_reached": True, "primary_window": {
+                "used_percent": 250, "limit_window_seconds": None}},
+             (100, True, 0)),
+            ({"primary_window": {"used_percent": "n/a", "limit_window_seconds": -5}},
+             (0, False, 0)),
+            ({"primary_window": ["not", "a", "dict"]}, (0, False, 0)),
+        ]
+        for rate_limit, (used, reached, seconds) in cases:
+            body = {"plan_type": ["x"], "rate_limit": rate_limit}
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps(body).encode()
+            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            with self.subTest(rate_limit=rate_limit), tempfile.TemporaryDirectory() as tmp:
+                auth_path = Path(tmp) / "auth.json"
+                auth_path.write_text(json.dumps(auth_data))
+                with patch("quiver.harness.rate_limits.os.path.expanduser",
+                           side_effect=lambda p: str(auth_path) if p == "~/.codex/auth.json" else p), \
+                     patch("quiver.harness.rate_limits.urllib.request.urlopen",
+                           return_value=mock_resp):
+                    info = _fetch_codex()
+                self.assertEqual((info.used_percent, info.limit_reached, info.window_seconds),
+                                 (used, reached, seconds))
+                self.assertEqual(info.plan_type, "—")
+                info.format_column()          # renders without raising
+
     def test_fetch_codex_reads_the_email_off_the_id_token(self):
         """The sign-in's address is an ``id_token`` claim, as the app
         reads it; a missing or un-JWT id_token just means no email."""
