@@ -39,8 +39,10 @@ Addr = tuple[str, int]
 _NETSTAT = "/usr/sbin/netstat"
 _PS = "/bin/ps"
 _TAILSCALE_APP = "/Applications/Tailscale.app"
-# ``process:pid``, the last colon before the digits; the name can hold
-# spaces, so only the token holding the colon is read.
+# ``process:pid``: the digits after the last colon of a token. The name
+# is the process's own choice and can hold spaces and ``:digits`` of its
+# own (``x:1 y`` prints as ``x:1 y:<pid>``), so only the last such token
+# on the line is the pid; the columns after it hold no colons.
 _PROC_PID = re.compile(r".*:(\d+)")
 
 
@@ -135,11 +137,10 @@ def netstat_pid(server: Addr, peer: Addr, text: str) -> int | None:
         local, foreign = _bsd_addr(fields[3]), _bsd_addr(fields[4])
         if not (local and foreign and _same(local, peer) and _same(foreign, server)):
             continue
-        for tok in fields[6:]:
-            if ":" in tok:
-                m = _PROC_PID.fullmatch(tok)
-                if m:
-                    return int(m.group(1))
+        for tok in reversed(fields[6:]):
+            m = _PROC_PID.fullmatch(tok)
+            if m:
+                return int(m.group(1))
         return None
     return None
 

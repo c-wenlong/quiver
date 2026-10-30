@@ -237,6 +237,8 @@ Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)      
 tcp4       0      0  127.0.0.1.8477         127.0.0.1.53757        ESTABLISHED         1038          368  407872  146988       python3.13:7001  00102 00000004 0000000000091e65 00000080 01002800      2      0 000000
 tcp4       0      0  127.0.0.1.53757        127.0.0.1.8477         ESTABLISHED          840          493  408000  146988 io.tailscale.ipn:1645   00182 00000008 0000000000091e64 00000080 04000900      2      0 000000
 tcp4       0      0  127.0.0.1.53760        127.0.0.1.8477         ESTABLISHED          840          493  408000  146988 Google Chrome He:812   00182 00000008 0000000000091e64 00000080 04000900      2      0 000000
+tcp4       0      0  127.0.0.1.53761        127.0.0.1.8477         ESTABLISHED          840          493  408000  146988            x:1 y:813   00182 00000008 0000000000091e64 00000080 04000900      2      0 000000
+tcp4       0      0  127.0.0.1.53762        127.0.0.1.8477         ESTABLISHED          840          493  408000  146988             z:1:814   00182 00000008 0000000000091e64 00000080 04000900      2      0 000000
 tcp6       0      0  ::1.53770              ::1.8477               ESTABLISHED          840          493  408000  146988 io.tailscale.ipn:1645   00182 00000008 0000000000091e64 00000080 04000900      2      0 000000
 tcp4       0      0  127.0.0.1.8477         *.*                    LISTEN                 0            0  131072  131072       python3.13:7001  00000 00000006 00000000000872ec 00000000 00002800      1      0 000000
 """
@@ -249,6 +251,10 @@ class TestDarwin(unittest.TestCase):
         self.assertEqual(peer.netstat_pid(self.hub, ("127.0.0.1", 53757), _NETSTAT), 1645)
         self.assertEqual(peer.netstat_pid(self.hub, ("127.0.0.1", 53760), _NETSTAT), 812)
         self.assertEqual(peer.netstat_pid(("::1", 8477), ("::1", 53770), _NETSTAT), 1645)
+        # A name is the process's own choice: ``:digits`` inside it must
+        # not pass for the pid (``x:1 y`` would read as launchd's pid 1).
+        self.assertEqual(peer.netstat_pid(self.hub, ("127.0.0.1", 53761), _NETSTAT), 813)
+        self.assertEqual(peer.netstat_pid(self.hub, ("127.0.0.1", 53762), _NETSTAT), 814)
         self.assertIsNone(peer.netstat_pid(self.hub, ("127.0.0.1", 1), _NETSTAT))
         self.assertIsNone(peer.netstat_pid(self.hub, ("127.0.0.1", 53757), ""))
 
@@ -283,6 +289,41 @@ class TestDarwin(unittest.TestCase):
         self.assertEqual(peer.app_store_binary(str(exe), str(app)), owned_by_root)
         self.assertFalse(peer.app_store_binary("/tmp/Tailscale", str(app)))
         self.assertFalse(peer.app_store_binary(str(app) + "x/evil", str(app)))
+
+
+class TestDarwinHelpers(unittest.TestCase):
+    def test_run_answers_stdout_only_on_success(self):
+        ok = MagicMock(returncode=0, stdout="out")
+        bad = MagicMock(returncode=1, stdout="partial")
+        with patch.object(peer.subprocess, "run", side_effect=[ok, bad]) as run:
+            self.assertEqual(peer._run(["x"]), "out")
+            self.assertEqual(peer._run(["x"]), "")
+        self.assertEqual(run.call_args.kwargs["timeout"], 3)
+
+    def test_pid_uid(self):
+        with patch.object(peer, "_run", side_effect=["    0\n", "  501\n", ""]):
+            self.assertEqual(peer._pid_uid(1), 0)
+            self.assertEqual(peer._pid_uid(2), 501)
+            self.assertIsNone(peer._pid_uid(3))
+
+    def test_own_process_is_never_the_proxy(self):
+        text = _NETSTAT.replace(":1645 ", f":{os.getpid()} ")
+        with patch.object(peer, "_run", return_value=text), \
+                patch.object(peer, "_pid_uid", return_value=0) as get_uid:
+            self.assertFalse(peer._darwin_is_proxy(("127.0.0.1", 8477), ("127.0.0.1", 53757)))
+        get_uid.assert_not_called()
+
+    def test_unlisted_socket_is_not_the_proxy(self):
+        with patch.object(peer, "_run", return_value=""):
+            self.assertFalse(peer._darwin_is_proxy(("127.0.0.1", 8477), ("127.0.0.1", 53757)))
+
+    @unittest.skipUnless(sys.platform == "darwin", "libproc is macOS's")
+    def test_pid_path_reads_the_kernels_path(self):
+        # A framework build re-execs into Python.app, so compare with what
+        # the kernel holds rather than sys.executable.
+        path = peer._pid_path(os.getpid())
+        self.assertTrue(path.startswith("/") and os.path.exists(path), path)
+        self.assertEqual(peer._pid_path(2 ** 22 + 7), "")
 
 
 class TestElsewhere(unittest.TestCase):
