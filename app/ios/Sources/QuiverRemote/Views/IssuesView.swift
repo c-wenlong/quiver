@@ -35,7 +35,7 @@ struct IssuesView: View {
             }
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
-            if let error = model.error, !listed.isEmpty {
+            if let error = closed ? model.closedError : model.error, !listed.isEmpty {
                 Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .lineLimit(2)
@@ -43,7 +43,7 @@ struct IssuesView: View {
             if !model.loaded {
                 LoadingRow(text: "Loading issues")
             } else if closed, model.closedLoaded, model.closedRepos.isEmpty,
-                      let error = model.error {
+                      let error = model.closedError {
                 // A Closed fetch that failed with an empty closed list
                 // must say so — otherwise it reads as "No closed issues".
                 StateCard(icon: "wifi.exclamationmark", title: "Can't load closed issues",
