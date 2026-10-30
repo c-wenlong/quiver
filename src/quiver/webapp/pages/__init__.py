@@ -20,6 +20,7 @@ moment its script registers. See docs/web-app.md, "Adding a page".
 from __future__ import annotations
 
 import importlib
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,12 +60,13 @@ def tilde(path: Path | str, home: Path | str | None = None) -> str:
     ``~``, as the pages show hub paths: ``~`` for the home itself,
     ``~/…`` inside it, anything else as is."""
     text = str(path)
-    root = str(home if home is not None else Path.home()).rstrip("/")
+    seps = {"/", os.sep}  # the native one too, as Windows writes paths
+    root = str(home if home is not None else Path.home()).rstrip("".join(seps))
     if not root:
         return text
     if text == root:
         return "~"
-    if text.startswith(root + "/"):
+    if any(text.startswith(root + sep) for sep in seps):
         return "~" + text[len(root):]
     return text
 
