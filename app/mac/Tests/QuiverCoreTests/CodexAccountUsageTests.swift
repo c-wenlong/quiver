@@ -9,7 +9,13 @@ import Testing
     /// noon UTC on Thursday 2026-10-15: the current week is Oct 12–18,
     /// the current month October.
     private let now = utc("2026-10-15T12:00:00Z")
-    private let calendar = Calendar(identifier: .gregorian)
+    /// Pinned to UTC: the fixture days are noon UTC, which a machine at
+    /// UTC+12 or later would put on the next local day.
+    private let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
 
     private func day(_ text: String) -> Date {
         utc("\(text)T12:00:00Z")
@@ -70,10 +76,9 @@ import Testing
         #expect(weeks[5].account == 50)
         #expect(weeks[5].inProgress)
         #expect(!weeks[4].inProgress)
-        let fmt = DateFormatter()
-        fmt.dateFormat = "EEEE"
+        // Weekday 2 is Monday in the Gregorian calendar, in any locale.
         for period in weeks {
-            #expect(fmt.string(from: period.start) == "Monday")
+            #expect(calendar.component(.weekday, from: period.start) == 2)
         }
     }
 
