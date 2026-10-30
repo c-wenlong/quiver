@@ -130,7 +130,8 @@ final class ChatModel {
         return app.client
     }
     private var seen = Set<Int>()
-    private var cursor = 0
+    /// The seq the next stream resumes after.
+    private(set) var cursor = 0
     /// Tool call id to the id of its card (ids, not positions: removing a
     /// send bubble would shift positions under a result still to come).
     private var toolCards: [String: String] = [:]
@@ -261,7 +262,8 @@ final class ChatModel {
                 case .connected: self.live = true
                 case .disconnected: self.live = false
                 case .unauthorized: self.app?.unpair(from: client); return
-                case .truncated:
+                case .truncated(let head):
+                    self.adoptJournalHead(head)
                     self.dropPending()
                     await self.backfill(client)
                 case .event(let env): self.enqueue(env)
@@ -463,6 +465,14 @@ final class ChatModel {
     }
 
     // MARK: Events
+
+    /// A `journal.truncated` names the journal's head: the next stream
+    /// resumes there even when it is below the cursor, since a wiped
+    /// journal numbers from the start again. The backfill that follows
+    /// replaces what was shown.
+    func adoptJournalHead(_ head: Int?) {
+        if let head { cursor = head }
+    }
 
     func apply(_ env: Envelope) {
         if let seq = env.seq {

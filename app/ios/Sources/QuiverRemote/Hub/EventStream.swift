@@ -28,6 +28,15 @@ struct SSEParser {
 /// One session's live events, resuming from `last` and reconnecting
 /// with backoff until the consuming task is cancelled.
 enum EventStream {
+    /// The `?last=` to reconnect with once `env` arrived: the highest seq
+    /// seen, except that `journal.truncated` carries the journal's head,
+    /// which wins even when lower. A hub whose journal was wiped starts
+    /// its seqs again, and a cursor left above the head hears nothing.
+    static func resume(after env: Envelope, from cursor: Int) -> Int {
+        guard let seq = env.seq else { return cursor }
+        return env.type == "journal.truncated" ? seq : max(cursor, seq)
+    }
+
     static func events(client: HubClient, key: String, last: Int) -> AsyncStream<StreamEvent> {
         AsyncStream { continuation in
             let task = Task {
@@ -51,9 +60,9 @@ enum EventStream {
                         for try await line in bytes.lines {
                             guard let payload = parser.feed(line) ?? parser.feed("") else { continue }
                             guard let env = try? Hub.decoder.decode(Envelope.self, from: Data(payload.utf8)) else { continue }
-                            if env.type == "journal.truncated" { continuation.yield(.truncated); continue }
+                            cursor = resume(after: env, from: cursor)
+                            if env.type == "journal.truncated" { continuation.yield(.truncated(head: env.seq)); continue }
                             if env.type == "journal.caught-up" { continue }
-                            if let seq = env.seq { cursor = max(cursor, seq) }
                             continuation.yield(.event(env))
                         }
                     } catch {
@@ -71,6 +80,9 @@ enum EventStream {
 }
 
 enum StreamEvent {
-    case connected, disconnected, unauthorized, truncated
+    case connected, disconnected, unauthorized
+    /// The replay can't cover the gap; `head` is the journal's newest
+    /// seq, which the next resume starts from.
+    case truncated(head: Int?)
     case event(Envelope)
 }
