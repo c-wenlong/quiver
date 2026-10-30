@@ -57,7 +57,12 @@ struct RepoDetailPage: View {
             .keyboardShortcut("[", modifiers: .command)
             .help("Back to all repositories (⌘[)")
             Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await model.refreshFocus(repo: repo, swe: app.swe) }
+                Task {
+                    await model.refreshFocus(repo: repo, swe: app.swe)
+                    if model.focusTab == .pulls {
+                        await model.loadReviewRequests(repo: repo, swe: app.swe, force: true)
+                    }
+                }
             }
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)

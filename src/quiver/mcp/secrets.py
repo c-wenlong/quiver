@@ -542,11 +542,6 @@ def shield_credentials(server: dict, home: Path | None = None) -> tuple[dict | N
     return out, notes
 
 
-def store_env(home: Path | None = None) -> dict[str, str]:
-    """The store merged over os.environ, for callers that want a full env."""
-    return {**os.environ, **load_secrets(home)}
-
-
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 

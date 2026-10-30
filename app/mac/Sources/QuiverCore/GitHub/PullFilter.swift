@@ -94,21 +94,30 @@ extension GitHubModel {
     }
 
     /// Reads `swe gh pr status --repo=<repo>` unless a reply landed
-    /// within `maxAge`. Only the review-requested bucket is kept: Mine
-    /// reads the login against each row's author, which also covers
-    /// the focus page's closed and merged PRs.
-    public func loadReviewRequests(repo: String, swe: SweClient,
+    /// within `maxAge`; `force` (Refresh) reads regardless. Only the
+    /// review-requested bucket is kept: Mine reads the login against
+    /// each row's author, which also covers the focus page's closed and
+    /// merged PRs.
+    public func loadReviewRequests(repo: String, swe: SweClient, force: Bool = false,
                                    now: Date = .now, maxAge: TimeInterval = 60) async {
-        if let last = reviewRequests[repo], now.timeIntervalSince(last.fetchedAt) < maxAge { return }
+        if !force, let last = reviewRequests[repo], now.timeIntervalSince(last.fetchedAt) < maxAge { return }
         let previous = reviewRequests[repo]?.numbers
         // Stamped before the call, so concurrent loads share this one.
         reviewRequests[repo] = PrReviewRequests(numbers: previous, fetchedAt: now)
         var numbers = previous
         do {
             let reply = try await swe.ghPrStatus(repo: repo)
+            try Task.checkCancellation()
             if let entry = reply.results.first(where: { $0.repo == repo }), entry.status == .ok {
                 numbers = Set((entry.reviewRequested ?? []).map(\.number))
             }
+        } catch is CancellationError {
+            // A cancelled read (the page's task restarting as the search
+            // changes) proves nothing: keep the last good set, but leave
+            // it stale so the next load reads again.
+            guard reviewRequests[repo]?.fetchedAt == now else { return }
+            reviewRequests[repo] = previous.map { PrReviewRequests(numbers: $0, fetchedAt: .distantPast) }
+            return
         } catch {
             // A broken swe leaves the flags as they were.
         }

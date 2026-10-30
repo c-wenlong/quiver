@@ -280,7 +280,12 @@ struct OwnershipData: Decodable {
     /// The channel an attach took (nil once observed again).
     var mode: String? = nil
 }
-struct ApprovalRequested: Decodable { let requestId: String?; let prompt: String? }
+struct ApprovalRequested: Decodable {
+    let requestId: String?
+    let prompt: String?
+    /// The pane's numbered menu rows, when the hub read any.
+    let options: [ApprovalOption]?
+}
 struct ApprovalResolved: Decodable { let requestId: String?; let decision: String?; let source: String? }
 struct CommandResult: Decodable {
     let op: String?

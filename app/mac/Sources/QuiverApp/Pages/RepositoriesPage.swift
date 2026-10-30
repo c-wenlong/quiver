@@ -139,6 +139,11 @@ struct RepositoriesPage: View {
                             await model.loadTab(.actions, repo: repo.name, swe: swe)
                         }
                     }
+                    if model.tab == .pulls {
+                        group.addTask {
+                            await model.loadReviewRequests(repo: repo.name, swe: swe, force: true)
+                        }
+                    }
                 }
             }
         }

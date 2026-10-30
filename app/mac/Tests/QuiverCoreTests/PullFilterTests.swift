@@ -133,6 +133,53 @@ private func decodePr(_ json: String) throws -> GhPr {
         #expect(model.reviewRequested("o/a") == [4])
     }
 
+    /// The dashboard's load task restarts as the search changes, which
+    /// cancels a status read in flight; the next task must read again
+    /// rather than skip a reply that never came.
+    @Test func aCancelledReadLeavesTheRepoToBeReadAgain() async {
+        final class Cancelling: CommandRunning, @unchecked Sendable {
+            func run(_ arguments: [String]) async throws -> CommandResult { throw CancellationError() }
+            func run(_ arguments: [String], input: Data?) async throws -> CommandResult { throw CancellationError() }
+        }
+        let model = GitHubModel()
+        await model.loadReviewRequests(repo: "o/a", swe: SweClient(runner: Cancelling()))
+        #expect(model.reviewRequests["o/a"] == nil)
+
+        let runner = Runner(["gh pr status --repo=o/a --json": status("o/a", requested: [5])])
+        await model.loadReviewRequests(repo: "o/a", swe: SweClient(runner: runner))
+        #expect(model.reviewRequested("o/a") == [5])
+        // With a known set, a cancelled read keeps it but marks it stale.
+        await model.loadReviewRequests(repo: "o/a", swe: SweClient(runner: Cancelling()), force: true)
+        #expect(model.reviewRequested("o/a") == [5])
+        await model.loadReviewRequests(repo: "o/a", swe: SweClient(runner: runner))
+        #expect(runner.calls.count == 2)
+    }
+
+    /// The rail counts every visible repo while the filter was offered
+    /// for the one listed: an unknown repo has no count, not zero.
+    @Test func anUnknownRepoHasNoReviewCountInTheRail() async {
+        let runner = Runner([
+            "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100},{\"name\":\"o/b\",\"added_at\":200}]",
+            "gh pr --state=open --limit=50 --repo=o/a --json": pulls("o/a", [pr(1)]),
+            "gh pr --state=open --limit=50 --repo=o/b --json": pulls("o/b", [pr(2)]),
+            "gh pr status --repo=o/a --json": status("o/a", requested: [1]),
+            "gh pr status --repo=o/b --json": status("o/b", requested: [], ok: false),
+        ])
+        let swe = SweClient(runner: runner)
+        let model = GitHubModel()
+        await model.load(swe: swe)
+        await model.loadTab(.pulls, repo: "o/a", swe: swe)
+        await model.loadTab(.pulls, repo: "o/b", swe: swe)
+        await model.loadReviewRequests(repo: "o/a", swe: swe)
+        await model.loadReviewRequests(repo: "o/b", swe: swe)
+        #expect(!model.pullFilters.contains(.reviewRequested))
+        model.shownRepo = "o/a"
+        model.pullFilter = .reviewRequested
+        #expect(model.activePullFilter == .reviewRequested)
+        #expect(model.rowCount("o/a", tab: .pulls) == 1)
+        #expect(model.rowCount("o/b", tab: .pulls) == nil)
+    }
+
     @Test func aRepoThatNeverAnsweredStaysUnknown() async {
         let swe = SweClient(runner: Runner([
             "gh pr status --repo=o/a --json": status("o/a", requested: [], ok: false),

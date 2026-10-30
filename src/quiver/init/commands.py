@@ -56,13 +56,6 @@ STATE_COLOR = {
 }
 
 
-def _short(path: Path, home: Path) -> str:
-    try:
-        return "~/" + str(path.relative_to(home))
-    except ValueError:
-        return str(path)
-
-
 def _backup(path: Path, home: Path) -> Path:
     """Copy a real file or directory aside before it is replaced."""
     return backup_tree(path, home)
@@ -142,7 +135,7 @@ def _print_section(title: str, rows: list[tuple[LinkStatus, str]], home: Path) -
         if result == "blocked":
             colour, note = "red", status.detail
         print(
-            f"    {c(colour, result.ljust(8))} {_short(status.path, home).ljust(30)}"
+            f"    {c(colour, result.ljust(8))} {home_relative(status.path, home).ljust(30)}"
             f" {c('dim', note)}"
         )
 
@@ -173,7 +166,7 @@ def _print_summary(sections: list[tuple[str, list[tuple[LinkStatus, str]]]]) -> 
 def _print_paths(title: str, rows: list[tuple[LinkStatus, str]], home: Path) -> None:
     print(f"  {c('yellow', title)}")
     for status, _ in rows:
-        print(f"    {_short(status.path, home).ljust(30)} {c('dim', status.detail)}")
+        print(f"    {home_relative(status.path, home).ljust(30)} {c('dim', status.detail)}")
 
 
 def _ensure_scaffold(home: Path, check_only: bool) -> list[str]:

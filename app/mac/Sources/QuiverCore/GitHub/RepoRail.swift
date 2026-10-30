@@ -124,6 +124,10 @@ extension GitHubModel {
         switch tab {
         case .pulls:
             guard case .loaded(let prs) = board.pulls else { return nil }
+            // The rail lists every visible repo, not only the listed
+            // one the filter was offered for: a repo whose review set
+            // is unknown has no count rather than a false zero.
+            if activePullFilter == .reviewRequested, reviewRequested(repo) == nil { return nil }
             return count(.loaded(prs.filter { keepsPull($0, repo: repo) }), repo: repo, \.searchText)
         case .issues: return count(board.issues, repo: repo, \.searchText)
         case .actions: return count(board.runs, repo: repo, \.searchText)
