@@ -137,6 +137,18 @@ struct Offline: Error {}
         #expect(PricingCatalog.baseName(for: "groq/openai/gpt-oss-120b") == "gpt-oss-120b")
     }
 
+    @Test func thresholdsCoverTodaysEntriesAndEarlierPrices() throws {
+        let catalog = try PricingCatalog(liteLLM: liteLLM)
+        #expect(catalog.thresholds == [200_000, 272_000])
+        // An earlier price of a key with no threshold today still counts.
+        let earlier = CatalogDatabase.PriceSpan(from: 0, to: 1_000, entry: [
+            "input_cost_per_token": 1e-06, "output_cost_per_token": 1e-05,
+            "input_cost_per_token_above_128k_tokens": 2e-06, "litellm_provider": "openai"])
+        let withHistory = catalog.withHistory(["gpt-5.6-luna": [earlier]])
+        #expect(withHistory.thresholds == [128_000, 200_000, 272_000])
+        #expect(withHistory.withHistory([:]).thresholds == [200_000, 272_000])
+    }
+
     @Test func longContextAndPriorityRatesApplyPerRequest() throws {
         let rates = try #require(try catalog().rates(for: "gpt-6.1-sol"))
         #expect(rates.longContext?.threshold == 272_000)

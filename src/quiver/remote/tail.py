@@ -1994,7 +1994,7 @@ class TailManager:
             meta = supervise.meta_for(self.home, key)
             if not meta or meta.get("mode") != "tmux":
                 if key in self._approval_outstanding:
-                    rid = self._approval_outstanding.pop(key)
+                    rid, _fp = self._approval_outstanding.pop(key)
                     supervise.set_pending_approval(key, None)
                     self._emit_approval(
                         "approval.resolved", key,
