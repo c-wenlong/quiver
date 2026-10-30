@@ -40,10 +40,8 @@ struct TasksView: View {
             } else {
                 // A blocked source leaves its stored rows on last-known
                 // state: the banner says why, each of its rows is marked.
-                if let blocked = model.envBlocked {
-                    blockedBanner(source: "GitHub", message: blocked)
-                } else if let failed = model.githubFailed {
-                    blockedBanner(source: "GitHub", message: failed)
+                if let reason = model.githubBanner {
+                    blockedBanner(source: "GitHub", message: reason)
                 }
                 if let blocked = model.linearBlocked {
                     blockedBanner(source: "Linear", message: blocked)

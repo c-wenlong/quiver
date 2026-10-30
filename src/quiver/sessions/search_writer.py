@@ -47,7 +47,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from quiver.paths import quiver_dir_for, search_index_for
+from quiver.paths import locked_beside, quiver_dir_for, search_index_for
 from quiver.sessions import search_containers as containers
 from quiver.sessions import search_decode as decode
 
@@ -167,9 +167,7 @@ def _update_state(home: Path | None, change) -> dict:
     pass recording its counts never undoes an ``--off`` saved meanwhile."""
     path = _state_path(home)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with open(str(path) + ".lock", "a+") as lock:
-        if fcntl is not None:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    with locked_beside(path):
         data = load_state(home)
         change(data)
         _write_json(path, data)
