@@ -1,6 +1,7 @@
 """supervise.py: tmux lifecycle, pending-launch adoption, priming."""
 
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -236,6 +237,23 @@ class TestTmuxHelpers(unittest.TestCase):
             "new-session", "-d", "-s", name,
             "-e", "PATH=/opt/bin:/usr/bin", "-c", "/tmp",
             "/opt/bin/claude", "--resume", "s1",
+        ])
+
+    def test_launch_tmux_never_passes_a_lone_command(self):
+        # One command argument makes tmux run it through default-shell
+        # -c (zsh rebuilds PATH; a space in the path splits it). A
+        # launch with no extra args must still reach tmux as an argv.
+        with patch.object(supervise, "tmux_bin", return_value="/usr/bin/tmux"), \
+             patch.object(supervise, "tmux_alive", side_effect=[False, True]), \
+             patch.object(supervise.shutil, "which",
+                          return_value="/Users/a b/bin/claude"), \
+             patch.object(supervise.time, "sleep"), \
+             patch.dict(supervise.os.environ, {"PATH": "/usr/bin"}), \
+             patch.object(supervise, "_tmux", return_value=self._cp()) as t:
+            name = supervise.launch_tmux("claude:s1", ["claude"], None)
+        self.assertEqual(list(t.call_args[0]), [
+            "new-session", "-d", "-s", name, "-e", "PATH=/usr/bin",
+            "/usr/bin/env", "/Users/a b/bin/claude",
         ])
 
     def test_launch_tmux_edges(self):
@@ -545,9 +563,21 @@ class TestAdoptPending(unittest.TestCase):
     def test_corrupt_marker_removed(self):
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
-        (folder / "bad.json").write_text("{not json")
+        bad = folder / "bad.json"
+        bad.write_text("{not json")
+        old = time.time() - supervise._PENDING_UNREADABLE_GRACE_S - 5
+        os.utime(bad, (old, old))
         self.assertEqual(supervise.adopt_pending(self.home, []), [])
-        self.assertFalse((folder / "bad.json").exists())
+        self.assertFalse(bad.exists())
+
+    def test_young_unreadable_marker_kept(self):
+        # Read mid-write: deleting it would strand the launch for a
+        # day. A marker this young is skipped, not removed.
+        folder = supervise._pending_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "half.json").write_text('{"tmux": "q-')
+        self.assertEqual(supervise.adopt_pending(self.home, []), [])
+        self.assertTrue((folder / "half.json").exists())
 
     def test_no_pending_dir_returns_empty(self):
         self.assertEqual(supervise.adopt_pending(self.home, []), [])
@@ -601,7 +631,7 @@ class TestLaunchNew(unittest.TestCase):
         with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
              patch.object(supervise.shutil, "which", return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane") as prime:
-            ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi")
+            ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi", binary="claude")
         self.assertTrue(ok)
         prime.assert_called_once_with("qv-n", "hi")
         marker = supervise._pending_dir(home) / "qv-n.json"
@@ -619,8 +649,8 @@ class TestLaunchNew(unittest.TestCase):
                               supervise.tmux_name(key)) or
                               supervise.tmux_name(key)), \
              patch.object(supervise, "prime_pane"):
-            supervise.launch_new(home, "claude", "/tmp", "one")
-            supervise.launch_new(home, "claude", "/tmp", "two")
+            supervise.launch_new(home, "claude", "/tmp", "one", binary="claude")
+            supervise.launch_new(home, "claude", "/tmp", "two", binary="claude")
         self.assertEqual(len(set(seen)), 2)
 
     def test_missing_folder_fails_before_tmux(self):
@@ -628,7 +658,7 @@ class TestLaunchNew(unittest.TestCase):
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"):
             ok, note, name = supervise.launch_new(
-                Path(tempfile.mkdtemp()), "claude", "/no/such/dir", "hi")
+                Path(tempfile.mkdtemp()), "claude", "/no/such/dir", "hi", binary="claude")
         self.assertFalse(ok)
         self.assertIn("no such folder", note)
         tmux.assert_not_called()
@@ -639,7 +669,7 @@ class TestLaunchNew(unittest.TestCase):
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane", return_value=True):
-            supervise.launch_new(home, "claude", "/tmp", "hi", launch_id="l9")
+            supervise.launch_new(home, "claude", "/tmp", "hi", launch_id="l9", binary="claude")
         marker = supervise._pending_dir(home) / "qv-n.json"
         self.assertEqual(json.loads(marker.read_text())["launch_id"], "l9")
         with patch.object(supervise, "_pending_match",
@@ -660,10 +690,17 @@ class TestLaunchNew(unittest.TestCase):
                                  binary="cursor-agent")
         self.assertEqual(tmux.call_args[0][1], ["cursor-agent"])
 
+    def test_binary_is_required(self):
+        # Guessing the command from the tool name launched the wrong
+        # binary for harnesses whose registry command differs (#510).
+        with self.assertRaises(TypeError):
+            supervise.launch_new(
+                Path(tempfile.mkdtemp()), "cursor", "/tmp", "hi")
+
     def test_unknown_harness(self):
         ok, note, name = supervise.launch_new(
-            Path(tempfile.mkdtemp()), "nope-tool", "/tmp", ""
-        )
+            Path(tempfile.mkdtemp()), "nope-tool", "/tmp", "",
+            binary="nope-tool")
         self.assertFalse(ok)
         self.assertIsNone(name)
 
@@ -676,7 +713,7 @@ class TestLaunchNew(unittest.TestCase):
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane", return_value=False):
-            ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi")
+            ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi", binary="claude")
         self.assertFalse(ok)
         self.assertEqual(name, "qv-n")
         self.assertIn("could not be delivered", note)
@@ -689,8 +726,8 @@ class TestLaunchNew(unittest.TestCase):
                           return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane", return_value=True):
             supervise.launch_new(
-                home, "claude", "/tmp", "hi", known_ids=["old-1", "old-2"]
-            )
+                home, "claude", "/tmp", "hi", known_ids=["old-1", "old-2"],
+                binary="claude")
         marker = supervise._pending_dir(home) / "qv-n.json"
         self.assertEqual(
             json.loads(marker.read_text())["exclude"], ["old-1", "old-2"]
@@ -761,6 +798,7 @@ class TestLaunchTuning(unittest.TestCase):
                           return_value="pane moved"), \
              patch.object(supervise.time, "sleep"), \
              patch.object(supervise, "send_text", return_value=True) as st:
+            kw.setdefault("binary", tool)
             out = supervise.launch_new(self.home, tool, self.proj, "hi", **kw)
         self.argv = lt.call_args[0][1] if lt.call_args else None
         return out, pp, st
@@ -815,12 +853,12 @@ class TestLaunchTuning(unittest.TestCase):
     def test_launch_refuses_a_model_the_harness_cannot_take(self):
         with patch.object(supervise, "launch_tmux") as lt:
             ok, note, _ = supervise.launch_new(
-                self.home, "gemini", self.proj, "hi", model="x")
+                self.home, "gemini", self.proj, "hi", model="x", binary="gemini")
             self.assertFalse(ok)
             self.assertIn("capabilities.model", note)
             # opencode mini needs provider/model to pick a model at all.
             ok, note, _ = supervise.launch_new(
-                self.home, "opencode", self.proj, "hi", model="x")
+                self.home, "opencode", self.proj, "hi", model="x", binary="opencode")
             self.assertFalse(ok)
             self.assertIn("provider/model", note)
         lt.assert_not_called()
@@ -853,7 +891,7 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise, "boot_pane", return_value="❯"), \
              patch.object(supervise, "send_text", return_value=False):
             ok, note, name = supervise.launch_new(
-                self.home, "claude", self.proj, "hi", effort="high")
+                self.home, "claude", self.proj, "hi", effort="high", binary="claude")
         self.assertFalse(ok)
         self.assertEqual(name, "qv-n")
         self.assertIn("could not be delivered", note)
@@ -877,7 +915,7 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise.time, "sleep"), \
              patch.object(supervise, "send_text", return_value=True):
             ok, _note, _ = supervise.launch_new(
-                self.home, "claude", self.proj, "hi", effort="high")
+                self.home, "claude", self.proj, "hi", effort="high", binary="claude")
         self.assertTrue(ok)
         self.assertEqual(sk.call_args_list[0][0], ("qv-n", "Enter"))
 
@@ -942,6 +980,106 @@ class TestLaunchTuning(unittest.TestCase):
                 self.home, key, session,
                 last_append_at=None, status="done", mode=mode, **kw)
         return out, st, key
+
+    def _tmux_patches(self, boot):
+        import contextlib
+        stack = contextlib.ExitStack()
+        for target, kw in (
+            ("resume_flags", {"return_value": ["--resume", "abc"]}),
+            ("resolve_mode", {"return_value": "tmux"}),
+            ("launch_tmux", {"return_value": "qv-a"}),
+            ("boot_pane", {"side_effect": boot}),
+            ("tmux_alive", {"return_value": True}),
+            ("_local_writer_pids", {"return_value": []}),
+            ("_stop_local_writers", {}),
+        ):
+            stack.enter_context(patch.object(supervise, target, **kw))
+        stack.enter_context(patch.object(supervise.shutil, "which",
+                                         return_value="/x/bin"))
+        return stack, stack.enter_context(patch.object(supervise, "kill"))
+
+    def test_a_booting_attach_holds_only_its_own_key(self):
+        # The pane's boot (up to ATTACH_BOOT_S) ran under the registry
+        # lock: every other attach, detach, keep and the catalog's
+        # registry read waited for it. Now another key's write goes
+        # through, while a detach of this key waits for the attach.
+        import threading
+        booting, release = threading.Event(), threading.Event()
+
+        def boot(name, timeout):
+            booting.set()
+            release.wait(5)
+            return "❯"
+
+        src = _session(sid="abc", path=self.proj)
+        key = "claude:abc"
+        stack, _kill = self._tmux_patches(boot)
+        with stack:
+            out = []
+            t = threading.Thread(target=lambda: out.append(supervise.attach(
+                self.home, key, src, last_append_at=None, status="done",
+                mode="tmux")))
+            t.start()
+            self.assertTrue(booting.wait(5))
+            other = threading.Thread(target=supervise.mark, args=(
+                self.home, "claude:other", {"mode": "headless"}))
+            other.start()
+            other.join(2)
+            self.assertFalse(other.is_alive())
+            detached = threading.Event()
+            d = threading.Thread(target=lambda: (
+                supervise.detach(self.home, key), detached.set()))
+            d.start()
+            self.assertFalse(detached.wait(0.3))
+            release.set()
+            t.join(5)
+            d.join(5)
+        self.assertTrue(out[0][0], out)
+        self.assertTrue(detached.is_set())
+        # The detach acted on the finished attach, not before it.
+        self.assertIsNone(supervise.meta_for(self.home, key))
+        self.assertIsNotNone(supervise.meta_for(self.home, "claude:other"))
+
+    def test_attach_elsewhere_during_boot_wins(self):
+        # Another process attached the key while this pane booted: its
+        # entry stands and this pane is closed.
+        key = "claude:abc"
+
+        def boot(name, timeout):
+            supervise.mark(self.home, key, {"mode": "tmux", "tmux": "qv-b"})
+            return "❯"
+
+        stack, kill = self._tmux_patches(boot)
+        with stack:
+            ok, note = supervise.attach(
+                self.home, key, _session(sid="abc", path=self.proj),
+                last_append_at=None, status="done", mode="tmux")
+        self.assertTrue(ok)
+        self.assertEqual(note, "already attached")
+        kill.assert_called_once_with("qv-a")
+        self.assertEqual(supervise.meta_for(self.home, key)["tmux"], "qv-b")
+
+    def test_attach_elsewhere_during_boot_with_another_model_is_refused(self):
+        # The winning entry runs a different model than this attach
+        # asked for: report that, not success.
+        key = "claude:abc"
+
+        def boot(name, timeout):
+            supervise.mark(self.home, key,
+                           {"mode": "headless", "model": "sonnet"})
+            return "❯"
+
+        stack, kill = self._tmux_patches(boot)
+        with stack, patch.object(supervise, "_send_launch_controls",
+                                 return_value=True):
+            ok, note = supervise.attach(
+                self.home, key, _session(sid="abc", path=self.proj),
+                last_append_at=None, status="done", mode="tmux",
+                model="opus")
+        self.assertFalse(ok)
+        self.assertIn("/model", note)
+        kill.assert_called_once_with("qv-a")
+        self.assertEqual(supervise.meta_for(self.home, key)["model"], "sonnet")
 
     def test_attach_tmux_types_the_pick_and_records_it(self):
         (ok, note), st, key = self._attach(

@@ -40,7 +40,7 @@
     const { status, data } = await api(`/v1/app/inbox${refresh ? "?refresh=1" : ""}`);
     if (gen !== routeGen) return;
     inbox.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("inbox");
     // A mark-read landed while this read was in flight: its rows may be
     // older than the write's answer, so the answer stays on screen.
     if (writes !== inbox.writes && inbox.data && !inbox.data.transport) return paint();
@@ -85,7 +85,7 @@
       const failed = data.failed || [];
       if (failed.length) inbox.actionError = failed.map((f) => `${f.id}: ${f.error}`).join(" · ");
     } else if (status === 401) {
-      if (onInbox()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      if (onInbox()) renderGate();
       return;
     } else {
       inbox.actionError = GhUI.failMessage(status, data);
@@ -98,7 +98,7 @@
     if (next && document.activeElement === document.body) next.focus();
   }
 
-  const onInbox = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "inbox";
+  const onInbox = () => currentRoute() === "inbox";
 
   /* The subject type's icon, tinted by why GitHub notified you. */
   function typeIcon(note) {
@@ -113,12 +113,13 @@
 
   function row(note) {
     const when = GhUI.ago(note.updated_at);
+    const href = safeHref(note.url);
     const busy = inbox.busy.has(String(note.id)) || inbox.busy.has("*");
     const read = note.unread ? `<button type="button" class="icon-button gh-note-read${busy ? " spinning" : ""}"
         data-read="${esc(note.id)}" title="Mark as read" aria-label="Mark as read: ${esc(note.title)}"${busy ? " disabled" : ""}>${
         GhUI.ico(busy ? "running" : "envelopeOpen")}</button>` : "";
     return `<div class="gh-note${note.unread ? " unread" : ""}">
-      <a class="gh-note-link" href="${esc(note.url)}" target="_blank" rel="noopener">
+      <a class="gh-note-link"${href ? ` href="${href}" target="_blank" rel="noopener"` : ""}>
         <span class="gh-note-dot" aria-label="${note.unread ? "Unread" : "Read"}"></span>
         ${typeIcon(note)}
         <span class="gh-row-main">

@@ -815,7 +815,7 @@ private struct ListPriceCell: View {
             Text([price.input, price.output, price.cacheRead].map(ModelCard.price).joined(separator: " · "))
                 .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
-                .help(Self.help(price))
+                .hoverTip(Self.help(price), replacesLabel: false)
         } else {
             Text("—").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
                 .help("No LiteLLM price for this model")
@@ -916,9 +916,9 @@ private struct LinkSheet: View {
                         Button { pick(aa.id) } label: {
                             HStack(spacing: 8) {
                                 let vendor = ModelVendor.of(aa)
-                                if let icon = vendor.icon, HarnessIcon.exists(for: icon) {
-                                    HarnessIcon(harness: icon, size: 16)
-                                }
+                                // As every view naming a model: its lab's logo
+                                // first, a blank square when there is none.
+                                BrandLogo(vendor: vendor, size: 16)
                                 Text(aa.name).font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
                                     .lineLimit(1).truncationMode(.tail)
                                 Spacer()
@@ -944,16 +944,5 @@ private struct LinkSheet: View {
         .padding(24)
         .frame(width: 460, height: 480)
         .background(Theme.panel)
-    }
-}
-
-/// The row-hover fill, as Overview and Pricing rows get.
-private struct RowHover: ViewModifier {
-    @State private var hovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(hovering ? Theme.rowHover : .clear)
-            .onHover { hovering = $0 }
     }
 }

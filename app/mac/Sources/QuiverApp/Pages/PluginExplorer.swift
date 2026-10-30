@@ -93,6 +93,7 @@ struct PluginExplorer: View {
                                             open: model.isOpen(market.id), searching: searching,
                                             openHealth: openHealth, confirm: confirm,
                                             onRename: { renaming = market.name
+                                                renameError = nil
                                                 renameText = app.primitiveNames.name(forMarketplace: market.name) ?? market.name },
                                             openPlugin: { opened = $0 },
                                             toggle: { model.toggle(market.id) })
@@ -101,6 +102,9 @@ struct PluginExplorer: View {
                     .padding(.top, 16)
                 }
             }
+            // A rename's failure goes once the next action has its own
+            // result to show; the card above shows one or the other.
+            .onChange(of: model.lastResult) { renameError = nil }
             .alert("Rename marketplace", isPresented: .init(
                 get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
                 TextField("Display name", text: $renameText)
@@ -298,7 +302,7 @@ private struct MarketplaceCard: View {
                 Image(systemName: "lock.fill")
                     .font(Theme.font(size: 10))
                     .foregroundStyle(Theme.textMuted)
-                    .help("Updates from GitHub would undo edits, so this marketplace is read-only.")
+                    .hoverTip("Updates from GitHub would undo edits, so this marketplace is read-only.")
             }
             Spacer(minLength: 8)
             Text(market.installed == 1 ? "1 installed" : "\(market.installed) installed")
@@ -433,7 +437,7 @@ private struct DriftBadge: View {
         }
         .plainButton(cornerRadius: 999)
         .fixedSize()
-        .help("\(harnessNames(harnesses)): \(state.title.lowercased()). Open Health to fix it.")
+        .hoverTip("\(harnessNames(harnesses)): \(state.title.lowercased()). Open Health to fix it.", replacesLabel: false)
     }
 }
 
@@ -450,7 +454,7 @@ private struct HarnessChip: View {
 
     var body: some View {
         if actions.isEmpty {
-            label.help(help)
+            label.hoverTip(help, replacesLabel: false)
         } else {
             Menu {
                 ForEach(actions) { action in

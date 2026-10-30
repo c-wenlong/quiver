@@ -209,6 +209,16 @@ final class PrimitiveHome {
 }
 
 @Suite struct JSONTextEditTests {
+    /// A URL keeps its slashes bare, in a string and inside an object.
+    @Test func slashesStayBare() throws {
+        let text = "{\n  \"name\": \"eng\"\n}\n"
+        var edited = try JSONTextEdit.set("https://example.com/a/b", at: ["homepage"], in: text)
+        edited = try JSONTextEdit.set(["url": "https://github.com/o/r"], at: ["repository"], in: edited)
+        #expect(edited.contains(#""homepage": "https://example.com/a/b""#))
+        #expect(edited.contains(#""url" : "https://github.com/o/r""#) || edited.contains(#""url": "https://github.com/o/r""#))
+        #expect(!edited.contains(#"\/"#))
+    }
+
     @Test func replacesAValueKeepingOrderAndUnknownKeys() throws {
         let text = """
         {
@@ -267,6 +277,42 @@ final class PrimitiveHome {
         // `extra` untouched and still ahead of `author` in the file.
         #expect(edited.contains("\"extra\": [1, 2]"))
         #expect(edited.range(of: "\"extra\"")!.lowerBound < edited.range(of: "\"author\"")!.lowerBound)
+    }
+
+    /// Only fields the form changed are written: no empty keys appear,
+    /// and values the form can't show stay as they are.
+    @Test func applyWritesOnlyTheFieldsThatChanged() throws {
+        let text = """
+        {
+          "name": "eng",
+          "repository": {"type": "git", "url": "https://github.com/o/r"},
+          "author": "Kai",
+          "keywords": ["a", 3]
+        }
+        """
+        var fields = PluginManifestFields(parsing: text)
+        #expect(try fields.apply(to: text) == text)
+        fields.version = "1.0.0"
+        let edited = try fields.apply(to: text)
+        #expect(edited.contains(#""version": "1.0.0""#))
+        #expect(edited.contains(#""repository": {"type": "git", "url": "https://github.com/o/r"}"#))
+        #expect(edited.contains(#""author": "Kai""#))
+        #expect(edited.contains(#""keywords": ["a", 3]"#))
+        for key in ["description", "homepage", "license", "email", "url"] {
+            #expect(!edited.contains("\"\(key)\": \"\""), "\(key)")
+        }
+        // A string author stays a string when only its name changes.
+        fields = PluginManifestFields(parsing: text)
+        fields.authorName = "Kai Chen"
+        #expect(try fields.apply(to: text).contains(#""author": "Kai Chen""#))
+        // A string author turning into an object keeps its unchanged name.
+        fields = PluginManifestFields(parsing: text)
+        fields.authorEmail = "k@x.dev"
+        let object = try JSONSerialization.jsonObject(with: Data(try fields.apply(to: text).utf8)) as? [String: Any]
+        let author = object?["author"] as? [String: Any]
+        #expect(author?["name"] as? String == "Kai")
+        #expect(author?["email"] as? String == "k@x.dev")
+        #expect(author?["url"] == nil)
     }
 
     @Test func versionAndURLValidation() {
@@ -331,6 +377,63 @@ final class PrimitiveHome {
     @Test func createsFrontmatterWhenMissing() {
         let edited = MarkdownFrontmatter.update("# Hi\n", set: [(key: "name", value: "s")])
         #expect(edited.hasPrefix("---\nname: s\n---\n\n# Hi"))
+    }
+
+    /// A value YAML would read as something else is written quoted, and
+    /// reads back as the text typed.
+    @Test func aValueYAMLWouldMisreadIsQuoted() {
+        let cases: [(typed: String, written: String)] = [
+            ("Fix: the bug", #""Fix: the bug""#),
+            ("#tag", ##""#tag""##),
+            ("yes", #""yes""#),
+            ("1.0", #""1.0""#),
+            ("- item", #""- item""#),
+            ("say \"hi\"\nthen go", #""say \"hi\"\nthen go""#),
+            ("Plain words, fine.", "Plain words, fine."),
+            ("bell\u{07}here", #""bell\u0007here""#),
+        ]
+        for (typed, written) in cases {
+            let edited = MarkdownFrontmatter.update(skill, set: [(key: "description", value: typed)])
+            #expect(edited.contains("description: \(written)\n"), "\(typed)")
+            #expect(MarkdownFrontmatter(text: edited)?.fields.first { $0.key == "description" }?.value == typed)
+        }
+    }
+
+    /// A quoted value reads without its quotes, and saving the form
+    /// unchanged leaves the line exactly as written.
+    @Test func aQuotedValueReadsBareAndAnUnchangedOneStays() {
+        let text = "---\nname: 'it''s'\ndescription: \"a: b\" # note\nkind: \"x\"\n---\nbody\n"
+        let fields = MarkdownFrontmatter(text: text)?.fields.map { ($0.key, $0.value) } ?? []
+        #expect(fields.map(\.0) == ["name", "description", "kind"])
+        #expect(fields[0].1 == "it's")
+        #expect(fields[1].1 == "a: b")
+        #expect(fields[2].1 == "x")
+        #expect(MarkdownFrontmatter.update(text, set: fields) == text)
+        // A changed value keeps its comment, outside the quotes.
+        let edited = MarkdownFrontmatter.update(text, set: [(key: "description", value: "a: c")])
+        #expect(edited.contains("description: \"a: c\" # note\n"))
+    }
+
+    /// Every YAML escape reads as the text it stands for, a plain value
+    /// drops its comment, and a value YAML can't read shows as written.
+    @Test func yamlEscapesAndCommentsRead() {
+        let cases: [(raw: String, value: String)] = [
+            (#""\u00E9 \x41 \U0001F600 \uD83D\uDE00""#, "\u{E9} A \u{1F600} \u{1F600}"),
+            (#""\e\a\b\v\f\N\_\L\P\ \/""#, "\u{1B}\u{07}\u{08}\u{0B}\u{0C}\u{85}\u{A0}\u{2028}\u{2029} /"),
+            ("plain words # a note", "plain words"),
+            ("#only a note", ""),
+            ("a#b", "a#b"),
+            (#""bad \q escape""#, #""bad \q escape""#),
+            (#""unclosed"#, #""unclosed"#),
+            (#""a" b"#, #""a" b"#),
+            ("'it''s' # c", "it's"),
+        ]
+        for (raw, value) in cases {
+            let text = "---\ndescription: \(raw)\n---\n"
+            #expect(MarkdownFrontmatter(text: text)?.fields.first?.value == value, "\(raw)")
+        }
+        let plain = MarkdownFrontmatter.update("---\nkind: x # c\n---\n", set: [(key: "kind", value: "z")])
+        #expect(plain == "---\nkind: z # c\n---\n")
     }
 }
 
@@ -409,6 +512,28 @@ final class PrimitiveHome {
         #expect(!PrimitiveTree.isTextFile(big))
         let md = try t.write("bin/readme.md", "# ok\n")
         #expect(PrimitiveTree.isTextFile(md))
+    }
+
+    /// The 8 KB sniff can cut a multi-byte character in two; the text is
+    /// still text. A real bad byte before the cut still isn't.
+    @Test func aCharacterSplitAtTheSniffLimitIsStillText() throws {
+        let t = try PrimitiveHome()
+        for (pad, character) in [(8191, "é"), (8190, "€"), (8191, "€"), (8189, "😀"), (8190, "😀"), (8191, "😀")] {
+            let text = String(repeating: "a", count: pad) + character + " more text after the cut\n"
+            let file = try t.write("notes/split-\(pad)-\(character.utf8.count).md", text)
+            #expect(PrimitiveTree.isTextFile(file), "\(pad) + \(character)")
+        }
+        let bad = t.home.appending(path: "notes/bad.md")
+        try (Data(repeating: 0x61, count: 8000) + Data([0xFF]) + Data(repeating: 0x61, count: 500)).write(to: bad)
+        #expect(!PrimitiveTree.isTextFile(bad))
+        // Bytes no character can start with, right at the cut, aren't
+        // mistaken for a split character.
+        for tail in [[0xFF], [0xC0], [0xF5], [0xE0, 0x80], [0xF4, 0x90], [0xED, 0xA0]] as [[UInt8]] {
+            let file = t.home.appending(path: "notes/bad-\(tail.map { String($0, radix: 16) }.joined()).md")
+            try (Data(repeating: 0x61, count: 8192 - tail.count) + Data(tail)
+                 + Data(repeating: 0x61, count: 100)).write(to: file)
+            #expect(!PrimitiveTree.isTextFile(file), "\(tail)")
+        }
     }
 }
 
@@ -493,6 +618,27 @@ final class PrimitiveHome {
             try PrimitiveParts.create(.command, named: "go", in: root)
         }
         #expect(!FileManager.default.fileExists(atPath: outside.appending(path: "go.md").path))
+    }
+
+    /// A missing path ending in ".." used to loop forever; the missing
+    /// rest of a path now lands where its ".." takes it.
+    @Test func aMissingPathsDotsApplyOnTopOfItsExistingAncestor() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir("plugin")
+        let real = FolderOwners.trimmed(FolderOwners.realPath(root.path))
+        let parent = (real as NSString).deletingLastPathComponent
+        #expect(PrimitiveOwnership.resolvedAncestor(of: root.path + "/new/..") == real)
+        #expect(PrimitiveOwnership.resolvedAncestor(of: root.path + "/a/b/../c") == real + "/a/c")
+        #expect(PrimitiveOwnership.resolvedAncestor(of: root.path + "/new/../../out") == parent + "/out")
+    }
+
+    @Test func aNameThatIsntPlainIsRefused() throws {
+        let t = try PrimitiveHome()
+        let root = try t.dir("plugin")
+        for name in ["../../escape", "a/b", "..", ""] {
+            #expect(throws: Error.self) { try PrimitiveParts.create(.command, named: name, in: root) }
+        }
+        #expect(!FileManager.default.fileExists(atPath: t.home.appending(path: "escape.md").path))
     }
 
     @Test func trashingASymlinkEscapeIsRefused() throws {
