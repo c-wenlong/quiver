@@ -342,6 +342,18 @@ class TestHandle(unittest.TestCase):
             self.assertNotIn(secret[:20], post["title"])
             self.assertIn("[REDACTED]", post["title"])
 
+    def test_session_title_redacts_before_the_cut(self):
+        # A bare token straddling character 60: cut first, its visible
+        # prefix is too short for the token pattern and would leak.
+        token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1"
+        row = {"title": "x" * 52 + " " + token}
+        with patch.object(self.state.catalog, "row_for",
+                          return_value=row):
+            title = self.n._session_title("k1")
+        self.assertNotIn("ghp_", title)
+        self.assertNotIn("A1b2", title)
+        self.assertTrue(title.startswith("x" * 52 + " [REDACT"), title)
+
 class TestPost(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
