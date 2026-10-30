@@ -11,6 +11,16 @@ final class HubErrorTests: XCTestCase {
         XCTAssertEqual(HubError.network(URLError(.timedOut)).localizedDescription,
                        "Can't reach the hub. Check that Tailscale is on.")
     }
+
+    /// Under its "Can't reach the hub" title the offline card said
+    /// "Can't reach the hub" again; it now says only what to do.
+    func testTheOfflineCardDoesNotRepeatItsTitle() {
+        let offline = HubError.network(URLError(.cannotConnectToHost)).message
+        XCTAssertEqual(HubError.detail(underUnreachableTitle: offline), "Check that Tailscale is on, then try again.")
+        XCTAssertEqual(StateCard.unreachable(offline) {}.message, "Check that Tailscale is on, then try again.")
+        // A hub that answered keeps its own words.
+        XCTAssertEqual(HubError.detail(underUnreachableTitle: "The hub answered 500."), "The hub answered 500.")
+    }
 }
 
 /// Never answers: a request sits in flight until its task is cancelled.
