@@ -13,6 +13,9 @@ struct AddMarketplaceSheet: View {
     @State private var harnesses: [String] = ["claude", "codex"]
     @State private var chosen: Set<String> = ["claude", "codex"]
     @State private var working = false
+    /// The running add, so Cancel (or any other close) stops the clone
+    /// rather than letting it finish and add the marketplace anyway.
+    @State private var adding: Task<Void, Never>?
     /// The installed-harness lookup is still running; the toggles wait for
     /// it so its answer can't undo a choice made meanwhile.
     @State private var lookingUp = true
@@ -82,10 +85,13 @@ struct AddMarketplaceSheet: View {
                     Button("Add") {
                         working = true
                         error = nil
-                        Task {
+                        adding = Task {
                             do {
                                 let reply = try await app.swe.addMarketplace(
                                     source: source, harnesses: harnesses.filter { chosen.contains($0) })
+                                // Added: a close from here on leaves the
+                                // reloads below to finish.
+                                adding = nil
                                 results = reply.results
                                 if reply.results.contains(where: \.ok) {
                                     // Health's "not added" findings change too.
@@ -105,6 +111,8 @@ struct AddMarketplaceSheet: View {
             }
         }
         .sheetScaffold(width: 480)
+        // Cancelling ends the swe run, clone and all.
+        .onDisappear { adding?.cancel() }
         .task {
             defer { lookingUp = false }
             // Only harnesses that can register a marketplace get a toggle.
