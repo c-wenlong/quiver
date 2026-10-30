@@ -1715,7 +1715,10 @@ const PrFilter = (() => {
     const model = picked && picked.launch_model ? ModelMenu.html(x.model, recentModels(x), "gh-resolve-model", busy || x.started) : "";
     const where = s.data && s.data.machine ? ` on ${esc(s.data.machine)}` : " on the hub";
     const branch = issue.branch || `quiver/issue-${issue.number}`;
-    const ready = x.harnesses && x.harnesses.length && !busy && !x.started;
+    // A refetch can find the issue closed since the panel opened: Start
+    // goes off, as the sheet's Resolve with agent is for a closed issue.
+    const closed = issue.state !== "open";
+    const ready = x.harnesses && x.harnesses.length && !busy && !x.started && !closed;
     return `<div class="gh-confirm gh-session" role="group" aria-label="Resolve with agent">
       <div class="gh-confirm-text">Resolve <strong>#${esc(issue.number)}</strong> with an agent: it starts in <code>${esc(branch)}</code>,
         a worktree off the default branch${where}.</div>
@@ -1728,6 +1731,7 @@ const PrFilter = (() => {
       <textarea class="field gh-session-prompt" id="gh-resolve-prompt" rows="5"
         placeholder="The hub writes one from the issue when this is empty."${off}>${esc(x.prompt)}</textarea>
       <div class="caption gh-muted">It runs under tmux on the hub. The chat opens once the session shows up.</div>
+      ${closed && !x.started ? '<div class="caption gh-danger-text" role="alert">This issue is closed.</div>' : ""}
       ${x.error ? `<div class="caption gh-danger-text" role="alert">${esc(x.error)}</div>` : ""}
       ${x.note ? `<div class="caption" role="status">${esc(x.note)}</div>` : ""}
       <div class="gh-confirm-buttons">
@@ -1788,6 +1792,8 @@ const PrFilter = (() => {
   async function startResolve(s) {
     const x = s.resolve;
     if (!x || x.phase || x.started || !x.harness) return;
+    const issue = s.data && s.data.issue;
+    if (!issue || issue.state !== "open") return;
     const alive = () => page.issue === s && s.resolve === x;
     const say = (fields) => { Object.assign(x, fields); if (alive()) paintIssue(); };
     say({ phase: "Starting…", error: null, note: null });

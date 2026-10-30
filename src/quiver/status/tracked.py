@@ -22,13 +22,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from quiver.paths import data_dir_for
+from quiver.paths import data_dir_for, locked_beside
 from quiver.status.catalog import LEGACY_GROUPS, StatusService
-
-try:  # flock keeps two hubs on one home from losing each other's entries
-    import fcntl
-except ImportError:  # pragma: no cover - Windows has no flock
-    fcntl = None  # type: ignore[assignment]
 
 STORE_NAME = "web-status-services.json"
 
@@ -113,9 +108,8 @@ def _edit(path: Path, change) -> list[StatusService]:
     """Read, change, write under the lock file. ``change`` maps the current
     list to the new one; its result is both written and returned."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(str(path) + ".lock", "a+") as lock:
-        if fcntl is not None:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    # The lock keeps two hubs on one home from losing each other's entries.
+    with locked_beside(path):
         services = change(_load(path))
         _write(path, services)
         return services

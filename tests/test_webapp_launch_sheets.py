@@ -441,6 +441,25 @@ fetchRoutes.push(["/v1/issues/resolve", { status: 409, body: { error: { code: "u
   out.noContext = !("context" in (post2 && post2.body || {}));
   out.chat = location.hash;
   out.closed = !d.open;
+  // Closed since the panel opened: Fetch again turns Start off and a
+  // press posts nothing.
+  location.hash = "#/repositories";
+  PAGES.repositories();
+  await tick();
+  click("tab", "issues");
+  click("issue", "5");
+  await tick();
+  q("#gh-resolve-open").onclick();
+  await tick();
+  apiAnswers.unshift(["/v1/issues/o/r/5", { status: 200, data: { machine: "hub", github: { status: "ok" },
+    repo: "o/r", status: "ok", issue: { ...ISSUE, state: "closed" }, fetched_at: 0 } }]);
+  q("[data-issue-refresh]").onclick();
+  await tick();
+  out.closedStartOff = q("#gh-resolve-start").disabled && d._html.includes("This issue is closed.");
+  const before = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").length;
+  q("#gh-resolve-start").onclick();
+  await tick();
+  out.closedNoPost = fetchCalls.filter((c) => c.path === "/v1/issues/resolve").length === before;
   process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
@@ -665,6 +684,8 @@ class TestLaunchModelMenu(unittest.TestCase):
         self.assertTrue(out["noContext"])
         self.assertEqual(out["chat"], "#/sessions?chat=k9")
         self.assertTrue(out["closed"])
+        self.assertTrue(out["closedStartOff"], "a refetch finding the issue closed turns Start off")
+        self.assertTrue(out["closedNoPost"])
 
     def test_sessions_new_session(self):
         out = self.run_node(STUB + MENU_JS.read_text(encoding="utf-8") + "\n"
