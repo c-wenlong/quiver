@@ -91,6 +91,9 @@ class RunnerArgvTest(unittest.TestCase):
             ("codex", ("-c", "sandbox_mode=danger-full-access")),
             ("codex", ("--config=sandbox_mode=danger-full-access",)),
             ("codex", ("-c", "approval_policy=never")),
+            ("codex", ("-capproval_policy=never",)),
+            ("codex", ("-csandbox_mode=danger-full-access",)),
+            ("codex", ("-c=sandbox_mode=danger-full-access",)),
             ("claude", ("--allow-dangerously-skip-permissions",)),
         ):
             with self.subTest(args=args):
@@ -122,6 +125,8 @@ class RunnerArgvTest(unittest.TestCase):
         )
 
         self.assertEqual(claude_argv[-2:], ["--effort", "medium"])
+        glued = build_argv(RunnerSpec("codex", "gpt-5", ("-cmodel_reasoning=medium",)))
+        self.assertEqual(glued[-2:], ["-cmodel_reasoning=medium", "-"])
         self.assertEqual(codex_argv[-3:], ["--config", "model_reasoning=medium", "-"])
 
     def test_managed_flags_cannot_be_repeated_after_safety_flags(self):

@@ -138,6 +138,11 @@ def _validate_extra_args(harness: str, args: Sequence[str]) -> None:
             value_allowed = config_value = False
             continue
 
+        if harness == "codex" and arg[:2] == "-c" and len(arg) > 2 and arg[2] != "=":
+            # `-ckey=value`: the override glued to the short flag.
+            _check_codex_config(arg[2:])
+            value_allowed = config_value = False
+            continue
         flag, eq, value = arg.partition("=")
         flag = flag.lower()
         # A short flag can carry its value glued on: codex reads `-sVALUE`
