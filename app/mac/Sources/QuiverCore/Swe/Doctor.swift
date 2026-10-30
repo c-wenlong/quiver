@@ -156,11 +156,15 @@ public final class DoctorModel {
     public func load() async {
         generation += 1
         let mine = generation
+        // A cancelled load (the page closed) puts this back rather than
+        // leaving the spinner, and `isBusy`, on for good.
+        let before = state == .loading ? .idle : state
         state = .loading
         let next: Loadable<DoctorReport>
         do {
             next = .loaded(try await swe.doctor())
         } catch is CancellationError {
+            if mine == generation { state = before }
             return
         } catch {
             next = .failed(error.localizedDescription)
