@@ -142,6 +142,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Repo section keeps its `status`/`error` when its fetch fails while the others still list
 - [x] Pull to refresh (`?refresh=1` bypasses the hub's `gh` cache); `env_blocked` shows the `gh` fix on an empty list
 - [x] Detail page: the row plus rendered body (the chat's Markdown), per-check runs, latest reviews, review requests, changed files and +/- counts, merge state
+- [x] Merge with a strategy (Squash, Rebase, merge commit) or arm auto-merge, behind a confirm that names the PR, base and strategy; a check row from an Actions run re-runs its failed or all jobs (the web app's `POST /v1/app/repositories/merge` and `…/rerun`)
 - [x] "Open in session" sheet: harness picker from `/v1/sessions`' launchable set, prompt field prefilled with `suggested_prompt`
 - [x] Hub: `GET /v1/pulls` (list + viewer flags), `GET /v1/pulls/<o>/<r>/<n>` (detail), `POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the pulls stack
 - [ ] Mine/Review-requested push notifications once APNs lands
