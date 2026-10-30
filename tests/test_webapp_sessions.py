@@ -154,6 +154,19 @@ class TestBuild(unittest.TestCase):
         self.assertEqual((bare["ownership"], bare["attachable"]), ("observed", False))
 
 
+    def test_rows_carry_the_hubs_model_and_blank_when_unknown(self):
+        rows = [
+            {"key": "claude:a", "id": "a", "harness": "claude", "machine_id": "hub",
+             "model": "claude-opus-4-5-20251101", "last_active_at": 2},
+            {"key": "gemini:b", "id": "b", "harness": "gemini", "machine_id": "hub",
+             "last_active_at": 1},
+        ]
+        known, unknown = sessions.build(rows, {}, "hub", {}, scanned=True)
+        # Verbatim: the page drops the provider path and date stamp.
+        self.assertEqual(known["model"], "claude-opus-4-5-20251101")
+        self.assertEqual(unknown["model"], "")
+
+
 class TestCodexResume(unittest.TestCase):
     def test_a_resumed_thread_carries_every_rollout(self):
         store = LedgerStore(Path(tempfile.mkdtemp()) / "l.sqlite")
@@ -282,6 +295,18 @@ class TestSessionsRoute(HubBase):
         self.assertIn("claude", body["ledger_harnesses"])
         # A terminal owns it; claude can resume, so the chat offers Attach.
         self.assertEqual((row["ownership"], row["attachable"]), ("observed", True))
+
+    def test_rows_carry_the_models_of_the_newest_reply(self):
+        _, data = self.srv.request("GET", "/v1/app/sessions", headers=self.auth())
+        [row] = json.loads(data)["sessions"]
+        self.assertEqual(row["model"], "")  # the hub doesn't know it
+        # The hub's own catalog row says it (session_model.py): the page
+        # reuses that, it has no second transcript reader.
+        self.srv.state.catalog._model_of = lambda ss: ["claude-opus-5-20251101"] * len(ss)
+        self.srv.state.catalog.refresh()
+        _, data = self.srv.request("GET", "/v1/app/sessions", headers=self.auth())
+        [row] = json.loads(data)["sessions"]
+        self.assertEqual(row["model"], "claude-opus-5-20251101")
 
     @unittest.skipIf(__import__("os").geteuid() == 0, "root reads anything")
     def test_an_unreadable_source_keeps_its_sessions_visible(self):
@@ -1437,7 +1462,7 @@ class TestTranscriptSearchBox(unittest.TestCase):
             "globalThis.api = async (path) => { asked.push(path); return " + json.dumps(search_answer) + "; };\n"
             "globalThis.document = { getElementById: (id) => id === 'session-search' ? {} : null };\n"
             "globalThis.setTimeout = (f) => { f(); return 0; }; globalThis.clearTimeout = () => {};\n"
-            "globalThis.Fmt = { logo: () => '', harnessName: (h) => h, tokens: String, dollars: String };\n")
+            "globalThis.Fmt = { logo: () => '', harnessName: (h) => h, modelName: (m) => m || '', tokens: String, dollars: String };\n")
         script = (prelude + SESSIONS_JS.read_text(encoding="utf-8")
                   + "\nrepaintKeepingFocus = () => {};\n"
                   + "sessionsPage.data = { sessions: " + json.dumps(self.ROWS) + " };\n"
@@ -1528,6 +1553,133 @@ class TestTranscriptSearchBox(unittest.TestCase):
         """, {"status": 0, "data": None})
         self.assertEqual(out["kept"], ["k1"])
         self.assertIn("Couldn't reach transcript search", out["note"])
+
+
+FORMAT_JS = SESSIONS_JS.with_name("format.js")
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestSessionModelShown(unittest.TestCase):
+    """The newest reply's model on the Sessions list rows and the chat
+    header (#643), as the phone shows it: no provider path, no date stamp,
+    nothing when unknown."""
+
+    def run_js(self, body, with_sessions=True):
+        fmt = FORMAT_JS.read_text(encoding="utf-8")
+        prelude = (
+            "const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;')"
+            ".replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n"
+            "globalThis.window = { addEventListener() {} };\n"
+            "globalThis.document = { addEventListener() {}, getElementById: () => null };\n"
+            "globalThis.location = { hash: '' };\n")
+        # format.js declares `const Fmt`; run it in its own scope and hand
+        # the result to the page scripts as the global they read.
+        prelude += ("globalThis.Fmt = new Function(" + json.dumps(fmt)
+                    + " + '\\nreturn Fmt;')();\n")
+        if with_sessions:
+            source = SESSIONS_JS.read_text(encoding="utf-8")
+        else:
+            source = (STATIC / "pages" / "chat.js").read_text(encoding="utf-8")
+        script = (prelude + source + "\n(async () => { const out = await (async () => {"
+                  + body + "})(); process.stdout.write(JSON.stringify(out)); })();\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+        self.addCleanup(Path(f.name).unlink)
+        done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_model_name_drops_provider_and_date_stamp(self):
+        out = self.run_js("""
+          const raw = ["claude-opus-4-5-20251101", "anthropic/claude-opus-4-5",
+            "openrouter/nvidia/nemotron-3:free", "gpt-5.1-codex", "swe-2-max",
+            "model-2025110", "-20251101", "  claude-opus-4-5  ", "", "   ", null, undefined, 7];
+          return raw.map((m) => Fmt.modelName(m));""")
+        self.assertEqual(out, [
+            "claude-opus-4-5", "claude-opus-4-5", "nemotron-3:free",
+            "gpt-5.1-codex",  # a version is not a date stamp
+            "swe-2-max",
+            "model-2025110",  # seven digits are kept
+            "-20251101",      # never shortened to nothing
+            "claude-opus-4-5", "", "", "", "", ""])
+
+    def test_list_row_names_the_model_once(self):
+        out = self.run_js("""
+          const usage = (...models) => ({ tokens: 1, cost_usd: 0, models: models.map((model) => ({ model, tokens: 1 })) });
+          const base = { key: "k", harness: "claude", title: "t", last_active_at: 2e9, location: "Local" };
+          const sub = (r) => /<span class="session-sub">([^<]*)<\\/span>/.exec(sessionRow({ ...base, ...r }))[1];
+          return {
+            known: sub({ model: "claude-opus-4-5-20251101" }),
+            unknown: sub({}),
+            blank: sub({ model: "" }),
+            deduped: sub({ model: "claude-opus-4-5-20251101", usage: usage("claude-opus-4-5-20251101") }),
+            others: sub({ model: "anthropic/claude-opus-4-5", usage: usage("claude-sonnet-4-5", "claude-opus-4-5") }),
+            ledgerOnly: sub({ usage: usage("claude-sonnet-4-5") }),
+          };""")
+        # Time and duration follow, so pull out just the model words.
+        def models(sub):
+            return [p for p in sub.split(" · ") if p.startswith(("claude", "gpt"))]
+        self.assertEqual(models(out["known"]), ["claude-opus-4-5"])
+        self.assertEqual(models(out["unknown"]), [])
+        self.assertEqual(models(out["blank"]), [])
+        self.assertEqual(models(out["deduped"]), ["claude-opus-4-5"])
+        self.assertEqual(models(out["others"]), ["claude-opus-4-5, claude-sonnet-4-5"])
+        self.assertEqual(models(out["ledgerOnly"]), ["claude-sonnet-4-5"])
+
+    def test_chat_header_shows_the_model_after_the_folder(self):
+        out = self.run_js("""
+          const T = SessionChat._test;
+          return {
+            local: T.barSub({ harness: "claude", cwd: "/w/app", model: "claude-opus-4-5-20251101" }),
+            remote: T.barSub({ harness: "codex", cwd: "/w/app", model: "openai/gpt-5.1-codex", remote: true, machine: "Mac mini" }),
+            unknown: T.barSub({ harness: "claude", cwd: "/w/app" }),
+            none: T.barSub(null),
+          };""", with_sessions=False)
+        self.assertEqual(out["local"], "Claude Code · /w/app · claude-opus-4-5")
+        self.assertEqual(out["remote"], "Codex · /w/app · gpt-5.1-codex · Mac mini")
+        self.assertEqual(out["unknown"], "Claude Code · /w/app")
+        self.assertEqual(out["none"], "")
+
+    def test_chat_reads_the_model_again_after_a_reply(self):
+        """The row is read once at open and no event carries the model, so
+        a finished turn (and a return to the tab) reads it again."""
+        out = self.run_js("""
+          const T = SessionChat._test;
+          const out = {};
+          T.chat.key = "s1"; T.chat.gen = 3;
+          T.chat.row = { harness: "claude", status: "active" };
+          const answer = (status, sessions) => { globalThis.api = async () => ({ status, data: { sessions } }); };
+          // A hub that fails, or doesn't know the model, leaves the header.
+          answer(503, null);
+          await T.refreshModel();
+          out.failed = T.chat.row.model || "";
+          answer(200, [{ key: "s1" }]);
+          await T.refreshModel();
+          out.unknown = T.chat.row.model || "";
+          // The opening reply names one; only the model is taken.
+          answer(200, [{ key: "s1", model: "claude-opus-4-5-20251101", status: "done" }]);
+          out.first = await T.refreshModel();
+          out.status = T.chat.row.status;
+          // A switch elsewhere changes it.
+          answer(200, [{ key: "s1", model: "claude-sonnet-4-5" }]);
+          out.switched = await T.refreshModel();
+          // An answer landing after the chat moved on is dropped.
+          let release;
+          globalThis.api = () => new Promise((r) => {
+            release = () => r({ status: 200, data: { sessions: [{ key: "s1", model: "late" }] } });
+          });
+          const slow = T.refreshModel();
+          T.chat.gen = 4;
+          release();
+          await slow;
+          out.late = T.chat.row.model;
+          return out;""", with_sessions=False)
+        self.assertEqual(out["failed"], "")
+        self.assertEqual(out["unknown"], "")
+        self.assertEqual(out["first"], "claude-opus-4-5-20251101")
+        self.assertEqual(out["status"], "active")
+        self.assertEqual(out["switched"], "claude-sonnet-4-5")
+        self.assertEqual(out["late"], "claude-sonnet-4-5")
 
 
 if __name__ == "__main__":

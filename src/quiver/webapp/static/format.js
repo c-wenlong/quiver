@@ -278,7 +278,21 @@ const Fmt = (() => {
   const shellWord = (s) => (/^[\w@%+=:,./-]+$/.test(String(s)) ? String(s)
     : `'${String(s).replace(/'/g, "'\\''")}'`);
 
-  return { tokens, dollars, ago, relative, harnessName, harnessColor, logo, mark, marbleScale,
+  /* A session's model as a header or list row shows it, the iPhone's
+   * ModelLabel.short: the id without its provider path or an 8-digit
+   * date stamp ("anthropic/claude-opus-4-5" and "claude-opus-4-5-20251101"
+   * both read "claude-opus-4-5"; "openrouter/nvidia/nemotron-3:free"
+   * reads "nemotron-3:free"). "" for a missing or blank one. */
+  function modelName(raw) {
+    const trimmed = typeof raw === "string" ? raw.trim() : "";
+    if (!trimmed) return "";
+    const parts = trimmed.split("/").filter(Boolean);
+    const name = parts.length ? parts[parts.length - 1] : trimmed;
+    const dash = name.lastIndexOf("-");
+    return dash > 0 && /^[0-9]{8}$/.test(name.slice(dash + 1)) ? name.slice(0, dash) : name;
+  }
+
+  return { tokens, dollars, ago, relative, harnessName, modelName, harnessColor, logo, mark, marbleScale,
     resetIn, windowLabel, planTitle, money, balance, onDemand,
     copyIcon, copy, copyTick, shellWord };
 })();
