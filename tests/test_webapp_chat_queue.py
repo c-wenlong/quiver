@@ -459,11 +459,16 @@ class TestQueuedTray(unittest.TestCase):
             let release;
             answer = () => new Promise((r) => { release = r; });
             T.chat.detaching = true;
-            const stale = T.cancelDetach();
-            await tick();
-            T.chat.gen++;
-            release({ status: 500, data: { error: { code: "boom", message: "it broke" } } });
-            await stale;
+            // A late answer from the chat open before: neither a success
+            // nor a refusal touches the chat open now.
+            for (const late of [{ status: 200, data: { ok: true } },
+                                { status: 500, data: { error: { code: "boom", message: "it broke" } } }]) {
+              const stale = T.cancelDetach();
+              await tick();
+              T.chat.gen++;
+              release(late);
+              await stale;
+            }
             out.stale = [ids["chat-log"].children.length, T.chat.detaching];
             answer = () => ({ status: 409, data: { error: { code: "busy", message: "the session is busy" } } });
             await T.cancelDetach();
