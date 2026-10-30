@@ -1289,8 +1289,11 @@ const rows = () => [...panel.innerHTML.matchAll(/>(alpha|beta)</g)].map((m) => m
   await tick();
   out.focusedAfter = document.activeElement === box();
   const typing = box();
+  typing.oncompositionstart();
   typing.value = "be";
   typing.oninput({ isComposing: true });
+  pollTick(); // the poll starts, and its reply lands, mid-composition
+  await tick();
   out.keptDuringComposition = box() === typing;
   out.rowsDuringComposition = rows();
   typing.value = "beta";

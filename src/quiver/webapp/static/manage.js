@@ -853,10 +853,13 @@ function accountCard(h, machine) {
 /* A filter box whose page repaints, and so replaces it, as you type.
  * ``onText`` keeps every keystroke, but the repaint waits while an IME
  * composition is open (it would end the composition mid-word) and runs
- * once the composition ends. ``repaint`` puts the focus and caret back. */
+ * once the composition ends. ``repaint`` puts the focus and caret back.
+ * ``input.composing`` says a composition is open, so a background repaint
+ * (GhUI.keepFocus) can wait for that same compositionend repaint. */
 function bindSearch(input, onText, repaint) {
+  input.oncompositionstart = () => { input.composing = true; };
   input.oninput = (e) => { onText(input.value); if (!e.isComposing) repaint(); };
-  input.oncompositionend = () => { onText(input.value); repaint(); };
+  input.oncompositionend = () => { input.composing = false; onText(input.value); repaint(); };
 }
 
 function bindRefresh(render, before) {
