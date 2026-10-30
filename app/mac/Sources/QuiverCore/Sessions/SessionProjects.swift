@@ -60,14 +60,8 @@ public enum SessionProjects {
 
     /// The repository a worktree's `.git` file points at: its `gitdir:`
     /// line, relative or absolute, resolved against the worktree's own
-    /// folder, then the folder above its `/.git` part.
-    public static func mainRepo(of contents: String, beside folder: String) -> String? {
-        mainRepoRoot(of: contents, beside: folder).flatMap(lastComponent)
-    }
-
-    /// The same resolution as `mainRepo`, returning the repository's
-    /// root path rather than its name: the identity project grouping
-    /// keys on.
+    /// folder, then the folder above its `/.git` part. The root path, not
+    /// the name: the identity project grouping keys on.
     public static func mainRepoRoot(of contents: String, beside folder: String) -> String? {
         guard let line = contents.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") }) else {
             return nil

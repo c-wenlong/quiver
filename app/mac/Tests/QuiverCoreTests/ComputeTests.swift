@@ -604,7 +604,7 @@ import Testing
         let slow = Task { await model.refresh() }
         // Wait off the main actor and off the cooperative pool, so the
         // refresh can reach its sample call.
-        await runOffPool { gated.waitForEntry() }
+        await offMain { gated.waitForEntry() }
         await model.refresh()
         gated.release.signal()
         await slow.value

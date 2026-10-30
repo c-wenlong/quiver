@@ -1603,6 +1603,96 @@ import Testing
         #expect(model.unreadCount == 1)
     }
 
+    /// One inbox read at a time: a second waits and reruns after, and a
+    /// read that was in flight when threads were marked read can't bring
+    /// them back as unread.
+    @Test(.timeLimit(.minutes(1))) func inboxReadsDontOverlapOrUndoAMarkRead() async throws {
+        final class HeldInbox: CommandRunning, @unchecked Sendable {
+            let router: Router
+            private let lock = NSLock()
+            private var holding = false
+            private var parked: CheckedContinuation<Void, Never>?
+            private(set) var listCalls = 0
+            init(_ router: Router) { self.router = router }
+            var isParked: Bool { lock.withLock { parked != nil } }
+            func hold() { lock.withLock { holding = true } }
+            func open() {
+                let waiting = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                    holding = false
+                    defer { parked = nil }
+                    return parked
+                }
+                waiting?.resume()
+            }
+            var lists: Int { lock.withLock { listCalls } }
+            func run(_ arguments: [String]) async throws -> CommandResult {
+                if arguments.starts(with: ["gh", "inbox", "--limit=50"]) {
+                    // Only the first read after hold() parks, so a model
+                    // that overlaps reads fails the count, not hangs.
+                    let held = lock.withLock { () -> Bool in
+                        listCalls += 1
+                        defer { holding = false }
+                        return holding
+                    }
+                    if held {
+                        // The answer is decided now, as a real reply is.
+                        let reply = try await router.run(arguments)
+                        await withCheckedContinuation { continuation in
+                            lock.withLock { parked = continuation }
+                        }
+                        return reply
+                    }
+                }
+                return try await router.run(arguments)
+            }
+        }
+        func payload(unread: Bool) -> String {
+            env + ",\"status\":\"ok\",\"notifications\":["
+                + "{\"id\":\"1\",\"repo\":\"o/a\",\"title\":\"A\",\"type\":\"Issue\","
+                + "\"reason\":\"mention\",\"unread\":\(unread),\"updated_at\":1700000000,"
+                + "\"url\":\"https://github.com/o/a/issues/1\"}]"
+        }
+        let router = router([
+            "gh inbox --limit=50 --all --json": payload(unread: true),
+            "gh inbox read 1 --json": env + ",\"all\":false,\"marked\":[\"1\"]",
+        ])
+        let runner = HeldInbox(router)
+        let swe = SweClient(runner: runner)
+        let model = GitHubModel()
+        await model.loadInbox(swe: swe)
+        #expect(model.unreadCount == 1)
+
+        runner.hold()
+        let first = Task { await model.loadInbox(swe: swe, force: true) }
+        while !runner.isParked { try await Task.sleep(for: .milliseconds(10)) }
+        // A second forced read waits for the first instead of racing it.
+        let second = Task { await model.loadInbox(swe: swe, force: true) }
+        await Task.yield()
+        #expect(runner.lists == 2)
+        #expect(await model.markInboxRead(["1"], swe: swe) == nil)
+        #expect(model.unreadCount == 0)
+        // GitHub now reports the thread read; the held read answered before.
+        router.replies["gh inbox --limit=50 --all --json"] = .init(
+            status: 0, stdout: envelope(payload(unread: false)), stderr: "")
+        runner.open()
+        await first.value
+        #expect(model.unreadCount == 0)
+        // The waiting forced caller reads again, and returns with its rows.
+        await second.value
+        #expect(runner.lists == 3)
+        #expect(model.unreadCount == 0)
+        // A plain poll that overlaps a read returns once that read landed.
+        runner.hold()
+        let third = Task { await model.loadInbox(swe: swe, force: true) }
+        while !runner.isParked { try await Task.sleep(for: .milliseconds(10)) }
+        let poll = Task { await model.loadInbox(swe: swe) }
+        await Task.yield()
+        runner.open()
+        await third.value
+        await poll.value
+        #expect(runner.lists == 4)
+    }
+
     @Test func markAllReadClearsTheInbox() async {
         let inboxPayload = env + ",\"status\":\"ok\",\"notifications\":["
             + "{\"id\":\"1\",\"repo\":\"o/a\",\"title\":\"A\",\"type\":\"Issue\","
