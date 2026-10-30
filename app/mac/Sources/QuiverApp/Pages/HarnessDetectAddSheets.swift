@@ -52,9 +52,7 @@ struct DetectSheet: View {
                                     Text(finding.command).font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.textSecondary)
                                     Badge(finding.confidence)
                                     if let path = finding.path {
-                                        Text(path.replacingOccurrences(
-                                            of: FileManager.default.homeDirectoryForCurrentUser.path,
-                                            with: "~"))
+                                        Text(displayPath(path))
                                             .font(Theme.caption).foregroundStyle(Theme.textMuted)
                                     }
                                 }
@@ -126,6 +124,8 @@ struct AddHarnessSheet: View {
     @State private var tags = ""
     @State private var working = false
     @State private var error: String?
+    /// Whether the typed command resolves on PATH; nil until checked.
+    @State private var onPath: Bool?
 
     static let nameRule = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -151,9 +151,19 @@ struct AddHarnessSheet: View {
             }
             FormField("Command") {
                 TextField("binary name or path", text: $command).quiverField(monospaced: true)
-                if !command.isEmpty, !command.hasPrefix("/"), !Self.onPath(command) {
+                if !command.isEmpty, !command.hasPrefix("/"), onPath == false {
                     Text("Not on PATH yet").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
+            }
+            // Checked off the main thread, per edit: a PATH entry on a
+            // stale mount must not stall typing.
+            .task(id: command) {
+                onPath = nil
+                let command = command
+                guard !command.isEmpty, !command.hasPrefix("/") else { return }
+                let path = await LoginShell.cachedEnvironment()["PATH"] ?? ""
+                let found = await Task.detached { Self.onPath(command, path: path) }.value
+                if !Task.isCancelled { onPath = found }
             }
             FormField("Description") {
                 TextField("What it does", text: $description).quiverField()
@@ -192,11 +202,11 @@ struct AddHarnessSheet: View {
         .sheetScaffold(width: 420)
     }
 
-    /// Whether `command` resolves on PATH, a quick which(1) on the app's own
-    /// PATH plus the usual Homebrew spot.
-    static func onPath(_ command: String) -> Bool {
-        let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "")
-            .split(separator: ":").map(String.init) + ["/opt/homebrew/bin", "/usr/local/bin"]
-        return paths.contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(command)") }
+    /// Whether `command` resolves on `path` or the usual Homebrew spots, a
+    /// quick which(1). `path` is the login shell's PATH, as provider
+    /// detection uses: the app's own launchd PATH has no ~/.local/bin, nvm
+    /// or cargo, so a CLI installed there read as missing.
+    nonisolated static func onPath(_ command: String, path: String) -> Bool {
+        ProviderDetection.commandExists(command, path: path + ":/opt/homebrew/bin:/usr/local/bin")
     }
 }
