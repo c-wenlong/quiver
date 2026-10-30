@@ -76,7 +76,7 @@ struct PullDetailView: View {
             (reply, error) = Self.landing(body, over: reply)
         } catch {
             guard gen == generation else { return }
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            self.error = error.localizedDescription
         }
     }
 
