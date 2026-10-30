@@ -259,21 +259,25 @@ class LedgerStore:
             GROUP BY 1, 2, 3, 4, 5, 6
         """).fetchall()
 
-    def activity_session_stats(self, harness: str) -> dict[tuple[str, str], dict]:
-        """One harness's whole-history totals per ``(account, session)``,
-        for the Calendar's file sources to judge an accidental session
-        (``Ledger.filterTrivialActivitySessions``): the keys
-        ``sessions.is_trivial`` reads."""
+    def activity_session_stats(self, harnesses: list[str]) -> dict[str, dict]:
+        """Whole-history totals per harness, then per ``(account,
+        session)``, for the Calendar's file sources to judge an accidental
+        session (``Ledger.filterTrivialActivitySessions``): the keys
+        ``sessions.is_trivial`` reads. One pass for every harness asked."""
+        out: dict[str, dict] = {h: {} for h in harnesses}
         rows = self.db.execute(
-            "SELECT account, session, COUNT(*),"
+            "SELECT harness, account, session, COUNT(*),"
             " SUM(input + output + cache_read + cache_write + reasoning),"
             " SUM(output), SUM(reasoning), MIN(ts), MAX(ts)"
-            " FROM events WHERE harness = ? GROUP BY account, session",
-            (harness,),
+            f" FROM events WHERE harness IN ({','.join('?' * len(harnesses))})"
+            " GROUP BY harness, account, session",
+            list(harnesses),
         ).fetchall()
-        return {(account, session): {"events": n, "tokens": tokens, "output": out,
-                                     "reasoning": reas, "first_ts": first, "last_ts": last}
-                for account, session, n, tokens, out, reas, first, last in rows}
+        for harness, account, session, n, tokens, outp, reas, first, last in rows:
+            out[harness][(account, session)] = {
+                "events": n, "tokens": tokens, "output": outp, "reasoning": reas,
+                "first_ts": first, "last_ts": last}
+        return out
 
     def session_folders(self) -> list[tuple]:
         """``(harness, session, cwd, events, last ts)`` per folder a

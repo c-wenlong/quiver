@@ -344,6 +344,7 @@ POST /v1/sessions/{id}/fork          {prompt?, model?, effort?} new session from
 GET  /v1/issues                      every pinned repo's issues, each row plus `mine` (`?state=open|closed|all`, open default)
 GET  /v1/issues/<o>/<r>/<n>          one issue in full: row + body, comments, branch, worktree, suggested_prompt
 POST /v1/issues/resolve              {repo, number, harness, prompt?, context?, model?, effort?} worktree + agent for a GitHub issue → launch_id
+POST /v1/issues/comment              {repo, number, body} post a comment on a pinned repo's issue as the hub's gh login
 GET  /v1/pulls                       every pinned repo's open PRs, each row plus `mine` and `review_requested`
 GET  /v1/pulls/<o>/<r>/<n>           one PR in full: row + body, per-check runs, reviews, worktree, suggested_prompt
 POST /v1/pulls/<o>/<r>/<n>/open      {harness, prompt?, model?, effort?} detached PR-head worktree + agent → launch_id
@@ -837,6 +838,33 @@ stores that as the session's display name (as `POST
 /v1/sessions/{id}/title` would) and emits `session.meta` on the global
 stream only, since an event in the session's own journal before its
 tailer starts would make the tailer skip the first turn.
+
+`POST /v1/issues/comment {repo, number, body}` (`issues.py`) posts
+`body` as a comment on issue `number`, with the hub machine's own `gh`
+login: the web and iPhone issue detail's composer, and their Resolve
+panel's "Also post as a comment" switch, which posts the context before
+the resolve. It goes through the function behind `swe gh issue comment
+--body-file=-` in process, so the text reaches `gh issue comment
+--body-file -` on stdin and never sits in argv, where every process on
+the machine can read it. The caller is gated like every other write
+here: a paired phone or the owner's own tailnet device, never a
+satellite credential. The route refuses before running `gh`: `400
+bad_body` for unreadable JSON, `422 bad_repo` for a missing or malformed
+`owner/name`, `422 bad_issue` for a number that isn't 1 to nine digits
+(a JSON number or a digit string; `true` is not one), `422 bad_comment`
+when `body` is not a string or is blank, `422 comment_too_long` past
+GitHub's own 65,536 characters, `404 not_pinned` for a repo the hub
+doesn't pin (so a client can't post anywhere else the hub's login
+reaches), and from a fresh `gh auth status` `409 gh_unavailable` (no
+`gh`), `gh_auth_required` (signed out) or `gh_upstream_error` (the check
+itself failed or timed out, so nothing says the account is signed out). The body is trimmed first, as the Mac's composer
+trims it. `gh` refusing answers `404 unknown_issue` (no such issue) or
+`502 comment_failed` with `gh`'s words. Success is `200 {ok, github,
+repo, number, comment: {author, body, created_at, url}, machine,
+machine_id}`, and the hub drops the issue's cached detail and the
+repo's issue lists, board and task rows, so the next read lists the
+comment and its new count, even after a failure, since a timed-out
+`gh` may still have posted.
 
 `GET /v1/pulls` (`pulls.py`) lists the open pull requests of every repo
 pinned on the hub (`swe gh repo list`): `{repos: [{name, status, pulls,
