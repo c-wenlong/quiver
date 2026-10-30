@@ -106,6 +106,12 @@ TAIL_MAX_SESSIONS = 100
 # once; the remainder waits for the next poll.
 _MAX_CHUNK = 4 << 20
 
+# ``JsonlTailSource.continue_from``: how much of the old transcript
+# before its cursor identifies the boundary, and how far from the same
+# offset the new file is searched for it.
+_BOUNDARY_BYTES = 4096
+_HANDOFF_SPAN = 1 << 20
+
 # How much of a transcript's head the tailer keeps to tell a truncation
 # that kept the stream (copytruncate, in-place rewrite) from one that
 # replaced it — the same idea as search_writer's PRINT_SAMPLE.
@@ -550,65 +556,42 @@ class JsonlTailSource:
         line for line into a new file, then appends the new turns. The
         catalog sees the new file a refresh later, so turns can already
         sit past the copy: starting at the end would lose them.
+
+        The boundary is the last ``_BOUNDARY_BYTES`` before ``old``'s
+        offset: several lines of context, so one repeated short line
+        can't match early, and bounded however large the last record
+        is. It is looked for at the same offset first (a real resume
+        copies byte for byte), then within ``_HANDOFF_SPAN`` of it.
         """
-        if old._align:
-            return False  # never polled: its offset is mid-line
-        lines = old._consumed_tail()
-        if not lines:
-            return False
-        newest = lines[0]
-        # The copy is usually byte for byte: the line sits at the same
-        # offset. Otherwise scan for the newest of the old tail lines.
-        at = old.offset - len(newest) - 1
-        if at >= 0:
-            try:
-                with open(self.path, "rb") as fh:
-                    fh.seek(at)
-                    if fh.read(len(newest) + 1) == newest + b"\n":
-                        self.offset = old.offset
-                        self._prime_head()
-                        return True
-            except OSError:
-                return False
-        rank = {line: i for i, line in reversed(list(enumerate(lines)))}
-        best: tuple[int, int] | None = None  # (rank, offset after line)
-        pos = 0
+        end = old.offset
+        if old._align or end <= 0:
+            return False  # never polled, or nothing read
+        start = max(0, end - _BOUNDARY_BYTES)
         try:
-            with open(self.path, "rb") as fh:
-                for raw in fh:
-                    pos += len(raw)
-                    if not raw.endswith(b"\n"):
-                        break  # a line still being written
-                    r = rank.get(raw[:-1])
-                    if r is not None and (best is None or r <= best[0]):
-                        best = (r, pos)
+            with open(old.path, "rb") as fh:
+                fh.seek(start)
+                mark = fh.read(end - start)
         except OSError:
             return False
-        if best is None:
+        if len(mark) != end - start or not mark.endswith(b"\n"):
             return False
-        self.offset = best[1]
+        lo = max(0, start - _HANDOFF_SPAN)
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(lo)
+                window = fh.read(start - lo + _HANDOFF_SPAN + len(mark))
+        except OSError:
+            return False
+        if window[start - lo:end - lo] == mark:
+            at = start
+        else:
+            found = window.find(mark)
+            if found < 0:
+                return False
+            at = lo + found
+        self.offset = at + len(mark)
         self._prime_head()
         return True
-
-    def _consumed_tail(self, count: int = 64) -> list[bytes]:
-        """The last ``count`` non-empty lines before ``offset``, newest
-        first, read from at most the last MiB of them."""
-        end = self.offset
-        if end <= 0:
-            return []
-        start = max(0, end - (1 << 20))
-        try:
-            with open(self.path, "rb") as fh:
-                fh.seek(start)
-                window = fh.read(end - start)
-        except OSError:
-            return []
-        lines = window.split(b"\n")
-        if lines and lines[-1] == b"":
-            lines.pop()  # offset sits after a newline
-        if start > 0 and lines:
-            lines.pop(0)  # began mid-line
-        return [line for line in reversed(lines) if line.strip()][:count]
 
     def _file_head(self, span: int) -> bytes:
         try:
@@ -1275,6 +1258,9 @@ class Tailer:
                 # First sight of this session: recent history only.
                 source.start_near_end()
         self.next_poll_at = 0.0
+        # A source waiting to replace ``source``; see ``hand_off``.
+        self._handoff = None
+        self._handoff_lock = threading.Lock()
         self._pending_save = False
         # (source, state) as the last poll left them; see ``poll``.
         self._polled: tuple | None = None
@@ -1286,6 +1272,32 @@ class Tailer:
         # here writes nothing, so the 0.25 s hot cadence and the 1 s
         # active one cost a read, not a file write, while nothing moves.
         self._saved: dict | None = state or None
+
+    def hand_off(self, source) -> None:
+        """Replace the source at the next ``poll``, on the tail thread
+        (any thread may call this). A JSONL source continues after the
+        last line the current one read when that line is in its file;
+        otherwise it keeps the placement it came with."""
+        with self._handoff_lock:
+            self._handoff = source
+
+    def next_source(self):
+        """The source ``poll`` reads next: a pending hand-off, else the
+        current one."""
+        with self._handoff_lock:
+            return self._handoff or self.source
+
+    def _take_handoff(self) -> None:
+        with self._handoff_lock:
+            source, self._handoff = self._handoff, None
+        if source is None:
+            return
+        old = self.source
+        if isinstance(old, JsonlTailSource) and isinstance(
+                source, JsonlTailSource):
+            source.continue_from(old)
+        self.source = source
+        self._pending_save = True
 
     def _load_cursor(self) -> dict:
         try:
@@ -1323,6 +1335,7 @@ class Tailer:
         (duplicates, recoverable) instead of skipping messages forever.
         """
         self.next_poll_at = now + self.interval(active, hot)
+        self._take_handoff()
         # The state the last poll left is this poll's "before", unless
         # the source was replaced since (a resume moved the transcript):
         # one state() per poll, not two.
@@ -1504,23 +1517,22 @@ class TailManager:
         Claude ``--resume`` from another folder writes a new JSONL under
         that project; the old source would keep polling a dead path.
         The journal already holds the history the new file copies, so
-        the fresh source starts after the last line the old one read,
-        found in the new file: turns written past the copy before this
-        refresh still stream. When that line isn't there, the end.
+        the fresh source continues after the last line the old one read
+        (``continue_from``): turns written past the copy before this
+        refresh still stream. That runs on the tail thread at its next
+        poll (``Tailer.hand_off``), so the old source can't read on
+        meanwhile. When the line isn't there, it starts at the end the
+        file has now.
         """
         new_path = resolve_jsonl_path(session)
-        if new_path is None or new_path == self._source_path(tailer.source):
+        if new_path is None or new_path == self._source_path(
+                tailer.next_source()):
             return
         source = make_source(session)
         if source is None:
             return
-        old = tailer.source
-        if not (isinstance(old, JsonlTailSource)
-                and isinstance(source, JsonlTailSource)
-                and source.continue_from(old)):
-            source.skip_to_end()
-        tailer.source = source
-        tailer.save_cursor()
+        source.skip_to_end()
+        tailer.hand_off(source)
 
     def sync(
         self,
