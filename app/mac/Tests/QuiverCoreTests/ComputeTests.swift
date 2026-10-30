@@ -594,7 +594,7 @@ import Testing
         let second = [Self.proc(11, 1, path: "/opt/homebrew/bin/claude")]
         let gated = Gated([first, second])
         let model = ComputeModel(sampler: gated, matchers: { [Self.claude] },
-                                 signaller: SystemSignaller(), selfPID: 99)
+                                 signaller: SystemSignaller(), defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         let slow = Task { await model.refresh() }
         // Wait off the main actor and off the cooperative pool, so the
@@ -630,7 +630,7 @@ import Testing
         let sampler = Flip([[shown], [reused]])
         let signaller = Signals()
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
-                                 signaller: signaller, selfPID: 99)
+                                 signaller: signaller, defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.refresh()
         await model.quit(.process(shown, harness: "claude"))
@@ -665,7 +665,8 @@ import Testing
         // passed: a matching process reports still running, the
         // recycled pid does not.
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude] }, signaller: fake,
-                                 clock: { .now.addingTimeInterval(60) }, selfPID: 99)
+                                 clock: { .now.addingTimeInterval(60) },
+                                 defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.refresh()
         await model.quit([.process(signalled, harness: "claude"),
@@ -693,7 +694,7 @@ import Testing
             Self.proc(21, 20, path: "/x/codex-helper"),
         ])
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude, Self.codex] },
-                                 signaller: fake, selfPID: 99)
+                                 signaller: fake, defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.refresh()
         await model.quitHarness("claude")
@@ -722,7 +723,7 @@ import Testing
         // The page's last sample predates the helper; quit's own has it.
         let fake = Flip([[root], [root, helper]])
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude] },
-                                 signaller: fake, selfPID: 99)
+                                 signaller: fake, defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.refresh()
         await model.quitHarness("claude")
@@ -739,7 +740,7 @@ import Testing
         }
         let fake = Fake([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude, Self.codex] },
-                                 signaller: fake, selfPID: 99)
+                                 signaller: fake, defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.quitHarness("codex")
         #expect(fake.signalled.isEmpty)

@@ -161,6 +161,15 @@ function onSettingsPage() {
   return currentRoute() === "settings";
 }
 
+/* Masks every key value the eye revealed; bumping revealGen drops a
+ * reveal still on its way. A visit, a reload of the keys, and leaving
+ * the Providers keys view for another section or tab all do this, so a
+ * value never comes back in plain text on the way back. */
+function settingsForgetRevealed() {
+  settingsPage.revealed = new Map();
+  settingsPage.revealGen++;
+}
+
 async function renderSettings() {
   const gen = routeGen;
   const p = settingsPage;
@@ -170,8 +179,7 @@ async function renderSettings() {
   p.ticket = null;
   p.confirming = null;
   p.setupStale = true;
-  p.revealed = new Map();
-  p.revealGen++;
+  settingsForgetRevealed();
   p.keyEditor = null;
   if (p.data) paintSettings();
   else {
@@ -963,6 +971,7 @@ function bindSettings(section) {
   for (const btn of panel.querySelectorAll("[data-section]")) {
     btn.onclick = () => {
       settingsWrite(SETTINGS_KEYS.section, btn.dataset.section);
+      settingsForgetRevealed();
       // A ?section= link picked the first one; a click wins from here on.
       if (location.hash.includes("?")) history.replaceState(null, "", "#/settings");
       paintSettings();
@@ -1016,7 +1025,11 @@ function bindSettings(section) {
     };
   }
   for (const btn of panel.querySelectorAll("[data-providers-tab]")) {
-    btn.onclick = () => { settingsWrite(SETTINGS_KEYS.providersTab, btn.dataset.providersTab); paintSettings(); };
+    btn.onclick = () => {
+      settingsWrite(SETTINGS_KEYS.providersTab, btn.dataset.providersTab);
+      settingsForgetRevealed();
+      paintSettings();
+    };
   }
   const status = document.getElementById("set-key-status");
   if (status) status.onchange = () => { settingsPage.status = status.value; paintSettings(); };
@@ -1146,8 +1159,7 @@ async function settingsReloadKeys(focus) {
   const gen = routeGen;
   const mine = ++p.gen;
   p.keysBusy = true;
-  p.revealed = new Map();
-  p.revealGen++;
+  settingsForgetRevealed();
   settingsKeyRepaint(focus);
   const { status, data } = await api("/v1/app/settings");
   p.keysBusy = false;
