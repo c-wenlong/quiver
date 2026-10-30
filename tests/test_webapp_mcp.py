@@ -748,6 +748,20 @@ class TestAdd(_SyncHome, unittest.TestCase):
         error = self.refused(**cmd, targets=[], vars=[secret, {"key": "api.key", "value": "x", "secret": True}])
         self.assertEqual((error.status, error.code), (422, "secret_clash"))
 
+    def test_a_failed_add_puts_the_secret_store_back(self):
+        from quiver.mcp.secrets import load_secrets, set_secret
+        set_secret("KEPT_API_KEY", "old-value-00000000")
+        before = load_secrets()
+        vars_ = [{"key": "API_KEY", "value": self.TOKEN, "secret": True},
+                 {"key": "NEW_KEY", "value": "new-value-00000000", "secret": True}]
+        for exc, code in ((mcp_cli.AddRefused("disk said no"), "add_refused"), (OSError("full"), "add_failed")):
+            with self.subTest(code=code), patch.object(mcp_cli, "add_server", side_effect=exc):
+                with self.assertRaises(PageError) as caught:
+                    self.add(name="kept", kind="command", command=["x"], targets=[], vars=vars_)
+                self.assertEqual(caught.exception.code, code)
+                # The replaced value comes back and the new one is gone.
+                self.assertEqual(load_secrets(), before)
+
     def test_a_secret_another_server_refers_to_is_not_overwritten(self):
         self.add(name="a-b", kind="command", command=["x"], targets=[],
                  vars=[{"key": "TOKEN", "value": "first-value-0000", "secret": True}])

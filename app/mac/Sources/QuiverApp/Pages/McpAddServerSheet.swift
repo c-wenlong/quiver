@@ -311,14 +311,21 @@ struct McpAddServerSheet: View {
             // The secrets go in before the add: swe refuses an add whose
             // ${NAME} has no value yet, and writes each harness's config
             // with the values filled in.
-            for variable in stored {
-                try await app.swe.mcpSecretSet(name: mcpSecretName(server: name, key: variable.key),
-                                               value: variable.value)
+            var values = stored.map { (mcpSecretName(server: name, key: $0.key), $0.value) }
+            if bearer { values.append((tokenRef, token.trimmingCharacters(in: .whitespaces))) }
+            // Names this add stored for the first time, so a failed add
+            // removes them again instead of leaving them in the store.
+            var created: [String] = []
+            do {
+                for (secret, value) in values {
+                    let result = try await app.swe.mcpSecretSet(name: secret, value: value)
+                    if result.replaced == false { created.append(secret) }
+                }
+                _ = try await app.swe.mcpAdd(spec, to: picked.sorted(), force: force)
+            } catch {
+                for secret in created { _ = try? await app.swe.mcpSecretRemove(name: secret) }
+                throw error
             }
-            if bearer {
-                try await app.swe.mcpSecretSet(name: tokenRef, value: token.trimmingCharacters(in: .whitespaces))
-            }
-            _ = try await app.swe.mcpAdd(spec, to: picked.sorted(), force: force)
             // Kept until the add lands, so a refused one can be retried
             // without typing the token again.
             token = ""

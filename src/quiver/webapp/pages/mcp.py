@@ -459,18 +459,38 @@ def _add(ctx, body: dict) -> dict:
                 raise PageError(409, "add_refused", "\n".join(
                     f"Not adding: no value for {var} (used by {name}). Set it first, or mark it secret here."
                     for var in missing))
-        for ref, value in stored.items():
-            try:
-                set_secret(ref, value)
-            except ValueError as exc:
-                raise PageError(422, "bad_value", f"{ref}: {exc}") from exc
+        # What each name held before, so a failed add puts the store back.
+        before = load_secrets()
         try:
-            report = add_server(name, canonical, targets, force=req["force"])
-        except AddRefused as exc:
-            raise PageError(409, "add_refused", str(exc)) from exc
-        except (OSError, ValueError) as exc:
-            raise PageError(409, "add_failed", str(exc) or exc.__class__.__name__) from exc
+            for ref, value in stored.items():
+                try:
+                    set_secret(ref, value)
+                except ValueError as exc:
+                    raise PageError(422, "bad_value", f"{ref}: {exc}") from exc
+            try:
+                report = add_server(name, canonical, targets, force=req["force"])
+            except AddRefused as exc:
+                raise PageError(409, "add_refused", str(exc)) from exc
+            except (OSError, ValueError) as exc:
+                raise PageError(409, "add_failed", str(exc) or exc.__class__.__name__) from exc
+        except PageError:
+            _restore_secrets(stored, before)
+            raise
     return {**report, "page": get(ctx, {})}
+
+
+def _restore_secrets(names, before: dict[str, str]) -> None:
+    """Put each of ``names`` back to its value in ``before``, or remove it
+    when it had none: an add that failed leaves no secret behind."""
+    from quiver.mcp.secrets import remove_secret, set_secret
+    for ref in names:
+        try:
+            if ref in before:
+                set_secret(ref, before[ref])
+            else:
+                remove_secret(ref)
+        except (OSError, ValueError):
+            pass
 
 
 def _sync_request(body: dict, needs_fingerprint: bool) -> dict:
