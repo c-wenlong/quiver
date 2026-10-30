@@ -694,6 +694,9 @@ final class ChatModel {
         settledSends.insert(cid)
         // Removed before it went out: gone, and not a failure.
         if r.cancelled == true { return }
+        // A send restored from the hub's list carries its refs only here:
+        // keep them for the bubble and a retry.
+        if !entry.attachments.isEmpty, sentFiles[cid] == nil { sentFiles[cid] = entry.attachments }
         // It went out (or failed): show it in the transcript as any send,
         // settled by the existing rules.
         let next = SendState.settled(r, current: .sending, agentActive: row?.sessionStatus == .active)

@@ -78,6 +78,7 @@ final class AppModel {
         // hub must not overwrite (or unpair) the new one.
         let pairedAtStart = hub
         let pinMark = pins.mark
+        let attachedAtStart = Set(sessions.filter(\.isAttached).map(\.key))
         do {
             async let s = client.sessions()
             // done=1 so the Inbox's "Finished today" rows ship with it.
@@ -85,9 +86,13 @@ final class AppModel {
             let (sessionsBody, inboxBody) = try await (s, i)
             guard hub == pairedAtStart else { return }
             let fetched = pins.overlay(sessionsBody.sessions, fetchedFrom: pinMark)
-            let attachedBefore = Set(sessions.filter(\.isAttached).map(\.key))
+            // Attached both when this refresh asked and now, and the hub
+            // says it isn't: detached elsewhere. One attached while the
+            // request was out isn't judged by an answer older than that.
+            let attachedNow = Set(sessions.filter(\.isAttached).map(\.key))
             sessions = fetched
-            for key in attachedBefore where fetched.first(where: { $0.key == key })?.isAttached != true {
+            for key in attachedAtStart.intersection(attachedNow)
+            where fetched.first(where: { $0.key == key })?.isAttached != true {
                 handedBack(key)
             }
             let now = Date()

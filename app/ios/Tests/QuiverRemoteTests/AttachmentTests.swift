@@ -311,6 +311,30 @@ final class ComposerAttachmentsTests: XCTestCase {
         XCTAssertTrue(chat.attachments.isEmpty)
     }
 
+    func testImagesPrepareOneAtATime() async {
+        let gate = Gate()
+        let files = model()
+        var loads = 0
+        let first = files.addPhoto {
+            await MainActor.run { loads += 1 }
+            await gate.wait()
+            return Data("a".utf8)
+        }
+        let second = files.addPhoto {
+            await MainActor.run { loads += 1 }
+            return Data("b".utf8)
+        }
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(loads, 1, "the second image waits for the first")
+        // Removed while waiting its turn: it never loads.
+        files.remove(files.items[1].id)
+        gate.open()
+        await first?.value
+        await second?.value
+        XCTAssertEqual(loads, 1)
+        XCTAssertEqual(files.refs, ["1730000000-a1b2c3-photo-1.jpg"])
+    }
+
     func testClearEmptiesTheComposer() {
         let files = model(gate: Gate())
         files.addFile(name: "a.txt", data: Data("a".utf8))
@@ -351,6 +375,13 @@ final class ChatAttachmentTests: XCTestCase {
         let kept = ChatModel.mergeQueue(local: [QueuedSend(clientId: "c1", text: "t", phase: .posting, attachments: refs)],
                                         hub: [WaitingSend(clientId: "c1", text: "t")], settled: [])
         XCTAssertEqual(kept.queued.first, QueuedSend(clientId: "c1", text: "t", phase: .waiting, attachments: refs))
+    }
+
+    func testARestoredQueuedSendKeepsItsFilesWhenItFails() {
+        let chat = ChatModel(key: "claude:1", app: AppModel())
+        chat.mergeQueue([WaitingSend(clientId: "c1", text: "look", attachments: [.string("1730000000-a1b2c3-a.png")])])
+        chat.apply(try! Hub.decoder.decode(Envelope.self, from: Data(#"{"type":"command.result","seq":50,"data":{"op":"message","ok":false,"note":"x","client_id":"c1"}}"#.utf8)))
+        XCTAssertEqual(chat.fileNames(for: "send-c1"), ["a.png"])
     }
 
     func testABubbleNamesItsFilesWhetherItWaitsOrGoesOut() {

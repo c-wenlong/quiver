@@ -285,8 +285,14 @@ final class ComposerAttachments {
         items.append(PendingAttachment(id: id, name: name, size: 0, isImage: isImage, state: .preparing))
         let convert = self.convert
         let task = Task { [weak self] in
+            // Images load and convert one at a time: ten 200 MB TIFFs read
+            // side by side would run the phone out of memory.
+            if converts { await self?.prepTurn() }
+            defer { if converts { self?.prepDone() } }
+            guard !Task.isCancelled else { return }
             var loaded = await load()
             if converts, case .data(let raw) = loaded {
+                guard !Task.isCancelled else { return }
                 let jpeg = await Task.detached { convert(raw) }.value
                 loaded = jpeg.map(Picked.data) ?? .refused("\(name) couldn't be read as an image.")
             }
@@ -302,6 +308,26 @@ final class ComposerAttachments {
         }
         tasks[id] = task
         return task
+    }
+
+    @ObservationIgnored private var prepBusy = false
+    @ObservationIgnored private var prepWaiting: [CheckedContinuation<Void, Never>] = []
+
+    /// Waits until no other image is loading or converting.
+    private func prepTurn() async {
+        guard prepBusy else {
+            prepBusy = true
+            return
+        }
+        await withCheckedContinuation { prepWaiting.append($0) }
+    }
+
+    private func prepDone() {
+        if prepWaiting.isEmpty {
+            prepBusy = false
+        } else {
+            prepWaiting.removeFirst().resume()
+        }
     }
 
     /// A pick that turned out unusable: its chip goes, with why.
