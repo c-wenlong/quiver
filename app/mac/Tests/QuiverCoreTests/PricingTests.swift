@@ -193,6 +193,17 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(PricingCatalog.baseName(for: "gpt-5") == "gpt-5")
     }
 
+    @Test func `an alias cycle resolves to nothing instead of recursing forever`() throws {
+        var supplement = PricingSupplement()
+        supplement.aliases = ["loop-a": "loop-b", "loop-b": "LOOP-A", "self-x": "self-x-high"]
+        let catalog = try PricingCatalog(
+            liteLLM: Data(#"{"gpt-5": {"input_cost_per_token": 0.000001, "output_cost_per_token": 0.000002}}"#.utf8),
+            supplement: supplement)
+        #expect(catalog.resolve(model: "loop-a") == nil)
+        #expect(catalog.resolve(model: "self-x") == nil)
+        #expect(catalog.resolve(model: "gpt-5") != nil)
+    }
+
     @Test func `resolve names the entry, tier and free models`() throws {
         var supplement = PricingSupplement()
         supplement.defaultTierMultipliers = ["fast": 2]

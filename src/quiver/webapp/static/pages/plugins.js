@@ -79,10 +79,9 @@ async function load(view, refresh = false) {
   if (seq !== page.seq[view]) return;
   page.busy[view] = false;
   if (gen !== routeGen || !onPage()) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
-    page.error[view] = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+    page.error[view] = failText(status, data, "then refresh");
   } else {
     page.error[view] = null;
     page.data[view] = data;
@@ -346,7 +345,7 @@ async function runFix(action, ids) {
   page.confirming = null;
   page.confirmAll = [];
   if (status === 401) {
-    if (onPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onPage()) renderGate();
     return;
   }
   if (status === 200 && data && data.health) {
@@ -380,8 +379,7 @@ async function runFix(action, ids) {
     }
     return;
   }
-  page.fixError = (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  page.fixError = failText(status, data);
   if (!onPage()) return;
   paint();
   // A refusal most likely means Health moved on (a finding gone, or
@@ -728,7 +726,7 @@ async function runAction(a) {
   const { status, data } = await apiPost("/v1/app/plugins/plugin", a);
   page.actRunning = null;
   if (status === 401) {
-    if (onPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onPage()) renderGate();
     return;
   }
   if (status === 200 && data && data.explore) {
@@ -748,8 +746,7 @@ async function runAction(a) {
     else text = `${a.ref} in ${Fmt.harnessName(a.harness)}: ${r.detail || "nothing changed"}`;
     page.actOutcome = { ref: a.ref, text, error: !!data.error };
   } else {
-    page.actOutcome = { ref: a.ref, error: true, text: (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.") };
+    page.actOutcome = { ref: a.ref, error: true, text: failText(status, data) };
   }
   if (!onPage()) return;
   paint();

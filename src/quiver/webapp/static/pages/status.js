@@ -113,7 +113,7 @@ function statusGate() {
   // A Track or Untrack reply can land after the browser moved on, and
   // the gate would replace whatever page shows now.
   if (!statusOnPage()) return;
-  renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  renderGate();
 }
 
 /* A card's reading, or none once it is older than an hour, as the hub
@@ -130,8 +130,7 @@ function statusView(s) {
 }
 
 function statusError(status, data) {
-  return (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+  return failText(status, data, "then refresh");
 }
 
 function statusHeader() {

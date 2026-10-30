@@ -71,6 +71,8 @@ protocol HubStore {
 final class MemoryHubStore: HubStore {
     private(set) var list: HubList
     private(set) var credentials: [String: Credential]
+    /// Stands in for a Keychain that refuses writes (tests).
+    var refusesSaves = false
 
     init(_ list: HubList = HubList()) {
         self.list = list
@@ -80,6 +82,7 @@ final class MemoryHubStore: HubStore {
     func load() -> HubList { list }
     func saveIndex(_ list: HubList) { self.list = list }
     func saveCredential(_ hub: PairedHub) -> Bool {
+        guard !refusesSaves else { return false }
         credentials[hub.id] = hub.credential
         return true
     }
@@ -212,12 +215,16 @@ struct KeychainHubStore: HubStore {
         return out as? Data
     }
 
+    /// Updates the item in place, or adds it when there is none. Never
+    /// deletes first: a failed add after a delete would lose the
+    /// credential that was there.
     private func keychainWrite(_ data: Data, account: String) -> Bool {
-        SecItemDelete(query(account: account) as CFDictionary)
-        var q = query(account: account)
-        q[kSecValueData as String] = data
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
+        let q = query(account: account)
+        let fields: [String: Any] = [kSecValueData as String: data,
+                                     kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let updated = SecItemUpdate(q as CFDictionary, fields as CFDictionary)
+        guard updated == errSecItemNotFound else { return updated == errSecSuccess }
+        return SecItemAdd(q.merging(fields) { _, new in new } as CFDictionary, nil) == errSecSuccess
     }
 
     /// Writes a pairing the way the app stored one before the hub list,

@@ -173,7 +173,7 @@ async function renderSkillsList() {
   }
   const { status, data } = await api("/v1/app/skills");
   if (gen !== routeGen || mine !== p.seq) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
     // New skill and Harness links work beside the error too.
     pageError(skillsHeader(false), status, data, renderSkills);
@@ -390,7 +390,7 @@ async function createSkill(sheet) {
   if (current) sheet.dataset.working = "";
   if (status === 401) {
     if (current) sheet.close();
-    if (skillsOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (skillsOnRoute()) renderGate();
     return;
   }
   // The skill exists whatever happened to the form: show it in the list.
@@ -409,8 +409,7 @@ async function createSkill(sheet) {
     $("sk-new-create").textContent = "Create";
     $("sk-new-create").disabled = false;
     const err = $("sk-new-error");
-    err.textContent = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    err.textContent = failText(status, data);
     err.hidden = false;
     return;
   }
@@ -460,12 +459,11 @@ async function skillsWrite(c) {
   const { status, data } = await apiPost(`/v1/app/skills/${action}`, body);
   for (const x of paths) p.busy.delete(x);
   if (status === 401) {
-    if (skillsOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (skillsOnRoute()) renderGate();
     return;
   }
   if (status !== 200 || !data) {
-    p.actionError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.actionError = failText(status, data);
     // A failed change may still have moved something: read the list again.
     return skillsReload();
   }
@@ -663,10 +661,9 @@ async function renderSkillDetail(path) {
   }
   const { status, data } = await api(`/v1/app/skills?skill=${encodeURIComponent(path)}`);
   if (gen !== routeGen || mine !== p.seq) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
-    const msg = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    const msg = failText(status, data);
     document.getElementById("panel").innerHTML = `<div class="page">${skillsHeader(false)}${skillsBack()}
       <div class="card"><p class="error">${esc(msg)}</p></div></div>`;
     bindSkillsHeader();

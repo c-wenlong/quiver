@@ -315,13 +315,23 @@ final class AppModel {
     // MARK: Pairing
 
     /// A newly paired hub joins the list (or replaces the one at the same
-    /// address) and goes on screen; the other hubs stay paired.
-    func adopt(_ hub: PairedHub) {
-        store.saveCredential(hub)
+    /// address) and goes on screen; the other hubs stay paired. False,
+    /// with `pairing.error` saying so, when the Keychain wouldn't store
+    /// the credential: listing the hub anyway would lose it at the next
+    /// launch, so the pairing is dropped here, where it can be retried.
+    @discardableResult
+    func adopt(_ hub: PairedHub) -> Bool {
+        guard store.saveCredential(hub) else {
+            // The hub took the code; it won't take it twice.
+            pairing.error = "Paired, but the Keychain wouldn't store the credential, so this phone would forget the hub. Make a new pair code on the hub and pair again."
+            pairing.codeSpent = true
+            return false
+        }
         hubs.adopt(hub)
         store.saveIndex(hubs)
         pairing = PairingFlow()
         showHub()
+        return true
     }
 
     /// Puts another paired hub on screen.
@@ -426,6 +436,7 @@ final class AppModel {
     func handle(_ url: URL) async {
         if let link = PairLink(url) {
             pairing.error = nil
+            pairing.codeSpent = false
             pairOffer = link
             return
         }
@@ -437,7 +448,7 @@ final class AppModel {
     /// Pairs with the hub `pairOffer` names, which the person confirmed.
     /// The offer stays up on failure so its error shows where they are.
     func acceptPairOffer() async {
-        guard let link = pairOffer else { return }
+        guard let link = pairOffer, !pairing.codeSpent else { return }
         let gen = pairingGen
         offerPairingGen = gen
         // Only this pair's own mark: a cancelled one finishing late must
@@ -471,13 +482,13 @@ final class AppModel {
         let gen = pairingGen
         pairing.busy = true
         pairing.error = nil
+        pairing.codeSpent = false
         let client = HubClient(baseURL: link.baseURL, credential: nil)
         do {
             let cred = try await client.pair(token: link.token, name: link.name ?? pairing.deviceName)
             guard gen == pairingGen else { return false }
             pairing.busy = false
-            adopt(PairedHub(baseURL: link.baseURL, credential: cred))
-            return true
+            return adopt(PairedHub(baseURL: link.baseURL, credential: cred))
         } catch {
             guard gen == pairingGen else { return false }
             pairing.busy = false
@@ -544,8 +555,11 @@ final class AppModel {
                 switch poll.status {
                 case "approved":
                     guard let deviceId = poll.deviceId, let credential = poll.credential else { continue }
-                    adopt(PairedHub(baseURL: client.baseURL,
-                                    credential: Credential(deviceId: deviceId, credential: credential, name: poll.name)))
+                    if !adopt(PairedHub(baseURL: client.baseURL,
+                                        credential: Credential(deviceId: deviceId, credential: credential, name: poll.name))) {
+                        // Back to the form, where the error shows.
+                        pairing.pending = nil
+                    }
                     return
                 case "denied":
                     pairing.pending?.outcome = .denied
@@ -575,6 +589,9 @@ final class AppModel {
 
 struct PairingFlow {
     var host: String = KeychainHubStore.lastHost ?? ""
+    /// The hub accepted the pair code but this phone couldn't keep the
+    /// credential: that code is used up, so pairing needs a new one.
+    var codeSpent = false
     var deviceName: String = PairingFlow.defaultDeviceName
     var busy = false
     var error: String?
