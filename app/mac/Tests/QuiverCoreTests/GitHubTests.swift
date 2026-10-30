@@ -194,6 +194,10 @@ import Testing
 /// returned pin list.
 @MainActor
 @Suite struct GitHubModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     /// A runner that answers by argv suffix so one fake can serve the
     /// overview, a surface and the inbox in one test.
     final class Router: CommandRunning, @unchecked Sendable {
@@ -264,7 +268,7 @@ import Testing
     /// `@MainActor` isolation, and the queue's call into it traps on a
     /// dispatch assert — the gh-history crash from the field.
     @Test func boardSurfacesPersistOffTheMainActor() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appending(path: "gh-history-\(UUID().uuidString).db")
         defer { try? FileManager.default.removeItem(at: url) }
         // A repo with a Pages site — its persist closure is the literal
@@ -526,7 +530,7 @@ import Testing
     // MARK: - warm-start snapshot
 
     private func tempSnapshot() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appending(path: "gh-test-\(UUID().uuidString).json")
     }
 
@@ -1031,7 +1035,7 @@ import Testing
     }
 
     private func tempDB() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appending(path: "gh-history-\(UUID().uuidString).db")
     }
 

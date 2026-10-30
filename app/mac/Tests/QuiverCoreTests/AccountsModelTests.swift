@@ -93,6 +93,8 @@ final class FakeRunningInstances: RunningInstances {
 
 @MainActor
 @Suite struct AccountsModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
     let root: URL
     let store: ProfileStore
     let usage = FakeUsage()
@@ -100,8 +102,8 @@ final class FakeRunningInstances: RunningInstances {
     let running = FakeRunningInstances()
 
     init() throws {
-        root = FileManager.default.temporaryDirectory.appending(path: "accounts-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        scratch = try TempDir()
+        root = scratch.url
         store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         // Real stub CLIs on the injected PATH: signIn refuses when they
         // aren't executable, like a missing install.
@@ -548,7 +550,13 @@ final class FakeRunningInstances: RunningInstances {
 
 @MainActor
 @Suite struct LaunchTargetTests {
-    let root = FileManager.default.temporaryDirectory.appending(path: "launch-\(UUID().uuidString)")
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    let root: URL
+    init() throws {
+        scratch = try TempDir()
+        root = scratch.url.appending(path: "launch")
+    }
     let launcher = FakeLauncher()
     /// Empty: never let a launch test see (or focus) the user's real apps.
     let running = FakeRunningInstances()

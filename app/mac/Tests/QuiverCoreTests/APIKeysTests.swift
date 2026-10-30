@@ -545,8 +545,12 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
 }
 
 @Suite struct APIKeysStoreTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     func temp() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keys-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keys-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -765,11 +769,15 @@ struct FakeShell: ShellEnvironmentReading {
 
 @MainActor
 @Suite struct APIKeysSourcingTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     /// A model against a temp home: keys file and backup dir inside it,
     /// shell name and environment fixed.
     private func model(shell: String, environment: [String: String] = [:]) throws
         -> (APIKeysModel, URL, URL) {
-        let home = FileManager.default.temporaryDirectory
+        let home = scratch.url
             .appending(path: "keysource-\(UUID().uuidString)")
         let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
@@ -807,7 +815,7 @@ struct FakeShell: ShellEnvironmentReading {
     }
 
     @Test func zdotdirWinsForTheRcPath() async throws {
-        let home = FileManager.default.temporaryDirectory
+        let home = scratch.url
             .appending(path: "keysource-\(UUID().uuidString)")
         let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
@@ -834,7 +842,7 @@ struct FakeShell: ShellEnvironmentReading {
     /// save's own read lands with ZDOTDIR in it, the check reruns
     /// against the file that environment actually names.
     @Test func sourcingFollowsTheLandingReadsEnvironment() async throws {
-        let home = FileManager.default.temporaryDirectory
+        let home = scratch.url
             .appending(path: "keysource-\(UUID().uuidString)")
         let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
@@ -874,8 +882,12 @@ struct FakeShell: ShellEnvironmentReading {
 
 @MainActor
 @Suite struct APIKeysModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     func model(text: String, shell: [String: String]? = [:]) throws -> (APIKeysModel, URL) {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keysmodel-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keysmodel-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
@@ -897,7 +909,7 @@ struct FakeShell: ShellEnvironmentReading {
     }
 
     @Test func rowsShowBeforeTheShellAnswers() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keysgate-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keysgate-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try sampleKeysFile.write(to: url, atomically: true, encoding: .utf8)
@@ -918,7 +930,7 @@ struct FakeShell: ShellEnvironmentReading {
     /// read again: the row shows the stale verdict first, then settles
     /// on what a new terminal would now get.
     @Test func aSaveRereadsTheShell() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keysreread-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keysreread-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try "export A_KEY=v1\n".write(to: url, atomically: true, encoding: .utf8)
@@ -947,7 +959,7 @@ struct FakeShell: ShellEnvironmentReading {
     /// its own: the load's answer predates the write and is dropped, so
     /// the saved key doesn't stay Not loaded on the stale answer.
     @Test func aSaveDuringLoadGetsItsOwnShellRead() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keysoverlap-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keysoverlap-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try "export A_KEY=v1\n".write(to: url, atomically: true, encoding: .utf8)
@@ -1051,7 +1063,7 @@ struct FakeShell: ShellEnvironmentReading {
     }
 
     @Test func aRenamedKeyKeepsItsCheckResult() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keyscheck-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keyscheck-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try "# FIRST\nexport OLD_KEY=\"v1\"\n".write(to: url, atomically: true, encoding: .utf8)
@@ -1074,7 +1086,7 @@ struct FakeShell: ShellEnvironmentReading {
 
     /// A model whose checks go to `transport`, so a verdict is chosen.
     private func model(text: String, transport: FakeTransport) throws -> (APIKeysModel, URL) {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keystest-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keystest-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
@@ -1197,8 +1209,12 @@ struct FakeShell: ShellEnvironmentReading {
 /// the picker's model fetch.
 @MainActor
 @Suite struct APIKeysCustomProviderTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func model(text: String, transport: FakeTransport) throws -> (APIKeysModel, URL) {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keyscustom-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keyscustom-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)

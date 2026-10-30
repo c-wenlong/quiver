@@ -6,6 +6,10 @@ import Testing
 /// helper's hold loop against a fake SMC, and the popover's model. Fakes
 /// only; nothing here touches the real SMC.
 @Suite struct FanTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     // MARK: Temperatures
 
     @Test func theDieSensorsAverageAndJunkSensorsDrop() {
@@ -375,7 +379,7 @@ import Testing
     }
 
     @Test func theHelperStatusRoundTripsAndAnswersOnlyItsRequest() throws {
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-status-\(UUID().uuidString).json")
+        let url = scratch.url.appending(path: "fan-status-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(FanHelperStatus.read(at: url) == nil)
         let request = ask(0.5, at: 1_800_000_000.123)
@@ -467,7 +471,7 @@ import Testing
     }
 
     @Test func theBundledHelperIsPreferredOverTheApp() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "helper-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "helper-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let app = dir.appending(path: "Quiver").path
@@ -488,7 +492,7 @@ import Testing
     }
 
     @Test func theHashIsSHA256OfTheFile() throws {
-        let url = FileManager.default.temporaryDirectory.appending(path: "hash-\(UUID().uuidString)")
+        let url = scratch.url.appending(path: "hash-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: url) }
         try Data("abc".utf8).write(to: url)
         #expect(AdministratorInstaller.sha256(of: url.path)
@@ -503,7 +507,7 @@ import Testing
     }
 
     @Test func theControlFileRoundTripsAndAnythingOddMeansAutomatic() throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)")
+        let folder = scratch.url.appending(path: "fan-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
         let url = folder.appending(path: "fan/control.json")
         #expect(FanControlFile.request(at: url) == nil)
@@ -520,7 +524,7 @@ import Testing
     }
 
     @Test func theRootHelperNeverReadsBigFilesLinksOrPipes() throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)")
+        let folder = scratch.url.appending(path: "fan-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let good = folder.appending(path: "good.json")
@@ -549,7 +553,7 @@ import Testing
                          clock: Box<Date> = Box(Date(timeIntervalSince1970: 1_800_000_000)),
                          status: Box<FanHelperStatus?> = Box(nil),
                          sleeper: Sleeper = Sleeper()) -> (FanControl, URL) {
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appending(path: "fan-\(UUID().uuidString)/control.json")
         let control = FanControl(control: url, reader: { FanKeys.read(smc) }, status: { status.value },
                                  installer: installer,
@@ -774,7 +778,7 @@ import Testing
         let gate = ReadGate()
         let installer = FakeInstaller()
         installer.installed.value = true
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url,
                               reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
                               status: { nil }, installer: installer, isInstalled: { _ in true }, executable: "/Apps/Quiver", owner: 77,
@@ -877,7 +881,7 @@ import Testing
         let sleeper = Sleeper()
         let installer = FakeInstaller()
         installer.installed.value = true
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url,
                               reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
                               status: { nil }, installer: installer, isInstalled: { _ in true },
@@ -981,7 +985,7 @@ import Testing
 
     @MainActor @Test func theThresholdIsClampedAndRemembered() async {
         let defaults = TestDefaults("fan")
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                               isInstalled: { _ in false }, defaults: defaults)
         #expect(fans.threshold == 80 && !fans.thresholdEnabled)
@@ -1020,7 +1024,7 @@ import Testing
 
     @MainActor @Test func theOffTemperatureStaysUnderTheOnLine() async {
         let defaults = TestDefaults("fan")
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                               isInstalled: { _ in false }, defaults: defaults)
         #expect(fans.releaseBelow == 75)
