@@ -461,8 +461,8 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
 
         installed = {}
 
-        def fake_install(program, log_path, path_env, label):
-            installed.update(program=program, label=label)
+        def fake_install(program, log_path, path_env, label, process_type):
+            installed.update(program=program, label=label, process_type=process_type)
             return self.home / "agent.plist"
 
         with patch.object(gc.sys, "platform", "darwin"), \
@@ -472,6 +472,8 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
             code, out, _ = self.run_cmd("install", "--port=9300")
         self.assertEqual(code, 0)
         self.assertEqual(installed["label"], gc.LABEL)
+        # Not throttled like the hub: sessions wait on its answers.
+        self.assertEqual(installed["process_type"], "Standard")
         self.assertIn("answering on http://127.0.0.1:9300", out)
         self.assertEqual(self.hub_data()["gateway"], {"enabled": True, "port": 9300})
         with patch.object(gc.sys, "platform", "darwin"), \
@@ -678,10 +680,15 @@ class GatewayLaunchdTest(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, "", "")
 
             path = launchd.install(["swe", "mcp", "gateway", "serve"], home / "g.log", "/usr/bin",
-                                   home=home, run=run, label=LABEL)
+                                   home=home, run=run, label=LABEL, process_type="Standard")
             self.assertEqual(path.name, f"{LABEL}.plist")
             import plistlib
-            self.assertEqual(plistlib.loads(path.read_bytes())["Label"], LABEL)
+            written = plistlib.loads(path.read_bytes())
+            self.assertEqual(written["Label"], LABEL)
+            self.assertEqual(written["ProcessType"], "Standard")
+            # The hub keeps its default.
+            self.assertEqual(launchd.build_plist(["swe"], home / "h.log", "/usr/bin")["ProcessType"],
+                             "Background")
             self.assertTrue(all(LABEL in " ".join(c) or c[1] == "bootstrap" for c in calls))
             self.assertFalse((home / "Library" / "LaunchAgents" / f"{launchd.LABEL}.plist").exists())
 

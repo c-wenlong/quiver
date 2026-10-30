@@ -145,7 +145,11 @@ def _install(args: list[str]) -> int:
         return 1
     log_path = gw.log_dir_for() / "gateway.log"
     try:
-        path = launchd.install(program, log_path, os.environ.get("PATH", ""), label=LABEL)
+        # Standard, not the hub's Background: macOS throttles a background
+        # job and every server it starts, and a large tools/list (X's is
+        # 6 MB) then took 10-18 s, past Claude Code's fetch timeout.
+        path = launchd.install(program, log_path, os.environ.get("PATH", ""), label=LABEL,
+                               process_type="Standard")
     except RuntimeError as exc:
         print(c("red", f"launchctl could not load the gateway: {exc}"), file=sys.stderr)
         return 1

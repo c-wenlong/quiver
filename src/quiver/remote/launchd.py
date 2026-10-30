@@ -75,13 +75,15 @@ def _domain() -> str:
 
 
 def build_plist(program: list[str], log_path: Path, path_env: str,
-                label: str = LABEL) -> dict:
+                label: str = LABEL, process_type: str = "Background") -> dict:
     """The LaunchAgent: run ``program`` at login, restart it on exit.
 
     launchd starts agents with a bare PATH, and the hub shells out to
     tailscale, tmux and the harness CLIs, so the installing shell's PATH
     goes in. Output is unbuffered so the log has the start line even
-    when the process is killed.
+    when the process is killed. ``process_type`` "Background" lets macOS
+    throttle the job and everything it starts; a job that answers a
+    waiting client passes "Standard".
     """
     return {
         "Label": label,
@@ -89,7 +91,7 @@ def build_plist(program: list[str], log_path: Path, path_env: str,
         "RunAtLoad": True,
         "KeepAlive": True,
         "ThrottleInterval": THROTTLE_S,
-        "ProcessType": "Background",
+        "ProcessType": process_type,
         "StandardOutPath": str(log_path),
         "StandardErrorPath": str(log_path),
         "EnvironmentVariables": {"PATH": path_env, "PYTHONUNBUFFERED": "1"},
@@ -106,7 +108,7 @@ def install(program: list[str], log_path: Path, path_env: str,
             home: Path | None = None,
             run: Runner = subprocess.run,
             sleep: Callable[[float], None] = time.sleep,
-            label: str = LABEL) -> Path:
+            label: str = LABEL, process_type: str = "Background") -> Path:
     """Write the plist and (re)load it. Reinstalling restarts the hub.
 
     Raises RuntimeError with launchctl's message when loading fails.
@@ -114,7 +116,7 @@ def install(program: list[str], log_path: Path, path_env: str,
     path = plist_path(home, label)
     path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(plistlib.dumps(build_plist(program, log_path, path_env, label)))
+    path.write_bytes(plistlib.dumps(build_plist(program, log_path, path_env, label, process_type)))
     # bootstrap refuses a label that is already loaded, so unload first;
     # a "not loaded" failure here is the normal first-install case.
     run(["launchctl", "bootout", f"{_domain()}/{label}"],
