@@ -810,6 +810,17 @@ process.stdout.write(JSON.stringify({ runs: runs.map((t) => t - 1000000), stoppe
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(json.loads(done.stdout), {"runs": [60000, 170000, 260000], "stopped": True})
 
+    def test_a_401_stops_the_poll_under_the_gate(self):
+        """GhUI.gate: the gate, and no later tick paints the page's last
+        rows over it (and its pair fields)."""
+        script = self.SCRIPT.replace("GITHUB_JS", (STATIC / "github.js").read_text()).split("const step =")[0]
+        script = ("const gates = []; global.renderGate = (m) => gates.push(m);\n" + script
+                  + "GhUI.gate('repositories');\n"
+                  "process.stdout.write(JSON.stringify({ gates: gates.length, stopped: tick === null }));\n")
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"gates": 1, "stopped": True})
+
 
 @unittest.skipUnless(shutil.which("git"), "git is not installed")
 class TestPrWorktree(_Base):
