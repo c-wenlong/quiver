@@ -750,6 +750,9 @@ struct PluginDetailView: View {
 
     @State private var name = ""
     @State private var nameError: String?
+    /// The last Codex manifest write; the next waits for it, so two quick
+    /// renames land in the order they were made.
+    @State private var manifestWrite: Task<Void, Never>?
     @State private var drafts = PrimitiveDrafts()
     @State private var leaving = false
     @State private var leaveError: String?
@@ -945,7 +948,9 @@ struct PluginDetailView: View {
         // old name.
         // Disk work in the plugin's folder, so off the main actor.
         let shown = trimmed.isEmpty ? plugin.name : trimmed
-        Task {
+        let previous = manifestWrite
+        manifestWrite = Task {
+            await previous?.value
             let failure: String? = await offMain {
                 guard FileManager.default.fileExists(atPath: codex.path) else { return nil }
                 do {
