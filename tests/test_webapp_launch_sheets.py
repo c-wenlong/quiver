@@ -19,7 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.test_webapp import app_js_function
+from tests.test_webapp import MANAGE_JS, app_js_function
 
 PAGES = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages"
 
@@ -167,7 +167,7 @@ const picked = (sel) => { const o = sel && optionsOf(sel).find((x) => x[0] === s
 const choose = (sel, label) => { sel.value = optionsOf(sel).find((x) => x[1] === label)[0]; sel.onchange(); };
 """
 
-STUB += app_js_function("currentRoute")
+STUB += app_js_function("currentRoute") + app_js_function("bindSearch", MANAGE_JS)
 
 MENU_JS = (Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/model-menu.js")
 

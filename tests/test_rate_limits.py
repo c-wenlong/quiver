@@ -4306,6 +4306,29 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertIsNotNone(info)
         self.assertIsNone(info.email)
 
+    def test_a_profile_row_that_is_not_an_object_costs_only_the_email(self):
+        """json.loads(profile).get raised AttributeError for a list or a
+        string, and the fetcher's exception dropped the whole reading."""
+        from quiver.harness.rate_limits import _fetch_cursor
+
+        for profile in ('["google-oauth2|user_01TEST"]', '"x"', "7", "{not json"):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as tmp:
+                db = self._state_db(tmp, "cursor-safe-storage:v1:blob", email="me@work.com")
+                connection = sqlite3.connect(db)
+                connection.execute("INSERT INTO ItemTable VALUES (?, ?)",
+                                   ("cursorAuth/cachedScopedProfile", profile))
+                connection.commit()
+                connection.close()
+                with patch("quiver.harness.rate_limits._CURSOR_STATE_DB_CANDIDATES", (db,)), \
+                     patch("quiver.harness.rate_limits._read_cursor_cli_token", return_value=None), \
+                     patch("quiver.harness.rate_limits._read_cursor_keychain_token",
+                           return_value=self._token()), \
+                     patch("quiver.harness.rate_limits._fetch_json",
+                           return_value=self._SAMPLE_RESPONSE):
+                    info = _fetch_cursor()
+                self.assertIsNotNone(info)
+                self.assertIsNone(info.email)
+
     def test_fetch_posts_with_cookie_and_first_party_origin(self):
         from quiver.harness.rate_limits import _CURSOR_USAGE_URL, _fetch_cursor
 

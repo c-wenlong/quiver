@@ -363,6 +363,25 @@ class TestHeaderActions(unittest.TestCase):
         self.assertIn('data-sheet="add"', painted)
 
 
+    def test_search_waits_out_an_ime_composition(self):
+        """bindSearch, which every filter box that repaints as you type
+        uses: text kept on each keystroke, the repaint (which replaces
+        the box) held while a composition is open and run once it ends."""
+        manage_js = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/manage.js"
+        body = ("const box = { value: '' }, seen = [], paints = [];\n"
+                "bindSearch(box, (t) => seen.push(t), () => paints.push(box.value));\n"
+                "box.value = 'a'; box.oninput({ isComposing: false });\n"
+                "box.value = 'ak'; box.oninput({ isComposing: true });\n"
+                "box.value = 'a\u304b'; box.oninput({ isComposing: true });\n"
+                "box.oncompositionend();\n"
+                "process.stdout.write(JSON.stringify({ seen, paints }));\n")
+        done = subprocess.run(["node", "-e", manage_js.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"seen": ["a", "ak", "a\u304b", "a\u304b"],
+                                                   "paints": ["a", "a\u304b"]})
+
+
 # ------------------------------------------------------------- the sheets
 
 FOUND = [

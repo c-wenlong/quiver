@@ -25,7 +25,7 @@ import Testing
     }
 
     @Test func runTogetherNumbers() {
-        // `.97.97` is two numbers; `-` starts a new token.
+        // `.5-.5` is two numbers: `-` starts a new token.
         let p = SVGPath.path("M0 0l.5-.5h2v2z")
         #expect(p.boundingBox.width > 1.9)
         #expect(p.boundingBox.height > 1.4)
@@ -48,10 +48,12 @@ import Testing
     }
 
     @Test func arcsWithPackedFlags() {
-        // `a.75.75 0 1 0 1.5 0` — flags may sit against neighbours.
-        let p = SVGPath.path("M0 0a.75.75 0 1 0 1.5 0")
-        #expect(p.boundingBox.width > 1.4)
-        #expect(!p.boundingBox.isEmpty)
+        // `101.5` is the large-arc flag 1, the sweep flag 0, then x = 1.5:
+        // a flag is one digit and may sit against its neighbours.
+        let packed = SVGPath.path("M0 0a.75.75 0 101.5 0")
+        let spaced = SVGPath.path("M0 0a.75.75 0 1 0 1.5 0")
+        #expect(packed.boundingBox == spaced.boundingBox)
+        #expect(abs(packed.boundingBox.width - 1.5) < 0.01)
     }
 
     @Test func octiconPullRequestRenders() {

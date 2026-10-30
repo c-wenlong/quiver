@@ -847,7 +847,7 @@ const PrFilter = (() => {
     bindDrag(panel);
     const search = document.getElementById("gh-search");
     if (search) {
-      search.oninput = () => { page.filter = search.value; GhUI.keepFocus("gh-search", paintDashboard); };
+      bindSearch(search, (text) => { page.filter = text; }, () => GhUI.keepFocus("gh-search", paintDashboard));
     }
   }
 
@@ -995,7 +995,8 @@ const PrFilter = (() => {
     const f = page.focus;
     const seq = ++f.seq; // newest read wins, as on the dashboard
     f.loading = true;
-    paintFocus();
+    // The minute poll comes through here too: keep the filter's caret.
+    GhUI.keepFocus("gh-search", paintFocus);
     const q = `repo=${encodeURIComponent(repo)}`;
     const { status, data } = await api(`/v1/app/repositories?${q}${refresh ? "&refresh=1" : ""}`);
     if (gen !== routeGen || page.focus !== f || seq !== f.seq) return;
@@ -1137,7 +1138,7 @@ const PrFilter = (() => {
     }
     bindRows(panel, paintFocus);
     const search = document.getElementById("gh-search");
-    if (search) search.oninput = () => { f.filter = search.value; GhUI.keepFocus("gh-search", paintFocus); };
+    if (search) bindSearch(search, (text) => { f.filter = text; }, () => GhUI.keepFocus("gh-search", paintFocus));
     const sentinel = panel.querySelector("[data-sentinel]");
     if (!sentinel) return;
     sentinel.onclick = () => { f.stalled.delete(sentinel.dataset.sentinel); advance(sentinel.dataset.sentinel); };
