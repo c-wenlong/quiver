@@ -34,6 +34,8 @@ CATALOG_BODY_MAX = (4 << 20) - (64 << 10)
 # An events POST is held to the same size: a batch is cut by encoded
 # bytes as well as count, and an event too big to go alone is clipped.
 EVENTS_BODY_MAX = CATALOG_BODY_MAX
+# Commands that run on the session's queue, in order, off the stream.
+_SESSION_QUEUED_OPS = frozenset({"message", "attach", "attachment"})
 OUTBOX_KEY = "_outbox"             # journal key for unsent uplink events
 # The in-memory uplink buffer keeps no more than the outbox journal's
 # ring does across a restart; while the hub is down the oldest go first.
@@ -572,24 +574,28 @@ class RemoteAgent:
             if seq <= self._last_cmd_seq:
                 return
             self._last_cmd_seq = seq
-        if (ev.get("data") or {}).get("op") == "message":
-            # Headless sends block for the whole turn — queue them so a
-            # later interrupt/detach isn't stuck behind the run. One
-            # session's sends stay in order. A send still queued at
-            # shutdown is left undone, so the replay runs it.
+        op = (ev.get("data") or {}).get("op")
+        if op in _SESSION_QUEUED_OPS:
+            # Headless sends block for the whole turn, an attach boots a
+            # pane (up to 30 s) and an attachment pull is a download:
+            # queue them so a later interrupt/detach isn't stuck behind
+            # them. One session's queued commands stay in order, so a
+            # message still finds the attachment or the pane before it.
+            # One still queued at shutdown is left undone, so the replay
+            # runs it.
             self._sendq.submit(
                 str(ev.get("session") or ""),
                 lambda: self._dispatch_then_done(seq, ev),
                 lambda: None,
             )
             return
-        if (ev.get("data") or {}).get("op") == "fork":
-            # Booting the fork's pane can take 30 s: run it beside the
-            # stream so an interrupt or detach behind it goes at once.
-            # The cursor still waits for it, so a crash replays it.
+        if op in ("fork", "launch"):
+            # Booting a new session's pane can take 30 s: run it beside
+            # the stream so an interrupt or detach behind it goes at
+            # once. The cursor still waits for it, so a crash replays it.
             threading.Thread(
                 target=self._dispatch_then_done, args=(seq, ev),
-                name=f"agent-fork-{seq}", daemon=True,
+                name=f"agent-{op}-{seq}", daemon=True,
             ).start()
             return
         self._dispatch(ev)

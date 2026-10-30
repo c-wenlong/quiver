@@ -2011,6 +2011,24 @@ class TestReviewFixes(unittest.TestCase):
         }).encode())
         ag._dispatch.assert_called_once()
 
+    def test_slow_ops_leave_the_stream_thread(self):
+        # launch and attach boot a pane (up to 30 s) and an attachment
+        # pull downloads; inline, every command behind them waited.
+        ag = self._agent()
+        ag._dispatch = MagicMock()
+        ag._sendq = MagicMock()
+        started = []
+        with patch.object(agent_mod.threading, "Thread") as thread:
+            thread.return_value.start.side_effect = lambda: started.append(1)
+            for seq, op in enumerate(("launch", "attach", "attachment"), 1):
+                ag._handle_frame(json.dumps({
+                    "type": "command", "seq": seq, "session": "claude:a",
+                    "data": {"op": op}}).encode())
+        ag._dispatch.assert_not_called()
+        self.assertEqual(started, [1])  # launch: its own thread
+        self.assertEqual([c[0][0] for c in ag._sendq.submit.call_args_list],
+                         ["claude:a", "claude:a"])  # queued in order
+
     def test_one_sessions_turn_does_not_hold_another(self):
         # A headless send blocks for its whole turn; a message to a
         # second session used to wait behind it on the single worker.
