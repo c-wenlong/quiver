@@ -73,7 +73,6 @@ _COMPONENT_BY_SENSOR = {
     "nvme": "ssd", "drivetemp": "ssd",
     "battery": "battery",
 }
-COMPONENTS = ("cpu", "gpu", "memory", "ssd", "battery", "airflow", "display")
 # FanSummary.upMargin: 15% over its minimum counts as a fan running up.
 FAN_UP_MARGIN = 0.15
 
@@ -689,6 +688,10 @@ class ComputeModel:
         self.nvidia_processes = nvidia_processes
         self.self_pid = os.getpid() if self_pid is None else self_pid
         self.lock = threading.Lock()
+        # One sample at a time, held across the nvidia-smi calls but
+        # apart from ``lock``, so a payload read never waits on the GPU
+        # and two due samples don't both run the commands.
+        self._sample_lock = threading.Lock()
         self.meter = CPUMeter()
         self.history = History()
         self.home: Path = Path.home()
@@ -718,11 +721,22 @@ class ComputeModel:
 
     def sample(self, force: bool = False) -> None:
         """Take a fresh sample unless the last one is under
-        ``MIN_SAMPLE`` old, and record it in the history."""
+        ``MIN_SAMPLE`` old, and record it in the history.
+
+        ``nvidia-smi`` runs before ``lock`` is taken: two calls of up to
+        ``NVIDIA_TIMEOUT`` each must not hold up every Compute read. A
+        second caller waits on ``_sample_lock`` and then finds the first
+        caller's sample fresh."""
+        with self._sample_lock:
+            with self.lock:
+                if not force and self._fresh():
+                    return
+            gpus = self.nvidia()
+            gpu_by_pid = self.nvidia_processes()
+            self._take_sample(gpus, gpu_by_pid)
+
+    def _take_sample(self, gpus, gpu_by_pid) -> None:
         with self.lock:
-            now = self.clock()
-            if not force and self.sampled_at is not None and now - self.sampled_at < MIN_SAMPLE:
-                return
             self._load_matchers()
             samples = read_processes(self.proc)
             at = self.clock()
@@ -730,10 +744,15 @@ class ComputeModel:
             self.cpu = self.meter.update(samples, at)
             self.attribution = attribute(samples, self.matchers, self.proc, self.self_pid)
             self.sampled_at = at
-            self._sample_machine()
+            self._sample_machine(gpus, gpu_by_pid)
             self._record(at)
 
-    def _sample_machine(self) -> None:
+    def _fresh(self) -> bool:
+        return (self.sampled_at is not None
+                and self.clock() - self.sampled_at < MIN_SAMPLE)
+
+    def _sample_machine(self, gpus: list[dict] | None,
+                        gpu_by_pid: dict[int, float] | None) -> None:
         times = read_cpu_times(self.proc)
         cpu_percent = None
         if times and self._cpu_times:
@@ -749,10 +768,10 @@ class ComputeModel:
             "memory": read_memory(self.proc),
             "load": read_load(self.proc),
         }
-        self.gpus = self.nvidia()
+        self.gpus = gpus
         # The GPU tab plots harnesses, so only per-process readings make
         # it available; the device totals feed the machine line.
-        self.gpu_by_pid = self.nvidia_processes()
+        self.gpu_by_pid = gpu_by_pid
         if self.gpu_by_pid is not None:
             self.gpu_available = True
         self.temperatures, self.fans = read_temperatures(self.sys_root)
