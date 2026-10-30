@@ -767,6 +767,15 @@ class TestAttachmentCapability(unittest.TestCase):
         self.assertTrue(attachments.at_refs("qwen", reg))
         self.assertFalse(attachments.at_refs("pi", reg))
 
+    def test_wrong_field_types_are_ignored(self):
+        for bad in ({"at_refs": "yes"}, {"at_refs": None}, {"at_refs": 1},
+                    {"supported": None}, {"supported": 0},
+                    {"supported": "false"}):
+            reg = {"claude": {"capabilities": {"attachments": bad}},
+                   "codex": {"capabilities": {"attachments": bad}}}
+            self.assertTrue(attachments.at_refs("claude", reg), bad)
+            self.assertFalse(attachments.at_refs("codex", reg), bad)
+
     def test_prompt_text_shapes(self):
         paths = ["/x/a b.png", "/x/c.pdf"]
         self.assertEqual(

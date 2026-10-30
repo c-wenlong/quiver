@@ -77,9 +77,12 @@ def capability(name: str, reg: dict | None = None) -> dict:
     caps = caps.get("attachments") if isinstance(caps, dict) else None
     base = dict(ATTACH_FALLBACK.get(name) or {})
     if isinstance(caps, dict):
-        if "supported" in caps and not caps["supported"]:
+        # Only a real boolean counts: a typo ("yes", null) leaves the
+        # fallback as it was instead of flipping the format.
+        if caps.get("supported") is False:
             return {"at_refs": False}
-        base.update(caps)
+        if isinstance(caps.get("at_refs"), bool):
+            base["at_refs"] = caps["at_refs"]
     return base
 
 
