@@ -7,8 +7,7 @@ struct ChatView: View {
     @Environment(\.scenePhase) private var phase
     let key: String
     @State private var model: ChatModel?
-    /// The stream was stopped when the app went to the background.
-    @State private var stoppedInBackground = false
+    @State private var streamGate = ChatStreamGate()
     @State private var otherModelShown = false
     @State private var otherModelText = ""
 
@@ -74,19 +73,36 @@ struct ChatView: View {
             Text("Typed into the session as /model <id>. The header shows it once a reply runs on it.")
         }
         .onDisappear { model?.stop() }
-        // Only a trip to the background stopped the stream. Inactive and
-        // back (Control Center, a notification, the app switcher peek)
-        // keeps it, so it isn't torn down and replayed for nothing.
         .onChange(of: phase) { _, new in
             guard let model else { return }
-            if new == .background {
-                model.stop()
-                stoppedInBackground = true
-            } else if new == .active, stoppedInBackground {
-                stoppedInBackground = false
-                Task { await model.start() }
+            switch streamGate.phase(new) {
+            case .stop: model.stop()
+            case .start: Task { await model.start() }
+            case .none: break
             }
         }
+    }
+}
+
+/// What a scene-phase change does to an open chat's live stream. Only a
+/// trip to the background stops it, and only that brings a restart.
+/// Inactive and back (Control Center, a notification, the app switcher
+/// peek) leaves it running, so it isn't torn down and replayed for
+/// nothing.
+struct ChatStreamGate {
+    enum Action: Equatable { case none, stop, start }
+    private(set) var stoppedInBackground = false
+
+    mutating func phase(_ new: ScenePhase) -> Action {
+        if new == .background {
+            stoppedInBackground = true
+            return .stop
+        }
+        if new == .active, stoppedInBackground {
+            stoppedInBackground = false
+            return .start
+        }
+        return .none
     }
 }
 
