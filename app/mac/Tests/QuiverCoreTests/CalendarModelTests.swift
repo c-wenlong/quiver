@@ -436,6 +436,22 @@ private struct TogglingActivity: ActivityProviding {
         #expect(!second.isUsageHidden("claude-default"))
     }
 
+    @Test func usageWindowHidingIsSeparateFromItsAccount() async {
+        let defaults = freshDefaults()
+        let first = model(defaults: defaults)
+        #expect(!first.isUsageHidden("claude-default", window: "5h"))
+        first.toggleUsage("claude-default", window: "5h")
+        #expect(first.isUsageHidden("claude-default", window: "5h"))
+        // The window bit never leaks into the account's own toggle or a
+        // sibling window.
+        #expect(!first.isUsageHidden("claude-default"))
+        #expect(!first.isUsageHidden("claude-default", window: "7d"))
+
+        let second = model(defaults: defaults)
+        #expect(second.hiddenUsageWindows == ["claude-default|5h"])
+        #expect(second.isUsageHidden("claude-default", window: "5h"))
+    }
+
     @Test func aBlockSpanningMidnightKeepsItsSessionsFromBothSides() async {
         // Sunday 23:50 and Monday 00:05 in one project: Monday's day
         // view must show the block from 23:50 with both sessions, even

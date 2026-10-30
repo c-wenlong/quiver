@@ -224,7 +224,7 @@ private struct CalendarContent: View {
                     }
                     if !usageCards.isEmpty {
                         Text("Usage").font(Theme.font(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.textSecondary).textCase(.uppercase)
+                            .foregroundStyle(Theme.textSecondary)
                             .padding(.top, 8).padding(.bottom, 4)
                         ForEach(usageCards) { card in
                             UsageLegend(model: model, card: card)
@@ -551,10 +551,12 @@ private struct CalendarContent: View {
     }
 
     /// The resets the grid draws: every scheduled reset of every account
-    /// the Usage legend has ticked.
+    /// and window the Usage legend has ticked.
     private var usageResets: [UsageReset] {
         usageCards.flatMap { card in
-            model.isUsageHidden(card.id) ? [] : card.usageResets
+            model.isUsageHidden(card.id) ? [] : card.usageResets.filter {
+                !model.isUsageHidden(card.id, window: $0.window)
+            }
         }
     }
 
@@ -1367,22 +1369,33 @@ private struct UsageLegend: View {
         }
     }
 
-    /// One window's row: its label, then how much of it is left. A kept
-    /// older or already-reset reading dims; a failed fetch reddens the
-    /// label — the same vocabulary the Accounts page's UsageBar speaks.
+    /// One window's row: a checkbox toggling its reset marker, its
+    /// label, then how much of it is left. A kept older or already-reset
+    /// reading dims; a failed fetch reddens the label — the same
+    /// vocabulary the Accounts page's UsageBar speaks.
     private func windowRow(_ window: UsageWindow, usage: AccountUsage, now: Date) -> some View {
         let left = max(0, 100 - Int(window.usedPercent.rounded()))
         let failed = usage.isStale && usage.status != .ok
         let past = window.resetsAt.map { $0 <= now } ?? false
         let reset = !failed && !past ? window.resetsAt : nil
-        return HStack(spacing: 6) {
-            Text(window.label).font(Theme.font(size: 10))
-                .foregroundStyle(failed ? Theme.dangerText : (hidden ? .secondary : .primary))
-            Spacer()
-            Text("\(left)% left" + (reset.map { " · \(UsageFormat.resetIn($0, now: now))" } ?? ""))
-                .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
+        let shown = !model.isUsageHidden(card.id, window: window.label)
+        return LegendToggle(action: { model.toggleUsage(card.id, window: window.label) }) {
+            HStack(spacing: 6) {
+                LegendCheckbox(shown: shown, color: color)
+                Text(window.label).font(Theme.font(size: 10))
+                    .foregroundStyle(failed ? Theme.dangerText
+                                     : (shown && !hidden ? .primary : .secondary))
+                Spacer()
+                Text("\(left)% left" + (reset.map { " · \(UsageFormat.resetIn($0, now: now))" } ?? ""))
+                    .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.leading, 18)
         }
-        .padding(.leading, 18)
+        .help(shown ? "Hide the \(window.label) reset marker"
+                    : "Show the \(window.label) reset marker")
+        .accessibilityLabel("\(card.usageTitle), \(window.label), \(shown ? "shown" : "hidden")")
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(shown ? "1" : "0")
         .frame(height: 20)
         .opacity(!failed && (usage.isStale || past) ? 0.55 : 1)
     }
