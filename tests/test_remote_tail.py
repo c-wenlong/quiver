@@ -904,24 +904,44 @@ class TestTailManager(unittest.TestCase):
         self.assertIs(mgr.tailers["claude:a"], first)
 
     def test_notify_only_on_transition(self):
+        # A first sighting in followup is state, not news, and a repeat
+        # of the same status is nothing; only a change notifies.
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        notify = lambda: [e for _k, e in self.events if e["type"] == "notify"]
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "followup")])
+            mgr.sync([("claude:x", sess, "followup")])
+            self.assertEqual(notify(), [])
+            mgr.sync([("claude:x", sess, "active")])
+            mgr.sync([("claude:x", sess, "followup")])
+            mgr.sync([("claude:x", sess, "followup")])
+        self.assertEqual([e["data"]["kind"] for e in notify()], ["needs_you"])
+
+    def test_an_unresolvable_source_gets_no_tailer(self):
         sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
                        session_id="", tool_name="claude")
         mgr = self._manager()
         with patch.object(tail, "make_source", return_value=None):
-            # Source unresolvable: no tailer, but status transitions still
-            # emit through sync? No — tailer-less keys are skipped.
             mgr.sync([("claude:x", sess, "active")])
-        notify = [ev for evs in self.events for ev in [evs[1]]
-                  if ev["type"] == "notify"]
-        self.assertEqual(notify, [])
+        self.assertNotIn("claude:x", mgr.tailers)
+        self.assertEqual(self.events, [])
 
     def test_removed_session_drops_tailer(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
         sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
                        session_id="", tool_name="claude")
         mgr = self._manager()
-        with patch.object(tail, "make_source", return_value=None):
-            mgr.sync([("claude:x", sess, "")])
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+        self.assertIn("claude:x", mgr.tailers)
+        mgr.sync([])
         self.assertNotIn("claude:x", mgr.tailers)
+        self.assertNotIn("claude:x", mgr.statuses)
 
     def test_notify_transitions(self):
         src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")

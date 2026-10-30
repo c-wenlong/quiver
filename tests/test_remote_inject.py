@@ -37,7 +37,7 @@ class TestSuperviseRegistry(unittest.TestCase):
         with patch.object(supervise, "tmux_alive", return_value=False):
             self.assertNotIn(self.key, supervise.supervised_keys(self.home))
         # and the registry file no longer lists it
-        self.assertNotIn(self.key, supervise.meta_for(self.home, self.key) or {})
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
 
     def test_alive_tmux_survives(self):
         supervise.mark(

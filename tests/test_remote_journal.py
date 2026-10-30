@@ -49,8 +49,9 @@ class TestJournal(unittest.TestCase):
                 fh.write(json.dumps({"seq": i + 1, "type": "t",
                                      "data": "x" * 300}) + "\n")
         self._append(key, 1)  # triggers _maybe_trim
-        events, truncated = self.journal.read_since(key, 0)
-        self.assertGreater(truncated or len(events) <= 4000, 0)
+        events, _truncated = self.journal.read_since(key, 0)
+        # The ring kept its newest RING_KEEP lines, the append included.
+        self.assertEqual(len(events), journal_mod.RING_KEEP)
         seqs = [e["seq"] for e in events]
         self.assertEqual(seqs[-1], 5001)  # newest survived
         self.assertLess(len(events), 5001)  # ring was trimmed
