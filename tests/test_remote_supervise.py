@@ -618,7 +618,7 @@ class TestLaunchNew(unittest.TestCase):
         with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
              patch.object(supervise.shutil, "which", return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane") as prime:
-            ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi")
+            ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi", binary="claude")
         self.assertTrue(ok)
         prime.assert_called_once_with("qv-n", "hi")
         marker = supervise._pending_dir(home) / "qv-n.json"
@@ -636,8 +636,8 @@ class TestLaunchNew(unittest.TestCase):
                               supervise.tmux_name(key)) or
                               supervise.tmux_name(key)), \
              patch.object(supervise, "prime_pane"):
-            supervise.launch_new(home, "claude", "/tmp", "one")
-            supervise.launch_new(home, "claude", "/tmp", "two")
+            supervise.launch_new(home, "claude", "/tmp", "one", binary="claude")
+            supervise.launch_new(home, "claude", "/tmp", "two", binary="claude")
         self.assertEqual(len(set(seen)), 2)
 
     def test_missing_folder_fails_before_tmux(self):
@@ -645,7 +645,7 @@ class TestLaunchNew(unittest.TestCase):
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"):
             ok, note, name = supervise.launch_new(
-                Path(tempfile.mkdtemp()), "claude", "/no/such/dir", "hi")
+                Path(tempfile.mkdtemp()), "claude", "/no/such/dir", "hi", binary="claude")
         self.assertFalse(ok)
         self.assertIn("no such folder", note)
         tmux.assert_not_called()
@@ -656,7 +656,7 @@ class TestLaunchNew(unittest.TestCase):
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane", return_value=True):
-            supervise.launch_new(home, "claude", "/tmp", "hi", launch_id="l9")
+            supervise.launch_new(home, "claude", "/tmp", "hi", launch_id="l9", binary="claude")
         marker = supervise._pending_dir(home) / "qv-n.json"
         self.assertEqual(json.loads(marker.read_text())["launch_id"], "l9")
         with patch.object(supervise, "_pending_match",
@@ -677,10 +677,17 @@ class TestLaunchNew(unittest.TestCase):
                                  binary="cursor-agent")
         self.assertEqual(tmux.call_args[0][1], ["cursor-agent"])
 
+    def test_binary_is_required(self):
+        # Guessing the command from the tool name launched the wrong
+        # binary for harnesses whose registry command differs (#510).
+        with self.assertRaises(TypeError):
+            supervise.launch_new(
+                Path(tempfile.mkdtemp()), "cursor", "/tmp", "hi")
+
     def test_unknown_harness(self):
         ok, note, name = supervise.launch_new(
-            Path(tempfile.mkdtemp()), "nope-tool", "/tmp", ""
-        )
+            Path(tempfile.mkdtemp()), "nope-tool", "/tmp", "",
+            binary="nope-tool")
         self.assertFalse(ok)
         self.assertIsNone(name)
 
@@ -693,7 +700,7 @@ class TestLaunchNew(unittest.TestCase):
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane", return_value=False):
-            ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi")
+            ok, note, name = supervise.launch_new(home, "claude", "/tmp", "hi", binary="claude")
         self.assertFalse(ok)
         self.assertEqual(name, "qv-n")
         self.assertIn("could not be delivered", note)
@@ -706,8 +713,8 @@ class TestLaunchNew(unittest.TestCase):
                           return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane", return_value=True):
             supervise.launch_new(
-                home, "claude", "/tmp", "hi", known_ids=["old-1", "old-2"]
-            )
+                home, "claude", "/tmp", "hi", known_ids=["old-1", "old-2"],
+                binary="claude")
         marker = supervise._pending_dir(home) / "qv-n.json"
         self.assertEqual(
             json.loads(marker.read_text())["exclude"], ["old-1", "old-2"]
@@ -778,6 +785,7 @@ class TestLaunchTuning(unittest.TestCase):
                           return_value="pane moved"), \
              patch.object(supervise.time, "sleep"), \
              patch.object(supervise, "send_text", return_value=True) as st:
+            kw.setdefault("binary", tool)
             out = supervise.launch_new(self.home, tool, self.proj, "hi", **kw)
         self.argv = lt.call_args[0][1] if lt.call_args else None
         return out, pp, st
@@ -832,12 +840,12 @@ class TestLaunchTuning(unittest.TestCase):
     def test_launch_refuses_a_model_the_harness_cannot_take(self):
         with patch.object(supervise, "launch_tmux") as lt:
             ok, note, _ = supervise.launch_new(
-                self.home, "gemini", self.proj, "hi", model="x")
+                self.home, "gemini", self.proj, "hi", model="x", binary="gemini")
             self.assertFalse(ok)
             self.assertIn("capabilities.model", note)
             # opencode mini needs provider/model to pick a model at all.
             ok, note, _ = supervise.launch_new(
-                self.home, "opencode", self.proj, "hi", model="x")
+                self.home, "opencode", self.proj, "hi", model="x", binary="opencode")
             self.assertFalse(ok)
             self.assertIn("provider/model", note)
         lt.assert_not_called()
@@ -870,7 +878,7 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise, "boot_pane", return_value="❯"), \
              patch.object(supervise, "send_text", return_value=False):
             ok, note, name = supervise.launch_new(
-                self.home, "claude", self.proj, "hi", effort="high")
+                self.home, "claude", self.proj, "hi", effort="high", binary="claude")
         self.assertFalse(ok)
         self.assertEqual(name, "qv-n")
         self.assertIn("could not be delivered", note)
@@ -894,7 +902,7 @@ class TestLaunchTuning(unittest.TestCase):
              patch.object(supervise.time, "sleep"), \
              patch.object(supervise, "send_text", return_value=True):
             ok, _note, _ = supervise.launch_new(
-                self.home, "claude", self.proj, "hi", effort="high")
+                self.home, "claude", self.proj, "hi", effort="high", binary="claude")
         self.assertTrue(ok)
         self.assertEqual(sk.call_args_list[0][0], ("qv-n", "Enter"))
 
