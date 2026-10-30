@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iOS app: answer an approval with the pane's own menu rows.** When
+  the hub reads the agent's numbered menu ("1. Approve once", "2.
+  Always allow in this project", ...), the chat's approval card lists
+  those rows as its answers, as the web app does, so a row the Allow,
+  Always and Deny buttons can't name is still reachable. The row's
+  number goes to the hub as the decision, and the answered card names
+  the row it picked. Approvals without menu rows (older hubs,
+  non-tmux sessions) keep Allow, Always and Deny. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **iOS app: merge, auto-merge and re-run on the pull request
   page.** The detail page has the Mac and web merge controls: a
   strategy menu (Squash and merge, Rebase and merge, Create a merge
