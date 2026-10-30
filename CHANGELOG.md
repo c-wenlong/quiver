@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names it. The chat's header has the same menu, and a rename made on
   another device shows there live
   ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+- **Mac app: Needs you on the Inbox page.** Above the GitHub
+  notifications, the Inbox now lists the sessions this Mac's hub says
+  wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the
+  iPhone's sections: Waiting on you, Errors and Finished today. A row
+  opens that session's chat; Clear, per row or per section, hides it
+  for this Mac until the session moves again (`POST /v1/inbox/dismiss`),
+  and never offers a pending approval. Nothing extra shows while the
+  hub isn't running
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 - **iOS app: merge, auto-merge and re-run on the pull request
   page.** The detail page has the Mac and web merge controls: a
   strategy menu (Squash and merge, Rebase and merge, Create a merge
@@ -704,6 +714,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the warning text can be selected to copy either out.
 
 ### Security
+
+- **Remote: a local process can no longer claim the owner's tailnet
+  identity.** Behind `tailscale serve` the hub read the client from
+  `X-Forwarded-For` on every loopback connection, so any process on the
+  hub machine, another user's included, could name the owner's phone
+  and get owner powers (launch agents, approve pair requests, read API
+  keys). It now believes the header only when the OS places the
+  connection's far end in the Tailscale daemon: a root-owned socket in
+  `/proc/net/tcp` on Linux, a root process or a binary in a root-owned
+  `/Applications/Tailscale.app` per `netstat -anv` on macOS. Anyone else
+  is read as a loopback client with no tailnet identity. The hub
+  machine's own tailnet node also stops counting as the owner's device:
+  serve's local listener forwards any local process as that node. The
+  owner's phones and other computers get in as before, and paired
+  devices are unaffected; a browser on the hub machine now pairs
+  ([#965](https://github.com/c-wenlong/quiver/issues/965)).
 
 - **The remote hub refuses wildcard and non-tailnet binds.** `swe
   remote serve --host=0.0.0.0` — or a LAN address, a link-local

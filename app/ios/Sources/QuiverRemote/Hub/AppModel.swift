@@ -792,4 +792,13 @@ enum RelativeTime {
         if s < 86_400 { return "\(Int(s / 3600))h" }
         return "\(Int(s / 86_400))d"
     }
+
+    /// `short` worded to stand alone, as the web app's `Fmt.ago`:
+    /// "just now", "5m ago". `short` reads "now" for the first minute,
+    /// which can't take an "ago" after it. Empty for a missing time.
+    static func ago(_ ts: Double?, now: Double = Date().timeIntervalSince1970) -> String {
+        let s = short(ts, now: now)
+        if s.isEmpty { return "" }
+        return s == "now" ? "just now" : "\(s) ago"
+    }
 }
