@@ -53,6 +53,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlsplit
 
 from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
@@ -82,6 +83,13 @@ MAX_LINKS = 100
 # two, and the store's history can run to MAX_TASKS. The most recently
 # active win; the rest keep their last-known state this round.
 MAX_REFRESH = 24
+# Field bounds on a TaskRef from a client: the store keeps whatever is
+# linked, and every /v1/tasks answer carries it back out. A title past
+# its bound is cut (an issue's own title can be long); the rest refuse.
+MAX_REF = 200
+MAX_PROJECT = 200
+MAX_TITLE = 1000
+MAX_URL = 2048
 
 # The hub is the only writer; this covers its concurrent handlers.
 _lock = threading.Lock()
@@ -130,14 +138,25 @@ def parse_ref(body) -> dict:
     if not isinstance(ref, str) or not ref.strip():
         raise ValueError("task_ref.ref is required")
     ref = ref.strip().lstrip("#")
+    if len(ref) > MAX_REF:
+        raise ValueError(f"task_ref.ref is over {MAX_REF} characters")
     title = body.get("title")
     url = body.get("url")
     if title is not None and not isinstance(title, str):
         raise ValueError("task_ref.title must be a string")
     if url is not None and not isinstance(url, str):
         raise ValueError("task_ref.url must be a string")
+    title = (title or "")[:MAX_TITLE]
+    if url:
+        # Clients render the url as a link: a javascript: or file: one
+        # must never be stored.
+        if len(url) > MAX_URL:
+            raise ValueError(f"task_ref.url is over {MAX_URL} characters")
+        parts = urlsplit(url)
+        if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+            raise ValueError("task_ref.url must be an http(s) URL")
     task = {"source": source, "kind": kind, "ref": ref,
-            "title": title or "", "url": url or ""}
+            "title": title, "url": url or ""}
     if source == "github":
         if kind not in _GITHUB_KINDS:
             raise ValueError("a github task_ref.kind is issue or pull")
@@ -158,6 +177,9 @@ def parse_ref(body) -> dict:
         project = body.get("project")
         if project is not None and not isinstance(project, str):
             raise ValueError("task_ref.project must be a string")
+        if project and len(project) > MAX_PROJECT:
+            raise ValueError(
+                f"task_ref.project is over {MAX_PROJECT} characters")
         if project:
             task["project"] = project
     return task

@@ -66,11 +66,12 @@ class TestTaskRef(unittest.TestCase):
     def test_linear_and_notion_refs(self):
         card = tasks_mod.parse_ref({"source": "linear", "kind": "card",
                                     "project": "QVR", "ref": "QVR-12",
-                                    "title": "x", "url": "u"})
+                                    "title": "x",
+                                    "url": "https://linear.app/a/issue/qvr-12"})
         self.assertEqual(tasks_mod.task_id(card), "linear:card:qvr:qvr-12")
         page = tasks_mod.parse_ref({"source": "notion", "kind": "page",
                                     "ref": "abc-123", "title": "x",
-                                    "url": "u"})
+                                    "url": "https://notion.so/abc-123"})
         self.assertEqual(tasks_mod.task_id(page), "notion:page::abc-123")
 
     def test_bad_refs(self):
@@ -91,10 +92,24 @@ class TestTaskRef(unittest.TestCase):
             {"source": "github", "kind": "issue", "repo": "o/r",
              "ref": "0"},                                      # zero
             {"source": "linear", "kind": "card", "ref": True},  # bool ref
+            {"source": "linear", "kind": "card", "ref": "x" * 201},  # long
+            {"source": "linear", "kind": "card", "ref": "Q-1",
+             "project": "p" * 201},                        # long project
+            {"source": "notion", "kind": "page", "ref": "a",
+             "url": "javascript:alert(1)"},                 # bad scheme
+            {"source": "notion", "kind": "page", "ref": "a",
+             "url": "https:no-host"},                       # no host
+            {"source": "notion", "kind": "page", "ref": "a",
+             "url": "https://x.io/" + "a" * 2048},          # long url
         ]
         for body in bad:
             with self.assertRaises(ValueError, msg=body):
                 tasks_mod.parse_ref(body)
+
+    def test_a_long_title_is_cut_not_refused(self):
+        ref = tasks_mod.parse_ref({"source": "linear", "kind": "card",
+                                   "ref": "Q-1", "title": "t" * 5000})
+        self.assertEqual(len(ref["title"]), tasks_mod.MAX_TITLE)
 
     def test_origin_refs(self):
         issue = gh_issues.shape(RAW_ISSUE, "o/r", Path("/tmp/h"))
