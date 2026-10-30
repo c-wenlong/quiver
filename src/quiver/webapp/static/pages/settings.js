@@ -183,8 +183,8 @@ async function renderSettings() {
   const signedOut = p.signedOut;
   p.signedOut = false;
   if (status === 401) {
-    return renderGate(signedOut ? "This browser was signed out of the hub. Pair it again to come back."
-      : "The hub doesn't know this browser's credential. It may have been revoked.");
+    return signedOut ? renderGate("This browser was signed out of the hub. Pair it again to come back.", true)
+      : renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   }
   if (status !== 200 || !data) {
     if (!p.data) return pageError(settingsHeader(), status, data, renderSettings);
@@ -1435,22 +1435,32 @@ function remoteSig(remote) {
 function settingsPollRequests() {
   const p = settingsPage;
   if (p.reqPoll) return;
-  p.reqPoll = setInterval(async () => {
+  const poll = p.reqPoll = setInterval(async () => {
     if (!onSettingsPage() || settingsSection() !== "integrations") {
-      clearInterval(p.reqPoll);
-      p.reqPoll = null;
+      settingsStopPoll();
       return;
     }
     const gen = routeGen;
     const { status, data } = await api("/v1/app/settings?part=remote");
-    if (gen !== routeGen) return;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    // Left the page, or the poll was stopped (a 401, this browser
+    // revoked) while the read was out.
+    if (gen !== routeGen || p.reqPoll !== poll) return;
+    if (status === 401) {
+      // The gate's inputs would be wiped by the next tick's gate.
+      settingsStopPoll();
+      return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    }
     if (status === 200 && data && p.data
         && remoteSig(data.remote) !== remoteSig(p.data.remote)) {
       p.data.remote = data.remote;
       settingsRepaintRemote();
     }
   }, 3000);
+}
+
+function settingsStopPoll() {
+  clearInterval(settingsPage.reqPoll);
+  settingsPage.reqPoll = null;
 }
 
 async function settingsRevoke(id) {
@@ -1464,8 +1474,13 @@ async function settingsRevoke(id) {
     { device_id: id, confirm_this_device: dev.this_device === true });
   p.revoking.delete(id);
   if (status === 200 && data && data.this_device) {
-    // This browser's credential is gone. The owner's own tailnet device
-    // still gets in without it; anything else now answers 401.
+    // This browser's credential is gone, so it leaves localStorage too.
+    // The owner's own tailnet device still gets in without it; anything
+    // else now answers 401.
+    pairForget();
+    // The remote poll would answer 401 now and replace the signed-out
+    // gate with the generic one.
+    settingsStopPoll();
     p.data = null;
     p.confirming = null;
     p.signedOut = true;

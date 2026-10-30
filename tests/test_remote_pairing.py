@@ -15,6 +15,15 @@ class TestPairing(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
 
+    def test_exchange_caps_name_length(self):
+        token = pairing.mint_pair_token(self.tmp)
+        cred = pairing.exchange(self.tmp, token, "y" * 100_000 + "  ")
+        want = "y" * pairing.MAX_NAME_LEN
+        self.assertEqual(cred["name"], want)
+        self.assertEqual(
+            pairing.load_devices(self.tmp)[cred["device_id"]]["name"], want
+        )
+
     def test_exchange_round_trip(self):
         token = pairing.mint_pair_token(self.tmp)
         cred = pairing.exchange(self.tmp, token, "iphone")
@@ -150,6 +159,14 @@ class TestPairRequests(unittest.TestCase):
             if x["request_id"] == r["request_id"]
         ][0]
         self.assertEqual(row["name"], "test-iphone")
+
+    def test_request_caps_name_length(self):
+        r = self._request(name="  " + "x" * 100_000)
+        row = [
+            x for x in pairing._load_requests(self.tmp)
+            if x["request_id"] == r["request_id"]
+        ][0]
+        self.assertEqual(row["name"], "x" * pairing.MAX_NAME_LEN)
 
     def test_poll_bad_secret_and_unknown_id(self):
         r = self._request()
