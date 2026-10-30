@@ -178,6 +178,9 @@ private struct ProjectInstructions: View {
     @Environment(AppModel.self) private var app
     @State private var selectedFile = AgentsModel.projectFileNames[0]
     @State private var pendingFolder: URL?
+    /// The selected file's document, opened in a task and never in body:
+    /// document(for:) follows symlinks and reads the file on first use.
+    @State private var opened: (file: AgentsModel.ProjectFile, document: InstructionDocument)?
 
     var body: some View {
         let model = app.agentsMd
@@ -200,16 +203,27 @@ private struct ProjectInstructions: View {
             if model.projectFolder != nil {
                 let files = model.projectFiles
                 Tabs(options: files.map { ($0.name, tabTitle($0)) }, selection: $selectedFile, style: .table, onPanel: true)
-                if let file = files.first(where: { $0.name == selectedFile }) {
-                    let document = model.document(for: file)
-                    InstructionEditor(document: document, title: file.name, subtitle: subtitle(file, document)) {
+                if let file = files.first(where: { $0.name == selectedFile }),
+                   let opened, opened.file == file {
+                    InstructionEditor(document: opened.document, title: file.name,
+                                      subtitle: subtitle(file, opened.document)) {
                         model.rescanProject()
                     }
                     .id(file.name)
                 }
             }
         }
-        .onAppear(perform: restore)
+        // A new folder, tab or rescan of the file opens its document; the
+        // model keeps each one, so a return to a tab keeps its edits.
+        .task(id: model.projectFolder == nil ? nil : model.projectFiles.first { $0.name == selectedFile }) {
+            guard model.projectFolder != nil,
+                  let file = model.projectFiles.first(where: { $0.name == selectedFile }) else {
+                opened = nil
+                return
+            }
+            opened = (file, model.document(for: file))
+        }
+        .task { await restore() }
         .confirmationDialog("Discard unsaved changes?", isPresented: .init(
             get: { pendingFolder != nil }, set: { if !$0 { pendingFolder = nil } })) {
             Button("Discard and switch", role: .destructive) {
@@ -252,11 +266,16 @@ private struct ProjectInstructions: View {
         UserDefaults.standard.set(folder.path, forKey: Self.folderKey)
     }
 
-    private func restore() {
+    /// Reopens the last folder. The check runs off the main actor: the
+    /// folder may sit on a stale mount or a file provider.
+    private func restore() async {
         guard app.agentsMd.projectFolder == nil,
               let path = UserDefaults.standard.string(forKey: Self.folderKey) else { return }
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+        let isFolder = await offMain {
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
+        if isFolder, app.agentsMd.projectFolder == nil {
             app.agentsMd.openProject(URL(fileURLWithPath: path))
         }
     }
