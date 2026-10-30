@@ -6,8 +6,9 @@ rejoins its SSE stream with ``?last=<seq>`` and replays the gap instead of
 refetching a transcript — the same thing Claude Remote Control's
 server-side transcript buys them, except ours never leaves the tailnet.
 
-The journal is a ring: appends past ``RING_MAX`` rewrite the file keeping
-the newest ``RING_KEEP`` events. Clients that fell off the back of the
+The journal is a ring: appends past ``RING_MAX`` events or
+``RING_MAX_BYTES`` rewrite the file keeping the newest ``RING_KEEP``
+events, at most ``RING_KEEP_BYTES`` of them. Clients that fell off the back of the
 ring get ``truncated: true`` in the replay header and refetch history
 through ``/v1/sessions/{id}/messages``.
 """
@@ -26,8 +27,21 @@ from quiver.remote.protocol import key_slug
 # not a transcript-length scan.
 RING_MAX = 4000
 RING_KEEP = 2000
+# The same ring by size: 4000 large tool events can run to hundreds of MB,
+# and every replay and trim reads the whole file.
+RING_MAX_BYTES = 16 << 20
+RING_KEEP_BYTES = 8 << 20
 
-_LOCK = threading.RLock()  # append -> last_seq re-enters the same lock
+# One lock per journal file, shared by every Journal on it: sessions
+# append and replay side by side instead of queueing on one lock. RLock:
+# append -> last_seq re-enters it.
+_LOCKS: dict[str, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.RLock:
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(str(path), threading.RLock())
 
 
 class Journal:
@@ -41,6 +55,8 @@ class Journal:
         # Line counts for journals already past the trim size, kept so a
         # trim check costs nothing per append. Counted once from disk.
         self._lines: dict[str, int] = {}
+        # Byte sizes, read once from disk and kept up per append.
+        self._bytes: dict[str, int] = {}
 
     def _file(self, session_key: str) -> Path:
         return self.dir / f"{key_slug(session_key)}.jsonl"
@@ -83,36 +99,41 @@ class Journal:
             window = min(window * 4, size)
 
     def last_seq(self, session_key: str) -> int:
-        with _LOCK:
+        with _lock_for(self._file(session_key)):
             if session_key not in self._seqs:
                 self._seqs[session_key] = self._load_seq(session_key)
             return self._seqs[session_key]
 
     def append(self, session_key: str, event: dict) -> dict:
         """Stamp ``seq`` on ``event`` and append it; returns the event."""
-        with _LOCK:
+        path = self._file(session_key)
+        with _lock_for(path):
             seq = self.last_seq(session_key) + 1
             event = dict(event, seq=seq)
             self._seqs[session_key] = seq
-            path = self._file(session_key)
+            line = json.dumps(event, ensure_ascii=False) + "\n"
             try:
                 with open(path, "a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+                    fh.write(line)
             except OSError:
                 return event
             if str(path) in self._lines:
                 self._lines[str(path)] += 1
+            if str(path) in self._bytes:
+                self._bytes[str(path)] += len(line.encode("utf-8"))
             self._maybe_trim(path)
             return event
 
     def _maybe_trim(self, path: Path) -> None:
         key = str(path)
-        count = self._lines.get(key)
-        if count is None:
+        size = self._bytes.get(key)
+        if size is None:
             try:
-                size = path.stat().st_size
+                size = self._bytes[key] = path.stat().st_size
             except OSError:
                 return
+        count = self._lines.get(key)
+        if count is None and size <= RING_MAX_BYTES:
             # Small journals can't be past RING_MAX yet. Past 1 MB the
             # lines are counted once; appends keep the count after that.
             # (Re-reading the file per append made a journal of large
@@ -124,7 +145,7 @@ class Journal:
             if count is None:
                 return
             self._lines[key] = count
-        if count <= RING_MAX:
+        if (count is None or count <= RING_MAX) and size <= RING_MAX_BYTES:
             return
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
@@ -132,12 +153,17 @@ class Journal:
         except OSError:
             return
         kept = lines[-RING_KEEP:]
+        kept_bytes = sum(len(line.encode("utf-8")) for line in kept)
+        # By size too, oldest first; the newest event always stays.
+        while len(kept) > 1 and kept_bytes > RING_KEEP_BYTES:
+            kept_bytes -= len(kept.pop(0).encode("utf-8"))
         tmp = path.with_suffix(".tmp")
         try:
             with open(tmp, "w", encoding="utf-8") as fh:
                 fh.writelines(kept)
             os.replace(tmp, path)
             self._lines[key] = len(kept)
+            self._bytes[key] = kept_bytes
         except OSError:
             try:
                 tmp.unlink(missing_ok=True)
@@ -163,13 +189,13 @@ class Journal:
         ``truncated`` is True when the client asked for events the ring
         already dropped: the oldest seq on disk is past ``after_seq``.
 
-        The read runs under ``_LOCK`` like appends and trims do —
+        The read runs under the file's lock like appends and trims do —
         ``_maybe_trim`` rewrites the file under it, so a reader without
         it could answer a post-trim request from the pre-trim file and
         report ``truncated=False`` for events the ring already dropped.
         """
-        with _LOCK:
-            path = self._file(session_key)
+        path = self._file(session_key)
+        with _lock_for(path):
             events: list[dict] = []
             oldest = 0
             try:
