@@ -24,7 +24,7 @@ struct IssueDetailView: View {
                 // A failed refresh keeps the issue it already had — the
                 // notice says why it's stale rather than replacing it.
                 if let error {
-                    Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                    Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
                         .font(Theme.caption).foregroundStyle(Theme.warningText)
                         .lineLimit(2)
                 }
