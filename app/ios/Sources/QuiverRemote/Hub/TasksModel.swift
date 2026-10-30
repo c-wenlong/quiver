@@ -63,6 +63,13 @@ final class TasksModel {
         loaded = true
     }
 
+    /// Why GitHub's rows are last-known, for the amber banner over the
+    /// list; nil when there's no banner to draw.
+    var githubBanner: String? {
+        TaskGrouping.githubBanner(envBlocked: envBlocked, githubFailed: githubFailed,
+                                  hasRows: !tasks.isEmpty || !failedRepos.isEmpty)
+    }
+
     /// The detail page's row, live as the list refreshes under it.
     func task(_ id: String) -> TaskRow? { tasks.first { $0.id == id } }
 
@@ -87,6 +94,14 @@ enum TaskGrouping {
     /// name (`sectionName`), ordered by the most
     /// recently active task each holds — the reply is already sorted by
     /// `last_active_at`, so first sight of a scope is its rank.
+    /// The GitHub banner's reason: `gh` signed out (`envBlocked`) or
+    /// failing (`githubFailed`). With no rows at all the page's empty
+    /// card already says GitHub can't be reached, in the same words, so
+    /// the banner — which says the rows under it are last-known — goes.
+    static func githubBanner(envBlocked: String?, githubFailed: String?, hasRows: Bool) -> String? {
+        hasRows ? envBlocked ?? githubFailed : nil
+    }
+
     static func sections(of tasks: [TaskRow], filter: TaskFilter) -> [TaskSection] {
         var order: [String] = []
         var buckets: [String: [TaskRow]] = [:]

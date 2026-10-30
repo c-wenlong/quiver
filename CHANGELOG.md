@@ -9,13 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-<<<<<<< HEAD
 - **Web app: issue detail and Resolve from Repositories.** An issue row
   now opens a sheet with the issue's body and comments (read only, from
   the hub's `GET /v1/issues/<owner>/<repo>/<n>`), Open on GitHub, and
   Resolve with agent: harness, model, your context and the first prompt,
   posted to `POST /v1/issues/resolve`, then the chat opens. Part of
-=======
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **Web app: pin, rename and fork sessions.** Each Sessions row has a
+  More actions button (and a right-click menu) with the iPhone's
+  swipe-left actions: Pin or Unpin, Rename, and Fork where the harness
+  can fork. Pinned rows lead the list in a Pinned group, in the order
+  they were pinned, whatever the time filter. Rename follows the hub's
+  rules (one line, 120 characters) and offers the harness's own name
+  back; Fork takes a first message and opens the new chat once the hub
+  names it. The chat's header has the same menu, and a rename made on
+  another device shows there live
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 - **Mac app: Needs you on the Inbox page.** Above the GitHub
   notifications, the Inbox now lists the sessions this Mac's hub says
   wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the
@@ -38,7 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run failed) and Re-run all jobs. The phone calls the web app's
   routes the hub already serves to paired devices,
   `POST /v1/app/repositories/merge` and `…/rerun`. Part of
->>>>>>> origin/main
   [#970](https://github.com/c-wenlong/quiver/issues/970).
 
 - **Web app: Mine and Review requested pull request filters.** The
