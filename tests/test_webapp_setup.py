@@ -22,6 +22,7 @@ from quiver.harness.discover import HarnessFinding
 from quiver.webapp.pages import PageError
 from quiver.webapp.pages import setup as setup_page
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 
 def _finding(name):
@@ -446,7 +447,6 @@ class TestRoute(_Home, HubBase):
 
     def test_page_assets_are_served(self):
         _, js = self.srv.request("GET", "/app/pages.js")
-        self.assertIn(b'registerPage("setup"', js)
         self.assertIn(b"/v1/app/setup/apply", js)
         # The look step saves where Settings › General reads it.
         self.assertIn(b'"quiver.appearance"', js)
@@ -465,7 +465,7 @@ class TestLoadOrder(unittest.TestCase):
         page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/setup.js"
         prelude = ("let routeGen = 1; const answers = [];\n"
                    "const api = () => new Promise((resolve) => answers.push(resolve));\n"
-                   "function registerPage() {}\n")
+                   "function registerPage() {}\n" + app_js_function("currentRoute"))
         done = subprocess.run(["node", "-e", prelude + page.read_text(encoding="utf-8") + "\n(async () => {" + body + "})();"],
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)

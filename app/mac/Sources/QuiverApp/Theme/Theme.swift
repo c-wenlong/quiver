@@ -89,6 +89,10 @@ enum Theme {
     static let successForeground = Color(light: "#ffffff", dark: "#0d0f0d")
     static let warning = Color(light: "#f58e3a", dark: "#f58e3a")
     static let danger = Color(light: "#f53b3a", dark: "#f53b3a")
+    /// Calendar's today mark and now line, red as Calendar.app draws them,
+    /// and the text on that mark.
+    static let calendarNow = danger
+    static let calendarNowText = Color(light: "#ffffff", dark: "#ffffff")
     /// Danger and warning as text. `text.destructive` is Devin's only red
     /// and reads 3.74:1 on the light card, so light keeps Quiver's deeper
     /// red (4.83:1); dark uses `text.destructive`. `text.yellow` is Devin's
@@ -141,7 +145,6 @@ enum Theme {
     @MainActor static var pageTitle: Font { font(size: 28, weight: .semibold) }
     @MainActor static var pageSubtitle: Font { font(size: 14) }
     @MainActor static var sectionTitle: Font { font(size: 20, weight: .semibold) }
-    @MainActor static var display: Font { font(size: 72, weight: .bold) }
     @MainActor static var figure: Font { font(size: 20, weight: .bold) }
     @MainActor static var cardTitle: Font { font(size: 14, weight: .medium) }
     @MainActor static var rowTitle: Font { font(size: 14, weight: .medium) }
