@@ -193,6 +193,30 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         #expect(runner.calls.contains(["setup", "--apply", "--json"]))
     }
 
+    @Test func setupAndDiscoverWaitForTheRegistryGate() async throws {
+        for action in [DoctorReport.Finding.Action.setup, .discover] {
+            let runner = RoutingRunner([
+                (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+                (["setup"], .init(status: 0, stdout: Data(#"{"schema": 1, "data": {"applied": {}}}"#.utf8), stderr: "")),
+                (["harness", "discover"], .init(status: 0, stdout: Data("ok".utf8), stderr: "")),
+            ])
+            let model = DoctorModel(swe: SweClient(runner: runner))
+            // A Harnesses page edit holds the gate.
+            await HarnessesModel.registryWrites.acquire()
+            let run = Task { await model.run(DoctorReport.Finding(
+                check: "setup.registry", severity: .warning, message: "none",
+                fix: nil, action: action)) }
+            // Either the run queues at the gate or, without it, reaches swe.
+            while HarnessesModel.registryWrites.waiters == 0, runner.calls.isEmpty {
+                await Task.yield()
+            }
+            #expect(runner.calls.isEmpty, "\(action) ran while the gate was held")
+            HarnessesModel.registryWrites.release()
+            await run.value
+            #expect(!runner.calls.isEmpty)
+        }
+    }
+
     @Test func aFailureRecordsTheErrorAndClearsRunning() async throws {
         let runner = RoutingRunner([
             (["init"], .init(status: 1, stdout: Data(), stderr: "link would overwrite")),

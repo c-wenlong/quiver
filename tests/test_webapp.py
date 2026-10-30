@@ -74,12 +74,16 @@ class TestWebAppRoutes(HubBase):
 APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
 
 
-def app_js_function(name: str) -> str:
-    """The source of a top-level ``function name(...)`` in app.js, for node
-    tests that run one page script with app.js's globals stubbed: a page
-    calls the real helper, not a copy that could drift."""
+MANAGE_JS = APP_JS.with_name("manage.js")
+
+
+def app_js_function(name: str, js: Path = APP_JS) -> str:
+    """The source of a top-level ``function name(...)`` in app.js (or
+    ``js``, e.g. ``MANAGE_JS``), for node tests that run one page script
+    with app.js's globals stubbed: a page calls the real helper, not a copy
+    that could drift."""
     import re
-    found = re.search(r"^(?:async )?function %s\(.*?^\}\n" % re.escape(name), APP_JS.read_text(encoding="utf-8"),
+    found = re.search(r"^(?:async )?function %s\(.*?^\}\n" % re.escape(name), js.read_text(encoding="utf-8"),
                       re.S | re.M)
     assert found, name
     return found.group(0)
@@ -415,6 +419,16 @@ class TestBodySheets(unittest.TestCase):
             src = (APP_JS.parent / "pages" / f"{page}.js").read_text(encoding="utf-8")
             self.assertNotIn("<dialog", src, page)
 
+    def test_body_sheets_go_through_bodySheet(self):
+        """Compute, Pricing and Service status kept sheets on document.body
+        that route() never closed: Compute's stayed modal over the next
+        page, and the other two each carried their own hashchange copy."""
+        for page in ("compute", "pricing", "status"):
+            src = (APP_JS.parent / "pages" / f"{page}.js").read_text(encoding="utf-8")
+            self.assertIn("bodySheet(", src, page)
+            for made in ("<dialog", 'createElement("dialog")', '"hashchange"'):
+                self.assertNotIn(made, src, page)
+
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
@@ -573,6 +587,26 @@ class TestHarnessMark(unittest.TestCase):
         self.assertIn('class="logo mono" src="/harness-copilot.svg"', logos[2])
         self.assertEqual(logos[3], '<span class="logo" aria-hidden="true"></span>')
         self.assertEqual(self.fmt("Fmt.harnessName('codex-acc2')"), "Codex (acc2)")
+
+    def test_mark_view_is_the_macs_harness_mark_view(self):
+        """Skills, AGENTS.md and Hooks each had a copy that drew a second
+        account's or Devin cloud's logo without its word."""
+        out = self.fmt("['claude', 'claude-desktop', 'codex-acc2', 'devin-cloud', 'grok-bot', 'zed', 'a<b']"
+                       ".map((id) => Fmt.markView(id, 'sk-mark'))")
+        self.assertEqual(out[0], '<span class="sk-mark" title="Claude Code" aria-label="Claude Code">'
+                                 '<img class="logo" src="/harness-claude-color.svg" alt="Claude Code"><span>CLI</span></span>')
+        self.assertIn('alt="Claude Desktop"><span>Desktop</span></span>', out[1])
+        self.assertIn('alt="Codex (acc2)"><span>acc2</span></span>', out[2])
+        self.assertIn('src="/harness-devin.svg" alt="Devin cloud"><span>Cloud</span></span>', out[3])
+        self.assertIn('src="/harness-grok.svg" alt="Grok Bot"></span>', out[4])
+        self.assertEqual(out[5], '<span class="sk-mark" title="Zed" aria-label="Zed"><span>Zed</span></span>')
+        self.assertEqual(out[6], '<span class="sk-mark" title="A&lt;b" aria-label="A&lt;b"><span>A&lt;b</span></span>')
+        self.assertIn('class="logo logo-sm mono"', self.fmt("Fmt.markView('cursor', 'hk-mark', 'logo logo-sm')"))
+
+    def test_tilde_shortens_only_paths_under_home(self):
+        out = self.fmt("[Fmt.tilde('/h/u/a/b', '/h/u'), Fmt.tilde('/h/user2/a', '/h/u'),"
+                       " Fmt.tilde('/h/u', '/h/u'), Fmt.tilde('/h/u/a', ''), Fmt.tilde('/h/u/a', undefined)]")
+        self.assertEqual(out, ["~/a/b", "/h/user2/a", "/h/u", "/h/u/a", "/h/u/a"])
 
 
 if __name__ == "__main__":

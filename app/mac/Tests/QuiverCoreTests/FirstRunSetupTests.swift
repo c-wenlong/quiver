@@ -148,6 +148,26 @@ private func applied(leftAlone: Bool) -> String {
         #expect(runner.calls.filter { $0.contains("--apply") }.count == 1, "setup runs once")
     }
 
+    @Test func setupWaitsForTheRegistryGate() async {
+        let runner = SetupRunner(preview: previewJSON, applied: applied(leftAlone: false))
+        let setup = model(runner, starred: ["claude"])
+        await setup.load()
+        await setup.next(order: ["claude"])
+        #expect(setup.step == .links)
+        // A Harnesses page edit holds the gate.
+        await HarnessesModel.registryWrites.acquire()
+        let leave = Task { await setup.next(order: ["claude"]) }
+        // Either setup queues at the gate or, without it, reaches swe.
+        while HarnessesModel.registryWrites.waiters == 0,
+              !runner.calls.contains(where: { $0.contains("--apply") }) {
+            await Task.yield()
+        }
+        #expect(!runner.calls.contains { $0.contains("--apply") })
+        HarnessesModel.registryWrites.release()
+        await leave.value
+        #expect(runner.calls.filter { $0.contains("--apply") }.count == 1)
+    }
+
     @Test func theStarterFileSendsNoAdopt() async {
         let runner = SetupRunner(preview: previewJSON, applied: applied(leftAlone: false))
         let setup = model(runner)

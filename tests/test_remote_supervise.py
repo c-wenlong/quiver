@@ -2,6 +2,9 @@
 
 import json
 import os
+import secrets
+import shutil
+import subprocess
 import tempfile
 import time
 import unittest
@@ -10,6 +13,8 @@ from unittest.mock import MagicMock, patch
 
 from quiver.remote import protocol, supervise
 from quiver.sessions.models import Session
+
+from tests._tempdir import temp_dir
 
 
 def _session(tool="claude", sid="s1", path="/private/tmp/proj"):
@@ -28,8 +33,38 @@ class TestTmuxHelpers(unittest.TestCase):
         with patch.object(supervise, "_tmux", return_value=self._cp()) as t:
             self.assertTrue(supervise.send_text("qv-x", "hello"))
         calls = [list(c[0]) for c in t.call_args_list]
-        self.assertEqual(calls[0], ["send-keys", "-t", "qv-x", "-l", "hello"])
+        self.assertEqual(calls[0],
+                         ["send-keys", "-t", "qv-x", "-l", "--", "hello"])
         self.assertEqual(calls[1], ["send-keys", "-t", "qv-x", "Enter"])
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_send_text_types_a_leading_dash(self):
+        # tmux reads "- item" after -l as a flag unless "--" ends them:
+        # a pasted list sent from the phone failed as "not reachable".
+        socket = f"qv-test-{secrets.token_hex(4)}"
+        sockets = tempfile.mkdtemp(prefix="qvt", dir="/tmp")
+        self.addCleanup(shutil.rmtree, sockets, True)
+        # The server's socket lives under this TMUX_TMPDIR, and the patch
+        # below is gone by cleanup time: name it here, or kill-server
+        # looks in the default folder and leaves the server running.
+        self.addCleanup(subprocess.run, ["tmux", "-L", socket, "kill-server"],
+                        capture_output=True,
+                        env={**os.environ, "TMUX_TMPDIR": sockets})
+        with patch.object(supervise, "_TMUX_SOCKET", socket), \
+             patch.dict(os.environ, {"TMUX_TMPDIR": sockets}):
+            out = subprocess.run(
+                ["tmux", "-L", socket, "new-session", "-d", "-s", "qv-x",
+                 "cat"], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertTrue(supervise.send_text("qv-x", "- item one"))
+            self.assertTrue(supervise.send_text("qv-x", "-x"))
+            for _ in range(50):
+                pane = supervise.capture_pane("qv-x")
+                if "-x" in pane:
+                    break
+                time.sleep(0.05)
+        self.assertIn("- item one", pane)
+        self.assertIn("-x", pane)
 
     def test_send_text_failure(self):
         with patch.object(supervise, "_tmux", return_value=self._cp(rc=1)):
@@ -406,7 +441,7 @@ class TestPrimePane(unittest.TestCase):
 
 class TestAdoptPending(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def test_pending_launch_tracks_markers(self):
         self.assertFalse(supervise.pending_launch(self.home))  # no dir
@@ -434,7 +469,7 @@ class TestAdoptPending(unittest.TestCase):
     def test_adopts_matching_new_session(self):
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
-        proj = Path(tempfile.mkdtemp())  # realpath-resolvable cwd
+        proj = temp_dir(self)  # realpath-resolvable cwd
         pending = {"tmux": "qv-new", "tool_name": "claude",
                    "cwd": str(proj), "launched_at": time.time()}
         (folder / "qv-new.json").write_text(json.dumps(pending))
@@ -457,7 +492,7 @@ class TestAdoptPending(unittest.TestCase):
         # one active before the launch is not.
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
-        proj = Path(tempfile.mkdtemp())
+        proj = temp_dir(self)
         now = time.time()
         (folder / "qv-oc.json").write_text(json.dumps(
             {"tmux": "qv-oc", "tool_name": "opencode", "cwd": str(proj),
@@ -498,7 +533,7 @@ class TestAdoptPending(unittest.TestCase):
         # could bind a human session to our pane — stay pending.
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
-        proj = Path(tempfile.mkdtemp())
+        proj = temp_dir(self)
         pending = {"tmux": "qv-new", "tool_name": "claude",
                    "cwd": str(proj), "launched_at": time.time()}
         (folder / "qv-new.json").write_text(json.dumps(pending))
@@ -523,7 +558,7 @@ class TestAdoptPending(unittest.TestCase):
 
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
-        proj = Path(tempfile.mkdtemp())
+        proj = temp_dir(self)
         now = time.time()
         pending = {"tmux": "qv-new", "tool_name": "claude",
                    "cwd": str(proj), "launched_at": now}
@@ -548,7 +583,7 @@ class TestAdoptPending(unittest.TestCase):
         # fresh transcript and unambiguous candidacy.
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
-        proj = Path(tempfile.mkdtemp())
+        proj = temp_dir(self)
         pending = {"tmux": "qv-new", "tool_name": "claude",
                    "cwd": str(proj), "exclude": ["s1"],
                    "launched_at": time.time()}
@@ -588,7 +623,7 @@ class TestAdoptPending(unittest.TestCase):
         # marker — supervision wins over the pending claim.
         folder = supervise._pending_dir(self.home)
         folder.mkdir(parents=True)
-        proj = Path(tempfile.mkdtemp())
+        proj = temp_dir(self)
         pending = {"tmux": "qv-new", "tool_name": "claude",
                    "cwd": str(proj), "launched_at": time.time()}
         (folder / "qv-new.json").write_text(json.dumps(pending))
@@ -605,7 +640,7 @@ class TestAdoptPending(unittest.TestCase):
 
 class TestRegistryEdges(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def test_load_filters_nondict_values(self):
         supervise._registry_file(self.home).parent.mkdir(
@@ -619,6 +654,7 @@ class TestRegistryEdges(unittest.TestCase):
     def test_unmark_missing_key_is_noop(self):
         # pops nothing, writes nothing — no crash, no file churn
         supervise.unmark(self.home, "never-marked")
+        self.assertFalse(supervise._registry_file(self.home).exists())
 
     def test_save_registry_chmod_failure_tolerated(self):
         with patch.object(supervise.os, "chmod", side_effect=OSError):
@@ -628,7 +664,7 @@ class TestRegistryEdges(unittest.TestCase):
 
 class TestLaunchNew(unittest.TestCase):
     def test_launch_writes_pending_and_primes(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
              patch.object(supervise.shutil, "which", return_value="/usr/bin/claude"), \
              patch.object(supervise, "prime_pane") as prime:
@@ -642,7 +678,7 @@ class TestLaunchNew(unittest.TestCase):
         )
 
     def test_same_second_launches_get_distinct_names(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         seen = []
         with patch.object(supervise.shutil, "which", return_value="/x/claude"), \
              patch.object(supervise, "launch_tmux",
@@ -659,13 +695,13 @@ class TestLaunchNew(unittest.TestCase):
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"):
             ok, note, name = supervise.launch_new(
-                Path(tempfile.mkdtemp()), "claude", "/no/such/dir", "hi", binary="claude")
+                temp_dir(self), "claude", "/no/such/dir", "hi", binary="claude")
         self.assertFalse(ok)
         self.assertIn("no such folder", note)
         tmux.assert_not_called()
 
     def test_launch_id_rides_marker_into_adoption(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"), \
@@ -681,7 +717,7 @@ class TestLaunchNew(unittest.TestCase):
             supervise.meta_for(home, "claude:new")["launch_id"], "l9")
 
     def test_binary_overrides_tool_name(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         with patch.object(supervise, "launch_tmux",
                           return_value="qv-n") as tmux, \
              patch.object(supervise.shutil, "which",
@@ -696,11 +732,11 @@ class TestLaunchNew(unittest.TestCase):
         # binary for harnesses whose registry command differs (#510).
         with self.assertRaises(TypeError):
             supervise.launch_new(
-                Path(tempfile.mkdtemp()), "cursor", "/tmp", "hi")
+                temp_dir(self), "cursor", "/tmp", "hi")
 
     def test_unknown_harness(self):
         ok, note, name = supervise.launch_new(
-            Path(tempfile.mkdtemp()), "nope-tool", "/tmp", "",
+            temp_dir(self), "nope-tool", "/tmp", "",
             binary="nope-tool")
         self.assertFalse(ok)
         self.assertIsNone(name)
@@ -709,7 +745,7 @@ class TestLaunchNew(unittest.TestCase):
         # Nothing was delivered, so no turn will ever start: the record
         # must not sit pending while the phone polls it. The pane itself
         # stays up for a terminal attach.
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"), \
@@ -721,7 +757,7 @@ class TestLaunchNew(unittest.TestCase):
         self.assertIn("pane is still up", note)
 
     def test_known_ids_land_in_marker(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         with patch.object(supervise, "launch_tmux", return_value="qv-n"), \
              patch.object(supervise.shutil, "which",
                           return_value="/usr/bin/claude"), \
@@ -735,7 +771,7 @@ class TestLaunchNew(unittest.TestCase):
         )
 
     def test_detach_kills_tmux(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         supervise.mark(home, "k1", {"mode": "tmux", "tmux": "qv-z"})
         with patch.object(supervise, "kill", return_value=True) as k:
             self.assertTrue(supervise.detach(home, "k1"))
@@ -747,8 +783,8 @@ class TestLaunchTuning(unittest.TestCase):
     """``model``/``effort`` picks: what a launch (or attach) can apply."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.proj = tempfile.mkdtemp()
+        self.home = temp_dir(self)
+        self.proj = str(temp_dir(self))
 
     def test_tuning_error_names_the_ops_the_tui_cannot_take(self):
         self.assertEqual(
@@ -1228,7 +1264,7 @@ class TestAttachMtime(unittest.TestCase):
     """The fresh-mtime recheck: cached status lies, the file does not."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:abc-123"
         self.session = _session(sid="abc-123", path="/tmp/proj")
         # Neither pgrep/ps over this machine's processes nor tmux on its
@@ -1240,7 +1276,7 @@ class TestAttachMtime(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def test_fresh_transcript_refused(self):
-        fresh = Path(tempfile.mkdtemp()) / "live.jsonl"
+        fresh = temp_dir(self) / "live.jsonl"
         fresh.write_text("{}\n")  # mtime = now
         with patch("quiver.remote.tail.resolve_jsonl_path",
                    return_value=fresh), \
@@ -1253,7 +1289,7 @@ class TestAttachMtime(unittest.TestCase):
         self.assertIn("idle", note)
 
     def test_stale_transcript_passes(self):
-        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old = temp_dir(self) / "old.jsonl"
         old.write_text("{}\n")
         import os
         stale = time.time() - 3600
@@ -1272,7 +1308,7 @@ class TestAttachMtime(unittest.TestCase):
         # When the tmux replacement can't be stood up the original
         # writer must stay: killing it first would leave the user with
         # a dead session and no supervision.
-        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old = temp_dir(self) / "old.jsonl"
         old.write_text("{}\n")
         import os
         stale = time.time() - 3600
@@ -1314,7 +1350,7 @@ class TestAttachMtime(unittest.TestCase):
     def test_tmux_handoff_replaces_then_marks(self):
         # Happy path: new pane stands up, original writer is stopped,
         # registry claims the session — in that order.
-        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old = temp_dir(self) / "old.jsonl"
         old.write_text("{}\n")
         import os
         stale = time.time() - 3600
@@ -1344,7 +1380,7 @@ class TestAttachMtime(unittest.TestCase):
     def test_tmux_handoff_fails_when_boot_kills_the_pane(self):
         # Claude quitting at its trust gate (or any boot screen) must
         # fail the attach and leave the original writer running.
-        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old = temp_dir(self) / "old.jsonl"
         old.write_text("{}\n")
         import os
         stale = time.time() - 3600
@@ -1368,7 +1404,7 @@ class TestAttachMtime(unittest.TestCase):
     def test_tmux_handoff_fails_when_boot_times_out(self):
         # A pane that never settles is not ready for the phone's write:
         # drop it and leave the original writer running.
-        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old = temp_dir(self) / "old.jsonl"
         old.write_text("{}\n")
         import os
         stale = time.time() - 3600
@@ -1392,7 +1428,7 @@ class TestAttachMtime(unittest.TestCase):
     def test_tmux_handoff_spares_the_replacement(self):
         # The replacement runs the same `claude --resume <id>` argv, so
         # only pids listed before launch may be stopped.
-        old = Path(tempfile.mkdtemp()) / "old.jsonl"
+        old = temp_dir(self) / "old.jsonl"
         old.write_text("{}\n")
         import os
         stale = time.time() - 3600
@@ -1418,7 +1454,7 @@ class TestAttachMtime(unittest.TestCase):
 
 class TestAttachModeGates(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.session = Session(
             timestamp=0, agent="Claude Code", path="/tmp/p",
             session_id="abc", tool_name="claude")
@@ -1507,9 +1543,18 @@ class TestResolveMode(unittest.TestCase):
             )
 
     def test_headless_attach_checks_claude_binary(self):
-        # headless joins _MODE_BINARY so attach can't register a channel
-        # whose binary is absent.
-        self.assertEqual(supervise._MODE_BINARY["headless"], "claude")
+        # attach can't register a headless channel whose binary is absent.
+        home = temp_dir(self)
+        session = _session(sid="abc")
+        with patch("shutil.which", return_value=None), \
+             patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=None):
+            ok, note = supervise.attach(
+                home, "claude:abc", session,
+                last_append_at=None, status="done", mode="headless")
+        self.assertFalse(ok)
+        self.assertEqual(note, "claude is not installed")
+        self.assertIsNone(supervise.meta_for(home, "claude:abc"))
 
 
 if __name__ == "__main__":

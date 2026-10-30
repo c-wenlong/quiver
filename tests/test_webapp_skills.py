@@ -16,6 +16,7 @@ from quiver.webapp.pages import PageError
 from quiver.webapp.pages import skills as page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 
 def _skill(name, path, source="harness", harnesses=("codex",), root="codex"):
@@ -608,6 +609,7 @@ class TestFileSheetReplies(unittest.TestCase):
     def test_a_late_reply_for_another_opening_is_dropped(self):
         script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/skills.js"
         prelude = (
+            (script.parents[1] / "format.js").read_text(encoding="utf-8") + "\n"
             "const esc = (s) => String(s); function registerPage() {}\n"
             "const sheet = { innerHTML: '', dataset: {}, open: false, showModal() { this.open = true; }, close() { this.open = false; } };\n"
             "const bodySheet = () => sheet;\n"
@@ -624,6 +626,39 @@ class TestFileSheetReplies(unittest.TestCase):
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(json.loads(done.stdout), [True, False])
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFileSheetFailures(unittest.TestCase):
+    """pages/skills.js's file sheet under node: a refused credential
+    closes it at the gate, like the page's other reads, and an
+    unreachable hub says so instead of "The hub answered 0."."""
+
+    def read_file(self, reply):
+        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/skills.js"
+        prelude = (
+            (script.parents[1] / "format.js").read_text(encoding="utf-8") + "\n"
+            "const esc = (s) => String(s); function registerPage() {}\n"
+            "globalThis.location = { hash: '#/skills?skill=%2Fs%2Fa' };\n"
+            "const gates = []; function renderGate() { gates.push(1); }\n"
+            "const sheet = { innerHTML: '', dataset: {}, open: false, showModal() { this.open = true; }, close() { this.open = false; } };\n"
+            "const bodySheet = () => sheet;\n"
+            "const api = async () => (" + json.dumps(reply) + ");\n"
+            + app_js_function("failText"))
+        body = ("openSkillFile({ skill: { path: '/s/a' }, home: '' }, 'README.md').then(() =>\n"
+                "  process.stdout.write(JSON.stringify({ open: sheet.open, gates: gates.length,\n"
+                "    error: (sheet.innerHTML.match(/<p class=\"error\">(.*?)<\\/p>/) || [])[1] || null })));\n")
+        done = subprocess.run(["node", "-e", prelude + script.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_a_refused_credential_goes_to_the_gate(self):
+        self.assertEqual(self.read_file({"status": 401, "data": None}), {"open": False, "gates": 1, "error": None})
+
+    def test_an_unreachable_hub_says_so(self):
+        self.assertEqual(self.read_file({"status": 0, "data": None}), {
+            "open": True, "gates": 0, "error": "Couldn't reach the hub. Check the connection, then try again."})
 
 
 if __name__ == "__main__":

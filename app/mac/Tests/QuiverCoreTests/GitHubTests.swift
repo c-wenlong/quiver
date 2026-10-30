@@ -499,13 +499,14 @@ import Testing
     }
 
     @Test func inboxLoadsNotificationsAndPolls() async {
-        let swe = SweClient(runner: router([
+        let calls = router([
             "gh inbox --limit=50 --all --json":
                 "\(env),\"status\":\"ok\",\"notifications\":[{"
                 + "\"id\":\"n1\",\"repo\":\"o/a\",\"title\":\"PR #7\",\"type\":\"PullRequest\","
                 + "\"reason\":\"review_requested\",\"unread\":true,"
                 + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/7\"}]",
-        ]))
+        ])
+        let swe = SweClient(runner: calls)
         var now = Date(timeIntervalSince1970: 1_000)
         let model = GitHubModel(now: { now }, staleAfter: 60)
         await model.loadInbox(swe: swe)
@@ -516,10 +517,13 @@ import Testing
         #expect(notes.first?.id == "n1")
         #expect(model.inboxFetchedAt == Date(timeIntervalSince1970: 1_000))
         // Fresh: a non-forced reload is a no-op.
+        let fetched = calls.calls.count
         now = now.addingTimeInterval(30)
         await model.loadInbox(swe: swe)
+        #expect(calls.calls.count == fetched)
         // Forced always refetches.
         await model.loadInbox(swe: swe, force: true)
+        #expect(calls.calls.count == fetched + 1)
         guard case .loaded(let again) = model.inbox else {
             Issue.record("inbox failed after forced reload")
             return
@@ -1574,15 +1578,32 @@ import Testing
     }
 
     @Test func rerunSuccessDropsTheActionsFetchTime() async {
-        let swe = SweClient(runner: router([
+        let calls = router([
+            "gh run --limit=30 --repo=o/a --json":
+                "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"runs\":[]}]",
             "gh run rerun 42 --repo=o/a --failed --json":
                 env + ",\"repo\":\"o/a\",\"run\":42,\"rerun\":true,\"failed_only\":true",
-        ]))
-        let model = GitHubModel()
+        ])
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel(now: { Date(timeIntervalSince1970: 1_000) }, staleAfter: 60)
+        // Both Actions boards loaded and fresh: a stale check fetches nothing.
+        await model.loadTabIfStale(.actions, repo: "o/a", swe: swe)
+        await model.loadFocusTab(.actions, repo: "o/a", swe: swe)
+        let loaded = calls.calls.count
+        await model.loadTabIfStale(.actions, repo: "o/a", swe: swe)
+        await model.loadFocusTabIfStale(.actions, repo: "o/a", swe: swe)
+        #expect(calls.calls.count == loaded)
+
         let error = await model.rerunRun(repo: "o/a", run: 42,
                                          failedOnly: true, swe: swe)
         #expect(error == nil)
         #expect(model.actionError == nil)
+        // Still inside the stale window, yet each board refetches its runs.
+        let rerun = calls.calls.count
+        await model.loadTabIfStale(.actions, repo: "o/a", swe: swe)
+        #expect(calls.calls.count == rerun + 1)
+        await model.loadFocusTabIfStale(.actions, repo: "o/a", swe: swe)
+        #expect(calls.calls.count == rerun + 2)
     }
 
     @Test func markReadFlipsUnreadLocally() async {
