@@ -135,6 +135,9 @@ FOLDER_LIST_CAP = 500
 # owner-identity path of /v1/pair/requests*) allow this many attempts
 # per source IP per window.
 _PAIR_ATTEMPT_MAX = 5
+# The catalog loop drops expired pair requests (and any uncollected
+# credential on them) at most this often.
+_PAIR_PRUNE_S = 60.0
 _PAIR_ATTEMPT_S = 600
 
 # A launch the phone started stays answerable at /v1/launches/<id> this
@@ -276,6 +279,7 @@ class HubState:
         self._pair_ex_times: dict[str, list[float]] = {}
         self._pair_dec_times: dict[str, list[float]] = {}
         self._pair_req_lock = threading.Lock()
+        self._pair_pruned_at = 0.0
         # Host values this hub answers to — the owner-identity approval
         # path requires one, and the unauthenticated routes answer only
         # these (filled by serve() from the bind host + whois); empty
@@ -708,6 +712,16 @@ class HubState:
             )
         return written
 
+    def _prune_pair_requests(self) -> None:
+        now = time.time()
+        if now - self._pair_pruned_at < _PAIR_PRUNE_S:
+            return
+        self._pair_pruned_at = now
+        try:
+            pairing.prune_requests(self.home)
+        except Exception:
+            pass
+
     def _catalog_loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -745,6 +759,7 @@ class HubState:
                 rows, as_of = self.catalog.tail_snapshot()
                 self.tail_manager.sync(rows, as_of=as_of)
                 supervise.reap_kept(self.home, self.catalog.session_for)
+                self._prune_pair_requests()
                 # GitHub last: a slow ``gh`` must never hold up adoption
                 # or tail sync, which don't need it.
                 self.catalog.poll_github()

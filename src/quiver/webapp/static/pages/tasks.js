@@ -54,7 +54,7 @@
   const LAUNCH_POLLS = 60;
 
   const page = {
-    data: null, status: 0, error: null, loading: false,
+    data: null, error: null, loading: false,
     filter: "all", busy: new Set(), actionError: null,
     seq: 0, forTask: null,
     // The list: the rail's chosen group (null is every task), the groups
@@ -816,14 +816,15 @@
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the other pages do.
       if (!page.data) {
-        return pageError(pageHeader("Tasks", "The issues and pull requests your agents are on."),
+        // The error says "then refresh", so the header carries the button.
+        return pageError(pageHeader("Tasks", "The issues and pull requests your agents are on.",
+          `<button class="icon-button" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>`),
           status, data, () => load(true));
       }
       page.error = GhUI.failMessage(status, data);
       return paint();
     }
     page.data = data;
-    page.status = status;
     page.error = null;
     // The rail's group went away (all closed out, unpinned): back to All.
     if (page.shown && !tasks().some((t) => groupName(t) === page.shown)

@@ -100,7 +100,6 @@
 .mcp-sheet .mcp-summary { max-height: 5.4em; overflow: auto; color: var(--text-secondary); }
 .mcp-sheet .mcp-rule { border: 0; border-top: 1px solid var(--border); margin: 0; width: 100%; }
 .mcp-sheet .mcp-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
-.mcp-sheet .mcp-secrets { display: flex; flex-wrap: wrap; gap: 6px; }
 .mcp-sheet .field-row { word-break: normal; overflow-wrap: anywhere; }
 .mcp-sheet .caption { margin: 0; }
 .mcp-sheet .warn { color: var(--warning-text); }

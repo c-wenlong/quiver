@@ -42,16 +42,29 @@ struct PrDetailSheet: View {
             switch state {
             case .idle, .loading:
                 LoadingCard(text: "Fetching the pull request…")
+                doneRow
             case .failed(let message):
                 ErrorCard(message: message, actionTitle: "Refresh") {
                     Task { await load() }
                 }
+                doneRow
             case .loaded(let pr):
                 content(pr)
             }
         }
         .sheetScaffold(width: 680)
         .task { await load() }
+    }
+
+    /// The way out while nothing has loaded: the loaded header carries
+    /// its own Done, and a slow or failed fetch must not trap the sheet.
+    private var doneRow: some View {
+        HStack {
+            Spacer()
+            Button("Done") { dismiss() }
+                .secondaryButton()
+                .keyboardShortcut(.cancelAction)
+        }
     }
 
     private func load() async {

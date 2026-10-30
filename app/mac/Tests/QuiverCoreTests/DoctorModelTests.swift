@@ -27,6 +27,14 @@ import Testing
         #expect(report.findings.map(\.harness) == [nil, nil])
     }
 
+    /// Run state and errors are keyed by id, so two findings whose check
+    /// and message only differ in where they split must not share one.
+    @Test func findingIdsKeepCheckAndMessageApart() {
+        let a = DoctorReport.Finding(check: "ab", severity: .error, message: "c")
+        let b = DoctorReport.Finding(check: "a", severity: .error, message: "bc")
+        #expect(a.id != b.id)
+    }
+
     /// An off-PATH finding names its harness, so the page can show its logo.
     @Test func aFindingAboutOneHarnessNamesIt() async {
         let offPath = Data(#"""

@@ -37,11 +37,13 @@ async function renderHarnesses() {
   paintHarnesses();
 }
 
-function harnessesHeader() {
+/* Detect and Add harness only once the list is painted: paintHarnesses
+ * binds them, so in the loading and error states they would do nothing. */
+function harnessesHeader(actions = false) {
   const where = harnessesPage.data && harnessesPage.data.machine ? ` on ${harnessesPage.data.machine}` : "";
   return pageHeader("Harnesses", `The AI coding CLIs swe knows about${where}. Star the ones you use; archive the ones you've ruled out.`,
-    `<button class="harness-button" data-sheet="detect">Detect</button>
-     <button class="harness-button primary harness-add" data-sheet="add">${harnessIcon("plus")}Add harness</button>
+    `${actions ? `<button class="harness-button" data-sheet="detect">Detect</button>
+     <button class="harness-button primary harness-add" data-sheet="add">${harnessIcon("plus")}Add harness</button>` : ""}
      <button class="icon-button" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
 }
 
@@ -86,7 +88,7 @@ function paintHarnesses() {
         ? "Hide the harnesses you haven't starred" : `Show ${hidden} more you haven't starred`}</button>`;
     }
   }
-  document.getElementById("panel").innerHTML = `<div class="page">${harnessesHeader()}
+  document.getElementById("panel").innerHTML = `<div class="page">${harnessesHeader(true)}
     <div class="stack">
       <div class="filters">
         <select class="field" id="harness-scope" aria-label="Scope">${options(
