@@ -20,11 +20,10 @@ the settings as saved.
 from __future__ import annotations
 
 import platform
-from pathlib import Path
 
 from quiver.configuration import ConfigurationError
 from quiver.webapp import compute
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, home_path
 
 
 def get(ctx, args: dict) -> dict:
@@ -45,7 +44,7 @@ def get(ctx, args: dict) -> dict:
     if interval not in compute.INTERVALS:
         interval = compute.DEFAULT_INTERVAL
     model = compute.model()
-    model.home = Path(ctx.home) if ctx.home is not None else Path.home()
+    model.home = home_path(ctx)
     model.sample(force=args.get("refresh") == "1")
     compute.start_ticker()
     body = model.payload(interval)
@@ -69,7 +68,7 @@ def post(ctx, action: str, body: dict) -> dict:
     # ``force`` present is read as "is it the JSON true" so a string
     # cannot turn it on by accident; the age clamps on the way in.
     force = body["force"] is True if "force" in body else None
-    home = Path(ctx.home) if ctx.home is not None else Path.home()
+    home = home_path(ctx)
     try:
         compute.save_clean_settings(home, enabled=enabled, force=force,
                                     orphan_age_seconds=body.get("orphan_age_seconds"))

@@ -27,7 +27,7 @@ import threading
 import time
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, home_path
 
 # The app's SnapshotLoader maxAge for both models.
 CACHE_TTL_S = 60.0
@@ -69,7 +69,7 @@ def get(ctx, args: dict) -> dict:
     view = args.get("view") or "health"
     if view not in VIEWS:
         raise PageError(400, "bad_view", f"view must be one of {', '.join(VIEWS)}")
-    home = ctx.home or Path.home()
+    home = home_path(ctx)
     body, built_at = cached(view, home, refresh=args.get("refresh") == "1")
     return {**body, "view": view, "built_at": built_at,
             "machine": (ctx.machine or {}).get("name")}
@@ -176,7 +176,7 @@ def post(ctx, action: str, body: dict) -> dict:
     if action == "plugin":
         return _plugin_action(ctx, body)
     ids = [_fix_id(body.get("id"))] if action == "fix" else _fix_ids(body.get("ids"))
-    home = ctx.home or Path.home()
+    home = home_path(ctx)
     if not _WRITE_LOCK.acquire(blocking=False):
         raise PageError(409, "busy", "A fix is already running. Wait for it, then refresh.")
     try:
@@ -221,7 +221,7 @@ def _plugin_action(ctx, body: dict) -> dict:
     for value in (verb, ref, harness):
         if not isinstance(value, str) or not value or len(value) > ID_MAX:
             raise PageError(422, "bad_action", "verb, ref and harness must name an action the page shows")
-    home = ctx.home or Path.home()
+    home = home_path(ctx)
     if not _WRITE_LOCK.acquire(blocking=False):
         raise PageError(409, "busy", "A plugin change is already running. Wait for it, then refresh.")
     try:
