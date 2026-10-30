@@ -836,7 +836,8 @@ class TestSettingsSheetLeavesWithThePage(unittest.TestCase):
             "    setAttribute(k, v) { this.attrs[k] = v; },\n"
             "    addEventListener(t, f) { (this.listeners[t] ||= []).push(f); },\n"
             "    showModal() { this.open = true; },\n"
-            "    close() { if (!this.open) return; this.open = false; for (const f of this.listeners.close || []) f(); },\n"
+            "    close() { if (!this.open) return; this.open = false;\n"
+            "      setTimeout(() => { for (const f of this.listeners.close || []) f(); }); },\n"
             "    remove() { const i = body.indexOf(this); if (i >= 0) body.splice(i, 1); },\n"
             "    querySelector(sel) { return (this.kids[sel] ||= makeEl('input')); },\n"
             "    querySelectorAll() { return []; } };\n"
@@ -853,14 +854,17 @@ class TestSettingsSheetLeavesWithThePage(unittest.TestCase):
             "const opened = !!sheet && sheet.open;\n"
             "sheet.querySelector('#compute-age').value = '3';\n"
             "sheet.querySelector('#compute-age-unit').value = 'hour';\n"
-            "routeGen++; closeRouteSheets();\n"
-            "process.stdout.write(JSON.stringify({ opened, routeSheet: 'routeSheet' in sheet.dataset,\n"
-            "  left: body.length, age: computePage.limits.orphanAge }));\n")
+            "// route()'s order; the browser fires close later, as a task.\n"
+            "closeRouteSheets(); routeGen++;\n"
+            "const before = { open: sheet.open, left: body.length };\n"
+            "setTimeout(() => process.stdout.write(JSON.stringify({ opened, before,\n"
+            "  routeSheet: 'routeSheet' in sheet.dataset, left: body.length, age: computePage.limits.orphanAge })));\n")
         done = subprocess.run(["node", "-e", prelude + script.read_text(encoding="utf-8") + "\n" + body],
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(json.loads(done.stdout),
-                         {"opened": True, "routeSheet": True, "left": 0, "age": 3 * 3600})
+                         {"opened": True, "before": {"open": False, "left": 1}, "routeSheet": True,
+                          "left": 0, "age": 3 * 3600})
 
 
 if __name__ == "__main__":
