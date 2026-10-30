@@ -53,7 +53,7 @@ An example per layer, from the harness domain:
 | `hooks/` | `commands.py` | `inventory.py`, `settings.py`, `create.py`, `contracts.py` (per-harness hook contracts + registry overrides), `shared.py` (shared-hook deploy: events headers, generated wrappers, `.disabled`, pruning), `shim_runtime.py` (stdlib-only payload translator copied to `~/.quiver/hooks/_runtime/`) | `models.py`: `Declaration`, `HookRow`, `HookDrift` |
 | `reports/` | `commands.py` | `pipeline.py`, `transcripts.py`, `triage.py`, `batching.py`, `runners.py`, `work.py`, `followups.py`, `prompts.py`, `store.py` | `models.py`: report records |
 | `setup/` | `commands.py`, `wizard.py` | (wizard is the whole domain; allowed to print) | `models.py`: `HarnessPreview`, `McpPreview`, `SkillsPreview` |
-| `github/` | `cli.py` (`swe gh`) | `gh.py` (the only module that spawns `gh`), `repos.py`, `manage.py`, `catalog.py`, `issues.py`, `pulls.py`, `shared.py` (the hub's cache, write lock and pins) | (no `models.py`; payloads are built in the service functions) |
+| `github/` | `cli.py` (`swe gh`) | `gh.py` (the only module in the package that spawns `gh`; the Copilot fetcher in `harness/rate_limits.py` runs `gh auth token` itself), `repos.py`, `manage.py`, `catalog.py`, `issues.py`, `pulls.py`, `shared.py` (the hub's cache, write lock and pins) | (no `models.py`; payloads are built in the service functions) |
 
 The remaining packages sit outside that convention:
 
