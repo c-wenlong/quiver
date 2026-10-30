@@ -459,6 +459,20 @@ class TestIssueCli(unittest.TestCase):
             ["issue", "view", "5", "--repo=o/r", "--body-file=-"])
         self.assertEqual(rc, 1)
 
+    def test_comment_unreadable_stdin_is_an_error_reply(self):
+        class Broken(io.StringIO):
+            def read(self, *args):
+                raise OSError("Is a directory")
+        with patch("sys.stdin", Broken()):
+            rc, out, _ = self._run(
+                ["issue", "comment", "5", "--repo=o/r", "--body-file=-",
+                 "--json"])
+        self.assertEqual(rc, 1)
+        data = self._data(out)
+        self.assertIsNone(data["comment"])
+        self.assertIn("Can't read stdin", data["error"])
+        self.assertEqual(self.calls, [])
+
     def test_comment_empty_body_is_an_error(self):
         for args in (["--body=   "], []):
             rc, out, _ = self._run(

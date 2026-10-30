@@ -1600,13 +1600,13 @@ def _cmd_issue_comment(number: int, opts: dict, json_view: bool) -> int:
         msg = None
         if opts["body"] is not None:
             msg = "Pass --body or --body-file, not both"
-        elif body_file == "-":
-            body = sys.stdin.read()
         else:
             try:
-                body = Path(body_file).expanduser().read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                msg = f"Can't read {body_file}: {exc}"
+                body = (sys.stdin.read() if body_file == "-" else
+                        Path(body_file).expanduser().read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                where = "stdin" if body_file == "-" else body_file
+                msg = f"Can't read {where}: {exc}"
         if msg:
             print(c("red", f"  {msg}"), file=error_stream(json_view))
             if json_view:
