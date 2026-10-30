@@ -51,6 +51,9 @@ class _Server:
         self.thread.start()
 
     def stop(self):
+        # The state first: a queued send or when_idle detach left waiting
+        # would otherwise keep polling this test's state long after it.
+        self.state.stop()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=3)
@@ -936,12 +939,16 @@ class TestHubWriteRoutes(unittest.TestCase):
                    return_value="/usr/bin/tmux"):
             status, data = self.srv.request(
                 "POST", "/v1/sessions", body=body, headers=self.hdr)
+            # The launch thread reads these patches after the 202 went
+            # out: it has to finish before they are undone.
+            self._wait_launch_threads()
         return status, json.loads(data)
 
     def _wait_launch_threads(self):
         for t in threading.enumerate():
             if t.name.startswith("remote-launch-"):
                 t.join(timeout=5)
+                self.assertFalse(t.is_alive(), t.name)
 
     def _launch_view(self, launch_id):
         status, data = self.srv.request(
@@ -957,7 +964,6 @@ class TestHubWriteRoutes(unittest.TestCase):
         ) as launch:
             status, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
-            self._wait_launch_threads()
         self.assertEqual(status, 202, body)
         launch_id = body["launch_id"]
         self.assertEqual(body["state"], "pending")
@@ -979,14 +985,12 @@ class TestHubWriteRoutes(unittest.TestCase):
         with patch("quiver.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")):
             self._launch({"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
-            self._wait_launch_threads()
         self.assertTrue(self.srv.state._catalog_wake.is_set())
 
     def test_failed_launch_leaves_the_catalog_loop_asleep(self):
         with patch("quiver.remote.supervise.launch_new",
                    return_value=(False, "nope", None)):
             self._launch({"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
-            self._wait_launch_threads()
         self.assertFalse(self.srv.state._catalog_wake.is_set())
 
     def test_pending_marker_forces_a_fresh_scan(self):
@@ -1021,7 +1025,6 @@ class TestHubWriteRoutes(unittest.TestCase):
                    return_value=(True, "launched", "qv-t")):
             _, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
-            self._wait_launch_threads()
         self.srv.state.emit("claude:new", protocol.event(
             "session.launched", "claude:new", "m",
             {"launch_id": body["launch_id"]}))
@@ -1037,7 +1040,6 @@ class TestHubWriteRoutes(unittest.TestCase):
         ):
             status, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi"})
-            self._wait_launch_threads()
         self.assertEqual(status, 202, body)
         _, view = self._launch_view(body["launch_id"])
         self.assertEqual(view["state"], "failed")
@@ -1049,7 +1051,6 @@ class TestHubWriteRoutes(unittest.TestCase):
             _, body = self._launch(
                 {"harness": "qwen-code", "cwd": "/tmp", "prompt": "hi"},
                 tracked=False)
-            self._wait_launch_threads()
         self.assertEqual(launch.call_args[1]["known_ids"], ["old"])
         _, view = self._launch_view(body["launch_id"])
         self.assertEqual(view["state"], "untracked")
@@ -1105,7 +1106,6 @@ class TestHubWriteRoutes(unittest.TestCase):
             status, body = self._launch(
                 {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
                  "model": "opus", "effort": "high"})
-            self._wait_launch_threads()
         self.assertEqual(status, 202, body)
         self.assertEqual(launch.call_args[1]["model"], "opus")
         self.assertEqual(launch.call_args[1]["effort"], "high")
@@ -3445,7 +3445,30 @@ class TestServeEntry(unittest.TestCase):
             time.sleep(0.05)
 
 
-class TestGlobalEvents(HubBase):
+class _ShortHeartbeat:
+    """A closed SSE stream's handler thread only exits when a heartbeat
+    write fails, and the default 15 s heartbeat left one running per test
+    long after the test. A short one, kept until those threads end."""
+
+    def setUp(self):
+        super().setUp()
+        streams = []
+        real = hub_mod._Handler._sse_stream
+
+        def sse_stream(handler, *args, **kwargs):
+            streams.append(threading.current_thread())
+            return real(handler, *args, **kwargs)
+
+        for p in (patch.object(hub_mod, "_SSE_HEARTBEAT_S", 0.1),
+                  patch.object(hub_mod._Handler, "_sse_stream", sse_stream)):
+            p.start()
+            self.addCleanup(p.stop)
+        # Runs before the patches stop: the clients have hung up by now,
+        # so each stream ends within a couple of heartbeats.
+        self.addCleanup(lambda: [t.join(timeout=3) for t in streams])
+
+
+class TestGlobalEvents(_ShortHeartbeat, HubBase):
     def test_global_events_use_global_seq(self):
         # Live global subscribers must see the *global* journal seq on
         # mirrored events, so their ?last= cursor stays aligned with
@@ -3503,7 +3526,7 @@ class TestGlobalEvents(HubBase):
             conn.close()
 
 
-class TestSSE(HubBase):
+class TestSSE(_ShortHeartbeat, HubBase):
     def test_replay_and_live(self):
         auth = self.auth()
         key = "claude:s1"
