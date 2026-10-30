@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import protocol
 from quiver.remote import tail
 from quiver.remote.hub import APPROVAL_TTL_S, HubState, make_server
-from quiver.remote import pairing
+from quiver.remote import catalog as catalog_mod, hub as hub_mod, pairing
 from quiver.sessions.models import Session
 
 
@@ -579,6 +579,101 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["status"], "followup")
         self.assertEqual(items[0]["key"], "claude:f1")
+
+    def test_inbox_takes_a_satellite_row_missing_fields(self):
+        """An older satellite may push a row without agent or title; the
+        inbox lists it rather than answering 500."""
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        catalog_mod.merge_remote_rows(srv.home, "sat1", [{
+            "key": "claude:x", "status": "followup",
+            "last_active_at": time.time()}])
+        srv.state.catalog.refresh()
+        cred = srv.pair()
+        status, data = srv.request(
+            "GET", "/v1/inbox",
+            headers={"Authorization": f"Bearer {cred['credential']}"})
+        self.assertEqual(status, 200, data)
+        [item] = [i for i in json.loads(data)["items"]
+                  if i["key"] == "claude:x@sat1"]
+        self.assertIsNone(item["harness"])
+
+    def test_a_route_bug_answers_500_instead_of_dropping(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        with patch.object(srv.state.catalog, "rows",
+                          side_effect=RuntimeError("boom")), \
+                patch("traceback.print_exc"):
+            status, data = srv.request("GET", "/v1/sessions", headers=hdr)
+        self.assertEqual(status, 500)
+        self.assertEqual(json.loads(data)["error"]["code"], "internal")
+        status, _ = srv.request("GET", "/v1/sessions", headers=hdr)
+        self.assertEqual(status, 200)
+
+    def test_a_client_that_hung_up_is_not_logged(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        handle_error = MagicMock()
+        srv.server.handle_error = handle_error
+        with patch("http.server.BaseHTTPRequestHandler.handle_one_request",
+                   side_effect=ConnectionResetError), \
+                patch("traceback.print_exc") as printed:
+            sock = socket.create_connection(("127.0.0.1", srv.port), timeout=5)
+            try:
+                sock.sendall(b"GET /v1/sessions HTTP/1.1\r\nHost: x\r\n\r\n")
+                try:
+                    self.assertEqual(sock.recv(4096), b"")
+                except ConnectionResetError:
+                    pass  # closed with our request unread: also no answer
+            finally:
+                sock.close()
+        printed.assert_not_called()
+        handle_error.assert_not_called()
+
+    def test_a_bug_after_the_headers_sends_no_second_answer(self):
+        """Once a status line is out, a later failure closes the
+        connection instead of appending a 500 to the response."""
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+
+        def half(handler, status, payload):
+            handler.send_response(200)
+            handler.send_header("Content-Length", "2")
+            handler.end_headers()
+            raise RuntimeError("after headers")
+
+        with patch.object(hub_mod._Handler, "_send_json", half), \
+                patch("traceback.print_exc"):
+            sock = socket.create_connection(("127.0.0.1", srv.port), timeout=5)
+            try:
+                sock.sendall(
+                    b"GET /v1/sessions HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                    b"Authorization: Bearer " + cred["credential"].encode()
+                    + b"\r\n\r\n")
+                data = b""
+                while chunk := sock.recv(4096):
+                    data += chunk
+            finally:
+                sock.close()
+        self.assertTrue(data.startswith(b"HTTP/1.1 200"), data[:40])
+        self.assertEqual(data.count(b"HTTP/1.1 "), 1)
+
+    def test_a_page_bug_answers_500_page_failed(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        broken = type("Page", (), {"get": staticmethod(
+            lambda ctx, args: {}["missing"])})
+        with patch("quiver.webapp.pages.load", return_value=broken), \
+                patch("traceback.print_exc"):
+            status, data = srv.request(
+                "GET", "/v1/app/skills",
+                headers={"Authorization": f"Bearer {cred['credential']}"})
+        self.assertEqual(status, 500)
+        self.assertEqual(json.loads(data)["error"]["code"], "page_failed")
 
     def test_inbox_shows_pending_approval_on_active(self):
         # A pane-only prompt leaves the transcript "active" — the inbox
@@ -2394,6 +2489,23 @@ class TestPairRoutes(unittest.TestCase):
             r["code"], r["request_id"], node=_MAC, auth=auth)
         self.assertEqual(status, 200, d)
 
+    def test_satellite_bearer_cannot_list_or_approve(self):
+        """A satellite credential is a machine's, not an approver's: it
+        neither lists pending requests nor mints a phone by approving."""
+        cred = self.srv.pair(role="satellite")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        _, data = self._req()
+        r = json.loads(data)
+        self.srv.state.owner_login = "other@github"  # no owner identity
+        status, _ = self.srv.request("GET", "/v1/pair/requests",
+                                     headers=auth)
+        self.assertEqual(status, 401)
+        status, _ = self._approve(
+            r["code"], r["request_id"], node=_MAC, auth=auth)
+        self.assertEqual(status, 401)
+        status, pdata = self._poll(r["request_id"], r["poll_secret"])
+        self.assertEqual(json.loads(pdata)["status"], "pending")
+
     def test_approve_unauthenticated_401(self):
         _, data = self._req()
         r = json.loads(data)
@@ -3468,6 +3580,26 @@ class TestAgentSecurity(HubBase):
         cred = self.srv.pair(role="actions")
         row = pairing.load_devices(self.srv.home)[cred["device_id"]]
         self.assertEqual(row["role"], "phone")
+
+    def test_satellite_credential_is_for_agent_routes_only(self):
+        """Any pair token can mint a satellite row, so that row must not
+        carry a phone's powers: session, launch, pairing and page routes
+        all refuse it, while its own agent route still answers."""
+        auth = self._sat()
+        for method, path, body in (
+            ("GET", "/v1/sessions", None),
+            ("GET", "/v1/devices", None),
+            ("GET", "/v1/app/settings", None),
+            ("POST", "/v1/sessions", {"machine": "m", "harness": "claude",
+                                      "cwd": "/tmp"}),
+            ("POST", "/v1/devices/revoke", {"device_id": "x"}),
+            ("DELETE", "/v1/sessions/claude:s1/task", None),
+        ):
+            status, _ = self.srv.request(method, path, body, headers=auth)
+            self.assertEqual(status, 401, (method, path))
+        status = self._post(
+            "/v1/agent/catalog", {"machine_id": "sat-m1", "rows": []}, auth)
+        self.assertEqual(status, 200)
 
     # -- non-satellite credentials ------------------------------------------
 

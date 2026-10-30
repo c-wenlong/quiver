@@ -236,8 +236,11 @@ def request(state, key: str, row: dict, body: dict | None) -> tuple[int, dict]:
     rows = state.catalog.tail_rows()
 
     def run() -> None:
-        ok, note = start(state.home, session, rows, prompt, launch_id,
-                         model=model, effort=effort)
+        try:
+            ok, note = start(state.home, session, rows, prompt, launch_id,
+                             model=model, effort=effort)
+        except Exception as exc:  # never leave the launch pending for a day
+            ok, note = False, f"fork failed: {exc}"
         if not ok:
             state.settle_launch(launch_id, state="failed", note=note)
 
