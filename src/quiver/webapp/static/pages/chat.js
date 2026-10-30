@@ -1,6 +1,7 @@
 /* Sessions chat: remote control inside the Sessions page. Opening a
  * session row shows its transcript, live over the hub's SSE, with the
- * composer (Queue/Steer, Stop), approval cards and Attach. Ported from
+ * composer (Queue/Steer, Stop, file attachments), approval cards and
+ * Attach. Ported from
  * the remote PWA's chat, which this file replaced: the same session
  * routes, the same ownership rules and the same event handling.
  *
@@ -1515,11 +1516,17 @@ const SessionChat = (() => {
       </div></div>
       <div class="chat-working hidden" id="chat-working" role="status" aria-label="Agent is working"><span></span><span></span><span></span></div>
       <div class="chat-menu hidden" id="chat-menu" role="listbox" aria-label="Commands"></div>
+      <div class="chat-files hidden" id="chat-files" aria-label="Attached files" aria-live="polite"></div>
       <form class="chat-composer" id="chat-composer" autocomplete="off">
         <select class="field chat-mode" id="chat-mode" aria-label="Send mode"
           title="Queue waits for the agent to finish its turn; Steer writes now">
           <option value="queue">Queue</option><option value="steer">Steer</option>
         </select>
+        <button type="button" class="icon-button chat-clip" id="chat-clip" aria-label="Attach files"
+          title="Attach images, PDFs or text files, up to 20 MB each" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5 12.4 19a5 5 0 0 1-7-7l7.8-7.8a3.3 3.3 0 0 1 4.7 4.7l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.2-7.2"
+            fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <input type="file" class="hidden" id="chat-file" multiple tabindex="-1" aria-hidden="true">
         <textarea class="field chat-text" id="chat-text" rows="1" placeholder="Loading…" disabled
           role="combobox" aria-controls="chat-menu" aria-expanded="false" aria-autocomplete="list"></textarea>
         <button type="button" class="icon-button chat-stop" id="chat-stop" aria-label="Stop" title="Stop the agent's turn" disabled>
@@ -1612,7 +1619,8 @@ const SessionChat = (() => {
     if (input.disabled && menu.open) closeMenu();
     input.placeholder = !chat.rowKnown ? "Loading…"
       : observed ? "Read-only until this session is attached" : "Message the session";
-    $("chat-send").disabled = !chat.rowKnown || observed;
+    $("chat-clip").disabled = !chat.rowKnown || observed;
+    paintSendState();
     $("chat-stop").disabled = !chat.rowKnown || observed || chat.stopping;
     $("chat-mode").classList.toggle("hidden", observed);
     // attachable means "has resume flags"; the hub also refuses while the
@@ -2691,6 +2699,7 @@ const SessionChat = (() => {
     chat.row = null;
     chat.toolCards.clear();
     resetMenus();
+    resetUploads();
   }
 
   /* ------------------------------------------------------------- composer */
@@ -2773,9 +2782,213 @@ const SessionChat = (() => {
     });
     form.onsubmit = (e) => { e.preventDefault(); send(); };
     $("chat-stop").onclick = interrupt;
+    bindAttachments(form, input);
   }
 
-  function appendOptimistic(text, clientId) {
+  /* ---------------------------------------------------------- attachments
+     Files ride a message the iPhone's way: each is uploaded on its own
+     through POST .../attachments (raw bytes, the name in ?name=), which
+     stages it on the session's machine and answers a `ref`; the send
+     then lists the refs in `attachments`, and the hub's injector puts
+     `@path` in front of the text. The hub's caps are checked here first
+     so a refusal reads plainly (attachments.py: MAX_BYTES, ALLOWED_EXTS). */
+
+  const ATTACH = {
+    maxBytes: 20 * 1024 * 1024,
+    exts: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".pdf",
+      ".txt", ".md", ".csv", ".json", ".log", ".diff", ".patch"],
+  };
+
+  /* A name's extension as the hub reads it (Path.suffix, lowercased): a
+   * dotfile such as ".png" has none. */
+  function fileExt(name) {
+    const base = String(name || "").split(/[\\/]/).pop();
+    const dot = base.lastIndexOf(".");
+    return dot > 0 ? base.slice(dot).toLowerCase() : "";
+  }
+
+  /* Why the hub would refuse this file, or "". */
+  function attachProblem(file) {
+    if (!file || !file.size) return "The file is empty";
+    if (file.size > ATTACH.maxBytes) return "Too big: files can be up to 20 MB";
+    const ext = fileExt(file.name);
+    if (!ATTACH.exts.includes(ext)) {
+      return `${ext ? `${ext} files` : "Files without an extension"} can't be attached: images, PDFs and text only`;
+    }
+    return "";
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+    const mb = n / (1024 * 1024);
+    return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+  }
+
+  /* The line a failed upload's chip shows. */
+  function uploadError(status, data) {
+    if (status === 413) return "Too big: files can be up to 20 MB";
+    if (!status) return "Upload failed: connection lost";
+    const msg = errorText(data);
+    if (msg) return msg.charAt(0).toUpperCase() + msg.slice(1);
+    return status === 404 ? "Update the hub to attach files from here" : `Upload failed (${status})`;
+  }
+
+  /* The composer's files, in the order they were added. Each item is
+   * { id, name, size, state: "uploading" | "ready" | "failed", ref,
+   * error, ctrl }. `note` is a one-off line under the chips. */
+  const uploads = { items: [], seq: 0, note: "" };
+
+  const uploading = () => uploads.items.some((it) => it.state === "uploading");
+
+  function resetUploads() {
+    for (const it of uploads.items) if (it.ctrl) it.ctrl.abort();
+    uploads.items = [];
+    uploads.note = "";
+    paintFiles();
+  }
+
+  /* Adds files from the picker, a drop or a paste. Ones the hub would
+   * refuse show as failed chips at once; the rest upload side by side.
+   * Returns the uploads it started, for tests. */
+  function addFiles(list) {
+    const input = $("chat-text");
+    if (!chat.key || !input || input.disabled) return [];
+    uploads.note = "";
+    const started = [];
+    for (const file of Array.from(list || [])) {
+      const item = { id: ++uploads.seq, name: file.name || "file", size: file.size || 0,
+        state: "uploading", ref: "", error: "", ctrl: null };
+      const problem = attachProblem(file);
+      uploads.items.push(item);
+      if (problem) {
+        item.state = "failed";
+        item.error = problem;
+      } else {
+        started.push(upload(item, file));
+      }
+    }
+    paintFiles();
+    paintSendState();
+    return started;
+  }
+
+  async function upload(item, file) {
+    const key = chat.key, gen = chat.gen;
+    const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+    item.ctrl = ctrl;
+    let status = 0, data = null;
+    try {
+      const resp = await fetch(`${sessionPath(key, "attachments")}?name=${encodeURIComponent(item.name)}`, {
+        method: "POST", credentials: "same-origin",
+        headers: authHeaders({ "Content-Type": file.type || "application/octet-stream" }),
+        body: file, signal: ctrl ? ctrl.signal : undefined,
+      });
+      status = resp.status;
+      try { data = await resp.json(); } catch { /* empty body */ }
+    } catch {
+      status = 0;
+    }
+    // Removed, or another chat opened, while it was in flight.
+    if (gen !== chat.gen || !uploads.items.includes(item)) return;
+    item.ctrl = null;
+    // A satellite session answers 202: the hub queued the bytes for it.
+    if ((status === 200 || status === 202) && data && typeof data.ref === "string" && data.ref) {
+      item.state = "ready";
+      item.ref = data.ref;
+      if (typeof data.size === "number") item.size = data.size;
+    } else {
+      item.state = "failed";
+      item.error = uploadError(status, data);
+      noteRefusal(data);
+    }
+    paintFiles();
+    paintSendState();
+  }
+
+  function removeUpload(id) {
+    const item = uploads.items.find((it) => it.id === id);
+    if (!item) return;
+    if (item.ctrl) item.ctrl.abort();
+    uploads.items = uploads.items.filter((it) => it !== item);
+    uploads.note = "";
+    paintFiles();
+    paintSendState();
+  }
+
+  function paintFiles() {
+    const box = $("chat-files");
+    if (!box) return;
+    box.classList.toggle("hidden", !uploads.items.length && !uploads.note);
+    box.innerHTML = uploads.items.map((it) => {
+      const meta = it.state === "uploading" ? "Uploading…" : it.state === "failed" ? it.error : formatBytes(it.size);
+      return `<span class="att-chip ${it.state}" data-id="${it.id}">` +
+        `<span class="att-name" title="${esc(it.name)}">${esc(it.name)}</span>` +
+        `<span class="att-meta">${esc(meta)}</span>` +
+        `<button type="button" class="att-x" data-id="${it.id}" aria-label="Remove ${esc(it.name)}">` +
+        `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button></span>`;
+    }).join("") + (uploads.note ? `<div class="att-note">${esc(uploads.note)}</div>` : "");
+  }
+
+  /* Send waits while any file is still uploading. */
+  function paintSendState() {
+    const btn = $("chat-send");
+    const input = $("chat-text");
+    if (!btn || !input) return;
+    const busy = uploading();
+    btn.disabled = !chat.rowKnown || input.disabled || busy;
+    btn.title = busy ? "Waiting for files to upload" : "";
+  }
+
+  function bindAttachments(form, input) {
+    const picker = $("chat-file");
+    picker.accept = ATTACH.exts.join(",");
+    $("chat-clip").onclick = () => { if (!input.disabled) picker.click(); };
+    picker.onchange = () => {
+      addFiles(picker.files);
+      picker.value = "";
+    };
+    $("chat-files").addEventListener("click", (e) => {
+      const x = e.target.closest(".att-x");
+      if (x) removeUpload(Number(x.dataset.id));
+    });
+    // Dropped files: only a drag that carries files lights the box.
+    const carriesFiles = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+    form.addEventListener("dragover", (e) => {
+      if (!carriesFiles(e) || input.disabled) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      form.classList.add("dropping");
+    });
+    form.addEventListener("dragleave", (e) => {
+      if (!form.contains(e.relatedTarget)) form.classList.remove("dropping");
+    });
+    form.addEventListener("drop", (e) => {
+      form.classList.remove("dropping");
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      addFiles(e.dataTransfer.files);
+    });
+    // A pasted screenshot attaches; a paste that also carries text (a
+    // copy from a document) stays a text paste.
+    input.addEventListener("paste", (e) => {
+      const data = e.clipboardData;
+      if (!data || !data.files || !data.files.length) return;
+      if (Array.from(data.types || []).includes("text/plain")) return;
+      e.preventDefault();
+      addFiles(data.files);
+    });
+  }
+
+  /* The message body: the refs of every uploaded file ride along. */
+  function messageBody(text, mode, clientId, items) {
+    const body = { text, mode, client_id: clientId };
+    const refs = items.filter((it) => it.state === "ready").map((it) => it.ref);
+    if (refs.length) body.attachments = refs;
+    return body;
+  }
+
+  function appendOptimistic(text, clientId, names = []) {
     const loading = $("chat-loading");
     if (loading) loading.remove();
     const div = document.createElement("div");
@@ -2783,7 +2996,9 @@ const SessionChat = (() => {
     div.dataset.clientId = clientId;
     div.dataset.text = text;
     div.dataset.sentAt = String(Math.floor(Date.now() / 1000));
-    div.innerHTML = `<div class="text">${md(text)}</div><div class="send-note">Sending…</div>`;
+    div.innerHTML = `<div class="text">${md(text)}</div>` +
+      (names.length ? `<div class="msg-files">${names.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : "") +
+      `<div class="send-note">Sending…</div>`;
     $("chat-log").appendChild(div);
     scrollBottom();
     return div;
@@ -2801,18 +3016,31 @@ const SessionChat = (() => {
   async function send() {
     const input = $("chat-text");
     const text = input.value.trim();
-    if (!text || !chat.key || input.disabled) return;
+    if (!chat.key || input.disabled) return;
+    const sent = uploads.items.filter((it) => it.state === "ready");
+    // Enter submits even with Send disabled; the files go with this
+    // message, so it waits for them.
+    if (uploading() || (!text && sent.length)) {
+      uploads.note = uploading() ? "Waiting for files to upload" : "Add a message to send with the files";
+      paintFiles();
+      return;
+    }
+    if (!text) return;
     input.value = "";
     growComposer();
     // An open / menu's token is gone with the text.
     trackMenus();
     const mode = $("chat-mode").value;
     const clientId = newClientId();
-    const bubble = appendOptimistic(text, clientId);
+    const body = messageBody(text, mode, clientId, sent);
+    const bubble = appendOptimistic(text, clientId, sent.map((it) => it.name));
+    // Sent files leave the composer; failed ones were never part of it.
+    resetUploads();
+    paintSendState();
     const gen = chat.gen, key = chat.key;
     chat.awaitingReply = true;
     updateWorking();
-    const { status, data } = await post(sessionPath(key, "message"), { text, mode, client_id: clientId });
+    const { status, data } = await post(sessionPath(key, "message"), body);
     // A fast command.result may already have settled this bubble: .pending
     // is gone then, and the response must not clobber it.
     if (!bubble.classList.contains("pending")) return;
@@ -3171,7 +3399,9 @@ const SessionChat = (() => {
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
-      cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat },
+      cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat,
+      ATTACH, fileExt, attachProblem, formatBytes, uploadError, uploads, addFiles, removeUpload,
+      messageBody, send },
   };
 })();
 

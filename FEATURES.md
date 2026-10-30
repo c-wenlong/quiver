@@ -24,7 +24,7 @@ Status words:
 | --- | --- | --- | --- | --- |
 | Overview | yes | yes | part | Mac and Web: tokens, cost, harness split, daily activity, top models. iOS: the Usage tab has limits and spend; harness split, daily activity and top models are missing |
 | Sessions | yes | yes | yes | Web: "Copy resume command" instead of Resume, no Devin-cloud or account-profile rows yet. iOS: the hub's remote sessions grouped by machine and folder |
-| Session chat | yes | yes | yes | Transcript, composer (Queue/Steer/Stop), approvals. Web renders its own chat page (`static/pages/chat.js`); iOS observe and attach is the app's core. Web and iOS: link cards under replies and a locked Preview of `.html`/`.svg` files a tool call wrote (web: a no-permission `<iframe sandbox>` plus a `default-src 'none'` policy; iOS: a script-off web view with network rules); iOS opens links in an in-app browser, the web in a new tab. Mac: neither yet |
+| Session chat | yes | yes | yes | Transcript, composer (Queue/Steer/Stop), approvals. Web renders its own chat page (`static/pages/chat.js`); iOS observe and attach is the app's core. Web and iOS: link cards under replies and a locked Preview of `.html`/`.svg` files a tool call wrote (web: a no-permission `<iframe sandbox>` plus a `default-src 'none'` policy; iOS: a script-off web view with network rules); iOS opens links in an in-app browser, the web in a new tab. Web: photo and file attachments in the composer (picker, drop, paste; the hub's 20 MB and image/PDF/text caps); the iOS composer has none yet. Mac: none of these yet |
 | Calendar | yes | yes | - | |
 | Pricing | yes | yes | - | |
 
