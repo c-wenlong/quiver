@@ -1,6 +1,7 @@
 """R2: supervise registry + tmux/headless injectors + hub write routes."""
 
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -25,9 +26,9 @@ class TestSuperviseRegistry(unittest.TestCase):
 
     def test_mark_read_unmark(self):
         supervise.mark(self.home, self.key, {"mode": "headless"})
-        self.assertIn(self.key, supervise.supervised_keys(self.home))
+        self.assertIn(self.key, supervise.supervised(self.home))
         supervise.unmark(self.home, self.key)
-        self.assertNotIn(self.key, supervise.supervised_keys(self.home))
+        self.assertNotIn(self.key, supervise.supervised(self.home))
 
     def test_dead_tmux_pruned(self):
         supervise.mark(
@@ -35,16 +36,16 @@ class TestSuperviseRegistry(unittest.TestCase):
             {"mode": "tmux", "tmux": "qv-dead"},
         )
         with patch.object(supervise, "tmux_alive", return_value=False):
-            self.assertNotIn(self.key, supervise.supervised_keys(self.home))
+            self.assertNotIn(self.key, supervise.supervised(self.home))
         # and the registry file no longer lists it
-        self.assertNotIn(self.key, supervise.meta_for(self.home, self.key) or {})
+        self.assertIsNone(supervise.meta_for(self.home, self.key))
 
     def test_alive_tmux_survives(self):
         supervise.mark(
             self.home, self.key, {"mode": "tmux", "tmux": "qv-live"}
         )
         with patch.object(supervise, "tmux_alive", return_value=True):
-            self.assertIn(self.key, supervise.supervised_keys(self.home))
+            self.assertIn(self.key, supervise.supervised(self.home))
 
 
 class TestAttach(unittest.TestCase):
@@ -538,6 +539,87 @@ class TestAttachments(unittest.TestCase):
         path = attachments.resolve(self.home, self.key, payload["ref"])
         self.assertEqual(Path(path).read_bytes(), b"\x89PNG")
 
+    def test_staged_files_are_private(self):
+        # Uploads are the user's screenshots: 0600 files in 0700
+        # folders, under a umask that would otherwise leave them 0644.
+        import stat
+        old_umask = os.umask(0o022)
+        try:
+            payload, _ = attachments.stage(self.home, self.key, "s.png", b"x")
+            placed, _ = attachments.place(self.home, "claude:s2", "r.png", b"y")
+        finally:
+            os.umask(old_umask)
+        for info in (payload, placed):
+            path = Path(info["path"])
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+        inbox = Path(payload["path"]).parent.parent
+        self.assertEqual(stat.S_IMODE(inbox.stat().st_mode), 0o700)
+
+    def test_existing_loose_folder_and_file_are_tightened(self):
+        # Folders and files from before modes were set get them on the
+        # next write, before any bytes land.
+        import stat
+        folder = attachments.inbox_dir(self.home, self.key)
+        folder.mkdir(parents=True, mode=0o755)
+        os.chmod(folder, 0o755)
+        (folder / "r.png").write_bytes(b"old")
+        os.chmod(folder / "r.png", 0o644)
+        placed, _ = attachments.place(self.home, self.key, "r.png", b"new")
+        self.assertEqual(
+            stat.S_IMODE(Path(placed["path"]).stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(folder.stat().st_mode), 0o700)
+
+    def test_modes_are_set_before_the_first_byte(self):
+        # The point is no readable window: at the first write the file
+        # must already be 0600 and its folders 0700, for a new upload
+        # and for one replacing a loose file in a loose folder.
+        import stat
+        real_fdopen = os.fdopen
+        seen = []
+
+        class Checked:
+            def __init__(self, fh, folder):
+                self.fh, self.folder = fh, folder
+
+            def __enter__(self):
+                self.fh.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self.fh.__exit__(*exc)
+
+            def fileno(self):
+                return self.fh.fileno()
+
+            def write(self, data):
+                seen.append((
+                    stat.S_IMODE(os.fstat(self.fh.fileno()).st_mode),
+                    stat.S_IMODE(self.folder.stat().st_mode),
+                    stat.S_IMODE(self.folder.parent.stat().st_mode)))
+                return self.fh.write(data)
+
+        loose = attachments.inbox_dir(self.home, "claude:s2")
+        loose.mkdir(parents=True)
+        os.chmod(loose.parent, 0o755)
+        os.chmod(loose, 0o755)
+        (loose / "r.png").write_bytes(b"old")
+        os.chmod(loose / "r.png", 0o644)
+
+        def fdopen(fd, mode="r", *a, **kw):
+            return Checked(real_fdopen(fd, mode, *a, **kw), self._folder)
+
+        old_umask = os.umask(0o022)
+        try:
+            with patch.object(attachments.os, "fdopen", side_effect=fdopen):
+                self._folder = attachments.inbox_dir(self.home, self.key)
+                attachments.stage(self.home, self.key, "s.png", b"x")
+                self._folder = loose
+                attachments.place(self.home, "claude:s2", "r.png", b"new")
+        finally:
+            os.umask(old_umask)
+        self.assertEqual(seen, [(0o600, 0o700, 0o700)] * 2)
+
     def test_caps_and_types(self):
         payload, err = attachments.stage(self.home, self.key, "x.exe", b"x")
         self.assertIsNone(payload)
@@ -596,7 +678,7 @@ class TestAttachments(unittest.TestCase):
         )
 
     def test_stage_oserror_reported(self):
-        with patch("quiver.remote.attachments.Path.write_bytes",
+        with patch("quiver.remote.attachments.os.open",
                    side_effect=OSError("disk full")):
             payload, err = attachments.stage(
                 self.home, self.key, "a.txt", b"x"

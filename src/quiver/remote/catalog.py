@@ -10,6 +10,7 @@ time, satellites upsert theirs over the agent channel.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -29,10 +30,6 @@ from quiver.sessions.resume import resume_json
 # How fresh the sessions list stays. The aggregator's own 60s disk cache
 # keeps each refresh cheap even with every parser in the registry.
 REFRESH_INTERVAL_S = 10.0
-
-# Cap on rows served at once: a well-used machine lists thousands, and the
-# phone wants the live end.
-MAX_ROWS = 500
 
 # Follow-ups, errors and interrupts leave the inbox this long after the
 # session's last activity; pending approvals never do.
@@ -79,8 +76,10 @@ def detected_harnesses() -> list[str]:
 
 
 # The Mac app's preferences: Settings > Provider visibility keeps the
-# provider order and the ones switched off here.
-APP_PREFS = Path.home() / "Library/Preferences/com.cwenlong.quiver.plist"
+# provider order and the ones switched off here. Resolved at each read
+# under the current home (None); tests set a path.
+APP_PREFS: Path | None = None
+_APP_PREFS_REL = "Library/Preferences/com.cwenlong.quiver.plist"
 
 
 def _provider_visibility() -> tuple[list[str], set[str]]:
@@ -89,7 +88,7 @@ def _provider_visibility() -> tuple[list[str], set[str]]:
     import plistlib
 
     try:
-        with open(APP_PREFS, "rb") as fh:
+        with open(APP_PREFS or Path.home() / _APP_PREFS_REL, "rb") as fh:
             prefs = plistlib.load(fh)
     except (OSError, ValueError, plistlib.InvalidFileException):
         return [], set()
@@ -362,13 +361,59 @@ def _satellite_dir(home: Path | None) -> Path:
     return remote_dir_for(home) / "satellite"
 
 
-def _safe_mid(machine_id: str) -> str:
-    """``machine_id`` as a filename: alphanumeric run, else its slug."""
+def _legacy_safe_mid(machine_id: str) -> str:
+    """The file stem before ids that map lossily got a hash suffix."""
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", machine_id)
     # "..", ".", "" escape the satellite dir — collapse to a slug.
     if not safe or set(safe) <= {".", "_", "-"}:
         safe = protocol.key_slug(machine_id)
     return safe
+
+
+def _safe_mid(machine_id: str) -> str:
+    """``machine_id`` as a filename. An id that is already a safe name
+    is used as is; any other gets a hash of the real id appended, since
+    "m.1" and "m_1" would otherwise share one file and overwrite each
+    other's rows, commands and usage."""
+    safe = _legacy_safe_mid(machine_id)
+    if safe == machine_id:
+        return safe
+    return f"{safe}-{hashlib.sha256(machine_id.encode()).hexdigest()[:8]}"
+
+
+def is_superseded(path: Path, machine_id: str) -> bool:
+    """A file left under the pre-suffix name of ``machine_id`` while the
+    suffixed one exists: read the new one, never both. Nothing is
+    deleted: the old name may be another machine's own file."""
+    stem = _safe_mid(machine_id)
+    return path.stem != stem and (path.parent / f"{stem}.json").exists()
+
+
+# A rows or usage file no push has refreshed for this long belongs to a
+# machine that is gone (or re-paired under a new id): it is skipped, so
+# the hub stops listing it. A machine that wakes later pushes again.
+# (Not the "/" menu files: an agent resends those only on a change.)
+SATELLITE_FILE_MAX_AGE_S = 30 * 86_400
+
+
+def satellite_files(folder: Path, now: float | None = None) -> list[Path]:
+    """The ``*.json`` under ``folder`` a push refreshed recently. Stale
+    ones are skipped, not deleted: a push can replace one at any moment
+    and a delete here would race it."""
+    now = time.time() if now is None else now
+    out = []
+    try:
+        files = list(folder.glob("*.json"))
+    except OSError:
+        return out
+    for f in files:
+        try:
+            if now - f.stat().st_mtime > SATELLITE_FILE_MAX_AGE_S:
+                continue
+        except OSError:
+            continue
+        out.append(f)
+    return out
 
 
 # supervise.tmux_name: "qv-" and a hex slug of the session key.
@@ -412,16 +457,15 @@ def merge_remote_rows(
 
 def load_remote_rows(home: Path | None) -> list[dict]:
     """All persisted satellite rows (``(key, row)``-ready dicts)."""
-    base = _satellite_dir(home)
     out: list[dict] = []
-    try:
-        files = list(base.glob("*.json"))
-    except OSError:
-        return out
-    for f in files:
+    for f in satellite_files(_satellite_dir(home)):
         try:
             rows = json.loads(f.read_text()).get("rows") or []
         except (OSError, ValueError):
+            continue
+        mid = next((str(r.get("machine_id") or "") for r in rows
+                    if isinstance(r, dict)), "")
+        if mid and is_superseded(f, mid):
             continue
         out.extend(r for r in rows if isinstance(r, dict))
     return out
@@ -496,6 +540,14 @@ def session_to_row(
     return key, row
 
 
+def _index_of(rows: list[tuple]) -> dict[str, int]:
+    """key -> position of its first row, as a scan would find it."""
+    index: dict[str, int] = {}
+    for i, entry in enumerate(rows):
+        index.setdefault(entry[0], i)
+    return index
+
+
 class Catalog:
     """The hub-side session list: refresh on a timer, serve instantly."""
 
@@ -506,7 +558,6 @@ class Catalog:
         fetch_sessions: Callable[[], list[Session]] | None = None,
         status_of: Callable[[list[Session]], list[str]] | None = None,
         fetch_github: Callable[[], list[dict] | None] | None = None,
-        max_rows: int = MAX_ROWS,
         model_of: Callable[[list[Session]], list[str]] | None = None,
     ) -> None:
         self.home = Path(home) if home is not None else None
@@ -549,9 +600,12 @@ class Catalog:
         # until the first successful poll, which is a silent baseline —
         # a hub start must not re-push the whole unread backlog.
         self._github_seen: dict[str, str] | None = None
-        self.max_rows = max_rows
-        self._rows: list[tuple[str, Session | None, dict, str]] = []
-        self._refreshed_at = 0.0
+        # The rows and a key -> position index built with them, swapped
+        # as one value so a lookup never pairs one list with the other's
+        # index. ``row_for``/``session_for`` run per request: a scan of
+        # thousands of rows each time was the hub's hottest loop.
+        self._table: tuple[list[tuple[str, Session | None, dict, str]],
+                           dict[str, int]] = ([], {})
         # One lock for every write to the rows after they are built:
         # refresh's overlay-and-swap, reapply_meta (pins and titles) and
         # note_status (tail probes). Each takes it for its whole
@@ -567,10 +621,6 @@ class Catalog:
         # is when the current rows' statuses were read.
         self._fresh: dict[str, tuple[str, float]] = {}
         self._status_as_of = 0.0
-
-    @property
-    def refreshed_at(self) -> float:
-        return self._refreshed_at
 
     def refresh(self) -> list[dict]:
         """Re-list sessions, reclassify statuses, rebuild rows."""
@@ -622,9 +672,8 @@ class Catalog:
                 if fresh is not None and session is not None:
                     row["status"] = fresh[0] or None
                     rows[i] = (key, session, row, fresh[0])
-            self._rows = rows
+            self._table = (rows, _index_of(rows))
             self._status_as_of = started
-            self._refreshed_at = time.time()
         return [row for _key, _s, row, _st in rows]
 
     def note_status(self, key: str, status: str, at: float) -> None:
@@ -638,11 +687,12 @@ class Catalog:
             if at <= self._status_as_of:
                 return
             self._fresh[key] = (status, at)
-            for i, (k, session, row, _st) in enumerate(self._rows):
-                if k == key and session is not None:
-                    row["status"] = status or None
-                    self._rows[i] = (k, session, row, status)
-                    break
+            rows, index = self._table
+            i = index.get(key)
+            if i is not None and rows[i][1] is not None:
+                k, session, row, _st = rows[i]
+                row["status"] = status or None
+                rows[i] = (k, session, row, status)
 
     def tail_snapshot(self) -> tuple[list[tuple[str, Session, str]], float]:
         """``tail_rows()`` plus when their statuses were read, together."""
@@ -668,21 +718,19 @@ class Catalog:
             if session is not None
         ]
 
+    @property
+    def _rows(self) -> list[tuple[str, Session | None, dict, str]]:
+        return self._table[0]
+
     def row_for(self, key: str) -> dict | None:
-        for k, _s, row, _st in self._rows:
-            if k == key:
-                return row
-        return None
+        rows, index = self._table
+        i = index.get(key)
+        return rows[i][2] if i is not None else None
 
     def session_for(self, key: str) -> Session | None:
-        for k, session, _row, _st in self._rows:
-            if k == key:
-                return session
-        return None
-
-    def due(self, now: float | None = None) -> bool:
-        now = time.time() if now is None else now
-        return now - self._refreshed_at >= REFRESH_INTERVAL_S
+        rows, index = self._table
+        i = index.get(key)
+        return rows[i][1] if i is not None else None
 
     def poll_github(self) -> None:
         """Fetch the unread GitHub listing, store its rows, and fire
@@ -784,15 +832,17 @@ class Catalog:
                 last <= dismissed[row["key"]]
             ):
                 continue
+            # Satellite rows arrive as pushed: an older agent may leave
+            # a field out, which must not fail the whole inbox.
             item = {
                 "key": row["key"],
-                "machine_id": row["machine_id"],
-                "harness": row["harness"],
-                "agent": row["agent"],
-                "title": row["title"],
-                "cwd": row["cwd"],
+                "machine_id": row.get("machine_id"),
+                "harness": row.get("harness"),
+                "agent": row.get("agent"),
+                "title": row.get("title"),
+                "cwd": row.get("cwd"),
                 "status": status,
-                "last_active_at": row["last_active_at"],
+                "last_active_at": row.get("last_active_at"),
             }
             if rid is not None:
                 item["request_id"] = rid

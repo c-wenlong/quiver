@@ -43,6 +43,8 @@ def whois(ip: str) -> dict | None:
         data = json.loads(cp.stdout)
     except ValueError:
         return None
+    if not isinstance(data, dict):
+        return None
     node = data.get("Node") or {}
     profile = data.get("UserProfile") or {}
     tagged = bool(node.get("Tags"))

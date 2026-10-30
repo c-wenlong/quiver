@@ -238,6 +238,31 @@ class TestDatabaseHarnesses(_Home):
             session_model.session_models([_session("s1", "opencode")]), [""])
 
 
+class TestReadOnlyOpen(unittest.TestCase):
+    def test_a_path_with_uri_characters_opens(self):
+        # A raw "file:{path}" URI ends at "?" or "#" in a folder name.
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from quiver.remote import session_model, tail
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        folder = Path(tmp.name) / "odd?name#1 %2"
+        folder.mkdir()
+        db = folder / "x.db"
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE t (v)")
+        conn.commit()
+        conn.close()
+        ro = session_model._open_ro(str(db))
+        self.assertIsNotNone(ro)
+        self.assertEqual(ro.execute("SELECT count(*) FROM t").fetchone(), (0,))
+        ro.close()
+        src = tail.OpencodeSource(db, "s")._open()
+        self.assertEqual(src.execute("SELECT count(*) FROM t").fetchone(), (0,))
+        src.close()
+
+
 class TestRows(unittest.TestCase):
     def test_row_carries_model_and_modes(self):
         s = _session("s1", "claude")

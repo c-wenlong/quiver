@@ -12,7 +12,8 @@ drag to reorder. Inbox marks notifications read.
 |---|---|
 | `src/quiver/webapp/pages/repositories.py` | `GET /v1/app/repositories`, `POST /v1/app/repositories/merge`, `/rerun`, `/worktree`, `/add`, `/remove` and `/reorder` |
 | `src/quiver/webapp/pages/inbox.py` | `GET /v1/app/inbox`, `POST /v1/app/inbox/read` |
-| `src/quiver/webapp/pages/_github.py` | Shared: the `gh` cache, the write lock, the hub's pins, the env payload. The leading underscore keeps it off `/v1/app/`. |
+| `src/quiver/github/shared.py` | Shared with the hub's `/v1` routes: the `gh` cache, the write lock, the hub's pins, the env payload. |
+| `src/quiver/webapp/pages/_github.py` | Page-side: request flags, pin errors as page errors. The leading underscore keeps it off `/v1/app/`. |
 | `src/quiver/webapp/static/pages/github.js`, `github.css` | Shared by both scripts: `GhUI` (icons, the gh setup card, the minute poll, the writes' POST, the PR body's markdown) and the styles. |
 | `src/quiver/webapp/static/pages/repositories.js`, `inbox.js` | The pages. |
 
@@ -54,7 +55,7 @@ They go through the functions `swe` itself calls, in the hub process
 `mark_all_read`, `quiver.github.manage.add_repo`, `pr_worktree`),
 with the hub's `gh` login. Nothing a browser sends reaches a shell: the
 repo must be a pin, the number and ids digits, the method one of three
-words. Writes run one at a time per hub (`_github.WRITE_LOCK`), behind
+words. Writes run one at a time per hub (`shared.WRITE_LOCK`), behind
 the device bearer and the hub's Origin check like every page POST.
 Refusals are `PageError`s: 404 for something the page does not list,
 409 for a state conflict (and for a missing or signed-out `gh`, with the

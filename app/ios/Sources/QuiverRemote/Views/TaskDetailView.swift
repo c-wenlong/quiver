@@ -273,7 +273,7 @@ struct TaskDetailView: View {
                 try await client.unlinkTask(key, task: task)
                 await model.load(client: client)
             } catch {
-                linkError = (error as? HubError)?.message ?? error.localizedDescription
+                linkError = error.localizedDescription
             }
         }
     }

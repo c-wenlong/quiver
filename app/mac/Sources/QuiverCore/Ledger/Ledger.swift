@@ -1705,12 +1705,21 @@ public actor Ledger {
 
     /// Usage per session, most recent first. `harness` restricts the read
     /// to one harness's dims when the caller only wants those.
-    public func bySession(in range: DateInterval, harness: String? = nil) -> [SessionUsage] {
+    ///
+    /// Off the actor (`readGroups`), like the Overview queries: the
+    /// Sessions page asks for it at launch, and on the actor it waited
+    /// behind the first scan's whole turn.
+    @concurrent
+    public nonisolated func bySession(in range: DateInterval, harness: String? = nil) async -> [SessionUsage] {
+        sessionUsage(in: range, harness: harness)
+    }
+
+    /// `bySession`'s read, synchronous for callers already off the main
+    /// thread (the calendar's trivial-session filter).
+    nonisolated func sessionUsage(in range: DateInterval, harness: String? = nil) -> [SessionUsage] {
         let pricing = self.pricing
-        guard let groups = try? store.groups(
-            in: range, by: [.harness, .account, .session, .cwd],
-            thresholds: pricing.thresholds, harness: harness,
-            priceChanges: priceChanges(in: range, pricing: pricing))
+        guard let groups = try? readGroups(
+            in: range, by: [.harness, .account, .session, .cwd], pricing: pricing, harness: harness)
         else { return [] }
         struct Key: Hashable { var harness, account, session: String }
         var sessions: [Key: SessionUsage] = [:]
@@ -1826,7 +1835,8 @@ public actor Ledger {
     /// price touches.
     private nonisolated func readGroups(in range: DateInterval, by columns: [LedgerStore.Column],
                                         bucketSeconds: Int? = nil, pricing: PricingCatalog,
-                                        splitsAtPriceChanges: Bool = true) throws -> [LedgerStore.PricedGroup] {
+                                        splitsAtPriceChanges: Bool = true,
+                                        harness: String? = nil) throws -> [LedgerStore.PricedGroup] {
         let reader = try overviewReaders.withLock { $0.popLast() } ?? openReadOnly()
         defer { overviewReaders.withLock { $0.append(reader) } }
         // One read transaction: both queries see the same commit, so a scan
@@ -1838,7 +1848,7 @@ public actor Ledger {
         let used = splitsAtPriceChanges && pricing.hasHistory ? try reader.modelsAndTiers() : []
         return try reader.pricedGroups(
             in: range, by: columns, thresholds: pricing.thresholds, bucketSeconds: bucketSeconds,
-            priceChanges: Self.priceChanges(in: range, used: used, pricing: pricing))
+            harness: harness, priceChanges: Self.priceChanges(in: range, used: used, pricing: pricing))
     }
 
     private nonisolated func openReadOnly() throws -> SQLiteDatabase {

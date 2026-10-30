@@ -244,6 +244,29 @@ import Testing
         #expect(calls == ["/h", "/i", "/h", "/i"])
     }
 
+    /// keepFresh reads its homes on each pass, and Refresh reads them
+    /// live too: an account added after the last pass is fetched.
+    @Test func refreshAfterKeepFreshSeesANewAccount() async throws {
+        var calls: [String] = []
+        var homes = ["/h"]
+        let model = CodexAccountUsage(
+            cacheFile: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString).json"),
+            fetch: { home in
+                calls.append(home)
+                return self.report([("2026-10-13", 10)])
+            },
+            macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
+        let poller = Task { await model.keepFresh(homes: { homes }) }
+        defer { poller.cancel() }
+        let deadline = Date().addingTimeInterval(10)
+        while calls.isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(calls == ["/h"])
+        homes.append("/i")
+        await model.refresh(force: true)
+        #expect(calls == ["/h", "/h", "/i"])
+    }
+
     @Test func recomputeRebuildsTheMacSideWithoutFetching() async {
         var calls = 0
         var mac: [Date: Int] = [day("2026-10-13"): 5]

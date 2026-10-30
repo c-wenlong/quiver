@@ -194,13 +194,6 @@ struct SessionMeta: Codable, Equatable {
     var pinnedAt: Double?
 }
 
-/// `POST .../control {op: "detach", mode: "when_idle"}` answers 202 with this.
-struct DetachQueued: Decodable {
-    let queued: Bool?
-    let mode: String?
-    let note: String?
-}
-
 struct SessionsResponse: Codable {
     let sessions: [SessionRow]
     let machines: [Machine]?

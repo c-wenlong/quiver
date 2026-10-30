@@ -420,10 +420,25 @@ private struct TogglingActivity: ActivityProviding {
         let first = model(defaults: defaults)
         first.toggle("codex")
         first.toggle(harness: "claude", accountHome: "/work")
+        first.toggleUsage("claude-default")
 
         let second = model(defaults: defaults)
         #expect(second.hiddenHarnesses == ["codex"])
         #expect(second.hiddenAccounts == ["claude|/work"])
+        #expect(second.hiddenUsage == ["claude-default"])
+    }
+
+    @Test func usageHidingTogglesAndRestores() async {
+        let defaults = freshDefaults()
+        let first = model(defaults: defaults)
+        #expect(!first.isUsageHidden("claude-default"))
+        first.toggleUsage("claude-default")
+        #expect(first.isUsageHidden("claude-default"))
+
+        let second = model(defaults: defaults)
+        #expect(second.isUsageHidden("claude-default"))
+        second.toggleUsage("claude-default")
+        #expect(!second.isUsageHidden("claude-default"))
     }
 
     @Test func aBlockSpanningMidnightKeepsItsSessionsFromBothSides() async {
