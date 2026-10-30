@@ -130,41 +130,6 @@ struct FilterChip: View {
     }
 }
 
-/// The Mac app's segmented control: a hairline track with the picked
-/// segment raised, full width.
-struct SegmentPicker<Option: Hashable & Identifiable>: View {
-    var options: [Option]
-    var title: (Option) -> String
-    @Binding var selection: Option
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(options) { option in
-                let selected = option == selection
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) { selection = option }
-                } label: {
-                    Text(title(option))
-                        .font(Theme.control)
-                        .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
-                        .centredWhenWrapped()
-                        .frame(maxWidth: .infinity)
-                        .scaledMinHeight(Theme.controlHeight - 4)
-                        .background(selected ? Theme.segmentSelected : .clear, in: .rect(cornerRadius: Theme.controlRadius - 2))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius - 2)
-                            .strokeBorder(selected ? Theme.border : .clear, lineWidth: 1))
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        .padding(2)
-        .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.controlRadius))
-        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
-    }
-}
-
 // MARK: - Buttons
 
 /// Ink on light, white on dark; never green. Full width at 44pt.
