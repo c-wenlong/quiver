@@ -618,6 +618,7 @@ class TestRegistryEdges(unittest.TestCase):
     def test_unmark_missing_key_is_noop(self):
         # pops nothing, writes nothing — no crash, no file churn
         supervise.unmark(self.home, "never-marked")
+        self.assertFalse(supervise._registry_file(self.home).exists())
 
     def test_save_registry_chmod_failure_tolerated(self):
         with patch.object(supervise.os, "chmod", side_effect=OSError):
@@ -1499,9 +1500,18 @@ class TestResolveMode(unittest.TestCase):
             )
 
     def test_headless_attach_checks_claude_binary(self):
-        # headless joins _MODE_BINARY so attach can't register a channel
-        # whose binary is absent.
-        self.assertEqual(supervise._MODE_BINARY["headless"], "claude")
+        # attach can't register a headless channel whose binary is absent.
+        home = Path(tempfile.mkdtemp())
+        session = _session(sid="abc")
+        with patch("shutil.which", return_value=None), \
+             patch("quiver.remote.tail.resolve_jsonl_path",
+                   return_value=None):
+            ok, note = supervise.attach(
+                home, "claude:abc", session,
+                last_append_at=None, status="done", mode="headless")
+        self.assertFalse(ok)
+        self.assertEqual(note, "claude is not installed")
+        self.assertIsNone(supervise.meta_for(home, "claude:abc"))
 
 
 if __name__ == "__main__":

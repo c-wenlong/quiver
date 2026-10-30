@@ -206,6 +206,22 @@ class TestWhoisCache(unittest.TestCase):
             return _PEERS.get(ip)
 
         state.whois = slow_whois
+        # The lookup is released only once all four callers have missed
+        # the cache (the first twice: before and under its lock), so
+        # the other three really are queued behind it.
+        misses = []
+        all_missed = threading.Event()
+        real_hit = state._whois_hit
+
+        def whois_hit(ip):
+            found = real_hit(ip)
+            if not found[0]:
+                misses.append(ip)
+                if len(misses) >= 5:
+                    all_missed.set()
+            return found
+
+        state._whois_hit = whois_hit
         results = []
         threads = [threading.Thread(
             target=lambda: results.append(state.whois_cached(_OWNER_IP)))
@@ -214,6 +230,7 @@ class TestWhoisCache(unittest.TestCase):
         self.assertTrue(started.wait(5))
         for t in threads[1:]:
             t.start()
+        self.assertTrue(all_missed.wait(5))
         release.set()
         for t in threads:
             t.join(5)

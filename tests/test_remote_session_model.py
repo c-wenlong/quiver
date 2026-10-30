@@ -228,10 +228,21 @@ class TestDatabaseHarnesses(_Home):
             conn.execute("INSERT INTO message VALUES (?, 's1', ?, ?)", (
                 f"j{i}", 100 + i, json.dumps({"role": "assistant",
                                                "modelID": "unknown"})))
+        # And OpenCode 2.x's table: s2 has only session_message rows.
+        conn.execute("INSERT INTO session_message VALUES ('n0', 's2',"
+                     " 'assistant', 0, 50, ?)", (json.dumps(
+                         {"model": {"id": "nvidia/nemotron:free",
+                                    "providerID": "openrouter"}}),))
+        for i in range(30):
+            conn.execute("INSERT INTO session_message VALUES (?, 's2',"
+                         " 'assistant', ?, ?, ?)", (
+                             f"k{i}", i + 1, 100 + i,
+                             json.dumps({"model": {"id": "unknown"}})))
         conn.commit()
         conn.close()
         self.assertEqual(session_model.session_models(
-            [_session("s1", "opencode")]), ["anthropic/claude-opus-4-5"])
+            [_session("s1", "opencode"), _session("s2", "opencode")]),
+            ["anthropic/claude-opus-4-5", "openrouter/nvidia/nemotron:free"])
 
     def test_missing_database_is_unknown(self):
         self.assertEqual(
