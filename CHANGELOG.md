@@ -695,6 +695,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Mac app: the fan helper is checked against Quiver's own signature
+  before it runs as root.** The one-time install copied
+  `Quiver.app/Contents/MacOS/QuiverFanHelper` to
+  `/Library/PrivilegedHelperTools` and only checked that the copy
+  matched a hash taken before the password prompt. The bundle is
+  user-writable, so anything running as the user could patch the helper
+  beforehand and have it run as root once the user typed their password.
+  A build signed by a team (Developer ID, or the Apple Development
+  identity dev builds pick up) now has the root script verify the
+  root-owned copy with `codesign --verify --strict` against
+  `identifier "QuiverFanHelper"` and that team, and deletes it and stops
+  otherwise. Ad-hoc builds have no signature to check against and keep
+  the hash check alone. Installed helpers are not reinstalled, so nobody
+  is asked for their password again
+  ([#967](https://github.com/c-wenlong/quiver/issues/967)).
+
 - **The remote hub refuses wildcard and non-tailnet binds.** `swe
   remote serve --host=0.0.0.0` — or a LAN address, a link-local
   address, or a name that resolves to one — used to be taken
