@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
+/// A transport the test never reaches: the store only opens.
+private struct NoHTTP: HTTPTransport {
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        throw URLError(.notConnectedToInternet)
+    }
+}
+
 /// Files only this user should read are 0600 in a 0700 folder, and ones
 /// an older build left 0644 / 0755 are tightened.
 @Suite struct PrivateFileTests {
@@ -46,16 +53,39 @@ import Testing
         #expect(try Self.mode(fresh.deletingLastPathComponent()) == 0o700)
 
         let old = try looseFolder(dir, "cache").appending(path: "github-history.db")
-        _ = GitHubHistory(url: old)
-        for path in [old.path, old.path + "-wal"] {
-            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
+        // Kept open, so SQLite doesn't remove the -wal on a clean close
+        // before its mode is loosened below.
+        let first = GitHubHistory(url: old)
+        try withExtendedLifetime(first) {
+            for path in [old.path, old.path + "-wal"] {
+                try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
+            }
+            try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                  ofItemAtPath: old.deletingLastPathComponent().path)
+            let reopened = GitHubHistory(url: old)
+            #expect(reopened.openError == nil)
+            #expect(try Self.mode(old) == 0o600)
+            #expect(try Self.mode(URL(fileURLWithPath: old.path + "-wal")) == 0o600)
+            #expect(try Self.mode(old.deletingLastPathComponent()) == 0o700)
         }
-        try FileManager.default.setAttributes([.posixPermissions: 0o755],
-                                              ofItemAtPath: old.deletingLastPathComponent().path)
-        let reopened = GitHubHistory(url: old)
-        #expect(reopened.openError == nil)
-        #expect(try Self.mode(old) == 0o600)
-        #expect(try Self.mode(URL(fileURLWithPath: old.path + "-wal")) == 0o600)
-        #expect(try Self.mode(old.deletingLastPathComponent()) == 0o700)
+    }
+
+    /// An old loose file is tightened when its store opens, not only at
+    /// the next save.
+    @Test func storesTightenOldFilesWhenTheyOpen() async throws {
+        let dir = try TempDir()
+        let names = try looseFolder(dir, "accounts").appending(path: "harness-names.json")
+        let devin = try looseFolder(dir, "devin-cloud")
+        let sessions = devin.appending(path: "sessions.json")
+        for file in [names, sessions] {
+            try Data("{}".utf8).write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        }
+        _ = HarnessAccountNameStore(file: names)
+        _ = DevinCloudSync(directory: devin, credentials: { nil }, transport: NoHTTP())
+        for file in [names, sessions] {
+            #expect(try Self.mode(file) == 0o600)
+            #expect(try Self.mode(file.deletingLastPathComponent()) == 0o700)
+        }
     }
 }

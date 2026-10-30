@@ -15,6 +15,7 @@ public final class HarnessAccountNameStore: @unchecked Sendable {
 
     public init(file: URL) {
         self.file = file
+        PrivateFile.tighten(file)
     }
 
     private struct Document: Codable {

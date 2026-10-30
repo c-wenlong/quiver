@@ -174,6 +174,7 @@ public actor DevinCloudSync {
         self.now = now
         self.onChanged = onChanged
         self.onStatus = onStatus
+        PrivateFile.tighten(directory.appending(path: "sessions.json"))
         self.snapshot = Self.stored(in: directory)
     }
 
