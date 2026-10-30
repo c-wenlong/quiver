@@ -266,6 +266,20 @@ public final class GitHubModel {
         restore()
     }
 
+    /// Takes a reply's `gh` probe. Only `swe gh`'s overview runs `gh auth
+    /// status` when the reads all came back ok; a surface reply (board,
+    /// pulls, issues…) then says ok with no login. Taking that as is
+    /// dropped the login, and with it the Mine filter, a second after
+    /// the dashboard showed it. While gh still answers ok, the login the
+    /// overview found stays.
+    private func adopt(_ new: GhEnv) {
+        if new.status == .ok, new.login == nil, let old = env, old.status == .ok, let login = old.login {
+            env = GhEnv(status: .ok, login: login, error: new.error)
+        } else {
+            env = new
+        }
+    }
+
     /// The blocking env state the pages' setup card covers — gh missing
     /// or signed out. nil while probing, ok, or upstream-error (the
     /// probe failed, not the login — pages stay up).
@@ -297,7 +311,7 @@ public final class GitHubModel {
         let syncGen = syncGeneration
         do {
             let overview = try await swe.ghOverview()
-            env = overview.github
+            adopt(overview.github)
             // A reply older than the last sync's write would paint over
             // the fresher count the sync just reported.
             if syncGeneration == syncGen { catalog = overview.catalog }
@@ -405,7 +419,7 @@ public final class GitHubModel {
         }
         do {
             let reply = try await swe.ghBoard(repos: pending)
-            env = reply.github
+            adopt(reply.github)
             probed = true
             let stamp = now()
             for repo in pending {
@@ -857,7 +871,7 @@ public final class GitHubModel {
         let next: Loadable<[GhNotification]>
         do {
             let reply = try await swe.ghInbox()
-            env = reply.github
+            adopt(reply.github)
             probed = true
             next = reply.status == "ok"
                 ? .loaded(reply.notifications)
@@ -1046,7 +1060,7 @@ public final class GitHubModel {
         if prDetails[key] == nil { prDetails[key] = .loading }
         do {
             let reply = try await swe.ghPrView(repo: repo, ref: "\(number)")
-            env = reply.github
+            adopt(reply.github)
             probed = true
             prDetails[key] = reply.pr.map { .loaded($0) }
                 ?? .failed(reply.error ?? "GitHub returned \(reply.status)")
@@ -1099,7 +1113,7 @@ public final class GitHubModel {
             let reply = try await swe.ghIssueView(repo: repo, number: number)
             guard issueGenerations[key] == generation else { return }
             if let github = reply.github {
-                env = github
+                adopt(github)
                 probed = true
             }
             next = reply.issue.map { .loaded($0) }
@@ -1128,7 +1142,7 @@ public final class GitHubModel {
         defer { actionBusy.remove(key) }
         do {
             let reply = try await swe.ghIssueComment(repo: repo, number: number, body: text)
-            if let github = reply.github { env = github }
+            if let github = reply.github { adopt(github) }
             if let error = reply.error { return error }
             guard reply.comment != nil else {
                 return "GitHub returned \(reply.status ?? "no comment")."
@@ -1159,7 +1173,7 @@ public final class GitHubModel {
         do {
             let reply = try await swe.ghPrMerge(repo: repo, ref: ref,
                                                 method: method, auto: auto)
-            env = reply.github
+            adopt(reply.github)
             if let error = reply.error { actionError = error; return error }
             actionError = nil
             for k in fetched.keys where k.repo == repo { fetched[k] = nil }
@@ -1192,7 +1206,7 @@ public final class GitHubModel {
         do {
             let reply = try await swe.ghRunRerun(repo: repo, run: run,
                                                  failedOnly: failedOnly)
-            env = reply.github
+            adopt(reply.github)
             if let error = reply.error { actionError = error; return error }
             actionError = nil
             fetched[BoardKey(repo: repo, tab: .actions)] = nil
@@ -1218,7 +1232,7 @@ public final class GitHubModel {
         defer { actionBusy.remove(key) }
         do {
             let reply = try await swe.ghInboxRead(ids: ids, all: all)
-            env = reply.github
+            adopt(reply.github)
             if let error = reply.error { actionError = error; return error }
             let missed = (reply.failed ?? []).map { "\($0.id): \($0.error)" }
             if !missed.isEmpty {
@@ -1363,7 +1377,7 @@ public final class GitHubModel {
         persist: (@Sendable (Row) -> Void)? = nil,
         rows: (Entry) -> Row
     ) {
-        env = reply.github
+        adopt(reply.github)
         probed = true
         let value: Loadable<Row>
         if let entry = reply.results.first(where: { $0.repo == key.repo }) {
