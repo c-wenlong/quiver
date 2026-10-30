@@ -1,7 +1,8 @@
 /* Compute: a port of the Mac app's ComputePage. What the starred
  * harnesses run on the hub machine, what it costs it, orphaned helpers,
- * and the RAM / CPU / GPU / Temperature trend card. Read only: Quit,
- * Clean up and fan control stay in the Mac app. Data from
+ * and the RAM / CPU / GPU / Temperature trend card. The one write is
+ * the settings sheet's auto clean: the hub quits old orphans itself.
+ * Quit, Clean up and fan control stay in the Mac app. Data from
  * /v1/app/compute, polled every 3 seconds while the page is open, as the
  * Mac page refreshes. */
 "use strict";
@@ -23,6 +24,8 @@ const computePage = {
   lines: computeLines(computeStoredJSON("temperatureLines", null)),
   limits: computeLimits(computeStoredJSON("limits", {})),
   collapsed: new Set(), showAll: new Set(), hover: null,
+  // The settings sheet's hub write in flight and its last error.
+  acBusy: false, acError: null,
 };
 
 const COMPUTE_VISIBLE_ROWS = 5;
@@ -327,7 +330,8 @@ function orphansCard(rows) {
       .filter(Boolean).join(" · ");
     return `<div class="compute-row orphan" title="${esc(o.command_line)}">
       <div class="compute-main"><div class="compute-name"><span class="ellipsis">${esc(o.command)}</span>${
-        old ? badge("Old") : ""}${o.memory_bytes > limit ? badge(`Over ${CFmt.bytes(limit)}`) : ""}</div>
+        old ? badge("Old") : ""}${o.memory_bytes > limit ? badge(`Over ${CFmt.bytes(limit)}`) : ""}${
+        o.quitting ? badge("Quitting") : ""}</div>
         <div class="caption num">${esc(caption)}</div></div>
       <span class="caption num compute-mem">${CFmt.bytes(o.memory_bytes)}</span>
     </div>`;
@@ -656,6 +660,34 @@ function splitAge(seconds) {
   return [minutes, "minute"];
 }
 
+/* app.js's api() only reads; the settings write sends JSON with the same
+ * headers (authHeaders: the bearer when one is stored, and X-Quiver-Pair
+ * so an owner's tailnet device is admitted without one). Never throws:
+ * { status: 0 } when the hub is unreachable. */
+async function computePost(path, body) {
+  let resp;
+  try {
+    resp = await fetch(path, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { status: 0, data: null };
+  }
+  let data = null;
+  try { data = await resp.json(); } catch { /* empty body */ }
+  return { status: resp.status, data };
+}
+
+/* The settings page's set-switch as a button: the same markup so the
+ * shared stylesheet draws the Mac's switch. `type="button"` matters —
+ * the sheet is a form, and a bare button would submit and close it. */
+function computeSwitch(id, on, opts = {}) {
+  return `<button type="button" class="set-switch" role="switch" aria-checked="${on}" data-cswitch="${esc(id)}"
+    aria-label="${esc(opts.label || id)}"${opts.disabled ? " disabled" : ""}><span></span></button>`;
+}
+
 function openComputeLimits() {
   let dialog = document.getElementById("compute-limits");
   if (dialog) dialog.remove();
@@ -665,6 +697,9 @@ function openComputeLimits() {
   const gen = routeGen;
   const repaint = () => { if (p.data && gen === routeGen) paintCompute(false); };
   const [value, unit] = splitAge(p.limits.orphanAge);
+  // Auto clean is the hub's own state, not this browser's; a non-Linux
+  // hub has no /proc to work, so its section is left out entirely.
+  const hasHub = p.data && p.data.supported !== false;
   document.body.insertAdjacentHTML("beforeend", `<dialog class="sheet compute-limits" id="compute-limits">
     <form method="dialog" class="sheet-body">
       <div class="sheet-title">Settings</div>
@@ -684,27 +719,115 @@ function openComputeLimits() {
             [1, 2, 4, 8].map((gb) => [String(gb), `${gb} GB`]), String(p.limits.memoryGB))}</select>
         </div>
       </div>
-      <p class="caption">Kept in this browser. Quitting processes and Clean up are in the Mac app.</p>
+      <div id="compute-autoclean"></div>
+      <p class="caption" id="compute-ac-note"></p>
+      <p class="caption">${hasHub
+        ? "Thresholds are kept in this browser; auto clean is kept on the hub. Quitting processes and Clean up are in the Mac app."
+        : "Kept in this browser. Quitting processes and Clean up are in the Mac app."}</p>
       <div class="sheet-actions"><button class="compute-button" value="done">Done</button></div>
     </form></dialog>`);
   dialog = document.getElementById("compute-limits");
   const age = dialog.querySelector("#compute-age"), ageUnit = dialog.querySelector("#compute-age-unit");
   const memory = dialog.querySelector("#compute-memory");
+
+  /* The hub's saved auto clean, from the last payload. The sheet writes
+   * its whole section at once, so each post carries the current of the
+   * other knobs too. */
+  const ac = () => (p.data && p.data.autoclean) || {};
+  const acBody = () => {
+    const on = ac().enabled === true;
+    const ageText = CFmt.duration(ac().orphan_age_seconds || p.limits.orphanAge);
+    const grace = Math.round(ac().grace_seconds || 10);
+    return `<div class="compute-setting">
+      <div><div>Auto clean</div>
+        <div class="caption">The hub sends an orphan older than ${esc(ageText)} a quit signal, even with no browser open.</div></div>
+      <div class="compute-setting-control">${computeSwitch("autoclean", on, { label: "Auto clean", disabled: p.acBusy })}</div>
+    </div>
+    ${on ? `<div class="compute-setting sub">
+      <div><div>Force quit</div>
+        <div class="caption">An orphan still running ${grace} seconds after its quit signal is force quit.</div></div>
+      <div class="compute-setting-control">${computeSwitch("autoclean-force", ac().force === true, { label: "Force quit", disabled: p.acBusy })}</div>
+    </div>` : ""}`;
+  };
+  const drawAutoclean = (refocus) => {
+    const zone = document.getElementById("compute-autoclean");
+    if (!zone) return;
+    zone.innerHTML = hasHub ? acBody() : "";
+    for (const sw of zone.querySelectorAll("[data-cswitch]")) {
+      sw.onclick = () => {
+        const cur = ac();
+        const body = {
+          enabled: cur.enabled === true,
+          force: cur.force === true,
+          orphan_age_seconds: cur.orphan_age_seconds || p.limits.orphanAge,
+        };
+        if (sw.dataset.cswitch === "autoclean") {
+          body.enabled = !body.enabled;
+          // "The orphaned setting" is the field above: switching auto
+          // clean on takes this sheet's age as the hub's threshold too.
+          if (body.enabled) body.orphan_age_seconds = resolveAge();
+        } else {
+          body.force = !body.force;
+        }
+        postClean(body, sw.dataset.cswitch);
+      };
+    }
+    const note = document.getElementById("compute-ac-note");
+    if (note) note.innerHTML = p.acError ? `<span class="error">${esc(p.acError)}</span>` : "";
+    if (refocus) zone.querySelector(`[data-cswitch="${refocus}"]`)?.focus();
+  };
+  const postClean = (body, refocus) => {
+    if (p.acBusy) return;
+    p.acBusy = true;
+    p.acError = null;
+    drawAutoclean();
+    computePost("/v1/app/compute/settings", body).then(({ status, data }) => {
+      p.acBusy = false;
+      if (status === 200 && data && data.autoclean) {
+        if (p.data) p.data.autoclean = data.autoclean;
+        // An age typed while the request was out never reached the hub
+        // (commitAge drops its own write while busy), so send it now —
+        // carrying the switches just saved, not the stale request's.
+        if (hasHub && p.limits.orphanAge !== data.autoclean.orphan_age_seconds) {
+          postClean({ enabled: data.autoclean.enabled === true,
+                      force: data.autoclean.force === true,
+                      orphan_age_seconds: p.limits.orphanAge }, refocus);
+          return;
+        }
+      } else {
+        p.acError = (data && data.error && data.error.message)
+          || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+      }
+      drawAutoclean(refocus);
+    });
+  };
   // OrphanAgeUnit.resolve: zero or less snaps back; the rest clamps to a
-  // minute up to a year. Written on change, never per keystroke.
-  const commitAge = () => {
+  // minute up to a year. resolveAge stores the field's value locally and
+  // answers the seconds; commitAge also echoes it to the hub, which uses
+  // it for auto clean.
+  const resolveAge = () => {
     const n = Math.floor(Number(age.value));
     const secs = AGE_UNITS.find(([id]) => id === ageUnit.value)[2];
     if (!(n > 0)) {
       const [v, u] = splitAge(p.limits.orphanAge);
       age.value = v; ageUnit.value = u;
-      return;
+      return p.limits.orphanAge;
     }
     const seconds = Math.min(Math.max(n * secs, 60), 365 * 86400);
     if (seconds !== n * secs) { const [v, u] = splitAge(seconds); age.value = v; ageUnit.value = u; }
+    if (seconds === p.limits.orphanAge) return seconds;
     p.limits.orphanAge = seconds;
     computeStore("limits", p.limits);
     repaint();
+    return seconds;
+  };
+  const commitAge = () => {
+    const before = p.limits.orphanAge;
+    const seconds = resolveAge();
+    if (!hasHub || seconds === before || p.acBusy) return;
+    const cur = ac();
+    postClean({ enabled: cur.enabled === true, force: cur.force === true,
+                orphan_age_seconds: seconds });
   };
   age.onchange = commitAge;
   ageUnit.onchange = commitAge;
@@ -714,6 +837,7 @@ function openComputeLimits() {
     repaint();
   };
   dialog.addEventListener("close", () => { commitAge(); dialog.remove(); });
+  drawAutoclean();
   dialog.showModal();
 }
 
