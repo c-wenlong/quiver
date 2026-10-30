@@ -1,6 +1,7 @@
 """R2: supervise registry + tmux/headless injectors + hub write routes."""
 
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -538,6 +539,37 @@ class TestAttachments(unittest.TestCase):
         path = attachments.resolve(self.home, self.key, payload["ref"])
         self.assertEqual(Path(path).read_bytes(), b"\x89PNG")
 
+    def test_staged_files_are_private(self):
+        # Uploads are the user's screenshots: 0600 files in 0700
+        # folders, under a umask that would otherwise leave them 0644.
+        import stat
+        old_umask = os.umask(0o022)
+        try:
+            payload, _ = attachments.stage(self.home, self.key, "s.png", b"x")
+            placed, _ = attachments.place(self.home, "claude:s2", "r.png", b"y")
+        finally:
+            os.umask(old_umask)
+        for info in (payload, placed):
+            path = Path(info["path"])
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+        inbox = Path(payload["path"]).parent.parent
+        self.assertEqual(stat.S_IMODE(inbox.stat().st_mode), 0o700)
+
+    def test_existing_loose_folder_and_file_are_tightened(self):
+        # Folders and files from before modes were set get them on the
+        # next write, before any bytes land.
+        import stat
+        folder = attachments.inbox_dir(self.home, self.key)
+        folder.mkdir(parents=True, mode=0o755)
+        os.chmod(folder, 0o755)
+        (folder / "r.png").write_bytes(b"old")
+        os.chmod(folder / "r.png", 0o644)
+        placed, _ = attachments.place(self.home, self.key, "r.png", b"new")
+        self.assertEqual(
+            stat.S_IMODE(Path(placed["path"]).stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(folder.stat().st_mode), 0o700)
+
     def test_caps_and_types(self):
         payload, err = attachments.stage(self.home, self.key, "x.exe", b"x")
         self.assertIsNone(payload)
@@ -596,7 +628,7 @@ class TestAttachments(unittest.TestCase):
         )
 
     def test_stage_oserror_reported(self):
-        with patch("quiver.remote.attachments.Path.write_bytes",
+        with patch("quiver.remote.attachments.os.open",
                    side_effect=OSError("disk full")):
             payload, err = attachments.stage(
                 self.home, self.key, "a.txt", b"x"
