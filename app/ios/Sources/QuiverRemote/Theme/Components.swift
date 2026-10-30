@@ -254,6 +254,18 @@ struct StateCard: View {
     }
 }
 
+/// Over what a failed refresh left on screen: the rows stay, and this
+/// says why they may be out of date, in the hub's words.
+struct StaleNotice: View {
+    let error: String
+
+    var body: some View {
+        Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
+            .font(Theme.caption).foregroundStyle(Theme.warningText)
+            .lineLimit(2)
+    }
+}
+
 extension Text {
     /// A hub or app message, its backtick spans drawn as inline code.
     init(inlineCode message: String) { self.init(Markdown.inlineCode(message)) }
