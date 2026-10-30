@@ -1910,11 +1910,16 @@ const SessionChat = (() => {
    * way. */
   async function cancelDetach() {
     if (!chat.key) return;
-    const { status } = await post(sessionPath(chat.key, "control"), { op: "attach" });
+    const gen = chat.gen;
+    const { status, data } = await post(sessionPath(chat.key, "control"), { op: "attach" });
+    if (gen !== chat.gen) return;
     if (status === 200 || status === 202) {
       chat.detaching = false;
       updateOwnership();
+      return;
     }
+    appendMessage({ kind: "error", text: `Stay attached failed: ${errorText(data) || (status ? `the hub answered ${status}` : "connection lost")}` }, true);
+    scrollBottom();
   }
 
   /* --------------------------------------------------------------- events */
@@ -2400,8 +2405,7 @@ const SessionChat = (() => {
       if (chat.stream !== mine) return;
       if (resp.status === 401) {
         chat.stream = null;
-        close();
-        renderGate();
+        gate();
         return;
       }
       if (resp.status === 404) {
@@ -2498,8 +2502,7 @@ const SessionChat = (() => {
     const held = chat.held || [];
     chat.held = null;
     if (status === 401) {
-      close();
-      renderGate();
+      gate();
       return;
     }
     const log = $("chat-log");
@@ -2708,7 +2711,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     chat.rail.loading = false;
     if (status === 401) {
-      renderGate();
+      gate();
       return;
     }
     if (status !== 200 || !data) {
@@ -2838,8 +2841,7 @@ const SessionChat = (() => {
       : await Promise.all([loadRow(gen), pendingApproval(gen), loadQueue(gen)]);
     if (gen !== chat.gen) return;
     if (rowStatus === 401 || logStatus === 401) {
-      close();
-      renderGate();
+      gate();
       return;
     }
     if (rowStatus === 404) { setConn("err"); return; }
@@ -2869,6 +2871,14 @@ const SessionChat = (() => {
     resetMenus();
     resetUploads();
     resetTray();
+  }
+
+  /* The hub refused this browser's credential: the chat closes first
+   * (stream, reveal timers, chat-open) so nothing keeps running behind
+   * the pair card, then the card takes the panel. */
+  function gate() {
+    close();
+    renderGate();
   }
 
   /* ------------------------------------------------------------- composer */
@@ -3550,7 +3560,7 @@ const SessionChat = (() => {
     paintTray();
     const err = await queueAction(cid, "steer");
     if (!err || gen !== chat.gen) return;
-    if (err.status === 401) return renderGate();
+    if (err.status === 401) return gate();
     noteRefusal(err.data);
     const row = trayRow(cid);
     if (!row || row.phase !== "sendingNow") return;
@@ -3576,7 +3586,7 @@ const SessionChat = (() => {
     const err = await queueAction(cid, "cancel");
     if (gen !== chat.gen) return;
     if (!err) { dropQueued(cid); return; }
-    if (err.status === 401) return renderGate();
+    if (err.status === 401) return gate();
     const row = trayRow(cid);
     if (!row || row.phase !== "removing") return;
     // The hub never held it, or forgot it: there's nothing to remove.
@@ -3662,7 +3672,7 @@ const SessionChat = (() => {
       paintTray();
       return;
     }
-    if (err.status === 401) return renderGate();
+    if (err.status === 401) return gate();
     if (err.code === "not_waiting") { editWentOut(cid, text); return; }
     // An older hub can't edit in place: remove the message, then queue
     // the new text, which lands at the end. It stays saving meanwhile.
@@ -4335,7 +4345,7 @@ const SessionChat = (() => {
       mentionToken, insertMention, splitPath, filesError, files, FILES, searchFiles, trackMenus, menu,
       echoes, sendsToTray, mergeQueue, queueNote, trayHtml, posted, takeQueued, echoLeavesTray, sendText,
       sendNow, removeQueued, removeAllQueued, beginEdit, cancelEdit, saveEdit, loadQueue, commandResult, appendMessage,
-      backfill, showLive },
+      backfill, showLive, cancelDetach, loadRail },
   };
 })();
 
