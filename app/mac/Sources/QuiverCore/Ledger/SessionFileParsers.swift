@@ -150,13 +150,15 @@ enum SessionTotalsFile {
         // The reader leaves an unterminated last line for a later scan;
         // this read is whole every time, so that line counts now, as it
         // does in swe (`droid_session_totals`).
+        // Droid may finish that line and start another meanwhile, so the
+        // rest is read only up to the end seen here and split into lines.
         if let handle = FileHandle(forReadingAtPath: transcript.path) {
             defer { try? handle.close() }
             if let end = try? handle.seekToEnd(), end > read,
                end - read <= UInt64(reader.maxLineBytes),
                (try? handle.seek(toOffset: read)) != nil,
-               let tail = try? handle.readToEnd(), !tail.isEmpty {
-                consume(tail)
+               let tail = try? handle.read(upToCount: Int(end - read)) {
+                for line in tail.split(separator: UInt8(ascii: "\n")) { consume(Data(line)) }
             }
         }
         guard let timestamp = last else { throw CocoaError(.coderReadCorrupt) }
