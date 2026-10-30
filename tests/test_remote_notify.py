@@ -388,6 +388,47 @@ class TestPost(unittest.TestCase):
         req = self._captured(cfg)
         self.assertEqual(req.get_header("Authorization"), "Bearer tok")
 
+    def test_post_retries_a_cert_failure_on_the_os_bundle(self):
+        # python.org builds ship no CA store: the default context fails
+        # every https push until the OS bundle is loaded.
+        import ssl
+        import urllib.error
+        from quiver.remote import agent as agent_mod
+        self.addCleanup(setattr, agent_mod, "_fallback_ctx", None)
+        ctx = object()
+        calls = []
+
+        def fake(req, timeout=None, context=None):
+            calls.append(context)
+            if context is None:
+                raise urllib.error.URLError(
+                    ssl.SSLCertVerificationError("no CA"))
+            m = MagicMock()
+            m.__enter__.return_value = m
+            return m
+
+        with patch("urllib.request.urlopen", fake), \
+             patch("quiver.harness.rate_limits._verified_context",
+                   return_value=ctx):
+            self.n._post({"url": "https://n.test", "topic": "t"},
+                         {"topic": "t"})
+        self.assertEqual(calls, [None, ctx])
+
+    def test_post_failure_warns_once_per_outage(self):
+        cfg = {"url": "https://n.test", "topic": "t"}
+        with patch("urllib.request.urlopen", side_effect=OSError("down")), \
+             patch.object(notify, "_warn") as warn:
+            for _ in range(3):
+                with self.assertRaises(OSError):
+                    self.n._post(cfg, {"topic": "t"})
+        self.assertEqual(warn.call_count, 1)
+        self._captured(cfg)  # a success re-arms the warning
+        with patch("urllib.request.urlopen", side_effect=OSError("down")), \
+             patch.object(notify, "_warn") as warn:
+            with self.assertRaises(OSError):
+                self.n._post(cfg, {"topic": "t"})
+        self.assertEqual(warn.call_count, 1)
+
     def test_post_propagates_http_errors(self):
         cfg = {"url": "https://n.test", "topic": "t"}
         with patch("urllib.request.urlopen", side_effect=OSError("down")):
