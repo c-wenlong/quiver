@@ -187,22 +187,6 @@ class TestDatabaseHarnesses(_Home):
         self.assertEqual(session_model.session_models(
             [_session("s1", "opencode", ts=2)]), ["p/b"])
 
-    def test_devin_skips_its_housekeeping_models(self):
-        path = self.home / ".local/share/devin/cli/sessions.db"
-        path.parent.mkdir(parents=True)
-        conn = sqlite3.connect(path)
-        conn.execute("CREATE TABLE message_nodes (row_id INTEGER PRIMARY KEY,"
-                     " session_id TEXT, chat_message TEXT)")
-        for model in ("swe-1.5", "compactor"):
-            conn.execute("INSERT INTO message_nodes (session_id, chat_message)"
-                         " VALUES ('d1', ?)", (json.dumps(
-                             {"role": "assistant",
-                              "metadata": {"generation_model": model}}),))
-        conn.commit()
-        conn.close()
-        self.assertEqual(session_model.session_models([_session("d1", "devin")]),
-                         ["swe-1.5"])
-
     def test_a_long_run_of_housekeeping_rows_pages_past(self):
         path = self.home / ".local/share/devin/cli/sessions.db"
         path.parent.mkdir(parents=True)

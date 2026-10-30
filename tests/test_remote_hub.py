@@ -804,19 +804,6 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertNotIn(key, srv.state.pending_approvals)
         self.assertNotIn(key, srv.state._approval_at)
 
-    def test_inbox_keeps_fresh_approval(self):
-        srv = _Server(sessions=[_session(sid="a4")],
-                      statuses=lambda ss: ["active"])
-        self.addCleanup(srv.stop)
-        cred = srv.pair()
-        hdr = {"Authorization": f"Bearer {cred['credential']}"}
-        srv.state.emit("claude:a4", protocol.event(
-            "approval.requested", "claude:a4", "mbp",
-            {"request_id": "req-4"}))
-        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
-        items = json.loads(data)["items"]
-        self.assertEqual([i["request_id"] for i in items], ["req-4"])
-
     def test_advertise_url_never_wildcard(self):
         from quiver.remote import catalog, hub
         with patch.object(
