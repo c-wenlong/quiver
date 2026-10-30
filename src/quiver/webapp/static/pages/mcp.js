@@ -902,7 +902,7 @@ function mcpOpenSheet(s) {
   sheet.dataset.server = s.name;
   // A closed sheet forgets every value it showed and every draft.
   sheet.onclose = () => {
-    st.revealed = new Map(); st.revealGen++; st.drafts = new Map(); st.replacing.clear(); st.secretError = null;
+    mcpForgetSecrets(st);
     // The closed dialog's markup still holds revealed values and pasted
     // drafts; empty it so the page keeps none of them.
     sheet.replaceChildren();
@@ -910,6 +910,23 @@ function mcpOpenSheet(s) {
   mcpBindSheet(sheet, s, st);
   if (!sheet.open) sheet.showModal();
 }
+
+/* Drops the secret values a server's sheet revealed or had typed into it;
+ * bumping revealGen drops a Reveal answer still on its way. */
+function mcpForgetSecrets(st) {
+  st.revealed = new Map(); st.revealGen++; st.drafts = new Map(); st.replacing.clear(); st.secretError = null;
+}
+
+/* Leaving the page takes both sheets away with #panel, but no close event
+ * fires, so their state would outlive them: the Add sheet would open again
+ * on the next visit with its token and secret values filled in, and a
+ * server's sheet would show its revealed values again. Forget them as a
+ * close does. */
+window.addEventListener("hashchange", () => {
+  if (mcpOnPage()) return;
+  mcpPage.add = null;
+  if (mcpPage.sheet) mcpForgetSecrets(mcpPage.sheet);
+});
 
 function mcpBindSheet(sheet, s, st) {
   const source = sheet.querySelector("#mcp-source");
