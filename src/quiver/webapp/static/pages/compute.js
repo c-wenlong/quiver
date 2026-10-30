@@ -6,28 +6,39 @@
  * Mac page refreshes. */
 "use strict";
 
-const computePage = {
-  data: null, seq: 0, timer: null, failed: null,
-  // Per-browser choices, kept like the Mac app's UserDefaults.
-  tab: computeStored("tab", "ram"),
-  interval: Number(computeStored("interval", "10")) || 10,
-  lines: computeStoredJSON("temperatureLines", ["cpu", "gpu", "ssd", "battery"]),
-  limits: computeLimits(computeStoredJSON("limits", {})),
-  collapsed: new Set(), showAll: new Set(), hover: null,
-};
-
 const COMPUTE_TABS = [["ram", "RAM"], ["cpu", "CPU"], ["gpu", "GPU"], ["temperature", "Temperature"]];
 // TrendInterval: [seconds, picker title, span for "Collecting" text].
 const COMPUTE_INTERVALS = [[3, "Every 3 s", "3 seconds"], [10, "Every 10 s", "10 seconds"],
   [30, "Every 30 s", "30 seconds"], [60, "Every minute", "a minute"], [300, "Every 5 minutes", "5 minutes"]];
 const COMPUTE_COMPONENTS = [["cpu", "CPU"], ["gpu", "GPU"], ["memory", "Memory"], ["ssd", "SSD"],
   ["battery", "Battery"], ["airflow", "Airflow"], ["display", "Display"]];
+
+const computePage = {
+  data: null, seq: 0, timer: null, failed: null,
+  // Per-browser choices, kept like the Mac app's UserDefaults. A stored
+  // value this page doesn't know (an older build's, a hand edit) falls
+  // back: an unknown tab threw in the chart and stopped the poll.
+  tab: computeChoice(computeStored("tab", "ram"), COMPUTE_TABS.map(([id]) => id), "ram"),
+  interval: computeChoice(Number(computeStored("interval", "10")), COMPUTE_INTERVALS.map(([s]) => s), 10),
+  lines: computeLines(computeStoredJSON("temperatureLines", null)),
+  limits: computeLimits(computeStoredJSON("limits", {})),
+  collapsed: new Set(), showAll: new Set(), hover: null,
+};
+
 const COMPUTE_VISIBLE_ROWS = 5;
 const COMPUTE_ORPHAN_FOLD = 8;
 const GB = 1024 * 1024 * 1024;
 
 function computeStored(key, fallback) {
   try { return localStorage.getItem(`quiver.compute.${key}`) || fallback; } catch { return fallback; }
+}
+function computeChoice(value, known, fallback) {
+  return known.includes(value) ? value : fallback;
+}
+/* The Temperature card's lines: known components only, in a list. */
+function computeLines(saved) {
+  const known = COMPUTE_COMPONENTS.map(([c]) => c);
+  return Array.isArray(saved) ? saved.filter((c) => known.includes(c)) : ["cpu", "gpu", "ssd", "battery"];
 }
 function computeStoredJSON(key, fallback) {
   try { const v = JSON.parse(localStorage.getItem(`quiver.compute.${key}`)); return v == null ? fallback : v; }
