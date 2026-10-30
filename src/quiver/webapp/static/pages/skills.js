@@ -174,7 +174,11 @@ async function renderSkillsList() {
   const { status, data } = await api("/v1/app/skills");
   if (gen !== routeGen || mine !== p.seq) return;
   if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
-  if (status !== 200 || !data) return pageError(skillsHeader(false), status, data, renderSkills);
+  if (status !== 200 || !data) {
+    // New skill and Harness links work beside the error too.
+    pageError(skillsHeader(false), status, data, renderSkills);
+    return bindSkillsHeader();
+  }
   p.data = data;
   p.detail = {};
   paintSkills();
