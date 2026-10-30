@@ -416,5 +416,34 @@ class TestRoute(HubBase):
         self.assertIn(b".hk-row", css)
 
 
+class TestFindingMessage(unittest.TestCase):
+    """hkFindingMessage says each fact once: the badge reads "Managed
+    elsewhere", so the note keeps only the path, and home paths read ~/."""
+
+    def test_managed_note_is_its_path_and_home_reads_tilde(self):
+        import re
+        import shutil
+        import subprocess
+
+        if not shutil.which("node"):
+            self.skipTest("node is not installed")
+        js = (Path(page.__file__).resolve().parents[1] / "static/pages/hooks.js").read_text(encoding="utf-8")
+        fn = re.search(r"^function hkFindingMessage\(.*?^\}\n", js, re.S | re.M).group(0)
+        script = fn + """
+process.stdout.write(JSON.stringify([
+  hkFindingMessage({kind: "managed", message: "/Users/k/.claude/settings.json — declaration managed elsewhere"}, "/Users/k"),
+  hkFindingMessage({kind: "unlinked", message: "g.py is not linked into /Users/k/.claude/hooks (swe init will link it)"}, "/Users/k/"),
+  hkFindingMessage({kind: "undeclared", message: "x at /Users/kb/y"}, "/Users/k"),
+]));
+"""
+        done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), [
+            "~/.claude/settings.json",
+            "g.py is not linked into ~/.claude/hooks (swe init will link it)",
+            "x at /Users/kb/y",
+        ])
+
+
 if __name__ == "__main__":
     unittest.main()

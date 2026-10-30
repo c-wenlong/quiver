@@ -137,6 +137,20 @@ import Testing
         #expect(inventory.checkError != nil)
     }
 
+    @Test func aFindingSaysEachFactOnceWithHomePaths() {
+        let managed = HookFinding(kind: "managed", harness: "claude",
+                                  message: "/Users/k/.claude/settings.json — declaration managed elsewhere")
+        #expect(managed.kindTitle == "Managed elsewhere")
+        #expect(managed.displayMessage(home: "/Users/k") == "~/.claude/settings.json")
+        let unlinked = HookFinding(kind: "unlinked", harness: "claude",
+                                   message: "guard.py is not linked into /Users/k/.claude/hooks (swe init will link it)")
+        #expect(unlinked.displayMessage(home: "/Users/k/")
+                == "guard.py is not linked into ~/.claude/hooks (swe init will link it)")
+        // Another user's home is not this one's prefix.
+        let other = HookFinding(kind: "undeclared", harness: "codex", message: "x at /Users/kb/y")
+        #expect(other.displayMessage(home: "/Users/k") == "x at /Users/kb/y")
+    }
+
     @Test func aCheckWithFindingsDecodesThroughItsNonzeroExit() async throws {
         // swe exits 1 while findings remain; the payload is still a report.
         let model = HooksModel()
