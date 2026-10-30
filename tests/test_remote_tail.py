@@ -1178,7 +1178,7 @@ class TestTailManager(unittest.TestCase):
         mgr.tick(time.time())
         self.assertEqual(self.events[-1][1]["data"]["text"], "a0")
         mgr.sync([("claude:s", sess_b, "active")])
-        src = mgr.tailers["claude:s"].source
+        src = mgr.tailers["claude:s"].next_source()
         self.assertEqual(getattr(src, "path", None), path_b)
         with open(path_a, "a") as fh:
             fh.write(json.dumps(_claude_user("stale")) + "\n")
@@ -1189,6 +1189,115 @@ class TestTailManager(unittest.TestCase):
                  if e["type"] == "message.appended"]
         self.assertNotIn("stale", texts)
         self.assertIn("b1", texts)
+
+    def _resume_pair(self):
+        # Claude --resume from another folder: the new file starts as a
+        # line-for-line copy of the old one.
+        path_a = self.tmp / "a.jsonl"
+        path_a.write_text("".join(
+            json.dumps(_claude_user(f"a{i}")) + "\n" for i in range(3)))
+        path_b = self.tmp / "b.jsonl"
+        sess_a = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_a), tool_name="claude")
+        sess_b = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_b), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess_a, "active")])
+        mgr.tick(time.time())
+        return mgr, path_a, path_b, sess_b
+
+    def _texts(self):
+        return [e["data"]["text"] for _k, e in self.events
+                if e["type"] == "message.appended"]
+
+    def test_reresolve_keeps_turns_written_past_the_copy(self):
+        # The catalog sees the new file a refresh late: a turn already
+        # appended after the copy must still stream, history must not.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "b1"])
+
+    def test_reresolve_finds_the_last_line_when_the_copy_shifts(self):
+        # A copy with an extra record ahead of it: no longer at the same
+        # offset, so the line is found by scanning.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(
+            (json.dumps({"type": "worktree-state"}) + "\n").encode()
+            + path_a.read_bytes()
+            + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "b1"])
+
+    def test_reresolve_streams_old_lines_never_read(self):
+        # Lines the old file got after its last poll were copied too and
+        # were never sent: they stream from the new file.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        with open(path_a, "a") as fh:
+            fh.write(json.dumps(_claude_user("a3")) + "\n")
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "a3", "b1"])
+
+    def test_reresolve_past_a_large_last_record(self):
+        # The old source's last record is bigger than any line window:
+        # the boundary still matches, so the new turn streams.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        big = json.dumps(_claude_user("x" * (3 << 20))) + "\n"
+        with open(path_a, "a") as fh:
+            fh.write(big)
+        mgr.tick(time.time() + 2)
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 4)
+        self.assertEqual(self._texts()[-1], "b1")
+        self.assertEqual(self._texts().count("b1"), 1)
+        self.assertEqual(len(self._texts()), 5)
+
+    def test_reresolve_shifted_copy_with_repeated_lines(self):
+        # A shifted copy whose last read line ("ok") repeats after the
+        # new turns: the cursor must land after the copied "ok", not the
+        # later one, or the turns in between are lost.
+        path_a = self.tmp / "a.jsonl"
+        ok = json.dumps(_claude_user("ok")) + "\n"
+        path_a.write_text(json.dumps(_claude_user("a0")) + "\n" + ok)
+        path_b = self.tmp / "b.jsonl"
+        sess_a = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_a), tool_name="claude")
+        sess_b = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_b), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess_a, "active")])
+        mgr.tick(time.time())
+        path_b.write_bytes(
+            (json.dumps({"type": "worktree-state"}) + "\n").encode()
+            + path_a.read_bytes()
+            + (json.dumps(_claude_user("b1")) + "\n" + ok).encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "ok", "b1", "ok"])
+
+    def test_reresolve_hands_off_on_the_tail_thread(self):
+        # The catalog thread only queues the new source: the old one is
+        # still the one polled until the tail thread swaps them, so its
+        # boundary can't move after being read.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(path_a.read_bytes())
+        old = mgr.tailers["claude:s"].source
+        mgr.sync([("claude:s", sess_b, "active")])
+        self.assertIs(mgr.tailers["claude:s"].source, old)
+        mgr.tick(time.time() + 2)
+        self.assertEqual(mgr.tailers["claude:s"].source.path, path_b)
+        self.assertEqual(
+            json.loads((mgr.cursors_dir / (tail.protocol.key_slug("claude:s")
+                                           + ".json")).read_text())["path"],
+            str(path_b))
 
     def test_ensure_on_demand_tailer_survives_cap(self):
         path = self.tmp / "s.jsonl"
