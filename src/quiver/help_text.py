@@ -687,6 +687,8 @@ to use their own login state and environment."""
   {c('cyan', '--web')}                Open the matching github.com page instead
   {c('cyan', '--body=TEXT')}          issue comment: the comment, as one argument
                           (it reaches gh on stdin, so any text is safe)
+  {c('cyan', '--body-file=PATH|-')}   issue comment: read the comment from a file,
+                          or stdin with -, so it never shows in ps
   {c('cyan', '--json')}               {{schema, data}} envelope; data is
                           {{github: {{status, login}}, results: [...]}} with one
                           entry per repo: ok → rows, else a typed status
