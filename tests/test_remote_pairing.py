@@ -210,10 +210,22 @@ class TestPairRequests(unittest.TestCase):
         out = pairing.poll_request(self.tmp, r["request_id"], r["poll_secret"])
         self.assertEqual(out["status"], "denied")
 
-    def test_wrong_code_without_id_does_not_bump(self):
+    def test_wrong_code_without_id_counts_a_strike(self):
         r = self._request()
         self.assertIsNone(pairing.approve_request(self.tmp, "zzzzzz"))
         self.assertIsNotNone(pairing.approve_request(self.tmp, r["code"]))
+
+    def test_wrong_codes_without_id_lock_out_every_pending_row(self):
+        a = self._request()
+        b = self._request(peer={**_PEER, "node_id": "nOTHER"}, name="b")
+        for _ in range(pairing.MAX_CODE_ATTEMPTS):
+            self.assertIsNone(pairing.approve_request(self.tmp, "zzzzzz"))
+        for r in (a, b):
+            out = pairing.poll_request(
+                self.tmp, r["request_id"], r["poll_secret"])
+            self.assertEqual(out["status"], "denied")
+        # Denied rows no longer take the right code either.
+        self.assertIsNone(pairing.approve_request(self.tmp, a["code"]))
 
     def test_self_approval_refused(self):
         r = self._request()

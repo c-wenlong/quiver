@@ -655,6 +655,20 @@ def approve_request(
     with _state_lock(home_path):
         now = time.time()
         rows = _prune_requests(_load_requests(home_path), now)
+        pending = [r for r in rows if r.get("status") == "pending"]
+        if request_id is None and pending and not any(
+            hmac.compare_digest(str(r.get("code") or ""), str(code))
+            for r in pending
+        ):
+            # A code with no request id is checked against every pending
+            # row, so a miss is a strike against each: otherwise guessing
+            # without an id would never hit the five-strike limit.
+            for row in pending:
+                row["attempts"] = row.get("attempts", 0) + 1
+                if row["attempts"] >= MAX_CODE_ATTEMPTS:
+                    row["status"] = "denied"
+            _save_requests(home_path, rows)
+            return None
         for row in rows:
             if row.get("status") != "pending":
                 continue
