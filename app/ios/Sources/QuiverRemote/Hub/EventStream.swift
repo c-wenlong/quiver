@@ -30,9 +30,11 @@ struct SSEParser {
 /// says the stream will never open (`ends(status:)`).
 enum EventStream {
     /// The `?last=` to reconnect with once `env` arrived: the highest seq
-    /// seen, except that `journal.truncated` carries the journal's head,
-    /// which wins even when lower. A hub whose journal was wiped starts
-    /// its seqs again, and a cursor left above the head hears nothing.
+    /// seen, except that a `journal.truncated` frame's seq always wins,
+    /// even when lower. That seq is the client's own cursor when the
+    /// ring overflowed, or the journal's head when the cursor was above
+    /// it (a wiped journal starts its seqs again, and a cursor left above
+    /// the head hears nothing).
     static func resume(after env: Envelope, from cursor: Int) -> Int {
         guard let seq = env.seq else { return cursor }
         return env.type == "journal.truncated" ? seq : max(cursor, seq)
@@ -104,8 +106,9 @@ enum EventStream {
 
 enum StreamEvent {
     case connected, disconnected, unauthorized
-    /// The replay can't cover the gap; `head` is the journal's newest
-    /// seq, which the next resume starts from.
+    /// The replay can't cover the gap. `head` is the seq the next resume
+    /// starts from: the journal's head after a wipe, or the cursor sent
+    /// when the ring overflowed.
     case truncated(head: Int?)
     /// The stream won't open again; the error says why.
     case gone(HubError)

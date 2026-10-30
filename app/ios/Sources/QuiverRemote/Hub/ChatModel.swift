@@ -470,12 +470,17 @@ final class ChatModel {
 
     // MARK: Events
 
-    /// A `journal.truncated` names the journal's head: the next stream
-    /// resumes there even when it is below the cursor, since a wiped
-    /// journal numbers from the start again. The backfill that follows
-    /// replaces what was shown.
+    /// A `journal.truncated` names where to resume: the journal's head
+    /// after a wipe, or this chat's own cursor when the ring overflowed.
+    /// It wins even below the cursor. A lower head means the journal
+    /// numbers from the start again, so the seqs already seen belong to
+    /// the old journal and must not drop new messages that reuse them,
+    /// even if the backfill that follows fails (the next start retries
+    /// it, as for any failed load).
     func adoptJournalHead(_ head: Int?) {
-        if let head { cursor = head }
+        guard let head else { return }
+        if head < cursor { seen = [] }
+        cursor = head
     }
 
     func apply(_ env: Envelope) {

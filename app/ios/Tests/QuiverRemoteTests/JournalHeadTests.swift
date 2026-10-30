@@ -28,4 +28,16 @@ final class JournalHeadTests: XCTestCase {
         chat.adoptJournalHead(nil)
         XCTAssertEqual(chat.cursor, 12)
     }
+
+    @MainActor
+    func testAfterAWipeANewMessageReusingAnOldSeqStillShows() {
+        let chat = ChatModel(key: "claude:1", app: AppModel(hub: nil))
+        chat.apply(env(#"{"type":"message.appended","seq":3,"data":{"kind":"assistant","text":"old"}}"#))
+        chat.apply(env(#"{"type":"message.appended","seq":9,"data":{"kind":"assistant","text":"older still"}}"#))
+        // The journal was wiped; its head is 2, and its next message is 3.
+        chat.adoptJournalHead(2)
+        chat.apply(env(#"{"type":"message.appended","seq":3,"data":{"kind":"assistant","text":"new"}}"#))
+        XCTAssertEqual(chat.cursor, 3)
+        XCTAssertEqual(chat.items.count, 3, "seq 3 of the new journal isn't the old journal's seq 3")
+    }
 }
