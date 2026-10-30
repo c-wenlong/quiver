@@ -78,7 +78,10 @@ def heading(line: str) -> str | None:
 
 def unquote(raw: str) -> str | None:
     """The value, or None when the line carries anything after it other
-    than a comment: saving such a line would drop it."""
+    than a comment: saving such a line would drop it. None too for a
+    double-quoted ``$`` or backtick the shell expands (``"$OTHER"``): the
+    text isn't the value, and saving it back escaped would turn the
+    reference into a literal."""
     if raw.startswith('"'):
         value, escaped, closed = [], False, None
         for index in range(1, len(raw)):
@@ -94,6 +97,8 @@ def unquote(raw: str) -> str | None:
             elif char == '"':
                 closed = index
                 break
+            elif char in "$`":
+                return None
             else:
                 value.append(char)
         if closed is None:

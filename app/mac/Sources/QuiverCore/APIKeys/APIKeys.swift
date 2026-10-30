@@ -341,6 +341,9 @@ public struct APIKeysFile: Equatable, Sendable {
 
     /// The value, or nil when the line carries anything after it other than
     /// a comment (`; export B=…`, `"a""b"`): saving such a line would drop it.
+    /// Nil too for a double-quoted `$` or backtick the shell expands
+    /// (`"$OTHER"`): the text isn't the value, and saving it back escaped
+    /// would turn the reference into a literal.
     static func unquote(_ raw: String) -> String? {
         var value = ""
         var rest: Substring
@@ -360,6 +363,8 @@ public struct APIKeysFile: Equatable, Sendable {
                 } else if character == "\"" {
                     closed = index
                     break
+                } else if character == "$" || character == "`" {
+                    return nil
                 } else {
                     value.append(character)
                 }

@@ -21,11 +21,16 @@ class TestParse(unittest.TestCase):
 
     def test_lines_it_cannot_round_trip_are_not_keys(self):
         for line in ['export A="open', "export A=x; export B=y", "export A=$HOME", 'export A="x"y',
-                     "EXPORT A=1", "A=1", "# export A=1"]:
+                     'export A="$OTHER"', 'export A="pre-${B}"', 'export A="$(cat f)"',
+                     'export A="`cat f`"', "EXPORT A=1", "A=1", "# export A=1"]:
             self.assertEqual(KeysFile(line + "\n").entries, [], line)
 
     def test_a_backslash_before_another_character_is_kept(self):
         self.assertEqual(keyfile.unquote('"a\\nb"'), "a\\nb")
+
+    def test_an_escaped_dollar_is_a_literal_value(self):
+        self.assertEqual(keyfile.unquote('"a\\$b\\`c"'), "a$b`c")
+        self.assertEqual(keyfile.unquote("'$OTHER'"), "$OTHER")
 
     def test_keys_holds_the_later_value_in_first_place(self):
         keys = KeysFile("export A=1\nexport B=2\nexport A=3\n").keys

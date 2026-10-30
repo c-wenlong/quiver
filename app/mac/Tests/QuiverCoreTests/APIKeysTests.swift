@@ -322,12 +322,28 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
     }
 
     @Test func aRenameTouchesOnlyTheName() throws {
-        var file = APIKeysFile(text: "export OLD=\"$TOKEN\" # note\n")
+        var file = APIKeysFile(text: "export OLD=\"a\\$b\" # note\n")
         try file.rename(name: "OLD", to: "NEW")
-        #expect(file.text == "export NEW=\"$TOKEN\" # note\n")
+        #expect(file.text == "export NEW=\"a\\$b\" # note\n")
         var indented = APIKeysFile(text: "  export   OLD='v'  # kept\n")
         try indented.rename(name: "OLD", to: "NEW")
         #expect(indented.text == "  export   NEW='v'  # kept\n")
+    }
+
+    /// A double-quoted `$` or backtick expands in the shell, so the text
+    /// isn't the key's value: the line is left alone, never rewritten with
+    /// the reference escaped into a literal.
+    @Test func aValueTheShellExpandsIsNotEditable() throws {
+        for line in [#"export OLD="$TOKEN""#, #"export OLD="pre-${B}""#,
+                     #"export OLD="$(cat f)""#, "export OLD=\"`cat f`\""] {
+            var file = APIKeysFile(text: line + "\n")
+            #expect(file.entries.isEmpty, "\(line)")
+            #expect(file.problems.map(\.reason) == ["Quiver can't edit this line safely, so it leaves it alone"])
+            #expect(throws: APIKeysError.notFound("OLD")) { try file.rename(name: "OLD", to: "NEW") }
+            #expect(file.text == line + "\n")
+        }
+        #expect(APIKeysFile.unquote(#""a\$b\`c""#) == "a$b`c")
+        #expect(APIKeysFile.unquote("'$OTHER'") == "$OTHER")
     }
 
     @Test func aMoveLandsAtTheEndOfTheTargetGroup() throws {
