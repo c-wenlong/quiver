@@ -323,8 +323,12 @@ class TestOpen(_Base):
              patch("quiver.remote.supervise.launch_new",
                    side_effect=launch,
                    return_value=(True, "launched", "qv-t")) as ln:
-            yield wt, ln
-            self._wait()
+            try:
+                yield wt, ln
+            finally:
+                # Even when the test fails: the launch thread must end
+                # while the patches still stand, or it runs for real.
+                self._wait()
 
     def _wait(self):
         for t in threading.enumerate():
