@@ -592,8 +592,8 @@ class TestPayload(PollerBase):
         json.dumps(body)
 
     def test_only_web_links_reach_an_href(self):
-        self.assertIsNone(status_page._link("javascript:alert(1)"))
-        self.assertEqual(status_page._link("https://x.test/i"), "https://x.test/i")
+        self.assertIsNone(status_page.web_url("javascript:alert(1)"))
+        self.assertEqual(status_page.web_url("https://x.test/i"), "https://x.test/i")
 
     def test_carries_the_hub_clock(self):
         self.assertEqual(status_page.payload([], now=EPOCH)["server_time"], EPOCH)

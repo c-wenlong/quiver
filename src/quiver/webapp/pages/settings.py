@@ -80,7 +80,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from quiver import __version__
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, web_url
 from quiver.webapp.pages._secrets import mask
 
 ACTIONS = ("pair", "revoke", "session_search", "sync", "key_set", "key_remove", "key_value")
@@ -350,7 +350,7 @@ def _catalog_row(pid: str, info: dict, set_vars: set[str] | None = None) -> dict
         # The catalogue sheet's "Set" badge: the file covers any variable.
         "has_key": bool(set_vars) and any(v in set_vars for v in env_vars),
         # Only a web link: the page puts it in an href.
-        "url": _web_url(info.get("url")),
+        "url": web_url(info.get("url")),
     }
 
 
@@ -438,12 +438,6 @@ def _key_heading(ctx, body: dict, name: str, keys, present: dict) -> str:
 def _fold(text: str) -> str:
     """"Together AI", "together_ai" and "TOGETHER AI" all fold together."""
     return text.lower().replace(" ", "").replace("_", "")
-
-
-def _web_url(value) -> str | None:
-    if isinstance(value, str) and value.lower().startswith(("https://", "http://")):
-        return value
-    return None
 
 
 def _provider_registry(ctx) -> dict:
