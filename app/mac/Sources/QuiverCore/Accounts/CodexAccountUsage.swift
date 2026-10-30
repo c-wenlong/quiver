@@ -313,6 +313,10 @@ public final class CodexAccountUsage {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
+        // Read the date in the calendar's own zone: a formatter on the
+        // system zone put each day on the previous one for a calendar
+        // ahead of it.
+        formatter.timeZone = calendar.timeZone
         var days: [Date: Int] = [:]
         for day in report.days {
             guard let date = formatter.date(from: day.date) else { continue }

@@ -9,7 +9,13 @@ import Testing
     /// noon UTC on Thursday 2026-10-15: the current week is Oct 12–18,
     /// the current month October.
     private let now = utc("2026-10-15T12:00:00Z")
-    private let calendar = Calendar(identifier: .gregorian)
+    /// Pinned to UTC: the fixture days are noon UTC, which a machine at
+    /// UTC+12 or later would put on the next local day.
+    private let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
 
     private func day(_ text: String) -> Date {
         utc("\(text)T12:00:00Z")
@@ -70,10 +76,24 @@ import Testing
         #expect(weeks[5].account == 50)
         #expect(weeks[5].inProgress)
         #expect(!weeks[4].inProgress)
-        let fmt = DateFormatter()
-        fmt.dateFormat = "EEEE"
+        // Weekday 2 is Monday in the Gregorian calendar, in any locale.
         for period in weeks {
-            #expect(fmt.string(from: period.start) == "Monday")
+            #expect(calendar.component(.weekday, from: period.start) == 2)
+        }
+    }
+
+    /// The report's dates read in the calendar's own zone, whatever zone
+    /// the machine is in: a calendar far from the system clock (Kiritimati
+    /// at UTC+14, then Baker Island at UTC-12) still keys each day on its
+    /// own midnight.
+    @Test func reportDatesReadInTheCalendarsZone() {
+        for zone in ["Pacific/Kiritimati", "Etc/GMT+12"] {
+            var far = Calendar(identifier: .gregorian)
+            far.timeZone = TimeZone(identifier: zone)!
+            let days = CodexAccountUsage.parseDays(report([("2026-10-13", 10)]), calendar: far)
+            var parts = DateComponents()
+            (parts.year, parts.month, parts.day) = (2026, 10, 13)
+            #expect(days == [far.date(from: parts)!: 10], "\(zone)")
         }
     }
 
