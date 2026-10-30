@@ -26,13 +26,19 @@ from quiver.remote import fork as fork_mod, usage as usage_mod
 from quiver.remote.detach import PendingDetaches
 
 AGENT_FILE = "agent.json"          # satellite's stored hub credential
-PUSH_BATCH = 50                    # events per /v1/agent/events POST
+PUSH_BATCH = 50                    # most events per /v1/agent/events POST
 RECONNECT_S = 5.0
 CATALOG_PUSH_S = 10.0
 # The hub refuses JSON bodies over 4 MiB (hub._MAX_BODY); a catalog push
 # stays under it with room to spare.
 CATALOG_BODY_MAX = (4 << 20) - (64 << 10)
+# An events POST is held to the same size: a batch is cut by encoded
+# bytes as well as count, and an event too big to go alone is clipped.
+EVENTS_BODY_MAX = CATALOG_BODY_MAX
 OUTBOX_KEY = "_outbox"             # journal key for unsent uplink events
+# The in-memory uplink buffer keeps no more than the outbox journal's
+# ring does across a restart; while the hub is down the oldest go first.
+OUTBOX_MAX = journal.RING_MAX
 
 
 def agent_file_for(home: Path | None) -> Path:
@@ -84,6 +90,32 @@ def _urlopen(req: urllib.request.Request, timeout: float | None):
         resp = urllib.request.urlopen(req, timeout=timeout, context=ctx)
         _fallback_ctx = ctx
         return resp
+
+
+def _encoded_len(event: dict) -> int:
+    return len(json.dumps(event, ensure_ascii=False).encode("utf-8"))
+
+
+def _clip_strings(value, cap: int):
+    if isinstance(value, str):
+        return value if len(value) <= cap else value[:cap] + "… (truncated)"
+    if isinstance(value, dict):
+        return {k: _clip_strings(v, cap) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clip_strings(v, cap) for v in value]
+    return value
+
+
+def _clip_event(event: dict, limit: int) -> dict | None:
+    """``event`` with its long strings cut until it encodes within
+    ``limit`` bytes, or None when even 1 KiB strings don't fit it."""
+    cap = limit // 2
+    while cap >= 1024:
+        clipped = _clip_strings(event, cap)
+        if _encoded_len(clipped) <= limit:
+            return clipped
+        cap //= 4
+    return None
 
 
 def _headers(credential: str, ctype: str | None = "application/json") -> dict:
@@ -209,7 +241,7 @@ class RemoteAgent:
         self._outbox = journal.Journal(self.home)
         events, _truncated = self._outbox.read_since(
             OUTBOX_KEY, self._outbox_ack)
-        self.outbox = list(events)
+        self.outbox = list(events)[-OUTBOX_MAX:]
 
     def _on_probed_status(self, key: str, status: str, at: float) -> None:
         """Same as the hub's: patch the catalog row, and let a pending
@@ -304,24 +336,63 @@ class RemoteAgent:
             # Buffer the stamped copy: the seq is what the ack file
             # records once the hub accepts the batch.
             self.outbox.append(stamped or event)
+            self._trim_outbox()
         return stamped or event
 
-    def _push_events(self) -> bool:
+    def _trim_outbox(self) -> None:
+        """Drop the oldest buffered events past ``OUTBOX_MAX``; the
+        caller holds ``_outbox_lock``. The next accepted batch acks past
+        them, so they are gone for good, as the ring would drop them."""
+        over = len(self.outbox) - OUTBOX_MAX
+        if over > 0:
+            del self.outbox[:over]
+
+    def _take_batch(self) -> tuple[list[dict], list[dict]]:
+        """Pop the next POST off the outbox: (events taken, events to
+        send). At most ``PUSH_BATCH`` events and ``EVENTS_BODY_MAX``
+        encoded bytes go at once. An event over that alone goes
+        clipped, or not at all when clipping can't fit it, so one huge
+        tool result can't get a 400 on every retry and wedge the
+        uplink."""
+        taken: list[dict] = []
+        batch: list[dict] = []
+        size = 0
         with self._outbox_lock:
-            batch, self.outbox = self.outbox[:PUSH_BATCH], \
-                self.outbox[PUSH_BATCH:]
-        if not batch:
+            for orig in self.outbox:
+                if len(batch) >= PUSH_BATCH:
+                    break
+                ev, n = orig, _encoded_len(orig) + 1
+                if n > EVENTS_BODY_MAX:
+                    ev = _clip_event(orig, EVENTS_BODY_MAX - 1)
+                    if ev is None:
+                        taken.append(orig)  # dropped, acked with the rest
+                        continue
+                    n = _encoded_len(ev) + 1
+                if batch and size + n > EVENTS_BODY_MAX:
+                    break
+                taken.append(orig)
+                batch.append(ev)
+                size += n
+            del self.outbox[:len(taken)]
+        return taken, batch
+
+    def _push_events(self) -> bool:
+        taken, batch = self._take_batch()
+        if not taken:
             return True
-        status, _payload = _post(
-            self.hub, "/v1/agent/events", self.cred,
-            {"machine_id": self.machine_id, "events": batch},
-        )
-        if status != 200:
-            with self._outbox_lock:
-                self.outbox = batch + self.outbox
-            return False
-        seq = batch[-1].get("seq")
-        if isinstance(seq, int) and seq > self._outbox_ack:
+        if batch:
+            status, _payload = _post(
+                self.hub, "/v1/agent/events", self.cred,
+                {"machine_id": self.machine_id, "events": batch},
+            )
+            if status != 200:
+                with self._outbox_lock:
+                    self.outbox[:0] = taken
+                    self._trim_outbox()
+                return False
+        seqs = [ev.get("seq") for ev in taken]
+        seq = max((s for s in seqs if isinstance(s, int)), default=None)
+        if seq is not None and seq > self._outbox_ack:
             self._outbox_ack = seq
             self._save_outbox_ack()
         return True
@@ -527,9 +598,7 @@ class RemoteAgent:
 
     def _buffer_result(self, event: dict) -> None:
         """Journal + buffer a command.result the same way _capture does."""
-        stamped = self._outbox.append(OUTBOX_KEY, event)
-        with self._outbox_lock:
-            self.outbox.append(stamped or event)
+        self._capture(str(event.get("session") or ""), event)
 
     def _execute(
         self, key: str, op: str, data: dict
