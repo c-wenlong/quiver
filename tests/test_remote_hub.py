@@ -82,10 +82,6 @@ class _Server:
         return auth
 
 
-class TestHub(_Server, unittest.TestCase):
-    pass  # placeholder so _Server isn't collected as a test
-
-
 class HubBase(unittest.TestCase):
     def setUp(self):
         self.srv = _Server(sessions=[_session()])
@@ -3157,7 +3153,11 @@ class TestServeEntry(unittest.TestCase):
 
     def test_state_start_stop(self):
         state = HubState(Path(tempfile.mkdtemp()))
-        state.start()
+        # No real session scan or notify config: only the thread
+        # lifecycle is under test.
+        state.catalog._fetch = lambda: []
+        with patch.object(hub_mod.notify, "load_config", return_value={}):
+            state.start()
         try:
             self.assertTrue(state._threads)
             self.assertTrue(all(t.is_alive() for t in state._threads))
@@ -3912,9 +3912,12 @@ class TestStartNotify(unittest.TestCase):
         home = Path(tempfile.mkdtemp())
         state = HubState(home)
         state.catalog._fetch = lambda: []
-        cfg = {"enabled": True, "url": "https://ntfy.sh",
+        cfg = {"enabled": True, "url": "https://ntfy.invalid",
                "topic": "t", "ntfy_token": "x"}
-        with patch.object(notify, "load_config", return_value=cfg):
+        # The notifier thread really runs: nothing it does may reach a
+        # network.
+        with patch.object(notify, "load_config", return_value=cfg), \
+             patch.object(notify.Notifier, "_post"):
             state.start()
             try:
                 names = [t.name for t in state._threads]
