@@ -717,13 +717,14 @@
     const busy = page.rerunning.has(key);
     menu.innerHTML = `${page.runMenu.failed ? `<button type="button" role="menuitem" data-rerun="failed"${busy ? " disabled" : ""}>${ico("rerun")}<span>Re-run failed jobs</span></button>` : ""}
       <button type="button" role="menuitem" data-rerun="all"${busy ? " disabled" : ""}>${ico("rerun")}<span>Re-run all jobs</span></button>
-      <div class="gh-menu-divider" role="separator"></div>
-      ${safeHref(page.runMenu.url) ? `<a role="menuitem" href="${safeHref(page.runMenu.url)}" target="_blank" rel="noopener">${ico("external")}<span>Open on GitHub</span></a>` : ""}`;
+      ${safeHref(page.runMenu.url) ? `<div class="gh-menu-divider" role="separator"></div>
+      <a role="menuitem" href="${safeHref(page.runMenu.url)}" target="_blank" rel="noopener">${ico("external")}<span>Open on GitHub</span></a>` : ""}`;
     menu.hidden = false;
     placeRunMenu();
     const m = page.runMenu;
     for (const item of menu.querySelectorAll("[data-rerun]")) item.onclick = () => rerun(m, item.dataset.rerun === "failed");
-    menu.querySelector("a").onclick = () => closeRunMenu();
+    const open = menu.querySelector("a");
+    if (open) open.onclick = () => closeRunMenu();
     const first = menu.querySelector("[role=menuitem]:not([disabled])");
     if (first) first.focus();
     // A menu's keys: arrows move between items, Home and End jump.
