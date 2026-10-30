@@ -680,6 +680,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP gateway: no longer throttled by macOS.** The LaunchAgent was
+  written with `ProcessType: Background`, as the remote hub's is, and
+  macOS throttled its servers: `so__x`'s 6 MB tool list took 6.9 s
+  through it against 1.3 s over stdio, and Claude Code's health check
+  timed out on it. The gateway's agent is now `Interactive`; run `swe mcp
+  gateway install` again to pick it up.
+
 - **MCP gateway: a session's burst of connections is queued, not
   reset.** A Claude Code session connects to every shared server at
   once, and the Python 3.13 that Quiver.app bundles queues only 5
