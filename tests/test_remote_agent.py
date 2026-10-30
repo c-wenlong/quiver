@@ -1329,6 +1329,17 @@ class TestAgentEdges(unittest.TestCase):
         self.assertLess(len(body["rows"]), 60)
         self.assertEqual(body["rows"][0]["key"], "k0")
 
+    def test_fit_rows_is_exact_at_the_cap(self):
+        ag = self._agent()
+        rows = [{"key": f"k{i}"} for i in range(3)]
+        exact = len(json.dumps({"machine_id": ag.machine_id, "rows": rows},
+                               ensure_ascii=False).encode())
+        with patch.object(agent_mod, "CATALOG_BODY_MAX", exact):
+            self.assertEqual(ag._fit_rows(rows), rows)
+        with patch.object(agent_mod, "CATALOG_BODY_MAX", exact - 1), \
+                patch("sys.stderr"):
+            self.assertEqual(ag._fit_rows(rows), rows[:2])
+
     def test_handle_frame_malformed_and_noncommand(self):
         ag = self._agent()
         ag._handle_frame(b"{nope")                       # bad json

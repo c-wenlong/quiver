@@ -463,8 +463,9 @@ class RemoteAgent:
                               ensure_ascii=False).encode("utf-8"))
         total = base
         for n, row in enumerate(rows):
+            # _post's json.dumps puts ", " between rows.
             total += len(json.dumps(row, ensure_ascii=False)
-                         .encode("utf-8")) + 1
+                         .encode("utf-8")) + (2 if n else 0)
             if total > CATALOG_BODY_MAX:
                 if self._rows_trimmed != len(rows):
                     self._rows_trimmed = len(rows)
