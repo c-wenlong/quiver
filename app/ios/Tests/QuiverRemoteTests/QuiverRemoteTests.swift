@@ -981,6 +981,21 @@ final class ReviewFixTests: XCTestCase {
         XCTAssertEqual(ledger.overlay([item("claude:3", 5)]).map(\.key), ["claude:3"])
     }
 
+    func testDismissalLedgerNeverHidesAPendingApproval() {
+        let item = { (status: String, at: Double) in
+            InboxItem(key: "claude:1", machineId: "m1", harness: "claude", agent: nil, title: "t", cwd: "/w",
+                      status: status, lastActiveAt: at, requestId: status == "approval" ? "r1" : nil)
+        }
+        var ledger = DismissalLedger()
+        ledger.choose("claude:1", stamp: 100)
+        // The session was cleared, then asked for approval before its
+        // last_active_at moved: the hub ships the approval regardless.
+        XCTAssertEqual(ledger.overlay([item("approval", 100)]).map(\.key), ["claude:1"],
+                       "a pending approval must never be hidden by a dismiss")
+        // The same row as a plain status is still the one the dismiss cleared.
+        XCTAssertEqual(ledger.overlay([item("done", 100)]).map(\.key), [])
+    }
+
     func testPairedDeviceDecodesAndLabels() throws {
         let json = #"""
         {"devices":[
