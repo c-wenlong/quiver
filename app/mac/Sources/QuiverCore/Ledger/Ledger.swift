@@ -258,6 +258,14 @@ public actor Ledger {
         reader = JSONLReader(maxLineBytes: maxLineBytes)
     }
 
+    /// How long a cache write waits out another connection's lock: two
+    /// seconds, so a reader's snapshot never fails a write at once. A
+    /// test that holds the lock on purpose shortens it, so it needn't sit
+    /// out the full wait.
+    func setBusyTimeout(milliseconds: Int32) {
+        store.db.setBusyTimeout(milliseconds: milliseconds)
+    }
+
     /// Nonisolated: the catalog sits behind its own lock, so a saved
     /// price lands at once instead of queueing behind a running scan.
     public nonisolated func setPricing(_ catalog: PricingCatalog) {

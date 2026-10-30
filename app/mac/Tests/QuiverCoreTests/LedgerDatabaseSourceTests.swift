@@ -401,6 +401,9 @@ func execute(_ sql: String, on url: URL) throws {
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
+        // The lock below is held for good, so waiting it out only costs
+        // the test two seconds before the same failure.
+        await ledger.setBusyTimeout(milliseconds: 0)
 
         // A second connection holding an exclusive lock makes every cache
         // operation fail, starting at BEGIN IMMEDIATE.
