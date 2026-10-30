@@ -360,6 +360,20 @@ pinned_at after a pin or rename), `approval.requested|resolved`, `compaction`,
 `github` for a notification thread that just turned unread — hub-local,
 not a satellite kind).
 
+`limit` comes from the transcript, not the status probe. The tailer
+marks Claude Code's 429 record (`isApiErrorMessage` with `error:
+"rate_limit"`, "You've hit your session limit · resets 9:30am") and a
+Codex `task_complete` whose `error.codex_error_info` is
+`usage_limit_exceeded`; the record still shows in the chat as an
+`error` message. Its notify adds `message` (the harness's line, at most
+280 characters) and, for Claude Code, `resets_at` (epoch seconds) and
+`window` (`five_hour`, `seven_day`, ...) from `quotaLimits`. It rings
+once per limit: a record read more than 10 minutes after it was written
+(backfill) is quiet, and the same limit again in that session (a retry
+into it) stays quiet until its reset time, or for an hour when the
+harness gave none. The ntfy push puts the harness's line in the body.
+Other harnesses don't raise `limit` yet.
+
 `queue|steer` is the OpenAI Remote distinction: queue waits for idle;
 steer injects mid-turn where the channel allows (codex turn input, tmux
 send-keys), else degrades to queue with a UI hint. `SessionRow.to_json`

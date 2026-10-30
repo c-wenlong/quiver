@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message carries the uploaded files' refs in `attachments`, which the
   hub turns into `@path` for the harness. A message still needs text
   (the hub requires it); Enter on an empty box with files says so
+
+- **Remote: a `limit` notification when a session hits its usage
+  limit.** The hub and satellites now raise `notify` kind `limit` when
+  a Claude Code session writes its rate-limit record ("You've hit your
+  session limit · resets 9:30am") or a Codex turn ends with
+  `usage_limit_exceeded`. The ntfy push carries the harness's own line,
+  so the lock screen says when work can resume, and Claude Code's carry
+  `resets_at` and `window`. It rings once per limit: old records read
+  during backfill and retries into the same limit stay quiet. Other
+  harnesses don't raise it yet
   ([#516](https://github.com/c-wenlong/quiver/issues/516)).
 
 - **Web app: the session's model in the chat header and Sessions
