@@ -87,7 +87,7 @@ const GhUI = (() => {
   /* GhSetupCard, with a line saying which machine's gh it means. */
   function setupCard(status, machine) {
     const title = status === "unavailable"
-      ? "Download gh cli to enable github features." : "Sign in to GitHub to enable github features.";
+      ? "Download the gh CLI to enable GitHub features." : "Sign in to GitHub to enable GitHub features.";
     const command = status === "unavailable" ? "brew install gh" : "gh auth login";
     return `<div class="card gh-setup">
       <div class="gh-setup-title">${ico("terminal")}<span>${esc(title)}</span></div>
@@ -149,6 +149,14 @@ const GhUI = (() => {
         if (Date.now() - polls[name].last >= POLL_MS) runPoll(name);
       }
     });
+  }
+
+  /* A read answered 401: the gate, and no more ticks for ``page``. A
+   * tick would paint the page's last rows over the gate (and the pair
+   * fields typed into it) before its own read came back 401 again. */
+  function gate(page) {
+    stopPoll(page);
+    renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   }
 
   function hashParams() {
@@ -439,6 +447,6 @@ const GhUI = (() => {
     return renderSegments(segments(String(body || "").replace(/\r\n?/g, "\n")));
   }
 
-  return { ico, ago, envSetup, setupCard, bindSetup, poll, hashParams, post, failMessage, keepFocus, markdown };
+  return { ico, ago, envSetup, setupCard, bindSetup, poll, gate, hashParams, post, failMessage, keepFocus, markdown };
 })();
 globalThis.GhUI = GhUI;

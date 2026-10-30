@@ -277,6 +277,8 @@ class Notifier:
     def __init__(self, state, base_url: str, *, subscribe_key: str) -> None:
         self._state = state
         self._base = base_url.rstrip("/")
+        # One stderr line per outage, not one per push.
+        self._post_warned = False
         self._subscribe_key = subscribe_key
         self._stop = state._stop
         self._q: queue.Queue | None = None
@@ -391,11 +393,14 @@ class Notifier:
         self._post(cfg, payload)
 
     def _session_title(self, key: str) -> str:
+        """The notification title's prefix. A session title is often
+        the first prompt, so it runs the secret-redactor, before the
+        cut so a half-truncated token can't slip past the patterns."""
         row = self._state.catalog.row_for(key) if key else None
         if row:
             title = str(row.get("title") or "").strip()
             if title:
-                return title[:60]
+                return _tr._redact_secrets(title)[:60]
             cwd = str(row.get("cwd") or "")
             if cwd:
                 return cwd.rstrip("/").rsplit("/", 1)[-1] or cwd
@@ -429,5 +434,17 @@ class Notifier:
         token = cfg.get("ntfy_token")
         if token:
             req.add_header("Authorization", f"Bearer {token}")
-        with urllib.request.urlopen(req, timeout=_POST_TIMEOUT_S):
-            pass
+        # The bundled python.org build has no CA store: agent._urlopen
+        # retries a certificate failure against the OS bundle.
+        from quiver.remote.agent import _urlopen
+
+        try:
+            with _urlopen(req, _POST_TIMEOUT_S):
+                pass
+        except Exception as exc:
+            if not self._post_warned:
+                self._post_warned = True
+                _warn(f"push failed ({exc}); later failures stay quiet "
+                      "until one succeeds")
+            raise
+        self._post_warned = False

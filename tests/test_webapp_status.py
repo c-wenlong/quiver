@@ -11,7 +11,9 @@ import copy
 import datetime
 import http.client
 import json
+import shutil
 import ssl
+import subprocess
 import tempfile
 import threading
 import time
@@ -886,6 +888,30 @@ class TestTrackRoute(HubBase):
         self.assertIsNotNone(linear)
         self.assertEqual(linear["group"], "infrastructure")
         self.assertTrue(linear["custom"])
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestLateWriteGate(unittest.TestCase):
+    """pages/status.js under node: a Track or Untrack reply that answers
+    401 after the browser left Service status shows no gate over the page
+    it moved to; on the page it does."""
+
+    def gates_after_untrack(self, hash_):
+        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/status.js"
+        prelude = ("globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
+                   "const gates = []; function renderGate(m) { gates.push(m); }\n"
+                   "function registerPage() {}\n"
+                   "const apiPost = async () => ({ status: 401, data: null });\n")
+        body = "statusUntrack('x').then(() => process.stdout.write(String(gates.length)));\n"
+        done = subprocess.run(["node", "-e", prelude + page.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return int(done.stdout)
+
+    def test_only_on_the_page(self):
+        self.assertEqual(self.gates_after_untrack("#/overview"), 0)
+        self.assertEqual(self.gates_after_untrack("#/status"), 1)
 
 
 if __name__ == "__main__":
