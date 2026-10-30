@@ -165,7 +165,7 @@ private struct LinkRow: View {
                 Text(link.state.title.lowercased()).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
-        .help("\(HarnessMark(name).name), \(link.state.title.lowercased()): \(displayPath(URL(fileURLWithPath: link.path)))")
+        .hoverTip("\(HarnessMark(name).name), \(link.state.title.lowercased()): \(displayPath(URL(fileURLWithPath: link.path)))")
         .accessibilityElement(children: .combine)
         // The dot alone says linked, so VoiceOver gets the state in words.
         .accessibilityValue(link.state.title)
