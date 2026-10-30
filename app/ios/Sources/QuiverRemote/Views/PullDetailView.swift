@@ -124,7 +124,7 @@ struct PullDetailView: View {
                     Text(bits.joined(separator: " · "))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
-                ForEach(labels.prefix(4), id: \.self) { Badge($0) }
+                ForEach(Array(labels.prefix(4).enumerated()), id: \.offset) { Badge($0.element) }
             }
         }
     }
