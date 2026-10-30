@@ -655,5 +655,40 @@ class TestFinalPrompt(unittest.TestCase):
         self.assertIn("(no description)", text)
 
 
+class TestRunLaunch(unittest.TestCase):
+    """``run_launch``: the thread a resolve and a PR open share."""
+
+    def _state(self):
+        settled = []
+
+        class State:
+            def settle_launch(self, launch_id, **kw):
+                settled.append(kw)
+        return State(), settled
+
+    def test_a_crash_settles_failed_with_the_verb_and_releases(self):
+        state, settled = self._state()
+        released = []
+
+        def boom():
+            raise RuntimeError("boom")
+
+        issues_mod.run_launch(state, "l1", "claude", True, boom, "Open",
+                              lambda: released.append(1))
+        self.assertEqual(settled, [{"state": "failed",
+                                    "note": "Open failed: boom"}])
+        self.assertEqual(released, [1])
+
+    def test_a_note_fails_and_an_untracked_harness_says_so(self):
+        state, settled = self._state()
+        issues_mod.run_launch(state, "l1", "claude", True,
+                              lambda: "no worktree", "Resolve", lambda: None)
+        issues_mod.run_launch(state, "l2", "aider", False,
+                              lambda: "", "Resolve", lambda: None)
+        self.assertEqual(settled[0], {"state": "failed", "note": "no worktree"})
+        self.assertEqual(settled[1]["state"], "untracked")
+        self.assertIn("aider", settled[1]["note"])
+
+
 if __name__ == "__main__":
     unittest.main()
