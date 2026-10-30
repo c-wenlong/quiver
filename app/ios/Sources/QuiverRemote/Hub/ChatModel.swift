@@ -261,6 +261,10 @@ final class ChatModel {
                 case .connected: self.live = true
                 case .disconnected: self.live = false
                 case .unauthorized: self.app?.unpair(from: client); return
+                case .gone(let error):
+                    self.live = false
+                    self.items.append(ChatItem(id: UUID().uuidString, kind: .system(error.message)))
+                    return
                 case .truncated:
                     self.dropPending()
                     await self.backfill(client)

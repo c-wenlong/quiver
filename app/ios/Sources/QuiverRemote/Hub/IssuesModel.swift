@@ -48,6 +48,9 @@ final class IssuesModel {
     /// nothing and the counts stay right.
     private(set) var closedRepos: [IssueRepo] = []
     private(set) var closedLoaded = false
+    /// The closed fetch's own failure: the open list's `error` would say
+    /// the open rows are stale when they aren't, and the reverse.
+    private(set) var closedError: String?
     /// Owns the closed fetch's ordering, as `generation` owns the open
     /// one's: an open pull-to-refresh must not eat a closed reply.
     @ObservationIgnored private var closedGeneration = 0
@@ -64,13 +67,13 @@ final class IssuesModel {
             machineId = body.machineId
             envBlocked = body.envBlocked
             login = body.github?.login
-            error = nil
+            closedError = nil
         } catch let e as HubError {
             guard gen == closedGeneration else { return }
-            error = e.message
+            closedError = e.message
         } catch {
             guard gen == closedGeneration else { return }
-            self.error = error.localizedDescription
+            closedError = error.localizedDescription
         }
         closedLoaded = true
     }
