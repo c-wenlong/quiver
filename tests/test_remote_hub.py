@@ -3131,7 +3131,7 @@ class TestDeviceList(unittest.TestCase):
             ({"device_id": 7}, 400, "bad_device"),
             ({"device_id": "x" * 65}, 400, "bad_device"),
             ({"device_id": "0123456789abcdef"}, 404, "unknown_device"),
-            ({"device_id": "tailnet:n1"}, 400, "not_paired"),
+            ({"device_id": "tailnet:n1"}, 404, "unknown_device"),
             ({"device_id": other["device_id"]}, 409, "already_revoked"),
         ):
             status, data = self.srv.request(
@@ -3166,7 +3166,7 @@ class TestDeviceList(unittest.TestCase):
 
     def test_revoke_owner_tailnet_device(self):
         # The hub owner's own tailnet sign-in can revoke a paired
-        # device, but its own tailnet: id is a sign-in, not a pairing.
+        # device, and its own tailnet: sign-in too, once confirmed.
         other = self.srv.pair()
         self.srv.state.owner_login = "dev@github"
         self.srv.state.allowed_hosts = {"127.0.0.1"}
@@ -3180,12 +3180,20 @@ class TestDeviceList(unittest.TestCase):
         self.assertEqual(status, 200, data)
         self.assertFalse(json.loads(data)["this_device"])
         status, data = self.srv.request(
+            "POST", "/v1/devices/revoke", {"device_id": "tailnet:nMAC"},
+            headers=hdrs)
+        self.assertEqual(
+            (status, json.loads(data)["error"]["code"]),
+            (409, "confirm_this_device"))
+        status, data = self.srv.request(
             "POST", "/v1/devices/revoke",
             {"device_id": "tailnet:nMAC", "confirm_this_device": True},
             headers=hdrs)
-        self.assertEqual(status, 400)
-        self.assertEqual(
-            json.loads(data)["error"]["code"], "not_paired")
+        self.assertEqual(status, 200, data)
+        self.assertTrue(json.loads(data)["this_device"])
+        # Signed itself out: no owner identity for that node any more.
+        status, _ = self.srv.request("GET", "/v1/devices", headers=hdrs)
+        self.assertEqual(status, 401)
 
 
 class TestServeEntry(unittest.TestCase):
