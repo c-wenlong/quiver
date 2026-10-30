@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import QuiverRemote
 
@@ -14,6 +15,21 @@ final class SSEParserTests: XCTestCase {
         var p = SSEParser()
         XCTAssertNil(p.feed(": ka"))
         XCTAssertNil(p.feed(""))
+    }
+}
+
+final class EventStreamTests: XCTestCase {
+    func testOnlyARefusalNoRetryCanChangeEndsTheStream() {
+        XCTAssertTrue(EventStream.ends(status: 403, notFoundInARow: 0))
+        // A restarted hub answers 404 until its catalog scan lands.
+        for n in 1..<EventStream.notFoundLimit {
+            XCTAssertFalse(EventStream.ends(status: 404, notFoundInARow: n), "404 number \(n) may be a restart")
+        }
+        XCTAssertTrue(EventStream.ends(status: 404, notFoundInARow: EventStream.notFoundLimit),
+                      "unknown_session that long: the hub dropped it")
+        for status in [0, 500, 502, 503, 504] {
+            XCTAssertFalse(EventStream.ends(status: status, notFoundInARow: 99), "\(status) is worth reconnecting for")
+        }
     }
 }
 
@@ -1364,5 +1380,18 @@ final class LaunchFlowTests: XCTestCase {
         """
         XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString),
                        ["https://one.example.com", "https://two.example.com/x"])
+    }
+}
+
+final class ChatStreamGateTests: XCTestCase {
+    func testOnlyTheBackgroundStopsAndRestartsTheStream() {
+        var gate = ChatStreamGate()
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none, "Control Center leaves it running")
+        XCTAssertEqual(gate.phase(.active), ChatStreamGate.Action.none, "and coming back restarts nothing")
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none)
+        XCTAssertEqual(gate.phase(.background), .stop)
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none)
+        XCTAssertEqual(gate.phase(.active), .start, "back from the background: started once")
+        XCTAssertEqual(gate.phase(.active), ChatStreamGate.Action.none)
     }
 }
