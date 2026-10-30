@@ -172,7 +172,10 @@ import Testing
         #expect(TaskFilter.prOpen.includes(prOpen))
         // A pull task with an open PR is its own PR-open row.
         #expect(TaskFilter.prOpen.includes(pull))
-        #expect(!TaskFilter.prOpen.includes(row("g", kind: "pull", state: "open")))
+        // A pull task counts until it lands even when its pr block is
+        // missing, as the web and the phone count it.
+        #expect(TaskFilter.prOpen.includes(row("g", kind: "pull", state: "open")))
+        #expect(!TaskFilter.prOpen.includes(row("g2", kind: "pull", state: "merged")))
         #expect(!TaskFilter.prOpen.includes(open))
         #expect(!TaskFilter.prOpen.includes(merged))
 
@@ -191,7 +194,7 @@ import Testing
             row("e", source: "notion", kind: "page", ref: "x", repo: nil),
         ]
         let sections = TaskGrouping.sections(of: tasks, filter: .all)
-        #expect(sections.map(\.name) == ["o/s", "o/r", "QUI", "Other"])
+        #expect(sections.map(\.name) == ["o/s", "o/r", "QUI", "Notion"])
         #expect(sections[1].rows?.map(\.id) == ["a", "c"])
         // Only a GitHub row's section can link out to the repo.
         #expect(sections[0].repo == "o/s")
@@ -202,6 +205,17 @@ import Testing
         // A scope whose rows all filter out drops its section.
         let none = TaskGrouping.sections(of: [row("a", running: false)], filter: .running)
         #expect(none.isEmpty)
+    }
+
+    /// GitHub is spelled GitHub, and a row naming no source at all is
+    /// the only one under "Other".
+    @Test func sourcesAreSpelledAsThePagesSpellThem() {
+        let tasks = [
+            row("a", repo: nil),
+            row("b", source: nil, kind: "page", ref: "x", repo: nil),
+        ]
+        #expect(TaskGrouping.sections(of: tasks, filter: .all).map(\.name) == ["GitHub", "Other"])
+        #expect(TaskGrouping.rail(of: tasks, filter: .all).map(\.title) == ["GitHub", "Other"])
     }
 
     @Test func railGroupsScopesBySourceAndCountsUnderTheFilter() {
@@ -224,7 +238,7 @@ import Testing
         #expect(rail[1].scopes.map(\.name) == ["p/a", "p/x"])
         #expect(rail[1].scopes.map(\.count) == [0, 0])
         #expect(rail[2].scopes.map(\.label) == ["QUI"])
-        #expect(rail[3].scopes.map(\.name) == ["Other"])
+        #expect(rail[3].scopes.map(\.name) == ["Notion"])
         // Every scope keeps its row; the count is what the chip leaves,
         // so a scope with none still lists (the rail folds it as quiet).
         #expect(rail[0].scopes.map(\.count) == [0, 1])
