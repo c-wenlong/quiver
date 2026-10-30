@@ -675,17 +675,28 @@ import Testing
 
     @MainActor @Test func changingTheIntervalWakesTheLoopRightAway() async {
         // A sleep that records each requested duration, then parks until
-        // the task is cancelled; Task.sleep observes the cancellation.
+        // the task is cancelled (Task.sleep observes the cancellation) or
+        // the test ends it, so no loop outlives the test.
         actor Parked {
             var durations: [Duration] = []
             private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+            private var sleepers: [CheckedContinuation<Void, Never>] = []
+            private var finished = false
             func call(_ duration: Duration) async throws {
                 durations.append(duration)
                 let n = durations.count
                 let ready = waiters.filter { n >= $0.0 }
                 waiters.removeAll { n >= $0.0 }
                 for (_, cont) in ready { cont.resume() }
-                try await Task.sleep(for: .seconds(3_600))
+                // A restart cancels this sleep's task; the loop it belongs
+                // to then returns on its own once woken.
+                if !finished { await withCheckedContinuation { sleepers.append($0) } }
+                throw CancellationError()
+            }
+            func finish() {
+                finished = true
+                for sleeper in sleepers { sleeper.resume() }
+                sleepers = []
             }
             func waitForParks(_ n: Int) async {
                 if durations.count >= n { return }
@@ -713,6 +724,8 @@ import Testing
         // Both ticks describe the same sample moment, so the second
         // replaces the first point rather than sharing its x.
         #expect(model.history.points(for: "claude").count == 1)
+        // The parked sleep throws, which ends the loop.
+        await parked.finish()
     }
 
     // MARK: Harness decoding

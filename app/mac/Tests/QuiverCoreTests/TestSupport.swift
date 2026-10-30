@@ -1,26 +1,35 @@
 import Foundation
 @testable import QuiverCore
 
-/// A `UserDefaults` suite of its own (`<prefix>-<uuid>`) that deletes
-/// itself when the last reference goes, so no test leaves a plist in
-/// `~/Library/Preferences`. Hand it to whatever takes `defaults:`; the
-/// model holding it keeps it alive for as long as it is used.
+/// A `UserDefaults` suite of its own for one test, kept out of
+/// `~/Library/Preferences`. Its name is an absolute path in this test
+/// process's own temp folder, so cfprefsd writes it there as
+/// `<suite>.plist` instead of beside the user's real preferences. The
+/// plist goes when the last reference goes, and the folder when the
+/// process exits. Hand it to whatever takes `defaults:`; the model
+/// holding it keeps it alive for as long as it is used.
+///
+/// A named suite (`UserDefaults(suiteName: "x-uuid")`) can't be cleaned up
+/// reliably: `removePersistentDomain(forName:)` leaves an empty plist, and
+/// cfprefsd can write a deleted file back seconds later.
 final class TestDefaults: UserDefaults, @unchecked Sendable {
     let suite: String
 
     init(_ prefix: String = "quiver-test") {
-        suite = "\(prefix)-\(UUID().uuidString)"
+        suite = Self.folder.appending(path: "\(prefix)-\(UUID().uuidString)").path
         super.init(suiteName: suite)!
     }
 
-    deinit {
-        // Flush what the suite wrote, then delete its file. Emptying the
-        // domain (removePersistentDomain) instead makes cfprefsd write an
-        // empty plist back some time later, which outlives the test.
-        CFPreferencesAppSynchronize(suite as CFString)
-        try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Preferences/\(suite).plist"))
-    }
+    deinit { try? FileManager.default.removeItem(atPath: suite + ".plist") }
+
+    /// One folder per test process, removed when it exits; anything
+    /// cfprefsd writes later lands in the temp folder, never in Preferences.
+    static let folder: URL = {
+        let folder = FileManager.default.temporaryDirectory
+            .appending(path: "quiver-test-defaults-\(getpid())", directoryHint: .isDirectory)
+        atexit { try? FileManager.default.removeItem(at: TestDefaults.folder) }
+        return folder
+    }()
 }
 
 extension APIKeysModel {

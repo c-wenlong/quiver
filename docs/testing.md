@@ -118,10 +118,12 @@ Tests use Swift Testing (`@Suite` / `@Test` / `#expect`). Conventions:
 - Temporary folders come from `TempDir` (`LedgerTestSupport.swift`), which
   removes itself; keep it alive (`withExtendedLifetime`) past any read that
   opens a file by path. A test that needs a `UserDefaults` suite takes a
-  `TestDefaults` (`TestSupport.swift`), which deletes its plist when the
-  last reference goes; `removePersistentDomain(forName:)` alone leaves an
-  empty plist in `~/Library/Preferences`. A model whose defaults point at
-  the real home (`APIKeysModel`'s shell and rc files) gets a temp one too.
+  `TestDefaults` (`TestSupport.swift`), whose plist lives in the test
+  process's temp folder. Never `UserDefaults(suiteName:)` with a plain
+  name: that writes `~/Library/Preferences`, and neither
+  `removePersistentDomain(forName:)` nor deleting the file reliably cleans
+  it up. A model whose defaults point at the real home (`APIKeysModel`'s
+  shell and rc files) gets a temp one too.
 - Fixtures and test data hold made-up figures and names: the repository
   is public.
 - A new dependency that sleeps or polls takes an injectable clock or a
