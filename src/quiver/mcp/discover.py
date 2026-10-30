@@ -16,6 +16,7 @@ from quiver.mcp.cli import (
     normalize_server,
     save_json,
 )
+from quiver.mcp import gateway
 from quiver.mcp.secrets import redact as redact_secrets
 from quiver.mcp.secrets import shield_credentials
 from quiver.paths import MCP_SOURCE_FILE
@@ -49,6 +50,13 @@ def _load_source_servers() -> dict:
     if not isinstance(servers, dict):
         return {}
     return {k: v for k, v in servers.items() if isinstance(v, dict)}
+
+
+def _gateway_settings() -> dict:
+    try:
+        return gateway.settings_of(load_json(MCP_SOURCE_FILE))
+    except CorruptConfigurationError:
+        return gateway.settings_of(None)
 
 
 def _unreadable_tools(mcp_tools) -> set[str]:
@@ -146,6 +154,7 @@ def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]
     registry = load_registry()
     mcp_tools = get_mcp_tools(registry)
     source = _load_source_servers()
+    settings = _gateway_settings()
     unreadable = _unreadable_tools(mcp_tools)
 
     by_name: dict[str, dict] = {}
@@ -174,9 +183,10 @@ def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]
         tools = tuple(sorted(meta["tools"]))
         if name not in source:
             status = "new"
-        elif source[name] != meta["server"]:
+        elif not gateway.matches_hub(name, source[name], meta["server"], settings):
             # Both sides are canonical and redacted by this point, so a
             # difference is a real edit rather than a formatting artefact.
+            # The gateway URL sync writes for a shared server is not one.
             status = "changed"
         else:
             status = "in_source"
@@ -274,6 +284,10 @@ def apply_mcp_findings(findings: list[McpFinding], prune: bool = False) -> Merge
         elif finding.status == "changed":
             shielded = _shielded(finding.server)
             if shielded is not None:
+                if (gateway.is_shared(servers.get(finding.name))
+                        and shielded.get("command") and not shielded.get("url")):
+                    # An edit to the command keeps the server shared.
+                    shielded = {**shielded, gateway.SHARED_KEY: True}
                 servers[finding.name] = shielded
                 updated.append(finding.name)
         elif finding.status == "orphaned":

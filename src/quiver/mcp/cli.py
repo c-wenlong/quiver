@@ -43,6 +43,7 @@ from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
 from quiver.mcp.inventory import server_inventory
+from quiver.mcp import gateway as gateway_defaults
 from quiver.flags import expand_value_flags
 from quiver.mcp.secrets import _SECRET_FLAG_RE
 from quiver.mcp.secrets import load_secrets
@@ -1358,6 +1359,10 @@ def _sync(args, report: dict | None):
                       f"Set it with: swe mcp secret set {var}")
             return 1
 
+    # Shared hub servers go out as the gateway's URL while it is on.
+    gateway = (gateway_defaults.settings_of(load_json(MCP_SOURCE_FILE))
+               if is_hub(source) else {"enabled": False, "port": 0})
+
     print(f"\n{c('green', f'Selected {len(selected)} server(s)')} from {c('cyan', source)}")
     if dry_run:
         print(f"{c('yellow', 'Dry-run mode: no files will be modified.')}\n")
@@ -1425,11 +1430,17 @@ def _sync(args, report: dict | None):
         unsupported: list[str] = []
         remote_ok = takes_remote(target)
 
+        via_gateway: list[str] = []
+
         for name in selected:
-            if not remote_ok and server_type(source_servers[name]) == "http":
+            server = source_servers[name]
+            if remote_ok and gateway_defaults.runs_on_gateway(server, gateway):
+                server = gateway_defaults.entry_for(name, gateway["port"])
+                via_gateway.append(name)
+            if not remote_ok and server_type(server) == "http":
                 unsupported.append(name)
                 continue
-            converted = convert_server_for_target(source_servers[name], source, target)
+            converted = convert_server_for_target(server, source, target)
             if name in target_servers:
                 if force or name in overwrite:
                     target_servers[name] = _merge_format_keys(
@@ -1466,7 +1477,8 @@ def _sync(args, report: dict | None):
         if report is not None:
             report["targets"].append({"name": target, "added": added,
                                       "updated": updated, "skipped": skipped,
-                                      "pruned": pruned, "unsupported": unsupported})
+                                      "pruned": pruned, "unsupported": unsupported,
+                                      "via_gateway": via_gateway})
 
         if (added or updated or pruned) and not dry_run:
             saver = get_tool_saver(target)
@@ -1487,6 +1499,10 @@ def _sync(args, report: dict | None):
             parts.append(
                 f"{len(pruned)} {'would prune' if dry_run else 'pruned'}{names}"
             )
+        if via_gateway and (added or updated):
+            on_gateway = [n for n in via_gateway if n in added or n in updated]
+            if on_gateway:
+                parts.append(f"{len(on_gateway)} through the gateway")
         if unsupported:
             parts.append(f"{len(unsupported)} remote left out ({', '.join(unsupported)}): "
                          f"{get_tool_config(target).get('label', target)} {LOCAL_ONLY_NOTE}")
@@ -2399,6 +2415,38 @@ MCP_HELP = {
 {c('bold', 'Examples')}
   swe mcp doctor
   swe mcp doctor --strict""",
+
+    "gateway": f"""\
+  {c('cyan', 'swe mcp gateway')}                     Show the gateway and its shared servers
+  {c('cyan', 'swe mcp gateway share <server...>')}    Run these hub servers once for every session
+  {c('cyan', 'swe mcp gateway unshare <server...>')}  Give each session its own copy again
+  {c('cyan', 'swe mcp gateway install')}             Run the gateway at login (macOS LaunchAgent)
+  {c('cyan', 'swe mcp gateway uninstall')}           Stop it; sync writes commands again
+  {c('cyan', 'swe mcp gateway serve')}               Run it in the foreground (what the agent runs)
+
+  Every harness session starts its own copy of each stdio server it is
+  configured with. The gateway starts each shared server once and serves
+  it at http://127.0.0.1:{gateway_defaults.DEFAULT_PORT}/mcp/<server>; once it is installed,
+  `swe mcp sync quiver ...` writes that URL for shared servers instead of
+  the command. Claude Desktop takes local servers only, so it keeps the
+  command.
+
+  Share only servers that keep no state per session (API clients such as
+  GitHub, Linear, Notion or search). A browser or REPL server would hand
+  every session the same page; share refuses those without --force.
+  The hub entry carries "shared": true; mcp.json's "gateway" key holds
+  the port.
+
+{c('bold', 'Flags')}
+  --port=<n>          install / serve: listen here (default {gateway_defaults.DEFAULT_PORT})
+  --force             share: share a server that looks stateful anyway
+  --json              status: print one JSON document
+
+{c('bold', 'Examples')}
+  swe mcp gateway share dv__github dv__linear sr__brave
+  swe mcp gateway install
+  swe mcp sync quiver --all --force
+  swe mcp gateway status --json""",
 }
 
 def cmd_help(args=None):
@@ -2423,6 +2471,7 @@ def cmd_help(args=None):
   {c('cyan', 'swe mcp remove')}       Remove a server from the hub or harnesses
   {c('cyan', 'swe mcp secret set')}   Store a ${{NAME}} value in the secrets file
   {c('cyan', 'swe mcp doctor')}       Deep diagnostics
+  {c('cyan', 'swe mcp gateway')}      Run shared servers once for every session
 
 {c('bold', 'Examples')}
   swe mcp list
@@ -2432,6 +2481,12 @@ def cmd_help(args=None):
   {c('dim', 'swe mcp <command> help   detailed help for one command')}
 """)
     return 0
+
+
+def cmd_gateway(args):
+    from quiver.mcp.gateway_commands import cmd_gateway as run
+
+    return run(args)
 
 
 def cmd_mcp_discover(args):
@@ -2453,6 +2508,7 @@ COMMANDS = {
     "remove": cmd_remove,
     "secret": cmd_secret,
     "doctor": cmd_doctor,
+    "gateway": cmd_gateway,
     "help": cmd_help,
 }
 
