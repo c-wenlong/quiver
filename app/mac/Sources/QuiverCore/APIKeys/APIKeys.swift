@@ -938,6 +938,10 @@ public final class APIKeysModel {
             saveChecks()
             return
         }
+        // The anchor names the key and endpoint this check is sent to.
+        // Taken after the await, it would read a base URL saved meanwhile
+        // and stamp this verdict as current for the new endpoint.
+        let anchor = checkAnchor(for: row)
         checking.insert(name)
         defer { checking.remove(name) }
         await slots.acquire()
@@ -945,7 +949,7 @@ public final class APIKeysModel {
         await slots.release()
         // A rename during the check must not publish under the old name.
         guard rows.contains(where: { $0.name == name }) else { return }
-        checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: checkAnchor(for: row),
+        checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: anchor,
                                    salt: checkSalt)
         saveChecks()
     }

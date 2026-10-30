@@ -733,7 +733,7 @@ struct RepoSurfaces: View {
                         ForEach(issue.labels.prefix(3), id: \.self) { Badge($0) }
                     }
                     Text("#\(issue.number) · \(issue.author)"
-                         + (issue.comments > 0 ? " · \(issue.comments) comments" : "")
+                         + (issue.comments > 0 ? " · \(RowWording.comments(issue.comments))" : "")
                          + (issue.updatedAt.date.map { " · \(UsageFormat.ago($0, now: .now))" } ?? ""))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .lineLimit(1).truncationMode(.middle)
@@ -772,7 +772,7 @@ struct RepoSurfaces: View {
                     preview: preview, edge: expandEdge,
                     window: window(for: .actions, rows: count(state))) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
-                RunIcon(status: run.status, conclusion: run.conclusion)
+                RunIcon(run: run)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(run.title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).truncationMode(.tail)
@@ -785,11 +785,11 @@ struct RepoSurfaces: View {
                 if model.actionBusy.contains("rerun:\(repo)#\(run.id)") {
                     ProgressView().controlSize(.small)
                 } else if let conclusion = run.conclusion {
-                    Badge(conclusion == "success" ? "Passed" : conclusion.capitalized)
+                    Badge(RowWording.conclusion(conclusion))
                 }
             }
             .contextMenu {
-                if run.conclusion == "failure" {
+                if run.failed {
                     Button("Re-run failed jobs") {
                         Task { await model.rerunRun(repo: repo, run: run.id,
                                                     failedOnly: true, swe: app.swe) }
@@ -1439,34 +1439,45 @@ struct PrStateIcons: View {
     }
 }
 
+/// How a board row words GitHub's counts and run conclusions.
+enum RowWording {
+    static func comments(_ count: Int) -> String {
+        "\(count) comment\(count == 1 ? "" : "s")"
+    }
+
+    /// `success` reads "Passed"; the rest in sentence case, so
+    /// `timed_out` reads "Timed out" rather than "Timed_out".
+    static func conclusion(_ conclusion: String) -> String {
+        if conclusion == "success" { return "Passed" }
+        let words = conclusion.replacingOccurrences(of: "_", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
+    }
+}
+
 /// A workflow run's status: running marks spin yellow, finished runs
-/// take their conclusion's colour.
+/// take their conclusion's colour. Failing is `GhRun.failed`, the same
+/// test the rail's dot and the search use, so a timed-out run reads red
+/// here too.
 private struct RunIcon: View {
-    var status: String?
-    var conclusion: String?
-    private var running: Bool { status == "in_progress" || status == "queued" }
+    var run: GhRun
     var body: some View {
         Image(systemName: symbol).font(Theme.font(size: 15)).foregroundStyle(color)
-            .symbolEffect(.rotate, options: .repeating, isActive: running)
+            .symbolEffect(.rotate, options: .repeating, isActive: run.running)
     }
     private var symbol: String {
-        if running { return "arrow.triangle.2.circlepath" }
-        switch conclusion {
+        if run.running { return "arrow.triangle.2.circlepath" }
+        if run.failed { return "xmark.circle.fill" }
+        switch run.conclusion {
         case "success": return "checkmark.circle.fill"
-        case "failure": return "xmark.circle.fill"
         case "cancelled": return "slash.circle"
         case "skipped": return "minus.circle"
         default: return "questionmark.circle"
         }
     }
     private var color: Color {
-        if status == "in_progress" || status == "queued" { return Theme.warning }
-        return switch conclusion {
-        case "success": Theme.success
-        case "failure": Theme.danger
-        case "cancelled", "skipped": Theme.textMuted
-        default: Theme.textMuted
-        }
+        if run.running { return Theme.warning }
+        if run.failed { return Theme.danger }
+        return run.conclusion == "success" ? Theme.success : Theme.textMuted
     }
 }
 
