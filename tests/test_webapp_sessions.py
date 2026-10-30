@@ -219,6 +219,24 @@ class TestLedgerCoverage(unittest.TestCase):
         (proj / "abc.settings.json").write_text("{}")
         self.assertTrue(self._build(home, "droid", "abc")["trivial"])
 
+    def test_droid_folders_are_listed_once_per_build(self):
+        # A glob per Droid row walked every project folder each time.
+        home = Path(tempfile.mkdtemp())
+        proj = home / ".factory" / "sessions" / "proj"
+        proj.mkdir(parents=True)
+        for sid in ("a", "b", "c"):
+            (proj / f"{sid}.settings.json").write_text("{}")
+        rows = [{"key": f"droid:{sid}", "id": sid, "harness": "droid",
+                 "machine_id": "hub", "cwd": "/w", "last_active_at": 1}
+                for sid in ("a", "b", "c", "gone")]
+        real = Path.glob
+        with patch.object(Path, "glob", autospec=True,
+                          side_effect=lambda self, pat: real(self, pat)) as walk:
+            built = sessions.build(rows, {}, "hub", {}, scanned=True, home=home)
+        self.assertEqual(walk.call_count, 1)
+        self.assertEqual({r["id"]: r["trivial"] for r in built},
+                         {"a": True, "b": True, "c": True, "gone": False})
+
     def test_pi_rows_are_covered_by_definition(self):
         home = Path(tempfile.mkdtemp())
         self.assertTrue(self._build(home, "pi", "anything")["trivial"])
