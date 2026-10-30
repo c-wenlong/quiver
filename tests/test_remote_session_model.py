@@ -245,7 +245,9 @@ class TestReadOnlyOpen(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from quiver.remote import session_model, tail
-        folder = Path(tempfile.mkdtemp()) / "odd?name#1 %2"
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        folder = Path(tmp.name) / "odd?name#1 %2"
         folder.mkdir()
         db = folder / "x.db"
         conn = sqlite3.connect(db)
