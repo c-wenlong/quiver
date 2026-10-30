@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iOS app: the overview's top models, quick figures, heatmap and
+  daily table, over all seven periods.** The Usage tab's Spend half
+  now offers This month, 90 days, 365 days and All time beside Today,
+  7 and 30 days, in a chip row that scrolls sideways. Under the
+  harness split it shows the Mac's active days, tokens a day and
+  busiest day, the top five models with the harnesses that ran them
+  and their share, an activity heatmap with as many recent weeks as
+  the phone fits (tap a day for its tokens and cost), and the daily
+  table (date, total, input, output, cached, spend), newest ten days
+  first, then 30 more a tap. All of it comes from the `GET /v1/app/overview`
+  payload the tab already read. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **iOS app: answer an approval with the pane's own menu rows.** When
+  the hub reads the agent's numbered menu ("1. Approve once", "2.
+  Always allow in this project", ...), the chat's approval card lists
+  those rows as its answers, as the web app does, so a row the Allow,
+  Always and Deny buttons can't name is still reachable. The row's
+  number goes to the hub as the decision, and the answered card names
+  the row it picked. Approvals without menu rows (older hubs,
+  non-tmux sessions) keep Allow, Always and Deny. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
+- **Web app: pin, rename and fork sessions.** Each Sessions row has a
+  More actions button (and a right-click menu) with the iPhone's
+  swipe-left actions: Pin or Unpin, Rename, and Fork where the harness
+  can fork. Pinned rows lead the list in a Pinned group, in the order
+  they were pinned, whatever the time filter. Rename follows the hub's
+  rules (one line, 120 characters) and offers the harness's own name
+  back; Fork takes a first message and opens the new chat once the hub
+  names it. The chat's header has the same menu, and a rename made on
+  another device shows there live
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 - **Mac app: Needs you on the Inbox page.** Above the GitHub
   notifications, the Inbox now lists the sessions this Mac's hub says
   wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the
@@ -718,6 +751,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Revoking a device paired through a tailnet request revokes its node
   too. The owner's other devices keep working
   ([#966](https://github.com/c-wenlong/quiver/issues/966)).
+
+- **Mac app: the fan helper is checked against Quiver's own signature
+  before it runs as root.** The one-time install copied
+  `Quiver.app/Contents/MacOS/QuiverFanHelper` to
+  `/Library/PrivilegedHelperTools` and only checked that the copy
+  matched a hash taken before the password prompt. The bundle is
+  user-writable, so anything running as the user could patch the helper
+  beforehand and have it run as root once the user typed their password.
+  A build signed by a team (Developer ID, or the Apple Development
+  identity dev builds pick up) now has the root script verify the
+  root-owned copy with `codesign --verify --strict` against
+  `identifier "QuiverFanHelper"` and that team, and deletes it and stops
+  otherwise. Ad-hoc builds have no signature to check against and keep
+  the hash check alone. Installed helpers are not reinstalled, so nobody
+  is asked for their password again
+  ([#967](https://github.com/c-wenlong/quiver/issues/967)).
 
 - **Remote: a local process can no longer claim the owner's tailnet
   identity.** Behind `tailscale serve` the hub read the client from

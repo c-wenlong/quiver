@@ -9,8 +9,6 @@ public enum JSONTextEdit {
     public enum Failure: Error, Equatable {
         /// The text is not a single JSON object.
         case notJSONObject
-        /// A key the path names holds a value that is not a JSON object.
-        case notAnObject(String)
         /// The new value is not a JSON type.
         case notJSONValue
     }

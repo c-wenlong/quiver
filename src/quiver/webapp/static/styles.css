@@ -267,6 +267,20 @@ select.field { flex: 0 1 auto; max-width: 240px; border-radius: var(--select-rad
   border-radius: 6px; font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
 .row-act:hover { background: var(--tab-hover); }
 .row-act[disabled] { opacity: .55; cursor: default; }
+.session-acts { gap: 4px; align-items: center; }
+.row-more { width: 26px; height: 24px; flex: none; display: grid; place-items: center; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-secondary); cursor: pointer; padding: 0; }
+.row-more svg { width: 16px; height: 16px; }
+.row-more:hover, .row-more[aria-expanded="true"] { background: var(--tab-hover); color: var(--text-primary); }
+/* The row's Pin / Rename / Fork menu (sessions.js openSessionMenu). */
+.row-menu { position: fixed; z-index: 30; min-width: 150px; display: flex; flex-direction: column; padding: 4px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.2); }
+.row-menu-item { border: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 13px;
+  text-align: left; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.row-menu-item:hover, .row-menu-item:focus-visible { background: var(--hover); outline: none; }
+/* The rename and fork sheets: paragraphs sit on the sheet's own gap. */
+.action-sheet p { margin: 0; }
+.rename-label { display: flex; justify-content: space-between; margin-bottom: -8px; }
 .detach-choices { flex-direction: column; align-items: stretch; }
 .detach-choices .tab { text-align: left; }
 .detach-danger { color: var(--danger-text); }
