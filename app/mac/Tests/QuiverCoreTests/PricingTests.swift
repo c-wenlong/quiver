@@ -778,9 +778,9 @@ extension PricingModelTests {
         func arm() { armed.withLock { $0 = true } }
         /// Disarms and says whether it was armed, in one step.
         func takeArmed() -> Bool {
-            armed.withLock {
-                defer { $0 = false }
-                return $0
+            armed.withLock { isArmed in
+                defer { isArmed = false }
+                return isArmed
             }
         }
     }

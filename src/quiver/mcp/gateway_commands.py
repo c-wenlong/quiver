@@ -145,7 +145,10 @@ def _install(args: list[str]) -> int:
         return 1
     log_path = gw.log_dir_for() / "gateway.log"
     try:
-        path = launchd.install(program, log_path, os.environ.get("PATH", ""), label=LABEL)
+        # Interactive: harness sessions wait on every answer, and macOS
+        # throttles a Background job (a 6 MB tool list went 1.3 s to 6.9 s).
+        path = launchd.install(program, log_path, os.environ.get("PATH", ""), label=LABEL,
+                               process_type="Interactive")
     except RuntimeError as exc:
         print(c("red", f"launchctl could not load the gateway: {exc}"), file=sys.stderr)
         return 1
