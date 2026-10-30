@@ -157,8 +157,12 @@ APPROVAL_TTL_S = 86400
 # Event types a satellite may journal via /v1/agent/events:
 # protocol.EVENT_TYPES plus the two agent→hub bookkeeping types the
 # phone never sends. Anything else is dropped, not journaled.
+# ``compaction`` left EVENT_TYPES (nothing ever emitted it; compactions
+# are ``message.appended`` with that kind) but an older satellite's
+# build still lists it, so the hub keeps taking it rather than start
+# refusing a type it used to accept.
 _SAT_EVENT_TYPES = protocol.EVENT_TYPES | {
-    "session.launched", "command.result",
+    "session.launched", "command.result", "compaction",
 }
 
 # Per-type ``data.kind`` vocabularies for the events that carry one.

@@ -671,6 +671,21 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(events[0]["machine"], self.mid)
         self.assertEqual(events[0]["data"]["text"], "hi from satellite")
 
+    def test_events_uplink_still_takes_legacy_compaction(self):
+        # compaction left protocol.EVENT_TYPES (nothing emits it), but
+        # the hub keeps accepting it from an older satellite.
+        self.assertNotIn("compaction", protocol.EVENT_TYPES)
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": self.mid, "events": [
+                protocol.event("compaction", "claude:r1", self.mid, {}),
+            ]},
+            headers=self.srv.sat_auth)
+        self.assertEqual(status, 200)
+        events, _ = self.srv.state.journal.read_since(
+            "claude:r1@sat-m1", 0)
+        self.assertEqual([e["type"] for e in events], ["compaction"])
+
     def test_message_routes_to_command_journal(self):
         self._push_catalog([{
             "key": "claude:r1", "title": "r", "status": "idle",
