@@ -10,6 +10,7 @@ import SwiftUI
 struct PullDetailView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
+    @Environment(\.dynamicTypeSize) private var size
     let repo: String
     let number: Int
     /// The tab pushes the new session's chat once a launch lands.
@@ -290,6 +291,13 @@ struct PullDetailView: View {
         }
     }
 
+    @ViewBuilder private func checkName(_ run: CheckRun) -> some View {
+        Text(run.name ?? "check").font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(1, larger: 3)
+        if let workflow = run.workflow, !workflow.isEmpty {
+            Text(workflow).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1, larger: 2)
+        }
+    }
+
     /// A check row's ⋯ menu: Re-run failed jobs (a run with a failing
     /// check only) and Re-run all jobs. The run spins while it's asked.
     private func rerunMenu(_ run: Int, name: String, checks: [CheckRun]) -> some View {
@@ -334,9 +342,13 @@ struct PullDetailView: View {
                 let runId = PullActions.runId(run.url, repo: repo)
                 let row = HStack(spacing: 12) {
                     ChecksGlyph(state: run.state)
-                    Text(run.name ?? "check").font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    if let workflow = run.workflow, !workflow.isEmpty {
-                        Text(workflow).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
+                    // Above the default size the workflow goes under the
+                    // name, which gets more lines: beside each other they
+                    // cut "test (3.11, shard 1)" to "test (".
+                    if size > .large {
+                        VStack(alignment: .leading, spacing: 2) { checkName(run) }
+                    } else {
+                        checkName(run)
                     }
                     Spacer(minLength: 8)
                     if run.url != nil {

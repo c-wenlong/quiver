@@ -18,11 +18,16 @@ final class LargeTextLayoutTests: XCTestCase {
     }
 
     func testFlowLayoutGivesAnOverlongViewTheLine() {
-        let flow = FlowLayout {
+        let sentence = Text("A sentence far too long to fit on one line of this width").font(Theme.caption)
+        let flow = FlowLayout(spacing: 6, lineSpacing: 6) {
             Color.black.frame(width: 30, height: 10)
-            Text("A sentence far too long to fit on one line of this width").font(Theme.caption)
+            sentence
         }
-        XCTAssertEqual(size(flow.frame(width: 100, alignment: .leading)).width, 100)
+        // The sentence gets a line of its own, 100pt wide, and wraps in it.
+        let wrapped = size(sentence.frame(width: 100, alignment: .leading).fixedSize(horizontal: false, vertical: true))
+        XCTAssertGreaterThan(wrapped.height, size(sentence.fixedSize()).height)
+        XCTAssertEqual(size(flow.frame(width: 100, alignment: .leading).fixedSize(horizontal: false, vertical: true)),
+                       CGSize(width: 100, height: 10 + 6 + wrapped.height))
     }
 
     func testRowsAreUnchangedAtTheDefaultSizeAndWrapAbove() {

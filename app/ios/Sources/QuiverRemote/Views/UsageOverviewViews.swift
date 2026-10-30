@@ -72,13 +72,20 @@ struct QuickFiguresCard: View {
                 .background(Theme.subtle, in: .circle)
             if size.isAccessibilitySize {
                 // No room beside the name for the share: the name wraps,
-                // and the logos and share go on the line under it.
+                // and the logos and share go on the line under it, or on a
+                // line each when several logos leave the share no room.
                 VStack(alignment: .leading, spacing: 4) {
                     modelName(model.model, lines: 3)
-                    HStack(spacing: 8) {
-                        harnessLogos(marks)
-                        Spacer(minLength: 8)
-                        share(model.share)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            harnessLogos(marks)
+                            Spacer(minLength: 8)
+                            share(model.share)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            harnessLogos(marks)
+                            share(model.share)
+                        }
                     }
                 }
             } else {
