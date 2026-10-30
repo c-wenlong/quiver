@@ -32,6 +32,8 @@ class _Proxied(unittest.TestCase):
         self.srv = _Server(sessions=[])
         self.addCleanup(self.srv.stop)
         self.srv.state.trust_proxy = self.trust
+        # The test client stands in for tailscale serve's connection.
+        self.srv.state.proxy_peer = lambda server, peer: True
         self.seen: list[str] = []
 
         def whois(ip):
