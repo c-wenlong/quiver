@@ -787,6 +787,16 @@ private struct SessionRail: View {
 // MARK: - Detail
 
 struct SessionDetail: View {
+    /// The resume argv as a line a shell runs as is: a word with a space,
+    /// quote or other shell character is single-quoted, plain words stay
+    /// bare so the line still reads like a command.
+    static func shellLine(_ argv: [String]) -> String {
+        argv.map { word in
+            !word.isEmpty && word.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "@%_+=:,./-".contains($0)) })
+                ? word : LaunchPlanner.shellQuote(word)
+        }.joined(separator: " ")
+    }
+
     /// The widest a value can be: the 640 pt sheet less its padding and
     /// the label column.
     static let valueWidth: CGFloat = 460
@@ -858,7 +868,7 @@ struct SessionDetail: View {
             if let command = s.resume {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Resume command").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    Text(command.argv.joined(separator: " "))
+                    Text(Self.shellLine(command.argv))
                         .font(Theme.font(size: 12, design: .monospaced))
                         .textSelection(.enabled)
                         .padding(10)
