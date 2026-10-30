@@ -142,13 +142,23 @@ enum UsageFormat {
     /// "$0.42", "$12.30", "$5,432": cents below $1,000, whole dollars above.
     static func usd(_ value: Double?) -> String {
         let v = value ?? 0
+        let f = abs(v) >= 1000 ? usdWhole : usdCents
+        return f.string(from: NSNumber(value: v)) ?? "$\(v)"
+    }
+
+    /// Built once: every spend row formats a figure, and a formatter is
+    /// costly to make. Never changed after this, so safe to share.
+    private static let usdCents = usdFormatter(fractionDigits: 2)
+    private static let usdWhole = usdFormatter(fractionDigits: 0)
+
+    private static func usdFormatter(fractionDigits: Int) -> NumberFormatter {
         let f = NumberFormatter()
         f.locale = Locale(identifier: "en_US")
         f.numberStyle = .currency
         f.currencyCode = "USD"
-        f.maximumFractionDigits = abs(v) >= 1000 ? 0 : 2
-        f.minimumFractionDigits = abs(v) >= 1000 ? 0 : 2
-        return f.string(from: NSNumber(value: v)) ?? "$\(v)"
+        f.maximumFractionDigits = fractionDigits
+        f.minimumFractionDigits = fractionDigits
+        return f
     }
 
     /// "$800", "$1.2K" for a chart axis.
