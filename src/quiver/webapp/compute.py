@@ -73,7 +73,6 @@ _COMPONENT_BY_SENSOR = {
     "nvme": "ssd", "drivetemp": "ssd",
     "battery": "battery",
 }
-COMPONENTS = ("cpu", "gpu", "memory", "ssd", "battery", "airflow", "display")
 # FanSummary.upMargin: 15% over its minimum counts as a fan running up.
 FAN_UP_MARGIN = 0.15
 
