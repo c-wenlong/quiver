@@ -147,11 +147,17 @@ process.stdout.write(JSON.stringify({ errors, pages: Object.keys(PAGES).sort() }
         self.assertEqual(done.returncode, 0, done.stderr)
         out = json.loads(done.stdout)
         self.assertEqual(out["errors"], [])
-        expected = set()
+        # The pages the app ships, named here so a page that stops calling
+        # registerPage (or renames itself) fails too, not only one that
+        # calls it and breaks.
+        shipped = {"agents", "calendar", "compute", "doctor", "hooks", "inbox", "mcp", "models", "plugins",
+                   "pricing", "repositories", "settings", "setup", "skills", "status", "tasks"}
+        self.assertLessEqual(shipped, set(out["pages"]))
+        # And any page added since registers as well.
+        declared = set()
         for path in (self.STATIC / "pages").glob("*.js"):
-            expected |= set(re.findall(r'registerPage\("(\w+)"', path.read_text(encoding="utf-8")))
-        self.assertTrue(expected)
-        self.assertLessEqual(expected, set(out["pages"]))
+            declared |= set(re.findall(r'registerPage\("(\w+)"', path.read_text(encoding="utf-8")))
+        self.assertLessEqual(declared, set(out["pages"]))
 
 
 class TestStylesheets(unittest.TestCase):
