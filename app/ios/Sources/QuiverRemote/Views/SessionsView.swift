@@ -397,9 +397,9 @@ private struct ChipCapsule: ViewModifier {
     }
 }
 
-/// What a tab's navigation stack can push. `pull` only ever appears on
-/// the Pull requests stack, `issue` on the Issues stack, `task` on the
-/// Tasks stack — which can also push all three from its detail page.
+/// What a tab's navigation stack can push. `pull` and `issue` appear on
+/// the GitHub stack, `task` on the Tasks stack, which can also push the
+/// other three from its detail page; every stack can push a chat.
 enum Route: Hashable {
     case chat(String), pull(repo: String, number: Int),
          issue(repo: String, number: Int), task(String)
