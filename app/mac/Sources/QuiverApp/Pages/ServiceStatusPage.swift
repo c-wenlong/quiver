@@ -435,7 +435,7 @@ private struct ServiceCard: View {
                 .labelStyle(.iconOnly)
                 .plainButton(cornerRadius: Theme.smallRadius)
                 .foregroundStyle(Theme.textSecondary)
-                .help(status.service.pageURL.absoluteString)
+                .hoverTip(status.service.pageURL.absoluteString, replacesLabel: false)
             EllipsisMenu {
                 Button("Edit…", action: edit)
                 if let reset {
