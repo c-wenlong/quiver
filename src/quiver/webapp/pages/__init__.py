@@ -19,6 +19,7 @@ moment its script registers. See docs/web-app.md, "Adding a page".
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import re
 import threading
@@ -81,6 +82,44 @@ def _js_string(text: str) -> str:
                .replace("\n", "\\n").replace("\r", "\\r")
                .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
     return f"'{escaped}'"
+
+
+# The last bundle built per suffix: ``suffix -> (stamp, body, etag)``,
+# the stamp each file's name, mtime and size, so a request that changes
+# nothing costs a stat per file instead of reading and escaping them all.
+_BUNDLES: dict[str, tuple[tuple, bytes, str]] = {}
+_BUNDLES_LOCK = threading.Lock()
+
+
+def bundled(suffix: str) -> tuple[bytes, str]:
+    """``(bundle(suffix), etag)``, rebuilt only when a file changed. The
+    ETag lets the browser revalidate with a 304 instead of a download."""
+    try:
+        stamp = tuple((p.name, st.st_mtime_ns, st.st_size)
+                      for p in sorted(STATIC.glob(f"*{suffix}"))
+                      for st in (p.stat(),))
+    except OSError:
+        stamp = None  # a file moved mid-listing: build without caching
+    # The build runs under the lock too: two requests after a change
+    # wait for one build instead of both reading every page script.
+    with _BUNDLES_LOCK:
+        hit = _BUNDLES.get(suffix)
+        if stamp is not None and hit is not None and hit[0] == stamp:
+            return hit[1], hit[2]
+        body = bundle(suffix)
+        etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
+        if stamp is not None:
+            _BUNDLES[suffix] = (stamp, body, etag)
+        return body, etag
+
+
+def etag_matches(header: str | None, etag: str) -> bool:
+    """``If-None-Match`` against ``etag`` by weak comparison, as a GET
+    takes it: a list, ``W/`` tags and ``*`` all count."""
+    if not header:
+        return False
+    tags = [t.strip() for t in header.split(",")]
+    return "*" in tags or any(t.removeprefix("W/") == etag for t in tags)
 
 
 def bundle(suffix: str) -> bytes:
