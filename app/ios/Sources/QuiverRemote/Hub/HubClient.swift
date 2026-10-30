@@ -171,8 +171,6 @@ struct HubClient: Sendable {
 
     // MARK: Routes
 
-    func status() async throws -> JSONValue { try await send(request("GET", "/v1/status")) }
-
     func sessions() async throws -> SessionsResponse { try await send(request("GET", "/v1/sessions")) }
 
     /// `GET /v1/inbox`: this device's undismissed pending rows — the

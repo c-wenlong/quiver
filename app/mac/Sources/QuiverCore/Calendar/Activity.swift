@@ -111,9 +111,9 @@ extension Ledger {
         guard !sessions.isEmpty, trivialGate.withLock({ $0 }) else { return sessions }
         struct Key: Hashable { var account, session: String }
         var usage: [Key: SessionUsage] = [:]
-        for row in bySession(in: DateInterval(start: Date(timeIntervalSince1970: 0),
-                                              end: .distantFuture),
-                             harness: harness) {
+        for row in sessionUsage(in: DateInterval(start: Date(timeIntervalSince1970: 0),
+                                                 end: .distantFuture),
+                                harness: harness) {
             let key = Key(account: row.accountHome, session: row.sessionId)
             if var existing = usage[key] {
                 existing.totals.add(row.totals)

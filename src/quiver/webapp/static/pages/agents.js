@@ -75,7 +75,7 @@ async function renderAgents() {
   const [global, project] = await Promise.all(loads);
   if (gen !== routeGen) return;
   if (global.status === 401 || (project && project.status === 401)) {
-    return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return renderGate();
   }
   // A failed check (an unreadable .linkignore, say) stays on the Global
   // tab; the Project tab reads its folder all the same.
@@ -88,8 +88,7 @@ async function renderAgents() {
 }
 
 function agentsErrorText({ status, data }) {
-  return (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+  return failText(status, data, "then refresh");
 }
 
 function agentsTakeProject({ status, data }) {
@@ -203,7 +202,7 @@ async function agentsRun(action) {
   // to it shows the result rather than a button still spinning.
   const here = onAgentsPage();
   if (status === 401) {
-    if (here) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (here) renderGate();
     return;
   }
   if (status === 200 && data) {
@@ -222,7 +221,7 @@ async function agentsRun(action) {
 }
 
 function onAgentsPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "agents";
+  return currentRoute() === "agents";
 }
 
 function agentsLinkRow(h, home) {
@@ -277,7 +276,7 @@ async function agentsOpenFolder(value) {
   if (!folder) return;
   const reply = await api(`/v1/app/agents?folder=${encodeURIComponent(folder)}`);
   if (gen !== routeGen || mine !== p.projectSeq) return;
-  if (reply.status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (reply.status === 401) return renderGate();
   agentsTakeProject(reply);
   paintAgents(false);
 }

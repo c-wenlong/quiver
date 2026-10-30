@@ -132,7 +132,8 @@ final class ChatModel {
         return app.client
     }
     private var seen = Set<Int>()
-    private var cursor = 0
+    /// The seq the next stream resumes after.
+    private(set) var cursor = 0
     /// Tool call id to the id of its card (ids, not positions: removing a
     /// send bubble would shift positions under a result still to come).
     private var toolCards: [String: String] = [:]
@@ -278,7 +279,12 @@ final class ChatModel {
                 case .connected: self.live = true
                 case .disconnected: self.live = false
                 case .unauthorized: self.app?.unpair(from: client); return
-                case .truncated:
+                case .gone(let error):
+                    self.live = false
+                    self.items.append(ChatItem(id: UUID().uuidString, kind: .system(error.message)))
+                    return
+                case .truncated(let head):
+                    self.adoptJournalHead(head)
                     self.dropPending()
                     await self.backfill(client)
                 case .event(let env): self.enqueue(env)
@@ -434,7 +440,7 @@ final class ChatModel {
             }
             loadError = nil
         } catch {
-            loadError = (error as? HubError)?.message ?? error.localizedDescription
+            loadError = error.localizedDescription
         }
         // The newest page held nothing to show (only results of older
         // calls): fetch back until something does, rather than "No
@@ -463,14 +469,17 @@ final class ChatModel {
             }
             // A backfill (stream truncated) replaced the history meanwhile.
             guard nextBefore == before else { return false }
-            if prepend(body) { return true }
+            if prepend(body, askedBefore: before) { return true }
         }
         return false
     }
 
     /// Puts an older page in front of what's loaded; returns whether it
-    /// added anything to show.
-    func prepend(_ body: MessagesResponse) -> Bool {
+    /// added anything to show. `askedBefore` is the cursor the page was
+    /// asked with: a page that claims more history but whose cursor
+    /// didn't move back past it would be asked for again forever, so
+    /// history counts as ended there (the Mac's twin, #1177).
+    func prepend(_ body: MessagesResponse, askedBefore: Int? = nil) -> Bool {
         var older: [ChatItem] = []
         var cards: [String: String] = [:]
         for env in body.messages where env.type == "message.appended" {
@@ -484,10 +493,24 @@ final class ChatModel {
         items.insert(contentsOf: older, at: 0)
         hasEarlier = body.hasMore ?? false
         nextBefore = body.nextBefore ?? body.messages.first?.seq
+        if let askedBefore, hasEarlier, (nextBefore ?? askedBefore) >= askedBefore { hasEarlier = false }
         return !older.isEmpty
     }
 
     // MARK: Events
+
+    /// A `journal.truncated` names where to resume: the journal's head
+    /// after a wipe, or this chat's own cursor when the ring overflowed.
+    /// It wins even below the cursor. A lower head means the journal
+    /// numbers from the start again, so the seqs already seen belong to
+    /// the old journal and must not drop new messages that reuse them,
+    /// even if the backfill that follows fails (the next start retries
+    /// it, as for any failed load).
+    func adoptJournalHead(_ head: Int?) {
+        guard let head else { return }
+        if head < cursor { seen = [] }
+        cursor = head
+    }
 
     func apply(_ env: Envelope) {
         if let seq = env.seq {
@@ -1155,17 +1178,17 @@ final class ChatModel {
     private(set) var attachQueued = false
     private(set) var attachError: String?
 
+    /// Through `AppModel.attach`, as the list's swipe does: an answer
+    /// from a hub the phone has since left is dropped, and the attach
+    /// cancels a `when_idle` detach still waiting on the turn.
     func attach() async {
-        guard let client = hubClient else { return }
+        // hubClient is nil once the chat's hub is no longer on screen.
+        guard let app, hubClient != nil else { return }
         attaching = true
         attachError = nil
         defer { attaching = false }
         do {
-            if try await client.control(key, op: "attach") {
-                attachQueued = true
-            } else {
-                app?.patch(key, ownership: "attached")
-            }
+            if try await app.attach(key) { attachQueued = true }
         } catch {
             attachError = (error as? HubError)?.message ?? "Attach failed"
         }

@@ -106,10 +106,14 @@ public struct AccountDirectory: Sendable {
 public enum UsageFormat {
     public static func tokens(_ count: Int) -> String {
         let value = Double(count)
-        for (limit, suffix) in [(1e9, "B"), (1e6, "M"), (1e3, "K")] where value >= limit {
-            return compact(value / limit) + suffix
+        let units: [(limit: Double, suffix: String)] = [(1e3, "K"), (1e6, "M"), (1e9, "B")]
+        guard var unit = units.lastIndex(where: { value >= $0.limit }) else { return String(count) }
+        // The unit after rounding: 999,950 rounds to 1000K, which reads
+        // as 1M.
+        while unit + 1 < units.count, ((value / units[unit].limit) * 10).rounded() / 10 >= 1000 {
+            unit += 1
         }
-        return String(count)
+        return compact(value / units[unit].limit) + units[unit].suffix
     }
 
     public static func dollars(_ amount: Double) -> String {
