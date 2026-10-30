@@ -107,6 +107,21 @@ const Fmt = (() => {
     };
   }
 
+  /* Foundation's .relative(presentation: .named), as Settings' devices and
+   * Service status show times: "now", "5 minutes ago", "yesterday". Every
+   * time shown this way is past; a hub clock a little ahead of this
+   * browser's must not read "in 2 minutes". */
+  function relative(epoch, now = Date.now() / 1000) {
+    const diff = Math.min(0, epoch - now);
+    const abs = Math.abs(diff);
+    const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
+    for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["week", 604800],
+      ["day", 86400], ["hour", 3600], ["minute", 60]]) {
+      if (abs >= size) return rtf.format(Math.trunc(diff / size), unit);
+    }
+    return abs < 1 ? "now" : rtf.format(Math.trunc(diff), "second");
+  }
+
   /* UsageFormat.resetIn: "in 12m", "in 4h 28m", "in 25d"; minutes round up. */
   function resetIn(epoch, now = Date.now() / 1000) {
     const seconds = epoch - now;
@@ -220,7 +235,7 @@ const Fmt = (() => {
   const shellWord = (s) => (/^[\w@%+=:,./-]+$/.test(String(s)) ? String(s)
     : `'${String(s).replace(/'/g, "'\\''")}'`);
 
-  return { tokens, dollars, ago, harnessName, harnessColor, logo, marbleScale,
+  return { tokens, dollars, ago, relative, harnessName, harnessColor, logo, marbleScale,
     resetIn, windowLabel, planTitle, money, balance, onDemand,
     copyIcon, copy, copyTick, shellWord };
 })();
