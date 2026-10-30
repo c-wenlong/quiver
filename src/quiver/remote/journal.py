@@ -259,15 +259,23 @@ class Journal:
             with fh:
                 try:
                     pos = fh.seek(0, os.SEEK_END)
-                    rest = b""
+                    # The line the walk is inside, as the chunks read so
+                    # far (later bytes first). Joined once its start is
+                    # found, so a large event is copied once, not per
+                    # chunk.
+                    parts: list[bytes] = []
                     while pos > 0 and len(out) < limit:
                         step = min(_TAIL_CHUNK, pos)
                         pos -= step
                         fh.seek(pos)
-                        lines = (fh.read(step) + rest).split(b"\n")
+                        chunk = fh.read(step)
+                        if pos > 0 and b"\n" not in chunk:
+                            parts.append(chunk)
+                            continue
+                        lines = (chunk + b"".join(reversed(parts))).split(b"\n")
                         # Until the read reaches the file's start, its
                         # first line may begin in the next chunk back.
-                        rest = lines.pop(0) if pos > 0 else b""
+                        parts = [lines.pop(0)] if pos > 0 else []
                         for raw in reversed(lines):
                             rec = _parse_line(raw)
                             if rec is None:
