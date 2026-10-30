@@ -129,8 +129,11 @@ struct DevicesView: View {
                             .background(Theme.subtle, in: .capsule)
                     }
                 }
+                // Two lines: on one, a phone's OS and client used the
+                // width and "last seen" was cut to "last seen 1…".
                 Text(detail(of: device))
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             if device.revoked == true {

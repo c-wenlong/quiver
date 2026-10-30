@@ -18,6 +18,7 @@ that still has one can be migrated by ``swe init --migrate``.
 """
 
 import contextlib
+import json
 import os
 from pathlib import Path
 
@@ -399,6 +400,23 @@ def expand_user(value: "str | Path") -> "Path":
     and a ``~user`` that does exist still resolves to its home.
     """
     return Path(os.path.expanduser(str(value)))
+
+
+def read_json_dict(path: "Path") -> dict:
+    """The JSON object in ``path``, or ``{}``.
+
+    For reads that can live with nothing: a missing or unreadable file,
+    bytes that are not UTF-8 or not JSON, and any top-level value other
+    than an object all read as ``{}``. Never build a write from its
+    result: an edit of ``{}`` saved back erases whatever couldn't be
+    parsed. A read-change-write needs a strict read, such as
+    ``configuration.read_json_object`` or pricing's ``_write_overrides``.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def atomic_write_text(path: "Path", text: str, *, private: bool = False) -> None:

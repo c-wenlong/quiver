@@ -34,7 +34,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 from quiver.github import cli as ghcli
-from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.paths import atomic_write_text, read_json_dict, remote_dir_for
 from quiver.remote import (
     attachments,
     catalog as catalog_mod,
@@ -3844,11 +3844,7 @@ def save_hub_config(home: Path | None, host: str, port: int,
 
 def load_hub_config(home: Path | None = None) -> dict:
     """``{"host", "port", "public_url"}`` from the last ``serve``, or {}."""
-    try:
-        data = json.loads(_hub_file(home).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return read_json_dict(_hub_file(home))
 
 
 def configure(state: HubState, host: str, port: int,
