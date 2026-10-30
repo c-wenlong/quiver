@@ -186,8 +186,11 @@ def request(state, key: str, row: dict, body: dict | None) -> tuple[int, dict]:
                 "unsupported_launch_option",
                 f"{mid} runs an agent too old to take launch options; "
                 "upgrade it, or fork without them")
-        # The hub's table answers for the satellite's too.
-        blocked = supervise.launch_tuning_error(harness, model, effort)
+        # The satellite's own advertised lists answer, as for a launch
+        # there (hub.py): its registry, not the hub's, says what its
+        # harness takes.
+        blocked = catalog_mod.launch_option_error(
+            machine_row, harness, model, effort)
         if blocked:
             return 409, protocol.error("unsupported_launch_option", blocked)
         launch_id = state.new_launch(

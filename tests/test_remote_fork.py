@@ -630,6 +630,23 @@ class TestSatelliteForkRoute(unittest.TestCase):
                 self.assertEqual(status, 409, body)
                 self.assertEqual(body["error"]["code"], "fork_unsupported")
 
+    def test_the_satellites_own_lists_decide_a_pick(self):
+        # The hub's registry used to answer: a model the satellite's
+        # harness takes was refused when the hub's didn't, and the
+        # other way round.
+        self._push(True)
+        catalog_mod.upsert_machine(self.srv.home, {
+            "id": "sat-m1", "model_at_launch": [], "effort_at_launch": ["claude"]})
+        status, body = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork",
+            {"prompt": "go", "model": "opus"})
+        self.assertEqual(status, 409, body)
+        self.assertIn("can't take a model", body["error"]["message"])
+        status, body = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/fork",
+            {"prompt": "go", "effort": "high"})
+        self.assertEqual(status, 202, body)
+
     def test_pick_refused_when_the_satellite_is_too_old(self):
         # The agent reads picks only since the release that reports
         # model_at_launch; without it a fork would drop them silently.
