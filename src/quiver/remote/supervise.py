@@ -1338,7 +1338,7 @@ def launch_new(
     *,
     known_ids: list[str] | None = None,
     launch_id: str = "",
-    binary: str | None = None,
+    binary: str,
     model: str | None = None,
     effort: str | None = None,
 ) -> tuple[bool, str, str | None]:
@@ -1351,8 +1351,9 @@ def launch_new(
     so a pre-existing same-cwd session can never be claimed as ours.
     ``launch_id`` rides the marker into the supervised entry, so the hub
     can tell the phone which session its launch became. ``binary`` is the
-    harness's registry command (``cursor`` runs as ``cursor-agent``);
-    without it the session tool name is the binary. ``model`` goes on
+    harness's registry command (``cursor`` runs as ``cursor-agent``),
+    from ``catalog.launch_command``; it is required so no caller falls
+    back to guessing it from the tool name (#510). ``model`` goes on
     the harness's command line (``launch_model.model_argv``, per
     harness.json ``capabilities.model``); ``effort`` is typed into the
     pane once it is up. ``fresh_launch_error`` names what a harness
@@ -1365,7 +1366,6 @@ def launch_new(
     blocked = fresh_launch_error(tool_name, model, effort)
     if blocked:
         return False, blocked, None
-    binary = binary or launch_tool_name(tool_name)
     if not binary or not shutil.which(binary):
         return False, f"{tool_name} is not installed on this machine", None
     if not cwd or not os.path.isdir(cwd):
