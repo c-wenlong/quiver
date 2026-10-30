@@ -52,8 +52,7 @@ struct IssuesView: View {
                           message: error, tone: .error,
                           actionTitle: "Try again") { Task { await model.loadClosed(client: app.client, refresh: true) } }
             } else if let error = listError, model.repos.isEmpty, model.closedRepos.isEmpty {
-                StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") {
+                StateCard.unreachable(error) {
                     Task {
                         if closed {
                             await model.loadClosed(client: app.client, refresh: true)

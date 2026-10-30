@@ -124,9 +124,9 @@ struct DevicesView: View {
                 HStack(spacing: 6) {
                     Text(device.label).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     if selfDevice(device) {
-                        Text("This device").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(Theme.subtle, in: .capsule)
+                        // The shared badge: its hairline keeps it visible on
+                        // a light card, where the subtle fill alone vanished.
+                        Badge("This device")
                     }
                 }
                 // Two lines: on one, a phone's OS and client used the
