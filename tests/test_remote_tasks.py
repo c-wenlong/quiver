@@ -100,11 +100,29 @@ class TestTaskRef(unittest.TestCase):
             {"source": "notion", "kind": "page", "ref": "a",
              "url": "https:no-host"},                       # no host
             {"source": "notion", "kind": "page", "ref": "a",
+             "url": "https://:80/path"},                    # port, no host
+            {"source": "notion", "kind": "page", "ref": "a",
+             "url": "http://[bad"},                         # unparsable
+            {"source": "notion", "kind": "page", "ref": "a",
              "url": "https://x.io/" + "a" * 2048},          # long url
         ]
         for body in bad:
             with self.assertRaises(ValueError, msg=body):
                 tasks_mod.parse_ref(body)
+
+    def test_fields_at_their_bounds_pass(self):
+        base = {"source": "linear", "kind": "card"}
+        url = "https://x.io/"
+        url += "a" * (tasks_mod.MAX_URL - len(url))
+        ok = tasks_mod.parse_ref({**base, "ref": "r" * tasks_mod.MAX_REF,
+                                  "project": "p" * tasks_mod.MAX_PROJECT,
+                                  "url": url})
+        self.assertEqual(len(ok["url"]), tasks_mod.MAX_URL)
+        for field, value in (("ref", "r" * (tasks_mod.MAX_REF + 1)),
+                             ("project", "p" * (tasks_mod.MAX_PROJECT + 1)),
+                             ("url", url + "a")):
+            with self.assertRaises(ValueError, msg=field):
+                tasks_mod.parse_ref({**base, "ref": "Q-1", field: value})
 
     def test_a_long_title_is_cut_not_refused(self):
         ref = tasks_mod.parse_ref({"source": "linear", "kind": "card",

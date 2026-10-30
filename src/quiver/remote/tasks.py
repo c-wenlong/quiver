@@ -152,8 +152,12 @@ def parse_ref(body) -> dict:
         # must never be stored.
         if len(url) > MAX_URL:
             raise ValueError(f"task_ref.url is over {MAX_URL} characters")
-        parts = urlsplit(url)
-        if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+        try:
+            parts = urlsplit(url)
+            host = parts.hostname  # netloc can be just ":80" or "user@"
+        except ValueError:
+            host = None
+        if not host or parts.scheme.lower() not in ("http", "https"):
             raise ValueError("task_ref.url must be an http(s) URL")
     task = {"source": source, "kind": kind, "ref": ref,
             "title": title, "url": url or ""}
