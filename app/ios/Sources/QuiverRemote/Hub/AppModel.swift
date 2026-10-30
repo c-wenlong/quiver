@@ -493,10 +493,18 @@ final class AppModel {
         } catch {
             guard gen == pairingGen else { return false }
             pairing.busy = false
-            pairing.error = error.localizedDescription
-            pairing.codeSpent = PairingFlow.spendsCode(error)
+            pairFailed(error, link: link)
             return false
         }
+    }
+
+    /// A pair with `link` failed with `error`. The code counts as spent
+    /// only for the link still on offer (or a scanned one, with no
+    /// offer): a pair that was out when a fresh link replaced the offer
+    /// must not take Pair away from the new token, which was never sent.
+    func pairFailed(_ error: Error, link: PairLink) {
+        pairing.error = error.localizedDescription
+        pairing.codeSpent = PairingFlow.spendsCode(error) && (pairOffer == nil || pairOffer == link)
     }
 
     func pair(token: String) async {
