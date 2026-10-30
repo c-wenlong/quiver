@@ -202,6 +202,68 @@ class TestMacOnlySidebar(unittest.TestCase):
 
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestGateLead(unittest.TestCase):
+    """renderGate's lead line: the refusal message only while a credential
+    is stored, unless the caller keeps it (Settings after "Revoke this
+    browser", which has just dropped the credential)."""
+
+    def lead(self, call, stored):
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "const els = {};\n"
+            "globalThis.document = { addEventListener() {}, getElementById: (id) => (els[id] ||= { innerHTML: '' }) };\n"
+            "globalThis.location = { hash: '' };\n"
+            "globalThis.localStorage = { getItem: () => " + json.dumps(stored) + " };\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n")
+        src = (prelude + APP_JS.read_text(encoding="utf-8") + "\n" + call
+               + ";\nprocess.stdout.write(els.panel.innerHTML.match(/<p>([^<]*)<\\/p>/)[1]);\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_lead(self):
+        cred = json.dumps({"credential": "c"})
+        self.assertEqual(self.lead('renderGate("Revoked.")', cred), "Revoked.")
+        self.assertIn("needs pairing", self.lead('renderGate("Revoked.")', None))
+        self.assertEqual(self.lead('renderGate("Signed out.", true)', None), "Signed out.")
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestSafeHref(unittest.TestCase):
+    """safeHref: a URL that came from GitHub, a tracker, a status feed or
+    a plugin's manifest becomes a link only when it is http(s) or mailto,
+    so a ``javascript:`` one can't run in the app's origin on a click."""
+
+    def hrefs(self, urls):
+        prelude = ("globalThis.window = { addEventListener() {} };\n"
+                   "globalThis.document = { addEventListener() {} };\n"
+                   "globalThis.location = { hash: '' };\n"
+                   "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n")
+        src = (prelude + APP_JS.read_text(encoding="utf-8")
+               + "\nprocess.stdout.write(JSON.stringify(" + json.dumps(urls) + ".map(safeHref)));\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_web_and_mail_links_pass_escaped(self):
+        self.assertEqual(self.hrefs(["https://github.com/a/b/pull/1", " HTTP://x.dev/?a=1&b=\"2\"", "mailto:me@x.dev"]),
+                         ["https://github.com/a/b/pull/1", "HTTP://x.dev/?a=1&amp;b=&quot;2&quot;", "mailto:me@x.dev"])
+
+    def test_script_and_other_schemes_are_dropped(self):
+        self.assertEqual(self.hrefs(["javascript:alert(1)", " JavaScript:alert(1)", "java\tscript:alert(1)",
+                                     "data:text/html,<b>x", "vbscript:x", "//evil.dev", "", None]),
+                         [""] * 8)
+
+    def test_pages_link_outside_urls_only_through_it(self):
+        """No page builds an href from server data with plain esc(); the
+        one esc() href left is Hooks' own in-app route."""
+        static = APP_JS.parent
+        hits = [f"{p.name}:{n}" for p in sorted([*static.glob("*.js"), *static.glob("pages/*.js")])
+                for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+                if 'href="${esc(' in line]
+        self.assertEqual([h.split(":")[0] for h in hits], ["hooks.js"], hits)
+
+
 FORMAT_JS = APP_JS.with_name("format.js")
 
 

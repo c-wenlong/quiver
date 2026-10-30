@@ -183,8 +183,8 @@ async function renderSettings() {
   const signedOut = p.signedOut;
   p.signedOut = false;
   if (status === 401) {
-    return renderGate(signedOut ? "This browser was signed out of the hub. Pair it again to come back."
-      : "The hub doesn't know this browser's credential. It may have been revoked.");
+    return signedOut ? renderGate("This browser was signed out of the hub. Pair it again to come back.", true)
+      : renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
   }
   if (status !== 200 || !data) {
     if (!p.data) return pageError(settingsHeader(), status, data, renderSettings);
@@ -505,12 +505,12 @@ function settingsKeySheet() {
         ? `<span class="caption">saved as</span><select class="field set-key-var" id="set-key-var" aria-label="Variable"${e.working ? " disabled" : ""}>${picked.env_vars.map((v) =>
             `<option value="${esc(v)}"${v === name ? " selected" : ""}>${esc(v)}</option>`).join("")}</select>`
         : `<code class="caption">saved as ${esc(name)}</code>`;
-      fields += `<div class="set-key-saved">${savedAs}<span class="set-key-spacer"></span>${link ? `<a class="caption" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
+      fields += `<div class="set-key-saved">${savedAs}<span class="set-key-spacer"></span>${safeHref(link) ? `<a class="caption" href="${safeHref(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
       if (existing) fields += `<p class="caption set-warn">${esc(name)} is already set; saving replaces it.</p>`;
     }
   } else {
     fields += `<div class="set-key-saved"><span class="caption">Under</span><span>${esc(row ? row.provider || "Other" : "")}</span>
-      <span class="set-key-spacer"></span>${link ? `<a class="caption" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
+      <span class="set-key-spacer"></span>${safeHref(link) ? `<a class="caption" href="${safeHref(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
   }
   fields += `<label class="set-form-field"><span class="caption">Value</span>
     <span class="set-key-input-row"><input class="field set-key-input" id="set-key-value" type="${e.show ? "text" : "password"}"
@@ -675,8 +675,8 @@ function setupRow(step) {
   const a = step.action || {};
   let control = SETUP_BADGE[step.state] || "";
   const live = step.state === "needs_you" || step.state === "failed";
-  if (live && a.kind === "open" && a.url) {
-    control += ` <a class="set-button" href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.label || "Open")}</a>`;
+  if (live && a.kind === "open" && safeHref(a.url)) {
+    control += ` <a class="set-button" href="${safeHref(a.url)}" target="_blank" rel="noopener">${esc(a.label || "Open")}</a>`;
   } else if (live && a.kind === "command" && a.command) {
     const label = a.label || "Copy command";
     control += ` <button class="icon-button" data-setup-copy="${esc(step.id)}" aria-label="${esc(label)}" title="${esc(label)}">${Fmt.copyIcon()}</button>`;
@@ -1435,22 +1435,32 @@ function remoteSig(remote) {
 function settingsPollRequests() {
   const p = settingsPage;
   if (p.reqPoll) return;
-  p.reqPoll = setInterval(async () => {
+  const poll = p.reqPoll = setInterval(async () => {
     if (!onSettingsPage() || settingsSection() !== "integrations") {
-      clearInterval(p.reqPoll);
-      p.reqPoll = null;
+      settingsStopPoll();
       return;
     }
     const gen = routeGen;
     const { status, data } = await api("/v1/app/settings?part=remote");
-    if (gen !== routeGen) return;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    // Left the page, or the poll was stopped (a 401, this browser
+    // revoked) while the read was out.
+    if (gen !== routeGen || p.reqPoll !== poll) return;
+    if (status === 401) {
+      // The gate's inputs would be wiped by the next tick's gate.
+      settingsStopPoll();
+      return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    }
     if (status === 200 && data && p.data
         && remoteSig(data.remote) !== remoteSig(p.data.remote)) {
       p.data.remote = data.remote;
       settingsRepaintRemote();
     }
   }, 3000);
+}
+
+function settingsStopPoll() {
+  clearInterval(settingsPage.reqPoll);
+  settingsPage.reqPoll = null;
 }
 
 async function settingsRevoke(id) {
@@ -1464,8 +1474,13 @@ async function settingsRevoke(id) {
     { device_id: id, confirm_this_device: dev.this_device === true });
   p.revoking.delete(id);
   if (status === 200 && data && data.this_device) {
-    // This browser's credential is gone. The owner's own tailnet device
-    // still gets in without it; anything else now answers 401.
+    // This browser's credential is gone, so it leaves localStorage too.
+    // The owner's own tailnet device still gets in without it; anything
+    // else now answers 401.
+    pairForget();
+    // The remote poll would answer 401 now and replace the signed-out
+    // gate with the generic one.
+    settingsStopPoll();
     p.data = null;
     p.confirming = null;
     p.signedOut = true;

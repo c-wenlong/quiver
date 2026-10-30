@@ -23,6 +23,16 @@ const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
+/* An href for a URL the hub passed on from somewhere else (GitHub, a
+ * tracker, a status feed, a plugin's manifest), escaped for an attribute.
+ * Only http(s) and mailto pass: a `javascript:` or `data:` URL in that
+ * data would run in the app's origin on a click, so it comes back "" and
+ * the caller shows no link. */
+const safeHref = (url) => {
+  const s = String(url == null ? "" : url).trim();
+  return /^(https?:\/\/|mailto:)/i.test(s) ? esc(s) : "";
+};
+
 /* status 0 means the hub didn't answer at all (offline, connection lost). */
 async function api(path) {
   let resp;
@@ -118,9 +128,11 @@ function pageHeader(title, subtitle, actions = "") {
 /* Only a device the hub can't place reaches this: the owner's own tailnet
  * devices are let in without pairing. The card is the old remote page's
  * pair view: ask the tailnet for a code the owner approves elsewhere, or
- * paste a token a ``swe remote pair`` or Settings' QR minted. */
-function renderGate(message) {
-  const lead = credential() ? message
+ * paste a token a ``swe remote pair`` or Settings' QR minted. ``message``
+ * explains a credential the hub refused; with none stored the card says
+ * the device needs pairing, unless ``always`` keeps the message. */
+function renderGate(message, always = false) {
+  const lead = credential() || always ? message
     : "This device isn't signed in to the hub owner's Tailscale account, so it needs pairing.";
   document.getElementById("panel").innerHTML = `<div class="page"><div class="card gate">
     <div class="card-title">Pair this browser</div>
@@ -195,6 +207,12 @@ function pairStillLive(gen, rgen) {
 /* Bank a minted credential where every page looks for it. */
 function pairStore(data) {
   try { localStorage.setItem("quiver.remote", JSON.stringify(data)); } catch { }
+}
+
+/* And drop it once the hub has revoked it, so this browser stops
+ * presenting a dead credential. */
+function pairForget() {
+  try { localStorage.removeItem("quiver.remote"); } catch { }
 }
 
 /* ``#pair=<token>[&name=]``: the address `swe remote pair` and Settings'
