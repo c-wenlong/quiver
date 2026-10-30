@@ -106,6 +106,18 @@ class TestScan(unittest.TestCase):
         self.assertEqual(_inputs(self.store), {"claude:m1:r1": 5, "claude:m2:r2": 7})
         self.assertEqual(scan(self.store, self.home).files_read, 0)
 
+    def test_a_line_nested_too_deep_to_parse_is_skipped(self):
+        # json.loads raises RecursionError, not ValueError, on deep
+        # nesting: the scan must skip that line, not stop at it on
+        # every run with the cursor unmoved.
+        deep = '{"usage": 1, "x": ' + "[" * 100_000 + "]" * 100_000 + "}\n"
+        (self.proj / "a.jsonl").write_text(
+            _line("m1", "r1", 5) + deep + _line("m2", "r2", 7))
+        result = scan(self.store, self.home)
+        self.assertEqual(result.errors, [])
+        self.assertEqual(_inputs(self.store),
+                         {"claude:m1:r1": 5, "claude:m2:r2": 7})
+
     def test_rows_outlive_deleted_logs(self):
         f = self.proj / "a.jsonl"
         f.write_text(_line("m1", "r1", 5))

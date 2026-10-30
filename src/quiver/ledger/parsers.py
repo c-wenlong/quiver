@@ -42,7 +42,9 @@ def claude_records(line: bytes, account: str) -> list[LedgerRecord]:
         return []
     try:
         obj = json.loads(line)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        # RecursionError: a line nested too deep to parse. Raised, it
+        # stopped the scan at this line on every run, cursor unmoved.
         return []
     if not isinstance(obj, dict):
         return []
@@ -333,7 +335,7 @@ def codex_file_records(path: Path, account: str) -> list[LedgerRecord]:
             continue
         try:
             obj = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             continue
         if isinstance(obj, dict):
             out.extend(parser.records(obj))
@@ -572,7 +574,7 @@ def pi_file_records(path: Path, account: str) -> list[LedgerRecord]:
             continue
         try:
             obj = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             continue
         if isinstance(obj, dict):
             out.extend(parser.records(obj))
@@ -645,7 +647,7 @@ def droid_session_totals(settings: Path, account: str):
                 for line in lines:
                     try:
                         entry = json.loads(line)
-                    except (ValueError, UnicodeDecodeError):
+                    except (ValueError, UnicodeDecodeError, RecursionError):
                         continue
                     if not isinstance(entry, dict):
                         continue
