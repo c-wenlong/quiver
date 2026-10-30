@@ -17,7 +17,7 @@ from quiver.github import gh
 from quiver.mcp import secrets as mcp_secrets
 from quiver.remote import linear
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 from tests.test_remote_hub import _Server, _session
 
@@ -352,6 +352,36 @@ class TestGraphQL(unittest.TestCase):
                    side_effect=err):
             out = linear._graphql("k", "query { viewer { id } }")
         self.assertEqual(out.status, "auth-required")
+
+    def test_certificate_failure_retries_against_the_os_bundle(self):
+        # python.org builds ship no CA store: the request is retried,
+        # still verified, with the OS bundle the agent's urlopen loads.
+        import io
+        import ssl
+        import urllib.error
+        from quiver.remote import agent as agent_mod
+        agent_mod._fallback_ctx = None
+        self.addCleanup(setattr, agent_mod, "_fallback_ctx", None)
+        sentinel = ssl.create_default_context()
+        calls = []
+
+        def urlopen(req, timeout=None, context=None):
+            calls.append(context)
+            if context is None:
+                raise urllib.error.URLError(
+                    ssl.SSLCertVerificationError("no CA store"))
+            return io.BytesIO(b'{"data": {"viewer": {"id": "u"}}}')
+
+        with patch("quiver.remote.linear.urllib.request.urlopen",
+                   side_effect=urlopen), \
+             patch("quiver.harness.rate_limits._verified_context",
+                   return_value=sentinel):
+            out = linear._graphql("k", "query { viewer { id } }")
+            again = linear._graphql("k", "query { viewer { id } }")
+        self.assertEqual((out.status, again.status), ("ok", "ok"))
+        # The second request goes straight to the bundle, no failed
+        # handshake first (the removed copy retried every time).
+        self.assertEqual(calls, [None, sentinel, sentinel])
 
     def test_500_is_upstream_error(self):
         import urllib.error

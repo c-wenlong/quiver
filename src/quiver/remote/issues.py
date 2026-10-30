@@ -2,7 +2,7 @@
 ``GET /v1/issues/<o>/<r>/<n>`` and ``POST /v1/issues/resolve``.
 
 The reads answer from the same 60-second ``gh`` cache the web app's
-Repositories page uses (``webapp/pages/_github.py``), per pinned repo,
+Repositories page uses (``github/shared.py``), per pinned repo,
 so the phone and the page agree and a slow ``gh`` shows up once. A
 repo's issue rows add ``mine`` (the hub's ``gh`` login authored it) so
 the client filters All/Mine without a second round trip; ``agent_running``
@@ -40,6 +40,8 @@ satellites have no mirrors.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
@@ -47,7 +49,7 @@ from quiver.github import issues as gh_issues
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import protocol, sessionmeta, supervise
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 # ``swe gh``'s list cap: open issues per pinned repo in one answer.
 LIST_LIMIT = 50
@@ -299,23 +301,10 @@ def request(state, body: dict | None) -> tuple[int, dict]:
             f"`swe gh repo add {cmd['repo']}`")
     cmd["repo"] = repo
     harness = cmd["harness"]
-    binary = catalog_mod.launch_command(harness)
-    if binary is None:
-        return 422, protocol.error(
-            "not_launchable",
-            f"{harness} can't start here: archived, switched off in "
-            f"Provider visibility, or not installed")
-    blocked = supervise.fresh_launch_error(
-        harness, cmd["model"], cmd["effort"])
-    if blocked:
-        return 409, protocol.error("unsupported_launch_option", blocked)
-    if not supervise.tmux_bin():
-        return 422, protocol.error("launch_failed", "tmux is not installed")
-    env = gh.probe_env()
-    if env.status != "ok":
-        return 422, protocol.error("gh_unavailable", gh.env_error(env))
-    tracked = harness not in catalog_mod.untracked(
-        catalog_mod.launchable_harnesses())
+    ready = launch_ready(cmd)
+    if isinstance(ready, tuple):
+        return ready
+    binary, tracked = ready.binary, ready.tracked
     rows = state.catalog.tail_rows()
     ref = (repo.lower(), cmd["number"])
     tree = manage.issue_worktree_path(repo, cmd["number"], state.home)
@@ -335,34 +324,87 @@ def request(state, body: dict | None) -> tuple[int, dict]:
     state.settle_launch(launch_id, note="preparing worktree")
     threading.Thread(
         target=_run,
-        args=(state, launch_id, cmd, binary, tracked, rows, env.login),
+        args=(state, launch_id, cmd, binary, tracked, rows, ready.login),
         name=f"remote-launch-{launch_id}", daemon=True,
     ).start()
     return 202, {"ok": True, "launch_id": launch_id, "state": "pending",
                  "note": "preparing worktree"}
 
 
-def _run(state, launch_id: str, cmd: dict, binary: str, tracked: bool,
-         rows, login: str) -> None:
+@dataclass
+class LaunchReady:
+    """What ``launch_ready`` found: the harness's command, the ``gh``
+    login (for the prompt's context line), and whether swe can read the
+    harness's sessions (an untracked one gets no chat to open)."""
+
+    binary: str
+    login: str
+    tracked: bool
+
+
+def launch_ready(cmd: dict) -> "LaunchReady | tuple[int, dict]":
+    """The checks a resolve and a PR open both make before their 202:
+    the harness can start here with the asked model and effort, tmux is
+    installed and ``gh`` is signed in. The refusal ``(status, payload)``
+    otherwise."""
+    harness = cmd["harness"]
+    binary = catalog_mod.launch_command(harness)
+    if binary is None:
+        return 422, protocol.error(
+            "not_launchable",
+            f"{harness} can't start here: archived, switched off in "
+            f"Provider visibility, or not installed")
+    blocked = supervise.fresh_launch_error(
+        harness, cmd["model"], cmd["effort"])
+    if blocked:
+        return 409, protocol.error("unsupported_launch_option", blocked)
+    if not supervise.tmux_bin():
+        return 422, protocol.error("launch_failed", "tmux is not installed")
+    env = gh.probe_env()
+    if env.status != "ok":
+        return 422, protocol.error("gh_unavailable", gh.env_error(env))
+    tracked = harness not in catalog_mod.untracked(
+        catalog_mod.launchable_harnesses())
+    return LaunchReady(binary, env.login, tracked)
+
+
+def run_launch(state, launch_id: str, harness: str, tracked: bool,
+               prepare: Callable[[], str], verb: str,
+               release: Callable[[], None]) -> None:
+    """The thread behind a resolve's or PR open's 202: ``prepare()``
+    returns a failure note or ""; any failure or exception settles the
+    launch ``failed`` (it must never stay pending forever), an untracked
+    harness settles ``untracked``, and ``release()`` always runs."""
     def fail(text: str) -> None:
         state.settle_launch(launch_id, state="failed", note=text)
 
     try:
-        failure = _prepare_and_launch(state, launch_id, cmd, binary, rows,
-                                      login)
+        failure = prepare()
         if failure:
             fail(failure)
         elif not tracked:
             state.settle_launch(launch_id, state="untracked", note=(
-                f"{cmd['harness']} is running under tmux, but swe can't "
+                f"{harness} is running under tmux, but swe can't "
                 f"read its sessions, so there's no chat to open"))
-    except Exception as exc:  # a launch must never stay pending forever
-        fail(f"Resolve failed: {exc}")
+    except Exception as exc:
+        fail(f"{verb} failed: {exc}")
     finally:
+        release()
+
+
+def _run(state, launch_id: str, cmd: dict, binary: str, tracked: bool,
+         rows, login: str) -> None:
+    def release() -> None:
         # launch_new has written its pending marker by now (or failed),
         # so fork_blocker takes over guarding the checkout.
         with _preparing_lock:
             _preparing.discard((cmd["repo"].lower(), cmd["number"]))
+
+    run_launch(
+        state, launch_id, cmd["harness"], tracked,
+        lambda: _prepare_and_launch(state, launch_id, cmd, binary, rows,
+                                    login),
+        "Resolve", release)
 
 
 def _prepare_and_launch(state, launch_id: str, cmd: dict, binary: str,

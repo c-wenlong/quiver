@@ -66,6 +66,13 @@ class PageContext:
         return self.state.machine
 
 
+def home_path(ctx) -> Path:
+    """The home a page reads under: ``ctx.home``, or the process's own
+    when there is no context or it names none."""
+    home = getattr(ctx, "home", None)
+    return Path(home) if home is not None else Path.home()
+
+
 def tilde(path: Path | str, home: Path | str | None = None) -> str:
     """``path`` with ``home`` (the process's own when None) written as
     ``~``, as the pages show hub paths: ``~`` for the home itself,
