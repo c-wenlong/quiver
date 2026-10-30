@@ -1239,6 +1239,9 @@ class TailManager:
         self.cursors_dir = remote_dir_for(self.home) / "cursors"
         self._journal_has = journal_has or (lambda key: False)
         self.max_sessions = max_sessions
+        # Written by the catalog thread (``sync``) and request threads
+        # (``ensure``), read by the tail thread: every insert, removal
+        # and iteration holds ``_status_lock`` (see ``_tailer_items``).
         self.tailers: dict[str, Tailer] = {}
         self.statuses: dict[str, str] = {}
         # Last time each key emitted a transcript append; the attach
@@ -1336,12 +1339,28 @@ class TailManager:
         source = make_source(session)
         if source is None:
             return
-        self.tailers[key] = Tailer(
+        if self._add_tailer(key, session, source):
+            with self._status_lock:
+                self.statuses[key] = status
+
+    def _add_tailer(self, key: str, session: Session, source) -> bool:
+        """Register a tailer for ``key`` unless another thread got there
+        first; two tailers on one session would journal it twice."""
+        tailer = Tailer(
             key, session, source, self.cursors_dir,
             self._journal_has(key),
         )
         with self._status_lock:
-            self.statuses[key] = status
+            if key in self.tailers:
+                return False
+            self.tailers[key] = tailer
+            return True
+
+    def _tailer_items(self) -> list[tuple[str, "Tailer"]]:
+        """A snapshot of the tailers, safe to walk while ``ensure``
+        inserts from a request thread."""
+        with self._status_lock:
+            return list(self.tailers.items())
 
     def _source_path(self, source) -> Path | None:
         path = getattr(source, "path", None)
@@ -1386,7 +1405,7 @@ class TailManager:
         by_key = {key: (s, st) for key, s, st in rows}
         wanted = rows[: self.max_sessions]
         wanted_keys = {key for key, _s, _st in wanted}
-        for key in list(self.tailers):
+        for key, _tailer in self._tailer_items():
             if key not in by_key:
                 # Under the lock: a probe applies only while its tailer
                 # is still the registered one, checked under this lock.
@@ -1397,32 +1416,29 @@ class TailManager:
                 self._probe_due.discard(key)
                 self._probed_at.pop(key, None)
         for key, session, status in wanted:
-            if key not in self.tailers:
+            tailer = self.tailers.get(key)
+            if tailer is None:
                 source = make_source(session)
                 if source is None:
                     continue
-                self.tailers[key] = Tailer(
-                    key, session, source, self.cursors_dir,
-                    self._journal_has(key),
-                )
+                self._add_tailer(key, session, source)
             else:
                 # Refresh the session object: title/cwd can change as the
                 # aggregator re-parses; the source may need re-resolving
                 # when a resume moved the transcript file.
-                tailer = self.tailers[key]
                 tailer.session = session
                 self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=True)
         # On-demand tailers past the cap: refresh session/status but
         # keep them alive while their session still exists.
-        for key in self.tailers:
+        for key, tailer in self._tailer_items():
             if key in wanted_keys:
                 continue
             session, status = by_key.get(key, (None, None))
             if session is None:
                 continue
-            self.tailers[key].session = session
-            self._reresolve(self.tailers[key], session)
+            tailer.session = session
+            self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=False)
 
     def _take_status(
@@ -1559,7 +1575,7 @@ class TailManager:
         woken, hot_until = self._take_wakes(now)
         n = 0
         probe_due: list[tuple[str, Tailer]] = []
-        for key, tailer in list(self.tailers.items()):
+        for key, tailer in self._tailer_items():
             if key not in woken and not tailer.due(now):
                 # Not due for a read, but a source that moved since its
                 # last probe still gets one once the gate opens.
@@ -1602,7 +1618,7 @@ class TailManager:
         it disappearing emits ``approval.resolved``. Cheap: one
         capture-pane per attached session every few seconds.
         """
-        for key in list(self.tailers):
+        for key, _tailer in self._tailer_items():
             if (
                 now - self._approval_checked_at.get(key, 0)
                 < PANE_APPROVAL_S

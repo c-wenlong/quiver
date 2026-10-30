@@ -800,6 +800,46 @@ class TestTailManager(unittest.TestCase):
         self.assertEqual(n, 1)
         self.assertEqual(self.events[-1][1]["data"]["text"], "hi")
 
+    def _jsonl_session(self, name):
+        path = self.tmp / f"{name}.jsonl"
+        path.write_text(json.dumps(_claude_user(name)) + "\n")
+        return Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(path), tool_name="claude")
+
+    def test_ensure_during_sync_does_not_break_the_walk(self):
+        # A phone opening a session calls ensure() on a request thread
+        # while the catalog thread walks the tailers in sync(); inserting
+        # into the dict mid-walk raised RuntimeError and ended the sync.
+        mgr = tail.TailManager(self._emit, "mbp", home=self.tmp,
+                               max_sessions=1)
+        a, b, c = (self._jsonl_session(n) for n in "abc")
+        mgr.ensure("claude:b", b, "")
+        rows = [("claude:a", a, ""), ("claude:b", b, "")]
+        mgr.sync(rows)
+        real = mgr._reresolve
+
+        def reresolve(tailer, session):
+            # The on-demand walk (b is past the cap) is mid-iteration.
+            if session is b and "claude:c" not in mgr.tailers:
+                mgr.ensure("claude:c", c, "")
+            real(tailer, session)
+
+        with patch.object(mgr, "_reresolve", side_effect=reresolve):
+            mgr.sync(rows + [("claude:c", c, "")])
+        self.assertEqual(set(mgr.tailers), {"claude:a", "claude:b",
+                                            "claude:c"})
+
+    def test_racing_inserts_keep_the_first_tailer(self):
+        # sync and ensure both saw no tailer for the key: the second
+        # insert must not replace the first (its cursor and emits).
+        mgr = self._manager()
+        a = self._jsonl_session("a")
+        mgr.ensure("claude:a", a, "")
+        first = mgr.tailers["claude:a"]
+        src = tail.make_source(a)
+        self.assertFalse(mgr._add_tailer("claude:a", a, src))
+        self.assertIs(mgr.tailers["claude:a"], first)
+
     def test_notify_only_on_transition(self):
         sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
                        session_id="", tool_name="claude")
