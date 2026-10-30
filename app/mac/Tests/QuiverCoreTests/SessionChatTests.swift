@@ -402,6 +402,7 @@ extension HubStubbed {
     /// carries it: a finished turn reads the row again.
     @Test func theModelIsReadAgainAfterAReply() async throws {
         let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:s1"}]}"#)
+        chat.modelRetryDelays = []
         #expect(chat.row?.model == nil)
         func answer(_ body: String, status: Int = 200) {
             HubStub.handler = { req in
@@ -460,6 +461,39 @@ extension HubStubbed {
         await chat.loadEarlier()
         #expect(earlierAsks.withLock { $0 } == 1)
         #expect(!chat.hasEarlier)
+    }
+
+    /// The turn's end can reach the stream before the hub's catalog
+    /// refresh (every 10 s) holds the new model, so one read may be stale:
+    /// the read repeats after each wait until the model differs.
+    @Test func aStaleReadIsRepeatedUntilTheCatalogCatchesUp() async throws {
+        let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:s1", "model": "claude-sonnet-4-5"}]}"#)
+        let reads = Mutex(0)
+        let waits = Mutex<[Duration]>([])
+        HubStub.handler = { req in
+            guard req.url?.path == "/v1/sessions" else { return (404, Data()) }
+            // The catalog is behind for the first two reads.
+            let n = reads.withLock { $0 += 1; return $0 }
+            let model = n < 3 ? "claude-sonnet-4-5" : "claude-opus-4-5"
+            return (200, Data(#"{"sessions": [{"key": "claude:s1", "model": "\#(model)"}]}"#.utf8))
+        }
+        chat.modelRetryDelays = [.seconds(6), .seconds(6), .seconds(6)]
+        chat.modelSleep = { delay in waits.withLock { $0.append(delay) } }
+        await chat.refreshModel().value
+        #expect(chat.row?.model == "claude-opus-4-5")
+        #expect(reads.withLock { $0 } == 3, "stops as soon as the model differs")
+        #expect(waits.withLock { $0 } == [.seconds(6), .seconds(6)])
+
+        // A model that really didn't change reads once per wait, then gives up.
+        reads.withLock { $0 = 0 }
+        waits.withLock { $0 = [] }
+        HubStub.handler = { req in
+            reads.withLock { $0 += 1 }
+            return (200, Data(#"{"sessions": [{"key": "claude:s1", "model": "claude-opus-4-5"}]}"#.utf8))
+        }
+        await chat.refreshModel().value
+        #expect(reads.withLock { $0 } == 4)
+        #expect(waits.withLock { $0.count } == 3)
     }
 
     @Test func aSessionTheHubDoesntListIsMissing() async throws {

@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `anthropic/claude-opus-4-5` and `claude-opus-4-5-20251101` both read
   `claude-opus-4-5`. The app reads it from this Mac's hub rows
   (`model`, optional), on the same read that tells which rows open a
-  chat, and the open chat reads its row again when a turn ends, so the
-  header follows a model that first appears with the opening reply or
+  chat, and the open chat reads its row again when a turn ends (twice
+  more, six seconds apart, while the hub's catalog still holds the old
+  model), so the header follows a model that first appears with the opening reply or
   changes elsewhere. Nothing shows when the hub doesn't know it. Display
   only: the Mac doesn't switch models. Part of
   [#643](https://github.com/c-wenlong/quiver/issues/643).
