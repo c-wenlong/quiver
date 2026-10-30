@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: the Cursor app on the Calendar.** The hub reads each Cursor
+  account's `state.vscdb` (the app's own folder and every extra Cursor
+  profile's) as the Mac app does, so editor chats show as blocks with
+  time and responses, one legend row per account. Devin cloud stays
+  Mac-only, since its sessions live in the Mac app's own store. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
 - **Web app: Freebuff on the Calendar.** The hub reads Freebuff's
   `run-state.json` chats under `~/.config/manicode/projects` as the Mac
   app does, so its work shows as blocks with time and responses. Part
