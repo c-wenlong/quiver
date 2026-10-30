@@ -284,6 +284,18 @@ extension HubStubbed {
                 == "http://127.0.0.1:8477/v1/sessions/claude%3Aabc%40x/files?limit=50&q=a%20b")
         }
 
+        @Test func aPlusInTheQueryReachesTheHubAsAPlus() async throws {
+            // parse_qs reads a bare `+` as a space, so `c++` must go as `%2B`.
+            HubStub.requests = []
+            HubStub.handler = { _ in (200, Data(#"{"entries":[]}"#.utf8)) }
+            let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!, credential: "c",
+                                   session: HubStub.session())
+            _ = try await client.files("k", query: "c++ a")
+            let req = try #require(HubStub.requests.first)
+            #expect(req.url?.absoluteString
+                == "http://127.0.0.1:8477/v1/sessions/k/files?limit=50&q=c%2B%2B%20a")
+        }
+
         @Test func aSatelliteSessionsRefusalCarriesItsCode() async {
             HubStub.handler = { _ in
                 (422, Data(#"{"error":{"code":"files_unavailable","message":"satellite"}}"#.utf8))
