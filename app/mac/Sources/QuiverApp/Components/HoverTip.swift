@@ -9,6 +9,11 @@ struct HoverTip: ViewModifier {
     var text: String
     /// A bold first line above the text, such as a skill's name.
     var title: String? = nil
+    /// Whether VoiceOver hears the tip as the view's name, for a mark or
+    /// icon with none of its own. Off for a view that shows text of its
+    /// own (a figure, a name, a button title): the tip is then its hint,
+    /// so the text it shows is still read.
+    var replacesLabel = true
 
     @State private var open = false
     /// Opened by a click, so leaving the icon doesn't close it.
@@ -51,7 +56,8 @@ struct HoverTip: ViewModifier {
             // A click outside the popover also dismisses it; the pin goes
             // with it so the next hover-only open closes on leaving.
             .onChange(of: open) { _, open in if !open { pinned = false } }
-            .accessibilityLabel(title.map { "\($0): \(text)" } ?? text)
+            .modifier(TipAccessibility(text: title.map { "\($0): \(text)" } ?? text,
+                                       replacesLabel: replacesLabel))
             .accessibilityAddTraits(.isButton)
             .popover(isPresented: $open, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -74,10 +80,24 @@ struct HoverTip: ViewModifier {
     }
 }
 
+/// The tip as the view's VoiceOver label, or as a hint after its own.
+private struct TipAccessibility: ViewModifier {
+    var text: String
+    var replacesLabel: Bool
+
+    func body(content: Content) -> some View {
+        if replacesLabel {
+            content.accessibilityLabel(text)
+        } else {
+            content.accessibilityHint(text)
+        }
+    }
+}
+
 extension View {
     /// A resting-hover and click tip, for small info marks and controls
     /// that need an explanation a `.help` tooltip would hide.
-    func hoverTip(_ text: String, title: String? = nil) -> some View {
-        modifier(HoverTip(text: text, title: title))
+    func hoverTip(_ text: String, title: String? = nil, replacesLabel: Bool = true) -> some View {
+        modifier(HoverTip(text: text, title: title, replacesLabel: replacesLabel))
     }
 }

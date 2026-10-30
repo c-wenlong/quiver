@@ -106,6 +106,9 @@ final class StatusItemController: NSObject {
             panel.setFrameTopLeftPoint(NSPoint(x: visible.maxX - size.width - 8, y: visible.maxY - 6))
         }
         panel.makeKeyAndOrderFront(nil)
+        // Any way the panel hides without close() leaves the last pair
+        // installed; drop it so each open holds exactly one pair.
+        removeClickMonitors()
         // Clicks in other apps arrive at the global monitor; clicks in
         // Quiver's own windows only at a local one. Either closes the panel,
         // except a click on the panel itself, on a popover it hosts or one
@@ -149,6 +152,10 @@ final class StatusItemController: NSObject {
 
     private func close() {
         panel.orderOut(nil)
+        removeClickMonitors()
+    }
+
+    private func removeClickMonitors() {
         for monitor in [outsideClickMonitor, localClickMonitor].compactMap({ $0 }) {
             NSEvent.removeMonitor(monitor)
         }

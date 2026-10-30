@@ -891,8 +891,10 @@ class TestPrWorktree(_Base):
         with patch("quiver.remote.catalog.launchable_harnesses",
                    return_value=rows), \
              patch("quiver.remote.catalog.recent_models",
-                   return_value={"claude": ["opus", "sonnet"]}):
+                   return_value={"claude": ["opus", "sonnet"]}) as recent:
             body = R.get(self.ctx, {"harnesses": "1"})
+        # Models come from the hub's own home, not the process's.
+        self.assertEqual(recent.call_args[0][0], self.ctx.home)
         self.assertEqual(body["harnesses"], [{
             "name": "claude", "display_name": "Claude Code",
             "tracked": True, "launch_model": True,

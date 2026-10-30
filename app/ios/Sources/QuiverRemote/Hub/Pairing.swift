@@ -10,9 +10,11 @@ struct PairedHub: Equatable, Identifiable {
 
     /// The host, with the port when it isn't the hub's default, so two
     /// hubs on one machine read apart.
-    var address: String {
-        let host = baseURL.host ?? id
-        guard let port = baseURL.port, port != Hub.defaultPort else { return host }
+    var address: String { Self.address(of: baseURL) }
+
+    static func address(of url: URL) -> String {
+        let host = url.host ?? url.absoluteString
+        guard let port = url.port, port != Hub.defaultPort else { return host }
         return "\(host):\(port)"
     }
 }
@@ -270,6 +272,13 @@ struct PairLink: Equatable {
     private static func query(_ items: [URLQueryItem]?) -> [String: String] {
         Dictionary((items ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
     }
+
+    /// The hub as the confirm sheet names it, the way the hub menu does.
+    var address: String { PairedHub.address(of: baseURL) }
+}
+
+extension PairLink: Identifiable {
+    var id: String { "\(baseURL.absoluteString) \(token)" }
 }
 
 /// Turns what someone types ("100.64.1.2", "mac.tailnet.ts.net:8477",

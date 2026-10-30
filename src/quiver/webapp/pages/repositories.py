@@ -64,7 +64,7 @@ def get(ctx, args: dict) -> dict:
     if "search" in args:
         body = search(ctx.home, args["search"], refresh)
     elif G.flag(args, "harnesses"):
-        body = {"harnesses": harnesses()}
+        body = {"harnesses": harnesses(ctx.home)}
     elif args.get("repo"):
         repo = G.pinned_name(ctx.home, args["repo"])
         if args.get("pr"):
@@ -329,18 +329,19 @@ def rerun(ctx, repo: str, run: str, failed: bool) -> dict:
 
 # ---------------------------------------------------------------- PR session
 
-def harnesses() -> list[dict]:
+def harnesses(home: Path | None = None) -> list[dict]:
     """``{name, display_name, tracked, launch_model, launch_effort,
     last_model, recent_models}`` for each harness the hub can start, in Provider
     visibility order (``catalog.launchable_harnesses``, what the phone's
     new-session sheet offers). ``recent_models`` is the harness's
-    recently used models, newest first (at most 5); ``last_model`` is
-    its head ("" when none), the picker's default."""
+    recently used models in ``home``'s ledger, newest first (at most 5);
+    ``last_model`` is its head ("" when none), the picker's default. The
+    Tasks page's launch sheet asks the same question."""
     from quiver.remote import catalog as catalog_mod
 
     launchable = catalog_mod.launchable_harnesses()
     recent = catalog_mod.recent_models(
-        None, [h["name"] for h in launchable])
+        home, [h["name"] for h in launchable])
     return [{"name": h["name"], "display_name": h["display_name"],
              "tracked": h["tracked"],
              "launch_model": h["launch_model"],
