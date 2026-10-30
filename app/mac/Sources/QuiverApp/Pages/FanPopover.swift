@@ -83,12 +83,13 @@ private struct FanPopover: View {
                     Text(line).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
                 Divider().overlay(Theme.border)
+                if fans.helperOutdated { FanHelperUpdateNotice() }
                 Tabs(options: [(false, "Automatic"), (true, "Manual")], selection: mode, style: .segmented)
                 if manual { manualControls } else { thresholdControls }
                 if case .failed(let message) = fans.phase {
                     Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 }
-                if fans.helperInstalled {
+                if fans.helperInstalled || fans.helperOutdated {
                     Button("Remove fan helper", role: .destructive) { Task { await fans.removeHelper() } }
                         .plainButton()
                         .font(Theme.caption)
@@ -225,6 +226,23 @@ private struct FanPopover: View {
 
     static func rpm(_ value: Double) -> String {
         "\(Int(value.rounded()).formatted()) rpm"
+    }
+}
+
+/// An older fan helper is installed: why Quiver won't steer it, and the
+/// update (one password prompt). Shared with the menu bar's fan panel.
+struct FanHelperUpdateNotice: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(FanControl.outdatedNotice)
+                .font(Theme.caption).foregroundStyle(Theme.warningText)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(app.fans.busy ? "Updating…" : "Update fan helper") { Task { await app.fans.updateHelper() } }
+                .secondaryButton()
+                .disabled(app.fans.busy)
+        }
     }
 }
 

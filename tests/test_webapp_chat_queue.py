@@ -421,5 +421,68 @@ class TestQueuedTray(unittest.TestCase):
         self.assertEqual(out, [["c1", "same", "waiting", ""]])
 
 
+    def test_a_refused_credential_closes_the_chat_before_the_gate(self):
+        """Every 401 closes the chat first (stream, reveal timers,
+        chat-open), as the stream's own 401 does, so nothing runs on
+        behind the pair card."""
+        out = self.run_js("""
+            const body = el("body"); body.classList.add("chat-open");
+            document.body = body;
+            let gates = 0;
+            globalThis.renderGate = () => { gates++; };
+            const out = {};
+            const reopen = () => { T.chat.key = "claude:s1"; T.chat.row = { status: "active", ownership: "attached" };
+              body.classList.add("chat-open"); };
+            await T.sendText("a", "queue");
+            await T.sendText("b", "queue");
+            answer = () => ({ status: 401, data: null });
+            const gen = T.chat.gen;
+            await T.sendNow("c1");
+            out.sendNow = [T.chat.key, T.chat.gen > gen, body.classList.contains("chat-open"), gates];
+            reopen();
+            answer = () => ({ status: 202, data: { waiting: true } });
+            await T.sendText("c", "queue");
+            answer = () => ({ status: 401, data: null });
+            await T.removeQueued(T.chat.tray.queued[0].cid);
+            out.removeQueued = [T.chat.key, gates];
+            globalThis.api = async () => ({ status: 401, data: null });
+            reopen(); T.chat.rail.loading = false;
+            await T.loadRail(T.chat.gen, true);
+            out.loadRail = [T.chat.key, body.classList.contains("chat-open"), gates];
+            return out;""")
+        self.assertEqual(out, {"sendNow": [None, True, False, 1], "removeQueued": [None, 2],
+                               "loadRail": [None, False, 3]})
+
+    def test_stay_attached_reports_a_failure_and_ignores_a_stale_answer(self):
+        out = self.run_js("""
+            const out = {};
+            let release;
+            answer = () => new Promise((r) => { release = r; });
+            T.chat.detaching = true;
+            // A late answer from the chat open before: neither a success
+            // nor a refusal touches the chat open now.
+            for (const late of [{ status: 200, data: { ok: true } },
+                                { status: 500, data: { error: { code: "boom", message: "it broke" } } }]) {
+              const stale = T.cancelDetach();
+              await tick();
+              T.chat.gen++;
+              release(late);
+              await stale;
+            }
+            out.stale = [ids["chat-log"].children.length, T.chat.detaching];
+            answer = () => ({ status: 409, data: { error: { code: "busy", message: "the session is busy" } } });
+            await T.cancelDetach();
+            out.failed = ids["chat-log"].children.map((b) => b.className);
+            out.text = ids["chat-log"].children.map((b) => b.innerHTML.includes("Stay attached failed: the session is busy"));
+            answer = () => ({ status: 200, data: { ok: true } });
+            await T.cancelDetach();
+            out.ok = T.chat.detaching;
+            return out;""")
+        self.assertEqual(out["stale"], [0, True])
+        self.assertEqual(len(out["failed"]), 1)
+        self.assertIn("error", out["failed"][0])
+        self.assertEqual(out["text"], [True])
+        self.assertFalse(out["ok"])
+
 if __name__ == "__main__":
     unittest.main()

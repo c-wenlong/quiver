@@ -66,24 +66,54 @@ FOOTER = ("  space toggle · ← → change · a all · n none · "
           "enter save · q cancel")
 
 
-def _render(choices, selected, cursor, title, prev_lines: int) -> int:
+def _window(total: int, cursor: int, height: int | None) -> tuple[int, int]:
+    """``(top, rows)``: the slice of a list to draw, keeping the cursor in it.
+
+    Drawn taller than the terminal, a widget scrolls it, and rewinding by
+    the line count then lands in the wrong place: the widget smears down
+    the screen on every keypress. So a long list shows ``height`` rows and
+    scrolls them itself. ``None`` draws every row.
+    """
+    view = total if height is None else min(height, total)
+    top = 0
+    if total > view:
+        top = max(0, min(cursor - view // 2, total - view))
+    return top, view
+
+
+def _default_height() -> int:
+    """Rows a widget may draw: the terminal less title, footer, range line
+    and the line the caret sits on. Measured on every redraw, so a pane
+    shrunk mid-pick still fits, and never padded up to a minimum, which
+    would overflow a short pane the same way."""
+    import shutil
+
+    return max(1, shutil.get_terminal_size(fallback=(80, 24)).lines - 4)
+
+
+def _render(choices, selected, cursor, title, prev_lines: int,
+            height: int | None = None) -> int:
     """Draw the checklist, returning how many lines it wrote.
 
     The caller feeds that count back as ``prev_lines`` so the next redraw
     rewinds by exactly what was drawn. Counting lines from the choice list
     instead was off by one, and once a redraw scrolls the terminal any fixed
     count drifts, which is how the footer ended up repeating on every keypress.
+    At most ``height`` rows are drawn (see ``_window``).
 
     Lines end with an explicit \r\n: tty.setraw clears ONLCR, so a bare \n
     moves down without returning to column 0.
     """
+    total = len(choices)
+    top, view = _window(total, cursor, height)
     out = []
     if prev_lines:
         out.append(f"\x1b[{prev_lines}A")   # back to the top of the widget
     out.append("\r\x1b[J")                  # and clear everything below it
 
     out.append(c("bold", sanitize(title)) + "\r\n")
-    for i, ch in enumerate(choices):
+    for i in range(top, top + view):
+        ch = choices[i]
         box = "[x]" if (ch.locked or ch.key in selected) else "[ ]"
         tail = c("dim", "  always shown") if ch.locked else ""
         # Labels come out of config files and registries, so a server
@@ -97,18 +127,23 @@ def _render(choices, selected, cursor, title, prev_lines: int) -> int:
         body = f"{box} {cellpad(label, 12)} {c('dim', sanitize(ch.about))}{tail}"
         line = c("cyan", body) if i == cursor else (c("dim", body) if ch.locked else body)
         out.append(f" {pointer} {line}\r\n")
+    if total > view:
+        out.append(c("dim", f"  {top + 1}–{top + view} of {total}") + "\r\n")
     out.append(c("dim", FOOTER) + "\r\n")
 
     sys.stdout.write("".join(out))
     sys.stdout.flush()
-    return len(choices) + 2      # title + one per choice + footer
+    # title + one per drawn row + range line when scrolled + footer
+    return view + 2 + (1 if total > view else 0)
 
 
-def multiselect(choices: list[Choice], selected=None, title="Select") -> list[str] | None:
+def multiselect(choices: list[Choice], selected=None, title="Select",
+                height: int | None = None) -> list[str] | None:
     """Return the chosen keys, or None if cancelled.
 
-    Falls back to returning the current selection unchanged when there is no
-    terminal, so piping `swe list edit` cannot hang a script.
+    Returns None without a terminal too, so piping `swe list edit` cannot
+    hang a script. ``height`` caps the rows drawn; by default the list
+    fits the terminal.
     """
     if not choices:
         return []
@@ -124,7 +159,8 @@ def multiselect(choices: list[Choice], selected=None, title="Select") -> list[st
         # instead of arriving as loose bytes the reader has to drop.
         sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
         while True:
-            drawn = _render(choices, chosen, cursor, title, drawn)
+            rows = height if height is not None else _default_height()
+            drawn = _render(choices, chosen, cursor, title, drawn, rows)
             key = _read_key(fd)
             if key in ("cancel", "escape"):
                 return None
@@ -178,17 +214,11 @@ STATE_FOOTER = ("  space cycle · ← → change · s star · x archive · c act
 def _state_render(choices, cursor, title, prev_lines: int, height: int) -> int:
     """Draw a window onto the list, keeping the cursor inside it.
 
-    The checkbox widget draws every row, which is fine for a fixed set of
-    columns. A registry can hold thirty-odd harnesses, and once the drawing
-    is taller than the terminal it scrolls, after which rewinding by a fixed
-    count lands in the wrong place and the widget smears down the screen.
-    So this one draws at most ``height`` rows and scrolls them itself.
+    A registry can hold thirty-odd harnesses, so like the checklist this
+    draws at most ``height`` rows and scrolls them itself (``_window``).
     """
     total = len(choices)
-    view = min(height, total)
-    top = 0
-    if total > view:
-        top = max(0, min(cursor - view // 2, total - view))
+    top, view = _window(total, cursor, height)
 
     counts = {s: sum(1 for ch in choices if ch.state == s) for s in STATES}
     out = []
@@ -247,19 +277,13 @@ def statepicker(choices: list[StateChoice], title="Select",
         print(c("dim", "  not a terminal, nothing changed"))
         return None
 
-    import shutil
-
-    if height is None:
-        # Leave room for the title, the footer, the range line, and the
-        # shell prompt that follows.
-        height = max(5, shutil.get_terminal_size(fallback=(80, 24)).lines - 5)
-
     fd = sys.stdin.fileno()
     cursor, drawn = 0, 0
     with keys.raw_terminal(fd):
         sys.stdout.write("\x1b[?25l" + keys.MOUSE_ON)
         while True:
-            drawn = _state_render(choices, cursor, title, drawn, height)
+            rows = height if height is not None else _default_height()
+            drawn = _state_render(choices, cursor, title, drawn, rows)
             key = _read_state_key(fd)
             if key in ("cancel", "escape"):
                 return None

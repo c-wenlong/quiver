@@ -20,9 +20,7 @@ import datetime
 import email.utils
 import http.client
 import json
-import os
 import ssl
-import tempfile
 import threading
 import time
 import urllib.error
@@ -31,7 +29,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from quiver.paths import cache_dir_for, locked_beside
+from quiver.paths import atomic_write_text, cache_dir_for, locked_beside
 from quiver.status.catalog import SERVICES, StatusService
 from quiver.status.parsers import Report, google_cloud, statuspage
 
@@ -473,19 +471,9 @@ class StatusPoller:
 
     def _write(self, entries: dict[str, Entry]) -> None:
         """The whole cache, atomically (callers hold the lock file)."""
-        body = json.dumps({"version": 1, "services": {k: v.to_dict() for k, v in sorted(entries.items())}},
-                          indent=2, sort_keys=True)
-        fd, tmp = tempfile.mkstemp(dir=self.cache_path.parent, prefix=".web-service-status-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(body)
-            os.replace(tmp, self.cache_path)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        atomic_write_text(self.cache_path, json.dumps(
+            {"version": 1, "services": {k: v.to_dict() for k, v in sorted(entries.items())}},
+            indent=2, sort_keys=True))
 
 
 # One poller per cache file, shared by every request the hub serves, so
