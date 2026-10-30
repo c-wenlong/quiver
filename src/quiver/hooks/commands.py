@@ -26,6 +26,7 @@ from collections import Counter
 from pathlib import Path
 
 from quiver import paths as _paths
+from quiver.paths import home_relative as _short
 from quiver.console import c, sanitize, terminal_width
 from quiver.flags import expand_value_flags
 from quiver.init.hooks import apply_hook_status, plan_hooks
@@ -199,13 +200,6 @@ def _row_json(r: HookRow, summaries: dict[Path, str]) -> dict:
         # has no single file to read it from.
         "summary": summaries[r.source],
     }
-
-
-def _short(path: Path, home: Path) -> str:
-    try:
-        return "~/" + str(path.relative_to(home))
-    except ValueError:
-        return str(path)
 
 
 def _declared_cell(row: HookRow) -> str:
