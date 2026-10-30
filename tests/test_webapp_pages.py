@@ -1,6 +1,8 @@
 """Web app page plugins: dispatch of /v1/app/<page> and the page bundles."""
 
 import json
+import shutil
+import subprocess
 import tempfile
 import types
 import unittest
@@ -95,7 +97,6 @@ class TestLoad(unittest.TestCase):
                 'registerPage("%s", render);\n' % (page, page))
         with patch.object(pages, "STATIC", folder):
             body = pages.bundle(".js").decode()
-            self.assertNotIn("(function", pages.bundle(".css").decode())
         node = shutil.which("node")
         if node is None:
             self.skipTest("node not installed")
@@ -103,6 +104,70 @@ class TestLoad(unittest.TestCase):
                   + "\nprocess.stdout.write(PAGES.one() + ',' + PAGES.two());")
         out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
         self.assertEqual(out.stdout, "one,two", out.stderr)
+
+
+class TestShippedBundle(unittest.TestCase):
+    """The real scripts, in index.html's order, then the served page
+    bundle, each run as its own classic script under node with a
+    permissive DOM: no script fails to parse or throws while loading,
+    and every page that calls registerPage registers. One test for every
+    page, instead of a substring check per page."""
+
+    STATIC = Path(pages.__file__).resolve().parent.parent / "static"
+    RUNNER = r"""
+const vm = require("vm"), fs = require("fs");
+const [order, bundlePath] = JSON.parse(process.argv[1]);
+// Anything the scripts touch at load: every property and call answers
+// with the same stub, so only a real parse error or throw can fail.
+const any = new Proxy(function () {}, {
+  get: (_t, k) => (k === Symbol.toPrimitive ? () => "" : k === Symbol.iterator ? function* () {} : any),
+  apply: () => any, construct: () => any, set: () => true, deleteProperty: () => true,
+});
+globalThis.window = globalThis;
+globalThis.addEventListener = () => {};
+globalThis.document = any;
+globalThis.navigator = { language: "en-US", userAgent: "node" };
+globalThis.location = { hash: "" };
+globalThis.history = any;
+const store = new Map();
+globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null),
+  setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
+const errors = [];
+console.error = (...a) => errors.push(a.map((x) => String(x && x.stack || x)).join(" "));
+for (const file of order) vm.runInThisContext(fs.readFileSync(file, "utf8"), { filename: file });
+vm.runInThisContext(fs.readFileSync(bundlePath, "utf8"), { filename: "pages.js" });
+// Exit now: a page may arm a timer at load, and those never ran in this check.
+process.stdout.write(JSON.stringify({ errors, pages: Object.keys(PAGES).sort() }), () => process.exit(0));
+"""
+
+    def test_every_page_loads_and_registers(self):
+        import re
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node not installed")
+        html = (self.STATIC / "index.html").read_text(encoding="utf-8")
+        order = [str(self.STATIC / name) for name in re.findall(r'<script src="/app/([\w.-]+\.js)"', html)
+                 if name != "pages.js"]
+        with tempfile.NamedTemporaryFile("wb", suffix=".js", delete=False) as f:
+            f.write(pages.bundle(".js"))
+        self.addCleanup(Path(f.name).unlink)
+        done = subprocess.run([node, "-e", self.RUNNER, json.dumps([order, f.name])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        self.assertEqual(out["errors"], [])
+        # The pages the app ships, named here so a page that stops calling
+        # registerPage (or renames itself) fails too, not only one that
+        # calls it and breaks.
+        shipped = {"agents", "calendar", "compute", "doctor", "hooks", "inbox", "mcp", "models", "plugins",
+                   "pricing", "repositories", "settings", "setup", "skills", "status", "tasks"}
+        self.assertLessEqual(shipped, set(out["pages"]))
+        # And any page added since registers as well.
+        declared = set()
+        for path in (self.STATIC / "pages").glob("*.js"):
+            declared |= set(re.findall(r'registerPage\("(\w+)"', path.read_text(encoding="utf-8")))
+        self.assertLessEqual(declared, set(out["pages"]))
 
 
 class TestStylesheets(unittest.TestCase):

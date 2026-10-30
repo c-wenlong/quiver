@@ -292,21 +292,12 @@ struct McpAddServerSheet: View {
                 error = "Two values would be saved as the secret \(twice). Rename one of them."
                 return
             }
-            var pairs: [(String, String)] = []
-            for variable in filled {
-                var value = variable.value
-                if variable.secret && !value.hasPrefix("${") {
-                    let secretName = mcpSecretName(server: name, key: variable.key)
-                    try await app.swe.mcpSecretSet(name: secretName, value: value)
-                    value = "${\(secretName)}"
-                }
-                pairs.append((variable.key, value))
-            }
-            if bearer {
-                try await app.swe.mcpSecretSet(name: tokenRef, value: token.trimmingCharacters(in: .whitespaces))
-                token = ""
-                pairs.append(("Authorization", "Bearer ${\(tokenRef)}"))
-            }
+            // The whole spec is built before any secret is stored, so
+            // nothing past this point can refuse with secrets left behind.
+            let pairs: [(String, String)] = filled.map { variable in
+                (variable.key, variable.secret && !variable.value.hasPrefix("${")
+                    ? "${\(mcpSecretName(server: name, key: variable.key))}" : variable.value)
+            } + (bearer ? [("Authorization", "Bearer ${\(tokenRef)}")] : [])
             let spec: McpServerSpec
             if kind == .command {
                 guard let words, !words.isEmpty else { return }
@@ -317,7 +308,20 @@ struct McpAddServerSheet: View {
                     url: url.trimmingCharacters(in: .whitespaces),
                     transport: sse ? "sse" : "http", headers: pairs))
             }
+            // The secrets go in before the add: swe refuses an add whose
+            // ${NAME} has no value yet, and writes each harness's config
+            // with the values filled in.
+            for variable in stored {
+                try await app.swe.mcpSecretSet(name: mcpSecretName(server: name, key: variable.key),
+                                               value: variable.value)
+            }
+            if bearer {
+                try await app.swe.mcpSecretSet(name: tokenRef, value: token.trimmingCharacters(in: .whitespaces))
+            }
             _ = try await app.swe.mcpAdd(spec, to: picked.sorted(), force: force)
+            // Kept until the add lands, so a refused one can be retried
+            // without typing the token again.
+            token = ""
             await reload()
             dismiss()
         } catch {

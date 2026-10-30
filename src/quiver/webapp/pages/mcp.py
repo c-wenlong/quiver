@@ -55,14 +55,13 @@ import re
 import secrets
 import shutil
 import subprocess
-import threading
 from contextlib import redirect_stdout
 from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from quiver.mcp.secrets import _SECRET_FLAG_RE
-from quiver.webapp.pages import PageError, tilde
+from quiver.webapp.pages import CONFIG_LOCK, PageError, tilde
 
 # A health probe HEADs each URL with its own five-second timeout; the whole
 # check gets this long before a server still being probed reads "unknown".
@@ -177,7 +176,7 @@ NAME_MAX = 200
 # back; two at once could lose one, and the dry run and the write must see
 # the same files. ``_sync`` also prints as it goes, which is captured while
 # this is held (the hub itself never writes to stdout).
-_WRITE_LOCK = threading.Lock()
+_WRITE_LOCK = CONFIG_LOCK  # shared with Skills and Setup
 # Fingerprints are keyed per hub process: the material holds the configs,
 # resolved secrets included, so a bare hash of it could be guessed at
 # offline. A hub restart between Preview and Sync just asks for a new

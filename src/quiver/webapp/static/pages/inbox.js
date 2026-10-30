@@ -98,7 +98,7 @@
     if (next && document.activeElement === document.body) next.focus();
   }
 
-  const onInbox = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "inbox";
+  const onInbox = () => currentRoute() === "inbox";
 
   /* The subject type's icon, tinted by why GitHub notified you. */
   function typeIcon(note) {

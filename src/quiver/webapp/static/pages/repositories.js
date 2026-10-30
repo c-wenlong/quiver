@@ -576,7 +576,7 @@
     if (onDashboard()) paintDashboard();
   }
 
-  const onDashboard = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "repositories"
+  const onDashboard = () => currentRoute() === "repositories"
     && !GhUI.hashParams().get("repo");
 
   function bindDrag(panel) {
@@ -1154,7 +1154,7 @@
       // The page behind the sheet reads the repo again, even if the sheet
       // was closed meanwhile: the hub dropped its cached board, so a
       // merged row leaves the list.
-      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+      const here = currentRoute();
       const focusRepo = GhUI.hashParams().get("repo");
       if (here === "repositories" && !focusRepo) renderDashboard();
       else if (here === "repositories" && page.focus && page.focus.repo === focusRepo) renderFocus(focusRepo);
@@ -1481,7 +1481,7 @@
     if (status === 200 && data) {
       if (page.data) page.data.repos = data.repos;
       addEl().close();
-      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+      const here = currentRoute();
       if (here === "repositories" && !GhUI.hashParams().get("repo")) renderDashboard();
       return;
     }
@@ -1628,7 +1628,7 @@
   /* The PR sheet lives on <body>, outside the panel a route repaints, so
    * leaving the page (Back, a sidebar link) has to close it here. */
   window.addEventListener("hashchange", () => {
-    const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+    const here = currentRoute();
     if (here !== "repositories") closeSheets();
     closeRunMenu();
     page.actionError = null;

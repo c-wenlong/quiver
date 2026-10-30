@@ -158,7 +158,7 @@ function settingsSection() {
 }
 
 function onSettingsPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "settings";
+  return currentRoute() === "settings";
 }
 
 async function renderSettings() {
@@ -593,17 +593,6 @@ function settingsUptime(seconds) {
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }
 
-/* Foundation's .relative(presentation: .named): "now", "5 minutes ago". */
-function settingsRelative(epoch) {
-  const diff = Math.min(0, epoch - Date.now() / 1000);
-  const abs = Math.abs(diff);
-  const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
-  for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["week", 604800],
-    ["day", 86400], ["hour", 3600], ["minute", 60]]) {
-    if (abs >= size) return rtf.format(Math.trunc(diff / size), unit);
-  }
-  return abs < 1 ? "now" : rtf.format(Math.trunc(diff), "second");
-}
 
 function remoteCards() {
   const d = settingsPage.data;
@@ -735,7 +724,7 @@ function deviceRow(dev) {
     if (f) bits.push(f);
   }
   bits.push(dev.id);
-  if (dev.last_seen_at) bits.push(`seen ${settingsRelative(dev.last_seen_at)}`);
+  if (dev.last_seen_at) bits.push(`seen ${Fmt.relative(dev.last_seen_at)}`);
   if (dev.paired_via === "tailscale") bits.push("paired with Tailscale");
   const title = `${esc(name)}${dev.this_device ? ' <span class="badge set-this">This device</span>' : ""}`;
   const busy = p.revoking.has(dev.id);

@@ -86,6 +86,11 @@ BRANDS: list[tuple[str, str, str | None, str | None, tuple[str, ...], tuple[str,
     ("llmgateway", "LLM Gateway", None, "llmgateway", ("llmgateway", "devpass"), ()),
     ("standardcompute", "Standard Compute", None, "standardcompute", ("stdcmpt",), ()),
     ("cheapestinference", "CheapestInference", None, "cheapestinference", ("cheapestinference",), ()),
+    # The Models page's benchmark source; a key filed under its name shows
+    # the mark too. "artificial" alone is too generic to claim, so only
+    # the run-together id matches.
+    ("artificialanalysis", "Artificial Analysis", None, "artificial-analysis",
+     ("artificialanalysis",), ()),
 ]
 
 OTHER = ("other", "Other", "#45454b", None, (), ())

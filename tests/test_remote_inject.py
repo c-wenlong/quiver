@@ -25,9 +25,9 @@ class TestSuperviseRegistry(unittest.TestCase):
 
     def test_mark_read_unmark(self):
         supervise.mark(self.home, self.key, {"mode": "headless"})
-        self.assertIn(self.key, supervise.supervised_keys(self.home))
+        self.assertIn(self.key, supervise.supervised(self.home))
         supervise.unmark(self.home, self.key)
-        self.assertNotIn(self.key, supervise.supervised_keys(self.home))
+        self.assertNotIn(self.key, supervise.supervised(self.home))
 
     def test_dead_tmux_pruned(self):
         supervise.mark(
@@ -35,7 +35,7 @@ class TestSuperviseRegistry(unittest.TestCase):
             {"mode": "tmux", "tmux": "qv-dead"},
         )
         with patch.object(supervise, "tmux_alive", return_value=False):
-            self.assertNotIn(self.key, supervise.supervised_keys(self.home))
+            self.assertNotIn(self.key, supervise.supervised(self.home))
         # and the registry file no longer lists it
         self.assertNotIn(self.key, supervise.meta_for(self.home, self.key) or {})
 
@@ -44,7 +44,7 @@ class TestSuperviseRegistry(unittest.TestCase):
             self.home, self.key, {"mode": "tmux", "tmux": "qv-live"}
         )
         with patch.object(supervise, "tmux_alive", return_value=True):
-            self.assertIn(self.key, supervise.supervised_keys(self.home))
+            self.assertIn(self.key, supervise.supervised(self.home))
 
 
 class TestAttach(unittest.TestCase):

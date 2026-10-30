@@ -22,6 +22,7 @@ from __future__ import annotations
 import importlib
 import os
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -30,6 +31,15 @@ from typing import Any
 _NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 _HERE = Path(__file__).resolve().parent
 STATIC = _HERE.parent / "static" / "pages"
+
+
+# One lock for the pages that rewrite the hub's shared config: MCP
+# servers (``mcp.json`` and the harness configs synced from it), skill
+# links (``skill_links.json`` and the links themselves) and Setup, which
+# does both in one apply. Each held its own lock, so a Setup apply could
+# rewrite mcp.json under an MCP page write, or relink a skills root the
+# Skills page was linking.
+CONFIG_LOCK = threading.Lock()
 
 
 class PageError(Exception):

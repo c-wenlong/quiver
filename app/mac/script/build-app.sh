@@ -161,7 +161,17 @@ describe="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
 # describe string, and WidgetKit then refuses every widget render with
 # bundleStubNotSupported ("Bundle version did not match").
 version="$( (git -C "$here" describe --tags --abbrev=0 2>/dev/null || true) | sed 's/^v//')"
-case "$version" in ""|*[!0-9.]*) version="0.0.0" ;; esac
+# A prerelease or build suffix (v0.3.0-rc1, v0.3.0+mac) keeps its dotted
+# part: 0.0.0 would read as older than every release.
+version="${version%%[-+]*}"
+case "$version" in
+  ""|*[!0-9.]*)
+    if [ "$channel" = "prod" ]; then
+      echo "build-app: the version tag gives no dotted version to stamp; prod would ship 0.0.0." >&2
+      exit 1
+    fi
+    version="0.0.0" ;;
+esac
 build="$(git -C "$here" rev-list --count HEAD 2>/dev/null || echo 1)"
 # Update stamping: dev builds record where they were built from, so
 # Settings > Updates can tell the user the checkout has moved on. Prod
