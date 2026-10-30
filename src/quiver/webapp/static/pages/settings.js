@@ -505,12 +505,12 @@ function settingsKeySheet() {
         ? `<span class="caption">saved as</span><select class="field set-key-var" id="set-key-var" aria-label="Variable"${e.working ? " disabled" : ""}>${picked.env_vars.map((v) =>
             `<option value="${esc(v)}"${v === name ? " selected" : ""}>${esc(v)}</option>`).join("")}</select>`
         : `<code class="caption">saved as ${esc(name)}</code>`;
-      fields += `<div class="set-key-saved">${savedAs}<span class="set-key-spacer"></span>${link ? `<a class="caption" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
+      fields += `<div class="set-key-saved">${savedAs}<span class="set-key-spacer"></span>${safeHref(link) ? `<a class="caption" href="${safeHref(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
       if (existing) fields += `<p class="caption set-warn">${esc(name)} is already set; saving replaces it.</p>`;
     }
   } else {
     fields += `<div class="set-key-saved"><span class="caption">Under</span><span>${esc(row ? row.provider || "Other" : "")}</span>
-      <span class="set-key-spacer"></span>${link ? `<a class="caption" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
+      <span class="set-key-spacer"></span>${safeHref(link) ? `<a class="caption" href="${safeHref(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
   }
   fields += `<label class="set-form-field"><span class="caption">Value</span>
     <span class="set-key-input-row"><input class="field set-key-input" id="set-key-value" type="${e.show ? "text" : "password"}"
@@ -675,8 +675,8 @@ function setupRow(step) {
   const a = step.action || {};
   let control = SETUP_BADGE[step.state] || "";
   const live = step.state === "needs_you" || step.state === "failed";
-  if (live && a.kind === "open" && a.url) {
-    control += ` <a class="set-button" href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.label || "Open")}</a>`;
+  if (live && a.kind === "open" && safeHref(a.url)) {
+    control += ` <a class="set-button" href="${safeHref(a.url)}" target="_blank" rel="noopener">${esc(a.label || "Open")}</a>`;
   } else if (live && a.kind === "command" && a.command) {
     const label = a.label || "Copy command";
     control += ` <button class="icon-button" data-setup-copy="${esc(step.id)}" aria-label="${esc(label)}" title="${esc(label)}">${Fmt.copyIcon()}</button>`;
