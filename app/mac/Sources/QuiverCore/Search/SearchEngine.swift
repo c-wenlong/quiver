@@ -76,7 +76,27 @@ public final class SearchEngine: @unchecked Sendable {
 
     /// The lazily opened read-only connection; nil until probed or after a
     /// failed probe (which is retried on the next call rather than cached).
-    private let lock = OSAllocatedUnfairLock<SQLiteDatabase?>(initialState: nil)
+    private let lock = OSAllocatedUnfairLock<Held?>(initialState: nil)
+
+    /// A connection and the file it opened. "Clear search data" deletes
+    /// the file and makes a new one; a held connection keeps reading the
+    /// deleted file (an unlinked inode reads without error), so each call
+    /// checks the path still names the file it opened.
+    private struct Held: @unchecked Sendable {
+        var db: SQLiteDatabase
+        var file: FileID
+    }
+
+    private struct FileID: Equatable {
+        var device: dev_t
+        var inode: ino_t
+    }
+
+    private static func fileID(_ url: URL) -> FileID? {
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { return nil }
+        return FileID(device: info.st_dev, inode: info.st_ino)
+    }
 
     /// - Parameter directory: where `search.sqlite` lives; production uses
     ///   `SearchLocation.directory(under:)` (`~/.quiver/data/search/`),
@@ -95,13 +115,17 @@ public final class SearchEngine: @unchecked Sendable {
 
     /// The held connection, or a fresh probe. Nil means this call sees no
     /// usable index — and stays uncached so a later call can succeed.
-    private func connection(_ db: inout SQLiteDatabase?) -> SQLiteDatabase? {
-        if let db { return db }
-        guard FileManager.default.fileExists(atPath: url.path),
+    private func connection(_ held: inout Held?) -> SQLiteDatabase? {
+        let current = Self.fileID(url)
+        if let open = held {
+            if open.file == current { return open.db }
+            held = nil  // deleted or replaced since it opened
+        }
+        guard let current,
               let opened = try? SQLiteDatabase(readOnlyURI: Self.readOnlyURI(for: url)),
               (try? Self.checkUsable(opened)) == true
         else { return nil }
-        db = opened
+        held = Held(db: opened, file: current)
         return opened
     }
 

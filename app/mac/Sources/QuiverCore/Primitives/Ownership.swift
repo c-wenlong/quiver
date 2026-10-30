@@ -65,17 +65,33 @@ public enum PrimitiveOwnership {
         return resolved.hasPrefix(inside + "/")
     }
 
-    /// `path`'s deepest existing ancestor with symlinks resolved: where a
-    /// file created under `path` would really land. `realpath` stops at
-    /// the first missing component, so a new part's folder is checked
-    /// through the closest ancestor that exists.
+    /// Where `path` would really land: its deepest existing ancestor with
+    /// symlinks resolved, then the missing rest of `path` on top. `realpath`
+    /// stops at the first missing component, so a new part's folder is
+    /// checked through the closest ancestor that exists. The missing rest
+    /// can't hold a symlink, so its `.` and `..` apply as written: a name
+    /// that climbs out of the ancestor lands outside it here too.
     public static func resolvedAncestor(of path: String,
                                         resolve: (String) -> String = FolderOwners.realPath) -> String {
         var candidate = path
+        var missing: [String] = []
         while !FileManager.default.fileExists(atPath: candidate), candidate != "/" {
-            candidate = URL(fileURLWithPath: candidate).deletingLastPathComponent().path
+            // NSString drops the last component as written, `..` included;
+            // URL's version leaves "/a/b/.." as it is, which looped forever.
+            let parent = (candidate as NSString).deletingLastPathComponent
+            guard parent != candidate, !parent.isEmpty else { break }
+            missing.insert((candidate as NSString).lastPathComponent, at: 0)
+            candidate = parent
         }
-        return FolderOwners.trimmed(resolve(candidate))
+        var parts = FolderOwners.trimmed(resolve(candidate)).split(separator: "/").map(String.init)
+        for part in missing {
+            switch part {
+            case ".", "": continue
+            case "..": if !parts.isEmpty { parts.removeLast() }
+            default: parts.append(part)
+            }
+        }
+        return "/" + parts.joined(separator: "/")
     }
 }
 

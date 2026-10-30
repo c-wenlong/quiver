@@ -392,6 +392,12 @@ final class MentionReviewFixTests: XCTestCase {
 
 @MainActor
 final class CommandMenuTests: XCTestCase {
+    // The kept lists are static: start each test without the last one's.
+    override func setUp() async throws {
+        try await super.setUp()
+        await CommandMenu.forgetKeptLists()
+    }
+
     func testFetchesOnceOnOpenAndFiltersLocally() async {
         let menu = CommandMenu()
         var calls = 0
@@ -554,6 +560,12 @@ final class MentionResumeTests: XCTestCase {
 
 @MainActor
 final class CommandMenuResumeTests: XCTestCase {
+    // The kept lists are static: start each test without the last one's.
+    override func setUp() async throws {
+        try await super.setUp()
+        await CommandMenu.forgetKeptLists()
+    }
+
     func testResumeRefetchesForAnOpenMenu() async {
         let menu = CommandMenu()
         var calls = 0
@@ -578,6 +590,12 @@ final class CommandMenuResumeTests: XCTestCase {
 
 @MainActor
 final class CommandMenuReviewFixTests: XCTestCase {
+    // The kept lists are static: start each test without the last one's.
+    override func setUp() async throws {
+        try await super.setUp()
+        await CommandMenu.forgetKeptLists()
+    }
+
     func testOpenMenuReloadsAfterResetWhileFocused() async {
         let menu = CommandMenu()
         var calls = 0

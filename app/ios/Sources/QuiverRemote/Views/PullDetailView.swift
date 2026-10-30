@@ -1,8 +1,12 @@
 import SwiftUI
 
 /// One pull request in full: title and meta, the rendered body, the
-/// per-check rows and reviews, then Open on GitHub and the primary
-/// Open in session. Reads `GET /v1/pulls/<o>/<r>/<n>`.
+/// per-check rows and reviews, then the primary Open in session, merge
+/// with a strategy or arm auto-merge (behind a confirm, as on the Mac
+/// and web), and Open on GitHub. A check row from a GitHub Actions run
+/// re-runs that run's failed jobs, or all of them, from its menu.
+/// Reads `GET /v1/pulls/<o>/<r>/<n>`; the writes are the web app's
+/// `POST /v1/app/repositories/merge` and `…/rerun`.
 struct PullDetailView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
@@ -15,6 +19,17 @@ struct PullDetailView: View {
     @State private var error: String?
     @State private var opening = false
     @State private var startedKey: String?
+    /// Bumped per load so a late reply can't overwrite a newer one.
+    @State private var generation = 0
+    @State private var method: MergeMethod = .squash
+    /// The write the confirm dialog is asking about.
+    @State private var asking: MergeAsk?
+    @State private var merging = false
+    /// A merge's error stays on the page, under the buttons.
+    @State private var mergeError: String?
+    /// Workflow runs whose re-run is in flight.
+    @State private var rerunning: Set<Int> = []
+    @State private var rerunError: String?
 
     var body: some View {
         PageScroll {
@@ -22,7 +37,7 @@ struct PullDetailView: View {
                 // A failed refresh keeps the PR it already had — the
                 // notice says why it's stale rather than replacing it.
                 if let error {
-                    Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                    Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
                         .font(Theme.caption).foregroundStyle(Theme.warningText)
                         .lineLimit(2)
                 }
@@ -50,6 +65,19 @@ struct PullDetailView: View {
         .navigationTitle("\(repo)#\(number)")
         .navigationBarTitleDisplayMode(.inline)
         .task { if reply == nil { await load() } }
+        .confirmationDialog(asking == .auto ? "Arm auto-merge" : "Merge pull request",
+                            isPresented: Binding(get: { asking != nil },
+                                                 set: { if !$0 { asking = nil } }),
+                            titleVisibility: .visible, presenting: asking) { ask in
+            if let pr = reply?.pr {
+                Button(PullActions.confirmButton(ask, pr)) { Task { await merge(ask) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { ask in
+            if let pr = reply?.pr {
+                Text(PullActions.confirmMessage(ask, pr, repo: repo, method: method))
+            }
+        }
         // The chat opens after the sheet is gone, so the push isn't
         // lost under the dismiss animation.
         .sheet(isPresented: $opening, onDismiss: {
@@ -66,12 +94,69 @@ struct PullDetailView: View {
 
     private func load(refresh: Bool = false) async {
         guard let client = app.client else { return }
+        generation += 1
+        let gen = generation
         do {
             let body = try await client.pull(repo: repo, number: number, refresh: refresh)
-            reply = body
-            error = nil
+            guard gen == generation else { return }
+            (reply, error) = Self.landing(body, over: reply)
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch {
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            guard gen == generation else { return }
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// What a reply leaves on screen. A `gh` failure answers 200 with
+    /// `pr: null`: the PR already shown stays, and the notice says why
+    /// it's stale, rather than blanking the page for an outage.
+    static func landing(_ body: PullResponse, over shown: PullResponse?) -> (reply: PullResponse?, error: String?) {
+        if body.pr == nil, shown?.pr != nil {
+            return (shown, body.error ?? "GitHub couldn't read the pull request.")
+        }
+        return (body, nil)
+    }
+
+    /// Merge or arm auto-merge, then read the PR again: the hub dropped
+    /// its cached copy, so the page shows merged or armed. A 409 or 404
+    /// means the page was out of date; the error stays and the PR is
+    /// read again so it shows what the hub saw. The buttons stay busy
+    /// until that read lands, so the old picture can't be acted on twice.
+    private func merge(_ ask: MergeAsk) async {
+        guard let client = app.client, !merging else { return }
+        merging = true
+        mergeError = nil
+        defer { merging = false }
+        do {
+            try await client.mergePull(repo: repo, number: number, method: method, auto: ask == .auto)
+            await load(refresh: true)
+        } catch is CancellationError {
+            return
+        } catch {
+            mergeError = error.localizedDescription
+            if let e = error as? HubError, e.status == 409 || e.status == 404 {
+                await load(refresh: true)
+            }
+        }
+    }
+
+    /// Re-run a workflow run's failed jobs, or all of them. Success
+    /// reads the PR again; the checks flip on GitHub's schedule.
+    private func rerun(_ run: Int, failed: Bool) async {
+        guard let client = app.client, !rerunning.contains(run) else { return }
+        rerunning.insert(run)
+        rerunError = nil
+        // Busy until the fresh read lands, as for a merge.
+        defer { rerunning.remove(run) }
+        do {
+            try await client.rerunRun(repo: repo, run: run, failed: failed)
+            await load(refresh: true)
+        } catch is CancellationError {
+            return
+        } catch {
+            rerunError = error.localizedDescription
         }
     }
 
@@ -118,13 +203,16 @@ struct PullDetailView: View {
     @ViewBuilder private func stats(_ pr: PullDetail) -> some View {
         let bits = statBits(pr)
         let labels = pr.labels ?? []
-        if !bits.isEmpty || !labels.isEmpty {
+        if !bits.isEmpty || !labels.isEmpty || pr.autoMerge != nil {
             HStack(spacing: 4) {
                 if !bits.isEmpty {
                     Text(bits.joined(separator: " · "))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
-                ForEach(labels.prefix(4), id: \.self) { Badge($0) }
+                if let auto = pr.autoMerge {
+                    Badge("Auto-merge · \(auto.method ?? "on")")
+                }
+                ForEach(Array(labels.prefix(4).enumerated()), id: \.offset) { Badge($0.element) }
             }
         }
     }
@@ -135,6 +223,17 @@ struct PullDetailView: View {
                 Label("Open in session", systemImage: "play")
             }
             .primaryButton()
+            if PullActions.offersMerge(pr) {
+                mergeControls(pr)
+            }
+            // Outside the open-only controls: a merge refused because the
+            // PR closed meanwhile still says why after the re-read.
+            if let mergeError {
+                Text(mergeError).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if let url = pr.url.flatMap(URL.init) {
                 Button { openURL(url) } label: {
                     Label("Open on GitHub", systemImage: "safari")
@@ -145,12 +244,93 @@ struct PullDetailView: View {
         .padding(.top, 4)
     }
 
+    /// The strategy menu, then Merge and Auto-merge; both ask first.
+    /// The phone has no hover, so why a button is off is written under.
+    private func mergeControls(_ pr: PullDetail) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Menu {
+                Picker("Merge strategy", selection: $method) {
+                    ForEach(MergeMethod.allCases) { Text($0.title).tag($0) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(method.title)
+                    Image(systemName: "chevron.up.chevron.down").font(Theme.small)
+                }
+                .font(Theme.control).foregroundStyle(Theme.textPrimary)
+                .scaledMinHeight(Theme.controlHeight)
+            }
+            .disabled(merging)
+            .accessibilityLabel("Merge strategy, \(method.title)")
+            HStack(spacing: 8) {
+                Button {
+                    mergeError = nil
+                    asking = .merge
+                } label: {
+                    if merging {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Merge", systemImage: "arrow.triangle.merge")
+                    }
+                }
+                .secondaryButton()
+                .disabled(merging || PullActions.mergeBlock(pr) != nil)
+                Button {
+                    mergeError = nil
+                    asking = .auto
+                } label: {
+                    Label("Auto-merge", systemImage: "clock")
+                }
+                .secondaryButton()
+                .disabled(merging || PullActions.autoBlock(pr) != nil)
+            }
+            if let note = PullActions.blockNote(pr) {
+                Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+        }
+    }
+
+    /// A check row's ⋯ menu: Re-run failed jobs (a run with a failing
+    /// check only) and Re-run all jobs. The run spins while it's asked.
+    private func rerunMenu(_ run: Int, name: String, checks: [CheckRun]) -> some View {
+        let busy = rerunning.contains(run)
+        return Menu {
+            if PullActions.runFailed(run, in: checks, repo: repo) {
+                Button {
+                    Task { await rerun(run, failed: true) }
+                } label: { Label("Re-run failed jobs", systemImage: "arrow.clockwise") }
+            }
+            Button {
+                Task { await rerun(run, failed: false) }
+            } label: { Label("Re-run all jobs", systemImage: "arrow.clockwise") }
+        } label: {
+            Group {
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "ellipsis.circle").font(Theme.font(size: 16))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(.rect)
+        }
+        .disabled(busy)
+        .accessibilityLabel("Re-run \(name)")
+    }
+
     @ViewBuilder private func checksSection(_ pr: PullDetail) -> some View {
         let runs = pr.checkRuns ?? []
         if !runs.isEmpty {
             GroupLabel(text: "Checks", trailing: pr.checks)
+            if let rerunError {
+                Text(rerunError).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
             CardList(data: runs.enumerated().map(CheckSlot.init)) { slot in
                 let run = slot.run
+                let runId = PullActions.runId(run.url, repo: repo)
                 let row = HStack(spacing: 12) {
                     ChecksGlyph(state: run.state)
                     Text(run.name ?? "check").font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(1)
@@ -159,17 +339,24 @@ struct PullDetailView: View {
                     }
                     Spacer(minLength: 8)
                     if run.url != nil {
-                        Image(systemName: "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Image(systemName: "arrow.up.right").font(Theme.font(size: 12)).foregroundStyle(Theme.textMuted)
                     }
                 }
                 .padding(.vertical, Theme.rowVertical - 2)
-                .padding(.horizontal, Theme.rowHorizontal)
+                .padding(.leading, Theme.rowHorizontal)
+                .padding(.trailing, runId == nil ? Theme.rowHorizontal : 4)
                 .contentShape(.rect)
-                if let url = run.url.flatMap(URL.init) {
-                    Button { openURL(url) } label: { row }
-                        .buttonStyle(RowButtonStyle())
-                } else {
-                    row
+                HStack(spacing: 0) {
+                    if let url = run.url.flatMap(URL.init) {
+                        Button { openURL(url) } label: { row }
+                            .buttonStyle(RowButtonStyle())
+                    } else {
+                        row
+                    }
+                    if let runId {
+                        rerunMenu(runId, name: run.name ?? "check", checks: runs)
+                            .padding(.trailing, Theme.rowHorizontal - 12)
+                    }
                 }
             }
         }
@@ -272,8 +459,10 @@ struct OpenPullSheet: View {
         NavigationStack {
             PageScroll {
                 if let machine {
-                    startsIn(machine)
-                    harnessSection(machine)
+                    StartsInCard(icon: "arrow.triangle.pull", title: "\(repo)#\(detail.number) worktree",
+                                 trailing: "on \(machine.displayName)")
+                        .padding(.top, 4)
+                    HarnessPicker(machine: machine, harness: $harness, sessions: rows)
                     ModelField(machine: machine, harness: harness,
                                selection: $model,
                                sessions: rows, disabled: flow.busy)
@@ -281,7 +470,7 @@ struct OpenPullSheet: View {
                     startSection(machine)
                 } else {
                     StateCard(icon: "terminal", title: "No machine can start a session",
-                              message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                              message: NewSessionOptions.noMachineMessage(app.machines))
                 }
             }
             .navigationTitle("Open in session")
@@ -319,88 +508,24 @@ struct OpenPullSheet: View {
         model.follow(harness, on: machine)
     }
 
-    private func startsIn(_ machine: Machine) -> some View {
-        Card(padding: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "arrow.triangle.pull").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Starts in").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    Text("\(repo)#\(detail.number) worktree")
-                        .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Text("on \(machine.displayName)")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            }
-            .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
-        }
-        .padding(.top, 4)
-    }
-
-    @ViewBuilder private func harnessSection(_ machine: Machine) -> some View {
-        let offered = NewSessionOptions.harnesses(on: machine)
-        GroupLabel(text: "Harness", trailing: harness.map { NewSessionOptions.name($0, on: machine, sessions: rows) })
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 48, maximum: 48), spacing: 8)], alignment: .leading, spacing: 8) {
-            ForEach(offered, id: \.self) { h in
-                let selected = h == harness
-                let name = NewSessionOptions.name(h, on: machine, sessions: rows)
-                Button { harness = h } label: {
-                    HarnessIcon(harness: h, name: name, size: 24)
-                        .font(.system(size: 10))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .frame(width: 48, height: 48)
-                        .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
-                            .strokeBorder(selected ? Theme.textPrimary : Theme.border, lineWidth: selected ? 1.5 : 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(name)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        if let harness, machine.untrackedHarnesses?.contains(harness) == true {
-            Text("Quiver can't read \(NewSessionOptions.name(harness, on: machine, sessions: rows)) sessions yet: it starts, but no chat opens.")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 4)
-        }
-    }
-
     private var promptSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            GroupLabel(text: "First prompt")
-            TextField("Describe the first task", text: $prompt, axis: .vertical)
-                .lineLimit(4...10)
-                .font(Theme.body)
-                .foregroundStyle(Theme.textPrimary)
-                .padding(12)
-                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+        FirstPromptField(prompt: $prompt) {
+            if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Leave it empty and the hub writes the review brief.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 4)
+            }
         }
     }
 
     private func startSection(_ machine: Machine) -> some View {
-        let ready = harness != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // A blank prompt is fine: the hub writes its review brief then.
+        let ready = harness != nil
         return VStack(alignment: .leading, spacing: 8) {
-            Button { launch = Task { await start(machine) } } label: {
-                HStack(spacing: 8) {
-                    if flow.busy { ProgressView().controlSize(.small).tint(Theme.primaryForeground) }
-                    Text(flow.phase == .waiting ? "Waiting for the session" : flow.opening ? "Opening the chat" : flow.busy ? "Starting" : "Start session")
-                }
+            LaunchStartButton(flow: flow, ready: ready,
+                              footnote: "Runs under tmux on \(machine.displayName) in a checkout of the PR's head. The chat opens once the session shows up.") {
+                launch = Task { await start(machine) }
             }
-            .primaryButton()
-            .disabled(!ready || flow.busy)
-            if case .failed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if case .unconfirmed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text("Runs under tmux on \(machine.displayName) in a checkout of the PR's head. The chat opens once the session shows up.")
-                .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

@@ -91,6 +91,18 @@ final class IssuesDecodingTests: XCTestCase {
     }
 }
 
+final class IssuesModelTests: XCTestCase {
+    @MainActor
+    func testAFailedClosedFetchLeavesTheOpenListsErrorAlone() async {
+        let model = IssuesModel()
+        // Nothing listens here, so the fetch fails at once.
+        await model.loadClosed(client: HubClient(baseURL: URL(string: "http://127.0.0.1:9")!, credential: "c"))
+        XCTAssertNotNil(model.closedError)
+        XCTAssertNil(model.error, "the open rows aren't stale")
+        XCTAssertTrue(model.closedLoaded)
+    }
+}
+
 final class IssueGroupingTests: XCTestCase {
     private func repo(_ name: String, status: String = "ok",
                       issues: [IssueRow]? = nil, error: String? = nil) -> IssueRepo {

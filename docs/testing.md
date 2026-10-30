@@ -55,6 +55,22 @@ Conventions that keep the suite working:
   `tests/test_syntax_floor.py` enforces it.
 - Width-asserting tests patch `quiver.console.terminal_width`; nothing else
   pins terminal size under unittest.
+- A test module's `if __name__ == "__main__": unittest.main()` goes at the
+  very end of the file. Anything below it is skipped when the file is run
+  directly, even though discovery still finds it.
+
+### Web app tests
+
+`tests/test_webapp_*.py` cover the web app's page data (`/v1/app/*`)
+through a real hub on a free port (`HubBase` in `tests/test_remote_hub.py`).
+Give that hub `WebApp(home, download_prices=False)` so no test downloads
+the LiteLLM price list.
+
+Behaviour in `src/quiver/webapp/static/` is tested by running the page
+scripts under `node` with the browser stubbed (`STUB` in
+`tests/test_webapp_launch_sheets.py` is the complete prelude). Those tests
+skip when `node` is not on PATH, so a machine without it silently runs
+fewer tests; CI's runner image ships node.
 
 ### Python coverage
 
@@ -78,8 +94,11 @@ lists the current risk areas.
 ## Swift
 
 The iPhone app in `app/ios/` has its own XCTest suite, run on a
-simulator; [app/ios/README.md](../app/ios/README.md) has the command.
-The rest of this section is the macOS app.
+simulator; [app/ios/README.md](../app/ios/README.md) has the command, and
+the nightly `native.yml` runs its unit target. The rest of this section
+is the macOS app, whose package has three test targets: `QuiverCoreTests`
+(the logic, and almost every test), `QuiverAppUITests` (views and AppKit
+glue that need a run loop or a window) and `QuiverWidgetsUITests`.
 
 From `app/mac/`:
 
@@ -96,6 +115,17 @@ Tests use Swift Testing (`@Suite` / `@Test` / `#expect`). Conventions:
   an ordering, not a wall-clock value.
 - Fixtures that feed `SweClient` and the parsers live under
   `Tests/QuiverCoreTests/Fixtures/`.
+- Temporary folders come from `TempDir` (`LedgerTestSupport.swift`), which
+  removes itself; keep it alive (`withExtendedLifetime`) past any read that
+  opens a file by path. A test that needs a `UserDefaults` suite takes a
+  `TestDefaults` (`TestSupport.swift`), whose plist lives in the test
+  process's temp folder. Never `UserDefaults(suiteName:)` with a plain
+  name: that writes `~/Library/Preferences`, and neither
+  `removePersistentDomain(forName:)` nor deleting the file reliably cleans
+  it up. A model whose defaults point at the real home (`APIKeysModel`'s
+  shell and rc files) gets a temp one too.
+- Fixtures and test data hold made-up figures and names: the repository
+  is public.
 - A new dependency that sleeps or polls takes an injectable clock or a
   gate so the test can drive it deterministically.
 
@@ -130,6 +160,8 @@ xcrun llvm-cov report \
 ```
 
 Filter the report rows by `Sources/QuiverCore` or `Sources/QuiverWidgetsUI`
-for a per-target total. `QuiverApp` is views and is not a unit-test target;
-there is no Swift coverage floor in CI, the report is a guide for where to
-add tests.
+for a per-target total. `QuiverApp` is mostly views; `QuiverAppUITests`
+covers the parts with logic worth pinning. There is no Swift coverage
+floor in CI, and the macOS unit tests run nightly, not on pull requests,
+so run the suites a change touches before pushing. The report is a guide
+for where to add tests.

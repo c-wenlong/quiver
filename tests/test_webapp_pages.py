@@ -1,6 +1,8 @@
 """Web app page plugins: dispatch of /v1/app/<page> and the page bundles."""
 
 import json
+import shutil
+import subprocess
 import tempfile
 import types
 import unittest
@@ -26,6 +28,29 @@ class TestLoad(unittest.TestCase):
         for bad in ("", "_private", "Upper", "a-b", "../x", "nope", "__init__"):
             self.assertIsNone(pages.load(bad), bad)
 
+    def test_home_path_falls_back_to_the_process_home(self):
+        # One rule for every page: the context's home, else the real one
+        # (no context at all, or one naming none).
+        self.assertEqual(
+            pages.home_path(pages.PageContext(home=Path("/h"), state=None)),
+            Path("/h"))
+        self.assertEqual(pages.home_path(types.SimpleNamespace(home="/s")),
+                         Path("/s"))
+        self.assertEqual(
+            pages.home_path(pages.PageContext(home=None, state=None)),
+            Path.home())
+        self.assertEqual(pages.home_path(None), Path.home())
+
+    def test_tilde_writes_the_home_as_a_tilde(self):
+        self.assertEqual(pages.tilde("/h/u", "/h/u/"), "~")
+        self.assertEqual(pages.tilde("/h/u/a/b", "/h/u"), "~/a/b")
+        self.assertEqual(pages.tilde("/h/user2/a", "/h/u"), "/h/user2/a")
+        self.assertEqual(pages.tilde("/elsewhere", "/h/u"), "/elsewhere")
+        with patch.object(pages.os, "sep", "\\"):
+            self.assertEqual(pages.tilde("C:\\Users\\a\\.quiver", "C:\\Users\\a"),
+                             "~\\.quiver")
+            self.assertEqual(pages.tilde("C:\\Users\\a", "C:\\Users\\a\\"), "~")
+
     def test_bundle_concatenates_in_name_order(self):
         folder = Path(tempfile.mkdtemp())
         (folder / "b.js").write_text("B")
@@ -37,6 +62,58 @@ class TestLoad(unittest.TestCase):
             self.assertNotIn("CSS", body)
             self.assertIn("/* a.js */", body)
             self.assertEqual(pages.bundle(".none"), b"")
+
+    def test_bundled_rebuilds_only_when_a_file_changes(self):
+        import os
+        folder = Path(tempfile.mkdtemp())
+        page = folder / "a.js"
+        page.write_text("A")
+        real = pages.bundle
+        with patch.object(pages, "STATIC", folder), \
+                patch.dict(pages._BUNDLES, clear=True), \
+                patch.object(pages, "bundle", side_effect=real) as build:
+            body, etag = pages.bundled(".js")
+            self.assertEqual(pages.bundled(".js"), (body, etag))
+            self.assertEqual(build.call_count, 1)
+            page.write_text("AB")
+            os.utime(page, ns=(1, 1))  # a changed mtime and size
+            body2, etag2 = pages.bundled(".js")
+        self.assertEqual(build.call_count, 2)
+        self.assertNotEqual(etag, etag2)
+        self.assertIn(b"AB", body2)
+
+    def test_etag_matches_by_weak_comparison(self):
+        tag = '"abc"'
+        for header in ('"abc"', 'W/"abc"', '"x", "abc"', "*", ' W/"abc" ,"y"'):
+            self.assertTrue(pages.etag_matches(header, tag), header)
+        for header in (None, "", '"abd"', 'W/"x"'):
+            self.assertFalse(pages.etag_matches(header, tag), header)
+
+    def test_concurrent_requests_build_once(self):
+        import threading
+        folder = Path(tempfile.mkdtemp())
+        (folder / "a.js").write_text("A")
+        gate, built = threading.Event(), []
+        real = pages.bundle
+
+        def slow(suffix):
+            built.append(suffix)
+            gate.wait(5)
+            return real(suffix)
+
+        with patch.object(pages, "STATIC", folder), \
+                patch.dict(pages._BUNDLES, clear=True), \
+                patch.object(pages, "bundle", side_effect=slow):
+            threads = [threading.Thread(target=pages.bundled, args=(".js",))
+                       for _ in range(3)]
+            for t in threads:
+                t.start()
+            import time
+            time.sleep(0.3)  # every request is in before the build ends
+            gate.set()
+            for t in threads:
+                t.join(5)
+        self.assertEqual(built, [".js"])
 
     def test_a_broken_page_does_not_stop_the_others(self):
         """One page that won't parse and one that throws are logged and
@@ -85,7 +162,6 @@ class TestLoad(unittest.TestCase):
                 'registerPage("%s", render);\n' % (page, page))
         with patch.object(pages, "STATIC", folder):
             body = pages.bundle(".js").decode()
-            self.assertNotIn("(function", pages.bundle(".css").decode())
         node = shutil.which("node")
         if node is None:
             self.skipTest("node not installed")
@@ -93,6 +169,116 @@ class TestLoad(unittest.TestCase):
                   + "\nprocess.stdout.write(PAGES.one() + ',' + PAGES.two());")
         out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
         self.assertEqual(out.stdout, "one,two", out.stderr)
+
+
+class TestShippedBundle(unittest.TestCase):
+    """The real scripts, in index.html's order, then the served page
+    bundle, each run as its own classic script under node with a
+    permissive DOM: no script fails to parse or throws while loading,
+    and every page that calls registerPage registers. One test for every
+    page, instead of a substring check per page."""
+
+    STATIC = Path(pages.__file__).resolve().parent.parent / "static"
+    RUNNER = r"""
+const vm = require("vm"), fs = require("fs");
+const [order, bundlePath] = JSON.parse(process.argv[1]);
+// Anything the scripts touch at load: every property and call answers
+// with the same stub, so only a real parse error or throw can fail.
+const any = new Proxy(function () {}, {
+  get: (_t, k) => (k === Symbol.toPrimitive ? () => "" : k === Symbol.iterator ? function* () {} : any),
+  apply: () => any, construct: () => any, set: () => true, deleteProperty: () => true,
+});
+globalThis.window = globalThis;
+globalThis.addEventListener = () => {};
+globalThis.document = any;
+globalThis.navigator = { language: "en-US", userAgent: "node" };
+globalThis.location = { hash: "" };
+globalThis.history = any;
+const store = new Map();
+globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null),
+  setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
+const errors = [];
+console.error = (...a) => errors.push(a.map((x) => String(x && x.stack || x)).join(" "));
+for (const file of order) vm.runInThisContext(fs.readFileSync(file, "utf8"), { filename: file });
+vm.runInThisContext(fs.readFileSync(bundlePath, "utf8"), { filename: "pages.js" });
+// Exit now: a page may arm a timer at load, and those never ran in this check.
+process.stdout.write(JSON.stringify({ errors, pages: Object.keys(PAGES).sort() }), () => process.exit(0));
+"""
+
+    def test_every_page_loads_and_registers(self):
+        import re
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node not installed")
+        html = (self.STATIC / "index.html").read_text(encoding="utf-8")
+        order = [str(self.STATIC / name) for name in re.findall(r'<script src="/([\w.-]+\.js)"', html)
+                 if name != "pages.js"]
+        with tempfile.NamedTemporaryFile("wb", suffix=".js", delete=False) as f:
+            f.write(pages.bundle(".js"))
+        self.addCleanup(Path(f.name).unlink)
+        done = subprocess.run([node, "-e", self.RUNNER, json.dumps([order, f.name])],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        self.assertEqual(out["errors"], [])
+        # The pages the app ships, named here so a page that stops calling
+        # registerPage (or renames itself) fails too, not only one that
+        # calls it and breaks.
+        shipped = {"agents", "calendar", "compute", "doctor", "hooks", "inbox", "mcp", "models", "plugins",
+                   "pricing", "repositories", "settings", "setup", "skills", "status", "tasks"}
+        self.assertLessEqual(shipped, set(out["pages"]))
+        # And any page added since registers as well.
+        declared = set()
+        for path in (self.STATIC / "pages").glob("*.js"):
+            declared |= set(re.findall(r'registerPage\("(\w+)"', path.read_text(encoding="utf-8")))
+        self.assertLessEqual(declared, set(out["pages"]))
+
+
+class TestBundleRoute(HubBase):
+    def test_an_unchanged_bundle_answers_304(self):
+        import http.client
+        for name in ("pages.js", "pages.css"):
+            conn = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=5)
+            try:
+                conn.request("GET", f"/{name}")
+                resp = conn.getresponse()
+                resp.read()
+                etag = resp.getheader("ETag")
+                self.assertEqual(resp.status, 200)
+                self.assertTrue(etag)
+                conn.request("GET", f"/{name}", headers={"If-None-Match": etag})
+                again = conn.getresponse()
+                self.assertEqual((again.status, again.read()), (304, b""))
+                self.assertEqual(again.getheader("ETag"), etag)
+            finally:
+                conn.close()
+
+
+class TestStylesheets(unittest.TestCase):
+    """The web app's stylesheets against its own rules."""
+
+    STATIC = Path(pages.__file__).resolve().parent.parent / "static"
+
+    def sheets(self):
+        return {p.name: p.read_text(encoding="utf-8")
+                for p in [self.STATIC / "styles.css", *sorted((self.STATIC / "pages").glob("*.css"))]}
+
+    def test_every_variable_used_is_defined(self):
+        """A var() with no definition renders the property's initial
+        value (chat's approval toggle had black text in dark mode)."""
+        import re
+        scripts = [p.read_text(encoding="utf-8") for p in [*self.STATIC.glob("*.js"), *self.STATIC.glob("pages/*.js")]]
+        defined = set()
+        for text in [*self.sheets().values(), *scripts]:  # scripts set some inline, as style="--c: …"
+            defined |= set(re.findall(r"(--[a-z0-9-]+)\s*:", text))
+        missing = sorted({f"{name}: {v}" for name, text in self.sheets().items()
+                          for v in re.findall(r"var\((--[a-z0-9-]+)\)?", text) if v not in defined})
+        self.assertEqual(missing, [])
+
+    def test_no_all_caps_labels(self):
+        """Sentence case only, as the Mac app."""
+        self.assertEqual([n for n, t in self.sheets().items() if "uppercase" in t], [])
 
 
 class TestLedgerAccess(HubBase):
@@ -161,11 +347,11 @@ class TestDispatch(HubBase):
         self.assertEqual(status, 404)
 
     def test_bundles_are_served(self):
-        for path, ctype in (("/app/pages.js", "javascript"), ("/app/pages.css", "css")):
+        for path, ctype in (("/pages.js", "javascript"), ("/pages.css", "css")):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 200, path)
-        status, body = self.srv.request("GET", "/app/")
-        self.assertIn(b"/app/pages.js", body)
+        status, body = self.srv.request("GET", "/")
+        self.assertIn(b"/pages.js", body)
 
 
 if __name__ == "__main__":

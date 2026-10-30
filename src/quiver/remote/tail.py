@@ -38,7 +38,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from quiver.paths import expand_user, remote_dir_for
 from quiver.remote import injected, protocol, supervise
@@ -102,9 +102,20 @@ def _approval_prompt_line(pane: str) -> str:
 # How many of the most recent sessions get a live tailer.
 TAIL_MAX_SESSIONS = 100
 
+# A session's journal and cursor files, untouched this long and not
+# being tailed, are deleted by ``TailManager.sweep_stale``. Without it
+# every session ever tailed kept up to 16 MB of journal forever.
+STALE_FILE_AGE_S = 30 * 86_400
+
 # Partial-line safety: never decode more than this many bytes of tail at
 # once; the remainder waits for the next poll.
 _MAX_CHUNK = 4 << 20
+
+# ``JsonlTailSource.continue_from``: how much of the old transcript
+# before its cursor identifies the boundary, and how far from the same
+# offset the new file is searched for it.
+_BOUNDARY_BYTES = 4096
+_HANDOFF_SPAN = 1 << 20
 
 # How much of a transcript's head the tailer keeps to tell a truncation
 # that kept the stream (copytruncate, in-place rewrite) from one that
@@ -116,6 +127,21 @@ _HEAD_SAMPLE = 4096
 # and reading a hundred whole transcripts at startup held >1 GB.
 BACKFILL_BYTES = 2 << 20
 BACKFILL_MESSAGES = 500
+
+# A decoded message carrying this key marks a usage/rate-limit hit; the
+# manager pops it before the message leaves and raises ``notify`` kind
+# ``limit`` from it. Its value is ``{"resets_at": epoch s, "window": ...}``
+# with whatever the harness recorded (either may be missing).
+LIMIT_MARK = "_limit"
+# A limit record older than this when the tailer reads it (backfill of a
+# session seen for the first time, a long-offline satellite) is history:
+# it still shows in the chat but rings nothing.
+LIMIT_FRESH_S = 600.0
+# The same limit (same reset time, or the same text when none is known)
+# rings once per session: again only after its reset time, or after this
+# long when the harness gave none. Retrying into a limit writes a new
+# record per attempt.
+LIMIT_REPEAT_S = 3600.0
 
 # Snapshot stores (no byte cursor) re-read only when something changed;
 # this is how long a "nothing changed" answer is trusted before a full
@@ -259,7 +285,17 @@ def _decode_claude(rec: dict) -> list[dict]:
     if rtype == "assistant":
         if rec.get("isApiErrorMessage"):
             text = _tr._clean_text(msg.get("content")) or "API error"
-            return [protocol.message("error", text, ts=ts)]
+            out = protocol.message("error", text, ts=ts)
+            if rec.get("error") == "rate_limit":
+                # "You've hit your session limit · resets 9:30am": the
+                # 429 record Claude Code writes, with ``quotaLimits``
+                # (``resetsAt`` epoch s, ``rateLimitType`` five_hour,
+                # seven_day, ...) on current versions.
+                quota = rec.get("quotaLimits")
+                quota = quota if isinstance(quota, dict) else {}
+                out[LIMIT_MARK] = _limit_info(
+                    quota.get("resetsAt"), quota.get("rateLimitType"))
+            return [out]
         return _decode_blocks("assistant", msg.get("content"), ts)
     if rtype == "summary":
         text = _tr._clean_text(rec.get("summary"))
@@ -270,6 +306,16 @@ def _decode_claude(rec: dict) -> list[dict]:
         text = _tr._clean_text(rec.get("content") or rec.get("text"))
         return [protocol.message("system", text, ts=ts)] if text else []
     return []
+
+
+def _limit_info(resets_at: Any, window: Any) -> dict:
+    info: dict = {}
+    if isinstance(resets_at, (int, float)) and not isinstance(resets_at, bool) \
+            and resets_at > 0:
+        info["resets_at"] = float(resets_at)
+    if isinstance(window, str) and window:
+        info["window"] = window
+    return info
 
 
 _CODEX_TEXT_BLOCKS = {"input_text", "output_text", "text"}
@@ -332,6 +378,20 @@ def _decode_codex(rec: dict) -> list[dict]:
     if rtype == "event_msg":
         if ptype == "turn_aborted":
             return [protocol.message("system", "turn interrupted", ts=ts)]
+        if ptype == "task_complete":
+            # A turn that ended on a usage limit carries
+            # ``error: {message, codex_error_info: "usage_limit_exceeded"}``
+            # ("You hit your spend cap ..."); other turn ends are
+            # bookkeeping here.
+            err = payload.get("error")
+            if isinstance(err, dict) \
+                    and err.get("codex_error_info") == "usage_limit_exceeded":
+                text = _tr._clean_text(err.get("message")) \
+                    or "usage limit reached"
+                out = protocol.message("error", text, ts=ts)
+                out[LIMIT_MARK] = {}
+                return [out]
+            return []
         if "compact" in ptype:
             return [protocol.message("compaction", "context compacted", ts=ts)]
         return []
@@ -480,45 +540,48 @@ class JsonlTailSource:
             ),
         }
 
-    def restore(self, state: dict) -> None:
-        if state.get("source") == "jsonl" and state.get("path") == str(self.path):
+    def restore(self, state: dict) -> bool:
+        """Resume from a saved cursor; False when it isn't this file's
+        (another path, or a head that no longer matches), leaving the
+        source unplaced for the caller to start fresh."""
+        if state.get("source") != "jsonl" or state.get("path") != str(self.path):
+            return False
+        try:
+            offset = int(state.get("offset") or 0)
+        except (TypeError, ValueError):
+            offset = 0
+        stored = state.get("head")
+        if isinstance(stored, str) and stored:
             try:
-                self.offset = int(state.get("offset") or 0)
-            except (TypeError, ValueError):
-                self.offset = 0
-            stored = state.get("head")
-            if isinstance(stored, str) and stored:
-                try:
-                    head = base64.b64decode(stored.encode("ascii"))
-                except ValueError:
-                    head = b""
-                if head:
-                    cur = self._file_head(len(head))
-                    if cur == head[: len(cur)]:
-                        # Verified — possibly a prefix shorter than the
-                        # sample, when the file was truncated while down.
-                        self._head = head
-                    else:
-                        # Not the file the cursor tracked: a rewrite
-                        # that happened while down reads as a new stream.
-                        self.offset = 0
-                        self._head = b""
-                    return
-            # A cursor written before the bytes were stored verifies
-            # only a file that still reaches the sampled length.
-            try:
-                head_len = int(state.get("head_len") or 0)
-            except (TypeError, ValueError):
-                head_len = 0
-            head_sha = str(state.get("head_sha") or "")
-            if not (head_len and head_sha):
-                return  # a cursor from before the check: nothing to verify
-            head = self._file_head(head_len)
-            if len(head) == head_len and hashlib.sha256(head).hexdigest() == head_sha:
-                self._head = head
-            else:
-                self.offset = 0
-                self._head = b""
+                head = base64.b64decode(stored.encode("ascii"))
+            except ValueError:
+                head = b""
+            if head:
+                cur = self._file_head(len(head))
+                if cur != head[: len(cur)]:
+                    # Not the file the cursor tracked: a rewrite that
+                    # happened while down.
+                    return False
+                # Verified — possibly a prefix shorter than the sample,
+                # when the file was truncated while down.
+                self.offset, self._head = offset, head
+                return True
+        # A cursor written before the bytes were stored verifies only a
+        # file that still reaches the sampled length.
+        try:
+            head_len = int(state.get("head_len") or 0)
+        except (TypeError, ValueError):
+            head_len = 0
+        head_sha = str(state.get("head_sha") or "")
+        if not (head_len and head_sha):
+            # A cursor from before the check: nothing to verify.
+            self.offset = offset
+            return True
+        head = self._file_head(head_len)
+        if len(head) != head_len or hashlib.sha256(head).hexdigest() != head_sha:
+            return False
+        self.offset, self._head = offset, head
+        return True
 
     def skip_to_end(self) -> None:
         try:
@@ -538,6 +601,51 @@ class JsonlTailSource:
         if size > max_bytes:
             self.offset = size - max_bytes
             self._align = True
+
+    def continue_from(self, old: "JsonlTailSource") -> bool:
+        """Place this source right after the last line ``old`` read,
+        found in this file; False (unplaced) when it isn't here.
+
+        Claude ``--resume`` from another folder copies the transcript
+        line for line into a new file, then appends the new turns. The
+        catalog sees the new file a refresh later, so turns can already
+        sit past the copy: starting at the end would lose them.
+
+        The boundary is the last ``_BOUNDARY_BYTES`` before ``old``'s
+        offset: several lines of context, so one repeated short line
+        can't match early, and bounded however large the last record
+        is. It is looked for at the same offset first (a real resume
+        copies byte for byte), then within ``_HANDOFF_SPAN`` of it.
+        """
+        end = old.offset
+        if old._align or end <= 0:
+            return False  # never polled, or nothing read
+        start = max(0, end - _BOUNDARY_BYTES)
+        try:
+            with open(old.path, "rb") as fh:
+                fh.seek(start)
+                mark = fh.read(end - start)
+        except OSError:
+            return False
+        if len(mark) != end - start or not mark.endswith(b"\n"):
+            return False
+        lo = max(0, start - _HANDOFF_SPAN)
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(lo)
+                window = fh.read(start - lo + _HANDOFF_SPAN + len(mark))
+        except OSError:
+            return False
+        if window[start - lo:end - lo] == mark:
+            at = start
+        else:
+            found = window.find(mark)
+            if found < 0:
+                return False
+            at = lo + found
+        self.offset = at + len(mark)
+        self._prime_head()
+        return True
 
     def _file_head(self, span: int) -> bytes:
         try:
@@ -635,7 +743,7 @@ class JsonlTailSource:
                 continue
             try:
                 rec = json.loads(raw.decode("utf-8", errors="replace"))
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if isinstance(rec, dict):
                 out.extend(decode_record(self.tool_name, rec))
@@ -648,6 +756,7 @@ class JsonlTailSource:
         multi-MB single line can't starve everything appended after it.
         """
         offset = self.offset + _MAX_CHUNK
+        size = offset
         try:
             size = self.path.stat().st_size
             with open(self.path, "rb") as fh:
@@ -722,14 +831,19 @@ class OpencodeSource:
             "seq": self.seq,
         }
 
-    def restore(self, state: dict) -> None:
-        if state.get("source") == "opencode":
-            self.cursor = _part_cursor(state.get("cursor"))
-            try:
-                seq = state.get("seq")
-                self.seq = None if seq is None else int(seq)
-            except (TypeError, ValueError):
-                self.seq = None
+    def restore(self, state: dict) -> bool:
+        """Resume from a saved cursor; False when it is another
+        session's or another source's."""
+        if state.get("source") != "opencode" or \
+                state.get("session_id", self.session_id) != self.session_id:
+            return False
+        self.cursor = _part_cursor(state.get("cursor"))
+        try:
+            seq = state.get("seq")
+            self.seq = None if seq is None else int(seq)
+        except (TypeError, ValueError):
+            self.seq = None
+        return True
 
     def skip_to_end(self) -> None:
         conn = self._open()
@@ -748,6 +862,44 @@ class OpencodeSource:
             pass
         try:
             self.seq = self._settled_seq(opencode_store.v2_rows(conn, self.session_id), -1)
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
+
+    def start_near_end(self, max_messages: int | None = None) -> None:
+        """Place both cursors so the first poll reads only the newest
+        ``max_messages`` (default BACKFILL_MESSAGES) rows of each store,
+        not the session's whole history."""
+        cap = BACKFILL_MESSAGES if max_messages is None else max_messages
+        conn = self._open()
+        if conn is None:
+            return
+        try:
+            row = conn.execute(
+                "SELECT time_created, id FROM part WHERE session_id = ? "
+                "ORDER BY time_created DESC, id DESC LIMIT 1 OFFSET ?",
+                (self.session_id, cap),
+            ).fetchone()
+            if row:
+                # The newest row left out: the poll reads strictly after.
+                self.cursor = (int(row[0]), str(row[1]))
+        except sqlite3.Error:
+            pass
+        try:
+            # The boundary comes from the raw rows: v2_rows drops a row
+            # whose JSON won't decode, which would shorten the window
+            # and read as a short session (the whole history again).
+            row = None
+            if opencode_store.has_v2_messages(conn):
+                row = conn.execute(
+                    "SELECT sm.seq FROM session_message sm "
+                    "WHERE sm.session_id = ? "
+                    f"{opencode_store._not_legacy(conn)} "
+                    "ORDER BY sm.seq DESC LIMIT 1 OFFSET ?",
+                    (self.session_id, cap),
+                ).fetchone()
+            self.seq = int(row[0] or 0) if row else -1
         except sqlite3.Error:
             pass
         finally:
@@ -777,10 +929,12 @@ class OpencodeSource:
 
     def _open(self) -> sqlite3.Connection | None:
         try:
+            # as_uri() percent-encodes the path: a raw "?" or "#" in a
+            # home folder name would end the file: URI early.
             return sqlite3.connect(
-                f"file:{self.db_path}?mode=ro", uri=True
+                Path(self.db_path).absolute().as_uri() + "?mode=ro", uri=True
             )
-        except sqlite3.Error:
+        except (sqlite3.Error, ValueError):
             return None
 
     def _role_for(self, conn: sqlite3.Connection, message_id: str) -> str:
@@ -977,11 +1131,14 @@ class SnapshotSource:
     def state(self) -> dict:
         return {"source": "snapshot", "fps": self._fps}
 
-    def restore(self, state: dict) -> None:
-        if state.get("source") == "snapshot":
-            fps = state.get("fps")
-            if isinstance(fps, list):
-                self._fps = [str(f) for f in fps]
+    def restore(self, state: dict) -> bool:
+        """Resume from a saved cursor; False when it isn't a snapshot
+        cursor."""
+        fps = state.get("fps")
+        if state.get("source") != "snapshot" or not isinstance(fps, list):
+            return False
+        self._fps = [str(f) for f in fps]
+        return True
 
     def skip_to_end(self) -> None:
         try:
@@ -1085,8 +1242,9 @@ def _devin_token(session_id: str) -> tuple | None:
     """Devin's newest message row and chain head for one session."""
     path = Path(os.path.expanduser(DEVIN_DB))
     try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
-    except sqlite3.Error:
+        conn = sqlite3.connect(path.absolute().as_uri() + "?mode=ro",
+                               uri=True, timeout=1.0)
+    except (sqlite3.Error, ValueError):
         return None
     try:
         rows = conn.execute(
@@ -1125,6 +1283,11 @@ def _cursor_path(cursors_dir: Path, key: str) -> Path:
     return cursors_dir / f"{protocol.key_slug(key)}.json"
 
 
+def _resolve_stamp(session: Session) -> tuple:
+    """What a transcript path was resolved from; see ``_may_have_moved``."""
+    return (session.session_id, session.account_home, session.timestamp)
+
+
 class Tailer:
     """One session's source plus its durable cursor."""
 
@@ -1141,17 +1304,28 @@ class Tailer:
         self.source = source
         self._cursor_path = _cursor_path(cursors_dir, key)
         state = self._load_cursor()
-        if state:
-            source.restore(state)
-        elif has_journal:
-            # Journal exists but the cursor is gone: skip backfill so
-            # history is not duplicated; live appends still land.
-            source.skip_to_end()
-        elif hasattr(source, "start_near_end"):
-            # First sight of this session: recent history only.
-            source.start_near_end()
+        # A cursor the source can't verify as its own (another file
+        # after a resume in another folder, a rewrite while down) counts
+        # as none: resuming at 0 would re-journal the whole transcript.
+        if not (state and source.restore(state)):
+            state = {}
+            if has_journal:
+                # Journal exists but the cursor is gone: skip backfill
+                # so history is not duplicated; live appends still land.
+                source.skip_to_end()
+            elif hasattr(source, "start_near_end"):
+                # First sight of this session: recent history only.
+                source.start_near_end()
         self.next_poll_at = 0.0
+        # The session timestamp the transcript path was last resolved
+        # at; see ``TailManager._may_have_moved``.
+        self.resolved_stamp = _resolve_stamp(session)
+        # A source waiting to replace ``source``; see ``hand_off``.
+        self._handoff = None
+        self._handoff_lock = threading.Lock()
         self._pending_save = False
+        # (source, state) as the last poll left them; see ``poll``.
+        self._polled: tuple | None = None
         # Whether the last poll moved the source (bytes, rows or
         # fingerprints read), with or without a message to show: a
         # turn-ending record that decodes to nothing still moves it.
@@ -1160,6 +1334,32 @@ class Tailer:
         # here writes nothing, so the 0.25 s hot cadence and the 1 s
         # active one cost a read, not a file write, while nothing moves.
         self._saved: dict | None = state or None
+
+    def hand_off(self, source) -> None:
+        """Replace the source at the next ``poll``, on the tail thread
+        (any thread may call this). A JSONL source continues after the
+        last line the current one read when that line is in its file;
+        otherwise it keeps the placement it came with."""
+        with self._handoff_lock:
+            self._handoff = source
+
+    def next_source(self):
+        """The source ``poll`` reads next: a pending hand-off, else the
+        current one."""
+        with self._handoff_lock:
+            return self._handoff or self.source
+
+    def _take_handoff(self) -> None:
+        with self._handoff_lock:
+            source, self._handoff = self._handoff, None
+        if source is None:
+            return
+        old = self.source
+        if isinstance(old, JsonlTailSource) and isinstance(
+                source, JsonlTailSource):
+            source.continue_from(old)
+        self.source = source
+        self._pending_save = True
 
     def _load_cursor(self) -> dict:
         try:
@@ -1197,9 +1397,16 @@ class Tailer:
         (duplicates, recoverable) instead of skipping messages forever.
         """
         self.next_poll_at = now + self.interval(active, hot)
-        before = self.source.state()
+        self._take_handoff()
+        # The state the last poll left is this poll's "before", unless
+        # the source was replaced since (a resume moved the transcript):
+        # one state() per poll, not two.
+        last = self._polled
+        before = last[1] if last and last[0] is self.source \
+            else self.source.state()
         out = self.source.poll()
         after = self.source.state()
+        self._polled = (self.source, after)
         self.moved = bool(out) or after != before
         # A source can move without emitting (records that decode to
         # nothing, an opencode row still streaming), so compare the
@@ -1239,6 +1446,9 @@ class TailManager:
         self.cursors_dir = remote_dir_for(self.home) / "cursors"
         self._journal_has = journal_has or (lambda key: False)
         self.max_sessions = max_sessions
+        # Written by the catalog thread (``sync``) and request threads
+        # (``ensure``), read by the tail thread: every insert, removal
+        # and iteration holds ``_status_lock`` (see ``_tailer_items``).
         self.tailers: dict[str, Tailer] = {}
         self.statuses: dict[str, str] = {}
         # Last time each key emitted a transcript append; the attach
@@ -1278,6 +1488,13 @@ class TailManager:
         self._status_at: dict[str, float] = {}
         self._probe_due: set[str] = set()
         self._probed_at: dict[str, float] = {}
+        # key -> (identity, rang at) of the last ``limit`` notify, so a
+        # retry into the same limit doesn't ring again. Tail thread only.
+        self._limit_seen: dict[str, tuple] = {}
+        # Orders tailer creation (which reads a key's cursor and asks
+        # whether it has a journal) against ``sweep_stale`` deleting
+        # them; see ``_add_tailer``.
+        self._files_lock = threading.Lock()
 
     def last_append_at(self, key: str) -> float | None:
         return self.last_append.get(key)
@@ -1336,34 +1553,84 @@ class TailManager:
         source = make_source(session)
         if source is None:
             return
-        self.tailers[key] = Tailer(
-            key, session, source, self.cursors_dir,
-            self._journal_has(key),
-        )
+        if self._add_tailer(key, session, source):
+            with self._status_lock:
+                self.statuses[key] = status
+
+    def _add_tailer(self, key: str, session: Session, source) -> bool:
+        """Register a tailer for ``key`` unless another thread got there
+        first; two tailers on one session would journal it twice."""
+        # Under ``_files_lock``: a sweep can't delete this key's journal
+        # and cursor between the tailer reading them and registering.
+        with self._files_lock:
+            tailer = Tailer(
+                key, session, source, self.cursors_dir,
+                self._journal_has(key),
+            )
+            with self._status_lock:
+                if key in self.tailers:
+                    return False
+                self.tailers[key] = tailer
+                return True
+
+    def _tailer_items(self) -> list[tuple[str, "Tailer"]]:
+        """A snapshot of the tailers, safe to walk while ``ensure``
+        inserts from a request thread."""
         with self._status_lock:
-            self.statuses[key] = status
+            return list(self.tailers.items())
 
     def _source_path(self, source) -> Path | None:
         path = getattr(source, "path", None)
         return Path(path) if path else None
+
+    def _may_have_moved(self, tailer: Tailer, session: Session) -> bool:
+        """Whether ``_reresolve`` needs to look for a new transcript.
+
+        Resolving globs every project folder (Claude) or walks the
+        session tree, and ran for every tailer on every catalog
+        refresh. A transcript can only have moved when the catalog saw
+        a write since the last look, so this says yes only once the
+        session's timestamp (or its id or account home) changed. For
+        Claude the timestamp is the newest copy's mtime in ms: when it
+        is the tailed file's own, nothing moved either.
+        """
+        stamp = _resolve_stamp(session)
+        if stamp == tailer.resolved_stamp:
+            return False
+        path = self._source_path(tailer.source)
+        same_file = stamp[:2] == tailer.resolved_stamp[:2]
+        if session.tool_name == "claude" and same_file and path is not None:
+            try:
+                if path.stat().st_mtime * 1000 >= session.timestamp:
+                    tailer.resolved_stamp = stamp
+                    return False
+            except OSError:
+                pass
+        tailer.resolved_stamp = stamp
+        return True
 
     def _reresolve(self, tailer: Tailer, session: Session) -> None:
         """Follow a resumed session into its new transcript file.
 
         Claude ``--resume`` from another folder writes a new JSONL under
         that project; the old source would keep polling a dead path.
-        The journal already holds the history the new file rewrites, so
-        the fresh source starts at its end — only new turns stream.
+        The journal already holds the history the new file copies, so
+        the fresh source continues after the last line the old one read
+        (``continue_from``): turns written past the copy before this
+        refresh still stream. That runs on the tail thread at its next
+        poll (``Tailer.hand_off``), so the old source can't read on
+        meanwhile. When the line isn't there, it starts at the end the
+        file has now.
         """
         new_path = resolve_jsonl_path(session)
-        if new_path is None or new_path == self._source_path(tailer.source):
+        if new_path is None or new_path == self._source_path(
+                tailer.next_source()):
             return
         source = make_source(session)
         if source is None:
             return
         source.skip_to_end()
-        tailer.source = source
-        tailer.save_cursor()
+        tailer.hand_off(source)
 
     def sync(
         self,
@@ -1386,7 +1653,7 @@ class TailManager:
         by_key = {key: (s, st) for key, s, st in rows}
         wanted = rows[: self.max_sessions]
         wanted_keys = {key for key, _s, _st in wanted}
-        for key in list(self.tailers):
+        for key, _tailer in self._tailer_items():
             if key not in by_key:
                 # Under the lock: a probe applies only while its tailer
                 # is still the registered one, checked under this lock.
@@ -1394,36 +1661,108 @@ class TailManager:
                     self.tailers.pop(key, None)
                     self.statuses.pop(key, None)
                     self._status_at.pop(key, None)
+                    # Under the lock too: the pane watcher raises a card
+                    # only while the tailer is registered, checked here.
+                    self._forget(key)
                 self._probe_due.discard(key)
                 self._probed_at.pop(key, None)
         for key, session, status in wanted:
-            if key not in self.tailers:
+            tailer = self.tailers.get(key)
+            if tailer is None:
                 source = make_source(session)
                 if source is None:
                     continue
-                self.tailers[key] = Tailer(
-                    key, session, source, self.cursors_dir,
-                    self._journal_has(key),
-                )
+                self._add_tailer(key, session, source)
             else:
                 # Refresh the session object: title/cwd can change as the
                 # aggregator re-parses; the source may need re-resolving
                 # when a resume moved the transcript file.
-                tailer = self.tailers[key]
                 tailer.session = session
-                self._reresolve(tailer, session)
+                if self._may_have_moved(tailer, session):
+                    self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=True)
         # On-demand tailers past the cap: refresh session/status but
         # keep them alive while their session still exists.
-        for key in self.tailers:
+        for key, tailer in self._tailer_items():
             if key in wanted_keys:
                 continue
             session, status = by_key.get(key, (None, None))
             if session is None:
                 continue
-            self.tailers[key].session = session
-            self._reresolve(self.tailers[key], session)
+            tailer.session = session
+            if self._may_have_moved(tailer, session):
+                self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=False)
+
+    def sweep_stale(
+        self,
+        journal,
+        keep: Iterable[str] = (),
+        now: float | None = None,
+    ) -> int:
+        """Delete the journal and cursor files of sessions nothing has
+        touched for ``STALE_FILE_AGE_S``; returns how many files went.
+
+        A journal goes once no append and no cursor save has reached it
+        for that long; a cursor goes once its journal is gone too, so a
+        session never keeps one without the other (a cursor alone would
+        resume past history the phone no longer has; a journal alone
+        would skip backfill). Keys being tailed and ``keep`` (the
+        caller's own journals, like the global stream) are never swept.
+        A session that comes back is tailed like a new one: recent
+        history only. Holds ``_files_lock``, so no tailer starts on a
+        key's files while they are being judged and deleted.
+        """
+        with self._files_lock:
+            return self._sweep_stale(journal, keep, now)
+
+    def _sweep_stale(self, journal, keep: Iterable[str],
+                     now: float | None) -> int:
+        now = time.time() if now is None else now
+        cutoff = now - STALE_FILE_AGE_S
+        held = {protocol.key_slug(k) for k in keep}
+        held.update(protocol.key_slug(k) for k, _t in self._tailer_items())
+
+        def fresh(path: Path) -> bool:
+            try:
+                return path.stat().st_mtime >= cutoff
+            except OSError:
+                return False
+
+        def kept(slug: str) -> bool:
+            return slug in held or fresh(self.cursors_dir / f"{slug}.json")
+
+        removed = journal.sweep(cutoff, kept)
+        try:
+            cursors = list(self.cursors_dir.glob("*.json"))
+        except OSError:
+            cursors = []
+        for path in cursors:
+            slug = path.stem
+            if slug in held or fresh(path):
+                continue
+            if (journal.dir / f"{slug}.jsonl").exists():
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed += 1
+        return removed
+
+    def _forget(self, key: str) -> None:
+        """Drop what the pane watcher and the attach check kept for a
+        session that left the catalog. A prompt still outstanding is
+        retired with ``approval.resolved``, so a phone's card for it
+        doesn't wait forever on a session that's gone."""
+        self.last_append.pop(key, None)
+        self._approval_checked_at.pop(key, None)
+        outstanding = self._approval_outstanding.pop(key, None)
+        if outstanding is not None:
+            supervise.set_pending_approval(key, None)
+            self._emit_approval(
+                "approval.resolved", key,
+                {"request_id": outstanding[0], "source": "gone"})
 
     def _take_status(
         self,
@@ -1464,7 +1803,21 @@ class TailManager:
         that was idle until just now, and the status probe calls a
         mid-turn transcript "interrupted" once that time is over
         ``ACTIVE_WINDOW_S`` old."""
-        session = tailer.session
+        return self._freshen(key, tailer, tailer.session)
+
+    def fresh_session(self, key: str, session: Session) -> Session:
+        """``session`` (a catalog copy) with its last-activity time
+        brought up to date from ``key``'s tailer, for a status probe
+        made outside the tail loop (a queue-mode send's idle wait).
+        Unchanged when nothing tails ``key``."""
+        tailer = self.tailers.get(key)
+        if tailer is None:
+            return session
+        return self._freshen(key, tailer, session)
+
+    def _freshen(
+        self, key: str, tailer: "Tailer", session: Session
+    ) -> Session:
         ts = session.timestamp
         path = getattr(tailer.source, "path", None)
         if path:
@@ -1534,6 +1887,32 @@ class TailManager:
             ),
         )
 
+    def _note_limit(self, key: str, msg: dict, info: dict,
+                    now: float) -> None:
+        """Raise ``notify`` kind ``limit`` for a fresh limit record.
+
+        Rings once per limit: a record read long after it was written
+        (backfill) or the same limit again (a retry into it) is quiet.
+        """
+        ts = msg.get("ts")
+        if isinstance(ts, (int, float)) and now - float(ts) > LIMIT_FRESH_S:
+            return
+        resets_at = info.get("resets_at")
+        identity = (info.get("window"), resets_at) if resets_at \
+            else msg.get("text")
+        seen = self._limit_seen.get(key)
+        if seen is not None and seen[0] == identity:
+            quiet_until = resets_at if resets_at \
+                else seen[1] + LIMIT_REPEAT_S
+            if now < quiet_until:
+                return
+        self._limit_seen[key] = (identity, now)
+        data: dict = {"kind": "limit",
+                      "status": self.statuses.get(key, ""),
+                      "message": str(msg.get("text") or "")[:280]}
+        data.update(info)
+        self.emit(key, protocol.event("notify", key, self.machine_id, data))
+
     def _emit_notify(self, key: str, old: str, new: str) -> None:
         # needs_you on a fresh followup, finished on active→done,
         # error whenever a session turns over to error.
@@ -1559,7 +1938,7 @@ class TailManager:
         woken, hot_until = self._take_wakes(now)
         n = 0
         probe_due: list[tuple[str, Tailer]] = []
-        for key, tailer in list(self.tailers.items()):
+        for key, tailer in self._tailer_items():
             if key not in woken and not tailer.due(now):
                 # Not due for a read, but a source that moved since its
                 # last probe still gets one once the gate opens.
@@ -1575,6 +1954,7 @@ class TailManager:
                 tailer.next_poll_at = now + POLL_IDLE_S
                 continue
             for msg in messages:
+                limit = msg.pop(LIMIT_MARK, None)
                 self.emit(
                     key,
                     protocol.event(
@@ -1582,6 +1962,8 @@ class TailManager:
                     ),
                 )
                 n += 1
+                if limit is not None:
+                    self._note_limit(key, msg, limit, now)
             if messages:
                 self.last_append[key] = now
             if tailer.moved:
@@ -1602,7 +1984,7 @@ class TailManager:
         it disappearing emits ``approval.resolved``. Cheap: one
         capture-pane per attached session every few seconds.
         """
-        for key in list(self.tailers):
+        for key, _tailer in self._tailer_items():
             if (
                 now - self._approval_checked_at.get(key, 0)
                 < PANE_APPROVAL_S
@@ -1622,6 +2004,10 @@ class TailManager:
             pane = supervise.capture_pane(
                 supervise.channel_name(self.home, key)
             )
+            if key not in self.tailers:
+                # sync dropped the session while its pane was read:
+                # _forget already retired it; don't raise a new card.
+                continue
             if supervise.pane_shows_approval(pane):
                 fp = supervise.approval_fingerprint(pane)
                 outstanding = self._approval_outstanding.get(key)
@@ -1637,22 +2023,25 @@ class TailManager:
                     )
                     outstanding = None
                 if outstanding is None:
-                    rid = f"req-{secrets.token_hex(6)}"
-                    self._approval_outstanding[key] = (rid, fp)
-                    supervise.set_pending_approval(key, rid, fp)
-                    prompt = _approval_prompt_line(pane)
-                    # The menu rows the pane offers, so a client can show
-                    # and answer the real prompt instead of guessing at
-                    # allow/always/deny. Labels are pane text: redact.
-                    options = [
-                        {"n": n, "label": _tr._redact_secrets(label)[:140]}
-                        for n, label in supervise.menu_options(pane)
-                    ]
-                    self._emit_approval(
-                        "approval.requested", key,
-                        {"request_id": rid, "prompt": prompt,
-                         "options": options},
-                    )
+                    with self._status_lock:
+                        if key not in self.tailers:
+                            continue  # dropped since the check above
+                        rid = f"req-{secrets.token_hex(6)}"
+                        self._approval_outstanding[key] = (rid, fp)
+                        supervise.set_pending_approval(key, rid, fp)
+                        prompt = _approval_prompt_line(pane)
+                        # The menu rows the pane offers, so a client can show
+                        # and answer the real prompt instead of guessing at
+                        # allow/always/deny. Labels are pane text: redact.
+                        options = [
+                            {"n": n, "label": _tr._redact_secrets(label)[:140]}
+                            for n, label in supervise.menu_options(pane)
+                        ]
+                        self._emit_approval(
+                            "approval.requested", key,
+                            {"request_id": rid, "prompt": prompt,
+                             "options": options},
+                        )
             else:
                 cur = self._approval_outstanding.pop(key, None)
                 if cur is not None:

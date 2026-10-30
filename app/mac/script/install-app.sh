@@ -113,13 +113,15 @@ installed_pids() {
 }
 running="$(installed_pids)"
 if [ -n "$running" ]; then
+  # The app takes SIGTERM as Quit, so unsaved AGENTS.md or hook edits
+  # put up its "Quit anyway?" alert rather than being dropped.
   kill -TERM $running
   for _ in $(seq 1 50); do
     [ -z "$(installed_pids)" ] && break
     sleep 0.2
   done
   if [ -n "$(installed_pids)" ]; then
-    echo "install-app: Quiver did not quit; nothing was replaced" >&2
+    echo "install-app: Quiver did not quit (unsaved edits waiting on its Quit alert?); nothing was replaced" >&2
     exit 1
   fi
 fi

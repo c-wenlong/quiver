@@ -726,8 +726,12 @@ public final class SessionsModel {
         return accountLabel(home)
     }
 
+    /// The thread uuid in a codex rollout stem, the FIRST uuid in it (as
+    /// swe's `codex_thread_id`): a resumed rollout is named
+    /// `rollout-<iso>-<thread uuid>_<rollout uuid>`, and the trailing one
+    /// only names that file, so `codex resume` doesn't know it.
     static func codexThreadId(_ id: String) -> String? {
-        guard let range = id.range(of: #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"#,
+        guard let range = id.range(of: #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#,
                                    options: .regularExpression) else { return nil }
         return id[range].lowercased()
     }

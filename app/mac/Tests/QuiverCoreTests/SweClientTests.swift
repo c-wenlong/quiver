@@ -275,6 +275,23 @@ func fixture(_ name: String) throws -> Data {
             try await SweClient(runner: runner).mcpSecretSet(name: "A", value: "")
         }
     }
+
+    @Test func theResultSaysWhetherAValueWasReplaced() async throws {
+        let fresh = CommandResult(status: 0, stdout: Data(
+            #"{"schema":1,"data":{"name":"A","path":"/x","created":false,"replaced":false}}"#.utf8), stderr: "")
+        let set = try await SweClient(runner: FakeRunner(fresh)).mcpSecretSet(name: "A", value: "v")
+        #expect(set.replaced == false)
+        // An older swe says nothing, which must not read as "new".
+        let old = try await SweClient(runner: FakeRunner(reply)).mcpSecretSet(name: "MY_TOKEN", value: "v")
+        #expect(old.replaced == nil)
+    }
+
+    @Test func removeCallsSecretRemove() async throws {
+        let runner = FakeRunner(CommandResult(status: 0, stdout: Data(
+            #"{"schema":1,"data":{"name":"A","removed":true}}"#.utf8), stderr: ""))
+        #expect(try await SweClient(runner: runner).mcpSecretRemove(name: "A"))
+        #expect(runner.calls == [["mcp", "secret", "remove", "A", "--json"]])
+    }
 }
 
 @Suite struct McpServerSecretsMissingTests {
@@ -341,6 +358,27 @@ func fixture(_ name: String) throws -> Data {
     @Test func secretNameDerivesAShellNameScopedToTheServer() {
         #expect(mcpSecretName(server: "my-srv", key: "X-Api-Key") == "MY_SRV_X_API_KEY")
         #expect(mcpSecretName(server: "1password", key: "Authorization") == "MCP_1PASSWORD_AUTHORIZATION")
+        // set_secret takes ASCII names only: accents collapse like any
+        // other non-alphanumeric run.
+        #expect(mcpSecretName(server: "café", key: "clé") == "CAF_CL")
+        #expect(mcpSecretName(server: "é", key: "ü") == "MCP_SECRET")
+    }
+
+    /// The app hides what swe hides (src/quiver/mcp/secrets.py's
+    /// _SECRET_FLAG_RE): cookies, signatures, bearer values, any passw-,
+    /// and the British spelling of authorization, plus a --headers value.
+    @Test func secretNamesMatchSwesRule() {
+        for name in ["--session-cookie", "--signature", "--bearer", "--passwd", "--passwords",
+                     "--authorisation", "--authorization", "--keyfile", "--api_key", "--auth",
+                     "X_SESSION_COOKIE", "--headers"] {
+            #expect(mcpIsSecretName(name), "\(name)")
+        }
+        for name in ["--port", "--verbose", "--url", "--name"] {
+            #expect(!mcpIsSecretName(name), "\(name)")
+        }
+        let shown = McpRedaction.args(["--cookie", "sid=abc", "--signature=xyz",
+                                       "--headers", "X-Token: t0k", "--port", "8080"])
+        #expect(shown == ["--cookie", "…", "--signature=…", "--headers", "X-Token:…", "--port", "8080"])
     }
 
     @Test func addToSummaryCountsPicksStillListed() {

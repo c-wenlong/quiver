@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -170,6 +171,19 @@ class TestJsonlTailSource(unittest.TestCase):
         self.assertEqual([m["text"] for m in src.poll()], ["after"])
         self._write([_claude_user("next")])
         self.assertEqual(src.poll()[0]["text"], "next")
+
+    def test_a_deeply_nested_record_is_skipped(self):
+        deep = ("[" * 100_000).encode()
+        with open(self.path, "ab") as fh:
+            fh.write(deep + b"\n")
+        self._write([_claude_user("after")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        self.assertEqual([m["text"] for m in src.poll()], ["after"])
+
+    def test_skipping_a_vanished_oversized_record_does_not_raise(self):
+        src = tail.JsonlTailSource(self.path, "claude")
+        self.path.unlink(missing_ok=True)
+        self.assertEqual(src._skip_oversized(), src.offset + tail._MAX_CHUNK)
 
     def test_truncate_to_a_prefix_emits_nothing_until_appends(self):
         # A file cut in place to a strict prefix of what was read
@@ -607,6 +621,22 @@ class TestOpencodeSource(unittest.TestCase):
         out = src.poll()
         self.assertEqual([m["text"] for m in out], ["more"])
 
+    def test_start_near_end_reads_only_recent_parts(self):
+        # First sight of a long session used to journal all of it.
+        for i in range(5):
+            self._add_part(f"p{i}", 1000 + i, {"type": "text", "text": f"t{i}"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        src.start_near_end(2)
+        self.assertEqual([m["text"] for m in src.poll()], ["t3", "t4"])
+        self._add_part("p5", 1005, {"type": "text", "text": "t5"})
+        self.assertEqual([m["text"] for m in src.poll()], ["t5"])
+
+    def test_start_near_end_on_a_short_session_reads_it_all(self):
+        self._add_part("p1", 1000, {"type": "text", "text": "a"})
+        src = tail.OpencodeSource(self.db, "sess1")
+        src.start_near_end(2)
+        self.assertEqual([m["text"] for m in src.poll()], ["a"])
+
     def test_cursor_persistence(self):
         self._add_part("p1", 1000, {"type": "text", "text": "a"})
         src = tail.OpencodeSource(self.db, "sess1")
@@ -750,6 +780,78 @@ class TestTailer(unittest.TestCase):
         t = tail.Tailer("k", _session_for(), src, self.tmp, has_journal=True)
         self.assertEqual(t.poll(time.time(), True), [])
 
+    def test_cursor_for_another_path_does_not_replay_history(self):
+        # A resume in another folder moves the transcript: the old
+        # cursor names the old path. It used to leave the offset at 0,
+        # so the whole transcript was journaled again.
+        old = self.tmp / "old.jsonl"
+        old.write_text(json.dumps(_claude_user("a")) + "\n")
+        cursors = self.tmp / "cursors"
+        t1 = tail.Tailer("k", _session_for(),
+                         tail.JsonlTailSource(old, "claude"), cursors, False)
+        t1.poll(time.time(), True)
+        t1.commit_cursor()
+        moved = self.tmp / "moved.jsonl"
+        moved.write_text(json.dumps(_claude_user("a")) + "\n"
+                         + json.dumps(_claude_user("b")) + "\n")
+        src = tail.JsonlTailSource(moved, "claude")
+        t2 = tail.Tailer("k", _session_for(), src, cursors, True)
+        self.assertEqual(t2.poll(time.time(), True), [])
+        with open(moved, "a") as fh:
+            fh.write(json.dumps(_claude_user("c")) + "\n")
+        self.assertEqual([m["text"] for m in t2.poll(time.time(), True)],
+                         ["c"])
+
+    def test_unverified_cursor_without_journal_backfills_recent(self):
+        # No journal yet: a cursor that fails its head check starts
+        # near the end like a first sight, not at byte 0.
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("a")) + "\n")
+        cursors = self.tmp / "cursors"
+        t1 = tail.Tailer("k", _session_for(),
+                         tail.JsonlTailSource(path, "claude"), cursors, False)
+        t1.poll(time.time(), True)
+        t1.commit_cursor()
+        path.write_text("".join(json.dumps(_claude_user(f"m{i}")) + "\n"
+                                for i in range(50)))
+        src = tail.JsonlTailSource(path, "claude")
+        with patch.object(tail, "BACKFILL_BYTES", 200):
+            t2 = tail.Tailer("k", _session_for(), src, cursors, False)
+        self.assertGreater(src.offset, 0)
+        texts = [m["text"] for m in t2.poll(time.time(), True)]
+        self.assertTrue(texts)
+        self.assertNotIn("m0", texts)
+
+    def test_opencode_cursor_for_another_session_is_not_restored(self):
+        src = tail.OpencodeSource(self.tmp / "none.db", "s2")
+        self.assertFalse(src.restore(
+            {"source": "opencode", "session_id": "s1", "cursor": [5, "x"]}))
+        self.assertEqual(src.cursor, (0, ""))
+        self.assertTrue(src.restore(
+            {"source": "opencode", "session_id": "s2", "cursor": [5, "x"]}))
+
+    def test_poll_reads_the_source_state_once(self):
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("a")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        t = tail.Tailer("k", _session_for(), src, self.tmp / "c", False)
+        t.poll(time.time(), True)
+        with patch.object(src, "state", wraps=src.state) as state:
+            t.poll(time.time(), True)
+            self.assertEqual(state.call_count, 1)
+            self.assertFalse(t.moved)
+            with open(path, "a") as fh:
+                fh.write(json.dumps(_claude_user("b")) + "\n")
+            t.poll(time.time(), True)
+            self.assertTrue(t.moved)
+        # A replaced source is read fresh, not compared with the old
+        # one's state: an empty new file reads as not moved.
+        empty = self.tmp / "empty.jsonl"
+        empty.write_text("")
+        t.source = tail.JsonlTailSource(empty, "claude")
+        self.assertEqual(t.poll(time.time(), True), [])
+        self.assertFalse(t.moved)
+
     def test_cursor_commits_only_after_emit(self):
         # The cursor must lag the journal write: a crash between poll
         # and commit replays events (duplicates) instead of losing them.
@@ -800,25 +902,129 @@ class TestTailManager(unittest.TestCase):
         self.assertEqual(n, 1)
         self.assertEqual(self.events[-1][1]["data"]["text"], "hi")
 
+    def _jsonl_session(self, name):
+        path = self.tmp / f"{name}.jsonl"
+        path.write_text(json.dumps(_claude_user(name)) + "\n")
+        return Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(path), tool_name="claude")
+
+    def test_ensure_during_sync_does_not_break_the_walk(self):
+        # A phone opening a session calls ensure() on a request thread
+        # while the catalog thread walks the tailers in sync(); inserting
+        # into the dict mid-walk raised RuntimeError and ended the sync.
+        mgr = tail.TailManager(self._emit, "mbp", home=self.tmp,
+                               max_sessions=1)
+        a, b, c = (self._jsonl_session(n) for n in "abc")
+        mgr.ensure("claude:b", b, "")
+        rows = [("claude:a", a, ""), ("claude:b", b, "")]
+        mgr.sync(rows)
+        real = mgr._reresolve
+
+        def reresolve(tailer, session):
+            # The on-demand walk (b is past the cap) is mid-iteration.
+            if session is b and "claude:c" not in mgr.tailers:
+                mgr.ensure("claude:c", c, "")
+            real(tailer, session)
+
+        with patch.object(mgr, "_may_have_moved", return_value=True), \
+             patch.object(mgr, "_reresolve", side_effect=reresolve):
+            mgr.sync(rows + [("claude:c", c, "")])
+        self.assertEqual(set(mgr.tailers), {"claude:a", "claude:b",
+                                            "claude:c"})
+
+    def test_racing_inserts_keep_the_first_tailer(self):
+        # sync and ensure both saw no tailer for the key: the second
+        # insert must not replace the first (its cursor and emits).
+        mgr = self._manager()
+        a = self._jsonl_session("a")
+        mgr.ensure("claude:a", a, "")
+        first = mgr.tailers["claude:a"]
+        src = tail.make_source(a)
+        self.assertFalse(mgr._add_tailer("claude:a", a, src))
+        self.assertIs(mgr.tailers["claude:a"], first)
+
     def test_notify_only_on_transition(self):
+        # A first sighting in followup is state, not news, and a repeat
+        # of the same status is nothing; only a change notifies.
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        notify = lambda: [e for _k, e in self.events if e["type"] == "notify"]
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "followup")])
+            mgr.sync([("claude:x", sess, "followup")])
+            self.assertEqual(notify(), [])
+            mgr.sync([("claude:x", sess, "active")])
+            mgr.sync([("claude:x", sess, "followup")])
+            mgr.sync([("claude:x", sess, "followup")])
+        self.assertEqual([e["data"]["kind"] for e in notify()], ["needs_you"])
+
+    def test_an_unresolvable_source_gets_no_tailer(self):
         sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
                        session_id="", tool_name="claude")
         mgr = self._manager()
         with patch.object(tail, "make_source", return_value=None):
-            # Source unresolvable: no tailer, but status transitions still
-            # emit through sync? No — tailer-less keys are skipped.
             mgr.sync([("claude:x", sess, "active")])
-        notify = [ev for evs in self.events for ev in [evs[1]]
-                  if ev["type"] == "notify"]
-        self.assertEqual(notify, [])
+        self.assertNotIn("claude:x", mgr.tailers)
+        self.assertEqual(self.events, [])
 
     def test_removed_session_drops_tailer(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
         sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
                        session_id="", tool_name="claude")
         mgr = self._manager()
-        with patch.object(tail, "make_source", return_value=None):
-            mgr.sync([("claude:x", sess, "")])
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+        self.assertIn("claude:x", mgr.tailers)
+        mgr.sync([])
         self.assertNotIn("claude:x", mgr.tailers)
+        self.assertNotIn("claude:x", mgr.statuses)
+
+    def test_a_gone_session_retires_its_approval_and_state(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+        mgr._approval_outstanding["claude:x"] = ("req-1", "fp")
+        mgr._approval_checked_at["claude:x"] = 1.0
+        mgr.last_append["claude:x"] = 1.0
+        with patch.object(tail.supervise, "set_pending_approval") as pending:
+            mgr.sync([])
+        pending.assert_called_once_with("claude:x", None)
+        resolved = [e for _k, e in self.events if e["type"] == "approval.resolved"]
+        self.assertEqual(resolved[-1]["data"]["request_id"], "req-1")
+        for kept in (mgr._approval_outstanding, mgr._approval_checked_at,
+                     mgr.last_append):
+            self.assertNotIn("claude:x", kept)
+
+    def test_a_session_dropped_mid_pane_read_raises_no_card(self):
+        (self.tmp / "x.jsonl").write_text("")
+        src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id="", tool_name="claude")
+        mgr = self._manager()
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:x", sess, "active")])
+
+        def capture(_name):
+            mgr.sync([])  # the catalog drops it while the pane is read
+            return "pane"
+
+        with patch.object(tail.supervise, "meta_for", return_value={"mode": "tmux"}), \
+                patch.object(tail.supervise, "channel_name", return_value="qv-1"), \
+                patch.object(tail.supervise, "capture_pane", side_effect=capture), \
+                patch.object(tail.supervise, "pane_shows_approval", return_value=True), \
+                patch.object(tail.supervise, "set_pending_approval"):
+            mgr._poll_approvals(1000.0)
+        self.assertNotIn("claude:x", mgr._approval_outstanding)
+        self.assertEqual([e for _k, e in self.events
+                          if e["type"] == "approval.requested"], [])
 
     def test_notify_transitions(self):
         src = tail.JsonlTailSource(self.tmp / "x.jsonl", "claude")
@@ -973,7 +1179,7 @@ class TestTailManager(unittest.TestCase):
         mgr.tick(time.time())
         self.assertEqual(self.events[-1][1]["data"]["text"], "a0")
         mgr.sync([("claude:s", sess_b, "active")])
-        src = mgr.tailers["claude:s"].source
+        src = mgr.tailers["claude:s"].next_source()
         self.assertEqual(getattr(src, "path", None), path_b)
         with open(path_a, "a") as fh:
             fh.write(json.dumps(_claude_user("stale")) + "\n")
@@ -984,6 +1190,145 @@ class TestTailManager(unittest.TestCase):
                  if e["type"] == "message.appended"]
         self.assertNotIn("stale", texts)
         self.assertIn("b1", texts)
+
+    def test_reresolve_runs_only_when_the_catalog_saw_a_write(self):
+        # Resolving globs every Claude project folder; an idle session
+        # (same timestamp) or one whose tailed file is the newest copy
+        # must not pay for it on every catalog refresh.
+        import os
+        path = self.tmp / "s.jsonl"
+        path.write_text(json.dumps(_claude_user("hi")) + "\n")
+        mtime_ms = path.stat().st_mtime * 1000
+        sess = Session(timestamp=mtime_ms, agent="Claude Code", path="/tmp",
+                       session_id=str(path), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess, "active")])
+        with patch.object(tail, "resolve_jsonl_path",
+                          wraps=tail.resolve_jsonl_path) as resolve:
+            mgr.sync([("claude:s", sess, "active")])  # unchanged
+            with open(path, "a") as fh:
+                fh.write(json.dumps(_claude_user("more")) + "\n")
+            now = path.stat().st_mtime
+            os.utime(path, (now + 5, now + 5))
+            grown = Session(timestamp=(now + 5) * 1000, agent="Claude Code",
+                            path="/tmp", session_id=str(path),
+                            tool_name="claude")
+            mgr.sync([("claude:s", grown, "active")])  # own file is newest
+            self.assertEqual(resolve.call_count, 0)
+            # The catalog saw a write newer than the tailed file: look.
+            newer = Session(timestamp=(now + 60) * 1000, agent="Claude Code",
+                            path="/tmp", session_id=str(path),
+                            tool_name="claude")
+            mgr.sync([("claude:s", newer, "active")])
+            self.assertEqual(resolve.call_count, 1)
+    def _resume_pair(self):
+        # Claude --resume from another folder: the new file starts as a
+        # line-for-line copy of the old one.
+        path_a = self.tmp / "a.jsonl"
+        path_a.write_text("".join(
+            json.dumps(_claude_user(f"a{i}")) + "\n" for i in range(3)))
+        path_b = self.tmp / "b.jsonl"
+        sess_a = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_a), tool_name="claude")
+        sess_b = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_b), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess_a, "active")])
+        mgr.tick(time.time())
+        return mgr, path_a, path_b, sess_b
+
+    def _texts(self):
+        return [e["data"]["text"] for _k, e in self.events
+                if e["type"] == "message.appended"]
+
+    def test_reresolve_keeps_turns_written_past_the_copy(self):
+        # The catalog sees the new file a refresh late: a turn already
+        # appended after the copy must still stream, history must not.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "b1"])
+
+    def test_reresolve_finds_the_last_line_when_the_copy_shifts(self):
+        # A copy with an extra record ahead of it: no longer at the same
+        # offset, so the line is found by scanning.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(
+            (json.dumps({"type": "worktree-state"}) + "\n").encode()
+            + path_a.read_bytes()
+            + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "b1"])
+
+    def test_reresolve_streams_old_lines_never_read(self):
+        # Lines the old file got after its last poll were copied too and
+        # were never sent: they stream from the new file.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        with open(path_a, "a") as fh:
+            fh.write(json.dumps(_claude_user("a3")) + "\n")
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "a1", "a2", "a3", "b1"])
+
+    def test_reresolve_past_a_large_last_record(self):
+        # The old source's last record is bigger than any line window:
+        # the boundary still matches, so the new turn streams.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        big = json.dumps(_claude_user("x" * (3 << 20))) + "\n"
+        with open(path_a, "a") as fh:
+            fh.write(big)
+        mgr.tick(time.time() + 2)
+        path_b.write_bytes(path_a.read_bytes()
+                           + (json.dumps(_claude_user("b1")) + "\n").encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 4)
+        self.assertEqual(self._texts()[-1], "b1")
+        self.assertEqual(self._texts().count("b1"), 1)
+        self.assertEqual(len(self._texts()), 5)
+
+    def test_reresolve_shifted_copy_with_repeated_lines(self):
+        # A shifted copy whose last read line ("ok") repeats after the
+        # new turns: the cursor must land after the copied "ok", not the
+        # later one, or the turns in between are lost.
+        path_a = self.tmp / "a.jsonl"
+        ok = json.dumps(_claude_user("ok")) + "\n"
+        path_a.write_text(json.dumps(_claude_user("a0")) + "\n" + ok)
+        path_b = self.tmp / "b.jsonl"
+        sess_a = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_a), tool_name="claude")
+        sess_b = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                         session_id=str(path_b), tool_name="claude")
+        mgr = self._manager()
+        mgr.sync([("claude:s", sess_a, "active")])
+        mgr.tick(time.time())
+        path_b.write_bytes(
+            (json.dumps({"type": "worktree-state"}) + "\n").encode()
+            + path_a.read_bytes()
+            + (json.dumps(_claude_user("b1")) + "\n" + ok).encode())
+        mgr.sync([("claude:s", sess_b, "active")])
+        mgr.tick(time.time() + 2)
+        self.assertEqual(self._texts(), ["a0", "ok", "b1", "ok"])
+
+    def test_reresolve_hands_off_on_the_tail_thread(self):
+        # The catalog thread only queues the new source: the old one is
+        # still the one polled until the tail thread swaps them, so its
+        # boundary can't move after being read.
+        mgr, path_a, path_b, sess_b = self._resume_pair()
+        path_b.write_bytes(path_a.read_bytes())
+        old = mgr.tailers["claude:s"].source
+        mgr.sync([("claude:s", sess_b, "active")])
+        self.assertIs(mgr.tailers["claude:s"].source, old)
+        mgr.tick(time.time() + 2)
+        self.assertEqual(mgr.tailers["claude:s"].source.path, path_b)
+        self.assertEqual(
+            json.loads((mgr.cursors_dir / (tail.protocol.key_slug("claude:s")
+                                           + ".json")).read_text())["path"],
+            str(path_b))
 
     def test_ensure_on_demand_tailer_survives_cap(self):
         path = self.tmp / "s.jsonl"
@@ -1044,6 +1389,245 @@ class TestTailManager(unittest.TestCase):
             n = mgr.tick(time.time())
         self.assertEqual(n, 1)
         self.assertIsNotNone(mgr.last_append_at("claude:y"))
+
+
+def _claude_limit(text, resets_at=1793323800, window="five_hour",
+                  ts="2026-10-29T22:55:25.053Z"):
+    """The 429 record Claude Code writes on a usage limit (real shape)."""
+    rec = _claude_assistant([{"type": "text", "text": text}])
+    rec.update({"isApiErrorMessage": True, "error": "rate_limit",
+                "apiErrorStatus": 429, "timestamp": ts})
+    if resets_at is not None:
+        rec["quotaLimits"] = {
+            "status": "rejected", "resetsAt": resets_at,
+            "rateLimitType": window, "overageStatus": "rejected",
+            "isUsingOverage": False}
+    return rec
+
+
+def _codex_limit(ts="2026-10-20T02:55:34.068Z"):
+    """A codex turn that ended on a usage limit (real shape)."""
+    return {"timestamp": ts, "type": "event_msg", "payload": {
+        "type": "task_complete", "turn_id": "t1", "last_agent_message": None,
+        "error": {"message": "You hit your spend cap set by the owner of "
+                             "your workspace.",
+                  "codex_error_info": "usage_limit_exceeded"}}}
+
+
+def _iso_ts(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(epoch))
+
+
+class TestLimitNotify(unittest.TestCase):
+    """notify kind ``limit`` from Claude Code and Codex limit records."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.events = []
+        self.path = self.tmp / "t.jsonl"
+        self.path.write_text("")
+
+    def _manager(self, tool="claude"):
+        mgr = tail.TailManager(
+            lambda k, ev: self.events.append((k, ev)), "mbp", home=self.tmp)
+        sess = Session(timestamp=0, agent="x", path="/tmp",
+                       session_id="", tool_name=tool)
+        src = tail.JsonlTailSource(self.path, tool)
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([(f"{tool}:s", sess, "active")])
+        return mgr
+
+    def _append(self, *recs):
+        with open(self.path, "a") as fh:
+            for rec in recs:
+                fh.write(json.dumps(rec) + "\n")
+
+    def _limits(self):
+        return [ev["data"] for _k, ev in self.events
+                if ev["type"] == "notify" and ev["data"]["kind"] == "limit"]
+
+    def test_claude_decode_marks_rate_limit_only(self):
+        out = tail.decode_record("claude", _claude_limit(
+            "You've hit your session limit · resets 9:30am"))
+        self.assertEqual(out[0]["kind"], "error")
+        self.assertEqual(out[0][tail.LIMIT_MARK],
+                         {"resets_at": 1793323800.0, "window": "five_hour"})
+        # Older records without quotaLimits still count.
+        out = tail.decode_record("claude", _claude_limit("limit", None))
+        self.assertEqual(out[0][tail.LIMIT_MARK], {})
+        # Another API error is just an error.
+        rec = _claude_limit("Internal server error", None)
+        rec["error"] = "server_error"
+        self.assertNotIn(tail.LIMIT_MARK, tail.decode_record("claude", rec)[0])
+
+    def test_codex_decode_marks_usage_limit_only(self):
+        out = tail.decode_record("codex", _codex_limit())
+        self.assertEqual(out[0]["kind"], "error")
+        self.assertIn("spend cap", out[0]["text"])
+        self.assertEqual(out[0][tail.LIMIT_MARK], {})
+        plain = {"type": "event_msg", "payload": {
+            "type": "task_complete", "last_agent_message": "done"}}
+        self.assertEqual(tail.decode_record("codex", plain), [])
+
+    def test_claude_limit_rings_once_with_reset(self):
+        mgr = self._manager()
+        now = time.time()
+        text = "You've hit your session limit · resets 9:30am"
+        self._append(_claude_limit(text, resets_at=now + 3600,
+                                   ts=_iso_ts(now)))
+        mgr.tick(now)
+        [data] = self._limits()
+        self.assertEqual(data["message"], text)
+        self.assertAlmostEqual(data["resets_at"], now + 3600)
+        self.assertEqual(data["window"], "five_hour")
+        self.assertEqual(data["status"], "active")
+        # The marker never reaches the wire.
+        appended = [ev for _k, ev in self.events
+                    if ev["type"] == "message.appended"]
+        self.assertNotIn(tail.LIMIT_MARK, appended[0]["data"])
+        # A retry into the same limit is quiet; nothing repeats per poll.
+        self._append(_claude_limit(text, resets_at=now + 3600,
+                                   ts=_iso_ts(now + 60)))
+        mgr.tick(now + 60)
+        mgr.tick(now + 120)
+        self.assertEqual(len(self._limits()), 1)
+        # The next window's limit rings again.
+        self._append(_claude_limit(text, resets_at=now + 9000,
+                                   ts=_iso_ts(now + 4000)))
+        mgr.tick(now + 4000)
+        self.assertEqual(len(self._limits()), 2)
+
+    def test_codex_limit_repeats_only_after_window(self):
+        mgr = self._manager("codex")
+        now = time.time()
+        self._append(_codex_limit(_iso_ts(now)))
+        mgr.tick(now)
+        self.assertEqual(len(self._limits()), 1)
+        self.assertNotIn("resets_at", self._limits()[0])
+        self._append(_codex_limit(_iso_ts(now + 30)))
+        mgr.tick(now + 30)
+        self.assertEqual(len(self._limits()), 1)
+        later = now + tail.LIMIT_REPEAT_S + 10
+        self._append(_codex_limit(_iso_ts(later)))
+        mgr.tick(later)
+        self.assertEqual(len(self._limits()), 2)
+
+    def test_stale_limit_record_is_quiet(self):
+        mgr = self._manager()
+        now = time.time()
+        self._append(_claude_limit(
+            "old limit", ts=_iso_ts(now - tail.LIMIT_FRESH_S - 60)))
+        mgr.tick(now)
+        self.assertEqual(self._limits(), [])
+        # Still shown in the chat.
+        appended = [ev["data"]["text"] for _k, ev in self.events
+                    if ev["type"] == "message.appended"]
+        self.assertEqual(appended, ["old limit"])
+
+
+class TestSweepStale(unittest.TestCase):
+    """``sweep_stale``: old journal + cursor pairs go, live ones stay."""
+
+    def setUp(self):
+        from quiver.remote.journal import Journal
+
+        self.tmp = Path(tempfile.mkdtemp())
+        self.journal = Journal(self.tmp)
+        self.mgr = tail.TailManager(lambda k, e: None, "mbp", home=self.tmp)
+        self.mgr.cursors_dir.mkdir(parents=True, exist_ok=True)
+        self.now = time.time()
+        self.old = self.now - tail.STALE_FILE_AGE_S - 3600
+
+    def _files(self, key, journal_at=None, cursor_at=None):
+        import os
+
+        slug = tail.protocol.key_slug(key)
+        j = self.journal.dir / f"{slug}.jsonl"
+        c = self.mgr.cursors_dir / f"{slug}.json"
+        if journal_at is not None:
+            self.journal.append(key, {"type": "t"})
+            os.utime(j, (journal_at, journal_at))
+        if cursor_at is not None:
+            c.write_text("{}")
+            os.utime(c, (cursor_at, cursor_at))
+        return j, c
+
+    def test_old_pair_goes(self):
+        j, c = self._files("claude:old", self.old, self.old)
+        self.assertEqual(self.mgr.sweep_stale(self.journal, now=self.now), 2)
+        self.assertFalse(j.exists())
+        self.assertFalse(c.exists())
+        # The journal forgot the key: it starts over, as after a restart.
+        self.assertEqual(self.journal.last_seq("claude:old"), 0)
+
+    def test_fresh_journal_or_cursor_keeps_both(self):
+        j1, c1 = self._files("claude:a", self.now, self.old)
+        j2, c2 = self._files("claude:b", self.old, self.now)
+        self.assertEqual(self.mgr.sweep_stale(self.journal, now=self.now), 0)
+        for path in (j1, c1, j2, c2):
+            self.assertTrue(path.exists(), path)
+
+    def test_lone_old_files_go(self):
+        j, _ = self._files("claude:j", journal_at=self.old)
+        _, c = self._files("claude:c", cursor_at=self.old)
+        self.assertEqual(self.mgr.sweep_stale(self.journal, now=self.now), 2)
+        self.assertFalse(j.exists())
+        self.assertFalse(c.exists())
+
+    def test_tailed_and_kept_keys_stay(self):
+        sess_path = self.tmp / "t.jsonl"
+        sess_path.write_text(json.dumps(_claude_user("hi")) + "\n")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(sess_path), tool_name="claude")
+        self.mgr.ensure("claude:tailed", sess, "")
+        j1, c1 = self._files("claude:tailed", self.old, self.old)
+        j2, _ = self._files("_global", journal_at=self.old)
+        self.assertEqual(
+            self.mgr.sweep_stale(self.journal, keep=["_global"], now=self.now),
+            0)
+        for path in (j1, c1, j2):
+            self.assertTrue(path.exists(), path)
+
+
+    def test_a_tailer_starting_mid_sweep_keeps_its_files(self):
+        # A phone opening an idle session while the sweep runs: the
+        # tailer either starts before the sweep (and its key is held)
+        # or after it (with neither file); never on files then deleted.
+        # As the hub wires it: a journal on disk means skip backfill.
+        self.mgr = tail.TailManager(
+            lambda k, e: None, "mbp", home=self.tmp,
+            journal_has=lambda k: self.journal.last_seq(k) > 0)
+        _j, c = self._files("claude:back", self.old, self.old)
+        sess_path = self.tmp / "back.jsonl"
+        sess_path.write_text(json.dumps(_claude_user("hi")) + "\n")
+        sess = Session(timestamp=0, agent="Claude Code", path="/tmp",
+                       session_id=str(sess_path), tool_name="claude")
+        started = threading.Event()
+        real = self.journal.sweep
+
+        def slow_sweep(cutoff, keep):
+            started.set()
+            time.sleep(0.2)  # the ensure below runs meanwhile
+            return real(cutoff, keep)
+
+        with patch.object(self.journal, "sweep", side_effect=slow_sweep):
+            t = threading.Thread(
+                target=self.mgr.sweep_stale, args=(self.journal,),
+                kwargs={"now": self.now})
+            t.start()
+            started.wait(2)
+            self.mgr.ensure("claude:back", sess, "")
+            t.join()
+        # The ensure waited for the sweep: both files went first, and
+        # the tailer started fresh, so recent history backfills (one
+        # started on the doomed journal would skip to the end).
+        self.assertFalse(c.exists())
+        self.assertIn("claude:back", self.mgr.tailers)
+        sent = []
+        self.mgr.emit = lambda k, e: sent.append(e)
+        self.mgr.tick(time.time())
+        self.assertEqual([e["data"]["text"] for e in sent
+                          if e["type"] == "message.appended"], ["hi"])
 
 
 class TestApprovalWatcher(unittest.TestCase):
@@ -1653,3 +2237,27 @@ class TestStatusProbe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFreshSession(unittest.TestCase):
+    """``fresh_session`` brings a catalog copy's activity time up to date."""
+
+    def test_fresh_session_uses_tailer_activity(self):
+        tmp = Path(tempfile.mkdtemp())
+        path = tmp / "t.jsonl"
+        path.write_text("")
+        mgr = tail.TailManager(lambda k, ev: None, "mbp", home=tmp)
+        stale = Session(timestamp=0, agent="x", path="/tmp",
+                        session_id="", tool_name="claude")
+        # Nothing tails the key: unchanged.
+        self.assertIs(mgr.fresh_session("claude:s", stale), stale)
+        src = tail.JsonlTailSource(path, "claude")
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:s", stale, "done")])
+        fresh = mgr.fresh_session("claude:s", stale)
+        self.assertGreater(fresh.timestamp, 0)  # the file's mtime
+        self.assertEqual(stale.timestamp, 0)    # the copy is untouched
+        mgr.last_append["claude:s"] = time.time() + 100
+        self.assertAlmostEqual(
+            mgr.fresh_session("claude:s", stale).timestamp,
+            mgr.last_append["claude:s"] * 1000)

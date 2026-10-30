@@ -76,7 +76,7 @@ struct RenameSheet: View {
                 try await app.rename(row.key, title: title)
                 dismiss()
             } catch {
-                self.error = (error as? HubError)?.message ?? error.localizedDescription
+                self.error = error.localizedDescription
             }
             saving = false
         }
@@ -220,7 +220,7 @@ struct ToastView: View {
                     dismiss()
                     action()
                 } label: {
-                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.primaryForeground)
+                    Text(title).font(Theme.font(size: 14, weight: .semibold)).foregroundStyle(Theme.primaryForeground)
                         .padding(.horizontal, 6).frame(minHeight: 32).contentShape(.rect)
                 }
                 .buttonStyle(.plain)

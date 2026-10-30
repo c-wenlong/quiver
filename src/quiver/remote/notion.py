@@ -52,8 +52,7 @@ from typing import Any
 
 from quiver import __version__, paths
 from quiver.mcp import secrets as mcp_secrets
-from quiver.remote.linear import _urlopen
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 API_URL = "https://api.notion.com/v1"
 # One pinned API version for every call. 2022-06-28 is the newest one
@@ -271,6 +270,10 @@ def _request(token: str, method: str, path: str,
              body: dict | None = None) -> NotionResult:
     """One call to ``api.notion.com/v1``; never raises. A 429 waits out
     its Retry-After (capped) up to ``MAX_RETRIES`` times."""
+    # The agent's urlopen, as linear.py's: a certificate failure retries
+    # against the OS CA bundle. Imported here to keep this module light.
+    from quiver.remote.agent import _urlopen
+
     data = json.dumps(body).encode("utf-8") if body is not None else None
     for attempt in range(MAX_RETRIES + 1):
         req = urllib.request.Request(

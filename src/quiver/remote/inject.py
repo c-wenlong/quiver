@@ -563,17 +563,36 @@ class OpencodeServeInjector:
         while time.monotonic() < deadline:
             if serve.proc.poll() is not None:
                 with self._serves_lock:
-                    self._serves.pop(cwd, None)
+                    serve.dead = True
+                    if self._serves.get(cwd) is serve:
+                        self._serves.pop(cwd, None)
                 return None
             status, _ = _serve_call(serve.base, "GET", "/session", None,
                                     timeout=2.0)
             if status != 0:
                 with self._serves_lock:
+                    # Another waiter may have given up on this proc and
+                    # killed it while our probe was in flight.
+                    if serve.dead or self._serves.get(cwd) is not serve:
+                        return None
                     if sid not in serve.subs:
                         serve.refs += 1
                     serve.subs[sid] = (self.key, self.emit, self.machine)
                 return serve
             time.sleep(0.25)
+        # Never answered. With no other session holding it, nothing
+        # would ever release it: kill it rather than leak the process.
+        with self._serves_lock:
+            if serve.refs:
+                return None
+            serve.dead = True
+            if self._serves.get(cwd) is serve:
+                self._serves.pop(cwd, None)
+        try:
+            serve.proc.kill()
+            serve.proc.wait(timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
         return None
 
     def _release(self, session: Session) -> None:
@@ -583,7 +602,12 @@ class OpencodeServeInjector:
             serve = self._serves.get(cwd)
             if serve is None:
                 return
-            serve.subs.pop(session.session_id, None)
+            # Only a hold on THIS proc counts: after a respawn the
+            # sessions subscribed to the dead one hold nothing here, and
+            # dropping a ref they never took would kill the new serve
+            # under the sessions using it.
+            if serve.subs.pop(session.session_id, None) is None:
+                return
             serve.refs = max(0, serve.refs - 1)
             if serve.refs:
                 return

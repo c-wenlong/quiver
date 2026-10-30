@@ -22,7 +22,10 @@ pages are not counted once per process.
 Sampling happens on request, at most every ``MIN_SAMPLE`` seconds for
 every viewer together. The first request also starts one daemon thread
 that samples every ``TICK`` seconds for the life of the hub, because the
-Mac trend card shows history from before the page was opened.
+Mac trend card shows history from before the page was opened — and auto
+clean, which quits orphan trees older than the configured age, starts
+the ticker at hub boot while it is enabled, since asking after a restart
+would mean the orphans it was set to stop get to keep running.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -56,6 +60,13 @@ TICK = 10.0
 INTERVALS = (3, 10, 30, 60, 300)
 DEFAULT_INTERVAL = 10
 WINDOW = 120
+# ComputeLimits: the orphan-age field's default and bounds — a minute to
+# a year — shared by the sheet and the auto-clean threshold.
+DEFAULT_ORPHAN_AGE = 24 * 3600
+ORPHAN_AGE_RANGE = (60, 365 * 86400)
+# ComputeModel.autoCleanGrace: a force-cleaned orphan gets this long to
+# exit after SIGTERM before the SIGKILL follows.
+AUTOCLEAN_GRACE = 10.0
 # Two rings: every 3 s for the 3 s view (six minutes), every 10 s for
 # the rest (ten hours, the 5 minute view's window).
 FINE_STEP, FINE_KEEP = 3.0, WINDOW * 3 + 30
@@ -73,7 +84,6 @@ _COMPONENT_BY_SENSOR = {
     "nvme": "ssd", "drivetemp": "ssd",
     "battery": "battery",
 }
-COMPONENTS = ("cpu", "gpu", "memory", "ssd", "battery", "airflow", "display")
 # FanSummary.upMargin: 15% over its minimum counts as a fan running up.
 FAN_UP_MARGIN = 0.15
 
@@ -151,6 +161,12 @@ def boot_time(proc: Path) -> float:
     return 0.0
 
 
+def ticks() -> int:
+    """``SC_CLK_TCK`` where the OS reports it, 100 elsewhere (the common
+    Linux value, and what the tests use)."""
+    return os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+
+
 def _status_kb(text: str, key: str) -> int | None:
     for line in text.splitlines():
         if line.startswith(key + ":"):
@@ -208,7 +224,7 @@ def read_process(proc: Path, pid: int, boot: float, tick: int) -> Proc | None:
 def read_processes(proc: Path = Path("/proc"), uid: int | None = None) -> list[Proc]:
     """The user's own processes, pid 1 left out, as the Mac's sampler."""
     uid = os.getuid() if uid is None else uid
-    tick = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+    tick = ticks()
     boot = boot_time(proc)
     out: list[Proc] = []
     try:
@@ -374,6 +390,166 @@ def attribute(samples: list[Proc], matchers: list[Matcher], proc: Path = Path("/
             node = parent
     orphans = [(roots[pid], trees.get(pid, [])) for pid in sorted(roots)]
     return Attribution(by_harness, orphans)
+
+
+# ---------------------------------------------------------------- auto clean
+
+
+def send_signal(pid: int, sig: int, started_at: float | None = None,
+                proc: Path = Path("/proc")) -> bool:
+    """``os.kill`` as a boolean, the ComputeModel's signaller seam.
+
+    Through a pidfd where the kernel offers one: the descriptor pins
+    the process the pid meant at open, so the signal can never land on
+    a recycled pid, and re-reading ``stat`` first means a process that
+    already exited is not signalled at all. ``started_at`` is the start
+    time the caller sampled; a pidfd-less kernel falls back to a bare
+    ``os.kill`` — the same window the manual quit paths already run."""
+    if started_at is not None and hasattr(os, "pidfd_open") \
+            and hasattr(os, "pidfd_send_signal"):
+        try:
+            fd = os.pidfd_open(pid)
+        except OSError:
+            return False
+        try:
+            current = read_process(proc, pid, boot_time(proc), ticks())
+            if current is None or current.started_at != started_at:
+                return False
+            os.pidfd_send_signal(fd, sig)
+            return True
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
+    try:
+        os.kill(pid, sig)
+        return True
+    except OSError:
+        return False
+
+
+def _clamp_age(seconds) -> int:
+    """The field's value clamped into the a-minute-to-a-year range; a
+    missing or unreadable one answers the default. ``1e309`` reads as
+    infinity and ``int`` raises ``OverflowError`` on it, so bad numbers
+    must not crash the boot-time settings read."""
+    try:
+        age = int(seconds)
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_ORPHAN_AGE
+    return min(max(age, ORPHAN_AGE_RANGE[0]), ORPHAN_AGE_RANGE[1]) if age > 0 \
+        else DEFAULT_ORPHAN_AGE
+
+
+def clean_settings(home: Path | None) -> dict:
+    """The ``compute`` section of the hub's ``config.json`` as the auto
+    clean knobs. ``enabled``/``force`` are strictly bool — a mistyped
+    ``swe config set`` leaves them off rather than kills things; the age
+    clamps to the sheet's range, the day default when absent."""
+    from quiver.configuration import load_config
+    from quiver.paths import config_file_for
+
+    section = load_config(config_file_for(home)).get("compute")
+    section = section if isinstance(section, dict) else {}
+    return {
+        "enabled": section.get("auto_clean") is True,
+        "force": section.get("auto_clean_force") is True,
+        "orphan_age_seconds": _clamp_age(section.get("orphan_age_seconds")),
+        "grace_seconds": AUTOCLEAN_GRACE,
+    }
+
+
+# The read-modify-write in save_clean_settings holds this lock so two
+# page writes can never interleave a read against a replace.
+_config_lock = threading.Lock()
+
+
+def save_clean_settings(home: Path | None, *, enabled: bool,
+                        force: bool | None = None,
+                        orphan_age_seconds=None) -> None:
+    """Write the knobs through ``swe config``'s own path: the file is
+    validated on the way out, so a corrupt ``config.json`` refuses the
+    write instead of being clobbered. A knob left as ``None`` keeps its
+    saved value, and the fill-in read happens under the same lock as the
+    save, so two hub writes cannot lose each other. Raises
+    ``ConfigurationError`` (and ``OSError`` if the file cannot be
+    written)."""
+    from quiver.configuration import load_config, save_config, set_value
+    from quiver.paths import config_file_for
+
+    with _config_lock:
+        path = config_file_for(home)
+        config = load_config(path)
+        saved = clean_settings(home)
+        if force is None:
+            force = saved["force"]
+        age = saved["orphan_age_seconds"] if orphan_age_seconds is None \
+            else _clamp_age(orphan_age_seconds)
+        config = set_value(config, "compute.auto_clean", enabled)
+        config = set_value(config, "compute.auto_clean_force", force)
+        config = set_value(config, "compute.orphan_age_seconds", age)
+        save_config(config, path)
+
+
+def _descendants_of(pid: int, children: dict[int, list[Proc]]) -> list[Proc]:
+    """Every process under ``pid``, walking the sample's own ppid links."""
+    out: list[Proc] = []
+    frontier = [pid]
+    visited = {pid}
+    for _ in range(64):
+        if not frontier:
+            break
+        nxt = [c for f in frontier for c in children.get(f, []) if c.pid not in visited]
+        visited.update(c.pid for c in nxt)
+        out.extend(nxt)
+        frontier = [c.pid for c in nxt]
+    return out
+
+
+def kill_order(root: Proc, descendants: list[Proc], samples: list[Proc],
+               self_pid: int, ancestors: set[int]) -> list[int]:
+    """ComputeSummary.killOrder's orphan-tree branch: the members still
+    alive, deepest first, then the root, so children do not die as
+    zombies waiting on a parent that already went. Never pid 1, the hub
+    or its ancestors; a pid the tree recorded counts only while the
+    sample still has it with the same start time — a pid that died and
+    got reused is somebody else's process now. The tree's membership
+    comes from the current sample, so a worker the root spawned after the
+    mark still dies, and so does a recorded child that outlived its
+    root."""
+    by_pid = {p.pid: p for p in samples}
+    children: dict[int, list[Proc]] = {}
+    for p in samples:
+        children.setdefault(p.ppid, []).append(p)
+
+    def live(p: Proc) -> bool:
+        current = by_pid.get(p.pid)
+        return current is not None and current.started_at == p.started_at
+
+    members = _descendants_of(root.pid, children) if live(root) else []
+    survivors = [d for d in descendants if live(d)]
+    members += survivors
+    for s in survivors:
+        members += _descendants_of(s.pid, children)
+    # Depth is the distance down from the root, so deeper members die
+    # first; a member reparented off the tree still gets its hop count.
+    depth = {root.pid: 0}
+    for member in members:
+        node, d = member, 0
+        while node.pid != root.pid and d < 64 and node.ppid in by_pid:
+            node = by_pid[node.ppid]
+            d += 1
+        depth[member.pid] = d
+    members.sort(key=lambda p: depth[p.pid], reverse=True)
+    ordered = members + ([root] if live(root) else [])
+    out: list[int] = []
+    seen: set[int] = set()
+    for p in ordered:
+        if p.pid <= 1 or p.pid == self_pid or p.pid in ancestors or p.pid in seen:
+            continue
+        out.append(p.pid)
+        seen.add(p.pid)
+    return out
 
 
 class CPUMeter:
@@ -684,11 +860,20 @@ class ComputeModel:
 
     def __init__(self, proc: Path = Path("/proc"), sys_root: Path = Path("/sys"),
                  nvidia=read_nvidia, nvidia_processes=read_nvidia_processes,
-                 clock=time.time, self_pid: int | None = None) -> None:
+                 clock=time.time, self_pid: int | None = None,
+                 signaller=None) -> None:
         self.proc, self.sys_root, self.nvidia, self.clock = proc, sys_root, nvidia, clock
         self.nvidia_processes = nvidia_processes
         self.self_pid = os.getpid() if self_pid is None else self_pid
+        # The seam takes (pid, sig, sampled start time); the default pins
+        # the signal through a pidfd against this model's /proc.
+        self.signaller = signaller or (
+            lambda pid, sig, started_at: send_signal(pid, sig, started_at, self.proc))
         self.lock = threading.Lock()
+        # One sample at a time, held across the nvidia-smi calls but
+        # apart from ``lock``, so a payload read never waits on the GPU
+        # and two due samples don't both run the commands.
+        self._sample_lock = threading.Lock()
         self.meter = CPUMeter()
         self.history = History()
         self.home: Path = Path.home()
@@ -707,6 +892,16 @@ class ComputeModel:
         self.temperatures: dict[str, float] = {}
         self.fans: dict | None = None
         self._cpu_times: tuple[int, int] | None = None
+        # Auto clean's ledger by orphan root pid: the tree as it was when
+        # SIGTERM went out, when, and whether the grace escalation to
+        # SIGKILL already ran. The recorded start times do the same work
+        # as `_signalled`: a pid the kernel recycled answers for a
+        # different process and is judged again on its own age.
+        self._cleaned: dict[int, tuple[float, float, tuple[Proc, list[Proc]], bool]] = {}
+        # Each pid auto clean signalled -> (at, started_at), for the
+        # "quitting" mark on the orphan row. Pruned like the Mac's
+        # signalledAt: a pid whose process changed forgets the mark.
+        self._signalled: dict[int, tuple[float, float]] = {}
 
     def _load_matchers(self) -> None:
         try:
@@ -718,11 +913,22 @@ class ComputeModel:
 
     def sample(self, force: bool = False) -> None:
         """Take a fresh sample unless the last one is under
-        ``MIN_SAMPLE`` old, and record it in the history."""
+        ``MIN_SAMPLE`` old, and record it in the history.
+
+        ``nvidia-smi`` runs before ``lock`` is taken: two calls of up to
+        ``NVIDIA_TIMEOUT`` each must not hold up every Compute read. A
+        second caller waits on ``_sample_lock`` and then finds the first
+        caller's sample fresh."""
+        with self._sample_lock:
+            with self.lock:
+                if not force and self._fresh():
+                    return
+            gpus = self.nvidia()
+            gpu_by_pid = self.nvidia_processes()
+            self._take_sample(gpus, gpu_by_pid)
+
+    def _take_sample(self, gpus, gpu_by_pid) -> None:
         with self.lock:
-            now = self.clock()
-            if not force and self.sampled_at is not None and now - self.sampled_at < MIN_SAMPLE:
-                return
             self._load_matchers()
             samples = read_processes(self.proc)
             at = self.clock()
@@ -730,10 +936,22 @@ class ComputeModel:
             self.cpu = self.meter.update(samples, at)
             self.attribution = attribute(samples, self.matchers, self.proc, self.self_pid)
             self.sampled_at = at
-            self._sample_machine()
+            self._auto_clean(at)
+            if self._signalled:
+                by_pid = {p.pid: p for p in samples}
+                self._signalled = {
+                    pid: v for pid, v in self._signalled.items()
+                    if pid in by_pid and by_pid[pid].started_at == v[1]
+                }
+            self._sample_machine(gpus, gpu_by_pid)
             self._record(at)
 
-    def _sample_machine(self) -> None:
+    def _fresh(self) -> bool:
+        return (self.sampled_at is not None
+                and self.clock() - self.sampled_at < MIN_SAMPLE)
+
+    def _sample_machine(self, gpus: list[dict] | None,
+                        gpu_by_pid: dict[int, float] | None) -> None:
         times = read_cpu_times(self.proc)
         cpu_percent = None
         if times and self._cpu_times:
@@ -749,10 +967,10 @@ class ComputeModel:
             "memory": read_memory(self.proc),
             "load": read_load(self.proc),
         }
-        self.gpus = self.nvidia()
+        self.gpus = gpus
         # The GPU tab plots harnesses, so only per-process readings make
         # it available; the device totals feed the machine line.
-        self.gpu_by_pid = self.nvidia_processes()
+        self.gpu_by_pid = gpu_by_pid
         if self.gpu_by_pid is not None:
             self.gpu_available = True
         self.temperatures, self.fans = read_temperatures(self.sys_root)
@@ -773,6 +991,62 @@ class ComputeModel:
         }
         self.history.record(Tick(at, harnesses, dict(self.temperatures),
                                  dict(self.fans) if self.fans else None))
+
+    # ------------------------------------------------------------ auto clean
+
+    def _auto_clean(self, now: float) -> None:
+        """The Mac model's autoClean, run over every accepted sample —
+        the ticker and page requests alike, so it works with no browser
+        open. An orphan tree older than the saved age gets one SIGTERM,
+        through the same kill plan and guards a manual Quit uses on the
+        Mac; a tree already signalled is left alone. With ``force`` a
+        marked tree whose members are still alive ``AUTOCLEAN_GRACE``
+        later gets SIGKILL once. Marks prune once nothing in the tree
+        answers the recorded start times, so a tree that died — or a pid
+        handed to somebody new — is forgotten.
+
+        It waits for the matcher list to load: an empty one would read
+        a harness's own helpers as orphans, and auto clean kills what it
+        reads."""
+        cfg = clean_settings(self.home)
+        if not cfg["enabled"] or not self.matchers_loaded:
+            return
+        marked = self._marked_pids()
+        for root, descendants in self.attribution.orphans:
+            if now - root.started_at <= cfg["orphan_age_seconds"]:
+                continue
+            mark = self._cleaned.get(root.pid)
+            if (mark is not None and mark[0] == root.started_at) \
+                    or (root.pid, root.started_at) in marked:
+                continue
+            self._signal_tree(root, descendants, force=False)
+            self._cleaned[root.pid] = (root.started_at, now, (root, descendants), False)
+        ancestors = _ancestors(self.self_pid, {p.pid: p for p in self.samples})
+        for pid, (started, at, tree, forced) in list(self._cleaned.items()):
+            order = kill_order(tree[0], tree[1], self.samples, self.self_pid, ancestors)
+            if not order:
+                del self._cleaned[pid]
+            elif cfg["force"] and not forced and now - at >= AUTOCLEAN_GRACE:
+                self._signal_tree(tree[0], tree[1], force=True)
+                self._cleaned[pid] = (started, at, tree, True)
+
+    def _marked_pids(self) -> set[tuple[int, float]]:
+        """Every ``(pid, started_at)`` inside a recorded tree, so a member
+        that outlived its root and reparented into a new orphan is not
+        signalled all over again as the new tree's root."""
+        out: set[tuple[int, float]] = set()
+        for started, _at, (root, descendants), _forced in self._cleaned.values():
+            out.add((root.pid, started))
+            out.update((d.pid, d.started_at) for d in descendants)
+        return out
+
+    def _signal_tree(self, root: Proc, descendants: list[Proc], *, force: bool) -> None:
+        ancestors = _ancestors(self.self_pid, {p.pid: p for p in self.samples})
+        started = {p.pid: p.started_at for p in self.samples}
+        sig = signal.SIGKILL if force else signal.SIGTERM
+        for pid in kill_order(root, descendants, self.samples, self.self_pid, ancestors):
+            if self.signaller(pid, sig, started[pid]):
+                self._signalled[pid] = (self.clock(), started[pid])
 
     # ------------------------------------------------------------ payload
 
@@ -821,6 +1095,7 @@ class ComputeModel:
                 "started_at": root.started_at,
                 "memory_bytes": root.memory_bytes + sum(d.memory_bytes for d in descendants),
                 "descendants": len(descendants),
+                "quitting": root.pid in self._signalled,
             })
         orphans.sort(key=lambda o: o["memory_bytes"], reverse=True)
         everyone = [p for procs in by.values() for p in procs] + [
@@ -831,6 +1106,7 @@ class ComputeModel:
             "matchers_loaded": self.matchers_loaded,
             "starred": order,
             "error": self.error,
+            "autoclean": clean_settings(self.home),
             "totals": {
                 "memory_bytes": sum(p.memory_bytes for p in everyone),
                 "cpu_percent": sum(self.cpu.get(p.pid, 0.0) for p in everyone),

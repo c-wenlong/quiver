@@ -6,8 +6,6 @@ import XCTest
 /// with every figure, name and time made up. Fields the app ignores are
 /// kept so decoding is shown to skip them.
 enum UsageFixtures {
-    static let serverTime: Double = 1_800_000_000
-
     static let usage = #"""
     {
       "harnesses": [
@@ -170,6 +168,11 @@ final class UsageDecodingTests: XCTestCase {
         XCTAssertEqual(body.days?.count, 7)
         XCTAssertEqual(body.range?.startDay, "2026-01-01")
         XCTAssertEqual(body.machine, "hub.local")
+        XCTAssertEqual(body.firstDay, "2025-12-01")
+        XCTAssertEqual(body.days?.first?.cached, 2_850_000)
+        XCTAssertEqual(body.quick?.busiestDay, "2026-01-03")
+        XCTAssertEqual(body.topModels?.first?.harnesses, ["claude"])
+        XCTAssertEqual(body.heatmap?.days?.first?.future, true)
     }
 
     func testEmptyBodiesDecode() throws {
@@ -251,6 +254,12 @@ final class UsageFormatTests: XCTestCase {
         XCTAssertEqual(UsageFormat.usd(nil), "$0.00")
         XCTAssertEqual(UsageFormat.usdAxis(800), "$800")
         XCTAssertEqual(UsageFormat.usdAxis(1260), "$1.3K")
+        XCTAssertEqual(UsageFormat.usdAxis(0), "$0")
+        // A $1 axis ticks at $0.50; rounding printed "$1" for both.
+        XCTAssertEqual(UsageFormat.usdAxis(0.5), "$0.50")
+        XCTAssertEqual(UsageFormat.usdAxis(1), "$1")
+        XCTAssertEqual(UsageFormat.usdAxis(0.25), "$0.25")
+        XCTAssertEqual(UsageFormat.usdAxis(12.5), "$12.5")
     }
 
     func testAgoAndStaleness() {
@@ -298,5 +307,118 @@ final class UsageFormatTests: XCTestCase {
         XCTAssertEqual(series.map(\.tokens), [2, 0, 5])
         XCTAssertTrue(UsageFormat.dailySeries([], start: nil, end: nil).isEmpty)
         XCTAssertTrue(UsageFormat.dailySeries([], start: "2026-10-05", end: "2026-10-01").isEmpty)
+    }
+}
+
+final class OverviewFormatTests: XCTestCase {
+    private let en = Locale(identifier: "en_US")
+
+    func testThePeriodsMatchTheHubAndTheMac() {
+        XCTAssertEqual(UsagePeriod.allCases.map(\.rawValue), ["today", "7d", "month", "30d", "90d", "365d", "all"])
+        XCTAssertEqual(UsagePeriod.allCases.map(\.title),
+                       ["Today", "7 days", "This month", "30 days", "90 days", "365 days", "All time"])
+    }
+
+    func testQuickChips() throws {
+        let body = try UsageFixtures.decode(UsageFixtures.overview, as: OverviewResponse.self)
+        XCTAssertEqual(OverviewFormat.quickChips(body.quick, locale: en), [
+            .init(value: "7", label: "active days"),
+            .init(value: "2.9M", label: "a day"),
+            .init(value: "Jan 3", label: "busiest"),
+        ])
+        let one = OverviewResponse.Quick(activeDays: 1, tokensPerDay: 5, busiestDay: nil)
+        XCTAssertEqual(OverviewFormat.quickChips(one, locale: en).map(\.label), ["active day", "a day", "busiest"])
+        XCTAssertEqual(OverviewFormat.quickChips(one, locale: en)[2].value, "None")
+    }
+
+    func testModelShareAndHarnessMarks() {
+        XCTAssertEqual(OverviewFormat.share(0.5), "50.0%")
+        XCTAssertEqual(OverviewFormat.share(0.1234), "12.3%")
+        let marks = OverviewFormat.harnessMarks(["claude", "codex", "devin", "opencode", "pi"])
+        XCTAssertEqual(marks.shown, ["claude", "codex", "devin"])
+        XCTAssertEqual(marks.more, "+2")
+        XCTAssertNil(OverviewFormat.harnessMarks(["claude"]).more)
+    }
+
+    func testAllTimeChartsFromTheFirstDay() throws {
+        let body = try UsageFixtures.decode(UsageFixtures.overview, as: OverviewResponse.self)
+        XCTAssertEqual(OverviewFormat.chartRange(body).start, "2026-01-01")
+        let all = try UsageFixtures.decode("""
+        {"period": "all", "range": null, "first_day": "2025-12-01",
+         "days": [{"date": "2026-01-08", "tokens": 1}, {"date": "2025-12-02", "tokens": 1}]}
+        """, as: OverviewResponse.self)
+        XCTAssertEqual(OverviewFormat.chartRange(all).start, "2025-12-01")
+        XCTAssertEqual(OverviewFormat.chartRange(all).end, "2026-01-08")
+    }
+
+    func testALongSeriesKeepsTheNewestDays() throws {
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let days = [OverviewResponse.Day(date: "2026-01-10", tokens: 9, costUsd: 1)]
+        let series = UsageFormat.dailySeries(days, start: "2020-01-01", end: "2026-01-10", timeZone: utc, maxDays: 30)
+        XCTAssertEqual(series.count, 30)
+        XCTAssertEqual(series.last?.tokens, 9, "the newest day survives the cap")
+    }
+
+    /// 21 cells: three Sunday-first weeks, the last two days still to come.
+    private func heatmap() throws -> OverviewResponse.Heatmap {
+        var cells: [String] = []
+        var date = try XCTUnwrap(OverviewFormat.day("2026-01-25"))
+        for i in 0..<21 {
+            let iso = ISO8601DateFormatter.string(from: date, timeZone: TimeZone(identifier: "UTC")!,
+                                                  formatOptions: [.withFullDate])
+            cells.append(i >= 19 ? #"{"date": "\#(iso)", "future": true}"#
+                         : #"{"date": "\#(iso)", "tokens": \#(i * 1000), "cost_usd": 1.5, "level": \#(i % 5)}"#)
+            date = date.addingTimeInterval(86_400)
+        }
+        return try UsageFixtures.decode(#"{"weeks": 3, "days": [\#(cells.joined(separator: ","))]}"#,
+                                        as: OverviewResponse.Heatmap.self)
+    }
+
+    func testHeatmapColumnsKeepTheNewestWeeks() throws {
+        let map = try heatmap()
+        let all = OverviewFormat.columns(map, weeks: 3)
+        XCTAssertEqual(all.count, 3)
+        XCTAssertEqual(all[0][0]?.date, "2026-01-25")
+        XCTAssertNil(all[2][5], "a future day is a gap")
+        XCTAssertNil(all[2][6])
+        let two = OverviewFormat.columns(map, weeks: 2)
+        XCTAssertEqual(two.first?[0]?.date, "2026-02-01")
+    }
+
+    func testWeeksThatFitTheCard() {
+        // 24pt labels, then 15pt a week.
+        XCTAssertEqual(OverviewFormat.weeksThatFit(width: 24 + 15 * 20, available: 26), 20)
+        XCTAssertEqual(OverviewFormat.weeksThatFit(width: 2000, available: 26), 26)
+        XCTAssertEqual(OverviewFormat.weeksThatFit(width: 50, available: 26), 8)
+        XCTAssertEqual(OverviewFormat.weeksThatFit(width: 50, available: 3), 3)
+        XCTAssertEqual(OverviewFormat.weeksThatFit(width: 300, available: 0), 0)
+    }
+
+    func testMonthLabelsSitOverEachMonthsFirstWeek() throws {
+        let columns = OverviewFormat.columns(try heatmap(), weeks: 3)
+        // Jan 25 starts week 0, but Feb starts week 1: the first label gives way.
+        XCTAssertEqual(OverviewFormat.monthLabels(columns, locale: en), [nil, "Feb", nil])
+    }
+
+    func testCellDetailAndDays() throws {
+        let map = try heatmap()
+        let cells = try XCTUnwrap(map.days)
+        XCTAssertEqual(OverviewFormat.cellDetail(cells[0]), "No usage")
+        XCTAssertEqual(OverviewFormat.cellDetail(cells[3]), "3.0K tokens · $1.50")
+        XCTAssertEqual(OverviewFormat.longDay("2026-01-03", locale: en), "Sat, Jan 3")
+        XCTAssertNil(OverviewFormat.shortDay("junk", locale: en))
+    }
+
+    func testDailyTablePagesInThirties() throws {
+        let days = (1...14).map { OverviewResponse.Day(date: String(format: "2026-01-%02d", 15 - $0), tokens: $0, costUsd: 0) }
+        XCTAssertEqual(OverviewFormat.dailyRows(days, shown: 10).count, 10)
+        XCTAssertEqual(OverviewFormat.dailyRows(days, shown: 10).first?.date, "2026-01-14")
+        XCTAssertEqual(OverviewFormat.dailyRows(days, shown: 40).count, 14)
+        XCTAssertEqual(OverviewFormat.dailyMore(total: 14, shown: 10), 4)
+        XCTAssertEqual(OverviewFormat.dailyMore(total: 400, shown: 10), 30)
+        XCTAssertEqual(OverviewFormat.dailyMore(total: 400, shown: 400), 0)
+        let body = try UsageFixtures.decode(UsageFixtures.overview, as: OverviewResponse.self)
+        XCTAssertEqual(OverviewFormat.dailyCells(try XCTUnwrap(body.days?.first)),
+                       ["2026-01-08", "3.0M", "100K", "50.0K", "2.9M", "$200.00"])
     }
 }

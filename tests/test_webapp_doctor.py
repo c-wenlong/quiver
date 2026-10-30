@@ -1,6 +1,8 @@
 """The Doctor page: the swe doctor report, and Run for a finding's fix."""
 
 import json
+import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -332,11 +334,28 @@ class TestRoute(_TempHome, HubBase):
             self.assertEqual(status, want, data)
 
     def test_page_assets_are_served(self):
-        _, js = self.srv.request("GET", "/app/pages.js")
-        self.assertIn(b'registerPage("doctor"', js)
+        _, js = self.srv.request("GET", "/pages.js")
         self.assertIn(b"/v1/app/doctor/run", js)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".doctor-fix", css)
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFindingIds(unittest.TestCase):
+    """pages/doctor.js's finding id keeps check and message apart, so
+    two findings whose texts only join the same way stay two (one Run
+    confirm or busy row would otherwise mark both)."""
+
+    def test_check_and_message_do_not_run_together(self):
+        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/doctor.js"
+        body = ("process.stdout.write(JSON.stringify([doctorId({ check: 'a', message: 'bc' }),"
+                " doctorId({ check: 'ab', message: 'c' })]));\n")
+        done = subprocess.run(["node", "-e", "function registerPage() {}\n" + page.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        first, second = json.loads(done.stdout)
+        self.assertNotEqual(first, second)
 
 
 if __name__ == "__main__":

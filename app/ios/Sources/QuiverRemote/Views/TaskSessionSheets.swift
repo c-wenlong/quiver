@@ -76,7 +76,7 @@ struct TaskSessionSheet: View {
             PageScroll {
                 if let machine {
                     startsIn(machine)
-                    harnessSection(machine)
+                    HarnessPicker(machine: machine, harness: $harness, sessions: rows) { harnessTouched = true }
                     ModelField(machine: machine, harness: harness,
                                selection: $model,
                                sessions: rows, disabled: flow.busy)
@@ -85,7 +85,7 @@ struct TaskSessionSheet: View {
                     startSection(machine)
                 } else {
                     StateCard(icon: "terminal", title: "No machine can start a session",
-                              message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                              message: NewSessionOptions.noMachineMessage(app.machines))
                 }
             }
             .navigationTitle("New agent session")
@@ -149,63 +149,12 @@ struct TaskSessionSheet: View {
             icon = "folder"
             where_ = folder.map(FolderRow.name) ?? "Pick a folder below"
         }
-        return Card(padding: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: icon).font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Starts in").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    Text(where_)
-                        .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Text("on \(machine.displayName)")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            }
-            .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
-        }
-        .padding(.top, 4)
-    }
-
-    @ViewBuilder private func harnessSection(_ machine: Machine) -> some View {
-        let offered = NewSessionOptions.harnesses(on: machine)
-        GroupLabel(text: "Harness", trailing: harness.map { NewSessionOptions.name($0, on: machine, sessions: rows) })
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 48, maximum: 48), spacing: 8)], alignment: .leading, spacing: 8) {
-            ForEach(offered, id: \.self) { h in
-                let selected = h == harness
-                let name = NewSessionOptions.name(h, on: machine, sessions: rows)
-                Button { harness = h; harnessTouched = true } label: {
-                    HarnessIcon(harness: h, name: name, size: 24)
-                        .font(.system(size: 10))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .frame(width: 48, height: 48)
-                        .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
-                            .strokeBorder(selected ? Theme.textPrimary : Theme.border, lineWidth: selected ? 1.5 : 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(name)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        if let harness, machine.untrackedHarnesses?.contains(harness) == true {
-            Text("Quiver can't read \(NewSessionOptions.name(harness, on: machine, sessions: rows)) sessions yet: it starts, but no chat opens.")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 4)
-        }
+        return StartsInCard(icon: icon, title: where_, trailing: "on \(machine.displayName)")
+            .padding(.top, 4)
     }
 
     private var promptSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            GroupLabel(text: "First prompt")
-            TextField("Describe the first task", text: $prompt, axis: .vertical)
-                .lineLimit(4...10)
-                .font(Theme.body)
-                .foregroundStyle(Theme.textPrimary)
-                .padding(12)
-                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+        FirstPromptField(prompt: $prompt) {
             if worktreeLaunch {
                 Text("Leave it empty and the hub writes the brief from the \(issueRoute != nil ? "issue" : "pull request").")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -246,22 +195,7 @@ struct TaskSessionSheet: View {
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
         } else {
             if searching || folders.count > Self.foldersShown {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
-                    TextField("Search folders", text: $folderQuery)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    if searching {
-                        Button { folderQuery = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted) }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Clear search")
-                    }
-                }
-                .font(Theme.body)
-                .padding(.horizontal, 12)
-                .frame(height: Theme.controlHeight + 4)
-                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+                FolderSearchField(query: $folderQuery)
             }
             let shown = searching || showAllFolders ? matches : Array(matches.prefix(Self.foldersShown))
             if shown.isEmpty {
@@ -290,24 +224,9 @@ struct TaskSessionSheet: View {
     private func startSection(_ machine: Machine) -> some View {
         let ready = harness != nil && (worktreeLaunch || folder != nil)
         return VStack(alignment: .leading, spacing: 8) {
-            Button { launch = Task { await start(machine) } } label: {
-                HStack(spacing: 8) {
-                    if flow.busy { ProgressView().controlSize(.small).tint(Theme.primaryForeground) }
-                    Text(flow.phase == .waiting ? "Waiting for the session" : flow.opening ? "Opening the chat" : flow.busy ? "Starting" : "Start session")
-                }
+            LaunchStartButton(flow: flow, ready: ready, footnote: footnote(machine)) {
+                launch = Task { await start(machine) }
             }
-            .primaryButton()
-            .disabled(!ready || flow.busy)
-            if case .failed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if case .unconfirmed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text(footnote(machine))
-                .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -435,7 +354,7 @@ struct LinkSessionSheet: View {
                 }
                 .font(Theme.body)
                 .padding(.horizontal, 12)
-                .frame(height: Theme.controlHeight + 4)
+                .scaledMinHeight(Theme.controlHeight + 4)
                 .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
                 .padding(.top, 4)
@@ -482,7 +401,7 @@ struct LinkSessionSheet: View {
             do {
                 try await client.linkTask(row.key, task: task)
             } catch {
-                self.error = (error as? HubError)?.message ?? error.localizedDescription
+                self.error = error.localizedDescription
                 busy = nil
                 return
             }

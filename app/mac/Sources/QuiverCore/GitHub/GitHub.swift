@@ -711,13 +711,14 @@ extension SweClient {
                        allowFailure: true)
     }
 
-    /// `swe gh issue comment <n> --repo=<repo> --body=<text> --json` —
-    /// posts as the `gh` login on this Mac. A refusal exits non-zero
-    /// with `error` in the reply, so `allowFailure` stays on.
+    /// `swe gh issue comment <n> --repo=<repo> --body-file=- --json`, the
+    /// text on stdin — posts as the `gh` login on this Mac. Never on argv:
+    /// every process on the Mac can read another's arguments. A refusal
+    /// exits non-zero with `error` in the reply, so `allowFailure` stays on.
     public func ghIssueComment(repo: String, number: Int, body: String) async throws -> GhIssueCommentReply {
         try await call(["gh", "issue", "comment", "\(number)", "--repo=\(repo)",
-                        "--body=\(body)", "--json"],
-                       allowFailure: true)
+                        "--body-file=-", "--json"],
+                       input: Data(body.utf8), allowFailure: true)
     }
 
     /// `swe gh pr merge <ref> --repo=<repo> --json`. `auto` arms

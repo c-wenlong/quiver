@@ -140,7 +140,7 @@
 .cal-mini-day.lit-start.lit-end { border-radius: 4px; }
 .cal-mini-day.today span { background: var(--cal-red); color: #fff; }
 
-.cal-legend-head { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 4px; }
+.cal-legend-head { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; }
 .cal-legend { display: flex; flex-direction: column; gap: 2px; }
 .cal-lrow { display: flex; align-items: center; min-height: 24px; }
 .cal-chev { width: 20px; height: 20px; flex: none; border: 0; background: transparent; color: var(--text-secondary); padding: 5px; cursor: pointer; }

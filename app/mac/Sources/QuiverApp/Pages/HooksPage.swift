@@ -253,7 +253,7 @@ private struct FindingsCard: View {
                             HarnessMarkView(harness: finding.harness, size: 14)
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         }
-                        Text(finding.message)
+                        Text(finding.displayMessage(home: FileManager.default.homeDirectoryForCurrentUser.path))
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -368,7 +368,7 @@ private struct EntryRow: View {
                     Image(systemName: "puzzlepiece.extension")
                         .font(Theme.font(size: 11))
                         .foregroundStyle(Theme.textMuted)
-                        .help("Declared by another tool")
+                        .hoverTip("Declared by another tool")
                 }
                 Text(hook.script)
                     .font(Theme.font(size: 13, weight: .medium, design: .monospaced))
@@ -731,11 +731,13 @@ private struct HookDetailView: View {
     /// Save the script, then close; a save that fails keeps the panel open
     /// and says why.
     private func saveAndLeave() {
-        if let draft, draft.save() != .saved {
-            leaveError = "Couldn't save \(hook.script)."
-        } else {
-            leaveError = nil
-            onBack()
+        Task {
+            if let draft, await draft.save() != .saved || draft.isDirty {
+                leaveError = "Couldn't save \(hook.script)."
+            } else {
+                leaveError = nil
+                onBack()
+            }
         }
     }
 

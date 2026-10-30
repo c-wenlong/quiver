@@ -36,7 +36,8 @@ class _Hub:
         self.server = make_server(self.state, "127.0.0.1", 0)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(
-            target=self.server.serve_forever, daemon=True)
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
+            daemon=True)
         self.thread.start()
         token = pairing.mint_pair_token(self.home)
         _status, data = self.request(
@@ -196,6 +197,15 @@ class TestForkRoute(unittest.TestCase):
         launch = self.srv.state.launches[body["launch_id"]]
         self.assertEqual(launch["state"], "failed")
         self.assertEqual(launch["note"], "claude exited")
+
+    def test_a_fork_that_raises_still_settles_the_launch(self):
+        with patch.object(fork_mod, "start",
+                          side_effect=RuntimeError("tmux vanished")):
+            _s, body = self._fork("claude:abc")
+            self._wait()
+        launch = self.srv.state.launches[body["launch_id"]]
+        self.assertEqual(launch["state"], "failed")
+        self.assertIn("tmux vanished", launch["note"])
 
     def test_fork_carries_the_pick(self):
         with patch.object(fork_mod, "start",

@@ -379,6 +379,27 @@ class TailTest(OpencodeV2Case):
         self.assertEqual(src.state()["seq"], 12)
         self.assertEqual(src.poll(), [])
 
+    def test_start_near_end_reads_only_recent_v2_rows(self):
+        src = self.source("ses_new")
+        src.start_near_end(2)  # rows 7 (assistant) and 12 (idle)
+        self.assertEqual(src.state()["seq"], 5)
+        self.assertEqual(
+            [e["kind"] for e in src.poll()],
+            ["thinking", "tool_use", "tool_result", "assistant"],
+        )
+
+    def test_start_near_end_counts_undecodable_rows(self):
+        # A row whose JSON won't decode still takes its place in the
+        # window: the cursor must not fall back to the start.
+        conn = self.conn()
+        conn.execute("INSERT INTO session_message VALUES ('bad', 'ses_new', 'user', 13, ?, ?, 'not json')",
+                     (T0 + 5000, T0 + 5000))
+        conn.commit()
+        conn.close()
+        src = self.source("ses_new")
+        src.start_near_end(2)  # rows 12 (idle) and 13 (bad)
+        self.assertEqual(src.state()["seq"], 7)
+
     def test_a_streaming_reply_waits_until_it_completes(self):
         conn = self.conn()
         self.v2_row(conn, "m5", "ses_new", "user", 16, {"text": "next"}, T0 + 5000)

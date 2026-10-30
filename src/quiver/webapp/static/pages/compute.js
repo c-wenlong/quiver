@@ -1,20 +1,11 @@
 /* Compute: a port of the Mac app's ComputePage. What the starred
  * harnesses run on the hub machine, what it costs it, orphaned helpers,
- * and the RAM / CPU / GPU / Temperature trend card. Read only: Quit,
- * Clean up and fan control stay in the Mac app. Data from
+ * and the RAM / CPU / GPU / Temperature trend card. The one write is
+ * the settings sheet's auto clean: the hub quits old orphans itself.
+ * Quit, Clean up and fan control stay in the Mac app. Data from
  * /v1/app/compute, polled every 3 seconds while the page is open, as the
  * Mac page refreshes. */
 "use strict";
-
-const computePage = {
-  data: null, seq: 0, timer: null, failed: null,
-  // Per-browser choices, kept like the Mac app's UserDefaults.
-  tab: computeStored("tab", "ram"),
-  interval: Number(computeStored("interval", "10")) || 10,
-  lines: computeStoredJSON("temperatureLines", ["cpu", "gpu", "ssd", "battery"]),
-  limits: computeLimits(computeStoredJSON("limits", {})),
-  collapsed: new Set(), showAll: new Set(), hover: null,
-};
 
 const COMPUTE_TABS = [["ram", "RAM"], ["cpu", "CPU"], ["gpu", "GPU"], ["temperature", "Temperature"]];
 // TrendInterval: [seconds, picker title, span for "Collecting" text].
@@ -22,12 +13,35 @@ const COMPUTE_INTERVALS = [[3, "Every 3 s", "3 seconds"], [10, "Every 10 s", "10
   [30, "Every 30 s", "30 seconds"], [60, "Every minute", "a minute"], [300, "Every 5 minutes", "5 minutes"]];
 const COMPUTE_COMPONENTS = [["cpu", "CPU"], ["gpu", "GPU"], ["memory", "Memory"], ["ssd", "SSD"],
   ["battery", "Battery"], ["airflow", "Airflow"], ["display", "Display"]];
+
+const computePage = {
+  data: null, seq: 0, timer: null, failed: null,
+  // Per-browser choices, kept like the Mac app's UserDefaults. A stored
+  // value this page doesn't know (an older build's, a hand edit) falls
+  // back: an unknown tab threw in the chart and stopped the poll.
+  tab: computeChoice(computeStored("tab", "ram"), COMPUTE_TABS.map(([id]) => id), "ram"),
+  interval: computeChoice(Number(computeStored("interval", "10")), COMPUTE_INTERVALS.map(([s]) => s), 10),
+  lines: computeLines(computeStoredJSON("temperatureLines", null)),
+  limits: computeLimits(computeStoredJSON("limits", {})),
+  collapsed: new Set(), showAll: new Set(), hover: null,
+  // The settings sheet's hub write in flight and its last error.
+  acBusy: false, acError: null,
+};
+
 const COMPUTE_VISIBLE_ROWS = 5;
 const COMPUTE_ORPHAN_FOLD = 8;
 const GB = 1024 * 1024 * 1024;
 
 function computeStored(key, fallback) {
   try { return localStorage.getItem(`quiver.compute.${key}`) || fallback; } catch { return fallback; }
+}
+function computeChoice(value, known, fallback) {
+  return known.includes(value) ? value : fallback;
+}
+/* The Temperature card's lines: known components only, in a list. */
+function computeLines(saved) {
+  const known = COMPUTE_COMPONENTS.map(([c]) => c);
+  return Array.isArray(saved) ? saved.filter((c) => known.includes(c)) : ["cpu", "gpu", "ssd", "battery"];
 }
 function computeStoredJSON(key, fallback) {
   try { const v = JSON.parse(localStorage.getItem(`quiver.compute.${key}`)); return v == null ? fallback : v; }
@@ -50,15 +64,18 @@ function computeStore(key, value) {
 
 const CFmt = {
   /* ByteCountFormatter's .memory style: binary units, whole KB, one
-   * decimal for MB, two for GB and up, trailing zeros dropped. */
+   * decimal for MB, two for GB and up, trailing zeros dropped; nothing
+   * is "0 KB", as in ComputeSummary.bytes. */
   bytes(count) {
-    if (!count) return "Zero KB";
+    if (!count) return "0 KB";
     if (count < 1024) return `${count} bytes`;
     const units = [["KB", 0], ["MB", 1], ["GB", 2], ["TB", 2]];
     let value = count / 1024, i = 0;
     while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
     return `${value.toLocaleString("en-US", { maximumFractionDigits: units[i][1] })} ${units[i][0]}`;
   },
+  /* "1 thread", "28 threads", as in ComputeSummary.threads. */
+  threads(n) { return `${n} ${n === 1 ? "thread" : "threads"}`; },
   /* Whole percent once it is two digits, one decimal below it. */
   percent(p) {
     const digits = p >= 10 ? 0 : 1;
@@ -113,7 +130,7 @@ async function pollCompute(gen, refresh = false) {
   if (refresh) q.set("refresh", "1");
   const { status, data } = await api(`/v1/app/compute?${q}`);
   if (gen !== routeGen || mine !== p.seq) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
     if (!p.data) {
       pageError(computeHeader(false), status, data, () => renderCompute("compute", true));
@@ -203,7 +220,8 @@ function paintCompute(busy) {
 function computeTop(d) {
   const t = d.totals;
   const machine = machineLine(d);
-  return `<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${t.process_count} processes · CPU ${CFmt.percent(t.cpu_percent)}% · ${t.threads} threads</p>${
+  const n = t.process_count;
+  return `<p class="caption num compute-totals">${CFmt.bytes(t.memory_bytes)} across ${n} ${n === 1 ? "process" : "processes"} · CPU ${CFmt.percent(t.cpu_percent)}% · ${CFmt.threads(t.threads)}</p>${
     machine ? `<p class="caption num compute-machine">${machine}</p>` : ""}`;
 }
 
@@ -275,7 +293,7 @@ function harnessCard(usage) {
   const flagged = (r) => r.memory_bytes > limit || r.busy;
   const hiddenFlagged = all ? 0 : rows.slice(COMPUTE_VISIBLE_ROWS).filter(flagged).length;
   const n = usage.process_count;
-  const figures = `${CFmt.bytes(usage.memory_bytes)} · CPU ${CFmt.percent(usage.cpu_percent)}% · ${n} ${n === 1 ? "process" : "processes"} · ${usage.threads} threads · running for ${CFmt.duration(nowS() - usage.running_since)}`;
+  const figures = `${CFmt.bytes(usage.memory_bytes)} · CPU ${CFmt.percent(usage.cpu_percent)}% · ${n} ${n === 1 ? "process" : "processes"} · ${CFmt.threads(usage.threads)} · running for ${CFmt.duration(nowS() - usage.running_since)}`;
   let body = "";
   if (expanded) {
     body = `<div class="compute-rows">${shown.map((r) => processRow(r, limit)).join("")}${hidden ? `
@@ -295,7 +313,7 @@ function processRow(r, limit) {
   const badges = (r.memory_bytes > limit ? badge(`Over ${CFmt.bytes(limit)}`) : "") + (r.busy ? badge("Busy") : "");
   return `<div class="compute-row" title="${esc(r.command_line)}">
     <div class="compute-main"><div class="compute-name"><span class="ellipsis">${esc(r.name)}</span>${badges}</div>
-      <div class="caption num">PID ${r.pid} · ${r.threads} threads · running for ${CFmt.duration(nowS() - r.started_at)}</div></div>
+      <div class="caption num">PID ${r.pid} · ${CFmt.threads(r.threads)} · running for ${CFmt.duration(nowS() - r.started_at)}</div></div>
     <span class="caption num compute-mem">${CFmt.bytes(r.memory_bytes)}</span>
     <span class="caption num compute-cpu">${r.cpu_percent == null ? "–" : `${CFmt.percent(r.cpu_percent)}%`}</span>
   </div>`;
@@ -316,7 +334,8 @@ function orphansCard(rows) {
       .filter(Boolean).join(" · ");
     return `<div class="compute-row orphan" title="${esc(o.command_line)}">
       <div class="compute-main"><div class="compute-name"><span class="ellipsis">${esc(o.command)}</span>${
-        old ? badge("Old") : ""}${o.memory_bytes > limit ? badge(`Over ${CFmt.bytes(limit)}`) : ""}</div>
+        old ? badge("Old") : ""}${o.memory_bytes > limit ? badge(`Over ${CFmt.bytes(limit)}`) : ""}${
+        o.quitting ? badge("Quitting") : ""}</div>
         <div class="caption num">${esc(caption)}</div></div>
       <span class="caption num compute-mem">${CFmt.bytes(o.memory_bytes)}</span>
     </div>`;
@@ -645,6 +664,14 @@ function splitAge(seconds) {
   return [minutes, "minute"];
 }
 
+/* The settings page's set-switch as a button: the same markup so the
+ * shared stylesheet draws the Mac's switch. `type="button"` matters —
+ * the sheet is a form, and a bare button would submit and close it. */
+function computeSwitch(id, on, opts = {}) {
+  return `<button type="button" class="set-switch" role="switch" aria-checked="${on}" data-cswitch="${esc(id)}"
+    aria-label="${esc(opts.label || id)}"${opts.disabled ? " disabled" : ""}><span></span></button>`;
+}
+
 function openComputeLimits() {
   let dialog = document.getElementById("compute-limits");
   if (dialog) dialog.remove();
@@ -654,6 +681,9 @@ function openComputeLimits() {
   const gen = routeGen;
   const repaint = () => { if (p.data && gen === routeGen) paintCompute(false); };
   const [value, unit] = splitAge(p.limits.orphanAge);
+  // Auto clean is the hub's own state, not this browser's; a non-Linux
+  // hub has no /proc to work, so its section is left out entirely.
+  const hasHub = p.data && p.data.supported !== false;
   document.body.insertAdjacentHTML("beforeend", `<dialog class="sheet compute-limits" id="compute-limits">
     <form method="dialog" class="sheet-body">
       <div class="sheet-title">Settings</div>
@@ -673,27 +703,115 @@ function openComputeLimits() {
             [1, 2, 4, 8].map((gb) => [String(gb), `${gb} GB`]), String(p.limits.memoryGB))}</select>
         </div>
       </div>
-      <p class="caption">Kept in this browser. Quitting processes and Clean up are in the Mac app.</p>
+      <div id="compute-autoclean"></div>
+      <p class="caption" id="compute-ac-note"></p>
+      <p class="caption">${hasHub
+        ? "Thresholds are kept in this browser; auto clean is kept on the hub. Quitting processes and Clean up are in the Mac app."
+        : "Kept in this browser. Quitting processes and Clean up are in the Mac app."}</p>
       <div class="sheet-actions"><button class="compute-button" value="done">Done</button></div>
     </form></dialog>`);
   dialog = document.getElementById("compute-limits");
   const age = dialog.querySelector("#compute-age"), ageUnit = dialog.querySelector("#compute-age-unit");
   const memory = dialog.querySelector("#compute-memory");
+
+  /* The hub's saved auto clean, from the last payload. The sheet writes
+   * its whole section at once, so each post carries the current of the
+   * other knobs too. */
+  const ac = () => (p.data && p.data.autoclean) || {};
+  const acBody = () => {
+    const on = ac().enabled === true;
+    const ageText = CFmt.duration(ac().orphan_age_seconds || p.limits.orphanAge);
+    const grace = Math.round(ac().grace_seconds || 10);
+    return `<div class="compute-setting">
+      <div><div>Auto clean</div>
+        <div class="caption">The hub sends an orphan older than ${esc(ageText)} a quit signal, even with no browser open.</div></div>
+      <div class="compute-setting-control">${computeSwitch("autoclean", on, { label: "Auto clean", disabled: p.acBusy })}</div>
+    </div>
+    ${on ? `<div class="compute-setting sub">
+      <div><div>Force quit</div>
+        <div class="caption">An orphan still running ${grace} seconds after its quit signal is force quit.</div></div>
+      <div class="compute-setting-control">${computeSwitch("autoclean-force", ac().force === true, { label: "Force quit", disabled: p.acBusy })}</div>
+    </div>` : ""}`;
+  };
+  const drawAutoclean = (refocus) => {
+    const zone = document.getElementById("compute-autoclean");
+    if (!zone) return;
+    zone.innerHTML = hasHub ? acBody() : "";
+    for (const sw of zone.querySelectorAll("[data-cswitch]")) {
+      sw.onclick = () => {
+        const cur = ac();
+        const body = {
+          enabled: cur.enabled === true,
+          force: cur.force === true,
+          orphan_age_seconds: cur.orphan_age_seconds || p.limits.orphanAge,
+        };
+        if (sw.dataset.cswitch === "autoclean") {
+          body.enabled = !body.enabled;
+          // "The orphaned setting" is the field above: switching auto
+          // clean on takes this sheet's age as the hub's threshold too.
+          if (body.enabled) body.orphan_age_seconds = resolveAge();
+        } else {
+          body.force = !body.force;
+        }
+        postClean(body, sw.dataset.cswitch);
+      };
+    }
+    const note = document.getElementById("compute-ac-note");
+    if (note) note.innerHTML = p.acError ? `<span class="error">${esc(p.acError)}</span>` : "";
+    if (refocus) zone.querySelector(`[data-cswitch="${refocus}"]`)?.focus();
+  };
+  const postClean = (body, refocus) => {
+    if (p.acBusy) return;
+    p.acBusy = true;
+    p.acError = null;
+    drawAutoclean();
+    apiPost("/v1/app/compute/settings", body).then(({ status, data }) => {
+      p.acBusy = false;
+      if (status === 200 && data && data.autoclean) {
+        if (p.data) p.data.autoclean = data.autoclean;
+        // An age typed while the request was out never reached the hub
+        // (commitAge drops its own write while busy), so send it now —
+        // carrying the switches just saved, not the stale request's.
+        if (hasHub && p.limits.orphanAge !== data.autoclean.orphan_age_seconds) {
+          postClean({ enabled: data.autoclean.enabled === true,
+                      force: data.autoclean.force === true,
+                      orphan_age_seconds: p.limits.orphanAge }, refocus);
+          return;
+        }
+      } else {
+        p.acError = (data && data.error && data.error.message)
+          || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+      }
+      drawAutoclean(refocus);
+    });
+  };
   // OrphanAgeUnit.resolve: zero or less snaps back; the rest clamps to a
-  // minute up to a year. Written on change, never per keystroke.
-  const commitAge = () => {
+  // minute up to a year. resolveAge stores the field's value locally and
+  // answers the seconds; commitAge also echoes it to the hub, which uses
+  // it for auto clean.
+  const resolveAge = () => {
     const n = Math.floor(Number(age.value));
     const secs = AGE_UNITS.find(([id]) => id === ageUnit.value)[2];
     if (!(n > 0)) {
       const [v, u] = splitAge(p.limits.orphanAge);
       age.value = v; ageUnit.value = u;
-      return;
+      return p.limits.orphanAge;
     }
     const seconds = Math.min(Math.max(n * secs, 60), 365 * 86400);
     if (seconds !== n * secs) { const [v, u] = splitAge(seconds); age.value = v; ageUnit.value = u; }
+    if (seconds === p.limits.orphanAge) return seconds;
     p.limits.orphanAge = seconds;
     computeStore("limits", p.limits);
     repaint();
+    return seconds;
+  };
+  const commitAge = () => {
+    const before = p.limits.orphanAge;
+    const seconds = resolveAge();
+    if (!hasHub || seconds === before || p.acBusy) return;
+    const cur = ac();
+    postClean({ enabled: cur.enabled === true, force: cur.force === true,
+                orphan_age_seconds: seconds });
   };
   age.onchange = commitAge;
   ageUnit.onchange = commitAge;
@@ -703,6 +821,7 @@ function openComputeLimits() {
     repaint();
   };
   dialog.addEventListener("close", () => { commitAge(); dialog.remove(); });
+  drawAutoclean();
   dialog.showModal();
 }
 

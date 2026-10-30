@@ -189,6 +189,9 @@ private struct ServerGrid: View {
     /// The name column takes whatever the cells leave, but never less than this.
     static let nameMinWidth: CGFloat = 180
     static let cellWidth: CGFloat = 88
+    /// The gap between a Local row's folder buttons and the first harness
+    /// cell, the same on a server's row and an unused folder's.
+    static let actionsGap: CGFloat = 8
     /// Rows a section shows before folding behind a Show more row.
     private static let foldLimit = 10
     /// Section titles the user has unfolded.
@@ -293,7 +296,7 @@ private struct ServerRow: View {
                     if showHealth, let health = server.health {
                         Circle().fill(healthColor(health)).frame(width: Theme.statusDot, height: Theme.statusDot)
                             .padding(.top, 4)
-                            .help(server.detail ?? "Healthy")
+                            .hoverTip(server.detail ?? "Healthy")
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 5) {
@@ -328,7 +331,7 @@ private struct ServerRow: View {
         .overlay(alignment: .trailing) {
             if !folders.isEmpty {
                 FolderActions(folders: folders, editor: editor)
-                    .padding(.trailing, cellsWidth + 8)
+                    .padding(.trailing, cellsWidth + ServerGrid.actionsGap)
             }
         }
     }
@@ -377,13 +380,13 @@ private struct Cell: View {
                     .frame(width: 20, height: 20)
                     .background(Theme.subtle, in: .rect(cornerRadius: 5))
                     .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border, lineWidth: 1))
-                    .help("Definition \(variantLetter(group))")
+                    .hoverTip("Definition \(variantLetter(group))")
             } else {
                 Image(systemName: "checkmark").font(Theme.font(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
             }
         } else {
-            Text("—").foregroundStyle(Theme.borderStrong).help("Not in \(HarnessMark(harness).name)")
+            Text("—").foregroundStyle(Theme.borderStrong).hoverTip("Not in \(HarnessMark(harness).name)")
         }
     }
 }
@@ -777,6 +780,8 @@ private struct FolderRow: View {
     var body: some View {
         HStack(spacing: 0) {
             RepoFolderRow(folder: folder, usedBy: hubKnown ? [] : nil, editor: editor)
+                // Its buttons end where a server row's do, not 8pt further right.
+                .padding(.trailing, ServerGrid.actionsGap)
                 .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
             ForEach(harnesses, id: \.self) { harness in
                 Spacer().frame(width: ServerGrid.columnWidth(harness))

@@ -50,8 +50,6 @@
 }
 .pl-copy:hover { background: var(--tab-hover); color: var(--text-primary); }
 .pl-copy svg { width: 14px; height: 14px; }
-.pl-copy.copied { color: var(--success); }
-.pl-copy.failed { color: var(--danger-text); }
 
 /* Fix and Fix all: the app's secondary and primary buttons, and the
    inline confirms standing in for its confirmation dialogs */
@@ -65,10 +63,6 @@
 .pl-button:disabled { cursor: default; opacity: .45; }
 .pl-button:focus-visible { outline: 1px solid var(--interactive); outline-offset: 2px; }
 .pl-running { display: grid; place-items: center; width: 44px; height: 32px; }
-.pl-spinner {
-  width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong);
-  border-top-color: var(--text-secondary); animation: spin .8s linear infinite;
-}
 .pl-confirm { gap: 10px; }
 .pl-confirm .caption { margin: 0; }
 .pl-confirm.inline {

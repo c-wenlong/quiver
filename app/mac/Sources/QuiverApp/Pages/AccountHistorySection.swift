@@ -76,7 +76,11 @@ struct AccountHistorySection: View {
                 }
             case .unsupported: note("Update Codex to read the account total")
             case .failed:
-                note("Couldn't read the account total").help(codex.failure ?? "")
+                if let failure = codex.failure {
+                    note("Couldn't read the account total").hoverTip(failure, replacesLabel: false)
+                } else {
+                    note("Couldn't read the account total")
+                }
             }
         } else {
             note("\(harnessName) doesn't share account-wide totals")
@@ -90,12 +94,13 @@ struct AccountHistorySection: View {
         if chips.difference > 0 {
             note("\(UsageFormat.tokens(chips.difference)) elsewhere "
                  + "(\(Int((chips.fraction * 100).rounded()))%) in the last 4 weeks\(stale)")
-                .help("Account total from OpenAI, minus what this Mac logged")
+                .hoverTip("Account total from OpenAI, minus what this Mac logged", replacesLabel: false)
         } else if chips.difference < 0 {
             note("\(UsageFormat.tokens(-chips.difference)) more on this Mac than the account "
                  + "in the last 4 weeks\(stale)")
-                .help("Possible causes: sessions from another account in a shared "
-                      + "conversation folder, or OpenAI's day boundary, which isn't your midnight.")
+                .hoverTip("Possible causes: sessions from another account in a shared "
+                      + "conversation folder, or OpenAI's day boundary, which isn't your midnight.",
+                      replacesLabel: false)
         } else {
             note("All on this Mac in the last 4 weeks\(stale)")
         }
@@ -188,7 +193,7 @@ private struct HistoryChart: View {
         .overlay {
             HStack(spacing: 0) {
                 ForEach(periods, id: \.start) { period in
-                    Color.clear.contentShape(Rectangle()).help(help(period))
+                    Color.clear.contentShape(Rectangle()).hoverTip(help(period))
                 }
             }
         }

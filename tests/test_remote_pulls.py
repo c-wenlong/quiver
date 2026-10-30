@@ -18,7 +18,7 @@ from quiver.github import gh, manage, repos
 from quiver.github import pulls as gh_pulls
 from quiver.remote import pulls as pulls_mod
 from quiver.remote import protocol
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 from quiver.webapp.pages import repositories
 
 from tests.test_remote_hub import _Server, _session
@@ -323,8 +323,12 @@ class TestOpen(_Base):
              patch("quiver.remote.supervise.launch_new",
                    side_effect=launch,
                    return_value=(True, "launched", "qv-t")) as ln:
-            yield wt, ln
-            self._wait()
+            try:
+                yield wt, ln
+            finally:
+                # Even when the test fails: the launch thread must end
+                # while the patches still stand, or it runs for real.
+                self._wait()
 
     def _wait(self):
         for t in threading.enumerate():

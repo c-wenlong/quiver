@@ -27,6 +27,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.remote.protocol import url_host
 
 # A pairing token is worthless within minutes of `swe remote pair`.
 TOKEN_TTL_S = 300
@@ -34,17 +35,19 @@ TOKEN_TTL_S = 300
 # A device row's ``role`` is what its credential may do. ``phone`` is
 # the default — and the effective role of every row minted before roles
 # existed: session routes only. ``satellite`` may use ``/v1/agent/*``,
-# pinned to one ``machine_id`` at its first register. ``actions`` is
-# the ntfy action-button row: approval POSTs, never agent routes.
-DEVICE_ROLES = frozenset({"phone", "satellite", "actions"})
-
-# Roles a ``/v1/pair`` body may claim. ``actions`` is never wire-
-# claimable — the hub writes those rows itself for ntfy action buttons.
-PAIR_ROLES = DEVICE_ROLES - {"actions"}
+# pinned to one ``machine_id`` at its first register. These are the
+# roles a ``/v1/pair`` body may claim. (Old hubs also wrote ``actions``
+# rows for ntfy buttons; notify.retire_action_credential revokes them.)
+PAIR_ROLES = frozenset({"phone", "satellite"})
 
 _DEVICES_BASENAME = "devices.json"
 _TOKENS_BASENAME = "pair_tokens.json"
 _REQUESTS_BASENAME = "pair_requests.json"
+# The hub owner's tailnet devices that got in without pairing, by node:
+# when each was seen, and whether the owner revoked it.
+_SIGNINS_BASENAME = "tailnet_signins.json"
+# How stale a sign-in's last_seen_at may get before a request rewrites it.
+SIGNIN_TOUCH_S = 300
 
 # Tailscale-identity pairing: a phone POSTs /v1/pair/request, shows a
 # code, and a second device (or the hub shell) approves it. Codes die
@@ -96,6 +99,10 @@ def requests_file(home: Path | str | None = None) -> Path:
     return remote_dir_for(home) / _REQUESTS_BASENAME
 
 
+def signins_file(home: Path | str | None = None) -> Path:
+    return remote_dir_for(home) / _SIGNINS_BASENAME
+
+
 def _hash_credential(credential: str) -> str:
     return hashlib.sha256(credential.encode("utf-8")).hexdigest()
 
@@ -133,6 +140,8 @@ def _save_devices(home: Path | None, devices: dict[str, dict]) -> None:
 META_KEYS = ("kind", "model", "client", "os")
 _META_FIELD_KEYS = META_KEYS + ("node_name",)
 _MAX_META_LEN = 120
+# A device name the pairing client sends is cut to this, like a rename.
+MAX_NAME_LEN = 80
 
 # Darwin major → Apple OS, for CFNetwork UAs that name no platform.
 # Both families share one kernel; the product token picks the map.
@@ -237,6 +246,11 @@ def client_meta(user_agent: str) -> dict:
     return meta
 
 
+def clean_name(name: object) -> str:
+    """A client-sent device name, trimmed and length-capped; "" if none."""
+    return str(name or "").strip()[:MAX_NAME_LEN]
+
+
 def clean_device_meta(fields: dict | None) -> dict:
     """The explicit ``device`` map a client posts: known keys only,
     trimmed and length-capped; ``kind`` becomes a lowercase token so
@@ -317,7 +331,8 @@ def pair_url(host: str, port: int, token: str, name: str = "",
              scheme: str = "http") -> str:
     """The form a phone browser can open directly: the web app's
     ``#pair=`` handler trades the token for a device credential."""
-    out = f"{scheme}://{host}:{port}/app/#pair={quote(token, safe='')}"
+    out = (f"{scheme}://{url_host(host)}:{port}/"
+           f"#pair={quote(token, safe='')}")
     if name:
         out += f"&name={quote(name, safe='')}"
     return out
@@ -371,6 +386,7 @@ def exchange(
     home_path = Path(home) if home is not None else None
     if not token:
         return None
+    name = clean_name(name)
     with _state_lock(home_path):
         if not _consume_token(home_path, token):
             return None
@@ -507,18 +523,153 @@ def bind_machine(
 
 
 def revoke_device(home: Path | str | None, device_id: str) -> bool:
+    """Sign one paired device out. A device paired through a tailnet
+    request is a node, so the node goes with it (``_revoke_node``): its
+    tailnet sign-in and every other credential paired from it. A lost
+    phone on the owner's login would otherwise walk back in through
+    Safari, or through a second pairing."""
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         devices = load_devices(home_path)
         row = devices.get(device_id)
         if row is None:
             return False
-        row["revoked_at"] = time.time()
-        _save_devices(home_path, devices)
+        now = time.time()
+        row["revoked_at"] = now
+        node = str(row.get("tailscale_node") or "")
+        if node:
+            _revoke_node(home_path, devices, node, now, row.get("node_name") or "")
+        else:
+            _save_devices(home_path, devices)
     # A lost phone loses its SSH login too. After the lock, since sync
     # takes its own. The revoke is saved by now, so a failed rewrite is
     # KeysNotSynced, never the OSError a failed save raises: the person
     # revoking must hear the device is out but its key line is still there.
+    from quiver.remote import sshkeys
+
+    try:
+        sshkeys.sync(home_path)
+    except OSError as exc:
+        raise sshkeys.KeysNotSynced(str(exc)) from exc
+    return True
+
+
+# -- tailnet sign-ins --------------------------------------------------------
+#
+# The hub owner's own tailnet devices use the hub without pairing (the
+# hub's ``_owner_device``). Nothing about them lives in devices.json, so
+# this file is what lets the owner see them and revoke a lost one: a
+# revoked node gets no owner identity until a pairing from it is approved
+# again. Keyed by Tailscale's StableID, which survives renames and IP
+# changes but not removing the node from the tailnet.
+
+
+def _read_signins(home: Path | str | None) -> dict[str, dict] | None:
+    """The sign-in rows; ``{}`` when the file doesn't exist yet, None
+    when it exists but can't be read or parsed. A damaged file must not
+    read as "nothing revoked"."""
+    path = signins_file(home)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return None
+    rows = data.get("signins") if isinstance(data, dict) else None
+    if not isinstance(rows, dict):
+        return None
+    return {k: v for k, v in rows.items() if isinstance(v, dict)}
+
+
+def load_signins(home: Path | str | None = None) -> dict[str, dict]:
+    """The sign-in rows for listing; a damaged file lists nothing."""
+    return _read_signins(home) or {}
+
+
+def _save_signins(home_path: Path | None, rows: dict[str, dict]) -> None:
+    path = signins_file(home_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps({"signins": rows}, indent=1), private=True)
+
+
+def signin_revoked(home: Path | str | None, node_id: str) -> bool:
+    """True when the owner revoked this tailnet node's sign-in, and for
+    every node while the file can't be read: owner devices then pair
+    like anyone else rather than a revoked phone getting back in."""
+    rows = _read_signins(home)
+    return rows is None or bool((rows.get(node_id) or {}).get("revoked_at"))
+
+
+def _revoke_node(home_path: Path | None, devices: dict, node: str, now: float,
+                 node_name: str = "") -> None:
+    """Under ``_state_lock``: revoke every device paired from ``node``,
+    then its sign-in. Devices are saved first, so a failure between the
+    two leaves the sign-in open and a retry does the whole job again."""
+    for drow in devices.values():
+        if drow.get("tailscale_node") == node and not drow.get("revoked_at"):
+            drow["revoked_at"] = now
+    _save_devices(home_path, devices)
+    rows = _read_signins(home_path)
+    if rows is None:
+        raise OSError(f"{signins_file(home_path)} is unreadable; not overwriting it")
+    entry = rows.setdefault(node, {})
+    if not entry.get("revoked_at"):
+        entry["revoked_at"] = now
+        if node_name:
+            entry.setdefault("node_name", node_name)
+        _save_signins(home_path, rows)
+
+
+def note_signin(
+    home: Path | str | None, node_id: str, node_name: str = "",
+    now: float | None = None,
+) -> None:
+    """Record that ``node_id`` got in as the owner: first sight, then a
+    ``last_seen_at`` refreshed at most every ``SIGNIN_TOUCH_S``. A revoked
+    node is left alone; it shouldn't have got this far."""
+    if not node_id:
+        return
+    now = time.time() if now is None else now
+
+    def fresh(row: dict) -> bool:
+        seen = row.get("last_seen_at")
+        return bool(row.get("revoked_at")) or (
+            seen is not None and now - float(seen) < SIGNIN_TOUCH_S)
+
+    rows = _read_signins(home)
+    if rows is None or fresh(rows.get(node_id) or {}):
+        return
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        rows = _read_signins(home_path)
+        if rows is None:
+            # Never rewrite a file we couldn't read: it may hold revocations.
+            return
+        row = rows.setdefault(node_id, {})
+        # Re-checked under the lock: a parallel request may have just
+        # written it.
+        if fresh(row):
+            return
+        row.setdefault("first_seen_at", now)
+        row["last_seen_at"] = now
+        if node_name:
+            row["node_name"] = node_name
+        _save_signins(home_path, rows)
+
+
+def revoke_signin(home: Path | str | None, node_id: str) -> bool:
+    """Revoke a tailnet node's sign-in, and every paired device that
+    pairing from that node minted: the owner is signing out a device,
+    not one of its credentials. False when the node was never seen."""
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        rows = _read_signins(home_path)
+        if rows is None:
+            raise OSError(f"{signins_file(home_path)} is unreadable")
+        if node_id not in rows:
+            return False
+        _revoke_node(home_path, load_devices(home_path), node_id, time.time())
+    # Always: a retry after a failed rewrite must still drop the keys.
     from quiver.remote import sshkeys
 
     try:
@@ -564,6 +715,7 @@ def request_pair(
     minted into the device when it's approved — the requester supplied
     it, not the approver."""
     home_path = Path(home) if home is not None else None
+    name = clean_name(name)
     with _state_lock(home_path):
         now = time.time()
         node_id = str(peer.get("node_id") or "")
@@ -612,15 +764,34 @@ def request_pair(
     }
 
 
+def _load_live_requests(home_path: Path | None, now: float) -> list[dict]:
+    """The request rows, with expired ones dropped from disk too — an
+    approved row's plaintext credential leaves with its row. Caller
+    holds ``_state_lock``."""
+    rows = _load_requests(home_path)
+    kept = _prune_requests(rows, now)
+    if len(kept) != len(rows):
+        _save_requests(home_path, kept)
+    return kept
+
+
+def prune_requests(home: Path | str | None = None) -> None:
+    """Drop expired request rows. The hub runs this on a timer so an
+    approved credential the phone never collected doesn't sit in
+    pair_requests.json until some other pairing call happens by."""
+    home_path = Path(home) if home is not None else None
+    if not requests_file(home_path).exists():
+        return
+    with _state_lock(home_path):
+        _load_live_requests(home_path, time.time())
+
+
 def list_requests(home: Path | str | None = None) -> list[dict]:
     """Pending, unexpired requests — never codes or secrets."""
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         now = time.time()
-        rows = _load_requests(home_path)
-        kept = _prune_requests(rows, now)
-        if len(kept) != len(rows):
-            _save_requests(home_path, kept)
+        kept = _load_live_requests(home_path, now)
     return [
         {
             "request_id": r["request_id"],
@@ -646,6 +817,20 @@ def approve_request(
     with _state_lock(home_path):
         now = time.time()
         rows = _prune_requests(_load_requests(home_path), now)
+        pending = [r for r in rows if r.get("status") == "pending"]
+        if request_id is None and pending and not any(
+            hmac.compare_digest(str(r.get("code") or ""), str(code))
+            for r in pending
+        ):
+            # A code with no request id is checked against every pending
+            # row, so a miss is a strike against each: otherwise guessing
+            # without an id would never hit the five-strike limit.
+            for row in pending:
+                row["attempts"] = row.get("attempts", 0) + 1
+                if row["attempts"] >= MAX_CODE_ATTEMPTS:
+                    row["status"] = "denied"
+            _save_requests(home_path, rows)
+            return None
         for row in rows:
             if row.get("status") != "pending":
                 continue
@@ -676,6 +861,13 @@ def approve_request(
             )
             row["status"] = "approved"
             row["device_id"] = device_id
+            # The owner just approved a device on this node, so a sign-in
+            # revoked earlier (the phone was found) works again.
+            node = str(row.get("node_id") or "")
+            signins = load_signins(home_path) if node else {}
+            if signins.get(node, {}).get("revoked_at"):
+                signins[node]["revoked_at"] = None
+                _save_signins(home_path, signins)
             # Fresh window: a phone mid-poll at the old deadline must
             # still collect its credential.
             row["expires_at"] = now + REQUEST_TTL_S
@@ -720,7 +912,7 @@ def poll_request(
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         now = time.time()
-        rows = _load_requests(home_path)
+        rows = _load_live_requests(home_path, now)
         for i, row in enumerate(rows):
             if row.get("request_id") != request_id:
                 continue

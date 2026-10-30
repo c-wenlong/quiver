@@ -292,21 +292,12 @@ struct McpAddServerSheet: View {
                 error = "Two values would be saved as the secret \(twice). Rename one of them."
                 return
             }
-            var pairs: [(String, String)] = []
-            for variable in filled {
-                var value = variable.value
-                if variable.secret && !value.hasPrefix("${") {
-                    let secretName = mcpSecretName(server: name, key: variable.key)
-                    try await app.swe.mcpSecretSet(name: secretName, value: value)
-                    value = "${\(secretName)}"
-                }
-                pairs.append((variable.key, value))
-            }
-            if bearer {
-                try await app.swe.mcpSecretSet(name: tokenRef, value: token.trimmingCharacters(in: .whitespaces))
-                token = ""
-                pairs.append(("Authorization", "Bearer ${\(tokenRef)}"))
-            }
+            // The whole spec is built before any secret is stored, so
+            // nothing past this point can refuse with secrets left behind.
+            let pairs: [(String, String)] = filled.map { variable in
+                (variable.key, variable.secret && !variable.value.hasPrefix("${")
+                    ? "${\(mcpSecretName(server: name, key: variable.key))}" : variable.value)
+            } + (bearer ? [("Authorization", "Bearer ${\(tokenRef)}")] : [])
             let spec: McpServerSpec
             if kind == .command {
                 guard let words, !words.isEmpty else { return }
@@ -317,7 +308,33 @@ struct McpAddServerSheet: View {
                     url: url.trimmingCharacters(in: .whitespaces),
                     transport: sse ? "sse" : "http", headers: pairs))
             }
-            _ = try await app.swe.mcpAdd(spec, to: picked.sorted(), force: force)
+            // The secrets go in before the add: swe refuses an add whose
+            // ${NAME} has no value yet, and writes each harness's config
+            // with the values filled in.
+            var values = stored.map { (mcpSecretName(server: name, key: $0.key), $0.value) }
+            if bearer { values.append((tokenRef, token.trimmingCharacters(in: .whitespaces))) }
+            // Names this add stored for the first time, so a failed add
+            // removes them again instead of leaving them in the store.
+            var created: [String] = []
+            do {
+                for (secret, value) in values {
+                    let result = try await app.swe.mcpSecretSet(name: secret, value: value)
+                    if result.replaced == false { created.append(secret) }
+                }
+                _ = try await app.swe.mcpAdd(spec, to: picked.sorted(), force: force)
+            } catch {
+                // swe saves the hub before the harness files, so once the
+                // hub holds the server its ${NAME}s must keep their values.
+                // A list that can't be read keeps them too.
+                let hub = try? await app.swe.mcpServers(health: false)
+                if let hub, !hub.servers.contains(where: { $0.name == name && $0.inHub }) {
+                    for secret in created { _ = try? await app.swe.mcpSecretRemove(name: secret) }
+                }
+                throw error
+            }
+            // Kept until the add lands, so a refused one can be retried
+            // without typing the token again.
+            token = ""
             await reload()
             dismiss()
         } catch {

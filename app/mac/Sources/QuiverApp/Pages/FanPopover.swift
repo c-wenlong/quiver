@@ -140,7 +140,7 @@ private struct FanPopover: View {
                 Text("\(Int(fans.threshold.rounded())) °C")
                     .font(Theme.bodySmall.monospacedDigit())
                     .foregroundStyle(fans.thresholdEnabled ? Theme.textPrimary : Theme.textSecondary)
-                Stepper("", value: threshold, in: FanControl.thresholdRange, step: 1)
+                Stepper("Fan on temperature", value: threshold, in: FanControl.thresholdRange, step: 1)
                     .labelsHidden()
             }
             HStack(spacing: 8) {
@@ -153,7 +153,7 @@ private struct FanPopover: View {
                     .foregroundStyle(fans.thresholdEnabled ? Theme.textPrimary : Theme.textSecondary)
                 // Its ceiling is a degree under the on line, so stepping
                 // can never put the fans down at or over it.
-                Stepper("", value: release,
+                Stepper("Fan off temperature", value: release,
                         in: FanControl.releaseRange.lowerBound...fans.threshold - 1, step: 1)
                     .labelsHidden()
             }

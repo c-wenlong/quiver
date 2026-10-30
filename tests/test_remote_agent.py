@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import socket
 import struct
 import tempfile
@@ -12,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from quiver.remote import agent as agent_mod
+from quiver.remote import usage as usage_mod
 from quiver.remote import attachments, catalog as catalog_mod
 from quiver.remote import inject, journal, pairing, protocol, supervise
 from quiver.remote import hub
@@ -36,7 +38,8 @@ class _Hub:
         self.server = make_server(self.state, "127.0.0.1", 0)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(
-            target=self.server.serve_forever, daemon=True
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
+            daemon=True
         )
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.port}"
@@ -261,6 +264,18 @@ class TestRemoteCatalog(unittest.TestCase):
                          {"claude": "opus", "codex": "gpt-5"})
         self.assertEqual(catalog_mod.last_used_models(
             Path(tempfile.mkdtemp())), {})
+
+    def test_app_prefs_follow_the_current_home(self):
+        # Bound to Path.home() at import, the path ignored a HOME set
+        # later (a test home, a hub started for another user's home).
+        import plistlib
+        home = Path(tempfile.mkdtemp())
+        prefs = home / catalog_mod._APP_PREFS_REL
+        prefs.parent.mkdir(parents=True)
+        prefs.write_bytes(plistlib.dumps({"providerOrder": ["codex"]}))
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            order, _off = catalog_mod._provider_visibility()
+        self.assertEqual(order, ["codex"])
 
     def _launchable(self, reg, prefs=None, on_path=None):
         import plistlib
@@ -566,8 +581,19 @@ class TestAgentState(unittest.TestCase):
                 {"ref": "1-shot.png", "hub_key": "claude:s1@m1"})
         self.assertTrue(ok)
         url = get.call_args[0][1]
-        self.assertIn("claude:s1@m1/1-shot.png", url)
+        self.assertIn("claude%3As1%40m1/1-shot.png", url)
         self.assertEqual(staged[0][1], "1-shot.png")
+
+    def test_attachment_pull_quotes_a_key_with_slashes(self):
+        # A session id can be a path: unquoted, its "/" split the route
+        # at the wrong place and "#" ended the URL early.
+        a = self._agent()
+        with patch.object(agent_mod, "_get_bytes", return_value=None) as get:
+            a._execute("droid:/a/b#c", "attachment",
+                       {"ref": "1 shot.png", "hub_key": "droid:/a/b#c@m1"})
+        url = get.call_args[0][1]
+        self.assertEqual(
+            url, "/v1/agent/attachments/droid%3A%2Fa%2Fb%23c%40m1/1%20shot.png")
 
 
 class _AgentHub(_Hub):
@@ -645,6 +671,21 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(events[0]["machine"], self.mid)
         self.assertEqual(events[0]["data"]["text"], "hi from satellite")
 
+    def test_events_uplink_still_takes_legacy_compaction(self):
+        # compaction left protocol.EVENT_TYPES (nothing emits it), but
+        # the hub keeps accepting it from an older satellite.
+        self.assertNotIn("compaction", protocol.EVENT_TYPES)
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": self.mid, "events": [
+                protocol.event("compaction", "claude:r1", self.mid, {}),
+            ]},
+            headers=self.srv.sat_auth)
+        self.assertEqual(status, 200)
+        events, _ = self.srv.state.journal.read_since(
+            "claude:r1@sat-m1", 0)
+        self.assertEqual([e["type"] for e in events], ["compaction"])
+
     def test_message_routes_to_command_journal(self):
         self._push_catalog([{
             "key": "claude:r1", "title": "r", "status": "idle",
@@ -658,8 +699,8 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(status, 202)
         body = json.loads(data)
         self.assertTrue(body["queued"])
-        # Same shape as the local 202; the satellite re-reads status and
-        # decides for itself, so waiting is always false here.
+        # Same shape as the local 202; waiting stays false (the
+        # satellite waits itself; nothing parks in the hub's tray).
         self.assertEqual(body["client_id"], "cid-9")
         self.assertFalse(body["waiting"])
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
@@ -727,6 +768,74 @@ class TestAgentRoutes(unittest.TestCase):
             {"op": "attach", "mode": "tmux"}, headers=self.srv.auth)
         self.assertEqual(status, 202)
 
+    def test_opening_a_satellite_chat_queues_one_tail_until_acked(self):
+        # Each GET of events/messages used to queue another tail, so a
+        # chat left open on an offline satellite filled its backlog.
+        self._push_catalog([{"key": "claude:r1", "status": "idle",
+                             "ownership": "observed"}])
+        self.srv.state.catalog.refresh()
+        key = "claude%3Ar1%40sat-m1"
+
+        def tails():
+            replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+            return [e for e in replay if e["data"]["op"] == "tail"]
+
+        for _ in range(3):
+            status, _ = self.srv.request(
+                "GET", f"/v1/sessions/{key}/messages",
+                headers=self.srv.auth)
+            self.assertEqual(status, 200)
+        self.assertEqual(len(tails()), 1)
+        # Once the satellite acks it, the next open may ask again.
+        self.srv.state._sat_result_acked(
+            self.mid, tails()[0]["data"]["command_id"])
+        self.srv.request("GET", f"/v1/sessions/{key}/messages",
+                         headers=self.srv.auth)
+        self.assertEqual(len(tails()), 2)
+
+    def test_concurrent_opens_queue_a_single_tail(self):
+        self._push_catalog([{"key": "claude:r2", "status": "idle",
+                             "ownership": "observed"}])
+        self.srv.state.catalog.refresh()
+        real_queue = self.srv.state.queue_command
+        gate = threading.Barrier(4)
+
+        def slow_queue(*a, **k):
+            # Widen the check-to-record window the race needs.
+            time.sleep(0.05)
+            return real_queue(*a, **k)
+
+        self.srv.state.queue_command = slow_queue
+
+        def open_():
+            gate.wait()
+            self.srv.state.queue_tail("sat-m1", "claude:r2@sat-m1", "idle")
+
+        threads = [threading.Thread(target=open_) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
+        self.assertEqual(
+            len([e for e in replay if e["data"]["op"] == "tail"]), 1)
+
+    def test_queue_tail_backlog_full_records_nothing(self):
+        # A refused queue (backlog full) must not mark a tail pending,
+        # or the next open would never ask again.
+        state = self.srv.state
+        with patch.object(state, "queue_command", return_value=None):
+            state.queue_tail("sat-m1", "claude:r3@sat-m1", "idle")
+        self.assertNotIn(("sat-m1", "claude:r3@sat-m1"), state._sat_tail_cmds)
+
+    def test_queue_tail_map_stays_bounded(self):
+        state = self.srv.state
+        state._sat_tail_cmds.update(
+            {("sat-m1", f"k{i}"): "c0" for i in range(4097)})
+        state.queue_tail("sat-m1", "claude:r4@sat-m1", "idle")
+        self.assertEqual(list(state._sat_tail_cmds),
+                         [("sat-m1", "claude:r4@sat-m1")])
+
     def test_launch_to_named_machine_queues(self):
         status, data = self.srv.request(
             "POST", "/v1/sessions",
@@ -740,6 +849,21 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(replay[0]["data"]["harness"], "claude")
         launch_id = json.loads(data)["launch_id"]
         self.assertEqual(replay[0]["data"]["launch_id"], launch_id)
+
+    def test_launch_to_unknown_machine_is_404(self):
+        # Nothing would ever drain a queue for a machine that never
+        # registered: refuse instead of opening a journal for it.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "nope-m9", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 404, data)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "unknown_machine")
+        replay, _ = self.srv.state.journal.read_since("_sat_nope-m9", 0)
+        self.assertEqual(replay, [])
+        self.assertEqual(self.srv.state.launches, {})
 
     def test_launch_to_named_machine_carries_the_pick(self):
         # The satellite advertises launch-option support on its machine
@@ -1071,6 +1195,8 @@ class TestEndToEnd(unittest.TestCase):
                 sess = _session("r1")
                 agent.catalog._fetch = lambda: [sess]
                 agent.catalog._status_of = lambda ss: ["idle"]
+                # The usage push would fetch real provider quotas.
+                agent._usage_loop = lambda: None
                 fake = MagicMock()
                 fake.send.return_value = inject.InjectResult(True, "sent")
                 mid = agent.machine_id
@@ -1144,10 +1270,6 @@ class TestEndToEnd(unittest.TestCase):
                 self.assertFalse(row["online"])
             finally:
                 srv.stop()
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestAgentEdges(unittest.TestCase):
@@ -1305,6 +1427,41 @@ class TestAgentEdges(unittest.TestCase):
         self.assertEqual(calls[0][1], "/v1/agent/catalog")
         self.assertEqual(calls[0][3]["machine_id"], ag.machine_id)
 
+    def test_push_catalog_trims_oldest_rows_to_fit(self):
+        # Rows over the hub's 4 MiB body cap were refused whole, every
+        # push; the newest that fit go instead.
+        ag = self._agent()
+        rows = [{"key": f"k{i}", "title": "t" * 100_000}
+                for i in range(60)]
+        ag.catalog.refresh = lambda: rows
+        ag._refresh_launchable = lambda: False
+        sent = []
+
+        def post(hub, path, cred, body, timeout=10.0):
+            sent.append(body)
+            return 200, {}
+
+        with patch.object(agent_mod, "_post", side_effect=post), \
+                patch("sys.stderr"):
+            self.assertTrue(ag._push_catalog())
+        body = sent[0]
+        self.assertLessEqual(len(json.dumps(body).encode()),
+                             agent_mod.CATALOG_BODY_MAX)
+        self.assertGreater(len(body["rows"]), 0)
+        self.assertLess(len(body["rows"]), 60)
+        self.assertEqual(body["rows"][0]["key"], "k0")
+
+    def test_fit_rows_is_exact_at_the_cap(self):
+        ag = self._agent()
+        rows = [{"key": f"k{i}"} for i in range(3)]
+        exact = len(json.dumps({"machine_id": ag.machine_id, "rows": rows},
+                               ensure_ascii=False).encode())
+        with patch.object(agent_mod, "CATALOG_BODY_MAX", exact):
+            self.assertEqual(ag._fit_rows(rows), rows)
+        with patch.object(agent_mod, "CATALOG_BODY_MAX", exact - 1), \
+                patch("sys.stderr"):
+            self.assertEqual(ag._fit_rows(rows), rows[:2])
+
     def test_handle_frame_malformed_and_noncommand(self):
         ag = self._agent()
         ag._handle_frame(b"{nope")                       # bad json
@@ -1426,6 +1583,72 @@ class TestAgentEdges(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("unknown attachment", note)
 
+    def test_detach_and_kill_drop_staged_files_keep_does_not(self):
+        # As on the hub: a session this machine no longer drives loses
+        # its staged attachments; a kept one still runs and may read them.
+        ag = self._agent()
+        sess = _session()
+        ag.catalog.session_for = lambda k: sess
+        fake = MagicMock()
+        fake.control.return_value = inject.InjectResult(True, "ok")
+
+        def staged(key):
+            attachments.place(self.home, key, "r.png", b"png")
+            return attachments.resolve(self.home, key, "r.png")
+
+        with patch.object(inject, "injector_for", return_value=fake):
+            for ctl in ("detach", "kill"):
+                self.assertIsNotNone(staged("claude:k"))
+                ok, _n, _d = ag._execute("claude:k", "control", {"ctl": ctl})
+                self.assertTrue(ok)
+                self.assertIsNone(
+                    attachments.resolve(self.home, "claude:k", "r.png"), ctl)
+            self.assertIsNotNone(staged("claude:k"))
+            fake.control.return_value = inject.InjectResult(False, "no")
+            ag._execute("claude:k", "control", {"ctl": "detach"})
+            # A failed detach keeps them.
+            self.assertIsNotNone(
+                attachments.resolve(self.home, "claude:k", "r.png"))
+        with patch.object(supervise, "keep", return_value=(True, "kept")):
+            ag._execute("claude:k", "control",
+                        {"ctl": "detach", "mode": "keep"})
+        self.assertIsNotNone(
+            attachments.resolve(self.home, "claude:k", "r.png"))
+
+    def test_when_idle_detach_drops_staged_files_once_it_fires(self):
+        # The deferred detach keeps the files while it waits (and if it
+        # is cancelled), drops them when its detach succeeds, keeps them
+        # when it fails.
+        ag = self._agent()
+        sess = _session()
+        ag.catalog.session_for = lambda k: sess
+        key = "claude:k"
+        attachments.place(self.home, key, "r.png", b"png")
+        supervise.mark(self.home, key, {"mode": "tmux", "tmux": "qv-x"})
+        scheduled = {}
+
+        def schedule(k, **kw):
+            scheduled.update(kw)
+            return True
+
+        def staged():
+            return attachments.resolve(self.home, key, "r.png")
+
+        with patch.object(ag.detaches, "schedule", side_effect=schedule):
+            ok, _n, _d = ag._detach_when_idle(key, sess)
+        self.assertTrue(ok)
+        self.assertIsNotNone(staged())  # waiting
+        scheduled["report"](False, "cancelled", True)
+        self.assertIsNotNone(staged())  # cancelled
+        fake = MagicMock()
+        fake.control.return_value = inject.InjectResult(False, "no")
+        with patch.object(inject, "injector_for", return_value=fake):
+            self.assertFalse(scheduled["fire"]()[0])
+            self.assertIsNotNone(staged())  # failed detach
+            fake.control.return_value = inject.InjectResult(True, "ok")
+            self.assertTrue(scheduled["fire"]()[0])
+        self.assertIsNone(staged())
+
     def test_execute_approval_and_control_and_error(self):
         ag = self._agent()
         sess = _session()
@@ -1528,9 +1751,26 @@ class TestAgentRouteValidation(unittest.TestCase):
             headers=self.srv.auth)
         self.assertEqual(status, 404)
 
+    def test_satellite_queue_send_never_says_waiting(self):
+        # The row says mid-turn, but the hub holds nothing to act on,
+        # so a client must not park the send in its tray.
+        self.srv.request(
+            "POST", "/v1/agent/catalog",
+            {"machine_id": self.mid, "rows": [
+                {"key": "claude:r1", "ownership": "attached",
+                 "status": "active"}]},
+            headers=self.srv.sat_auth)
+        self.srv.state.catalog.refresh()
+        status, data = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/message",
+            {"text": "later", "mode": "queue", "client_id": "q-9"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 202)
+        self.assertFalse(json.loads(data)["waiting"])
+
     def test_satellite_queue_tray_is_empty_and_actions_409(self):
-        # A satellite delivers or refuses on arrival, so nothing waits
-        # on the hub: the list is empty and an action says why.
+        # A satellite waits for idle on its own machine, so nothing
+        # waits on the hub: the list is empty and an action says why.
         self.srv.request(
             "POST", "/v1/agent/catalog",
             {"machine_id": self.mid, "rows": [
@@ -1566,15 +1806,17 @@ class TestAgentRouteValidation(unittest.TestCase):
             {"op": "interrupt"}, headers=self.srv.auth)
         self.assertEqual(status, 409)
 
-    def test_launch_unknown_machine_queues_anyway(self):
-        # An unregistered machine still gets the command: it may simply
-        # not have connected yet — the offline queue is the point.
+    def test_launch_to_offline_registered_machine_queues(self):
+        # A registered machine that is offline still gets the command —
+        # the offline queue is the point. Only a never-registered id
+        # is refused (test_launch_to_unknown_machine_is_404).
+        catalog_mod.upsert_machine(self.srv.home, {"id": "ghost"})
         status, data = self.srv.request(
             "POST", "/v1/sessions",
             {"machine": "ghost", "harness": "claude", "cwd": "/x",
              "prompt": "go"},
             headers=self.srv.auth)
-        self.assertEqual(status, 202)
+        self.assertEqual(status, 202, data)
         replay, _ = self.srv.state.journal.read_since("_sat_ghost", 0)
         self.assertEqual(replay[0]["data"]["op"], "launch")
 
@@ -1638,8 +1880,25 @@ class TestAgentLoopEdges(unittest.TestCase):
     def test_save_cmd_cursor_oserror(self):
         ag = self._agent()
         ag._done_cmd_seq = 9
-        with patch.object(Path, "write_text", side_effect=OSError):
+        with patch.object(agent_mod, "atomic_write_text",
+                          side_effect=OSError):
             ag._save_cmd_cursor()  # must not raise
+            ag._save_outbox_ack()
+
+    def test_cursor_and_ack_are_written_atomically(self):
+        # A plain write_text torn by a crash read back as no cursor
+        # (the backlog re-ran) or ack 0 (the outbox was resent).
+        ag = self._agent()
+        ag._done_cmd_seq, ag._outbox_ack = 3, 4
+        real = agent_mod.atomic_write_text
+        with patch.object(agent_mod, "atomic_write_text",
+                          side_effect=real) as write:
+            ag._save_cmd_cursor()
+            ag._save_outbox_ack()
+        self.assertEqual([c[0][0] for c in write.call_args_list],
+                         [ag._cmd_cursor_file(), ag._outbox_ack_file()])
+        b = self._agent()
+        self.assertEqual((b._done_cmd_seq, b._outbox_ack), (3, 4))
 
     def test_command_stream_reads_frames(self):
         ag = self._agent()
@@ -1679,8 +1938,9 @@ class TestAgentLoopEdges(unittest.TestCase):
         ag._register = lambda: None
         ag._push_catalog = lambda: True
         # Loop bodies exit instantly; run() then waits on _stop.
+        # _usage_loop too: its push reads real provider quotas.
         ag._uplink_loop = ag._catalog_loop = ag._tail_loop = \
-            ag._downlink_loop = lambda: None
+            ag._downlink_loop = ag._usage_loop = lambda: None
         t = threading.Thread(target=ag.run, daemon=True)
         t.start()
         time.sleep(0.2)
@@ -1698,6 +1958,56 @@ class TestAgentLoopEdges(unittest.TestCase):
 class TestCatalogEdge(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
+
+    def test_lookups_use_the_index_built_with_the_rows(self):
+        sessions = [_session(f"s{i}") for i in range(300)]
+        cat = catalog_mod.Catalog(self.home, "m1",
+                                  fetch_sessions=lambda: sessions,
+                                  status_of=lambda ss: [""] * len(ss),
+                                  model_of=lambda ss: [""] * len(ss))
+        cat.refresh()
+        self.assertIs(cat.session_for("claude:s299"), sessions[299])
+        self.assertEqual(cat.row_for("claude:s7")["key"], "claude:s7")
+        self.assertIsNone(cat.row_for("claude:nope"))
+        cat.note_status("claude:s5", "active", time.time() + 60)
+        self.assertEqual(cat.row_for("claude:s5")["status"], "active")
+        self.assertEqual(catalog_mod._index_of([("a", 0), ("b", 1), ("a", 2)]),
+                         {"a": 0, "b": 1})
+
+
+    def test_machine_ids_that_map_alike_get_their_own_files(self):
+        # "m.1" and "m_1" both became m_1.json: one satellite's rows
+        # overwrote the other's.
+        self.assertNotEqual(catalog_mod._safe_mid("m.1"),
+                            catalog_mod._safe_mid("m_1"))
+        self.assertEqual(catalog_mod._safe_mid("c92d6398"), "c92d6398")
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        catalog_mod.merge_remote_rows(self.home, "m_1", [{"key": "claude:b"}])
+        keys = sorted(r["key"] for r in catalog_mod.load_remote_rows(self.home))
+        self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
+
+    def test_a_pre_suffix_file_is_read_until_superseded_and_never_deleted(self):
+        folder = catalog_mod._satellite_dir(self.home)
+        folder.mkdir(parents=True)
+        (folder / "m_1.json").write_text(json.dumps(
+            {"rows": [{"key": "claude:old@m.1", "machine_id": "m.1"}]}))
+        self.assertEqual([r["key"] for r in catalog_mod.load_remote_rows(self.home)],
+                         ["claude:old@m.1"])
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        self.assertEqual([r["key"] for r in catalog_mod.load_remote_rows(self.home)],
+                         ["claude:a@m.1"])
+        # Either write order: "m_1"'s own file is its own, never removed.
+        catalog_mod.merge_remote_rows(self.home, "m_1", [{"key": "claude:b"}])
+        catalog_mod.merge_remote_rows(self.home, "m.1", [{"key": "claude:a"}])
+        keys = sorted(r["key"] for r in catalog_mod.load_remote_rows(self.home))
+        self.assertEqual(keys, ["claude:a@m.1", "claude:b@m_1"])
+
+    def test_a_menu_saved_under_the_old_name_still_loads(self):
+        from quiver.remote import slash
+        path = slash._sat_file(self.home, "m.1").with_name("m_1.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"harnesses": {}}))
+        self.assertEqual(slash.load_satellite(self.home, "m.1"), {"harnesses": {}})
 
     def test_merge_skips_non_dict_rows(self):
         out = catalog_mod.merge_remote_rows(
@@ -1830,6 +2140,25 @@ class TestR3FinalEdges(unittest.TestCase):
         with patch.object(agent_mod, "RECONNECT_S", 0):
             ag._downlink_loop()
 
+    def test_tail_loop_sweeps_keeping_the_outbox(self):
+        ag = agent_mod.RemoteAgent("http://h:1", "c", self.home)
+        calls = []
+
+        def sweep(journal, keep=(), now=None):
+            calls.append((journal, tuple(keep)))
+            ag._stop.set()
+            return 0
+
+        ag.tail_manager.tick = lambda: None
+        ag.tail_manager.wait = lambda _t: None
+        swept = []
+        with patch.object(ag.tail_manager, "sweep_stale", sweep), \
+             patch.object(attachments, "sweep", side_effect=swept.append):
+            ag._tail_loop()
+        self.assertEqual(calls, [(ag._outbox, (agent_mod.OUTBOX_KEY,))])
+        # Staged attachments age out here too, as on the hub.
+        self.assertEqual(swept, [self.home])
+
     def test_load_remote_rows_glob_failure(self):
         with patch.object(Path, "glob", side_effect=OSError):
             self.assertEqual(catalog_mod.load_remote_rows(self.home), [])
@@ -1923,19 +2252,177 @@ class TestReviewFixes(unittest.TestCase):
     def test_message_op_goes_to_worker(self):
         ag = self._agent()
         ag._dispatch = MagicMock()
+        ag._sendq = MagicMock()
         ag._handle_frame(json.dumps({
-            "type": "command", "seq": 1,
+            "type": "command", "seq": 1, "session": "claude:a",
             "data": {"op": "message", "command_id": "c1"},
         }).encode())
         ag._dispatch.assert_not_called()
-        seq, cmd = ag._work_q.get_nowait()
-        self.assertEqual(seq, 1)
+        key, run, _cancel = ag._sendq.submit.call_args[0]
+        # No mode means queue: its own lane, beside the session's.
+        self.assertEqual(key, "claude:a\x00queue")
+        run()
+        ag._dispatch.assert_called_once()
+        self.assertEqual(ag._done_cmd_seq, 1)
+        ag._dispatch.reset_mock()
         # Control ops still run inline.
         ag._handle_frame(json.dumps({
             "type": "command", "seq": 2,
             "data": {"op": "control", "command_id": "c2"},
         }).encode())
         ag._dispatch.assert_called_once()
+
+    def _frame(self, **ev):
+        return json.dumps(ev).encode()
+
+    def test_cursor_follows_a_wiped_command_journal(self):
+        # The hub's _sat_ journal started over below our cursor: it says
+        # so with journal.truncated at its head. Without acting on it,
+        # every new command (seq 1, 2, ...) was dropped as already seen.
+        ag = self._agent()
+        ag._done_cmd_seq = ag._last_cmd_seq = ag._stream_cursor = 50
+        ag._done_set = {52}
+        ag._dispatch = MagicMock()
+        self.assertEqual(ag._handle_frame(
+            self._frame(type="journal.truncated", seq=2)), "reset")
+        # Back to 0, so the reconnect replays the commands the new
+        # journal queued while we were away (seq 1 and 2) too.
+        self.assertEqual((ag._done_cmd_seq, ag._last_cmd_seq), (0, 0))
+        self.assertEqual(ag._done_set, set())
+        self.assertEqual(self._agent()._done_cmd_seq, 0)  # persisted
+        for seq in (1, 2, 3):
+            ag._handle_frame(self._frame(
+                type="command", seq=seq, data={"op": "control"}))
+        self.assertEqual(ag._dispatch.call_count, 3)
+        self.assertEqual(ag._done_cmd_seq, 3)
+
+    def test_truncated_at_our_own_cursor_changes_nothing(self):
+        # Behind the ring the hub echoes the cursor we sent, even when
+        # a command finished meanwhile and moved the floor past it.
+        ag = self._agent()
+        ag._done_cmd_seq, ag._last_cmd_seq = 5, 7
+        ag._stream_cursor = 5
+        ag._mark_done(6)
+        self.assertEqual(ag._done_cmd_seq, 6)
+        self.assertIsNone(ag._handle_frame(
+            self._frame(type="journal.truncated", seq=5)))
+        self.assertEqual((ag._done_cmd_seq, ag._last_cmd_seq), (6, 7))
+
+    def test_command_from_before_a_reset_cannot_mark_a_new_one_done(self):
+        # A message queued under the old journal finishes after the
+        # reset: its seq must not count as done in the new journal.
+        ag = self._agent()
+        ag._done_cmd_seq = ag._last_cmd_seq = ag._stream_cursor = 9
+        ag._dispatch = MagicMock()
+        ag._sendq = MagicMock()
+        ag._handle_frame(self._frame(
+            type="command", seq=10, session="claude:a",
+            data={"op": "message"}))
+        _key, run, _cancel = ag._sendq.submit.call_args[0]
+        ag._handle_frame(self._frame(type="journal.truncated", seq=0))
+        run()  # the old seq 10 finishes now
+        self.assertEqual(ag._done_cmd_seq, 0)
+        self.assertNotIn(10, ag._done_set)
+
+    def test_command_stream_reconnects_after_a_reset(self):
+        # The stream drops after a reset so the next connection's
+        # ?last= (the hub's backlog floor) is the new cursor.
+        ag = self._agent()
+        ag._done_cmd_seq = ag._last_cmd_seq = 50
+        ag._dispatch = MagicMock()
+        frames = [self._frame(type="journal.truncated", seq=0),
+                  self._frame(type="command", seq=1, data={"op": "x"})]
+        resp = MagicMock()
+        resp.__iter__.return_value = iter(
+            [line for f in frames for line in (b"data: " + f + b"\n", b"\n")])
+        resp.__enter__.return_value = resp
+        with patch("urllib.request.urlopen", return_value=resp), \
+             patch.object(agent_mod.time, "sleep"):
+            ag._command_stream()
+        ag._dispatch.assert_not_called()
+        self.assertEqual(ag._done_cmd_seq, 0)
+
+    def test_slow_ops_leave_the_stream_thread(self):
+        # A launch boots a pane (up to 30 s) and an attachment pull
+        # downloads; inline, every command behind them waited.
+        ag = self._agent()
+        ran = []
+        ag._dispatch = lambda ev: ran.append(ev["data"]["op"])
+        ag._sendq = MagicMock()
+        threads = []
+        with patch.object(agent_mod.threading, "Thread") as thread:
+            thread.side_effect = lambda **kw: threads.append(kw) or MagicMock()
+            for seq, op in enumerate(("launch", "attachment", "message"), 1):
+                ag._handle_frame(json.dumps({
+                    "type": "command", "seq": seq, "session": "claude:a",
+                    "data": {"op": op}}).encode())
+        self.assertEqual(ran, [])  # nothing ran on the stream thread
+        self.assertEqual(len(threads), 1)  # launch: its own thread
+        threads[0]["target"](*threads[0]["args"])
+        queued = ag._sendq.submit.call_args_list
+        # The pull keeps the session's lane; a queue-mode send waits on
+        # its own.
+        self.assertEqual([c[0][0] for c in queued],
+                         ["claude:a", "claude:a\x00queue"])
+        for c in queued:
+            c[0][1]()  # the session queue runs them in submit order
+        self.assertEqual(ran, ["launch", "attachment", "message"])
+        self.assertEqual(ag._done_cmd_seq, 3)
+
+    def test_attach_stays_on_the_stream(self):
+        # Queued behind a headless turn, an attach could run after a
+        # later detach and undo it.
+        ag = self._agent()
+        ag._dispatch = MagicMock()
+        ag._sendq = MagicMock()
+        ag._handle_frame(json.dumps({
+            "type": "command", "seq": 1, "session": "claude:a",
+            "data": {"op": "attach"}}).encode())
+        ag._dispatch.assert_called_once()
+        ag._sendq.submit.assert_not_called()
+
+    def test_one_sessions_turn_does_not_hold_another(self):
+        # A headless send blocks for its whole turn; a message to a
+        # second session used to wait behind it on the single worker.
+        ag = self._agent()
+        release = threading.Event()
+        ran = []
+        second = threading.Event()
+
+        def dispatch(ev):
+            ran.append(ev["seq"])
+            if ev["seq"] == 1:
+                release.wait(30)  # held until the assertion is done
+            else:
+                second.set()
+
+        ag._dispatch = dispatch
+        try:
+            for seq, key in ((1, "claude:a"), (2, "claude:b")):
+                ag._handle_frame(json.dumps({
+                    "type": "command", "seq": seq, "session": key,
+                    "data": {"op": "message"}}).encode())
+            self.assertTrue(second.wait(5))
+        finally:
+            release.set()
+            ag._sendq.close()
+
+    def test_a_raising_send_does_not_stop_the_queue(self):
+        ag = self._agent()
+        done = threading.Event()
+
+        def dispatch(ev):
+            if ev["seq"] == 1:
+                raise RuntimeError("boom")
+            done.set()
+
+        ag._dispatch = dispatch
+        for seq in (1, 2):
+            ag._handle_frame(json.dumps({
+                "type": "command", "seq": seq, "session": "claude:a",
+                "data": {"op": "message"}}).encode())
+        self.assertTrue(done.wait(5))
+        ag._sendq.close()
 
     def test_done_cursor_contiguous(self):
         ag = self._agent()
@@ -1985,6 +2472,7 @@ class TestReviewFixes(unittest.TestCase):
         ag._mark_done(6)  # seq 5 still running; 6 is done above floor
         b = self._agent()  # restarted: resumes the stream at ?last=4
         b._dispatch = MagicMock()
+        b._sendq = MagicMock()
         # seq 5's message op parks on the work queue — not done yet.
         b._handle_frame(json.dumps({
             "type": "command", "seq": 5,
@@ -1992,8 +2480,8 @@ class TestReviewFixes(unittest.TestCase):
         b._handle_frame(json.dumps({
             "type": "command", "seq": 6,
             "data": {"op": "control", "command_id": "c6"}}).encode())
-        b._dispatch.assert_not_called()   # 5 waits on _work_q, 6 skipped
-        self.assertEqual(b._work_q.get_nowait()[0], 5)
+        b._dispatch.assert_not_called()   # 5 waits on _sendq, 6 skipped
+        b._sendq.submit.assert_called_once()
         self.assertEqual(b._last_cmd_seq, 6)  # wire cursor still moved
         self.assertEqual(b._done_cmd_seq, 4)  # floor waits on seq 5
 
@@ -2035,6 +2523,7 @@ class TestReviewFixes(unittest.TestCase):
         ag = self._agent()
         sess = _session()
         ag.catalog.session_for = lambda k: sess
+        ag.status_of = MagicMock(side_effect=OSError)  # probe fails
         ag.tail_manager.statuses["k"] = "done"   # queue said "active"
         fake = MagicMock()
         fake.send.return_value = inject.InjectResult(True, "ok")
@@ -2043,6 +2532,193 @@ class TestReviewFixes(unittest.TestCase):
             ag._execute("k", "message",
                         {"text": "hi", "status": "active"})
         self.assertEqual(fake.send.call_args[0][2], "done")
+
+
+class TestSatelliteQueueMode(unittest.TestCase):
+    """``queue``-mode sends wait for idle on the satellite, like the hub."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        poll = patch.object(agent_mod, "QUEUE_POLL_S", 0.01)
+        poll.start()
+        self.addCleanup(poll.stop)
+        self.ag = agent_mod.RemoteAgent("http://h:1", "cred", self.home)
+        self.addCleanup(self.ag._stop.set)
+        self.sess = _session()
+        self.ag.catalog.session_for = lambda k: self.sess
+        self.status = "active"
+        self.ag.status_of = lambda sessions: [self.status]
+        self.fake = MagicMock()
+        self.fake.send.return_value = inject.InjectResult(True, "sent")
+        self.patches = [
+            patch.object(supervise, "meta_for", return_value={}),
+            patch.object(inject, "injector_for", return_value=self.fake),
+        ]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _frame(self, seq, mode="queue", key="claude:s1"):
+        self.ag._handle_frame(json.dumps({
+            "type": "command", "seq": seq, "session": key,
+            "data": {"op": "message", "command_id": f"c{seq}",
+                     "client_id": f"cid-{seq}", "text": "hi",
+                     "mode": mode, "status": "active"},
+        }).encode())
+
+    def _wait(self, cond, timeout=5.0):
+        end = time.monotonic() + timeout
+        while not cond():
+            if time.monotonic() > end:
+                self.fail("timed out")
+            time.sleep(0.01)
+
+    def _results(self):
+        with self.ag._outbox_lock:
+            return [e["data"] for e in self.ag.outbox
+                    if e.get("type") == "command.result"]
+
+    def test_queue_send_waits_for_idle_then_delivers(self):
+        self._frame(1)
+        time.sleep(0.1)
+        self.fake.send.assert_not_called()  # mid-turn: still waiting
+        self.assertEqual(self.ag._done_cmd_seq, 0)
+        self.status = "done"
+        self._wait(lambda: self.fake.send.called)
+        self.assertEqual(self.fake.send.call_args[0][1]["mode"], "queue")
+        self.assertEqual(self.fake.send.call_args[0][2], "done")
+        self._wait(lambda: self.ag._done_cmd_seq == 1)
+        [res] = self._results()
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["client_id"], "cid-1")
+
+    def test_steer_skips_the_wait(self):
+        self._frame(1)                 # parked behind the turn
+        self._frame(2, mode="steer")   # its own key, goes at once
+        self._wait(lambda: self.fake.send.called)
+        self.assertEqual(self.fake.send.call_count, 1)
+        self.assertEqual(self.fake.send.call_args[0][1]["mode"], "steer")
+        self._wait(lambda: 2 in self.ag._done_set)
+        self.assertEqual(self.ag._done_cmd_seq, 0)  # 1 still waits
+
+    def test_other_session_is_not_held(self):
+        self.ag.status_of = lambda sessions: [
+            "active" if sessions[0] is self.sess else "done"]
+        other = _session("s2")
+        self.ag.catalog.session_for = (
+            lambda k: other if k == "claude:s2" else self.sess)
+        self._frame(1)
+        self._frame(2, key="claude:s2")
+        self._wait(lambda: self.fake.send.called)
+        self.assertIs(self.fake.send.call_args[0][0], other)
+
+    def test_busy_past_cap_fails_honestly(self):
+        with patch.object(agent_mod, "QUEUE_WAIT_MAX_S", 0.05):
+            self._frame(1)
+            self._wait(lambda: self.ag._done_cmd_seq == 1)
+        self.fake.send.assert_not_called()
+        [res] = self._results()
+        self.assertFalse(res["ok"])
+        self.assertIn("stayed busy", res["note"])
+        self.assertEqual(res["client_id"], "cid-1")
+        self.assertEqual(res["command_id"], "c1")
+
+    def test_stop_leaves_waiting_send_for_replay(self):
+        self._frame(1)
+        time.sleep(0.05)
+        self.ag._stop.set()
+        self.ag._sendq.close()
+        time.sleep(0.1)
+        self.status = "done"
+        time.sleep(0.05)
+        self.fake.send.assert_not_called()
+        self.assertEqual(self.ag._done_cmd_seq, 0)  # replays on restart
+        self.assertEqual(self._results(), [])
+
+    def test_steer_and_its_pull_pass_a_waiting_send(self):
+        # A queue-mode send waits out the turn on its own lane; the
+        # steer behind it, and the attachment pull it needs, go now.
+        fetch = patch.object(agent_mod, "_get_bytes", return_value=b"png")
+        fetch.start()
+        self.addCleanup(fetch.stop)
+        self._frame(1)
+        self.ag._handle_frame(json.dumps({
+            "type": "command", "seq": 2, "session": "claude:s1",
+            "data": {"op": "attachment", "command_id": "c2",
+                     "ref": "1-ab-shot.png"}}).encode())
+        self.ag._handle_frame(json.dumps({
+            "type": "command", "seq": 3, "session": "claude:s1",
+            "data": {"op": "message", "command_id": "c3", "text": "see",
+                     "mode": "steer", "attachments": ["1-ab-shot.png"]},
+        }).encode())
+        self._wait(lambda: self.fake.send.called)
+        cmd = self.fake.send.call_args[0][1]
+        self.assertEqual(cmd["mode"], "steer")
+        self.assertTrue(cmd["attachments"][0].endswith("1-ab-shot.png"))
+        self.assertEqual(self.fake.send.call_count, 1)  # 1 still waits
+
+    def test_idle_is_checked_after_the_pulls(self):
+        # A steer can start a turn while the queued send's file is
+        # still downloading: the send must wait that turn out too.
+        order = []
+        self.ag._await_pulls = lambda k, d: order.append("pulls") or True
+        real_wait = self.ag._wait_idle
+        self.ag._wait_idle = lambda k, d: order.append("idle") or real_wait(k, d)
+        self.status = "done"
+        self._frame(1)
+        self._wait(lambda: self.fake.send.called)
+        self.assertEqual(order, ["pulls", "idle"])
+
+    def test_queued_send_waits_for_its_pull(self):
+        pull = threading.Event()
+        self.ag._pulls[("claude:s1", "r1")] = pull
+        got = []
+        t = threading.Thread(target=lambda: got.append(
+            self.ag._await_pulls("claude:s1", {"attachments": ["r1"]})))
+        t.start()
+        time.sleep(0.05)
+        self.assertEqual(got, [])   # still downloading
+        pull.set()
+        t.join(5)
+        self.assertEqual(got, [True])
+        # A ref with no pull in flight doesn't wait; a stop says so.
+        self.assertTrue(self.ag._await_pulls("claude:s1",
+                                             {"attachments": ["gone"]}))
+        self.ag._pulls[("claude:s1", "r2")] = threading.Event()
+        self.ag._stop.set()
+        self.assertFalse(self.ag._await_pulls("claude:s1",
+                                              {"attachments": ["r2"]}))
+
+    def test_missing_session_stops_waiting(self):
+        self.ag.catalog.session_for = lambda k: None
+        self._frame(1)
+        self._wait(lambda: self.ag._done_cmd_seq == 1)
+        [res] = self._results()
+        self.assertFalse(res["ok"])
+        self.assertIn("unknown session", res["note"])
+
+    def test_probe_sees_the_tailers_activity_time(self):
+        # The catalog copy is stale (timestamp 0); the tailer saw the
+        # transcript move just now, and the probe gets that time.
+        seen = []
+        self.ag.status_of = lambda sessions: seen.append(
+            sessions[0].timestamp) or ["active"]
+        self.ag.tail_manager.last_append["claude:s1"] = 1000.0
+        self.ag.tail_manager.tailers["claude:s1"] = MagicMock(
+            session=self.sess, source=MagicMock(path=None))
+        self.ag._live_status("claude:s1", {})
+        self.assertEqual(seen, [1000.0 * 1000])
+
+    def test_live_status_prefers_fresh_probe(self):
+        self.ag.tail_manager.statuses["claude:s1"] = "active"
+        self.status = "done"
+        self.assertEqual(self.ag._live_status("claude:s1", {}), "done")
+        self.ag.status_of = MagicMock(side_effect=OSError)
+        self.assertEqual(
+            self.ag._live_status("claude:s1", {}), "active")
+        self.ag.catalog.session_for = lambda k: None
+        self.assertEqual(
+            self.ag._live_status("gone", {"status": "idle"}), "idle")
 
 
 class TestReviewHubFixes(unittest.TestCase):
@@ -2147,3 +2823,7 @@ class TestReviewHubFixes(unittest.TestCase):
         seqs = st._sat_cmd_seqs["sat-m1"]
         self.assertNotIn(first["data"]["command_id"], seqs)
         self.assertEqual(len(seqs), 1)  # the unacked command stays
+
+
+if __name__ == "__main__":
+    unittest.main()

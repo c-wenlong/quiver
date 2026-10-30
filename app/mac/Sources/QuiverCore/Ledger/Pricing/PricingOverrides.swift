@@ -6,7 +6,8 @@ import Foundation
 ///         "input": <usd per 1M>, "output": <usd per 1M>,
 ///         "cache_read": <usd per 1M>, "cache_write": <usd per 1M>}}}
 ///
-/// A missing file is an empty list. Saved under the model's base name,
+/// A missing file is an empty list; a file that is there but isn't JSON
+/// also reads empty, and saving refuses to replace it. Saved under the model's base name,
 /// these merge into the `PricingCatalog` ahead of LiteLLM and the
 /// supplement, so every form of the name reprices.
 public struct PricingOverrides: Sendable {
@@ -54,7 +55,7 @@ public struct PricingOverrides: Sendable {
         var updated = models
         if let replacing { updated.removeValue(forKey: replacing) }
         updated[name] = prices
-        try write(updated)
+        try write(updated, dropping: replacing.map { [$0] } ?? [])
         models = updated
     }
 
@@ -72,20 +73,28 @@ public struct PricingOverrides: Sendable {
         var updated = models
         for key in keys { updated.removeValue(forKey: key) }
         guard updated != models else { return }
-        try write(updated)
+        try write(updated, dropping: Set(keys))
         models = updated
     }
 
-    private func write(_ document: [String: Prices]) throws {
-        let object: [String: Any] = [
-            "schema": 1,
-            "models": document.mapValues { prices in
-                [
-                    "input": prices.input, "output": prices.output,
-                    "cache_read": prices.cacheRead, "cache_write": prices.cacheWrite,
-                ]
-            },
-        ]
+    /// Write `document` over the file's own `models`, the way swe's
+    /// `_write_overrides` does: an entry the reader skips (a hand-edited
+    /// price it can't use) stays as it is unless `dropping` names it, and
+    /// a file that is there but isn't a JSON object throws instead of
+    /// being replaced, so one bad character never costs every saved price.
+    private func write(_ document: [String: Prices], dropping: Set<String> = []) throws {
+        var object = try Self.readObject(url) ?? [:]
+        var models = (object["models"] as? [String: Any] ?? [:]).filter {
+            Self.prices($0.value) == nil && !dropping.contains($0.key)
+        }
+        for (name, prices) in document {
+            models[name] = [
+                "input": prices.input, "output": prices.output,
+                "cache_read": prices.cacheRead, "cache_write": prices.cacheWrite,
+            ]
+        }
+        object["schema"] = 1
+        object["models"] = models
         let data = try JSONSerialization.data(
             withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
         try FileManager.default.createDirectory(
@@ -93,19 +102,44 @@ public struct PricingOverrides: Sendable {
         try data.write(to: url, options: .atomic)
     }
 
+    /// The file's top-level object; nil when there is no file (or it is
+    /// blank). Throws `CocoaError(.fileReadCorruptFile)` when the file is
+    /// there but isn't a JSON object.
+    private static func readObject(_ url: URL) throws -> [String: Any]? {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile
+                    || error.code == .fileNoSuchFile {
+            return nil
+        }
+        if data.allSatisfy({ [0x20, 0x09, 0x0A, 0x0D].contains($0) }) { return nil }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: url.path])
+        }
+        return object
+    }
+
     private static func read(_ url: URL) throws -> [String: Prices] {
-        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        // Entry by entry, so one entry of the wrong shape skips only itself.
         var models: [String: Prices] = [:]
-        for (name, value) in object?["models"] as? [String: [String: Any]] ?? [:] {
-            guard let input = JSONValue.double(value["input"]),
-                  let output = JSONValue.double(value["output"]),
-                  input >= 0, output >= 0 else { continue }
-            models[name] = Prices(
-                input: input, output: output,
-                cacheRead: JSONValue.double(value["cache_read"]) ?? 0,
-                cacheWrite: JSONValue.double(value["cache_write"]) ?? 0)
+        for (name, value) in try readObject(url)?["models"] as? [String: Any] ?? [:] {
+            if let prices = prices(value) { models[name] = prices }
         }
         return models
+    }
+
+    /// One saved entry, nil when it isn't usable: input and output are
+    /// required and non-negative, a missing cache price is $0.
+    private static func prices(_ value: Any) -> Prices? {
+        guard let value = value as? [String: Any],
+              let input = JSONValue.double(value["input"]),
+              let output = JSONValue.double(value["output"]),
+              input >= 0, output >= 0 else { return nil }
+        return Prices(
+            input: input, output: output,
+            cacheRead: JSONValue.double(value["cache_read"]) ?? 0,
+            cacheWrite: JSONValue.double(value["cache_write"]) ?? 0)
     }
 }
 

@@ -42,9 +42,8 @@ The Mac app's sheets:
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, tilde
 
 ACTIONS = ("star", "unstar", "archive", "restore", "edit", "register", "add")
 REASON_MAX = 500
@@ -71,13 +70,12 @@ def get(ctx, args) -> dict:
     from quiver.harness.discover import discover_harnesses
     from quiver.harness.models import DiscoveryRow
 
-    home = str(Path.home())
     rows = []
     for finding in discover_harnesses():
         row = DiscoveryRow.of(finding).to_json()
-        # The sheet shows the path with ~ for the hub's home, as the app does.
-        path = row.get("path") or ""
-        row["short_path"] = "~" + path[len(home):] if home and path.startswith(home + "/") else path
+        # The sheet shows the path with ~ for the home discovery scanned
+        # (the process's own), as the app does.
+        row["short_path"] = tilde(row.get("path") or "")
         rows.append(row)
     return {"findings": rows}
 

@@ -168,6 +168,23 @@ import Testing
         #expect(model.cards.isEmpty)
     }
 
+    /// A failed refresh keeps the last cards and rows and says so,
+    /// rather than blanking every harness over one swe hiccup.
+    @Test func aFailedRefreshKeepsTheLastCards() async {
+        let runner = QueueRunner([.init(status: 0, stdout: body, stderr: ""),
+                                  .init(status: 1, stdout: Data(), stderr: "swe timed out")])
+        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
+        await model.load()
+        let cards = model.cards
+        let rows = model.rows
+        #expect(!cards.isEmpty)
+        #expect(model.note == nil)
+        await model.load()
+        #expect(model.cards == cards)
+        #expect(model.rows == rows)
+        #expect(model.note?.hasPrefix("Couldn't refresh") == true)
+    }
+
     @Test func anOldSweLeavesTheSectionEmptyWithAReason() async {
         let runner = FakeRunner(.init(status: 0, stdout: Data("Unexpected args: --json".utf8), stderr: ""))
         let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
@@ -330,8 +347,8 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
 @MainActor
 @Suite struct HarnessAccountNameModelTests {
     func tempNamesFile() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("quiver-names-\(UUID().uuidString)")
+        usageScratch
+            .appendingPathComponent("names-\(UUID().uuidString)")
             .appendingPathComponent("harness-names.json")
     }
 

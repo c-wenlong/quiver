@@ -52,16 +52,16 @@ struct NewSessionView: View {
         return PageScroll {
             if machines.isEmpty {
                 StateCard(icon: "terminal", title: "No machine can start a session",
-                          message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                          message: NewSessionOptions.noMachineMessage(app.machines))
             } else {
                 GroupLabel(text: "Machine")
                 machinePicker(machines)
                 if let machine {
-                    harnessSection(machine)
+                    HarnessPicker(machine: machine, harness: $harness, sessions: rows) { harnessPicked = true }
                     ModelField(machine: machine, harness: harness,
                                selection: $model,
                                sessions: rows, disabled: flow.busy)
-                    promptSection
+                    FirstPromptField(prompt: $prompt)
                     startSection(machine)
                     folderSection(machine)
                 }
@@ -108,7 +108,7 @@ struct NewSessionView: View {
                         .font(Theme.control)
                         .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
                         .padding(.horizontal, 12)
-                        .frame(height: Theme.controlHeight)
+                        .scaledMinHeight(Theme.controlHeight)
                         .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
                         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
                             .strokeBorder(selected ? Theme.borderStrong : Theme.border, lineWidth: 1))
@@ -121,95 +121,20 @@ struct NewSessionView: View {
         }
     }
 
-    @ViewBuilder private func harnessSection(_ machine: Machine) -> some View {
-        let offered = NewSessionOptions.harnesses(on: machine)
-        GroupLabel(text: "Harness", trailing: harness.map { NewSessionOptions.name($0, on: machine, sessions: rows) })
-        // Wraps to a second row: Provider visibility can switch on ten or more.
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 48, maximum: 48), spacing: 8)], alignment: .leading, spacing: 8) {
-            ForEach(offered, id: \.self) { h in
-                let selected = h == harness
-                let name = NewSessionOptions.name(h, on: machine, sessions: rows)
-                Button {
-                    harness = h
-                    harnessPicked = true
-                } label: {
-                    HarnessIcon(harness: h, name: name, size: 24)
-                        .font(.system(size: 10))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .frame(width: 48, height: 48)
-                        .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
-                            .strokeBorder(selected ? Theme.textPrimary : Theme.border, lineWidth: selected ? 1.5 : 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(name)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        if let harness, machine.untrackedHarnesses?.contains(harness) == true {
-            Text("Quiver can't read \(NewSessionOptions.name(harness, on: machine, sessions: rows)) sessions yet: it starts, but no chat opens.")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 4)
-        }
-    }
-
-    private var promptSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            GroupLabel(text: "First prompt")
-            TextField("Describe the first task", text: $prompt, axis: .vertical)
-                .lineLimit(4...10)
-                .font(Theme.body)
-                .foregroundStyle(Theme.textPrimary)
-                .padding(12)
-                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
-        }
-    }
-
     private func startSection(_ machine: Machine) -> some View {
         let ready = folder != nil && harness != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 8) {
             // The folder picked below, restated here so Start says where
             // it runs without scrolling down.
-            Card(padding: 0) {
-                HStack(spacing: 12) {
-                    Image(systemName: "folder").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Starts in").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        Text(folder.map(FolderRow.name) ?? "Pick a folder below")
-                            .font(Theme.rowTitle).foregroundStyle(folder == nil ? Theme.textMuted : Theme.textPrimary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    if let folder {
-                        Text(SessionGrouping.abbreviateHome(FolderRow.parent(folder)))
-                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1).truncationMode(.head)
-                    }
-                }
-                .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
+            StartsInCard(icon: "folder", title: folder.map(FolderRow.name) ?? "Pick a folder below",
+                         titleMuted: folder == nil,
+                         trailing: folder.map { SessionGrouping.abbreviateHome(FolderRow.parent($0)) },
+                         trailingTruncation: .head)
+                .padding(.top, 8)
+            LaunchStartButton(flow: flow, ready: ready,
+                              footnote: "Runs under tmux on \(machine.displayName). The chat opens once the session shows up.") {
+                launch = Task { await start(machine) }
             }
-            .padding(.top, 8)
-            Button { launch = Task { await start(machine) } } label: {
-                HStack(spacing: 8) {
-                    if flow.busy { ProgressView().controlSize(.small).tint(Theme.primaryForeground) }
-                    Text(flow.phase == .waiting ? "Waiting for the session" : flow.opening ? "Opening the chat" : flow.busy ? "Starting" : "Start session")
-                }
-            }
-            .primaryButton()
-            .disabled(!ready || flow.busy)
-            if case .failed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if case .unconfirmed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text("Runs under tmux on \(machine.displayName). The chat opens once the session shows up.")
-                .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -242,22 +167,7 @@ struct NewSessionView: View {
             StateCard(icon: "folder", title: "No recent folders",
                       message: "Folders show up here once a session has run in them on \(machine.displayName). Browse to pick any folder.")
         } else {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
-                TextField("Search folders", text: $folderQuery)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                if searching {
-                    Button { folderQuery = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted) }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Clear search")
-                }
-            }
-            .font(Theme.body)
-            .padding(.horizontal, 12)
-            .frame(height: Theme.controlHeight + 4)
-            .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
-            .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+            FolderSearchField(query: $folderQuery)
             let shown = searching || showAllFolders ? matches : Array(matches.prefix(Self.foldersShown))
             if shown.isEmpty {
                 Text("No recent folder matches. Browse to find it.")
@@ -349,7 +259,7 @@ struct FolderBrowserView: View {
                     CardList(data: [FolderChoice(path: parent)]) { up in
                         NavigationLink(value: FolderBrowse(machineId: machineId, path: up.path)) {
                             HStack(spacing: 12) {
-                                Image(systemName: "arrow.up").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                                Image(systemName: "arrow.up").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
                                 Text("Up to \(FolderRow.name(up.path))").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                                 Spacer(minLength: 8)
                             }
@@ -368,10 +278,10 @@ struct FolderBrowserView: View {
                     CardList(data: listing.folders.filter { shown.contains($0.path) }) { entry in
                         NavigationLink(value: FolderBrowse(machineId: machineId, path: entry.path)) {
                             HStack(spacing: 12) {
-                                Image(systemName: "folder").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                                Image(systemName: "folder").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
                                 Text(entry.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                                 Spacer(minLength: 8)
-                                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                                Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
                             }
                             .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
                             .contentShape(.rect)
@@ -416,8 +326,10 @@ struct FolderBrowserView: View {
         error = nil
         do {
             listing = try await client.folders(machine: machineId, path: current ?? path)
+        } catch is CancellationError {
+            // The picker closed mid-fetch: nothing failed.
         } catch {
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            self.error = error.localizedDescription
         }
     }
 }
@@ -490,11 +402,11 @@ struct ModelField: View {
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(Theme.font(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textMuted)
             }
             .padding(.horizontal, 12)
-            .frame(height: Theme.fieldHeight)
+            .scaledMinHeight(Theme.fieldHeight)
             .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
             .contentShape(.rect)
@@ -517,7 +429,7 @@ struct FolderRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "folder").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+            Image(systemName: "folder").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(Self.name(path)).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(SessionGrouping.abbreviateHome(Self.parent(path))).font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -525,7 +437,7 @@ struct FolderRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if selected {
-                Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                Image(systemName: "checkmark").font(Theme.font(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
             }
         }
         .padding(.vertical, Theme.rowVertical)

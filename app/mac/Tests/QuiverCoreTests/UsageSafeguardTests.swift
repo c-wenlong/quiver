@@ -181,6 +181,37 @@ import Testing
         #expect(h.transport.requests.count == 3)
     }
 
+    /// A forced refresh that arrives while a non-forced call is still
+    /// looking up the credential must not take that call's cached answer.
+    @Test(.timeLimit(.minutes(1))) func aForcedCallDoesNotJoinANonForcedOne() async throws {
+        let h = UsageHarness()
+        let user = ClaudeKeychain.currentAccount
+        h.secrets.set(service: "Claude Code-credentials", account: user, claudeCredentialsJSON())
+        let secrets = GatedSecrets(h.secrets)
+        let clock = h.clock
+        let service = UsageService(transport: h.transport, secrets: secrets, files: h.files,
+                                   cacheURL: h.cacheURL, now: { clock.now })
+        h.transport.reply(200, body: try fixture("claude-usage"))
+        let first = await service.usage(for: claudeKey, force: true)
+        try #require(first.fetchedAt == usageEpoch)
+
+        h.clock.advance(60)
+        secrets.close()
+        let background = Task { await service.usage(for: claudeKey, force: false) }
+        try #require(await secrets.parks.reach(1))
+        h.transport.reply(200, body: try fixture("claude-usage"))
+        // The forced call must find the background one still in flight.
+        let overlapped = AsyncStream<Void>.makeStream()
+        await service.setOnFindsInFlight { overlapped.continuation.yield() }
+        let forced = Task { await service.usage(for: claudeKey, force: true) }
+        for await _ in overlapped.stream { break }
+        secrets.open()
+
+        #expect(await background.value.fetchedAt == usageEpoch)
+        #expect(await forced.value.fetchedAt == usageEpoch.addingTimeInterval(60))
+        #expect(h.transport.requests.count == 2)
+    }
+
     @Test func aNetworkFailureReturnsTheLastReadingWithItsOriginalTime() async throws {
         let (h, first) = try await harnessWithReading()
         h.clock.advance(3 * 60 * 60)
@@ -291,17 +322,23 @@ import Testing
         #expect((attributes[.posixPermissions] as? Int) == 0o600)
     }
 
-    @Test func concurrentCallsForOneAccountShareOneRequest() async throws {
+    @Test(.timeLimit(.minutes(1))) func concurrentCallsForOneAccountShareOneRequest() async throws {
         let h = UsageHarness()
         h.files.set("\(codexHome)/auth.json", codexAuthJSON())
-        let slow = SlowTransport(body: try fixture("codex-usage"))
+        let slow = HeldUsageTransport(body: try fixture("codex-usage"))
         let clock = h.clock
         let service = UsageService(
             transport: slow, secrets: h.secrets, files: h.files, cacheURL: h.cacheURL, now: { clock.now })
 
-        async let a = service.usage(for: codexKey, force: true)
-        async let b = service.usage(for: codexKey, force: true)
-        let (first, second) = await (a, b)
+        let a = Task { await service.usage(for: codexKey, force: true) }
+        #expect(await slow.gate.arrived(1))
+        // The second call must find the first still in flight.
+        let overlapped = AsyncStream<Void>.makeStream()
+        await service.setOnFindsInFlight { overlapped.continuation.yield() }
+        let b = Task { await service.usage(for: codexKey, force: true) }
+        for await _ in overlapped.stream { break }
+        slow.gate.open()
+        let (first, second) = await (a.value, b.value)
 
         #expect(slow.count == 1)
         #expect(first == second)
@@ -412,16 +449,57 @@ import Testing
     }
 }
 
-/// Answers every request with the same body after a short wait, counting them.
-final class SlowTransport: HTTPTransport {
+/// Answers every request with the same body once `gate` opens, counting them.
+private final class HeldUsageTransport: HTTPTransport {
     private let body: Data
     private let calls = Mutex(0)
+    let gate = HoldGate()
     init(body: Data) { self.body = body }
     var count: Int { calls.withLock { $0 } }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         calls.withLock { $0 += 1 }
-        try await Task.sleep(for: .milliseconds(100))
+        try await gate.pass()
         return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+}
+
+/// Holds every keychain lookup while closed, then answers from `inner`.
+final class GatedSecrets: SecretReading, @unchecked Sendable {
+    private let inner: FakeSecrets
+    private let lock = NSLock()
+    private var closed = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    init(_ inner: FakeSecrets) { self.inner = inner }
+
+    /// Bumped each time a lookup parks, so the test awaits the park.
+    let parks = CountGate()
+
+    func close() { lock.withLock { closed = true } }
+
+    func open() {
+        let parked = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            closed = false
+            defer { waiting = [] }
+            return waiting
+        }
+        parked.forEach { $0.resume() }
+    }
+
+    func genericPassword(service: String, account: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            let park = lock.withLock { () -> Bool in
+                if closed { waiting.append(continuation) }
+                return closed
+            }
+            if park {
+                let parks = self.parks
+                Task { await parks.bump() }
+            } else {
+                continuation.resume()
+            }
+        }
+        return await inner.genericPassword(service: service, account: account)
     }
 }

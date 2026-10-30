@@ -54,7 +54,7 @@
   const LAUNCH_POLLS = 60;
 
   const page = {
-    data: null, status: 0, error: null, loading: false,
+    data: null, error: null, loading: false,
     filter: "all", busy: new Set(), actionError: null,
     seq: 0, forTask: null,
     // The list: the rail's chosen group (null is every task), the groups
@@ -69,14 +69,14 @@
   const tasks = () => (page.data && page.data.tasks) || [];
   const task = (id) => tasks().find((t) => t.id === id) || null;
   const selectedId = () => GhUI.hashParams().get("task");
-  const onTasks = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "tasks";
+  const onTasks = () => currentRoute() === "tasks";
 
   /* A github task groups under its repo; another source's task under its
-   * project or the source's name. */
+   * project or the source's name, "Other" only for a row with no source,
+   * as the Mac and iOS group them. */
   const SOURCE_NAMES = { github: "GitHub", linear: "Linear", notion: "Notion" };
   const sourceName = (s) => SOURCE_NAMES[s] || (s ? s[0].toUpperCase() + s.slice(1) : "Other");
-  const groupName = (t) => t.repo || t.project
-    || { linear: "Linear", notion: "Notion" }[t.source] || t.source;
+  const groupName = (t) => t.repo || t.project || sourceName(t.source);
   const PREVIEW = 5; // rows a group shows before its Show more fold
   /* ``#42`` for a github issue/pull; the ref as it is anywhere else. */
   const refLabel = (t) => (t.source === "github" ? `#${t.ref}` : `${t.ref}`);
@@ -90,23 +90,8 @@
     return ref;
   };
 
-  /* GhUI.post only POSTs; the unlink route is a DELETE with the same
-   * JSON shape. Never throws: {status: 0} when the hub is unreachable. */
-  async function del_(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "DELETE",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  // The unlink route is a DELETE with the same JSON shape as a POST.
+  const del_ = (path, body) => apiSend("DELETE", path, body);
 
   /* ----------------------------------------------------------- marks */
 
@@ -486,8 +471,8 @@
       ${caption ? `<span class="gh-row-sub">${esc(caption)}</span>` : ""}</span>`;
     const body = link
       ? `<a class="gh-note-link" href="${link}">${row}<span class="gh-row-side">${ico("chevronRight", "gh-muted")}</span></a>`
-      : `<span class="gh-note-link">${row}${pr.url
-          ? `<a class="icon-button gh-note-read" style="opacity:1" href="${esc(pr.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>` : ""}</span>`;
+      : `<span class="gh-note-link">${row}${safeHref(pr.url)
+          ? `<a class="icon-button gh-note-read" style="opacity:1" href="${safeHref(pr.url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>` : ""}</span>`;
     return `<div class="card tk-card"><div class="card-title">${t.kind === "pull" ? "Pull request" : "Linked pull request"}</div>
       <div class="gh-note">${body}</div></div>`;
   }
@@ -512,7 +497,7 @@
     if (x.harnesses === null) {
       picker = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading what the hub can start…</div>`;
     } else if (!x.harnesses.length) {
-      picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Provider visibility.</div>`;
+      picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Providers.</div>`;
     } else {
       picker = `<select class="field" id="tk-harness" aria-label="Harness"${busy || x.started ? " disabled" : ""}>${
         x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;
@@ -580,7 +565,7 @@
       `${refLabel(t)} · ${where} · ${statusOf(t)}`,
       `<a class="gh-button" href="#/tasks" title="Back to the task list">${ico("chevronLeft")}<span>Tasks</span></a>
        <button class="icon-button${page.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>
-       ${t.url ? `<a class="icon-button" href="${esc(t.url)}" target="_blank" rel="noopener" title="Open on ${t.source === "github" ? "GitHub" : esc(t.source)}" aria-label="Open on ${esc(t.source)}">${ico("external")}</a>` : ""}`);
+       ${safeHref(t.url) ? `<a class="icon-button" href="${safeHref(t.url)}" target="_blank" rel="noopener" title="Open on ${t.source === "github" ? "GitHub" : esc(t.source)}" aria-label="Open on ${esc(t.source)}">${ico("external")}</a>` : ""}`);
   }
 
   function detailContent(t) {
@@ -659,7 +644,7 @@
     const id = launched.data && launched.data.launch_id;
     if ((launched.status !== 202 && launched.status !== 200) || !id) {
       return say({ phase: null, error: launched.status === 401
-        ? "The hub doesn't know this browser's credential. It may have been revoked."
+        ? CREDENTIAL_REFUSED
         : GhUI.failMessage(launched.status, launched.data) });
     }
     say({ phase: "Waiting for the session…" });
@@ -703,7 +688,7 @@
     } else {
       x.sessions = [];
       x.error = status === 401
-        ? "The hub doesn't know this browser's credential. It may have been revoked."
+        ? CREDENTIAL_REFUSED
         : GhUI.failMessage(status, data);
     }
     paint();
@@ -723,7 +708,7 @@
     if (status !== 200 || !data) {
       if (x && page.link === x) {
         x.error = status === 401
-          ? "The hub doesn't know this browser's credential. It may have been revoked."
+          ? CREDENTIAL_REFUSED
           : GhUI.failMessage(status, data);
         if (onTasks()) paint();
       }
@@ -751,7 +736,7 @@
        * may have moved to. */
       if (onTasks() && selectedId() === t.id) {
         page.actionError = status === 401
-          ? "The hub doesn't know this browser's credential. It may have been revoked."
+          ? CREDENTIAL_REFUSED
           : GhUI.failMessage(status, data);
         paint();
       }
@@ -812,18 +797,19 @@
     const { status, data } = await api(`/v1/app/tasks${refresh ? "?refresh=1" : ""}`);
     if (gen !== routeGen || seq !== page.seq) return;
     page.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("tasks");
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the other pages do.
       if (!page.data) {
-        return pageError(pageHeader("Tasks", "The issues and pull requests your agents are on."),
+        // The error says "then refresh", so the header carries the button.
+        return pageError(pageHeader("Tasks", "The issues and pull requests your agents are on.",
+          `<button class="icon-button" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>`),
           status, data, () => load(true));
       }
       page.error = GhUI.failMessage(status, data);
       return paint();
     }
     page.data = data;
-    page.status = status;
     page.error = null;
     // The rail's group went away (all closed out, unpinned): back to All.
     if (page.shown && !tasks().some((t) => groupName(t) === page.shown)

@@ -213,6 +213,38 @@ class SetSecretTest(unittest.TestCase):
         self.assertEqual(secrets.load_secrets(self.home)["NEW_KEY"], "n")
 
 
+class RemoveSecretTest(unittest.TestCase):
+    """secrets.remove_secret: drops every line for a name, keeps the rest."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_drops_every_line_for_the_name_and_keeps_the_others(self):
+        from quiver.mcp import secrets
+
+        path = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        path.parent.mkdir(parents=True)
+        path.write_text("# keep me\nexport A='one'\nexport B='two'\nexport A='three'\n")
+        self.assertTrue(secrets.remove_secret("A", home=self.home))
+        self.assertEqual(path.read_text(), "# keep me\nexport B='two'\n")
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_an_absent_or_bad_name_changes_nothing(self):
+        from quiver.mcp import secrets
+
+        self.assertFalse(secrets.remove_secret("A", home=self.home))
+        self.assertFalse((self.home / ".quiver" / "secrets" / "mcp" / ".api_keys").exists())
+        secrets.set_secret("B", "two", home=self.home)
+        self.assertFalse(secrets.remove_secret("A", home=self.home))
+        with self.assertRaises(ValueError):
+            secrets.remove_secret("1Nope", home=self.home)
+        self.assertEqual(secrets.load_secrets(self.home), {"B": "two"})
+
+
 class SecretCommandTest(unittest.TestCase):
     """The CLI surface: stdin only, no echo, --json shape."""
 
@@ -249,6 +281,25 @@ class SecretCommandTest(unittest.TestCase):
         self.assertTrue(doc["data"]["created"])
         self.assertTrue(doc["data"]["path"].endswith(".api_keys"))
         self.assertNotIn("v\n", result.stdout)
+
+    def test_json_says_whether_a_value_was_replaced(self):
+        first = json.loads(self.run_mcp("secret", "set", "MY_TOKEN", "--json", stdin="v1\n").stdout)
+        again = json.loads(self.run_mcp("secret", "set", "MY_TOKEN", "--json", stdin="v2\n").stdout)
+        self.assertFalse(first["data"]["replaced"])
+        self.assertTrue(again["data"]["replaced"])
+
+    def test_remove(self):
+        self.run_mcp("secret", "set", "MY_TOKEN", stdin="v\n")
+        result = self.run_mcp("secret", "remove", "MY_TOKEN", "--json")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(json.loads(result.stdout)["data"], {"name": "MY_TOKEN", "removed": True})
+        store = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        self.assertEqual(store.read_text(), "")
+        # Removing it again is not an error: there is nothing left to drop.
+        again = self.run_mcp("secret", "remove", "MY_TOKEN", "--json")
+        self.assertEqual(again.returncode, 0, msg=again.stderr)
+        self.assertFalse(json.loads(again.stdout)["data"]["removed"])
+        self.assertEqual(self.run_mcp("secret", "remove", "1Nope").returncode, 1)
 
     def test_empty_value_refused(self):
         result = self.run_mcp("secret", "set", "MY_TOKEN", stdin="")

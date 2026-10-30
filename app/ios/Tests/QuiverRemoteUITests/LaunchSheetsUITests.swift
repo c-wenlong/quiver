@@ -12,7 +12,9 @@ import XCTest
 /// assertions wait rather than assume, so a slow hub still passes.
 /// The default cases also need real ledger data on that hub — a harness
 /// that has never launched has no recent model to start on — and the
-/// resolve-sheet case needs the hub to see c-wenlong/quiver issues.
+/// resolve-sheet case needs the hub to see c-wenlong/quiver issues. What
+/// the hub lacks (an unpaired simulator, no second harness, no Kilo, the
+/// issue out of reach) skips the case instead of failing it.
 final class LaunchSheetsUITests: XCTestCase {
 
     private var app: XCUIApplication!
@@ -85,9 +87,10 @@ final class LaunchSheetsUITests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
 
         // An untouched menu follows a harness switch to the new
-        // harness's newest model.
+        // harness's newest model. A hub offering only one of these
+        // harnesses has nothing to switch to: its setup, not a menu bug.
         guard let first = otherChip(than: harnesses) else {
-            XCTFail("no alternate harness chip to switch to"); return
+            throw XCTSkip("the hub offers no alternate harness to switch to")
         }
         first.tap()
         XCTAssertNotEqual(menuValue(), initial, "Model menu kept another harness's model across a switch")
@@ -96,7 +99,7 @@ final class LaunchSheetsUITests: XCTestCase {
         pick("Harness default")
         XCTAssertEqual(menuValue(), "Harness default")
         guard let second = otherChip(than: harnesses) else {
-            XCTFail("no second harness chip to switch to"); return
+            throw XCTSkip("the hub offers no second harness to switch to")
         }
         second.tap()
         XCTAssertEqual(menuValue(), "Harness default", "a picked Harness default was re-defaulted by a switch")
@@ -115,7 +118,7 @@ final class LaunchSheetsUITests: XCTestCase {
         try openNewSessionSheet()
 
         let kilo = chip("Kilo")
-        XCTAssertTrue(kilo.waitForExistence(timeout: 10), "no Kilo harness chip")
+        try XCTSkipUnless(kilo.waitForExistence(timeout: 10), "Kilo isn't installed on the hub")
         kilo.tap()
 
         XCTAssertTrue(modelMenu.waitForExistence(timeout: 5), "Model row missing entirely — the disabled variant should still show")
@@ -131,7 +134,8 @@ final class LaunchSheetsUITests: XCTestCase {
                           "no paired hub on this simulator — pair once with a quiver://pair link")
         XCUIDevice.shared.system.open(URL(string: "quiver://issue/c-wenlong/quiver/914")!)
         let resolve = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Resolve with agent")).firstMatch
-        XCTAssertTrue(resolve.waitForExistence(timeout: 15), "no Resolve with agent button on the issue")
+        try XCTSkipUnless(resolve.waitForExistence(timeout: 15),
+                          "the hub can't show c-wenlong/quiver#914 (not pinned, or gh signed out)")
         resolve.tap()
         XCTAssertTrue(modelMenu.waitForExistence(timeout: 10), "Model menu missing on the resolve sheet")
         XCTAssertNotEqual(menuValue(), "Harness default", "resolve-sheet Model menu did not start on a recent model")

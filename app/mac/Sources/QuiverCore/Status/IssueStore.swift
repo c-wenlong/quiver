@@ -171,7 +171,9 @@ public struct IssueStore: Sendable {
     }
 
     private struct File: Codable {
-        var version = 1
+        /// The newest layout this build writes; a higher one is kept.
+        static let version = 1
+        var version = File.version
         var issues: [String: Issue]
         /// Each slot (`harness` or `harness/account`) that has had a
         /// successful read, and when it first did: a sign-out there is a
@@ -193,7 +195,7 @@ public struct IssueStore: Sendable {
 
     /// Every stored issue, resolved ones included, newest first.
     public func all() -> [Issue] {
-        load().issues.values.sorted { $0.firstSeen > $1.firstSeen }
+        (load() ?? File(issues: [:])).issues.values.sorted { $0.firstSeen > $1.firstSeen }
     }
 
     /// The issues still open, for the badge and Doctor.
@@ -223,7 +225,16 @@ public struct IssueStore: Sendable {
                        accountKey: String? = nil) -> Outcome {
         var notify: Outcome!
         withFileLock {
-            var file = load()
+            guard var file = load() else {
+                // A file this build can't read is kept, not replaced, so
+                // nothing is remembered: a toast now would repeat every
+                // poll, so the issue stays quiet.
+                notify = Outcome(issue: Issue(
+                    id: Self.id(harness: harness, status: status, account: accountKey ?? account),
+                    harness: harness, account: account, accountKey: accountKey ?? account,
+                    status: status, remedy: remedy, at: now()), shouldNotify: false)
+                return
+            }
             var issues = file.issues
             let key = accountKey ?? account
             let id = Self.id(harness: harness, status: status, account: key)
@@ -295,7 +306,7 @@ public struct IssueStore: Sendable {
     public func resolveMissing(starred: Set<String>? = nil,
                                accounts: [String: Set<String>]) {
         withFileLock {
-            var file = load()
+            guard var file = load() else { return }
             var changed = false
             for (id, issue) in file.issues where !issue.resolved {
                 let unstarred = starred.map { !$0.contains(issue.harness) } ?? false
@@ -317,7 +328,7 @@ public struct IssueStore: Sendable {
     /// regression.
     public func resolve(harness: String, accountKey: String? = nil) {
         withFileLock {
-            var file = load()
+            guard var file = load() else { return }
             var changed = false
             for (id, issue) in file.issues where !issue.resolved
                 && issue.harness == harness && issue.accountKey == accountKey {
@@ -338,19 +349,34 @@ public struct IssueStore: Sendable {
     /// The toast went up; a restart does not raise this episode again.
     public func markNotified(_ id: String) {
         withFileLock {
-            var file = load()
-            guard var issue = file.issues[id], issue.lastNotified == nil else { return }
+            guard var file = load(), var issue = file.issues[id],
+                  issue.lastNotified == nil else { return }
             issue.lastNotified = now()
             file.issues[id] = issue
             write(file)
         }
     }
 
-    private func load() -> File {
-        guard let data = try? Data(contentsOf: url) else { return File(issues: [:]) }
+    /// The stored file; empty when there is none. Nil when it is there
+    /// but this build can't read it (corrupt, a newer `version`, a status
+    /// it doesn't know, unreadable): callers that write then leave it
+    /// alone, since writing back an empty list would wipe every issue.
+    private func load() -> File? {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile
+                    || error.code == .fileNoSuchFile {
+            return File(issues: [:])
+        } catch {
+            return nil
+        }
+        if data.allSatisfy({ [0x20, 0x09, 0x0A, 0x0D].contains($0) }) { return File(issues: [:]) }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
-        return (try? decoder.decode(File.self, from: data)) ?? File(issues: [:])
+        guard let file = try? decoder.decode(File.self, from: data),
+              file.version <= File.version else { return nil }
+        return file
     }
 
     private func write(_ file: File) {
@@ -370,16 +396,7 @@ public struct IssueStore: Sendable {
     /// copies, like UsageCacheStore: an atomic rename alone would let a
     /// second app write back the file it read before this save.
     private func withFileLock(_ body: () -> Void) {
-        let lockURL = url.appendingPathExtension("lock")
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        let fd = Darwin.open(lockURL.path, O_RDWR | O_CREAT, 0o600)
-        guard fd >= 0 else { return body() }
-        defer { close(fd) }
-        guard flock(fd, LOCK_EX) == 0 else { return body() }
-        defer { flock(fd, LOCK_UN) }
-        body()
+        FileLock.whileHeld(beside: url, body)
     }
 }
 

@@ -115,8 +115,22 @@ struct SessionRow: Codable, Identifiable, Hashable {
     /// names it ("claude-opus-4-5-20251101", "anthropic/claude-opus-4-5").
     /// Nil when the hub doesn't know it, or is older than the field.
     var model: String? = nil
+    /// On an attached row, the supervised channel: tmux, headless,
+    /// serve or appserver.
+    var mode: String? = nil
+    /// The channels (`mode` values) in which the hub can switch this
+    /// harness's model: `["tmux"]` for Claude Code and Codex today.
+    /// Nil on a hub or satellite older than the field.
+    var modelModes: [String]? = nil
 
     var id: String { key }
+    /// The chat offers its Model menu: attached through a channel whose
+    /// `model` control op works. Everywhere else the op is refused, so
+    /// the menu is hidden rather than offered.
+    var canSwitchModel: Bool {
+        guard isAttached, let mode else { return false }
+        return modelModes?.contains(mode) == true
+    }
     /// `model` short enough for a header or a list row, or nil.
     var modelLabel: String? { ModelLabel.short(model) }
     var displayTitle: String { (title?.isEmpty == false ? title : nil) ?? "Untitled session" }
@@ -178,13 +192,6 @@ struct SessionMeta: Codable, Equatable {
     var harnessTitle: String?
     var pinned: Bool?
     var pinnedAt: Double?
-}
-
-/// `POST .../control {op: "detach", mode: "when_idle"}` answers 202 with this.
-struct DetachQueued: Decodable {
-    let queued: Bool?
-    let mode: String?
-    let note: String?
 }
 
 struct SessionsResponse: Codable {
@@ -268,8 +275,17 @@ struct MessagesResponse: Decodable {
 }
 
 struct StatusData: Decodable { let status: String? }
-struct OwnershipData: Decodable { let ownership: String? }
-struct ApprovalRequested: Decodable { let requestId: String?; let prompt: String? }
+struct OwnershipData: Decodable {
+    let ownership: String?
+    /// The channel an attach took (nil once observed again).
+    var mode: String? = nil
+}
+struct ApprovalRequested: Decodable {
+    let requestId: String?
+    let prompt: String?
+    /// The pane's numbered menu rows, when the hub read any.
+    let options: [ApprovalOption]?
+}
 struct ApprovalResolved: Decodable { let requestId: String?; let decision: String?; let source: String? }
 struct CommandResult: Decodable {
     let op: String?
@@ -559,6 +575,8 @@ struct PullDetail: Decodable {
     let reviewRequests: [String]?
     let createdAt: String?
     let mergedAt: String?
+    /// Set once auto-merge is armed: GitHub merges when checks pass.
+    let autoMerge: PullAutoMerge?
     /// Where the hub's `pr_worktree` puts the checkout — the open
     /// sheet's "Starts in" line before the worktree exists.
     let worktree: String?
@@ -578,6 +596,12 @@ struct CheckRun: Decodable, Hashable {
     /// passing | failing | running | none
     let state: String?
     let url: String?
+}
+
+/// A PR's armed auto-merge: `method` is squash, rebase or merge.
+struct PullAutoMerge: Decodable, Hashable {
+    let method: String?
+    let enabledAt: String?
 }
 
 /// One `latestReviews` entry; `review_requests` decodes as names.
@@ -680,6 +704,14 @@ struct IssueComment: Decodable, Hashable {
     let url: String?
 }
 
+/// `POST /v1/issues/comment`: the comment as posted.
+struct IssueCommentReply: Decodable {
+    let ok: Bool?
+    let repo: String?
+    let number: Int?
+    let comment: IssueComment?
+}
+
 // MARK: Tasks (GET /v1/tasks…)
 
 /// `GET /v1/tasks`: the hub's work-item store over the sources' open
@@ -763,8 +795,9 @@ struct TaskRow: Decodable, Identifiable, Hashable, Sendable {
     /// leave it out; decoding still reads it.
     var status: String? = nil
 
-    /// The list's group key: the repo for GitHub, the project elsewhere.
-    var scope: String { repo ?? project ?? "" }
+    /// The list's group key: the repo for GitHub, the project elsewhere;
+    /// empty when the row names neither.
+    var scope: String { [repo, project].compactMap { $0 }.first { !$0.isEmpty } ?? "" }
     /// "o/r#5" for GitHub, "QUI-123" elsewhere.
     var refLabel: String {
         guard let ref, !ref.isEmpty else { return "" }

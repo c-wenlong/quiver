@@ -16,7 +16,7 @@ for the hub machine, at ``#/setup``.
 ``first_run`` is the Mac app's launch check, ``FirstRun.shouldOffer``:
 no shared ``~/.quiver/AGENTS.md`` yet. (The Mac app also remembers a
 per-Mac "finished or skipped" flag. The web app keeps its own per browser:
-a bare ``/app/`` opens ``#/setup`` once, and Overview shows a card linking
+a bare ``/`` opens ``#/setup`` once, and Overview shows a card linking
 here for as long as ``first_run`` holds; see ``app.js``.)
 
 ``POST /v1/app/setup/apply`` with ``{"starred": [ids], "adopt": path or
@@ -43,7 +43,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import CONFIG_LOCK, PageError, home_path
 
 # ProviderCatalog.all in QuiverCore/Providers/ProviderVisibility.swift,
 # row for row: (id, commands on PATH, paths that exist). Only ids swe
@@ -92,15 +92,11 @@ PATH_MAX = 4096
 _LOCK = threading.Lock()
 
 
-def _home(ctx) -> Path:
-    return Path(ctx.home) if ctx is not None and ctx.home is not None else Path.home()
-
-
 def get(ctx, args) -> dict:
     from quiver.init.layout import agents_file
     from quiver.setup.commands import setup_preview
 
-    home = _home(ctx)
+    home = home_path(ctx)
     preview = setup_preview(home)
     agents = _agents(home, {h["name"] for h in preview.get("harness", [])})
     return {
@@ -128,10 +124,12 @@ def post(ctx, action: str, body: dict) -> dict:
     from quiver.setup.commands import _instructions_preview, apply_setup
     from quiver.webapp.pages.harness import REGISTRY_LOCK
 
-    home = _home(ctx)
+    home = home_path(ctx)
     # The Harnesses page's writes and Doctor's fixes rewrite harness.json
-    # too, under the same registry lock, so setup waits for them.
-    with _LOCK, REGISTRY_LOCK:
+    # too, under the same registry lock, so setup waits for them; it also
+    # writes mcp.json and relinks skills, under the MCP and Skills pages'
+    # CONFIG_LOCK.
+    with _LOCK, REGISTRY_LOCK, CONFIG_LOCK:
         registry = load_registry_readonly()
         for name in starred:
             if name not in PROVIDER_IDS and resolve(registry, name) is None:
@@ -172,7 +170,7 @@ def _install(ctx, body: dict) -> dict:
         raise PageError(404, "unknown_harness", f"no agent named {pid!r}")
     if via not in METHODS or via not in {inst.via for inst in installers_for(pid)}:
         raise PageError(422, "bad_via", f"{pid} has no {via!r} install command")
-    home = _home(ctx)
+    home = home_path(ctx)
     error = install_now(home, pid, via)
     return {"error": error, "setup": get(ctx, {})}
 

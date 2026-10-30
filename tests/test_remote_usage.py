@@ -206,13 +206,15 @@ class TestSatelliteStore(unittest.TestCase):
 
 
 class TestAgentUsageRoute(HubBase):
-    def _usage(self, auth):
+    def _usage(self, _satellite_auth=None):
+        """``/v1/usage`` as a phone reads it; a satellite's credential is
+        for the agent routes only."""
         with patch.object(usage, "snapshot", return_value={
             "harnesses": [{"name": "hubtool"}], "window_days": 100,
             "server_time": 1000.0,
         }):
             status, data = self.srv.request(
-                "GET", "/v1/usage", headers=auth
+                "GET", "/v1/usage", headers=self.auth()
             )
         self.assertEqual(status, 200)
         return json.loads(data)

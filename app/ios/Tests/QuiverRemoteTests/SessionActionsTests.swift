@@ -123,6 +123,7 @@ final class SessionActionsTests: XCTestCase {
     func testAReplyFromAHubThisPhoneLeftIsDropped() async throws {
         let cred = Credential(deviceId: "d", credential: "c", name: nil)
         let app = AppModel(hub: PairedHub(baseURL: URL(string: "http://hub-a.test:8477")!, credential: cred))
+        app.revokeOnHub = { _, _ in }
         let same = try await app.onSameHub { _ in 1 }
         XCTAssertEqual(same, 1)
         let moved = try await app.onSameHub { _ -> Int in
@@ -132,6 +133,7 @@ final class SessionActionsTests: XCTestCase {
         XCTAssertNil(moved, "paired elsewhere while it was out")
 
         let other = AppModel(hub: PairedHub(baseURL: URL(string: "http://hub-b.test:8477")!, credential: cred))
+        other.revokeOnHub = { _, _ in }
         let failed = try await other.onSameHub { _ -> Int in
             other.unpair()
             throw HubError(status: 409, code: "x", message: "old hub")

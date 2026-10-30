@@ -53,6 +53,9 @@ public struct ProcessRunner: CommandRunning {
     /// it per call. Long enough for swe's slowest replies (a `--usage`
     /// list polling every provider); a wedged child still gets found.
     public var defaultTimeout: Duration
+    /// When the deadline fires. Tests replace it to fire at a point they
+    /// pick, once the command tree they mean to stop exists.
+    var deadlineTimer: DeadlineTimer = .wallClock
 
     public init(executable: String = SweLocation.executable(override: nil),
                 environment: [String: String]? = nil,
@@ -97,6 +100,7 @@ public struct ProcessRunner: CommandRunning {
         process.standardOutput = out
         process.standardError = err
         let gate = LaunchGate(process)
+        let deadlineTimer = self.deadlineTimer
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -134,8 +138,13 @@ public struct ProcessRunner: CommandRunning {
                     try? err.fileHandleForWriting.close()
                     once.resume(throwing: error)
                 }
+                // Set below, before anything can call it: a cancel
+                // arriving after the launch stops the tree through it.
+                let stopper = StopperBox()
                 do {
-                    guard try gate.launch() else { return abandon(CancellationError()) }
+                    guard try gate.launch(onCancel: { stopper.run() }) else {
+                        return abandon(CancellationError())
+                    }
                 } catch let error as NSError {
                     // env(1) itself failed to spawn — the box is out of
                     // processes or env is broken — which is a system
@@ -160,10 +169,12 @@ public struct ProcessRunner: CommandRunning {
                 // deadline the whole command tree is stopped — a child
                 // like `bash` leaves `swift build` running otherwise —
                 // and the call throws once the run's own process is gone
-                // (the termination handler may report it sooner). Both
-                // blocks are cancelled when the run answers, so a pid
+                // (the termination handler may report it sooner). A
+                // cancelled caller stops the same tree. Both blocks are
+                // cancelled when a run nobody stopped answers, so a pid
                 // reused after the child exited is never signalled.
                 let tagged = PidBox()
+                let stopping = StopOnce()
                 let killBlock = DispatchWorkItem {
                     if process.isRunning {
                         kill(process.processIdentifier, SIGKILL)
@@ -179,19 +190,20 @@ public struct ProcessRunner: CommandRunning {
                         kill(descendant.pid, SIGKILL)
                     }
                     // SIGKILL cannot be ignored, so this waits out the
-                    // kernel's reaping rather than a live child.
+                    // kernel's reaping rather than a live child. A
+                    // cancelled run whose pipes an orphan still holds
+                    // answers here too.
                     process.waitUntilExit()
-                    once.resume(throwing: SweError.timedOut)
+                    once.resume(throwing: deadline.isExpired
+                                ? SweError.timedOut : CancellationError())
                 }
-                let deadlineBlock = DispatchWorkItem {
-                    deadline.expire()
+                /// Stops the whole tree, once: SIGTERM now, SIGKILL for
+                /// whatever is left two seconds later.
+                func stopTree() {
                     // A child that already exited left nothing to
                     // signal, and its pid may already belong to another
-                    // process — report the timeout, never sweep.
-                    guard process.isRunning else {
-                        once.resume(throwing: SweError.timedOut)
-                        return
-                    }
+                    // process — never sweep then.
+                    guard process.isRunning, stopping.begin() else { return }
                     // Children first: the parent must stay alive until
                     // the tree is tagged or they reparent and vanish.
                     tagged.set(Self.stopDescendants(
@@ -206,13 +218,32 @@ public struct ProcessRunner: CommandRunning {
                     DispatchQueue.global().asyncAfter(
                         deadline: .now() + .seconds(2), execute: killBlock)
                 }
-                DispatchQueue.global().asyncAfter(
-                    deadline: .now() + timeout.timeInterval, execute: deadlineBlock)
+                stopper.set(stopTree)
+                let deadlineBlock = DispatchWorkItem {
+                    deadline.expire()
+                    // A child that already exited reports the timeout
+                    // without a sweep.
+                    guard process.isRunning else {
+                        once.resume(throwing: SweError.timedOut)
+                        return
+                    }
+                    stopTree()
+                }
+                deadlineTimer.arm(timeout, deadlineBlock)
                 group.notify(queue: .global()) {
-                    // A finished run disarms the deadline; a timed-out
+                    // A run past its deadline throws however it ended:
+                    // the termination handler leaves the group before it
+                    // reports the timeout, so this block can get there
+                    // first and must not hand back the killed child's
+                    // exit status as an answer.
+                    if deadline.isExpired {
+                        once.resume(throwing: SweError.timedOut)
+                        return
+                    }
+                    // A finished run disarms the deadline; a cancelled
                     // one keeps the kill pass so survivors cannot
                     // outlive the call.
-                    if !deadline.isExpired {
+                    if !stopping.started {
                         deadlineBlock.cancel()
                         killBlock.cancel()
                     }
@@ -223,7 +254,8 @@ public struct ProcessRunner: CommandRunning {
                 }
             }
         } onCancel: {
-            // Leaving a page cancels its task; the child should not outlive it.
+            // Leaving a page cancels its task; the child should not outlive
+            // it, and neither should anything it started.
             gate.cancel()
         }
     }
@@ -236,27 +268,37 @@ public struct ProcessRunner: CommandRunning {
     /// descendants too. Never call this on a child that has already
     /// exited: its pid may belong to another process by then.
     @discardableResult
-    private static func stopDescendants(of pid: pid_t, signal: Int32) -> [TaggedPid] {
+    fileprivate static func stopDescendants(of pid: pid_t, signal: Int32) -> [TaggedPid] {
+        // The whole tree is listed before anything is signalled, then
+        // signalled leaves first: a parent killed mid-walk would let its
+        // children reparent to launchd before the walk listed them.
         var found: [TaggedPid] = []
         var seen: Set<pid_t> = [pid]
         var queue = [pid]
         while let parent = queue.popLast() {
             var buffer = [pid_t](repeating: 0, count: 512)
-            let bytes = proc_listchildpids(parent, &buffer,
-                                         Int32(MemoryLayout<pid_t>.stride * buffer.count))
-            guard bytes > 0 else { continue }
-            for child in buffer.prefix(Int(bytes) / MemoryLayout<pid_t>.stride)
-            where seen.insert(child).inserted {
+            // libproc answers a count of pids here, not bytes (unlike
+            // proc_listpids). Read as bytes it dropped every child of a
+            // parent with fewer than four, so the sweep found nothing and
+            // a child that ignored SIGTERM outlived the run. The zero
+            // filter keeps a bytes answer harmless too.
+            let count = proc_listchildpids(parent, &buffer,
+                                           Int32(MemoryLayout<pid_t>.stride * buffer.count))
+            guard count > 0 else { continue }
+            for child in buffer.prefix(min(Int(count), buffer.count))
+            where child > 0 && seen.insert(child).inserted {
                 // A child that exited since the listing has no start tag
                 // and its number may already serve another process, so
                 // only a tagged pid is ever signalled. Its own children
                 // are still walked either way.
-                if let tagged = Self.tag(child) {
-                    found.append(tagged)
-                    kill(child, signal)
-                }
+                if let tagged = Self.tag(child) { found.append(tagged) }
                 queue.append(child)
             }
+        }
+        // Every child comes after its parent in `found`. The tag is
+        // checked again: a process may have exited since it was listed.
+        for tagged in found.reversed() where Self.tag(tagged.pid) == tagged {
+            kill(tagged.pid, signal)
         }
         return found
     }
@@ -273,6 +315,18 @@ public struct ProcessRunner: CommandRunning {
     }
 }
 
+/// When a run's deadline fires. Production counts the timeout down on
+/// the wall clock. A test fires it at the moment it means to test, once
+/// the command tree it wants stopped exists, so a starved machine cannot
+/// move the deadline in front of the child's own setup.
+struct DeadlineTimer: Sendable {
+    let arm: @Sendable (_ timeout: Duration, _ fire: DispatchWorkItem) -> Void
+
+    static let wallClock = DeadlineTimer { timeout, fire in
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval, execute: fire)
+    }
+}
+
 /// Set when a run passes its deadline; read by the termination handler
 /// to report the stop as soon as the child is gone.
 private final class DeadlineBox: @unchecked Sendable {
@@ -282,6 +336,50 @@ private final class DeadlineBox: @unchecked Sendable {
     var isExpired: Bool { lock.withLock { expired } }
 
     func expire() { lock.withLock { expired = true } }
+}
+
+/// Lets the tree be stopped only once, by whichever of the deadline and
+/// a cancel comes first.
+private final class StopOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var begun = false
+
+    var started: Bool { lock.withLock { begun } }
+
+    /// True for the first caller only.
+    func begin() -> Bool {
+        lock.withLock {
+            defer { begun = true }
+            return !begun
+        }
+    }
+}
+
+/// The run's stop-the-tree action, handed to the launch gate before the
+/// action itself exists (it needs the kill pass built after the launch).
+private final class StopperBox: @unchecked Sendable {
+    private let lock = NSLock()
+    // Not @Sendable: it captures the kill work item. Every call goes
+    // through the lock-guarded hand-off below.
+    private var action: (() -> Void)?
+    private var pending = false
+
+    func set(_ newValue: @escaping () -> Void) {
+        let runNow = lock.withLock { () -> Bool in
+            action = newValue
+            return pending
+        }
+        if runNow { newValue() }
+    }
+
+    /// Runs the action, or runs it as soon as it is set.
+    func run() {
+        let now = lock.withLock { () -> (() -> Void)? in
+            if action == nil { pending = true }
+            return action
+        }
+        now?()
+    }
 }
 
 /// A descendant process's pid plus its start instant. The pair survives
@@ -313,25 +411,29 @@ private final class LaunchGate: @unchecked Sendable {
     private let process: Process
     private var cancelled = false
     private var launched = false
+    private var onCancel: (@Sendable () -> Void)?
 
     init(_ process: Process) { self.process = process }
 
     /// Starts the process, or returns false without starting it when the
-    /// run was already cancelled.
-    func launch() throws -> Bool {
+    /// run was already cancelled. A later cancel calls `onCancel`, which
+    /// stops the child and everything under it.
+    func launch(onCancel: @escaping @Sendable () -> Void) throws -> Bool {
         try lock.withLock {
             if cancelled { return false }
             try process.run()
             launched = true
+            self.onCancel = onCancel
             return true
         }
     }
 
     func cancel() {
-        lock.withLock {
+        let stop = lock.withLock { () -> (@Sendable () -> Void)? in
             cancelled = true
-            if launched, process.isRunning { process.terminate() }
+            return launched ? onCancel : nil
         }
+        stop?()
     }
 }
 
@@ -356,14 +458,18 @@ public enum LoginShell {
             .map { String($0.dropFirst("PATH=".count)) }
     }
 
-    /// The login shell's environment, resolved once per launch.
+    /// The login shell's environment, resolved once per launch. A shell
+    /// that didn't answer in time is asked again later, in the background,
+    /// rather than leaving the whole launch on launchd's bare PATH.
     public static func cachedEnvironment() async -> [String: String] {
-        await cache.value
+        await cache.environment()
     }
 
-    private static let cache = Task.detached(priority: .userInitiated) {
+    private static let cache = ShellEnvironmentCache(retryAfter: .seconds(60)) {
         let base = ProcessInfo.processInfo.environment
-        return await resolve(shell: base["SHELL"] ?? "/bin/zsh", base: base, timeout: .seconds(5))
+        return await resolveIfAnswered(shell: base["SHELL"] ?? "/bin/zsh", base: base, timeout: .seconds(5))
+    } fallback: {
+        scrubbed(ProcessInfo.processInfo.environment)
     }
 
     /// `base` with PATH replaced by what `shell -ilc env` reports.
@@ -371,11 +477,29 @@ public enum LoginShell {
     /// A slow or hanging shell startup file must not freeze the app: after
     /// `timeout` the shell is stopped and `base` comes back unchanged.
     public static func resolve(shell: String, base: [String: String], timeout: Duration) async -> [String: String] {
+        await resolve(shell: shell, base: base, timeout: timeout, deadline: .wallClock)
+    }
+
+    /// `resolve` with the deadline fired by `deadline`, for tests.
+    static func resolve(shell: String, base: [String: String], timeout: Duration,
+                        deadline: DeadlineTimer) async -> [String: String] {
+        await resolveIfAnswered(shell: shell, base: base, timeout: timeout, deadline: deadline)
+            ?? scrubbed(base)
+    }
+
+    /// `resolve`, or nil when the shell gave no PATH in time.
+    static func resolveIfAnswered(shell: String, base: [String: String], timeout: Duration,
+                                  deadline: DeadlineTimer = .wallClock) async -> [String: String]? {
+        guard let output = await envOutput(shell: shell, base: base, timeout: timeout,
+                                           deadline: deadline),
+              let path = path(fromEnvOutput: output) else { return nil }
         var env = base
-        if let output = await envOutput(shell: shell, base: base, timeout: timeout),
-           let path = path(fromEnvOutput: output) {
-            env["PATH"] = path
-        }
+        env["PATH"] = path
+        return scrubbed(env)
+    }
+
+    private static func scrubbed(_ base: [String: String]) -> [String: String] {
+        var env = base
         for key in ignoredVariables { env.removeValue(forKey: key) }
         return env
     }
@@ -396,7 +520,8 @@ public enum LoginShell {
         return env
     }
 
-    private static func envOutput(shell: String, base: [String: String], timeout: Duration) async -> String? {
+    private static func envOutput(shell: String, base: [String: String], timeout: Duration,
+                                  deadline: DeadlineTimer = .wallClock) async -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-ilc", "/usr/bin/env"]
@@ -419,12 +544,76 @@ public enum LoginShell {
                 process.waitUntilExit()
                 once.resume(String(decoding: data, as: UTF8.self))
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) {
-                if process.isRunning { process.terminate() }
+            deadline.arm(timeout, DispatchWorkItem {
+                // SIGKILL, children first: an interactive zsh ignores
+                // SIGTERM, so a terminate left the shell (and whatever its
+                // startup file was waiting on) running for good.
+                if process.isRunning {
+                    let pid = process.processIdentifier
+                    ProcessRunner.stopDescendants(of: pid, signal: SIGKILL)
+                    if process.isRunning { kill(pid, SIGKILL) }
+                }
                 once.resume(nil)
-            }
+            })
         }
         return output
+    }
+}
+
+/// The login shell's environment once a read succeeded. Until then each
+/// caller gets `fallback`: the first call waits for the first read, and
+/// after a failed read another starts in the background once `retryAfter`
+/// has passed, so a slow shell neither sticks for the whole launch nor
+/// stalls every call.
+actor ShellEnvironmentCache {
+    private let read: @Sendable () async -> [String: String]?
+    private let fallback: @Sendable () -> [String: String]
+    private let retryAfter: Duration
+    private var value: [String: String]?
+    private var inFlight: Task<Void, Never>?
+    private var failedAt: ContinuousClock.Instant?
+
+    init(retryAfter: Duration,
+         read: @escaping @Sendable () async -> [String: String]?,
+         fallback: @escaping @Sendable () -> [String: String]) {
+        self.retryAfter = retryAfter
+        self.read = read
+        self.fallback = fallback
+    }
+
+    func environment() async -> [String: String] {
+        if let value { return value }
+        if failedAt == nil {
+            // The first read: every early caller waits on the same one.
+            let task = inFlight ?? start()
+            await task.value
+            return value ?? fallback()
+        }
+        if inFlight == nil, let failedAt, ContinuousClock.now - failedAt >= retryAfter {
+            _ = start()
+        }
+        return fallback()
+    }
+
+    /// Waits for the read in flight, if any, so a test sees a background
+    /// retry land without polling for it.
+    func settle() async {
+        await inFlight?.value
+    }
+
+    private func start() -> Task<Void, Never> {
+        let read = self.read
+        let task = Task.detached(priority: .userInitiated) { [weak self] in
+            let result = await read()
+            await self?.record(result)
+        }
+        inFlight = task
+        return task
+    }
+
+    private func record(_ result: [String: String]?) {
+        inFlight = nil
+        if let result { value = result } else { failedAt = .now }
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import QuiverCore
 
@@ -6,6 +7,10 @@ import Testing
 /// helper's hold loop against a fake SMC, and the popover's model. Fakes
 /// only; nothing here touches the real SMC.
 @Suite struct FanTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     // MARK: Temperatures
 
     @Test func theDieSensorsAverageAndJunkSensorsDrop() {
@@ -21,6 +26,28 @@ import Testing
         #expect(TemperatureReading.summarise([]) == nil)
         #expect(TemperatureReading.summarise([("PMU tdev1", -9000), ("PMU tcal", 50)]) == nil)
         #expect(TemperatureReading.summarise([("gas gauge battery", 30)])?[.cpu] == nil)
+    }
+
+    @Test func hidIsReadOnlyForWhatTheSMCLeftOut() {
+        var asked = 0
+        let hid = { () -> TemperatureReading? in
+            asked += 1
+            return TemperatureReading([.cpu: 70, .ssd: 40, .battery: 30])
+        }
+        // The SMC answered all three: the HID sensors are never read.
+        let full = TemperatureReading([.cpu: 60, .gpu: 55, .ssd: 45, .battery: 35])
+        #expect(MacTemperatureSampler.combine(full, hid: hid) == full)
+        #expect(asked == 0)
+
+        // No SSD key answered: HID is read and fills only the gap.
+        let partial = TemperatureReading([.cpu: 60, .battery: 35])
+        #expect(MacTemperatureSampler.combine(partial, hid: hid)
+                == TemperatureReading([.cpu: 60, .ssd: 40, .battery: 35]))
+        #expect(asked == 1)
+
+        // No SMC at all: HID is the whole reading, and nothing means nil.
+        #expect(MacTemperatureSampler.combine(nil, hid: hid)?[.cpu] == 70)
+        #expect(MacTemperatureSampler.combine(nil, hid: { nil }) == nil)
     }
 
     @Test func chipNamesParse() {
@@ -197,7 +224,7 @@ import Testing
 
     @Test func theOwnerQuittingHandsTheFansBack() {
         let smc = FakeSMC.twoFans(gate: false)
-        let alive = Flag(true)
+        let alive = Box(true)
         var modeAfterQuit: Double?
         let counter = Counter()
         smc.onWrite = { key, _ in if key == "F0Md" { modeAfterQuit = smc.number("F0Md") } }
@@ -375,7 +402,7 @@ import Testing
     }
 
     @Test func theHelperStatusRoundTripsAndAnswersOnlyItsRequest() throws {
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-status-\(UUID().uuidString).json")
+        let url = scratch.url.appending(path: "fan-status-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(FanHelperStatus.read(at: url) == nil)
         let request = ask(0.5, at: 1_800_000_000.123)
@@ -392,9 +419,10 @@ import Testing
         #expect(!FanHelperStatus(state: .ready).answers(request))
     }
 
-    @Test func aToolThatHangsIsKilledAndCountsAsNoAnswer() async {
-        let started = Date()
-        let (yes, no, hung, missing) = await runOffPool {
+    /// The time limit catches a kill that never comes; the 60 s sleep
+    /// would outlast it.
+    @Test(.timeLimit(.minutes(1))) func aToolThatHangsIsKilledAndCountsAsNoAnswer() async {
+        let (yes, no, hung, missing) = await offMain {
             (FanControl.exitStatus(of: "/usr/bin/true", [], within: 5),
              FanControl.exitStatus(of: "/usr/bin/false", [], within: 5),
              FanControl.exitStatus(of: "/bin/sleep", ["60"], within: 0.2),
@@ -404,9 +432,6 @@ import Testing
         #expect(no == 1)
         #expect(hung == nil)
         #expect(missing == nil)
-        // Well before the 60 s hang would end; loose, since a busy CI
-        // runner can take seconds just to start the processes.
-        #expect(Date().timeIntervalSince(started) < 30)
     }
 
     // MARK: The helper's arguments and install
@@ -433,9 +458,9 @@ import Testing
 
     @Test func theInstallScriptChecksTheCopyAndWritesTheJobAsRoot() throws {
         let command = AdministratorInstaller.installCommand(
-            executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", sha256: "abc123",
+            executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", sha256: "abc123", team: nil,
             control: URL(fileURLWithPath: "/Users/o'neil/.quiver/fan/control.json"))
-        #expect(command.contains(#"/usr/bin/install -m 755 -o root -g wheel '/Users/o'\''neil/Apps/Quiver.app/Contents/MacOS/Quiver' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'"#))
+        #expect(command.contains(#"/usr/bin/install -m 755 -o root -g wheel '/Users/o'\''neil/Apps/Quiver.app/Contents/MacOS/Quiver' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"#))
         // The hash is checked on the root-owned copy, before re-signing
         // changes its bytes.
         let hash = try #require(command.range(of: "/usr/bin/shasum -a 256 '/Library/PrivilegedHelperTools/"))
@@ -451,6 +476,91 @@ import Testing
         #expect(AdministratorInstaller.uninstallCommand.contains("/bin/rm -f '/Library/LaunchDaemons/"))
         #expect(AdministratorInstaller.script(#"echo "a\b" 'c'"#, prompt: #"Say "hi""#)
             == #"do shell script "echo \"a\\b\" 'c'" with prompt "Say \"hi\"" with administrator privileges"#)
+    }
+
+    /// A team-signed app checks the helper's signature on the root-owned
+    /// copy, after the hash and before the ad-hoc re-sign erases it: a
+    /// helper patched in the user-writable bundle never runs as root.
+    @Test func aSignedAppChecksTheHelpersTeamBeforeRunningItAsRoot() throws {
+        let command = AdministratorInstaller.installCommand(
+            executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", team: "ABCDE12345",
+            control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"))
+        let hash = try #require(command.range(of: "/usr/bin/shasum -a 256 "))
+        let verify = try #require(command.range(
+            of: #"/usr/bin/codesign --verify --strict -R '=identifier "QuiverFanHelper" and anchor apple generic"#
+                + #" and certificate leaf[subject.OU] = "ABCDE12345"' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"#))
+        let sign = try #require(command.range(of: "/usr/bin/codesign --force --sign -"))
+        let bootout = try #require(command.range(of: "/bin/launchctl bootout"))
+        let move = try #require(command.range(of: "/bin/mv -f '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"
+            + " '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'"))
+        let job = try #require(command.range(of: "/usr/bin/printf '%s'"))
+        #expect(hash.lowerBound < verify.lowerBound)
+        #expect(verify.lowerBound < sign.lowerBound)
+        // The live executable an old KeepAlive job could relaunch changes
+        // only after every check, and only once that job is unloaded.
+        #expect(sign.lowerBound < bootout.lowerBound)
+        #expect(bootout.lowerBound < move.lowerBound)
+        #expect(move.lowerBound < job.lowerBound)
+        // Nothing but the move writes the live path.
+        #expect(command.components(separatedBy: "'/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'").count == 2)
+        #expect(!command.contains("\n"))
+        // An ad-hoc build has no team to check against and keeps the hash.
+        let adHoc = AdministratorInstaller.installCommand(
+            executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", team: nil,
+            control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"))
+        #expect(!adHoc.contains("--verify"))
+        #expect(adHoc.contains("/usr/bin/shasum -a 256 "))
+    }
+
+    /// The check itself, run: a helper that isn't the team's (here an
+    /// ad-hoc signed copy) is deleted and the script stops with a reason.
+    @Test func aHelperWithoutTheTeamsSignatureIsRefusedAndDeleted() throws {
+        let tool = scratch.url.appending(path: "it's a helper").path
+        try FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: tool)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", AdministratorInstaller.signatureCheck(tool: tool, team: "ABCDE12345")
+            + " && echo installed"]
+        let out = Pipe(), err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 1)
+        #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).isEmpty)
+        #expect(String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .contains("not signed by the team that signed Quiver"))
+        #expect(!FileManager.default.fileExists(atPath: tool))
+    }
+
+    @Test func theHelperRequirementCompiles() throws {
+        var requirement: SecRequirement?
+        let text = String(AdministratorInstaller.helperRequirement(team: "ABCDE12345").dropFirst())
+        #expect(SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess)
+        #expect(requirement != nil)
+    }
+
+    @Test func onlyRealTeamIdentifiersReachTheScript() async {
+        #expect(AdministratorInstaller.isTeamIdentifier("ABCDE12345"))
+        for odd in ["", "abcde12345", "ABCDE1234", "ABCDE123456", "ABCDE\"1234", "ABCDE 1234"] {
+            #expect(!AdministratorInstaller.isTeamIdentifier(odd), "\(odd)")
+        }
+        // Refused before any prompt: neither the hash nor osascript runs.
+        let odd = AdministratorInstaller(team: { "AB'; rm -rf" })
+        await #expect(throws: FanHelperInstallError.self) {
+            try await odd.install(executable: "/nonexistent", control: URL(fileURLWithPath: "/tmp/c.json"))
+        }
+        let unreadable = AdministratorInstaller(team: { throw FanHelperInstallError.failed("no signature") })
+        await #expect(throws: FanHelperInstallError.failed("no signature")) {
+            try await unreadable.install(executable: "/nonexistent", control: URL(fileURLWithPath: "/tmp/c.json"))
+        }
+    }
+
+    /// The test runner's own signature reads without error: a team for a
+    /// signed build, nil for an ad-hoc one.
+    @Test func theRunningCodesTeamReads() throws {
+        let team = try AdministratorInstaller.signingTeam()
+        if let team { #expect(AdministratorInstaller.isTeamIdentifier(team)) }
     }
 
     /// The job names the helper's version, so an install from before it
@@ -469,7 +579,7 @@ import Testing
     }
 
     @Test func theBundledHelperIsPreferredOverTheApp() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "helper-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "helper-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let app = dir.appending(path: "Quiver").path
@@ -490,7 +600,7 @@ import Testing
     }
 
     @Test func theHashIsSHA256OfTheFile() throws {
-        let url = FileManager.default.temporaryDirectory.appending(path: "hash-\(UUID().uuidString)")
+        let url = scratch.url.appending(path: "hash-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: url) }
         try Data("abc".utf8).write(to: url)
         #expect(AdministratorInstaller.sha256(of: url.path)
@@ -505,7 +615,7 @@ import Testing
     }
 
     @Test func theControlFileRoundTripsAndAnythingOddMeansAutomatic() throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)")
+        let folder = scratch.url.appending(path: "fan-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
         let url = folder.appending(path: "fan/control.json")
         #expect(FanControlFile.request(at: url) == nil)
@@ -522,7 +632,7 @@ import Testing
     }
 
     @Test func theRootHelperNeverReadsBigFilesLinksOrPipes() throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)")
+        let folder = scratch.url.appending(path: "fan-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let good = folder.appending(path: "good.json")
@@ -551,14 +661,14 @@ import Testing
                          clock: Box<Date> = Box(Date(timeIntervalSince1970: 1_800_000_000)),
                          status: Box<FanHelperStatus?> = Box(nil),
                          sleeper: Sleeper = Sleeper()) -> (FanControl, URL) {
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appending(path: "fan-\(UUID().uuidString)/control.json")
         let control = FanControl(control: url, reader: { FanKeys.read(smc) }, status: { status.value },
                                  installer: installer,
                                  isInstalled: { _ in installer.checks += 1; return installer.installed.value },
                                  executable: "/Apps/Quiver", owner: 77, clock: { clock.value },
                                  sleep: { await sleeper.sleep($0) },
-                                 defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
+                                 defaults: TestDefaults("fan"))
         return (control, url)
     }
 
@@ -631,7 +741,7 @@ import Testing
         #expect(installer.checks == checks + 1)
     }
 
-    @MainActor @Test func automaticIsOnlyClaimedOnceTheRequestIsGone() async throws {
+    @MainActor @Test(skippedAsRoot) func automaticIsOnlyClaimedOnceTheRequestIsGone() async throws {
         let installer = FakeInstaller()
         installer.installed.value = true
         let (fans, url) = control(FakeSMC.twoFans(), installer: installer)
@@ -776,16 +886,16 @@ import Testing
         let gate = ReadGate()
         let installer = FakeInstaller()
         installer.installed.value = true
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url,
                               reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
                               status: { nil }, installer: installer, isInstalled: { _ in true }, executable: "/Apps/Quiver", owner: 77,
-                              defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
+                              defaults: TestDefaults("fan"))
         await fans.refresh()
         fans.thresholdEnabled = true
         gate.armed = true
         let takeover = Task { await fans.checkTemperature(90) }
-        await runOffPool { gate.parked.wait() }
+        await offMain { gate.parked.wait() }
         // The takeover is waiting on its fan read: switch the rule off now.
         fans.thresholdEnabled = false
         gate.armed = false
@@ -879,16 +989,16 @@ import Testing
         let sleeper = Sleeper()
         let installer = FakeInstaller()
         installer.installed.value = true
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url,
                               reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
                               status: { nil }, installer: installer, isInstalled: { _ in true },
                               executable: "/Apps/Quiver", owner: 77, sleep: { await sleeper.sleep($0) },
-                              defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
+                              defaults: TestDefaults("fan"))
         await fans.refresh()
         gate.armed = true
         let takeover = Task { await fans.applyManual() }
-        await runOffPool { gate.parked.wait() }
+        await offMain { gate.parked.wait() }
         #expect(fans.phase == .starting)
         // The read never comes back, and no refresh settles anything: the
         // deadline set when Starting began ends it anyway.
@@ -982,8 +1092,8 @@ import Testing
     }
 
     @MainActor @Test func theThresholdIsClampedAndRemembered() async {
-        let defaults = UserDefaults(suiteName: "fan-\(UUID().uuidString)")!
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let defaults = TestDefaults("fan")
+        let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                               isInstalled: { _ in false }, defaults: defaults)
         #expect(fans.threshold == 80 && !fans.thresholdEnabled)
@@ -1021,8 +1131,8 @@ import Testing
     }
 
     @MainActor @Test func theOffTemperatureStaysUnderTheOnLine() async {
-        let defaults = UserDefaults(suiteName: "fan-\(UUID().uuidString)")!
-        let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
+        let defaults = TestDefaults("fan")
+        let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                               isInstalled: { _ in false }, defaults: defaults)
         #expect(fans.releaseBelow == 75)
@@ -1173,15 +1283,5 @@ import Testing
             }
             all.forEach { $0.resume() }
         }
-    }
-
-    final class Flag: @unchecked Sendable {
-        var value: Bool
-        init(_ value: Bool) { self.value = value }
-    }
-
-    final class Box<T>: @unchecked Sendable {
-        var value: T
-        init(_ value: T) { self.value = value }
     }
 }

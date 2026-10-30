@@ -1,14 +1,20 @@
 """The Compute page's data: /proc and /sys parsing over fake trees,
-attribution, the meters, the history rings and the route."""
+attribution, the meters, the history rings, auto clean and the route."""
 
 import json
 import os
+import shutil
+import signal
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from quiver.configuration import load_config
+from quiver.paths import config_file_for
 from quiver.webapp import compute
+from quiver.webapp.pages import PageError
 from quiver.webapp.pages import compute as page
 
 from tests.test_remote_hub import HubBase
@@ -354,6 +360,55 @@ class _Model(unittest.TestCase):
 
 
 class TestModel(_Model):
+    def test_nvidia_smi_runs_off_the_lock(self):
+        # Two nvidia-smi calls of up to 3 s each ran under the model's
+        # lock, so every Compute read waited for them.
+        held = []
+
+        def nvidia():
+            held.append(self.model.lock.locked())
+            return None
+
+        self.model.nvidia = nvidia
+        self.model.nvidia_processes = lambda: held.append(
+            self.model.lock.locked())
+        self.model.sample()
+        self.assertEqual(held, [False, False])
+
+    def test_overlapping_samples_run_nvidia_smi_once(self):
+        # A sample paused in nvidia-smi: a second due sample waits for it
+        # and then finds it fresh, while payload reads go on meanwhile.
+        import threading
+        inside, release = threading.Event(), threading.Event()
+        calls = []
+
+        def nvidia():
+            calls.append(1)
+            inside.set()
+            release.wait(10)
+            return None
+
+        self.model.nvidia = nvidia
+        first = threading.Thread(target=self.model.sample)
+        second = threading.Thread(target=self.model.sample)
+        first.start()
+        self.assertTrue(inside.wait(10))
+        second.start()
+        self.model.payload(10)  # the data lock stays free
+        release.set()
+        first.join(10)
+        second.join(10)
+        self.assertEqual(calls, [1])
+        self.assertEqual(len(self.model.history.fine), 1)
+
+    def test_a_fresh_sample_skips_nvidia_smi(self):
+        calls = []
+        self.model.sample()
+        self.model.nvidia = lambda: calls.append(1)
+        self.now[0] += 1.0
+        self.model.sample()  # inside MIN_SAMPLE
+        self.assertEqual(calls, [])
+
     def test_two_samples_make_the_payload(self):
         self.model.sample()
         self.m.process(101, 100, ["claude"], exe="/usr/bin/node", start=200, anon_kb=3 * 1024 * 1024,
@@ -431,6 +486,235 @@ class TestModel(_Model):
         self.assertEqual(body["harnesses"], [])
 
 
+class TestAutoClean(_Model):
+    """The hub's auto clean: SIGTERM for old orphans, the force switch's
+    SIGKILL grace, and the recorded-start-time guards the Mac shares."""
+
+    def _signals(self):
+        calls = []
+        self.model.signaller = \
+            lambda pid, sig, at=None: calls.append((pid, sig)) or True
+        return calls
+
+    def _config(self, section):
+        home = Path(tempfile.mkdtemp())
+        from quiver.configuration import save_config
+        save_config({"compute": section}, config_file_for(home))
+        self.model.home = home
+
+    def test_no_config_signals_nothing(self):
+        calls = self._signals()
+        self.model.home = Path(tempfile.mkdtemp())
+        self.model.sample()
+        self.assertEqual(calls, [])
+
+    def test_off_signals_nothing(self):
+        calls = self._signals()
+        self._config({"auto_clean": False, "orphan_age_seconds": 60})
+        self.model.sample()
+        self.assertEqual(calls, [])
+
+    def test_old_orphan_gets_one_sigterm(self):
+        calls = self._signals()
+        self._config({"auto_clean": True, "orphan_age_seconds": 3600})
+        self.model.sample()
+        self.assertEqual(calls, [(200, signal.SIGTERM)])
+        self.now[0] += 10.0
+        self.model.sample()  # marked already: not signalled again
+        self.assertEqual(calls, [(200, signal.SIGTERM)])
+
+    def test_descendants_die_before_the_root(self):
+        calls = self._signals()
+        self.m.process(201, 200, ["esbuild"], exe="/usr/bin/esbuild", start=60)
+        self._config({"auto_clean": True, "orphan_age_seconds": 3600})
+        self.model.sample()
+        self.assertEqual(calls, [(201, signal.SIGTERM), (200, signal.SIGTERM)])
+
+    def test_young_orphan_left_alone(self):
+        calls = self._signals()
+        self._config({"auto_clean": True})  # the day default; the fixture is ~4000 s
+        self.model.sample()
+        self.assertEqual(calls, [])
+
+    def test_force_escalates_after_the_grace(self):
+        calls = self._signals()
+        self._config({"auto_clean": True, "auto_clean_force": True,
+                      "orphan_age_seconds": 3600})
+        self.model.sample()
+        self.assertEqual(calls, [(200, signal.SIGTERM)])
+        self.now[0] += compute.AUTOCLEAN_GRACE + 1
+        self.model.sample()  # still alive: SIGKILL follows
+        self.assertEqual(calls, [(200, signal.SIGTERM), (200, signal.SIGKILL)])
+        self.now[0] += 60
+        self.model.sample()  # forced once: not over and over
+        self.assertEqual(len(calls), 2)
+
+    def test_no_force_no_escalation(self):
+        calls = self._signals()
+        self._config({"auto_clean": True, "orphan_age_seconds": 3600})
+        self.model.sample()
+        self.now[0] += 60
+        self.model.sample()
+        self.assertEqual(calls, [(200, signal.SIGTERM)])
+
+    def test_dead_tree_and_reused_pid_are_left_alone(self):
+        calls = self._signals()
+        self._config({"auto_clean": True, "auto_clean_force": True,
+                      "orphan_age_seconds": 3600})
+        self.model.sample()
+        self.assertEqual(calls, [(200, signal.SIGTERM)])
+        # The tree exited and the kernel recycled pid 200 for a brand-new
+        # process: the recorded mark does not carry over to it, and its
+        # own age is young, so nothing more is signalled.
+        shutil.rmtree(self.m.proc / "200")
+        self.m.process(200, 1, ["node", "new.js"], exe="/usr/bin/node",
+                       cwd="/home/u/new", start=395000)  # ~60 s before now
+        self.now[0] += compute.AUTOCLEAN_GRACE + 1
+        self.model.sample()
+        self.assertEqual(calls, [(200, signal.SIGTERM)])
+
+    def test_a_surviving_child_still_gets_the_escalation(self):
+        calls = self._signals()
+        self.m.process(201, 200, ["esbuild"], exe="/usr/bin/esbuild", start=60)
+        self._config({"auto_clean": True, "auto_clean_force": True,
+                      "orphan_age_seconds": 3600})
+        self.model.sample()
+        self.assertEqual(calls, [(201, signal.SIGTERM), (200, signal.SIGTERM)])
+        # The root died on SIGTERM; the child reparented to init but is
+        # the same process the recorded tree saw, so the force pass
+        # still reaches it.
+        shutil.rmtree(self.m.proc / "200")
+        self.m.process(201, 1, ["esbuild"], exe="/usr/bin/esbuild", start=60)
+        self.now[0] += compute.AUTOCLEAN_GRACE + 1
+        self.model.sample()
+        self.assertEqual(calls[-1], (201, signal.SIGKILL))
+
+    def test_payload_marks_quitting_and_exposes_the_settings(self):
+        self._signals()
+        self._config({"auto_clean": True, "auto_clean_force": True,
+                      "orphan_age_seconds": 3600})
+        self.model.sample()
+        body = self.model.payload(10)
+        self.assertTrue(body["autoclean"]["enabled"])
+        self.assertTrue(body["autoclean"]["force"])
+        self.assertEqual(body["autoclean"]["orphan_age_seconds"], 3600)
+        self.assertEqual(body["autoclean"]["grace_seconds"], compute.AUTOCLEAN_GRACE)
+        self.assertTrue(body["orphans"][0]["quitting"])
+
+    def test_a_recycled_pid_does_not_keep_the_quitting_mark(self):
+        self._signals()
+        self._config({"auto_clean": True, "orphan_age_seconds": 3600})
+        self.model.sample()
+        self.assertTrue(self.model.payload(10)["orphans"][0]["quitting"])
+        shutil.rmtree(self.m.proc / "200")
+        self.m.process(200, 1, ["node", "new.js"], exe="/usr/bin/node",
+                       cwd="/home/u/new", start=395000)
+        self.now[0] += 10
+        self.model.sample()
+        self.assertFalse(self.model.payload(10)["orphans"][0]["quitting"])
+
+    def test_clean_settings_coerces_and_defaults(self):
+        home = Path(tempfile.mkdtemp())
+        self.assertEqual(compute.clean_settings(home),
+                         {"enabled": False, "force": False,
+                          "orphan_age_seconds": compute.DEFAULT_ORPHAN_AGE,
+                          "grace_seconds": compute.AUTOCLEAN_GRACE})
+        from quiver.configuration import save_config
+        save_config({"compute": {"auto_clean": "yes", "auto_clean_force": True,
+                                 "orphan_age_seconds": "x"}},
+                    config_file_for(home))
+        got = compute.clean_settings(home)
+        # A mistyped "yes" reads as off — the switch never fires on a string.
+        self.assertEqual((got["enabled"], got["force"]), (False, True))
+        self.assertEqual(got["orphan_age_seconds"], compute.DEFAULT_ORPHAN_AGE)
+        # Infinity and NaN in the file answer the default too; int()
+        # raises OverflowError on them, which the boot read must survive.
+        save_config({"compute": {"orphan_age_seconds": 1e309}},
+                    config_file_for(home))
+        self.assertEqual(compute.clean_settings(home)["orphan_age_seconds"],
+                         compute.DEFAULT_ORPHAN_AGE)
+
+    def test_a_tree_member_that_outlives_its_root_is_not_signalled_twice(self):
+        calls = self._signals()
+        self.m.process(201, 200, ["esbuild"], exe="/usr/bin/esbuild", start=60)
+        self._config({"auto_clean": True, "orphan_age_seconds": 3600})
+        self.model.sample()
+        self.assertEqual(calls, [(201, signal.SIGTERM), (200, signal.SIGTERM)])
+        # The root died on SIGTERM; the child is now its own orphan root
+        # but still sits inside the recorded tree's mark, so it is left
+        # for the mark's own bookkeeping instead of another SIGTERM.
+        shutil.rmtree(self.m.proc / "200")
+        self.m.process(201, 1, ["node", "child.js"], exe="/usr/bin/node",
+                       cwd="/home/u/app", start=60)
+        self.now[0] += 10
+        self.model.sample()
+        self.assertEqual(calls, [(201, signal.SIGTERM), (200, signal.SIGTERM)])
+
+
+class TestSettingsPost(_Model):
+    def _ctx(self, home):
+        class Ctx:
+            machine = {"name": "box"}
+        ctx = Ctx()
+        ctx.home = home
+        return ctx
+
+    def test_settings_round_trip_starts_the_ticker(self):
+        home = Path(tempfile.mkdtemp())
+        with patch.object(compute, "supported", return_value=True), \
+                patch.object(compute, "model", return_value=self.model), \
+                patch.object(compute, "start_ticker") as ticker:
+            body = page.post(self._ctx(home), "settings",
+                             {"enabled": True, "force": True,
+                              "orphan_age_seconds": 7200})
+        self.assertTrue(body["autoclean"]["enabled"])
+        self.assertTrue(body["autoclean"]["force"])
+        self.assertEqual(body["autoclean"]["orphan_age_seconds"], 7200)
+        self.assertTrue(ticker.called)
+        self.assertEqual(self.model.home, home)
+        cfg = load_config(config_file_for(home))
+        self.assertEqual(cfg["compute"],
+                         {"auto_clean": True, "auto_clean_force": True,
+                          "orphan_age_seconds": 7200})
+
+    def test_disabling_keeps_the_saved_age(self):
+        home = Path(tempfile.mkdtemp())
+        ctx = self._ctx(home)
+        with patch.object(compute, "supported", return_value=True), \
+                patch.object(compute, "model", return_value=self.model), \
+                patch.object(compute, "start_ticker"):
+            page.post(ctx, "settings", {"enabled": True, "orphan_age_seconds": 7200})
+            body = page.post(ctx, "settings", {"enabled": False})
+        self.assertFalse(body["autoclean"]["enabled"])
+        self.assertEqual(body["autoclean"]["orphan_age_seconds"], 7200)
+
+    def test_bad_bodies_are_refused(self):
+        ctx = self._ctx(Path(tempfile.mkdtemp()))
+        with patch.object(compute, "supported", return_value=True):
+            for body, code in (({}, "bad_enabled"),
+                               ({"enabled": "yes"}, "bad_enabled")):
+                with self.assertRaises(PageError) as cm:
+                    page.post(ctx, "settings", body)
+                self.assertEqual(cm.exception.code, code)
+            with self.assertRaises(PageError) as cm:
+                page.post(ctx, "quit", {"enabled": True})
+            self.assertEqual(cm.exception.status, 404)
+        # The file is never written for a refused body.
+        self.assertFalse(config_file_for(ctx.home).exists())
+
+    def test_the_age_clamps_to_the_field_bounds(self):
+        home = Path(tempfile.mkdtemp())
+        # model and the ticker are patched like the neighbouring tests:
+        # an enabled write starts the real sampler otherwise, and the
+        # real sampler signals the host's real orphans.
+        with patch.object(compute, "supported", return_value=True), \
+                patch.object(compute, "model", return_value=self.model), \
+                patch.object(compute, "start_ticker"):
+            body = page.post(self._ctx(home), "settings",
+                             {"enabled": True, "orphan_age_seconds": 5})
+        self.assertEqual(body["autoclean"]["orphan_age_seconds"], 60)
+
+
 class TestPage(_Model):
     def _ctx(self):
         class Ctx:
@@ -472,10 +756,61 @@ class TestRoute(_Model, HubBase):
         self.assertEqual(body["trend"]["interval"], 3)
         self.assertEqual(body["harnesses"][0]["harness"], "claude")
 
-    def test_page_script_is_bundled(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("compute"', data)
+    def test_settings_post_writes_the_hub_config(self):
+        self.assertEqual(self.srv.request(
+            "POST", "/v1/app/compute/settings", {"enabled": True})[0], 401)
+        with patch.object(compute, "supported", return_value=True), \
+                patch.object(compute, "model", return_value=self.model), \
+                patch.object(compute, "start_ticker"):
+            status, data = self.srv.request(
+                "POST", "/v1/app/compute/settings",
+                {"enabled": True, "force": True, "orphan_age_seconds": 7200},
+                headers=self.auth())
+        self.assertEqual(status, 200, data)
+        body = json.loads(data)
+        self.assertTrue(body["autoclean"]["enabled"])
+        self.assertTrue(body["autoclean"]["force"])
+        self.assertEqual(body["autoclean"]["orphan_age_seconds"], 7200)
+        cfg = load_config(config_file_for(self.srv.state.home))
+        self.assertEqual(cfg["compute"],
+                         {"auto_clean": True, "auto_clean_force": True,
+                          "orphan_age_seconds": 7200})
+
+    def test_settings_post_rejects_a_bad_body(self):
+        with patch.object(compute, "supported", return_value=True):
+            status, data = self.srv.request(
+                "POST", "/v1/app/compute/settings", {"enabled": "yes"},
+                headers=self.auth())
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(data)["error"]["code"], "bad_enabled")
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestStoredChoices(unittest.TestCase):
+    """pages/compute.js under node: the tab, interval and Temperature lines
+    kept in localStorage fall back when the page doesn't know them (an
+    unknown tab threw in the chart and stopped the poll)."""
+
+    def choices(self, stored):
+        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/compute.js"
+        prelude = ("const stored = " + json.dumps({f"quiver.compute.{k}": v for k, v in stored.items()}) + ";\n"
+                   "globalThis.localStorage = { getItem: (k) => (k in stored ? stored[k] : null) };\n"
+                   "function registerPage() {}\n")
+        body = ("process.stdout.write(JSON.stringify({ tab: computePage.tab, interval: computePage.interval,"
+                " lines: computePage.lines }));\n")
+        done = subprocess.run(["node", "-e", prelude + script.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_known_choices_are_kept(self):
+        self.assertEqual(self.choices({"tab": "gpu", "interval": "30", "temperatureLines": '["ssd","cpu"]'}),
+                         {"tab": "gpu", "interval": 30, "lines": ["ssd", "cpu"]})
+
+    def test_unknown_choices_fall_back(self):
+        self.assertEqual(self.choices({"tab": "disk", "interval": "7", "temperatureLines": '{"cpu":1}'}),
+                         {"tab": "ram", "interval": 10, "lines": ["cpu", "gpu", "ssd", "battery"]})
+        self.assertEqual(self.choices({"temperatureLines": '["cpu","fan",3]'})["lines"], ["cpu"])
 
 
 if __name__ == "__main__":

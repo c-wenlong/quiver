@@ -25,7 +25,7 @@ const statusIcon = (name) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STATUS_ICONS[name]}</svg>`;
 
 // The logos the Mac app draws for each page (StatusService.logoID), as
-// shipped in /app/: colour ones as they are, the rest in the text colour.
+// shipped beside the page: colour ones as they are, the rest in the text colour.
 const STATUS_LOGOS = {
   claude: "harness-claude-color.svg", openai: "harness-openai.svg", copilot: "harness-copilot.svg",
   cursor: "harness-cursor.svg", gemini: "harness-gemini-color.svg", devin: "harness-devin.svg",
@@ -42,6 +42,38 @@ const STATUS_LOGOS = {
   render: "harness-render.svg", upstash: "harness-upstash.svg",
   convex: "harness-convex.svg", linear: "harness-linear.svg",
   notion: "harness-notion.svg", twilio: "harness-twilio.svg", clerk: "harness-clerk.svg",
+  "mistral-vibe": "harness-mistral-vibe-color.svg", kimi: "harness-kimi.svg",
+  nebius: "harness-nebius.svg",
+  stability: "harness-stability.svg", ai21: "harness-ai21.svg", sambanova: "harness-sambanova.svg",
+  poe: "harness-poe.svg", writer: "harness-writer.svg", cartesia: "harness-cartesia-color.svg",
+  deepgram: "harness-deepgram.svg", droid: "harness-droid.svg", windsurf: "harness-windsurf.svg",
+  replit: "harness-replit.svg", sourcegraph: "harness-sourcegraph-color.svg",
+  augment: "harness-augment.svg", warp: "harness-warp.svg", manus: "harness-manus.svg",
+  lovable: "harness-lovable.svg", blackbox: "harness-blackbox.svg", kilo: "harness-kilo.svg",
+  ona: "harness-ona.svg", e2b: "harness-e2b.svg", browserbase: "harness-browserbase-color.svg",
+  tavily: "harness-tavily.svg", runloop: "harness-runloop.svg", arcade: "harness-arcade-color.svg",
+  morph: "harness-morph.svg", supermemory: "harness-supermemory.svg",
+  pypi: "harness-pypi.svg", crates: "harness-crates.svg", rubygems: "harness-rubygems.svg",
+  maven: "harness-maven.svg", bitbucket: "harness-bitbucket.svg", circleci: "harness-circleci.svg",
+  buildkite: "harness-buildkite.svg", travisci: "harness-travisci.svg", netlify: "harness-netlify.svg",
+  flyio: "harness-flyio.svg", linode: "harness-linode.svg", expo: "harness-expo.svg",
+  mongodb: "harness-mongodb.svg", pinecone: "harness-pinecone.svg", prisma: "harness-prisma.svg",
+  sanity: "harness-sanity.svg", contentful: "harness-contentful.svg", temporal: "harness-temporal.svg",
+  inngest: "harness-inngest.svg", astronomer: "harness-astronomer.svg", grafana: "harness-grafana.svg",
+  newrelic: "harness-newrelic.svg", honeycomb: "harness-honeycomb-color.svg",
+  incidentio: "harness-incidentio.svg", launchdarkly: "harness-launchdarkly.svg",
+  statsig: "harness-statsig-color.svg", snyk: "harness-snyk.svg", codecov: "harness-codecov.svg",
+  postman: "harness-postman.svg", ngrok: "harness-ngrok.svg", hashicorp: "harness-hashicorp.svg",
+  figma: "harness-figma.svg", atlassian: "harness-atlassian.svg", workos: "harness-workos-color.svg",
+  mailgun: "harness-mailgun.svg", discord: "harness-discord.svg", revenuecat: "harness-revenuecat.svg",
+  nvidia: "harness-nvidia-color.svg", anyscale: "harness-anyscale.svg",
+  bolt: "harness-bolt.svg", v0: "harness-v0.svg",
+  snowflake: "harness-snowflake.svg", clickhouse: "harness-clickhouse.svg",
+  cockroach: "harness-cockroach.svg", planetscale: "harness-planetscale.svg",
+  semaphore: "harness-semaphore.svg", sonatype: "harness-sonatype.svg",
+  langfuse: "harness-langfuse.svg", braintrust: "harness-braintrust.svg",
+  prefect: "harness-prefect.svg",
+  zapier: "harness-zapier-color.svg", make: "harness-make.svg", loom: "harness-loom.svg",
 };
 /* The logo cell: the shipped mark for a known id, else the service's
  * initial on a tile, so rows with no mark still line up (CatalogueRow
@@ -53,23 +85,9 @@ function statusLogo(id, name = "") {
     return `<span class="logo status-glyph" aria-hidden="true">${esc(letter.toUpperCase())}</span>`;
   }
   const mono = file.endsWith("-color.svg") ? "" : " mono";
-  return `<img class="logo${mono}" src="/app/${file}" alt="">`;
+  return `<img class="logo${mono}" src="/${file}" alt="">`;
 }
 
-/* Foundation's .relative(presentation: .named): "now", "5 minutes ago",
- * "yesterday". */
-function statusRelative(epoch) {
-  // Every time shown this way is past; a hub clock a little ahead of this
-  // browser's must not read "in 2 minutes".
-  const diff = Math.min(0, epoch - Date.now() / 1000);
-  const abs = Math.abs(diff);
-  const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
-  for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["week", 604800],
-    ["day", 86400], ["hour", 3600], ["minute", 60]]) {
-    if (abs >= size) return rtf.format(Math.trunc(diff / size), unit);
-  }
-  return abs < 1 ? "now" : rtf.format(Math.trunc(diff), "second");
-}
 
 /* .dateTime.day().month(.abbreviated).hour().minute(): "Oct 7, 1:25 PM". */
 function statusWhen(epoch) {
@@ -124,7 +142,10 @@ function statusKeep(data) {
 function statusGate() {
   statusPage.data = null;
   statusPage.loading = false;
-  renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  // A Track or Untrack reply can land after the browser moved on, and
+  // the gate would replace whatever page shows now.
+  if (!statusOnPage()) return;
+  renderGate();
 }
 
 /* A card's reading, or none once it is older than an hour, as the hub
@@ -141,13 +162,12 @@ function statusView(s) {
 }
 
 function statusError(status, data) {
-  return (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+  return failText(status, data, "then refresh");
 }
 
 function statusHeader() {
   const p = statusPage, d = p.data;
-  const checked = d && d.checked_at ? `<span class="caption muted">Checked ${esc(statusRelative(d.checked_at))}</span>` : "";
+  const checked = d && d.checked_at ? `<span class="caption muted">Checked ${esc(Fmt.relative(d.checked_at))}</span>` : "";
   return pageHeader("Service status", "Live status from the official status pages of the services your harnesses use.",
     `${checked}<button class="status-add" id="status-add">${statusIcon("plus")}<span>Add service</span></button>
     <button class="icon-button${p.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh"
@@ -233,8 +253,8 @@ function statusCard(raw) {
   return `<article class="card status-card">
     <div class="status-body">
       <div class="status-head">${statusLogo(s.logo, s.name)}<span class="status-name">${esc(s.name)}</span>
-        <a class="status-open" href="${esc(s.page_url)}" target="_blank" rel="noopener noreferrer"
-          title="${esc(s.page_url)}" aria-label="Open the ${esc(s.name)} status page">${statusIcon("open")}</a>${remove}</div>
+        ${safeHref(s.page_url) ? `<a class="status-open" href="${safeHref(s.page_url)}" target="_blank" rel="noopener noreferrer"
+          title="${esc(s.page_url)}" aria-label="Open the ${esc(s.name)} status page">${statusIcon("open")}</a>` : ""}${remove}</div>
       <div class="status-health-block">
         <div class="status-health"><span class="health-dot health-${esc(s.health || "unknown")}" aria-hidden="true"></span>
           <span class="${s.health ? "" : "muted"}">${esc(label)}</span></div>
@@ -255,7 +275,7 @@ function statusCard(raw) {
 /* True while the status page is the visible one, so a slow POST landing
  * after the browser moved on cannot paint cards over another page. */
 function statusOnPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "status";
+  return currentRoute() === "status";
 }
 
 /* The card's Remove, confirmed inline. The hub's answer is a fresh
@@ -296,8 +316,8 @@ function statusDetails(s) {
   }
   if (s.incidents.length) {
     out += `<div class="status-incidents">${s.incidents.slice(0, INCIDENT_LIMIT).map(statusIncident).join("")}
-      ${s.incidents.length > INCIDENT_LIMIT
-        ? `<a class="status-more" href="${esc(s.page_url)}" target="_blank" rel="noopener noreferrer">${
+      ${s.incidents.length > INCIDENT_LIMIT && safeHref(s.page_url)
+        ? `<a class="status-more" href="${safeHref(s.page_url)}" target="_blank" rel="noopener noreferrer">${
           s.incidents.length - INCIDENT_LIMIT} more on the status page</a>` : ""}</div>`;
   }
   return out;
@@ -307,8 +327,8 @@ function statusIncident(i) {
   const meta = [];
   if (i.stage) meta.push(i.stage);
   if (i.started_at != null) meta.push(`${i.maintenance ? "began" : "started"} ${statusWhen(i.started_at)}`);
-  if (i.updated_at != null) meta.push(`updated ${statusRelative(i.updated_at)}`);
-  const link = i.url ? `<a class="status-incident-link" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer"
+  if (i.updated_at != null) meta.push(`updated ${Fmt.relative(i.updated_at)}`);
+  const link = safeHref(i.url) ? `<a class="status-incident-link" href="${safeHref(i.url)}" target="_blank" rel="noopener noreferrer"
       title="${esc(i.url)}" aria-label="Open incident">${statusIcon("arrow")}</a>` : "";
   return `<div class="status-incident">
     <div class="status-incident-name">${esc(i.name)}${link}</div>
@@ -331,14 +351,17 @@ function statusProblem(s) {
   if (s.problem_until != null) {
     text += ` ${new Date(s.problem_until * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
   }
-  if (s.stale && s.checked_at != null) text += `. Showing the reading from ${statusRelative(s.checked_at)}.`;
+  if (s.stale && s.checked_at != null) text += `. Showing the reading from ${Fmt.relative(s.checked_at)}.`;
   return `<div class="status-problem caption">${statusIcon("warn")}<span>${esc(text)}</span></div>`;
 }
 
 /* ------------------------------------------------------- the catalogue */
 
-const CAT_GROUPS = [[null, "All"], ["providers", "AI providers"], ["infrastructure", "Infrastructure"]];
-const CAT_TITLES = { providers: "AI providers", infrastructure: "Infrastructure" };
+const CAT_GROUPS = [[null, "All"], ["modelProviders", "Model providers"],
+  ["agentPlatforms", "Agent platforms"], ["cloud", "Cloud & network"], ["data", "Data"],
+  ["devtools", "Dev tools & quality"], ["registries", "Registries"],
+  ["observability", "Observability"], ["services", "Services & productivity"]];
+const CAT_TITLES = Object.fromEntries(CAT_GROUPS.slice(1));
 
 /* The sheet lives on document.body, so a page repaint behind it does not
  * close it (the app's sheet stays up while adds land). */
@@ -353,7 +376,7 @@ function statusCatalogueDialog() {
   document.body.appendChild(dlg);
   // A sheet belongs to the status page: leaving it closes the sheet.
   window.addEventListener("hashchange", () => {
-    if ((location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] !== "status" && dlg.open) dlg.close();
+    if (currentRoute() !== "status" && dlg.open) dlg.close();
   });
   return dlg;
 }
@@ -504,7 +527,7 @@ function startStatusClock() {
   const p = statusPage;
   if (p.timer) return;
   p.timer = setInterval(() => {
-    const onPage = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "status";
+    const onPage = currentRoute() === "status";
     if (!onPage) { clearInterval(p.timer); p.timer = null; return; }
     if (document.hidden || p.loading || !p.data) return;
     if (Date.now() - p.loadedAt >= 300000) renderStatus("status");

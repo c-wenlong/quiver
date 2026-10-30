@@ -145,6 +145,7 @@ struct EllipsisMenu<Content: View>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("More")
+        .accessibilityLabel("More")
     }
 }
 
@@ -695,8 +696,8 @@ struct GhSetupCard: View {
 
     private var title: String {
         status == .unavailable
-            ? "Download gh cli to enable github features."
-            : "Sign in to GitHub to enable github features."
+            ? "Download the gh CLI to enable GitHub features."
+            : "Sign in to GitHub to enable GitHub features."
     }
 
     private var command: String {

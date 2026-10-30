@@ -180,18 +180,43 @@ public struct ModelMatcher: Sendable {
     }
 
     /// `~/.quiver/config/model-links.json`: `{"logged base": "aa id"}`.
-    /// A manual link beats every rule.
+    /// A manual link beats every rule. Read entry by entry, so a value
+    /// that isn't a string skips only itself; a missing file, or one that
+    /// isn't a JSON object, is no links.
     public static func loadLinks(from url: URL) -> [String: String] {
-        guard let data = FileManager.default.contents(atPath: url.path),
-              let decoded = try? JSONDecoder().decode([String: String].self, from: data)
-        else { return [:] }
-        return decoded
+        guard let object = try? readLinks(url) else { return [:] }
+        return object.compactMapValues { $0 as? String }
     }
 
+    /// Write `links` over the file's own object: an entry the reader
+    /// skips stays as it is, and a file that is there but isn't a JSON
+    /// object throws instead of being replaced, so one bad character
+    /// never costs every saved link.
     public static func saveLinks(_ links: [String: String], to url: URL) throws {
+        var object = (try readLinks(url) ?? [:]).filter { !($0.value is String) }
+        for (base, id) in links { object[base] = id }
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
-        try JSONEncoder().encode(links).write(to: url, options: .atomic)
+        try data.write(to: url, options: .atomic)
+    }
+
+    /// The links file's object; nil when there is no file (or it is
+    /// blank). Throws `CocoaError(.fileReadCorruptFile)` when it is there
+    /// but isn't a JSON object.
+    private static func readLinks(_ url: URL) throws -> [String: Any]? {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile
+                    || error.code == .fileNoSuchFile {
+            return nil
+        }
+        if data.allSatisfy({ [0x20, 0x09, 0x0A, 0x0D].contains($0) }) { return nil }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: url.path])
+        }
+        return object
     }
 
     /// The AA model `logged` names, or nil: the headline entry of the
@@ -327,18 +352,5 @@ public struct ModelMatcher: Sendable {
             name = String(name[..<range.lowerBound])
         }
         return name
-    }
-}
-
-/// Where a model's blended price lands on AA's whole price scale:
-/// `(cheaper + 0.5 × same-priced others) / (count − 1)`, clamped to 0…1.
-/// Equal-priced models share a spot, which is how pickers rank them.
-public enum CostPercentile {
-    public static func rank(of model: AALanguageModel, in models: [AALanguageModel]) -> Double? {
-        let priced = models.compactMap(\.priceBlended).filter { $0 > 0 }
-        guard let price = model.priceBlended, price > 0, priced.count > 1 else { return nil }
-        let lower = priced.filter { $0 < price }.count
-        let equal = priced.filter { $0 == price }.count - 1 // itself excluded
-        return min(max((Double(lower) + 0.5 * Double(equal)) / Double(priced.count - 1), 0), 1)
     }
 }

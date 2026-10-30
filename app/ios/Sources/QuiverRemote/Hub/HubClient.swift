@@ -25,9 +25,18 @@ struct HubError: LocalizedError, Equatable {
     var errorDescription: String? { message }
     var isUnauthorized: Bool { status == 401 }
 
+    static let networkMessage = "Can't reach the hub. Check that Tailscale is on."
+
     static func network(_ error: Error) -> HubError {
-        HubError(status: 0, code: "network",
-                 message: "Can't reach the hub. Check that Tailscale is on.")
+        HubError(status: 0, code: "network", message: networkMessage)
+    }
+
+    /// The message under a "Can't reach the hub" title. The network
+    /// error's first sentence is that title, so only the next step stays
+    /// (the web app's "Check the connection, then try again", worded for
+    /// the tailnet). Any other failure keeps its own words.
+    static func detail(underUnreachableTitle message: String) -> String {
+        message == networkMessage ? "Check that Tailscale is on, then try again." : message
     }
 }
 
@@ -36,8 +45,11 @@ struct HubError: LocalizedError, Equatable {
 struct HubClient: Sendable {
     let baseURL: URL
     let credential: String?
+    /// The session REST calls go through; tests hand in one whose
+    /// protocol is stubbed.
+    var session: URLSession = HubClient.requestSession
 
-    private static let session: URLSession = {
+    static let requestSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.waitsForConnectivity = false
@@ -102,8 +114,15 @@ struct HubClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await Self.session.data(for: req)
+            (data, response) = try await session.data(for: req)
         } catch {
+            // URLSession reports a cancelled task as URLError(.cancelled):
+            // leaving a page is not a hub that can't be reached, so callers
+            // get CancellationError and ignore it.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled
+                || Task.isCancelled {
+                throw CancellationError()
+            }
             throw HubError.network(error)
         }
         let http = response as? HTTPURLResponse
@@ -162,8 +181,6 @@ struct HubClient: Sendable {
 
     // MARK: Routes
 
-    func status() async throws -> JSONValue { try await send(request("GET", "/v1/status")) }
-
     func sessions() async throws -> SessionsResponse { try await send(request("GET", "/v1/sessions")) }
 
     /// `GET /v1/inbox`: this device's undismissed pending rows — the
@@ -209,6 +226,32 @@ struct HubClient: Sendable {
                                       body: body))
     }
 
+    /// `POST /v1/app/repositories/merge {repo, number, method, auto}`:
+    /// the web app's merge, which the hub serves to any paired device.
+    /// The hub reads the PR again first and refuses (409) a merge the
+    /// detail page wouldn't offer any more; GitHub's own refusals come
+    /// back as a 502 in its words.
+    func mergePull(repo: String, number: Int, method: MergeMethod, auto: Bool) async throws {
+        _ = try await raw(mergeRequest(repo: repo, number: number, method: method, auto: auto))
+    }
+
+    func mergeRequest(repo: String, number: Int, method: MergeMethod, auto: Bool) -> URLRequest {
+        request("POST", "/v1/app/repositories/merge",
+                body: ["repo": repo, "number": number, "method": method.rawValue, "auto": auto])
+    }
+
+    /// `POST /v1/app/repositories/rerun {repo, run, failed}`: re-run a
+    /// workflow run's failed jobs, or all of them. GitHub decides what
+    /// can re-run; its refusal comes back as a 502 in its words.
+    func rerunRun(repo: String, run: Int, failed: Bool) async throws {
+        _ = try await raw(rerunRequest(repo: repo, run: run, failed: failed))
+    }
+
+    func rerunRequest(repo: String, run: Int, failed: Bool) -> URLRequest {
+        request("POST", "/v1/app/repositories/rerun",
+                body: ["repo": repo, "run": run, "failed": failed])
+    }
+
     /// "o/r" as the `/v1/pulls/<owner>/<repo>` path pair, each part
     /// percent-encoded on its own.
     static func repoPath(_ repo: String) -> String {
@@ -235,16 +278,37 @@ struct HubClient: Sendable {
                                query: refresh ? ["refresh": "1"] : [:]))
     }
 
-    /// `POST /v1/issues/resolve {repo, number, harness, prompt?, model?}`
+    /// `POST /v1/issues/resolve {repo, number, harness, prompt?, context?, model?}`
     /// → a launch on branch `quiver/issue-<n>` in the issue's worktree;
     /// poll `launch(_:)` for the session key, as for `startSession`. An
-    /// empty `prompt` lets the hub build its resolve brief; a nil `model`
-    /// sends no pick.
-    func resolveIssue(repo: String, number: Int, harness: String, prompt: String, model: String? = nil) async throws -> LaunchStatus {
+    /// empty `prompt` lets the hub build its resolve brief; `context`
+    /// joins it as a "Context for this run" block; a nil `model` sends
+    /// no pick.
+    func resolveIssue(repo: String, number: Int, harness: String, prompt: String,
+                      context: String = "", model: String? = nil) async throws -> LaunchStatus {
+        try await send(resolveIssueRequest(repo: repo, number: number, harness: harness,
+                                           prompt: prompt, context: context, model: model))
+    }
+
+    func resolveIssueRequest(repo: String, number: Int, harness: String, prompt: String,
+                             context: String = "", model: String? = nil) -> URLRequest {
         var body: [String: Any] = ["repo": repo, "number": number, "harness": harness]
         if !prompt.isEmpty { body["prompt"] = prompt }
+        if !context.isEmpty { body["context"] = context }
         if let model, !model.isEmpty { body["model"] = model }
-        return try await send(request("POST", "/v1/issues/resolve", body: body))
+        return request("POST", "/v1/issues/resolve", body: body)
+    }
+
+    /// `POST /v1/issues/comment {repo, number, body}`: post a comment on
+    /// the issue through the hub's own `gh` login, as the Mac posts
+    /// through `gh` on the Mac. The hub trims the text and refuses a
+    /// blank one; GitHub's own refusals come back as a 502 in its words.
+    func commentOnIssue(repo: String, number: Int, body: String) async throws -> IssueCommentReply {
+        try await send(commentRequest(repo: repo, number: number, body: body))
+    }
+
+    func commentRequest(repo: String, number: Int, body: String) -> URLRequest {
+        request("POST", "/v1/issues/comment", body: ["repo": repo, "number": number, "body": body])
     }
 
     // MARK: Tasks
@@ -343,8 +407,11 @@ struct HubClient: Sendable {
     /// Returns true when the hub queued it for a satellite (202), so the
     /// outcome arrives later as `command.result` or `session.ownership`.
     @discardableResult
-    func control(_ key: String, op: String) async throws -> Bool {
-        let (_, status) = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/control", body: ["op": op]))
+    func control(_ key: String, op: String, value: String? = nil, clientId: String? = nil) async throws -> Bool {
+        var body: [String: Any] = ["op": op]
+        if let value { body["value"] = value }
+        if let clientId { body["client_id"] = clientId }
+        let (_, status) = try await raw(request("POST", "/v1/sessions/\(Self.encodeKey(key))/control", body: body))
         return status == 202
     }
 

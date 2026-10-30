@@ -9,10 +9,14 @@ const Fmt = (() => {
   }
 
   function tokens(count) {
-    for (const [limit, suffix] of [[1e9, "B"], [1e6, "M"], [1e3, "K"]]) {
-      if (count >= limit) return compact(count / limit) + suffix;
-    }
-    return String(count || 0);
+    const units = [[1e3, "K"], [1e6, "M"], [1e9, "B"]];
+    let unit = -1;
+    units.forEach(([limit], i) => { if (count >= limit) unit = i; });
+    if (unit < 0) return String(count || 0);
+    // The unit after rounding: 999,950 rounds to 1000K, which reads as 1M.
+    while (unit + 1 < units.length
+           && Math.round((count / units[unit][0]) * 10) / 10 >= 1000) unit += 1;
+    return compact(count / units[unit][0]) + units[unit][1];
   }
 
   function dollars(amount) {
@@ -42,8 +46,11 @@ const Fmt = (() => {
     "qoder-cn": "Qoder CN", "grok-bot": "Grok Bot", "grok": "Grok Build", "kilo": "Kilo Code",
     "goose": "Goose", "aider": "Aider", "zcode": "ZCode",
   };
+  const nameOf = (id) => NAMES[id] || (id ? id[0].toUpperCase() + id.slice(1) : "");
+  /* HarnessMark(id).name: a second account ("codex-acc2") reads
+   * "Codex (acc2)", as every Mac page names it. */
   function harnessName(id) {
-    return NAMES[id] || (id ? id[0].toUpperCase() + id.slice(1) : "");
+    return mark(id).name;
   }
 
   /* HarnessColor.fixed, then the same fallback palette by FNV-1a. */
@@ -64,19 +71,60 @@ const Fmt = (() => {
     return PALETTE[h % PALETTE.length];
   }
 
-  /* The logos shipped in /app/: colour ones drawn as they are, mono ones
-   * inverted in dark mode. */
-  const LOGOS = {
-    claude: "harness-claude-color.svg", codex: "harness-codex-color.svg",
-    opencode: "harness-opencode-color.svg", gemini: "harness-gemini-color.svg",
-    devin: "harness-devin.svg", cursor: "harness-cursor.svg", pi: "harness-pi.svg",
-    droid: "harness-droid.svg", freebuff: "harness-freebuff.svg", cline: "harness-cline.svg",
-  };
+  /* HarnessIcons: every harness-<id>.svg shipped beside the page. Colour ones
+   * are drawn as they are (harness-<id>-color.svg), mono ones inverted in
+   * dark mode. Keep in step with the files beside this script. */
+  const COLOR_LOGOS = new Set(("antgroup arcade browserbase cartesia claude cloudflare codex cohere deepseek "
+    + "fireworks gemini honeycomb meta minimax mistral-vibe nvidia opencode perplexity qwen-code sourcegraph "
+    + "statsig stepfun upstage workos zapier").split(" "));
+  const MONO_LOGOS = new Set(("ai21 anyscale assemblyai astronomer atlassian augment baseten bitbucket blackbox bolt braintrust buildkite "
+    + "cerebras circleci clerk cline clickhouse cockroach codecov contentful convex copilot crates cursor datadog deepgram devin "
+    + "digitalocean discord docker droid e2b elevenlabs expo figma flyio freebuff grafana grok groq hashicorp "
+    + "incidentio inngest kilo kimi lambda langfuse launchdarkly linear linode loom lovable mailgun make manus maven mongodb morph "
+    + "nebius netlify newrelic ngrok notion npm ona openai pi pinecone planetscale poe postman prefect prisma pypi render replit "
+    + "revenuecat rubygems runloop sambanova sanity semaphore sentry snowflake snyk sonatype stability supermemory supabase tailscale tavily "
+    + "temporal travisci twilio upstash v0 vercel warp windsurf writer xiaomimimo yi zai").split(" "));
+  // HarnessIcons.aliases: other names the same harness goes by.
+  const ALIASES = { "claude-code": "claude", "github-copilot": "copilot", factory: "droid", qwen: "qwen-code",
+    mistral: "mistral-vibe", codebuff: "freebuff", "command-code": "commandcode" };
+  function logoFile(id) {
+    const key = ALIASES[String(id).toLowerCase()] || String(id).toLowerCase();
+    if (COLOR_LOGOS.has(key)) return `harness-${key}-color.svg`;
+    if (MONO_LOGOS.has(key)) return `harness-${key}.svg`;
+    return null;
+  }
+
+  /* HarnessMark: the logo to draw (or null), a word after it where the
+   * logo alone is ambiguous (or alone when there is no logo), and the
+   * full name for tooltips. Claude's logo stands for the CLI and the
+   * Desktop app; a second account ("codex-acc2") shows its base harness's
+   * logo and the suffix. */
+  function mark(id) {
+    id = String(id || "");
+    const special = {
+      claude: ["claude", "CLI"], "claude-desktop": ["claude", "Desktop"],
+      "grok-bot": ["grok", null], "devin-cloud": ["devin", "Cloud"],
+    };
+    if (special[id]) return { icon: special[id][0], word: special[id][1], name: nameOf(id) };
+    if (logoFile(id)) return { icon: id, word: null, name: nameOf(id) };
+    const dash = id.lastIndexOf("-");
+    if (dash > 0) {
+      const base = id.slice(0, dash), suffix = id.slice(dash + 1);
+      if (suffix && logoFile(base)) return { icon: base, word: suffix, name: `${nameOf(base)} (${suffix})` };
+    }
+    return { icon: null, word: nameOf(id), name: nameOf(id) };
+  }
+
+  /* A harness's logo (claude-desktop and codex-acc2 draw their base
+   * harness's). One with no logo keeps an empty square, as the Mac's
+   * HarnessIcon does, so rows line up; mark().word names it where text
+   * has to stand in. */
   function logo(id, cls = "logo") {
-    const file = LOGOS[id];
+    const m = mark(id);
+    const file = m.icon && logoFile(m.icon);
     if (!file) return `<span class="${cls}" aria-hidden="true"></span>`;
     const mono = file.endsWith("-color.svg") ? "" : " mono";
-    return `<img class="${cls}${mono}" src="/app/${file}" alt="${harnessName(id)}">`;
+    return `<img class="${cls}${mono}" src="/${file}" alt="${m.name.replace(/"/g, "&quot;")}">`;
   }
 
   /* MarbleScale: one marble per round amount of spend (1, 2, 5 times a
@@ -105,6 +153,21 @@ const Fmt = (() => {
       bySpend, step,
       counts: shown.map((s, i) => ({ harness: s.harness, count: counts[i] })),
     };
+  }
+
+  /* Foundation's .relative(presentation: .named), as Settings' devices and
+   * Service status show times: "now", "5 minutes ago", "yesterday". Every
+   * time shown this way is past; a hub clock a little ahead of this
+   * browser's must not read "in 2 minutes". */
+  function relative(epoch, now = Date.now() / 1000) {
+    const diff = Math.min(0, epoch - now);
+    const abs = Math.abs(diff);
+    const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
+    for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["week", 604800],
+      ["day", 86400], ["hour", 3600], ["minute", 60]]) {
+      if (abs >= size) return rtf.format(Math.trunc(diff / size), unit);
+    }
+    return abs < 1 ? "now" : rtf.format(Math.trunc(diff), "second");
   }
 
   /* UsageFormat.resetIn: "in 12m", "in 4h 28m", "in 25d"; minutes round up. */
@@ -220,7 +283,21 @@ const Fmt = (() => {
   const shellWord = (s) => (/^[\w@%+=:,./-]+$/.test(String(s)) ? String(s)
     : `'${String(s).replace(/'/g, "'\\''")}'`);
 
-  return { tokens, dollars, ago, harnessName, harnessColor, logo, marbleScale,
+  /* A session's model as a header or list row shows it, the iPhone's
+   * ModelLabel.short: the id without its provider path or an 8-digit
+   * date stamp ("anthropic/claude-opus-4-5" and "claude-opus-4-5-20251101"
+   * both read "claude-opus-4-5"; "openrouter/nvidia/nemotron-3:free"
+   * reads "nemotron-3:free"). "" for a missing or blank one. */
+  function modelName(raw) {
+    const trimmed = typeof raw === "string" ? raw.trim() : "";
+    if (!trimmed) return "";
+    const parts = trimmed.split("/").filter(Boolean);
+    const name = parts.length ? parts[parts.length - 1] : trimmed;
+    const dash = name.lastIndexOf("-");
+    return dash > 0 && /^[0-9]{8}$/.test(name.slice(dash + 1)) ? name.slice(0, dash) : name;
+  }
+
+  return { tokens, dollars, ago, relative, harnessName, modelName, harnessColor, logo, mark, marbleScale,
     resetIn, windowLabel, planTitle, money, balance, onDemand,
     copyIcon, copy, copyTick, shellWord };
 })();

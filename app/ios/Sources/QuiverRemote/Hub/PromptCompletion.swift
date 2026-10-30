@@ -343,6 +343,14 @@ final class CommandMenu {
     private static var nextSeq = 0
     @ObservationIgnored private var generation = 0
 
+    /// Forgets every kept list, so one test's lists can't fill another's
+    /// menu (tests).
+    static func forgetKeptLists() {
+        lists = [:]
+        seqs = [:]
+        nextSeq = 0
+    }
+
     /// `lists`' key for this menu: the hub scope plus the session key.
     private var listKey: String? { cacheKey.map { "\(scope())|\($0)" } }
 
@@ -430,6 +438,8 @@ final class CommandMenu {
             guard gen == generation else { return }
             response = body
             error = nil
+        } catch is CancellationError {
+            // Pull to refresh was cut short: keep the list shown.
         } catch {
             guard gen == generation else { return }
             self.error = Self.message(for: error)

@@ -542,11 +542,6 @@ def shield_credentials(server: dict, home: Path | None = None) -> tuple[dict | N
     return out, notes
 
 
-def store_env(home: Path | None = None) -> dict[str, str]:
-    """The store merged over os.environ, for callers that want a full env."""
-    return {**os.environ, **load_secrets(home)}
-
-
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -576,16 +571,70 @@ def set_secret(name: str, value: str, home: Path | None = None) -> tuple[Path, b
     Raises :class:`ValueError` on a bad name, an empty or multi-line value,
     or a value no line here could store (see :func:`render_secret_line`).
     """
-    if not _NAME_RE.fullmatch(name):
-        raise ValueError(
-            f"{name} isn't a valid variable name: letters, digits and "
-            "underscores, not starting with a digit")
+    _check_name(name)
     if not value:
         raise ValueError("empty value; pipe one in, e.g. `printf %s \"$V\" | swe mcp secret set NAME`")
     if "\n" in value or "\r" in value:
         raise ValueError("a value can't span more than one line")
     line = render_secret_line(name, value)
 
+    def edit(lines: list[str]) -> list[str]:
+        # Every line for the name, not just the first: load_secrets keeps the
+        # last one, so a stale duplicate further down would win.
+        replaced = False
+        for i, existing in enumerate(lines):
+            body = existing.rstrip("\r\n")
+            match = _EXPORT_RE.match(body)
+            if match and match.group(1) == name:
+                lines[i] = line + (existing[len(body):] or "\n")
+                replaced = True
+        if not replaced:
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+            lines.append(line + "\n")
+        return lines
+
+    shown, created = _rewrite_store(home, edit)
+    if load_secrets(home).get(name) != value:
+        raise ValueError(f"the value could not be written in a form {shown} reads back")
+    return shown, created
+
+
+def _check_name(name: str) -> None:
+    if not _NAME_RE.fullmatch(name):
+        raise ValueError(
+            f"{name} isn't a valid variable name: letters, digits and "
+            "underscores, not starting with a digit")
+
+
+def remove_secret(name: str, home: Path | None = None) -> bool:
+    """Drop every ``NAME`` line from the MCP secrets file; True when one
+    was there. Every other line stays byte-for-byte. A missing store, or
+    one without the name, is left untouched. Raises :class:`ValueError`
+    on a bad name, as :func:`set_secret` does."""
+    _check_name(name)
+    if name not in load_secrets(home):
+        return False
+    found = False
+
+    def edit(lines: list[str]) -> list[str]:
+        nonlocal found
+        kept = []
+        for existing in lines:
+            match = _EXPORT_RE.match(existing.rstrip("\r\n"))
+            if match and match.group(1) == name:
+                found = True
+                continue
+            kept.append(existing)
+        return kept
+
+    _rewrite_store(home, edit)
+    return found
+
+
+def _rewrite_store(home: Path | None, edit) -> tuple[Path, bool]:
+    """Rewrite the MCP secrets file through ``edit(lines) -> lines`` under
+    its lock, swapped in atomically; return (shown path, created)."""
     shown = secrets_file_for(home)
     # Quiver's own folder is private; a store symlinked elsewhere keeps
     # whatever access its real folder has.
@@ -615,20 +664,7 @@ def set_secret(name: str, value: str, home: Path | None = None) -> tuple[Path, b
                 text = handle.read()
         except FileNotFoundError:
             text = ""
-        lines = text.splitlines(keepends=True)
-        # Every line for the name, not just the first: load_secrets keeps the
-        # last one, so a stale duplicate further down would win.
-        replaced = False
-        for i, existing in enumerate(lines):
-            body = existing.rstrip("\r\n")
-            match = _EXPORT_RE.match(body)
-            if match and match.group(1) == name:
-                lines[i] = line + (existing[len(body):] or "\n")
-                replaced = True
-        if not replaced:
-            if lines and not lines[-1].endswith("\n"):
-                lines[-1] += "\n"
-            lines.append(line + "\n")
+        lines = edit(text.splitlines(keepends=True))
 
         fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
         try:
@@ -648,7 +684,4 @@ def set_secret(name: str, value: str, home: Path | None = None) -> tuple[Path, b
     # The store sits under secrets/, which must stay out of any `git add .`.
     from quiver.init.migrate import seal_secrets_dir
     seal_secrets_dir(home)
-
-    if load_secrets(home).get(name) != value:
-        raise ValueError(f"the value could not be written in a form {shown} reads back")
     return shown, created

@@ -119,11 +119,6 @@ class TestApprovalTokens(unittest.TestCase):
         self.assertFalse(self.tokens.consume(a, "k1", "r1"))
         self.assertTrue(self.tokens.consume(b, "k1", "r2"))
 
-    def test_drop_session_retires_tokens(self):
-        tok = self.tokens.mint("k1", "r1")
-        self.tokens.drop_session("k1")
-        self.assertFalse(self.tokens.consume(tok, "k1", "r1"))
-
     def test_burn_on_mismatch(self):
         # A mismatched request_id is a failed spend, not a free probe:
         # the token is gone for its real binding too.
@@ -289,7 +284,7 @@ class TestHandle(unittest.TestCase):
             ("needs_you", "Needs you", 4, "bell"),
             ("finished", "Finished", 3, "bell"),
             ("error", "Errored", 4, "rotating_light"),
-            ("limit", "Limit hit", 3, "bell"),
+            ("limit", "Limit hit", 4, "hourglass"),
         ]
         for kind, label, prio, tag in cases:
             self.posts.clear()
@@ -300,6 +295,21 @@ class TestHandle(unittest.TestCase):
             self.assertIn(label.lower(), post["title"])
             self.assertEqual(post["priority"], prio)
             self.assertEqual(post["tags"], [tag])
+
+    def test_limit_carries_harness_line_redacted(self):
+        self.n._handle({"type": "notify", "session": "k1", "data": {
+            "kind": "limit",
+            "message": "You've hit your session limit · resets 9:30am "
+                       "sk-abcdefghijklmnop " + "x " * 200}}, self.cfg)
+        msg = self.posts[0]["message"]
+        self.assertTrue(msg.startswith("You've hit your session limit"))
+        self.assertNotIn("sk-abcdefghijklmnop", msg)
+        self.assertEqual(len(msg), 280)
+        # Other kinds still post an empty body.
+        self.posts.clear()
+        self.n._handle({"type": "notify", "session": "k1", "data": {
+            "kind": "finished", "message": "ignored"}}, self.cfg)
+        self.assertEqual(self.posts[0]["message"], "")
 
     def test_unknown_notify_kind_skipped(self):
         self.n._handle({"type": "notify", "session": "k1",
@@ -325,6 +335,34 @@ class TestHandle(unittest.TestCase):
                           return_value=None):
             self.assertEqual(self.n._session_title("k1"), "Quiver")
 
+
+    def test_session_title_redacted_in_every_post(self):
+        secret = "sk-ant-abcdefghijklmnopqrstuvwxyz0123"
+        row = {"title": f"deploy with ANTHROPIC_API_KEY={secret} now"}
+        with patch.object(self.state.catalog, "row_for",
+                          return_value=row):
+            self.n._handle({"type": "notify", "session": "k1",
+                            "data": {"kind": "finished"}}, self.cfg)
+            self.n._handle({"type": "approval.requested", "session": "k1",
+                            "data": {"request_id": "r1",
+                                     "prompt": "Allow Bash"}}, self.cfg)
+        self.assertEqual(len(self.posts), 2)
+        for post in self.posts:
+            self.assertNotIn(secret, post["title"])
+            self.assertNotIn(secret[:20], post["title"])
+            self.assertIn("[REDACTED]", post["title"])
+
+    def test_session_title_redacts_before_the_cut(self):
+        # A bare token straddling character 60: cut first, its visible
+        # prefix is too short for the token pattern and would leak.
+        token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1"
+        row = {"title": "x" * 52 + " " + token}
+        with patch.object(self.state.catalog, "row_for",
+                          return_value=row):
+            title = self.n._session_title("k1")
+        self.assertNotIn("ghp_", title)
+        self.assertNotIn("A1b2", title)
+        self.assertTrue(title.startswith("x" * 52 + " [REDACT"), title)
 
 class TestPost(unittest.TestCase):
     def setUp(self):
@@ -359,6 +397,47 @@ class TestPost(unittest.TestCase):
                "ntfy_token": "tok"}
         req = self._captured(cfg)
         self.assertEqual(req.get_header("Authorization"), "Bearer tok")
+
+    def test_post_retries_a_cert_failure_on_the_os_bundle(self):
+        # python.org builds ship no CA store: the default context fails
+        # every https push until the OS bundle is loaded.
+        import ssl
+        import urllib.error
+        from quiver.remote import agent as agent_mod
+        self.addCleanup(setattr, agent_mod, "_fallback_ctx", None)
+        ctx = object()
+        calls = []
+
+        def fake(req, timeout=None, context=None):
+            calls.append(context)
+            if context is None:
+                raise urllib.error.URLError(
+                    ssl.SSLCertVerificationError("no CA"))
+            m = MagicMock()
+            m.__enter__.return_value = m
+            return m
+
+        with patch("urllib.request.urlopen", fake), \
+             patch("quiver.harness.rate_limits._verified_context",
+                   return_value=ctx):
+            self.n._post({"url": "https://n.test", "topic": "t"},
+                         {"topic": "t"})
+        self.assertEqual(calls, [None, ctx])
+
+    def test_post_failure_warns_once_per_outage(self):
+        cfg = {"url": "https://n.test", "topic": "t"}
+        with patch("urllib.request.urlopen", side_effect=OSError("down")), \
+             patch.object(notify, "_warn") as warn:
+            for _ in range(3):
+                with self.assertRaises(OSError):
+                    self.n._post(cfg, {"topic": "t"})
+        self.assertEqual(warn.call_count, 1)
+        self._captured(cfg)  # a success re-arms the warning
+        with patch("urllib.request.urlopen", side_effect=OSError("down")), \
+             patch.object(notify, "_warn") as warn:
+            with self.assertRaises(OSError):
+                self.n._post(cfg, {"topic": "t"})
+        self.assertEqual(warn.call_count, 1)
 
     def test_post_propagates_http_errors(self):
         cfg = {"url": "https://n.test", "topic": "t"}

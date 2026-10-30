@@ -228,6 +228,10 @@ def main(sources):
     base = Path(sources).parent
     outputs, problems = {}, []
     for row in rows:
+        # The id becomes a file name under OUT: no separators, no "..".
+        if not re.fullmatch(r"[a-z0-9-]+", row["id"] or ""):
+            problems.append(f"{row['id']!r}: id must be lowercase letters, digits and dashes")
+            continue
         kind = row["kind"]
         if kind not in ("mono", "color"):
             problems.append(f"{row['id']}: kind must be mono or color, not {kind!r}")

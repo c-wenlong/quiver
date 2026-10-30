@@ -10,18 +10,18 @@ simply drops offline on the hub until it wakes and replays the queue.
 
 import json
 import os
-import queue as queue_mod
 import ssl
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from pathlib import Path
 
 from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
-from quiver.remote import inject, journal, protocol, supervise, tail
+from quiver.remote import inject, journal, protocol, sendq, supervise, tail
 from quiver.remote import fork as fork_mod, usage as usage_mod
 from quiver.remote.detach import PendingDetaches
 
@@ -35,7 +35,16 @@ CATALOG_BODY_MAX = (4 << 20) - (64 << 10)
 # An events POST is held to the same size: a batch is cut by encoded
 # bytes as well as count, and an event too big to go alone is clipped.
 EVENTS_BODY_MAX = CATALOG_BODY_MAX
+# Commands that run on the session's queue, in order, off the stream.
+_SESSION_QUEUED_OPS = frozenset({"message", "attachment"})
 OUTBOX_KEY = "_outbox"             # journal key for unsent uplink events
+# Same as the hub's: a ``queue``-mode send polls a fresh status on this
+# cadence and fails honestly once a turn outlives the cap.
+QUEUE_POLL_S = 2.0
+QUEUE_WAIT_MAX_S = 1800
+# How long a queue-mode send that reached idle waits for an attachment
+# pull it names to finish downloading.
+PULL_WAIT_MAX_S = 300
 # The in-memory uplink buffer keeps no more than the outbox journal's
 # ring does across a restart; while the hub is down the oldest go first.
 OUTBOX_MAX = journal.RING_MAX
@@ -198,6 +207,8 @@ class RemoteAgent:
         # Last "/" menu payload the hub accepted; see _push_catalog.
         self._slash_digest: str | None = None
         self._slash_skipped: str | None = None
+        # Row count last trimmed to fit a push, so the note prints once.
+        self._rows_trimmed: int | None = None
         # Set after a printed 403 register refusal, so the loop retries
         # without re-printing; cleared on the next accepted register.
         self._register_denied: str | None = None
@@ -205,9 +216,17 @@ class RemoteAgent:
         self._outbox_lock = threading.Lock()
         self._stop = threading.Event()
         # Commands dispatch on the stream thread except ``message``,
-        # which can run minutes (headless claude): those go through
-        # ``_work_q`` so a queued interrupt/detach isn't stuck behind it.
-        self._work_q: "queue_mod.Queue" = queue_mod.Queue()
+        # which can run minutes (headless claude) or wait out a turn
+        # (``queue`` mode), and attachment pulls: those go through
+        # ``_sendq``, one worker per session like the hub's, so a queued
+        # interrupt/detach isn't stuck behind a run and one session's
+        # turn doesn't hold every other session's messages.
+        self._sendq = sendq.SendQueue()
+        # Attachment pulls not finished yet, by (session, ref): a
+        # queue-mode send waits on its own lane, so it can't count on
+        # the session lane's order to find its file staged.
+        self._pulls: dict[tuple[str, str], threading.Event] = {}
+        self._pulls_lock = threading.Lock()
         # ``detach`` with ``mode: when_idle``, waiting out a turn here.
         self.detaches = PendingDetaches(self._stop)
         # Fresh per-session status for those waits; tests stub it.
@@ -225,6 +244,11 @@ class RemoteAgent:
         # The stream thread, the work loop and fork threads all finish
         # commands; the cursor advance must not interleave.
         self._done_lock = threading.Lock()
+        # Bumped when the hub's command journal starts over under our
+        # cursor (``_reset_cmd_cursor``); see ``_mark_done``.
+        self._cmd_epoch = 0
+        # The ``?last=`` the current command stream sent.
+        self._stream_cursor = self._done_cmd_seq
         from quiver.sessions.status import session_statuses
         # Same status re-probe as the hub: the satellite's tailer emits
         # session.status itself, and its catalog push carries the
@@ -280,7 +304,9 @@ class RemoteAgent:
         path = self._cmd_cursor_file()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({
+            # Atomic: a crash mid-write left a torn file that loaded as
+            # no cursor, so the whole backlog replayed and re-ran.
+            atomic_write_text(path, json.dumps({
                 "hub": self.hub,
                 "seq": self._done_cmd_seq,
                 # Done seqs above the contiguous floor — without them a
@@ -307,15 +333,23 @@ class RemoteAgent:
 
     def _save_outbox_ack(self) -> None:
         try:
-            self._outbox_ack_file().write_text(str(self._outbox_ack))
+            # Atomic: a torn file reads as ack 0 and resends the outbox.
+            atomic_write_text(self._outbox_ack_file(), str(self._outbox_ack))
         except OSError:
             pass
 
-    def _mark_done(self, seq: int | None) -> None:
-        """Advance the completed cursor to the highest contiguous seq."""
+    def _mark_done(self, seq: int | None, epoch: int | None = None) -> None:
+        """Advance the completed cursor to the highest contiguous seq.
+
+        ``epoch`` is ``_cmd_epoch`` when the command arrived: a command
+        from before a journal reset finishing late must not mark the
+        new journal's seq of the same number done.
+        """
         if not isinstance(seq, int):
             return
         with self._done_lock:
+            if epoch is not None and epoch != self._cmd_epoch:
+                return
             self._done_set.add(seq)
             while self._done_cmd_seq + 1 in self._done_set:
                 self._done_cmd_seq += 1
@@ -418,7 +452,8 @@ class RemoteAgent:
                     "session.launched", key, self.machine_id,
                     {"launch_id": lid},
                 ))
-        body = {"machine_id": self.machine_id, "rows": rows}
+        body = {"machine_id": self.machine_id,
+                "rows": self._fit_rows(rows)}
         # The "/" menu's custom commands live on this machine's disk; send
         # them only when they changed, so the 10 s push stays small.
         try:
@@ -447,6 +482,31 @@ class RemoteAgent:
         if self._refresh_launchable():
             self._register()
         return status == 200
+
+    def _fit_rows(self, rows: list[dict]) -> list[dict]:
+        """The newest rows whose push fits under ``CATALOG_BODY_MAX``.
+
+        A machine with thousands of sessions can list more than the hub
+        takes in one body; refused whole, the push failed every 10 s
+        and the hub never heard of a new session. Rows come newest
+        first, so the oldest are the ones left out.
+        """
+        base = len(json.dumps({"machine_id": self.machine_id, "rows": []},
+                              ensure_ascii=False).encode("utf-8"))
+        total = base
+        for n, row in enumerate(rows):
+            # _post's json.dumps puts ", " between rows.
+            total += len(json.dumps(row, ensure_ascii=False)
+                         .encode("utf-8")) + (2 if n else 0)
+            if total > CATALOG_BODY_MAX:
+                if self._rows_trimmed != len(rows):
+                    self._rows_trimmed = len(rows)
+                    print(f"swe remote agent: {len(rows)} sessions are too "
+                          f"many for one catalog push; sending the newest "
+                          f"{n}", file=sys.stderr)
+                return rows[:n]
+        self._rows_trimmed = None
+        return rows
 
     def _push_usage(self) -> bool:
         body = usage_mod.snapshot()
@@ -493,9 +553,13 @@ class RemoteAgent:
 
     def _command_stream(self) -> None:
         """GET /v1/agent/commands as an SSE stream; dispatch each command."""
+        # The cursor this connection asks from: a journal.truncated
+        # reply is judged against it, not against a floor that commands
+        # finishing meanwhile moved on.
+        self._stream_cursor = self._done_cmd_seq
         url = (
             f"{self.hub}/v1/agent/commands"
-            f"?machine={self.machine_id}&last={self._done_cmd_seq}"
+            f"?machine={self.machine_id}&last={self._stream_cursor}"
         )
         req = urllib.request.Request(url, headers=_headers(self.cred, None))
         try:
@@ -512,8 +576,12 @@ class RemoteAgent:
                     line = raw.rstrip(b"\n")
                     if line == b"":
                         if data_lines:
-                            self._handle_frame(b"\n".join(data_lines))
+                            frame = b"\n".join(data_lines)
                             data_lines = []
+                            if self._handle_frame(frame) == "reset":
+                                # Reconnect from the new cursor, so the
+                                # hub's backlog floor follows it down.
+                                break
                         continue
                     if line.startswith(b"data:"):
                         data_lines.append(line[5:].lstrip())
@@ -522,13 +590,20 @@ class RemoteAgent:
         if not self._stop.is_set():
             time.sleep(1)
 
-    def _handle_frame(self, blob: bytes) -> None:
+    def _handle_frame(self, blob: bytes) -> str | None:
+        """Act on one SSE frame; "reset" when it moved the command
+        cursor back (the stream should reconnect from there)."""
         try:
             ev = json.loads(blob.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            return
-        if not isinstance(ev, dict) or ev.get("type") != "command":
-            return
+            return None
+        if not isinstance(ev, dict):
+            return None
+        if ev.get("type") == "journal.truncated":
+            return self._reset_cmd_cursor(ev.get("seq"))
+        if ev.get("type") != "command":
+            return None
+        epoch = self._cmd_epoch
         seq = ev.get("seq")
         if isinstance(seq, int):
             if seq in self._done_set:
@@ -536,43 +611,185 @@ class RemoteAgent:
                 # floor the replay started from: seen it, don't run
                 # it again. The wire cursor still moves.
                 self._last_cmd_seq = max(self._last_cmd_seq, seq)
-                return
+                return None
             if seq <= self._last_cmd_seq:
-                return
+                return None
             self._last_cmd_seq = seq
-        if (ev.get("data") or {}).get("op") == "message":
-            # Headless sends block for the whole turn — queue them so a
-            # later interrupt/detach isn't stuck behind the run.
-            self._work_q.put((seq, ev))
-            return
-        if (ev.get("data") or {}).get("op") == "fork":
-            # Booting the fork's pane can take 30 s: run it beside the
-            # stream so an interrupt or detach behind it goes at once.
-            # The cursor still waits for it, so a crash replays it.
+        op = (ev.get("data") or {}).get("op")
+        if op in _SESSION_QUEUED_OPS:
+            # Headless sends block for the whole turn and an attachment
+            # pull is a download: queue them so a later interrupt/detach
+            # isn't stuck behind them. A session's pulls and steers stay
+            # in order; a queue-mode send waits for idle on its own lane
+            # and then for the pulls it names (``_submit_queued``).
+            # attach stays on the stream: queued behind a turn it could
+            # land after a later detach and undo it. One still queued at
+            # shutdown is left undone, so the replay runs it.
+            self._submit_queued(seq, ev, epoch)
+            return None
+        if op in ("fork", "launch"):
+            # Booting a new session's pane can take 30 s: run it beside
+            # the stream so an interrupt or detach behind it goes at
+            # once. The cursor still waits for it, so a crash replays it.
             threading.Thread(
-                target=self._dispatch_then_done, args=(seq, ev),
-                name=f"agent-fork-{seq}", daemon=True,
+                target=self._dispatch_then_done, args=(seq, ev, epoch),
+                name=f"agent-{op}-{seq}", daemon=True,
             ).start()
-            return
+            return None
         self._dispatch(ev)
-        self._mark_done(seq)
+        self._mark_done(seq, epoch)
+        return None
 
-    def _dispatch_then_done(self, seq, ev: dict) -> None:
+    def _dispatch_then_done(self, seq, ev: dict,
+                            epoch: int | None = None) -> None:
         try:
             self._dispatch(ev)
         finally:
-            self._mark_done(seq)
+            self._mark_done(seq, epoch)
 
-    def _work_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                seq, cmd = self._work_q.get(timeout=0.5)
-            except queue_mod.Empty:
-                continue
-            try:
-                self._dispatch(cmd)
-            finally:
-                self._mark_done(seq)
+    def _submit_queued(self, seq, ev: dict, epoch: int) -> None:
+        """Put a ``message`` or ``attachment`` command on its lane.
+
+        Attachment pulls and steer sends share the session's lane, in
+        order. A ``queue``-mode send gets a lane of its own, as on the
+        hub, and waits there until the session is idle, so it never
+        holds a steer or the pull a steer needs. It first waits for the
+        pulls it names, then for idle. A command the agent stops before
+        running is
+        never marked done, so the hub replays it after the restart.
+        """
+        data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+        key = str(ev.get("session") or "")
+        op = str(data.get("op") or "")
+        if op == "attachment":
+            pull = (key, str(data.get("ref") or ""))
+            done = threading.Event()
+            with self._pulls_lock:
+                self._pulls[pull] = done
+
+            def pull_job() -> None:
+                try:
+                    self._dispatch_then_done(seq, ev, epoch)
+                finally:
+                    with self._pulls_lock:
+                        if self._pulls.get(pull) is done:
+                            del self._pulls[pull]
+                    done.set()
+
+            self._sendq.submit(key, pull_job, lambda: None)
+            return
+        if str(data.get("mode") or "queue") != "queue":
+            self._sendq.submit(
+                key, lambda: self._dispatch_then_done(seq, ev, epoch),
+                lambda: None)
+            return
+
+        def job() -> None:
+            # Pulls first: they run on the session lane, which never
+            # waits on a turn, so they end soon. The idle check then
+            # sits right before the send; a steer that started a turn
+            # during a download is waited out, not typed into.
+            if not self._await_pulls(key, data):
+                return
+            waited = self._wait_idle(key, data)
+            if waited == "stopped":
+                return
+            if waited == "busy":
+                self._report_message(
+                    key, data, False,
+                    "session stayed busy for 30 min; message not sent")
+                self._mark_done(seq, epoch)
+                return
+            self._dispatch_then_done(seq, ev, epoch)
+
+        self._sendq.submit(f"{key}\x00queue", job, lambda: None)
+
+    def _live_status(self, key: str, data: dict) -> str:
+        """The session's status now: a fresh probe, else the tailer's.
+
+        The status in the queued command is stale: the session may have
+        gone idle or errored while we were offline.
+        """
+        fallback = (self.tail_manager.statuses.get(key)
+                    or str(data.get("status") or "done"))
+        session = self.catalog.session_for(key)
+        if session is None:
+            return fallback
+        try:
+            # The catalog's activity time can be minutes old for a turn
+            # that just started; the probe would call it "interrupted".
+            session = self.tail_manager.fresh_session(key, session)
+            got = self.status_of([session])
+        except Exception:
+            return fallback
+        return str(got[0]) if got and got[0] else fallback
+
+    def _wait_idle(self, key: str, data: dict) -> str:
+        """Wait for ``key``'s turn to end: ``idle``, ``busy`` or ``stopped``."""
+        deadline = time.monotonic() + QUEUE_WAIT_MAX_S
+        while self._live_status(key, data) == "active":
+            if self.catalog.session_for(key) is None:
+                # Gone from this machine: stop waiting, and let the
+                # dispatch report the unknown session.
+                return "idle"
+            if time.monotonic() >= deadline:
+                return "busy"
+            if self._stop.wait(QUEUE_POLL_S):
+                return "stopped"
+        return "stopped" if self._stop.is_set() else "idle"
+
+    def _await_pulls(self, key: str, data: dict) -> bool:
+        """Wait for the attachment pulls ``data`` names; False if the
+        agent stopped meanwhile. A pull that never finishes leaves the
+        send to report its attachment unknown."""
+        deadline = time.monotonic() + PULL_WAIT_MAX_S
+        for ref in data.get("attachments") or []:
+            with self._pulls_lock:
+                done = self._pulls.get((key, str(ref)))
+            while done is not None and not done.is_set():
+                if self._stop.is_set():
+                    return False
+                if time.monotonic() >= deadline:
+                    break
+                done.wait(min(QUEUE_POLL_S, 0.5))
+        return not self._stop.is_set()
+
+    def _report_message(
+        self, key: str, data: dict, ok: bool, note: str
+    ) -> None:
+        fields = {"command_id": str(data.get("command_id") or ""),
+                  "op": "message", "ok": ok, "note": note,
+                  "degraded": False}
+        if data.get("client_id"):
+            fields["client_id"] = str(data["client_id"])
+        self._buffer_result(protocol.event(
+            "command.result", key, self.machine_id, fields))
+
+    def _reset_cmd_cursor(self, seq) -> str | None:
+        """The hub answered ``journal.truncated``: start over if it says
+        our cursor is past its command journal (wiped, or a hub that
+        lost its data). Its seqs restart below us, and every new
+        command would be dropped as already seen.
+
+        The cursor goes to 0, not to the head the hub names: every
+        command in the new journal was queued after ours ended, so the
+        reconnect replays them all rather than skipping those queued
+        while we were away. Behind the ring the hub echoes the cursor
+        this connection sent, and nothing changes: compared with that,
+        not the live floor, which commands finishing since have moved."""
+        if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+            return None
+        with self._done_lock:
+            if seq >= self._stream_cursor:
+                return None
+            self._cmd_epoch += 1
+            self._done_cmd_seq = 0
+            self._last_cmd_seq = 0
+            # Done seqs above the old floor name the old journal's
+            # commands, not the new one's.
+            self._done_set.clear()
+            self._save_cmd_cursor()
+        return "reset"
 
     def _dispatch(self, cmd: dict) -> None:
         """Execute one command envelope; report back as command.result."""
@@ -634,7 +851,10 @@ class RemoteAgent:
                 hub_key = str(data.get("hub_key") or key)
                 blob = _get_bytes(
                     self.hub,
-                    f"/v1/agent/attachments/{hub_key}/{ref}", self.cred,
+                    # Both quoted whole: a key can hold "/" or "#",
+                    # and the hub unquotes each part.
+                    f"/v1/agent/attachments/{quote(hub_key, safe='')}/"
+                    f"{quote(ref, safe='')}", self.cred,
                 )
                 if blob is None:
                     return False, "attachment fetch failed", False
@@ -696,11 +916,7 @@ class RemoteAgent:
                     if path is None:
                         return False, f"unknown attachment {ref}", False
                     paths.append(path)
-                # The status in the queued command is stale — the
-                # session may have gone idle or errored while we were
-                # offline. Our own tail manager knows the current one.
-                live = (self.tail_manager.statuses.get(key)
-                        or str(data.get("status") or "done"))
+                live = self._live_status(key, data)
                 result = injector.send(
                     session,
                     {"text": data.get("text") or "",
@@ -729,6 +945,10 @@ class RemoteAgent:
                 result = injector.control(
                     session, ctl, str(data.get("value") or ""),
                 )
+                if result.ok and ctl in {"kill", "detach"}:
+                    # As on the hub: the session is no longer ours, so
+                    # its staged files go (a kept one returned above).
+                    attachments.drop_session(self.home, key)
                 return result.ok, result.note, result.degraded
             return False, f"unknown op {op}", False
         except Exception as exc:
@@ -759,6 +979,8 @@ class RemoteAgent:
                 self.home, key, supervise.meta_for(self.home, key),
                 emit=self._capture, machine=self.machine_id,
             ).control(current, "detach", "")
+            if result.ok:
+                attachments.drop_session(self.home, key)
             return result.ok, result.note
 
         def report(ok: bool, note: str, cancelled: bool) -> None:
@@ -808,12 +1030,31 @@ class RemoteAgent:
             )
 
     def _tail_loop(self) -> None:
+        sweeps = 0
         while not self._stop.is_set():
             try:
                 self.tail_manager.tick()
             except Exception:
                 pass
+            sweeps += 1
+            if sweeps >= 1200:  # ~5 min at a 250 ms tick, as on the hub
+                sweeps = 0
+                self._sweep()
             self.tail_manager.wait(0.25)
+
+    def _sweep(self) -> None:
+        """Delete files this satellite stopped needing: cursors of
+        sessions idle past ``tail.STALE_FILE_AGE_S`` (the uplink outbox
+        is its own and stays), and staged attachments past
+        ``attachments.MAX_AGE_S``, as the hub's loop does."""
+        try:
+            self.tail_manager.sweep_stale(self._outbox, keep=(OUTBOX_KEY,))
+        except Exception:
+            pass
+        try:
+            attachments.sweep(self.home)
+        except Exception:
+            pass
 
     def _downlink_loop(self) -> None:
         while not self._stop.is_set():
@@ -844,8 +1085,6 @@ class RemoteAgent:
                              name="agent-tail"),
             threading.Thread(target=self._downlink_loop, daemon=True,
                              name="agent-downlink"),
-            threading.Thread(target=self._work_loop, daemon=True,
-                             name="agent-worker"),
         ]
         for t in threads:
             t.start()
@@ -857,6 +1096,7 @@ class RemoteAgent:
         except KeyboardInterrupt:
             pass
         self._stop.set()
+        self._sendq.close()
         self.tail_manager.interrupt()
         self.detaches.close()
         for t in threads:

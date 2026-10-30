@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 from quiver.github import gh, manage, repos
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 from quiver.webapp.pages import tasks as T
 
 from tests.test_remote_hub import _Server, _session
@@ -116,23 +116,13 @@ class TestPageRoute(_Base):
         self.assertEqual(status, 401)
 
     def test_harnesses_answer(self):
-        launchable = [{"name": "claude", "command": "claude",
-                       "display_name": "Claude Code", "tracked": True,
-                       "launch_model": True, "launch_effort": True}]
-        with patch("quiver.remote.catalog.launchable_harnesses",
-                   return_value=launchable), \
-             patch("quiver.remote.catalog.recent_models",
-                   return_value={"claude": ["opus", "sonnet"]}):
+        # The rows are the Repositories page's harnesses(), tested there.
+        with patch("quiver.webapp.pages.tasks.harnesses",
+                   return_value=[{"name": "claude"}]) as rows:
             status, body = self._get("/v1/app/tasks?harnesses=1")
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["harnesses"],
-                         [{"name": "claude",
-                           "display_name": "Claude Code",
-                           "tracked": True,
-                           "launch_model": True,
-                           "launch_effort": True,
-                           "last_model": "opus",
-                           "recent_models": ["opus", "sonnet"]}])
+        self.assertEqual(body["harnesses"], [{"name": "claude"}])
+        rows.assert_called_once_with(self.srv.home)
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
         # The flag doesn't pull the task list at all.
         with patch("quiver.remote.catalog.launchable_harnesses",
@@ -361,6 +351,56 @@ class TestListRailAndFold(unittest.TestCase):
         self.assertTrue(out["fellBack"])
         self.assertTrue(out["emptyNoRail"])
 
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFirstLoadError(unittest.TestCase):
+    """pages/tasks.js under the launch-sheet DOM stub: when the first read
+    fails, the error's header carries the Refresh button its "then
+    refresh" points at, and pageError gets a retry to bind to it."""
+
+    def test_the_error_header_has_refresh(self):
+        from tests.test_webapp_launch_sheets import PAGES, STUB
+        flow = r"""
+let header = null, retry = null;
+globalThis.pageHeader = (t, s, actions = "") => `<h1>${t}</h1>${actions}`;
+globalThis.pageError = (h, status, data, r) => { header = h; retry = r; };
+apiAnswers.push(["/v1/app/tasks", { status: 503, data: null }]);
+(async () => {
+  location.hash = "#/tasks";
+  PAGES.tasks();
+  await tick();
+  process.stdout.write(JSON.stringify({ refresh: /id="page-refresh"/.test(header || ""), retry: typeof retry }));
+  process.exit(0);
+})();
+"""
+        script = (STUB + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "tasks.js").read_text(encoding="utf-8") + "\n" + flow)
+        done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"refresh": True, "retry": "function"})
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestTaskGroupNames(unittest.TestCase):
+    """tasks.js groups a row with no repo or project under its source's
+    name, spelled as the Mac and iOS spell it."""
+
+    def test_scopeless_rows_group_under_their_source_name(self):
+        import re
+
+        from tests.test_webapp_launch_sheets import PAGES
+        src = (PAGES / "tasks.js").read_text(encoding="utf-8")
+        helpers = "\n".join(re.search(r"^  const %s = .*?;$" % name, src, re.M | re.S).group(0)
+                            for name in ("SOURCE_NAMES", "sourceName", "groupName"))
+        rows = [{"source": "linear"}, {"source": "github", "repo": ""}, {"source": "jira"},
+                {}, {"source": "linear", "repo": "", "project": "QUI"}, {"source": "github", "repo": "o/a"}]
+        done = subprocess.run(["node", "-e", helpers + "\nprocess.stdout.write(JSON.stringify("
+                               + json.dumps(rows) + ".map(groupName)));"],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), ["Linear", "GitHub", "Jira", "Other", "QUI", "o/a"])
 
 if __name__ == "__main__":
     unittest.main()

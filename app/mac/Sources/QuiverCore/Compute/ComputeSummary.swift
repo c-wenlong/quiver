@@ -7,12 +7,20 @@ public struct ComputeLimits: Sendable, Equatable {
     public var orphanAge: TimeInterval = 24 * 3600
     /// A process (or a whole orphan tree) above this is flagged. Bytes.
     public var memoryBytes: UInt64 = 2 << 30
+    /// Quit orphans older than `orphanAge` without asking. The switch
+    /// sends SIGTERM, as a clean-up Quit does.
+    public var autoClean: Bool = false
+    /// With `autoClean`, force quit an orphan still alive a grace after
+    /// its quit signal. Only meaningful while `autoClean` is on.
+    public var autoCleanForce: Bool = false
 
     /// Whole minutes under this key; a minute is the field's finest unit.
     public static let orphanAgeKey = "computeOrphanAgeMinutes"
     /// The pre-minutes key, read once for upgrade then removed on save.
     public static let legacyOrphanAgeKey = "computeOrphanAgeHours"
     public static let memoryLimitKey = "computeMemoryLimitGB"
+    public static let autoCleanKey = "computeAutoClean"
+    public static let autoCleanForceKey = "computeAutoCleanForce"
 
     /// The field's bounds: a minute up to a year.
     public static let orphanAgeRange: ClosedRange<TimeInterval> = 60...(365 * 86400)
@@ -30,6 +38,8 @@ public struct ComputeLimits: Sendable, Equatable {
         if let gb = defaults.object(forKey: Self.memoryLimitKey) as? Int, gb > 0 {
             memoryBytes = UInt64(gb) << 30
         }
+        autoClean = defaults.bool(forKey: Self.autoCleanKey)
+        autoCleanForce = defaults.bool(forKey: Self.autoCleanForceKey)
     }
 
     public func save(to defaults: UserDefaults) {
@@ -38,6 +48,8 @@ public struct ComputeLimits: Sendable, Equatable {
         defaults.set(Int(clamped / 60), forKey: Self.orphanAgeKey)
         defaults.removeObject(forKey: Self.legacyOrphanAgeKey)
         defaults.set(Int(memoryBytes >> 30), forKey: Self.memoryLimitKey)
+        defaults.set(autoClean, forKey: Self.autoCleanKey)
+        defaults.set(autoCleanForce, forKey: Self.autoCleanForceKey)
     }
 }
 
@@ -470,11 +482,27 @@ public enum ComputeSummary {
         return "\(max(minutes, 0))m"
     }
 
-    /// Physical footprint the way Activity Monitor shows it.
+    /// Physical footprint the way Activity Monitor shows it, except that
+    /// nothing reads "0 KB": the formatter's own "Zero KB" sat oddly in
+    /// a line of figures.
     public static func bytes(_ count: UInt64) -> String {
+        if count == 0 { return "0 KB" }
         let formatter = ByteCountFormatter()
         formatter.countStyle = .memory
         return formatter.string(fromByteCount: Int64(count))
+    }
+
+    /// The line over the trend card: every starred harness's processes
+    /// added up.
+    public static func totalsLine(_ totals: ComputeModel.Totals) -> String {
+        let count = totals.processCount
+        return "\(bytes(totals.memoryBytes)) across \(count) \(count == 1 ? "process" : "processes") "
+            + "· CPU \(percent(totals.cpuPercent))% · \(threads(totals.threads))"
+    }
+
+    /// "1 thread", "28 threads".
+    public static func threads(_ count: Int) -> String {
+        "\(count) \(count == 1 ? "thread" : "threads")"
     }
 
     /// Whole percent once it is two digits, one decimal below it.

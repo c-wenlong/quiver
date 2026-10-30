@@ -492,6 +492,81 @@ class TestSatellite(_Home):
             len(capped["harnesses"]["claude"]["folders"]["/a"]["commands"]),
             slash.MAX_LAYER_ENTRIES)
 
+    def test_bound_payload_matches_a_full_recount(self):
+        # The running size must give exactly what re-serialising after
+        # every drop gave: same folders kept, same flag.
+        import random
+
+        def reference(payload, limit):
+            out = {"harnesses": {
+                h: {"user": slash._capped(sl.get("user")),
+                    "folders": {c: slash._capped(l)
+                                for c, l in sl["folders"].items()},
+                    "auto": sl.get("auto")}
+                for h, sl in payload["harnesses"].items()},
+                "attached": dict(payload["attached"])}
+            folders = sorted(
+                ((slash._size(l), h, c) for h, sl in out["harnesses"].items()
+                 for c, l in sl["folders"].items()), reverse=True)
+            while slash._size(out) > limit:
+                if not folders:
+                    return None
+                _n, h, c = folders.pop(0)
+                del out["harnesses"][h]["folders"][c]
+                out["truncated"] = True
+            return out
+
+        rng = random.Random(7)
+        for trial in range(40):
+            payload = {"harnesses": {}, "attached": {"k": "tmux"}}
+            for h in ("claude", "codex")[: rng.randint(1, 2)]:
+                payload["harnesses"][h] = {
+                    "user": {"skills": [{"name": "u\u00e9" * rng.randint(1, 9)}]},
+                    "folders": {
+                        f"/p\u6f22{i}": {"commands": [
+                            {"name": "c" * rng.randint(1, 300)}
+                            for _ in range(rng.randint(0, 4))]}
+                        for i in range(rng.randint(0, 6))},
+                    "auto": "tmux",
+                }
+            full = slash._size(reference(payload, 10**9))
+            limit = rng.randint(full // 4, full + 10)
+            with patch.object(slash, "MAX_PAYLOAD_BYTES", limit):
+                self.assertEqual(slash.bound_payload(payload),
+                                 reference(payload, limit), trial)
+
+    def test_bound_payload_serialises_linearly(self):
+        # Dropping folder after folder used to re-serialise the whole
+        # payload each time.
+        row = {"name": "n", "description": "d" * 200, "source": "project"}
+        payload = {"harnesses": {"claude": {
+            "user": {}, "auto": "tmux",
+            "folders": {f"/f{i}": {"commands": [dict(row)] * 5}
+                        for i in range(300)},
+        }}, "attached": {}}
+        real = slash._size
+        serialised = []
+
+        def counting(obj):
+            n = real(obj)
+            serialised.append(n)
+            return n
+
+        with patch.object(slash, "_size", side_effect=counting), \
+             patch.object(slash, "MAX_PAYLOAD_BYTES", 5000):
+            out = slash.bound_payload(payload)
+        self.assertTrue(out["truncated"])
+        whole = real(payload)
+        self.assertLess(sum(serialised), 3 * whole)
+
+    def test_satellite_payload_reads_the_registry_once(self):
+        rows = [dict(self.row, key=f"claude:r{i}") for i in range(30)]
+        with patch.object(slash, "_auto_channel", return_value="tmux"), \
+             patch.object(supervise, "_load_registry",
+                          wraps=supervise._load_registry) as load:
+            slash.satellite_payload(rows, self.home)
+        self.assertEqual(load.call_count, 1)
+
     def test_oversized_menu_never_blocks_rows(self):
         ag = agent_mod.RemoteAgent(
             "http://h:1", "cred", Path(tempfile.mkdtemp()))
@@ -500,6 +575,7 @@ class TestSatellite(_Home):
                     title="t", session_id="r1", tool_name="claude")]
         ag.catalog._status_of = lambda ss: [""] * len(ss)
         _write(self.home / ".claude/commands/a.md", "x" * 50 + "\n")
+        # The row alone fits the cap; the row plus the menu does not.
         sent = []
 
         def post(_hub, _path, _cred, body):
@@ -507,7 +583,16 @@ class TestSatellite(_Home):
             return 200, {"ok": True, "slash": "slash" in body}
 
         with patch.object(agent_mod, "_post", side_effect=post), \
-                patch.object(agent_mod, "CATALOG_BODY_MAX", 300), \
+                patch.object(agent_mod, "CATALOG_BODY_MAX", 10**9), \
+                patch.object(slash, "_auto_channel", return_value="tmux"):
+            ag._push_catalog()  # measure the row-only body
+        sent.clear()
+        rows_only = len(json.dumps(
+            {"machine_id": ag.machine_id, "rows": ag.catalog.rows()},
+            ensure_ascii=False).encode("utf-8"))
+        ag._slash_digest = None
+        with patch.object(agent_mod, "_post", side_effect=post), \
+                patch.object(agent_mod, "CATALOG_BODY_MAX", rows_only + 20), \
                 patch.object(slash, "_auto_channel", return_value="tmux"), \
                 patch("sys.stderr"):
             self.assertTrue(ag._push_catalog())

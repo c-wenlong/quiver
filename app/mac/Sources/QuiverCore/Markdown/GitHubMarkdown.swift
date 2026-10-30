@@ -660,58 +660,95 @@ public enum GitHubMarkdown {
             return out
         }
 
-        /// `attr("href")`-style pull from raw tag attributes.
+        /// `attr("href")`-style pull from raw tag attributes. Only a whole
+        /// attribute name matches: `href` is not `data-href`, and text
+        /// inside another attribute's quoted value is skipped.
         func attr(_ attrs: String, _ key: String) -> String? {
-            guard let k = attrs.range(of: key, options: .caseInsensitive)
-            else { return nil }
-            var j = k.upperBound
-            while j < attrs.endIndex, attrs[j].isWhitespace {
+            var j = attrs.startIndex
+            func skipBlanks() {
+                while j < attrs.endIndex, attrs[j].isWhitespace {
+                    j = attrs.index(after: j)
+                }
+            }
+            while true {
+                skipBlanks()
+                guard j < attrs.endIndex else { return nil }
+                let nameStart = j
+                while j < attrs.endIndex, !attrs[j].isWhitespace,
+                      attrs[j] != "=", attrs[j] != "/" {
+                    j = attrs.index(after: j)
+                }
+                let name = attrs[nameStart..<j]
+                if name.isEmpty { j = attrs.index(after: j); continue }  // a stray "/"
+                skipBlanks()
+                guard j < attrs.endIndex, attrs[j] == "=" else { continue }  // valueless
                 j = attrs.index(after: j)
+                skipBlanks()
+                var value = ""
+                if j < attrs.endIndex, attrs[j] == "\"" || attrs[j] == "'" {
+                    let quote = attrs[j]
+                    let from = attrs.index(after: j)
+                    let end = attrs[from...].firstIndex(of: quote) ?? attrs.endIndex
+                    value = String(attrs[from..<end])
+                    j = end < attrs.endIndex ? attrs.index(after: end) : end
+                } else {
+                    let from = j
+                    while j < attrs.endIndex, !attrs[j].isWhitespace {
+                        j = attrs.index(after: j)
+                    }
+                    value = String(attrs[from..<j])
+                }
+                if name.caseInsensitiveCompare(key) == .orderedSame {
+                    return value.isEmpty ? nil : decodeEntities(value)
+                }
             }
-            guard j < attrs.endIndex, attrs[j] == "=" else { return nil }
-            j = attrs.index(after: j)
-            while j < attrs.endIndex, attrs[j].isWhitespace {
-                j = attrs.index(after: j)
-            }
-            guard j < attrs.endIndex else { return nil }
-            let quote = attrs[j]
-            var value = ""
-            if quote == "\"" || quote == "'" {
-                let end = attrs[attrs.index(after: j)...]
-                    .firstIndex(of: quote) ?? attrs.endIndex
-                value = String(attrs[attrs.index(after: j)..<end])
-            } else {
-                var e = j
-                while e < attrs.endIndex,
-                      !attrs[e].isWhitespace { e = attrs.index(after: e) }
-                value = String(attrs[j..<e])
-            }
-            return value.isEmpty ? nil : decodeEntities(value)
         }
 
+        /// HTML entities read in one left-to-right pass, so `&amp;lt;`
+        /// stays `&lt;`. One a reader doesn't know (or a number past
+        /// Unicode) stays as written and the rest still decode.
         func decodeEntities(_ t: String) -> String {
-            var r = t
-            let named: [(String, String)] = [
-                ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
-                ("&quot;", "\""), ("&apos;", "'"), ("&#39;", "'"),
-                ("&nbsp;", " "), ("&#8203;", ""), ("&#x200b;", ""),
-                ("&#x200B;", ""), ("&hellip;", "…"), ("&mdash;", "—"),
-                ("&ndash;", "–"), ("&middot;", "·"),
+            guard t.contains("&") else { return t }
+            let named: [Substring: String] = [
+                "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'",
+                "nbsp": " ", "hellip": "…", "mdash": "—", "ndash": "–",
+                "middot": "·",
             ]
-            for (k, v) in named {
-                r = r.replacingOccurrences(of: k, with: v)
+            var out = ""
+            var rest = t[...]
+            while let amp = rest.firstIndex(of: "&") {
+                out += rest[..<amp]
+                rest = rest[amp...]
+                // `&#` takes every digit that follows (leading zeros
+                // included); a name is letters and digits. Either needs
+                // its `;`, else the `&` is text.
+                let after = rest.dropFirst()
+                let numeric = after.first == "#"
+                let hex = numeric && (after.dropFirst().first == "x" || after.dropFirst().first == "X")
+                let bodyStart = numeric ? after.dropFirst(hex ? 2 : 1) : after
+                let body = bodyStart.prefix { ch in
+                    numeric ? (hex ? ch.isHexDigit : ch.isASCII && ch.isNumber)
+                            : ch.isASCII && (ch.isLetter || ch.isNumber)
+                }
+                var decoded: String?
+                if !body.isEmpty, body.endIndex < rest.endIndex, rest[body.endIndex] == ";" {
+                    if numeric {
+                        if let n = UInt32(body, radix: hex ? 16 : 10), let u = Unicode.Scalar(n) {
+                            decoded = n == 0x200B ? "" : String(Character(u))
+                        }
+                    } else {
+                        decoded = named[body]
+                    }
+                }
+                if let decoded {
+                    out += decoded
+                    rest = rest[rest.index(after: body.endIndex)...]
+                } else {
+                    out.append("&")
+                    rest = rest.dropFirst()
+                }
             }
-            // &#NNN; / &#xHH;
-            while let m = r.range(of: "&#(\\d+|x[0-9a-fA-F]+);",
-                                  options: .regularExpression) {
-                let digits = r[m].dropFirst(2).dropLast()
-                let scalar: UInt32? = digits.hasPrefix("x")
-                    ? UInt32(digits.dropFirst(), radix: 16)
-                    : UInt32(digits)
-                guard let n = scalar, let u = Unicode.Scalar(n) else { break }
-                r.replaceSubrange(m, with: String(Character(u)))
-            }
-            return r
+            return out + rest
         }
     }
 }

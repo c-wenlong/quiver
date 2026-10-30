@@ -128,6 +128,12 @@ private struct SettingsSectionView: View {
     @Binding var loginFailure: String?
     /// Terminals LaunchServices can't find, checked when General appears.
     @State private var missingTerminals: Set<TerminalApp> = []
+    /// Each terminal's icon, looked up with missingTerminals, not per body
+    /// pass: a body runs on every keystroke in a Files path field.
+    @State private var terminalIcons: [TerminalApp: NSImage] = [:]
+    /// The editors in /Applications and their icons, looked up when Files
+    /// appears and when the app comes back to the front.
+    @State private var editors: (installed: [CodeEditor], icons: [String: NSImage]) = ([], [:])
     /// The draft "Refresh only what failed for" value, in minutes.
     @State private var refreshMinutes = 0
     @FocusState private var refreshFocused: Bool
@@ -228,6 +234,20 @@ private struct SettingsSectionView: View {
 
     private func checkTerminals() {
         missingTerminals = Set(TerminalApp.allCases.filter { !$0.isInstalled })
+        var icons: [TerminalApp: NSImage] = [:]
+        for terminal in TerminalApp.allCases {
+            icons[terminal] = terminal.icon
+                ?? terminal.toolIconID.flatMap(ToolIcons.image(for:))
+                ?? missingAppIcon
+        }
+        terminalIcons = icons
+    }
+
+    /// The installed editors (a stat per candidate, so off the main actor)
+    /// and every candidate's icon.
+    private func checkEditors() async {
+        let installed = await offMain { CodeEditors.installed() }
+        editors = (installed, editorIcons(installed))
     }
 
     private var preferencesCard: some View {
@@ -461,18 +481,6 @@ private struct SettingsSectionView: View {
         NSImage(systemSymbolName: "app.dashed", accessibilityDescription: nil)
     }
 
-    /// Each terminal's own icon — its bundled mark when it isn't
-    /// installed, the placeholder when it has neither.
-    private var terminalIcons: [TerminalApp: NSImage] {
-        var icons: [TerminalApp: NSImage] = [:]
-        for terminal in TerminalApp.allCases {
-            icons[terminal] = terminal.icon
-                ?? terminal.toolIconID.flatMap(ToolIcons.image(for:))
-                ?? missingAppIcon
-        }
-        return icons
-    }
-
     /// Every candidate editor's icon — its bundled mark when it isn't
     /// installed, the placeholder when it has neither.
     private func editorIcons(_ installed: [CodeEditor]) -> [String: NSImage] {
@@ -513,23 +521,31 @@ private struct SettingsSectionView: View {
                     Text("Opens a server folder from the MCP servers page.")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
-                let installed = CodeEditors.installed()
+                let installed = editors.installed
                 let missing = Set(CodeEditors.candidates.map { $0.name })
                     .subtracting(installed.map { $0.name })
                 let options = CodeEditors.candidates.map {
                     ($0.name, $0.name == "Visual Studio Code" ? "VS Code" : $0.name)
                 }
-                let selection = Binding(get: { app.editor?.name ?? "" },
-                                        set: { app.codeEditor = $0 })
+                // app.editor runs CodeEditors.installed() on each read, and
+                // Tabs reads this per option: pick from the looked-up list.
+                let selection = Binding(get: {
+                    (installed.first { $0.name == app.codeEditor } ?? installed.first)?.name ?? ""
+                }, set: { app.codeEditor = $0 })
                 ViewThatFits(in: .horizontal) {
                     Tabs(options: options, selection: selection,
-                         iconImages: editorIcons(installed), disabled: missing)
+                         iconImages: editors.icons, disabled: missing)
                     Tabs(options: options, selection: selection,
-                         iconImages: editorIcons(installed), fillWidth: true,
+                         iconImages: editors.icons, fillWidth: true,
                          columns: 3, disabled: missing)
                 }
             }
             .padding(.vertical, 14)
+        }
+        .task { await checkEditors() }
+        // An editor installed while Files stays open counts on return.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await checkEditors() }
         }
     }
 }
@@ -734,6 +750,7 @@ struct SettingRow<Control: View>: View {
                 if let warning {
                     Label {
                         Text(warning).foregroundStyle(Theme.textSecondary)
+                            .textSelection(.enabled)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(danger ? Theme.dangerText : Theme.warningText)
@@ -780,7 +797,7 @@ struct PathRow: View {
                 Text("In use: \(displayPath(running)). \(hint)")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     .lineLimit(1).truncationMode(.middle)
-                    .help(running)
+                    .hoverTip(running, replacesLabel: false)
             }
             HStack(spacing: 8) {
                 TextField(placeholder, text: $draft)

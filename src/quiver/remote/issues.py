@@ -1,8 +1,9 @@
 """GitHub issues on the phone: ``GET /v1/issues``,
-``GET /v1/issues/<o>/<r>/<n>`` and ``POST /v1/issues/resolve``.
+``GET /v1/issues/<o>/<r>/<n>``, ``POST /v1/issues/resolve`` and
+``POST /v1/issues/comment``.
 
 The reads answer from the same 60-second ``gh`` cache the web app's
-Repositories page uses (``webapp/pages/_github.py``), per pinned repo,
+Repositories page uses (``github/shared.py``), per pinned repo,
 so the phone and the page agree and a slow ``gh`` shows up once. A
 repo's issue rows add ``mine`` (the hub's ``gh`` login authored it) so
 the client filters All/Mine without a second round trip; ``agent_running``
@@ -35,11 +36,20 @@ launch ``failed`` with a readable note. When adoption names the new
 session, its title becomes ``<owner>/<repo>#<n> <issue title>``
 (``title_adopted``, called from ``HubState.emit``). Hub machine only:
 satellites have no mirrors.
+
+The comment: body ``{repo, number, body}``. The hub posts ``body`` on
+the issue with its own ``gh`` login, through ``swe gh issue comment``'s
+``post_comment``: the text goes to ``gh issue comment --body-file -``
+on stdin, never argv, where every process on the machine could read it.
+Only a pinned repo, and nothing past GitHub's own size cap, so a paired
+client can't post anywhere the hub's ``gh`` login reaches.
 """
 
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
@@ -47,7 +57,7 @@ from quiver.github import issues as gh_issues
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import protocol, sessionmeta, supervise
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 # ``swe gh``'s list cap: open issues per pinned repo in one answer.
 LIST_LIMIT = 50
@@ -57,6 +67,9 @@ MAX_CONTEXT = 8_000
 # Room for the "Context for this run, from <login>:" line (a GitHub
 # login is at most 39 characters) when context joins a client's prompt.
 _CONTEXT_HEADER_ROOM = 80
+
+# GitHub refuses a comment body longer than this many characters.
+MAX_COMMENT = 65_536
 
 # Issues whose resolve is still between the 202 and launch_new's
 # pending marker, as (repo lower, number). A second resolve of one of
@@ -87,9 +100,19 @@ def _number_arg(raw) -> int | None:
     return number if number >= 1 else None
 
 
+def _body_number(raw) -> int | None:
+    """A JSON body's issue number: an int or digit string, as
+    ``_number_arg`` reads a path's. ``true`` is no number."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        raw = str(raw)
+    return _number_arg(raw.strip() if isinstance(raw, str) else raw)
+
+
 # ------------------------------------------------------------------ reads
 
-def list(state, args) -> tuple[int, dict]:
+def list_view(state, args) -> tuple[int, dict]:
     """``GET /v1/issues``: every pinned repo's issues.
 
     ``{repos: [{name, status, issues, error?}], machine, machine_id,
@@ -260,6 +283,71 @@ def parse_body(body) -> dict:
             "effort": protocol._launch_value(body, "effort")}
 
 
+def comment(state, body: dict | None) -> tuple[int, dict]:
+    """``POST /v1/issues/comment``: post ``body`` on issue ``number`` of
+    a pinned ``repo`` as the hub's ``gh`` login. Answers ``200 {ok,
+    github, repo, number, comment: {author, body, created_at, url},
+    machine, machine_id}``; the issue's cached reads are dropped so the
+    next detail read lists the new comment."""
+    if body is None:
+        return 400, protocol.error("bad_body", "unreadable JSON body")
+    raw = body.get("repo")
+    name = repos.normalize_repo_input(raw) if isinstance(raw, str) else None
+    if not name:
+        return 422, protocol.error("bad_repo", "repo must be owner/name")
+    number = _body_number(body.get("number"))
+    if number is None:
+        return 422, protocol.error("bad_issue",
+                                   "number must be an issue number")
+    text = body.get("body")
+    if not isinstance(text, str):
+        return 422, protocol.error("bad_comment",
+                                   "body must be the comment's text")
+    # The Mac's composer posts the trimmed text; so does this.
+    text = text.strip()
+    if not text:
+        return 422, protocol.error("bad_comment", "The comment is empty")
+    if len(text) > MAX_COMMENT:
+        return 422, protocol.error(
+            "comment_too_long",
+            f"The comment is over GitHub's {MAX_COMMENT:,} characters")
+    pinned = _pinned(state.home, name)
+    if pinned is None:
+        return 404, protocol.error(
+            "not_pinned", f"{name} is not pinned on the hub")
+    env = G.probe(state.home, refresh=True)
+    if env.status != "ok":
+        return 409, protocol.error("gh_" + env.status.replace("-", "_"),
+                                   gh.env_error(env))
+    with G.WRITE_LOCK:
+        result = gh_issues.post_comment(pinned, number, text, env.login)
+    # Dropped even after a failure: a timeout may still have posted.
+    _drop_issue(state.home, pinned, number)
+    if result.status == "not-found":
+        return 404, protocol.error(
+            "unknown_issue", f"No issue #{number} in {pinned}: "
+                             f"{result.error or 'not found'}")
+    if result.status != "ok":
+        return 502, protocol.error(
+            "comment_failed", result.error or result.status)
+    return 200, {"ok": True, "github": G.env_payload(env), "repo": pinned,
+                 "number": number, "comment": result.data,
+                 "machine": (state.machine or {}).get("name"),
+                 "machine_id": state.machine_id}
+
+
+def _drop_issue(home, repo: str, number: int) -> None:
+    """Forget the issue's detail and every list that counts its
+    comments (the phone's ``/v1/issues``, the Repositories board and
+    focus surfaces, the task rows), as the Mac drops its own after a
+    post."""
+    hk = G.home_key(home)
+    G.CACHE.drop(lambda k: isinstance(k, tuple) and len(k) > 2
+                 and k[1] == hk and k[2] == repo
+                 and (k[0] in ("issues", "board", "focus", "task")
+                      or (k[0] == "issue" and k[3:4] == (str(number),))))
+
+
 def _pinned(home, name: str) -> str | None:
     """The pin ``name`` matches, spelled as pinned, or None."""
     for pin in repos.load_pinned(manage.pins_file(home)):
@@ -299,23 +387,10 @@ def request(state, body: dict | None) -> tuple[int, dict]:
             f"`swe gh repo add {cmd['repo']}`")
     cmd["repo"] = repo
     harness = cmd["harness"]
-    binary = catalog_mod.launch_command(harness)
-    if binary is None:
-        return 422, protocol.error(
-            "not_launchable",
-            f"{harness} can't start here: archived, switched off in "
-            f"Provider visibility, or not installed")
-    blocked = supervise.fresh_launch_error(
-        harness, cmd["model"], cmd["effort"])
-    if blocked:
-        return 409, protocol.error("unsupported_launch_option", blocked)
-    if not supervise.tmux_bin():
-        return 422, protocol.error("launch_failed", "tmux is not installed")
-    env = gh.probe_env()
-    if env.status != "ok":
-        return 422, protocol.error("gh_unavailable", gh.env_error(env))
-    tracked = harness not in catalog_mod.untracked(
-        catalog_mod.launchable_harnesses())
+    ready = launch_ready(cmd)
+    if isinstance(ready, tuple):
+        return ready
+    binary, tracked = ready.binary, ready.tracked
     rows = state.catalog.tail_rows()
     ref = (repo.lower(), cmd["number"])
     tree = manage.issue_worktree_path(repo, cmd["number"], state.home)
@@ -335,34 +410,87 @@ def request(state, body: dict | None) -> tuple[int, dict]:
     state.settle_launch(launch_id, note="preparing worktree")
     threading.Thread(
         target=_run,
-        args=(state, launch_id, cmd, binary, tracked, rows, env.login),
+        args=(state, launch_id, cmd, binary, tracked, rows, ready.login),
         name=f"remote-launch-{launch_id}", daemon=True,
     ).start()
     return 202, {"ok": True, "launch_id": launch_id, "state": "pending",
                  "note": "preparing worktree"}
 
 
-def _run(state, launch_id: str, cmd: dict, binary: str, tracked: bool,
-         rows, login: str) -> None:
+@dataclass
+class LaunchReady:
+    """What ``launch_ready`` found: the harness's command, the ``gh``
+    login (for the prompt's context line), and whether swe can read the
+    harness's sessions (an untracked one gets no chat to open)."""
+
+    binary: str
+    login: str
+    tracked: bool
+
+
+def launch_ready(cmd: dict) -> "LaunchReady | tuple[int, dict]":
+    """The checks a resolve and a PR open both make before their 202:
+    the harness can start here with the asked model and effort, tmux is
+    installed and ``gh`` is signed in. The refusal ``(status, payload)``
+    otherwise."""
+    harness = cmd["harness"]
+    binary = catalog_mod.launch_command(harness)
+    if binary is None:
+        return 422, protocol.error(
+            "not_launchable",
+            f"{harness} can't start here: archived, switched off in "
+            f"Provider visibility, or not installed")
+    blocked = supervise.fresh_launch_error(
+        harness, cmd["model"], cmd["effort"])
+    if blocked:
+        return 409, protocol.error("unsupported_launch_option", blocked)
+    if not supervise.tmux_bin():
+        return 422, protocol.error("launch_failed", "tmux is not installed")
+    env = gh.probe_env()
+    if env.status != "ok":
+        return 422, protocol.error("gh_unavailable", gh.env_error(env))
+    tracked = harness not in catalog_mod.untracked(
+        catalog_mod.launchable_harnesses())
+    return LaunchReady(binary, env.login, tracked)
+
+
+def run_launch(state, launch_id: str, harness: str, tracked: bool,
+               prepare: Callable[[], str], verb: str,
+               release: Callable[[], None]) -> None:
+    """The thread behind a resolve's or PR open's 202: ``prepare()``
+    returns a failure note or ""; any failure or exception settles the
+    launch ``failed`` (it must never stay pending forever), an untracked
+    harness settles ``untracked``, and ``release()`` always runs."""
     def fail(text: str) -> None:
         state.settle_launch(launch_id, state="failed", note=text)
 
     try:
-        failure = _prepare_and_launch(state, launch_id, cmd, binary, rows,
-                                      login)
+        failure = prepare()
         if failure:
             fail(failure)
         elif not tracked:
             state.settle_launch(launch_id, state="untracked", note=(
-                f"{cmd['harness']} is running under tmux, but swe can't "
+                f"{harness} is running under tmux, but swe can't "
                 f"read its sessions, so there's no chat to open"))
-    except Exception as exc:  # a launch must never stay pending forever
-        fail(f"Resolve failed: {exc}")
+    except Exception as exc:
+        fail(f"{verb} failed: {exc}")
     finally:
+        release()
+
+
+def _run(state, launch_id: str, cmd: dict, binary: str, tracked: bool,
+         rows, login: str) -> None:
+    def release() -> None:
         # launch_new has written its pending marker by now (or failed),
         # so fork_blocker takes over guarding the checkout.
         with _preparing_lock:
             _preparing.discard((cmd["repo"].lower(), cmd["number"]))
+
+    run_launch(
+        state, launch_id, cmd["harness"], tracked,
+        lambda: _prepare_and_launch(state, launch_id, cmd, binary, rows,
+                                    login),
+        "Resolve", release)
 
 
 def _prepare_and_launch(state, launch_id: str, cmd: dict, binary: str,

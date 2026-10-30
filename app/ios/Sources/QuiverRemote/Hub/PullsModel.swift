@@ -15,20 +15,31 @@ final class PullsModel {
     private(set) var login: String?
     private(set) var error: String?
     private(set) var loaded = false
+    /// Bumped per load: an on-open fetch and a pull-to-refresh can
+    /// overlap, and only the newer one's reply may land.
+    @ObservationIgnored private var generation = 0
 
     func load(client: HubClient?, refresh: Bool = false) async {
         guard let client else { return }
+        generation += 1
+        let gen = generation
         do {
             let body = try await client.pulls(refresh: refresh)
+            guard gen == generation else { return }
             repos = body.repos
             machine = body.machine
             machineId = body.machineId
             envBlocked = body.envBlocked
             login = body.github?.login
             error = nil
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch let e as HubError {
+            guard gen == generation else { return }
             error = e.message
         } catch {
+            guard gen == generation else { return }
             self.error = error.localizedDescription
         }
         loaded = true

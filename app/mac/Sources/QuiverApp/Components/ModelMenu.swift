@@ -15,14 +15,27 @@ struct ModelMenu: View {
     var width: CGFloat? = 280
 
     private var options: [(value: ModelChoice, title: String)] {
-        ModelPick.options(recent).map { (value: $0, title: $0.title) }
+        Self.options(for: recent).map { (value: $0, title: $0.title) }
+    }
+
+    /// One row per model, newest kept: a repeat would give the menu two
+    /// rows with one id.
+    static func options(for recent: [String]) -> [ModelChoice] {
+        var seen = Set<String>()
+        return ModelPick.options(recent.filter { seen.insert($0).inserted })
     }
 
     /// Each recent model's brand logo, as every view naming a model draws.
+    /// A model listed twice keeps one entry: uniqueKeysWithValues traps on
+    /// a repeated key, and the list comes from logs, not a set.
     private var icons: [ModelChoice: String] {
-        Dictionary(uniqueKeysWithValues: recent.compactMap { model in
+        Self.icons(for: recent)
+    }
+
+    static func icons(for recent: [String]) -> [ModelChoice: String] {
+        Dictionary(recent.compactMap { model in
             ModelVendor.of(logged: model).icon.map { (ModelChoice.recent(model), $0) }
-        })
+        }, uniquingKeysWith: { first, _ in first })
     }
 
     private var shown: ModelChoice { supported ? pick.choice : .harnessDefault }

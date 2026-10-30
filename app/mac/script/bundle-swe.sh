@@ -150,9 +150,9 @@ fi
 # When a libcrypto was bundled, the decryptor must actually load it —
 # loading the wrong one crashes this interpreter, so probe now.
 if [ -n "$libcrypto" ] && ! QUIVER_BUNDLED_PYTHON=1 "$py/bin/python3" -I -B -c \
-    'import sys; sys.path.insert(0, "'"$site"'"); \
+    'import sys; sys.path.insert(0, sys.argv[1]); \
      from quiver.harness.rate_limits import _load_libcrypto; \
-     sys.exit(0 if _load_libcrypto() is not None else 1)'; then
+     sys.exit(0 if _load_libcrypto() is not None else 1)' "$site"; then
   echo "bundle-swe: the bundled libcrypto did not load" >&2
   exit 1
 fi

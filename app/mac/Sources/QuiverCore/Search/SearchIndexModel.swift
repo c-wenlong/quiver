@@ -12,7 +12,7 @@ import Observation
 /// files — on a short cycle so sessions running now become searchable
 /// within a minute; a poll task keeps the status line
 /// honest — every couple of seconds while a scan runs, slower once it
-/// settles.
+/// settles — and reads the index only while the line is on screen.
 @MainActor
 @Observable
 public final class SearchIndexModel {
@@ -49,6 +49,15 @@ public final class SearchIndexModel {
     /// a store that only ever read an old index shows no timestamp.
     public private(set) var lastSynced: Date?
 
+    /// Whether Settings is showing the status line. The row sets it on
+    /// appear and disappear; showing it reads the index at once.
+    public var statusVisible = false {
+        didSet {
+            guard statusVisible, !oldValue else { return }
+            Task { await refreshStatus() }
+        }
+    }
+
     /// A scan is running (the ledger's `isLoading`): the resync button
     /// dims while one is.
     public var isScanning: Bool { overview?.isLoading ?? false }
@@ -56,6 +65,10 @@ public final class SearchIndexModel {
     /// Internal so tests can check what got attached under `@testable`.
     var store: SearchStore?
     var indexer: SearchIndexer?
+    /// Index reads `refreshStatus` started, and poll ticks run, so tests
+    /// can tell a hidden poll skipped the index.
+    private(set) var statusReads = 0
+    private(set) var pollTicks = 0
     /// A failure the status line shows instead of the counts.
     private var statusError: String?
 
@@ -249,6 +262,7 @@ public final class SearchIndexModel {
     /// failed read lands on the status line too — the app keeps running.
     func refreshStatus() async {
         guard let store else { return }
+        statusReads += 1
         let polled: Result<SearchStatus, Error> = await Task
             .detached(priority: .utility) { [store] in
                 Result(catching: { try store.status() })
@@ -257,16 +271,23 @@ public final class SearchIndexModel {
         switch polled {
         case .success(let status):
             lastStatus = status
-            let scanning = overview?.isLoading ?? false
-            // A scan the model didn't kick — the app's own refresh — still
-            // counts as a sync once the poll watches it end.
-            if wasScanning && !scanning { lastSynced = Date() }
-            wasScanning = scanning
+            let scanning = noteScan()
             statusText = statusError
                 ?? Self.statusLine(status, scanning: scanning, synced: lastSynced)
         case .failure(let error):
             statusText = "Couldn't read the index status: \(error.localizedDescription)"
         }
+    }
+
+    /// Watches the ledger's scan without touching the index: a scan the
+    /// model didn't kick (the app's own refresh) still counts as a sync
+    /// once a poll sees it end. Returns whether one is running now.
+    @discardableResult
+    private func noteScan() -> Bool {
+        let scanning = overview?.isLoading ?? false
+        if wasScanning && !scanning { lastSynced = Date() }
+        wasScanning = scanning
+        return scanning
     }
 
     /// Settings' resync: the same full `load(scan:)` enabling kicks, then a
@@ -279,12 +300,20 @@ public final class SearchIndexModel {
 
     /// The status poll: every `pollScanning` while the ledger's scan is in
     /// flight (the `isLoading` signal), `pollSettled` once it is quiet.
+    /// The index's `count(*)` reads only run while the row is on screen;
+    /// on a large index they cost a few percent of a core every poll.
+    /// Hidden, the poll only watches the scan, so `lastSynced` stays true.
     private func startPolling() {
         polling?.cancel()
         polling = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refreshStatus()
                 guard let self else { return }
+                if statusVisible {
+                    await refreshStatus()
+                } else {
+                    noteScan()
+                }
+                pollTicks += 1
                 do {
                     try await Task.sleep(
                         for: overview?.isLoading ?? false ? pollScanning : pollSettled)

@@ -5,6 +5,9 @@ public enum APIKeysError: Error, Equatable, LocalizedError {
     case invalidName(String)
     case invalidProvider
     case duplicate(String)
+    /// The name is also set on a line Quiver can't edit safely, which
+    /// may be the one the shell ends up with.
+    case unsafeLine(String)
     /// The name a rename asked for already belongs to another export.
     case nameTaken(String)
     /// The provider a rename asked for already heads another group.
@@ -22,6 +25,7 @@ public enum APIKeysError: Error, Equatable, LocalizedError {
         case .invalidProvider:
             "A provider name has to be a short label: up to 60 letters, digits, spaces and ( ) . , & / -."
         case .duplicate(let name): "\(name) is exported more than once in the file. Remove the extra line in an editor, then edit it here."
+        case .unsafeLine(let name): "\(name) is also set on a line Quiver can't edit safely. Change or remove that line in an editor, then edit it here."
         case .nameTaken(let name): "\(name) is already exported; pick another variable name."
         case .providerTaken(let name): "\(name) already exists; move keys into it instead."
         case .multilineValue: "A key can't span more than one line."
@@ -84,15 +88,37 @@ public struct APIKeysFile: Equatable, Sendable {
     }
 
     /// One per variable: the value a shell ends up with, which for a name
-    /// exported twice is the later line.
+    /// exported twice is the later line. A name whose last assignment is a
+    /// line Quiver can't read has no known value, so it isn't listed.
     public var keys: [Entry] {
         var last: [String: Entry] = [:]
         for entry in entries { last[entry.name] = entry }
+        let unsafe = unsafeLines
         var seen = Set<String>()
         return entries.compactMap { entry in
-            guard seen.insert(entry.name).inserted else { return nil }
-            return last[entry.name]
+            guard seen.insert(entry.name).inserted, let winner = last[entry.name],
+                  (unsafe[entry.name] ?? -1) < winner.line else { return nil }
+            return winner
         }
+    }
+
+    /// The last line index of each name assigned by an `export` line
+    /// Quiver can't edit safely (`export A="$OTHER"`, `export A=x; …`).
+    var unsafeLines: [String: Int] {
+        var found: [String: Int] = [:]
+        for (index, line) in lines.enumerated() where Self.export(line) == nil {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let match = trimmed.firstMatch(of: /^export\s+([A-Za-z_][A-Za-z0-9_]*)=/) {
+                found[String(match.1)] = index
+            }
+        }
+        return found
+    }
+
+    /// Refuses an edit to `name` while an unsafe line also sets it: the
+    /// edit could leave a second assignment the shell reads instead.
+    private func refuseUnsafe(_ name: String) throws {
+        guard unsafeLines[name] == nil else { throw APIKeysError.unsafeLine(name) }
     }
 
     /// Lines that set nothing, set a key Quiver can't edit safely, or are
@@ -101,6 +127,10 @@ public struct APIKeysFile: Equatable, Sendable {
         let all = entries
         var lastLine: [String: Int] = [:]
         for entry in all { lastLine[entry.name] = entry.line }
+        // An unsafe line later in the file wins over an editable one too.
+        for (name, line) in unsafeLines where line > (lastLine[name] ?? -1) {
+            lastLine[name] = line
+        }
         var problems: [Problem] = lines.enumerated().compactMap { index, line in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.range(of: #"^EXPORT\s+[A-Za-z_]"#, options: .regularExpression) != nil {
@@ -136,7 +166,13 @@ public struct APIKeysFile: Equatable, Sendable {
         let line = Self.render(name: name, value: value)
         let all = entries
         guard all.filter({ $0.name == name }).count <= 1 else { throw APIKeysError.duplicate(name) }
-        if let existing = all.first(where: { $0.name == name }) {
+        let existing = all.first(where: { $0.name == name })
+        // A value set in place still wins when it comes after the unsafe
+        // line; a new line, or one the unsafe line overrides, wouldn't.
+        if let unsafe = unsafeLines[name], (existing?.line ?? -1) < unsafe {
+            throw APIKeysError.unsafeLine(name)
+        }
+        if let existing {
             lines[existing.line] = line
             return
         }
@@ -160,6 +196,7 @@ public struct APIKeysFile: Equatable, Sendable {
         let matches = entries.filter { $0.name == name }
         guard matches.count <= 1 else { throw APIKeysError.duplicate(name) }
         guard let entry = matches.first else { throw APIKeysError.notFound(name) }
+        try refuseUnsafe(name)
         let siblings = entries.filter { $0.provider == entry.provider && $0.name != name }
         lines.remove(at: entry.line)
         guard siblings.isEmpty, !entry.provider.isEmpty,
@@ -180,7 +217,10 @@ public struct APIKeysFile: Equatable, Sendable {
         let all = entries
         guard all.filter({ $0.name == name }).count <= 1 else { throw APIKeysError.duplicate(name) }
         guard let entry = all.first(where: { $0.name == name }) else { throw APIKeysError.notFound(name) }
-        guard !all.contains(where: { $0.name == newName }) else { throw APIKeysError.nameTaken(newName) }
+        guard !all.contains(where: { $0.name == newName }), unsafeLines[newName] == nil else {
+            throw APIKeysError.nameTaken(newName)
+        }
+        try refuseUnsafe(name)
         // Only the name changes: the line keeps its quoting, its value
         // expression and any trailing comment byte-for-byte.
         let line = lines[entry.line]
@@ -202,6 +242,7 @@ public struct APIKeysFile: Equatable, Sendable {
         let all = entries
         guard all.filter({ $0.name == name }).count <= 1 else { throw APIKeysError.duplicate(name) }
         guard let entry = all.first(where: { $0.name == name }) else { throw APIKeysError.notFound(name) }
+        try refuseUnsafe(name)
         guard entry.provider != provider else { return }
         // A group that isn't in the file needs a label it would read
         // back; check before any line moves, so a refused move leaves
@@ -341,6 +382,9 @@ public struct APIKeysFile: Equatable, Sendable {
 
     /// The value, or nil when the line carries anything after it other than
     /// a comment (`; export B=…`, `"a""b"`): saving such a line would drop it.
+    /// Nil too for a double-quoted `$` or backtick the shell expands
+    /// (`"$OTHER"`): the text isn't the value, and saving it back escaped
+    /// would turn the reference into a literal.
     static func unquote(_ raw: String) -> String? {
         var value = ""
         var rest: Substring
@@ -360,6 +404,8 @@ public struct APIKeysFile: Equatable, Sendable {
                 } else if character == "\"" {
                     closed = index
                     break
+                } else if character == "$" || character == "`" {
+                    return nil
                 } else {
                     value.append(character)
                 }

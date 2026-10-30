@@ -22,7 +22,6 @@ struct FirstRunSetupSheet: View {
         }
         .frame(width: 820, height: 680)
         .background(Theme.panel)
-        .interactiveDismissDisabled()
         .task {
             let starred = app.others.starred ?? []
             let setup = FirstRunSetupModel(swe: { [app] in app.swe }, starred: starred)
@@ -337,14 +336,14 @@ private struct LinksStep: View {
                         Text("Start from").font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                         SelectMenu(options: instructions.adoptCandidates.map {
                                        (FirstRunSetupModel.Start.file($0.path),
-                                        "Your \(Self.tilde($0.path))")
+                                        "Your \(displayPath($0.path))")
                                    } + [(.seed, "Quiver's starter file")],
                                    selection: $model.start, width: nil)
                             .disabled(model.outcome != nil)
                     }
                 }
                 ForEach(model.untouchedCandidates, id: \.self) { candidate in
-                    Text("\(Self.tilde(candidate.path)) has other text, so it stays as it is. Link it later on the AGENTS.md page.")
+                    Text("\(displayPath(candidate.path)) has other text, so it stays as it is. Link it later on the AGENTS.md page.")
                         .font(Theme.caption).foregroundStyle(Theme.warningText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -366,7 +365,7 @@ private struct LinksStep: View {
             }
             ForEach(outcome.leftAlone, id: \.path) { row in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(Self.tilde(row.path)).font(Theme.font(size: 12, design: .monospaced))
+                    Text(displayPath(row.path)).font(Theme.font(size: 12, design: .monospaced))
                         .foregroundStyle(Theme.textPrimary).textSelection(.enabled)
                     if !row.detail.isEmpty {
                         Text(row.detail).font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -398,11 +397,6 @@ private struct LinksStep: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 14)
-    }
-
-    static func tilde(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }
 }
 

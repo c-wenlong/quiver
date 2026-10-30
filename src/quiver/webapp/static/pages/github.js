@@ -62,6 +62,7 @@ const GhUI = (() => {
     grip: '<circle cx="9" cy="6" r="1" fill="currentColor"/><circle cx="15" cy="6" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="18" r="1" fill="currentColor"/><circle cx="15" cy="18" r="1" fill="currentColor"/>',
     star: '<path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
     envelopeOpen: '<path d="M3 10.5 12 4l9 6.5V19a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="m3.5 11 8.5 5.5 8.5-5.5"/>',
+    xmark: '<path d="M7 7l10 10M17 7 7 17"/>',
   };
 
   function ico(name, cls = "", title = "") {
@@ -87,7 +88,7 @@ const GhUI = (() => {
   /* GhSetupCard, with a line saying which machine's gh it means. */
   function setupCard(status, machine) {
     const title = status === "unavailable"
-      ? "Download gh cli to enable github features." : "Sign in to GitHub to enable github features.";
+      ? "Download the gh CLI to enable GitHub features." : "Sign in to GitHub to enable GitHub features.";
     const command = status === "unavailable" ? "brew install gh" : "gh auth login";
     return `<div class="card gh-setup">
       <div class="gh-setup-title">${ico("terminal")}<span>${esc(title)}</span></div>
@@ -124,7 +125,6 @@ const GhUI = (() => {
    * already running), so only a real read counts as the last one. */
   const POLL_MS = 60000;
   const polls = {};
-  const route = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
   function stopPoll(page) {
     if (!polls[page]) return;
     clearInterval(polls[page].timer);
@@ -133,7 +133,7 @@ const GhUI = (() => {
   function runPoll(page) {
     const entry = polls[page];
     if (!entry) return;
-    if (route() !== page) return stopPoll(page);
+    if (currentRoute() !== page) return stopPoll(page);
     if (document.hidden) return;
     if (entry.fn() !== false) entry.last = Date.now();
   }
@@ -151,29 +151,21 @@ const GhUI = (() => {
     });
   }
 
+  /* A read answered 401: the gate, and no more ticks for ``page``. A
+   * tick would paint the page's last rows over the gate (and the pair
+   * fields typed into it) before its own read came back 401 again. */
+  function gate(page) {
+    stopPoll(page);
+    renderGate();
+  }
+
   function hashParams() {
     return new URLSearchParams(location.hash.split("?")[1] || "");
   }
 
-  /* app.js's api() only reads; a write sends JSON with the same headers
-   * (authHeaders: the bearer when one is stored, and X-Quiver-Pair so an
-   * owner's tailnet device is admitted without one). Never throws:
-   * { status: 0 } when the hub is unreachable. */
-  async function post(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  /* A JSON POST through app.js's apiSend(): never throws, { status: 0 } when
+   * the hub is unreachable. */
+  const post = (path, body) => apiPost(path, body);
 
   function failMessage(status, data) {
     return (data && data.error && (data.error.message || data.error))
@@ -377,7 +369,7 @@ const GhUI = (() => {
       .replace(new RegExp(`!\\[([^\\]]*)\\]\\(${URL_PART}[^)]*\\)`, "g"), (_m, alt, src) => `[${alt || "image"}](${src})`);
   }
 
-  const safeUrl = (url) => /^(https?:\/\/|mailto:)/i.test(url);
+  const safeUrl = (url) => safeHref(url) !== "";
 
   function inline(text) {
     const codes = [];
@@ -439,6 +431,6 @@ const GhUI = (() => {
     return renderSegments(segments(String(body || "").replace(/\r\n?/g, "\n")));
   }
 
-  return { ico, ago, envSetup, setupCard, bindSetup, poll, hashParams, post, failMessage, keepFocus, markdown };
+  return { ico, ago, envSetup, setupCard, bindSetup, poll, gate, hashParams, post, failMessage, keepFocus, markdown };
 })();
 globalThis.GhUI = GhUI;

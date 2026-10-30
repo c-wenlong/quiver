@@ -28,6 +28,19 @@ import Testing
 @Suite struct ResumeCommandTests {
     let resume = SessionInfo.Resume(argv: ["claude", "--resume", "aaa 111"], cwd: "/Users/k/my code")
 
+    /// A resumed rollout's stem ends in its own uuid after the thread's;
+    /// `codex resume` takes the thread's, the first (as swe does).
+    @MainActor @Test func codexResumesTheThreadNotTheResumesRollout() {
+        let thread = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+        let rollout = "0199ffff-0000-7111-8222-333344445555"
+        #expect(SessionsModel.resumeArgv(harness: "codex", id: "rollout-2026-10-01T09-30-00-\(thread)")
+                == ["codex", "resume", thread])
+        #expect(SessionsModel.resumeArgv(harness: "codex",
+                                         id: "rollout-2026-10-01T09-30-00-\(thread.uppercased())_\(rollout)")
+                == ["codex", "resume", thread])
+        #expect(SessionsModel.resumeArgv(harness: "codex", id: "rollout-no-uuid") == nil)
+    }
+
     @Test func theDefaultAccountClearsAnyOverride() {
         let line = SessionResume.shellLine(resume, harness: "claude", accountHome: "/Users/k/.claude", isDefaultHome: true)
         // Every step depends on the one before: a missing folder stops it all.
@@ -67,7 +80,9 @@ actor FakeSessionLedger: SessionUsageQuerying {
     /// The next `daily` call captures its rows, then waits for `releaseDaily`.
     private var holdDaily = false
     private var dailyGate: CheckedContinuation<Void, Never>?
-    private(set) var dailyWaiting = false
+    /// Bumped once a held `daily` is parked, so a test waits for it without
+    /// spinning.
+    let dailyParks = CountGate()
     func set(_ rows: [SessionUsage]) { self.rows = rows }
     func setDaily(_ rows: [DailyUsage]) { self.days = rows }
     func holdNextDaily() { holdDaily = true }
@@ -80,8 +95,11 @@ actor FakeSessionLedger: SessionUsageQuerying {
         let result = days
         if holdDaily {
             holdDaily = false
-            dailyWaiting = true
-            await withCheckedContinuation { dailyGate = $0 }
+            let parks = dailyParks
+            await withCheckedContinuation {
+                dailyGate = $0
+                Task { await parks.bump() }
+            }
         }
         return result
     }
@@ -91,11 +109,19 @@ actor FakeSessionLedger: SessionUsageQuerying {
 actor GatedSessionSource: SessionListing {
     let list: SessionList
     private var gate: CheckedContinuation<Void, Never>?
+    /// Whether anything asked for the listing.
     private(set) var waiting = false
+    /// Bumped once a listing is parked, so a test waits for it without
+    /// spinning.
+    let parks = CountGate()
     init(_ list: SessionList) { self.list = list }
     func sessions(days: Int?, limit: Int) async throws -> SessionList {
         waiting = true
-        await withCheckedContinuation { gate = $0 }
+        let parks = self.parks
+        await withCheckedContinuation {
+            gate = $0
+            Task { await parks.bump() }
+        }
         return list
     }
     func release() { gate?.resume(); gate = nil }
@@ -465,7 +491,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         let source = GatedSessionSource(SessionList(sessions: [session("a", "claude", cwd: nil, at: 1_791_699_000)], failures: []))
         let model = SessionsModel(source: source, ledger: FakeSessionLedger(), now: { [now] in now }, calendar: calendar)
         let load = Task { await model.load() }
-        while !(await source.waiting) { await Task.yield() }
+        try #require(await source.parks.reach(1))
         await model.refreshUsage()
         await source.release()
         await load.value
@@ -557,7 +583,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         #expect(model.models.first?.tokens == 300)
     }
 
-    @Test func aUsageRefreshMidLoadKeepsItsDailyRows() async {
+    @Test func aUsageRefreshMidLoadKeepsItsDailyRows() async throws {
         let ledger = FakeSessionLedger()
         var stale = UsageTotals()
         stale.inputTokens = 100
@@ -569,7 +595,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         // Hold the load mid-read so a refresh can commit newer daily rows.
         await ledger.holdNextDaily()
         let loading = Task { await model.load() }
-        while !(await ledger.dailyWaiting) { await Task.yield() }
+        try #require(await ledger.dailyParks.reach(1))
         await ledger.setDaily([DailyUsage(day: now, harness: "claude", model: "opus", totals: fresh)])
         await model.refreshUsage()
         await ledger.releaseDaily()

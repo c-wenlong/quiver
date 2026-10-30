@@ -80,6 +80,7 @@ struct QuiverApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: StatusItemController?
     private var dockBadgeTask: Task<Void, Never>?
+    private var termSource: DispatchSourceSignal?
 
     /// Before launch finishes, so a hidden Dock icon never flashes in.
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -89,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        quitOnSIGTERM()
         PopupKeyRouting.install()
         FocusVisibility.start()
         CommandKeyHold.start()
@@ -126,6 +128,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         await MainActor.run {
             AppModel.shared.openGitHub(repo: repo, type: type)
         }
+    }
+
+    /// install-app.sh quits the installed copy with SIGTERM (by pid, so a
+    /// dev build with the same bundle id is left alone). Left to the
+    /// default action the signal ends the process on the spot, past
+    /// applicationShouldTerminate and its unsaved-drafts check; here it
+    /// quits the way the menu does.
+    private func quitOnSIGTERM() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { MainActor.assumeIsolated { NSApp.terminate(nil) } }
+        source.resume()
+        termSource = source
     }
 
     /// The GitHub snapshot's debounced write may still be pending; the

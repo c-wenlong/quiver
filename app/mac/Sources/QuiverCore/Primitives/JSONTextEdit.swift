@@ -9,8 +9,6 @@ public enum JSONTextEdit {
     public enum Failure: Error, Equatable {
         /// The text is not a single JSON object.
         case notJSONObject
-        /// A key the path names holds a value that is not a JSON object.
-        case notAnObject(String)
         /// The new value is not a JSON type.
         case notJSONValue
     }
@@ -209,7 +207,8 @@ public enum JSONTextEdit {
             return "\(number)"
         case is [Any], is [String: Any]:
             guard JSONSerialization.isValidJSONObject(value),
-                  let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted])
+                  let data = try? JSONSerialization.data(withJSONObject: value,
+                                                         options: [.prettyPrinted, .withoutEscapingSlashes])
             else { throw Failure.notJSONValue }
             let pretty = String(decoding: data, as: UTF8.self)
             guard !indent.isEmpty else { return pretty }
@@ -218,9 +217,11 @@ public enum JSONTextEdit {
         }
     }
 
-    /// A string as a JSON string literal.
+    /// A string as a JSON string literal. Slashes stay bare, so a URL
+    /// reads `https://…` as people and other tools write it, not `https:\/\/…`.
     private static func render(_ string: String) throws -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: [string]) else {
+        guard let data = try? JSONSerialization.data(withJSONObject: [string],
+                                                     options: [.withoutEscapingSlashes]) else {
             throw Failure.notJSONValue
         }
         var encoded = String(decoding: data, as: UTF8.self)

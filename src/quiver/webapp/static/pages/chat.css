@@ -271,6 +271,8 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
   background: var(--card); padding: 12px 14px;
 }
 .msg.approval .role { color: var(--warning-text); }
+.approval-prompt { white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
 .approval-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 .approval-actions .tab { border: 1px solid var(--border-strong); height: 30px; padding: 0 16px; font-size: 13px; }
 /* The pane's real menu, stacked like the TUI shows it; the rows can be
@@ -289,11 +291,11 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
 .approval-toggle {
   display: flex; align-items: center; gap: 8px; width: 100%;
   background: none; border: 0; padding: 0; margin: 0;
-  font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--text-primary);
   text-align: left; cursor: pointer;
 }
 .approval-toggle[hidden] { display: none; }
-.approval-toggle .chev { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; color: var(--text-subtle); transition: transform .12s; }
+.approval-toggle .chev { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; color: var(--text-muted); transition: transform .12s; }
 .msg.approval.open .approval-toggle .chev { transform: rotate(90deg); }
 .msg.approval.resolved:not(.open) .role,
 .msg.approval.resolved:not(.open) .text,
@@ -385,6 +387,36 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
 .chat-text:focus-visible { outline: none; }
 .chat-text:disabled { cursor: not-allowed; }
 .chat-mode { flex: none; height: 36px; }
+.chat-clip { flex: none; border: 0; background: transparent; color: var(--text-secondary); }
+.chat-clip svg { width: 17px; height: 17px; }
+.chat-clip:disabled { opacity: .4; cursor: default; }
+.chat-composer.dropping { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+
+/* Files waiting to go with the next message: a chip each, name then
+ * size (or "Uploading…", or why the hub refused it), and a remove x. */
+.chat-files { flex: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; }
+.att-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  background: var(--card); border: 1px solid var(--border); border-radius: 99px;
+  padding: 3px 4px 3px 10px; font-size: 12px;
+}
+.att-name { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-meta { flex: none; color: var(--text-secondary); white-space: nowrap; }
+.att-chip.uploading .att-meta { color: var(--text-muted); }
+.att-chip.failed { border-color: var(--danger-text); }
+.att-chip.failed .att-meta { color: var(--danger-text); white-space: normal; }
+.att-x {
+  flex: none; width: 20px; height: 20px; border: 0; border-radius: 50%; background: transparent;
+  color: var(--text-secondary); display: grid; place-items: center; cursor: pointer; padding: 0;
+}
+.att-x:hover { background: var(--hover); }
+.att-x svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.att-note { flex-basis: 100%; font-size: 12px; color: var(--text-secondary); padding-left: 4px; }
+.msg-files { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.msg-files span {
+  font-size: 12px; color: var(--text-secondary); border: 1px solid var(--border);
+  border-radius: 99px; padding: 1px 8px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .chat-stop { flex: none; }
 .chat-stop svg { width: 14px; height: 14px; }
 .chat-stop:disabled, .chat-send:disabled { opacity: .4; cursor: default; }
@@ -393,9 +425,49 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
   background: var(--text-primary); color: var(--card); font-size: 13px; font-weight: 500;
 }
 
+/* The Queued tray (the iPhone's QueuedTray): Queue-mode sends the hub
+ * holds until the agent is idle, straight above the box; past three rows
+ * it scrolls, oldest first. */
+.chat-tray {
+  flex: none; background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; margin-bottom: 8px; padding: 2px 0 4px;
+}
+.tray-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 2px 12px; }
+.tray-all { border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px;
+  padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.tray-all:hover { background: var(--hover); color: var(--text-primary); }
+.tray-all.arming { color: var(--danger-text); }
+.tray-note { padding: 0 12px 4px; font-size: 11px; color: var(--text-muted); }
+.tray-rows { max-height: calc(3 * 40px); overflow-y: auto; }
+.tray-row { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 6px 0 12px; }
+.tray-row.posting .tray-text { opacity: .6; }
+.tray-row.editing .tray-text { color: var(--text-secondary); }
+.tray-mark { flex: none; width: 14px; height: 14px; border-radius: 50%; border: 1.5px dashed var(--text-muted);
+  color: var(--text-secondary); display: grid; place-items: center; }
+.tray-row.editing .tray-mark { border: 0; }
+.tray-mark svg { width: 14px; height: 14px; }
+.tray-mark.spin { border: 1.6px solid var(--text-secondary); border-right-color: transparent;
+  animation: tray-spin .9s linear infinite; }
+@keyframes tray-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tray-mark.spin { animation: none; } }
+.tray-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tray-text { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tray-row-note { flex: none; font-size: 12px; color: var(--danger-text); white-space: nowrap; padding-right: 6px; }
+.tray-row-note.left { color: var(--text-muted); }
+.tray-row-note.sub { padding: 0; overflow: hidden; text-overflow: ellipsis; }
+.tray-btn { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-secondary); cursor: pointer; padding: 0; }
+.tray-btn svg { width: 15px; height: 15px; }
+.tray-btn:hover { background: var(--hover); color: var(--text-primary); }
+.tray-btn:disabled { opacity: .4; cursor: default; background: transparent; }
+/* "Editing a queued message" with Cancel, or why an edit didn't save. */
+.chat-editbar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 0 4px 6px 12px; }
+.edit-note { color: var(--warning-text); }
+
 /* The composer's / menu (the remote PWA's #prompt-menu): the commands the
  * session's harness runs, straight above the box; past six rows it
- * scrolls. */
+ * scrolls. An @ token reuses it for files under the session's folder. */
 .chat-menu {
   flex: none; background: var(--card); border: 1px solid var(--border);
   border-radius: 12px; margin-bottom: 8px; padding: 4px 0;
@@ -414,6 +486,13 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
   flex: 1 1 0; min-width: 0; font-size: 12px; color: var(--text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* The @ menu's rows: a file or folder glyph, the name, then its folder. */
+.menu-row.file { height: 40px; }
+.file-icon {
+  flex: none; width: 16px; height: 16px; color: var(--text-secondary);
+  fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round;
+}
+.menu-row.file .menu-sub { flex: 0 1 auto; }
 .menu-note { padding: 10px 12px; font-size: 12px; color: var(--text-secondary); }
 .menu-note.error-note { color: var(--danger-text); }
 .cmd-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }

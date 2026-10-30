@@ -161,7 +161,17 @@ describe="$(git -C "$here" describe --tags --always 2>/dev/null || echo 0.0.0)"
 # describe string, and WidgetKit then refuses every widget render with
 # bundleStubNotSupported ("Bundle version did not match").
 version="$( (git -C "$here" describe --tags --abbrev=0 2>/dev/null || true) | sed 's/^v//')"
-case "$version" in ""|*[!0-9.]*) version="0.0.0" ;; esac
+# A prerelease or build suffix (v0.3.0-rc1, v0.3.0+mac) keeps its dotted
+# part: 0.0.0 would read as older than every release.
+version="${version%%[-+]*}"
+case "$version" in
+  ""|*[!0-9.]*)
+    if [ "$channel" = "prod" ]; then
+      echo "build-app: the version tag gives no dotted version to stamp; prod would ship 0.0.0." >&2
+      exit 1
+    fi
+    version="0.0.0" ;;
+esac
 build="$(git -C "$here" rev-list --count HEAD 2>/dev/null || echo 1)"
 # Update stamping: dev builds record where they were built from, so
 # Settings > Updates can tell the user the checkout has moved on. Prod
@@ -314,10 +324,20 @@ fi
 # would only hash its binaries as data, so each is signed as code first.
 # ${arr[@]+...}: bash 3.2 reads a bare empty "${arr[@]}" under set -u as
 # unbound, so the expansion is guarded.
+# The Python executable itself also carries Quiver.entitlements: the hub
+# it runs (a LaunchAgent, so its own responsible process) opens Terminal
+# through osascript for the web app's Sessions page, which the hardened
+# runtime refuses without the Apple Events entitlement. Libraries and
+# extension modules get plain signatures; entitlements mean nothing there.
 find "$bundle/Contents/Resources/swe" -type f | while IFS= read -r file; do
-  if file -b "$file" | grep -q '^Mach-O'; then
-    codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$file" >/dev/null
-  fi
+  kind="$(file -b "$file")"
+  case "$kind" in
+    Mach-O*executable*)
+      codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
+        --entitlements "$here/script/Quiver.entitlements" "$file" >/dev/null ;;
+    Mach-O*)
+      codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$file" >/dev/null ;;
+  esac
 done
 # Embedded frameworks sign inside-out like swe: loose Mach-O files first
 # (Sparkle's Autoupdate, the XPC helpers' binaries), then the nested
@@ -339,10 +359,15 @@ codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
 # helper beside it is signed on its own, like the frameworks above.
 codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
   "$bundle/Contents/MacOS/QuiverFanHelper" >/dev/null
-# Hardened runtime audit for the app itself (see the commit for the full
-# list): the bundled libcrypto is re-signed here with the same identity,
-# which is all library validation asks, so no entitlements file is needed.
-codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} "$bundle" >/dev/null
+# Hardened runtime audit for the app itself (see commit 5abae68d for the
+# full list): the bundled libcrypto is re-signed here with the same
+# identity, which is all library validation asks. The one exception it
+# needs is Apple Events: Terminal launches go through an osascript child,
+# and TCC charges that event to Quiver as the responsible app, so the
+# hardened runtime refuses it (-1743, no prompt) unless Quiver.entitlements
+# grants com.apple.security.automation.apple-events.
+codesign --force --sign "$identity" ${sign_opts[@]+"${sign_opts[@]}"} \
+  --entitlements "$here/script/Quiver.entitlements" "$bundle" >/dev/null
 
 # Notarize and staple when a `notarytool store-credentials` keychain
 # profile is named. The zip exists only for the submission; stapler

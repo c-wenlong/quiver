@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import protocol
 from quiver.remote import tail
 from quiver.remote.hub import APPROVAL_TTL_S, HubState, make_server
-from quiver.remote import pairing
+from quiver.remote import catalog as catalog_mod, hub as hub_mod, pairing
 from quiver.sessions.models import Session
 
 
@@ -35,12 +35,18 @@ class _Server:
         )
         # No tailnet in tests; cases that need an identity stub it.
         self.state.whois = lambda ip: None
+        # Nor the network: pages price from the bundled LiteLLM snapshot
+        # instead of downloading the live list on the first ledger read.
+        self.state.webapp.download_prices = False
         self.state.catalog.refresh()
         self.state.tail_manager.sync(self.state.catalog.tail_rows())
         self.server = make_server(self.state, "127.0.0.1", 0)
         self.port = self.server.server_address[1]
+        # shutdown() waits for the next poll; the default 0.5 s is paid by
+        # every test that builds a server.
         self.thread = threading.Thread(
-            target=self.server.serve_forever, daemon=True
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
+            daemon=True
         )
         self.thread.start()
 
@@ -80,10 +86,6 @@ class _Server:
             headers=auth)
         assert status == 200, data
         return auth
-
-
-class TestHub(_Server, unittest.TestCase):
-    pass  # placeholder so _Server isn't collected as a test
 
 
 class HubBase(unittest.TestCase):
@@ -580,6 +582,101 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(items[0]["status"], "followup")
         self.assertEqual(items[0]["key"], "claude:f1")
 
+    def test_inbox_takes_a_satellite_row_missing_fields(self):
+        """An older satellite may push a row without agent or title; the
+        inbox lists it rather than answering 500."""
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        catalog_mod.merge_remote_rows(srv.home, "sat1", [{
+            "key": "claude:x", "status": "followup",
+            "last_active_at": time.time()}])
+        srv.state.catalog.refresh()
+        cred = srv.pair()
+        status, data = srv.request(
+            "GET", "/v1/inbox",
+            headers={"Authorization": f"Bearer {cred['credential']}"})
+        self.assertEqual(status, 200, data)
+        [item] = [i for i in json.loads(data)["items"]
+                  if i["key"] == "claude:x@sat1"]
+        self.assertIsNone(item["harness"])
+
+    def test_a_route_bug_answers_500_instead_of_dropping(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        hdr = {"Authorization": f"Bearer {cred['credential']}"}
+        with patch.object(srv.state.catalog, "rows",
+                          side_effect=RuntimeError("boom")), \
+                patch("traceback.print_exc"):
+            status, data = srv.request("GET", "/v1/sessions", headers=hdr)
+        self.assertEqual(status, 500)
+        self.assertEqual(json.loads(data)["error"]["code"], "internal")
+        status, _ = srv.request("GET", "/v1/sessions", headers=hdr)
+        self.assertEqual(status, 200)
+
+    def test_a_client_that_hung_up_is_not_logged(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        handle_error = MagicMock()
+        srv.server.handle_error = handle_error
+        with patch("http.server.BaseHTTPRequestHandler.handle_one_request",
+                   side_effect=ConnectionResetError), \
+                patch("traceback.print_exc") as printed:
+            sock = socket.create_connection(("127.0.0.1", srv.port), timeout=5)
+            try:
+                sock.sendall(b"GET /v1/sessions HTTP/1.1\r\nHost: x\r\n\r\n")
+                try:
+                    self.assertEqual(sock.recv(4096), b"")
+                except ConnectionResetError:
+                    pass  # closed with our request unread: also no answer
+            finally:
+                sock.close()
+        printed.assert_not_called()
+        handle_error.assert_not_called()
+
+    def test_a_bug_after_the_headers_sends_no_second_answer(self):
+        """Once a status line is out, a later failure closes the
+        connection instead of appending a 500 to the response."""
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+
+        def half(handler, status, payload):
+            handler.send_response(200)
+            handler.send_header("Content-Length", "2")
+            handler.end_headers()
+            raise RuntimeError("after headers")
+
+        with patch.object(hub_mod._Handler, "_send_json", half), \
+                patch("traceback.print_exc"):
+            sock = socket.create_connection(("127.0.0.1", srv.port), timeout=5)
+            try:
+                sock.sendall(
+                    b"GET /v1/sessions HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                    b"Authorization: Bearer " + cred["credential"].encode()
+                    + b"\r\n\r\n")
+                data = b""
+                while chunk := sock.recv(4096):
+                    data += chunk
+            finally:
+                sock.close()
+        self.assertTrue(data.startswith(b"HTTP/1.1 200"), data[:40])
+        self.assertEqual(data.count(b"HTTP/1.1 "), 1)
+
+    def test_a_page_bug_answers_500_page_failed(self):
+        srv = _Server()
+        self.addCleanup(srv.stop)
+        cred = srv.pair()
+        broken = type("Page", (), {"get": staticmethod(
+            lambda ctx, args: {}["missing"])})
+        with patch("quiver.webapp.pages.load", return_value=broken), \
+                patch("traceback.print_exc"):
+            status, data = srv.request(
+                "GET", "/v1/app/skills",
+                headers={"Authorization": f"Bearer {cred['credential']}"})
+        self.assertEqual(status, 500)
+        self.assertEqual(json.loads(data)["error"]["code"], "page_failed")
+
     def test_inbox_shows_pending_approval_on_active(self):
         # A pane-only prompt leaves the transcript "active" — the inbox
         # must still surface it, and drop it once resolved.
@@ -657,12 +754,52 @@ class TestHubWriteRoutes(unittest.TestCase):
         srv.state.emit("claude:a3", protocol.event(
             "approval.requested", "claude:a3", "mbp",
             {"request_id": "req-3", "prompt": "run it?"}))
-        srv.state._approval_at["claude:a3"] = (
-            time.time() - APPROVAL_TTL_S - 1)
+        srv.state._approval_at["claude:a3"] = {
+            "req-3": time.time() - APPROVAL_TTL_S - 1}
         status, data = srv.request("GET", "/v1/inbox", headers=hdr)
         self.assertEqual(json.loads(data)["items"], [])
         self.assertNotIn("claude:a3", srv.state.pending_approvals)
         self.assertNotIn("claude:a3", srv.state._approval_at)
+
+    def test_expiry_drops_only_the_stale_request(self):
+        # One prompt past its TTL, one fresh, same session: the sweep
+        # must keep the fresh one in both maps and in the inbox.
+        srv = _Server(sessions=[_session(sid="a7")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        hdr = {"Authorization": f"Bearer {srv.pair()['credential']}"}
+        key = "claude:a7"
+        for rid in ("req-old", "req-new"):
+            srv.state.emit(key, protocol.event(
+                "approval.requested", key, "mbp",
+                {"request_id": rid, "prompt": "run it?"}))
+        srv.state._approval_at[key]["req-old"] = (
+            time.time() - APPROVAL_TTL_S - 1)
+        status, data = srv.request("GET", "/v1/inbox", headers=hdr)
+        items = json.loads(data)["items"]
+        self.assertEqual([i["request_id"] for i in items], ["req-new"])
+        self.assertEqual(srv.state.pending_approvals[key], "req-new")
+        self.assertEqual(set(srv.state._approval_at[key]), {"req-new"})
+
+    def test_overlapping_approvals_resolve_one_at_a_time(self):
+        # A Codex app-server can hold two prompts on one session:
+        # answering A must leave B pending, not clear the session.
+        srv = _Server(sessions=[_session(sid="a6")],
+                      statuses=lambda ss: ["active"])
+        self.addCleanup(srv.stop)
+        key = "claude:a6"
+        for rid in ("req-A", "req-B"):
+            srv.state.emit(key, protocol.event(
+                "approval.requested", key, "mbp",
+                {"request_id": rid, "prompt": "run it?"}))
+        self.assertEqual(srv.state.pending_approvals[key], "req-B")
+        srv.state.emit(key, protocol.event(
+            "approval.resolved", key, "mbp", {"request_id": "req-B"}))
+        self.assertEqual(srv.state.pending_approvals[key], "req-A")
+        srv.state.emit(key, protocol.event(
+            "approval.resolved", key, "mbp", {"request_id": "req-A"}))
+        self.assertNotIn(key, srv.state.pending_approvals)
+        self.assertNotIn(key, srv.state._approval_at)
 
     def test_inbox_keeps_fresh_approval(self):
         srv = _Server(sessions=[_session(sid="a4")],
@@ -736,6 +873,49 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(
             [m["data"]["text"] for m in msgs], ["m0", "m1"]
         )
+
+    def test_messages_page_reads_the_journal_tail(self):
+        # A page comes from the end of the journal, not a parse of all
+        # of it; other event types and has_more/next_before still hold.
+        for i in range(5):
+            self.srv.state.emit(
+                "claude:s1",
+                protocol.event(
+                    "message.appended", "claude:s1", "mbp",
+                    protocol.message("assistant", f"m{i}"),
+                ),
+            )
+            self.srv.state.emit(
+                "claude:s1",
+                protocol.event("session.status", "claude:s1", "mbp",
+                               {"state": "idle"}),
+            )
+        with patch.object(
+            self.srv.state.journal, "read_since",
+            side_effect=AssertionError("whole-journal read"),
+        ):
+            status, data = self.srv.request(
+                "GET", "/v1/sessions/claude:s1/messages?limit=2",
+                headers=self.hdr,
+            )
+            self.assertEqual(status, 200)
+            body = json.loads(data)
+            self.assertEqual(
+                [m["data"]["text"] for m in body["messages"]], ["m3", "m4"])
+            self.assertTrue(body["has_more"])
+            self.assertEqual(body["next_before"], body["messages"][0]["seq"])
+            status, data = self.srv.request(
+                "GET",
+                f"/v1/sessions/claude:s1/messages?limit=3"
+                f"&before={body['next_before']}",
+                headers=self.hdr,
+            )
+            body = json.loads(data)
+            self.assertEqual(
+                [m["data"]["text"] for m in body["messages"]],
+                ["m0", "m1", "m2"])
+            self.assertFalse(body["has_more"])
+            self.assertIsNone(body["next_before"])
 
     def test_events_unknown_key_404(self):
         status, _ = self.srv.request(
@@ -1079,10 +1259,17 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(self.srv.state.launches[lid]["state"], "started")
 
     def test_static_assets(self):
-        """``/`` and a bookmarked /index.html land on the web app; the
-        icons are the only root assets left (its pages reference them
-        there). The remote PWA's paths are gone."""
-        for path in ("/", "/index.html"):
+        """The web app is the root: ``/`` is its page and its assets sit
+        beside it. The old ``/app/`` paths, and a bookmarked
+        /index.html, redirect to the same name at the root, so pair links
+        minted before #944 keep working (the fragment rides along)."""
+        for path in ("/", "/app.js", "/styles.css", "/harness-devin.svg",
+                     "/icon-192.png", "/icon-512.png"):
+            status, _ = self.srv.request("GET", path)
+            self.assertEqual(status, 200, path)
+        for path, where in (("/app/", "/"), ("/app", "/"), ("/index.html", "/"),
+                            ("/app/app.js", "/app.js"),
+                            ("/app/pages.css", "/pages.css")):
             conn = http.client.HTTPConnection(
                 "127.0.0.1", self.srv.port, timeout=5)
             try:
@@ -1090,15 +1277,27 @@ class TestHubWriteRoutes(unittest.TestCase):
                 resp = conn.getresponse()
                 resp.read()
                 self.assertEqual(resp.status, 301, path)
-                self.assertEqual(
-                    resp.getheader("Location"), "/app/", path)
+                self.assertEqual(resp.getheader("Location"), where, path)
             finally:
                 conn.close()
-        for path in ("/icon-192.png", "/icon-512.png"):
-            status, _ = self.srv.request("GET", path)
-            self.assertEqual(status, 200, path)
-        for path in ("/app.js", "/styles.css", "/manifest.webmanifest",
-                     "/pair", "/harness-claude.svg", "/nope.js"):
+        # A legacy path redirects only to a name the root serves: one that
+        # would put another host in Location is a 404, not a redirect.
+        for path in ("/app//evil.example/", "/app//evil.example", "/app/x/y.js",
+                     "/app/nope.js", "/app/%2e%2e/hub.py"):
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", self.srv.port, timeout=5)
+            try:
+                conn.request("GET", path)
+                resp = conn.getresponse()
+                resp.read()
+                self.assertEqual(resp.status, 404, path)
+                self.assertIsNone(resp.getheader("Location"), path)
+            finally:
+                conn.close()
+        # The remote PWA's paths are gone, and nothing but a known asset
+        # is served at the root.
+        for path in ("/manifest.webmanifest", "/pair", "/nope.js",
+                     "/hub.py", "/pages/chat.js"):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 404, path)
 
@@ -1116,8 +1315,8 @@ class TestHubWriteRoutes(unittest.TestCase):
     def test_every_response_refuses_framing_and_sniffing(self):
         """The app shell, its data, an error and a redirect all carry the
         same policy: no foreign frame, no sniffing, no referrer."""
-        for path, headers in (("/app/", {}), ("/v1/sessions", self.hdr),
-                              ("/v1/sessions", {}), ("/", {})):
+        for path, headers in (("/", {}), ("/v1/sessions", self.hdr),
+                              ("/v1/sessions", {}), ("/app/", {})):
             status, pairs = self._headers(path, headers)
             names = [k.lower() for k, _ in pairs]
             got = dict((k.lower(), v) for k, v in pairs)
@@ -1131,7 +1330,7 @@ class TestHubWriteRoutes(unittest.TestCase):
             self.assertEqual(got["referrer-policy"], "no-referrer", path)
 
     def test_server_header_names_no_python(self):
-        _, pairs = self._headers("/app/")
+        _, pairs = self._headers("/")
         server = dict((k.lower(), v) for k, v in pairs)["server"]
         self.assertEqual(server, "quiver-remote")
 
@@ -1184,6 +1383,18 @@ class TestScopedApprovalToken(unittest.TestCase):
         self.assertNotEqual(first, 401)
         second, _ = self._post_approval(body, tok)
         self.assertEqual(second, 401)
+
+    def test_scoped_token_cannot_pick_a_menu_row(self):
+        # The buttons send allow/deny/always only; a row number could
+        # choose any option of a digit menu. It burns the token too.
+        for decision in ("2", "0", 3, None, ["allow"]):
+            tok = self.tokens.mint("claude:s1", "r1")
+            status, _ = self._post_approval(
+                {"request_id": "r1", "decision": decision}, tok)
+            self.assertEqual(status, 401, decision)
+            status, _ = self._post_approval(
+                {"request_id": "r1", "decision": "allow"}, tok)
+            self.assertEqual(status, 401, decision)
 
     def test_scoped_token_bound_to_request(self):
         tok = self.tokens.mint("claude:s1", "r1")
@@ -2329,6 +2540,8 @@ class TestPairRoutes(unittest.TestCase):
             hdrs.update(auth)
         if node is not None:
             self.srv.state.whois = lambda ip: dict(node)
+            # The approval routes read whois through the cache.
+            self.srv.state._whois_cache.clear()
         try:
             return self.srv.request(
                 "POST", "/v1/pair/requests/approve",
@@ -2339,6 +2552,7 @@ class TestPairRoutes(unittest.TestCase):
                 self.srv.state.whois = (
                     lambda ip: dict(_PHONE) if ip == "127.0.0.1" else None
                 )
+                self.srv.state._whois_cache.clear()
 
     def test_request_403_without_tailnet_identity(self):
         self.srv.state.whois = lambda ip: None
@@ -2393,6 +2607,23 @@ class TestPairRoutes(unittest.TestCase):
         status, d = self._approve(
             r["code"], r["request_id"], node=_MAC, auth=auth)
         self.assertEqual(status, 200, d)
+
+    def test_satellite_bearer_cannot_list_or_approve(self):
+        """A satellite credential is a machine's, not an approver's: it
+        neither lists pending requests nor mints a phone by approving."""
+        cred = self.srv.pair(role="satellite")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        _, data = self._req()
+        r = json.loads(data)
+        self.srv.state.owner_login = "other@github"  # no owner identity
+        status, _ = self.srv.request("GET", "/v1/pair/requests",
+                                     headers=auth)
+        self.assertEqual(status, 401)
+        status, _ = self._approve(
+            r["code"], r["request_id"], node=_MAC, auth=auth)
+        self.assertEqual(status, 401)
+        status, pdata = self._poll(r["request_id"], r["poll_secret"])
+        self.assertEqual(json.loads(pdata)["status"], "pending")
 
     def test_approve_unauthenticated_401(self):
         _, data = self._req()
@@ -2481,8 +2712,50 @@ class TestPairRoutes(unittest.TestCase):
             body={"code": r["code"], "request_id": r["request_id"]},
             headers={"Content-Type": "application/json"},
         )
-        self.assertEqual(status, 403)
-        self.assertEqual(json.loads(d)["error"]["code"], "bad_origin")
+        # No bearer and no X-Quiver-Pair: the identity path can't
+        # pass, so the hub refuses without looking the peer up.
+        self.assertEqual(status, 401)
+        self.assertEqual(json.loads(d)["error"]["code"], "unauthorized")
+
+    def test_unauthenticated_approver_never_forks_whois(self):
+        calls = []
+        self.srv.state.whois = lambda ip: calls.append(ip) or dict(_MAC)
+        for hdrs in (
+            {},  # no bearer, no pair header
+            {"X-Quiver-Pair": "1", "Origin": "http://evil.example"},
+        ):
+            status, _ = self.srv.request(
+                "GET", "/v1/pair/requests", headers=hdrs)
+            self.assertIn(status, (401, 403))
+            status, _ = self.srv.request(
+                "POST", "/v1/pair/requests/deny",
+                body={"code": "123456"},
+                headers={"Content-Type": "application/json", **hdrs},
+            )
+            self.assertIn(status, (401, 403))
+        self.assertEqual(calls, [])
+
+    def test_owner_identity_lookups_are_cached_and_rate_limited(self):
+        calls = []
+        self.srv.state.whois = lambda ip: calls.append(ip) or dict(_MAC)
+        hdrs = {"X-Quiver-Pair": "1"}
+        for _ in range(5):
+            status, _ = self.srv.request(
+                "GET", "/v1/pair/requests", headers=hdrs)
+            self.assertEqual(status, 200)
+        # One lookup serves the burst.
+        self.assertEqual(len(calls), 1)
+        status, data = self.srv.request(
+            "GET", "/v1/pair/requests", headers=hdrs)
+        self.assertEqual(status, 429)
+        self.assertEqual(json.loads(data)["error"]["code"], "rate_limited")
+        # A paired bearer is never throttled by the identity budget.
+        status, _ = self.srv.request(
+            "GET", "/v1/pair/requests",
+            headers={"Authorization":
+                     f"Bearer {self.srv.pair()['credential']}"},
+        )
+        self.assertEqual(status, 200)
 
     def test_decide_rejects_foreign_origin_and_host(self):
         _, data = self._req()
@@ -2506,6 +2779,25 @@ class TestPairRoutes(unittest.TestCase):
         r = json.loads(data)
         # Bearer auth, but the peer IS the requesting node — the
         # whois check must still refuse self-approval.
+        self.srv.state.whois = lambda ip: dict(_PHONE)
+        cred = self.srv.pair()
+        status, d = self.srv.request(
+            "POST", "/v1/pair/requests/approve",
+            body={"code": r["code"], "request_id": r["request_id"]},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {cred['credential']}",
+            },
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(d)["error"]["code"], "self_approval")
+
+    def test_bearer_self_approval_rechecks_a_cached_whois_miss(self):
+        _, data = self._req()
+        r = json.loads(data)
+        # An earlier lookup missed and the miss is still cached; the
+        # node resolves now. The approval must not skip the self check.
+        self.srv.state._whois_cache["127.0.0.1"] = (time.time() + 60, None)
         self.srv.state.whois = lambda ip: dict(_PHONE)
         cred = self.srv.pair()
         status, d = self.srv.request(
@@ -2839,7 +3131,7 @@ class TestDeviceList(unittest.TestCase):
             ({"device_id": 7}, 400, "bad_device"),
             ({"device_id": "x" * 65}, 400, "bad_device"),
             ({"device_id": "0123456789abcdef"}, 404, "unknown_device"),
-            ({"device_id": "tailnet:n1"}, 400, "not_paired"),
+            ({"device_id": "tailnet:n1"}, 404, "unknown_device"),
             ({"device_id": other["device_id"]}, 409, "already_revoked"),
         ):
             status, data = self.srv.request(
@@ -2874,7 +3166,7 @@ class TestDeviceList(unittest.TestCase):
 
     def test_revoke_owner_tailnet_device(self):
         # The hub owner's own tailnet sign-in can revoke a paired
-        # device, but its own tailnet: id is a sign-in, not a pairing.
+        # device, and its own tailnet: sign-in too, once confirmed.
         other = self.srv.pair()
         self.srv.state.owner_login = "dev@github"
         self.srv.state.allowed_hosts = {"127.0.0.1"}
@@ -2888,12 +3180,20 @@ class TestDeviceList(unittest.TestCase):
         self.assertEqual(status, 200, data)
         self.assertFalse(json.loads(data)["this_device"])
         status, data = self.srv.request(
+            "POST", "/v1/devices/revoke", {"device_id": "tailnet:nMAC"},
+            headers=hdrs)
+        self.assertEqual(
+            (status, json.loads(data)["error"]["code"]),
+            (409, "confirm_this_device"))
+        status, data = self.srv.request(
             "POST", "/v1/devices/revoke",
             {"device_id": "tailnet:nMAC", "confirm_this_device": True},
             headers=hdrs)
-        self.assertEqual(status, 400)
-        self.assertEqual(
-            json.loads(data)["error"]["code"], "not_paired")
+        self.assertEqual(status, 200, data)
+        self.assertTrue(json.loads(data)["this_device"])
+        # Signed itself out: no owner identity for that node any more.
+        status, _ = self.srv.request("GET", "/v1/devices", headers=hdrs)
+        self.assertEqual(status, 401)
 
 
 class TestServeEntry(unittest.TestCase):
@@ -2953,11 +3253,168 @@ class TestServeEntry(unittest.TestCase):
         state.catalog.refresh = lambda: []
         state._adopt_launches = lambda: None
         state._refresh_launchable = lambda: None
-        state.tail_manager.sync = lambda rows, **kw: state._stop.set()
+        # stop() wakes the loop as well; setting only _stop left it to sit
+        # out the whole refresh interval.
+        state.tail_manager.sync = lambda rows, **kw: state.stop()
         with patch("quiver.remote.supervise.reap_kept"):
             state._catalog_loop()
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
         self.assertFalse(state.tail_manager.is_hot("claude:b"))
+
+    def test_satellite_presence_counts_survive_concurrent_streams(self):
+        # Each stream connects/disconnects on its own request thread;
+        # an unlocked read-modify-write lost counts and could leave a
+        # machine flagged online (or offline) for good.
+        import sys
+        state = HubState(Path(tempfile.mkdtemp()))
+        writes = []
+        events = []
+
+        def emit(_key, event):
+            events.append(event["type"] == "machine.online")
+
+        state.emit = emit
+
+        def upsert(_home, row):
+            writes.append(row["online"])
+
+        def stream():
+            for _ in range(300):
+                state.sat_connected("m1")
+                state.sat_disconnected("m1")
+
+        prev = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            with patch.object(hub_mod.catalog_mod, "upsert_machine", upsert):
+                # Daemon threads and a bounded join: a locking bug must
+                # fail the test, not hang the run.
+                threads = [threading.Thread(target=stream, daemon=True)
+                           for _ in range(8)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join(timeout=30)
+        finally:
+            sys.setswitchinterval(prev)
+        self.assertFalse(any(t.is_alive() for t in threads),
+                         "a presence worker never finished")
+        self.assertEqual(state._sat_subs["m1"], 0)
+        self.assertFalse(state.machine_online("m1"))
+        # Flags and events match one for one, alternate online/offline,
+        # and end offline.
+        self.assertEqual(events, writes)
+        self.assertEqual(writes[-1], False)
+        self.assertTrue(all(a != b for a, b in zip(writes, writes[1:])))
+
+    def test_failing_loop_step_logs_once_per_window(self):
+        # A loop step that raises used to vanish without a trace; it
+        # must reach stderr, but not on every 250 ms tick.
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+        ticks = iter(range(3))
+
+        def tick():
+            if next(ticks) == 2:
+                state._stop.set()
+            raise RuntimeError("tick broke")
+
+        state.tail_manager.tick = tick
+        state.tail_manager.wait = lambda _t: None
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            state._tail_loop()
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 1, out)
+        self.assertIn("RuntimeError: tick broke", out)
+
+    def test_tail_loop_sweeps_stale_journals_keeping_its_own(self):
+        # Every ~5 min the tail loop sweeps idle journals and cursors,
+        # sparing the global stream and each satellite's command queue.
+        state = HubState(Path(tempfile.mkdtemp()))
+        catalog_mod.upsert_machine(state.home, {"id": "sat1", "name": "s"})
+        # A satellite session has no tailer or cursor on the hub: its
+        # journal must stay while the catalog lists it.
+        state.catalog.rows = lambda: [
+            {"key": "claude:x@sat1", "remote": True},
+            {"key": "claude:local"},
+        ]
+        calls = []
+
+        def sweep(journal, keep=(), now=None):
+            calls.append((journal, list(keep)))
+            state._stop.set()
+            return 0
+
+        state.tail_manager.tick = lambda: None
+        state.tail_manager.wait = lambda _t: None
+        with patch.object(state.tail_manager, "sweep_stale", sweep), \
+             patch.object(hub_mod.attachments, "sweep", lambda home: 0):
+            state._tail_loop()
+        self.assertEqual(len(calls), 1)
+        journal, keep = calls[0]
+        self.assertIs(journal, state.journal)
+        self.assertIn(hub_mod.GLOBAL_KEY, keep)
+        self.assertIn(state.sat_journal_key("sat1"), keep)
+        self.assertIn("claude:x@sat1", keep)
+        self.assertNotIn("claude:local", keep)
+
+    def test_loop_error_log_throttles_per_step_and_window(self):
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+
+        def fail(step):
+            try:
+                raise RuntimeError(step)
+            except RuntimeError:
+                state._log_loop_error(step)
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            fail("tail tick")
+            fail("tail tick")          # same window: quiet
+            fail("catalog refresh")    # another step logs in that window
+            # The window passes: the same step logs again.
+            state._loop_error_at["tail tick"] -= hub_mod._LOOP_ERROR_LOG_S + 1
+            fail("tail tick")
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 2, out)
+        self.assertEqual(out.count("catalog refresh failed"), 1, out)
+
+    def test_catalog_loop_prunes_pair_requests_at_most_once_a_minute(self):
+        home = Path(tempfile.mkdtemp())
+        state = HubState(home)
+        r = pairing.request_pair(home, {"node_id": "n1"}, "phone")
+        pairing.approve_request(home, r["code"])
+        rows = pairing._load_requests(home)
+        rows[0]["expires_at"] = time.time() - 1
+        pairing._save_requests(home, rows)
+        # Three loop passes: prune on the first, skip the second (same
+        # minute), prune the third once the last prune is backdated
+        # past the interval.
+        passes = iter(range(3))
+        state.catalog.rows = lambda: []
+        state.catalog.refresh = lambda: []
+        state.catalog.poll_github = lambda: None
+        state._adopt_launches = lambda: None
+        state._refresh_launchable = lambda: None
+        state._catalog_wake.wait = lambda _t: None
+
+        def sync(rows, **kw):
+            if next(passes) == 2:
+                state._pair_pruned_at -= hub_mod._PAIR_PRUNE_S + 1
+                state._stop.set()
+
+        state.tail_manager.sync = sync
+        with patch("quiver.remote.supervise.reap_kept"), \
+             patch("quiver.remote.pairing.prune_requests",
+                   wraps=pairing.prune_requests) as prune:
+            state._catalog_loop()
+        self.assertEqual(prune.call_count, 2)
+        # The uncollected credential left with its expired row.
+        self.assertEqual(pairing._load_requests(home), [])
 
     def test_tail_manager_probes_through_state_status_of(self):
         state = HubState(Path(tempfile.mkdtemp()))
@@ -2969,7 +3426,11 @@ class TestServeEntry(unittest.TestCase):
 
     def test_state_start_stop(self):
         state = HubState(Path(tempfile.mkdtemp()))
-        state.start()
+        # No real session scan or notify config: only the thread
+        # lifecycle is under test.
+        state.catalog._fetch = lambda: []
+        with patch.object(hub_mod.notify, "load_config", return_value={}):
+            state.start()
         try:
             self.assertTrue(state._threads)
             self.assertTrue(all(t.is_alive() for t in state._threads))
@@ -3085,6 +3546,44 @@ class TestSSE(HubBase):
                     break
             self.assertIn("message.appended", lines)
             self.assertTrue(got_live)
+        finally:
+            conn.close()
+
+    def test_cursor_ahead_of_a_wiped_journal_resyncs(self):
+        # The client last saw seq 500; the journal was wiped and holds
+        # one event. It must hear journal.truncated, and a new event
+        # (seq 2, under its old cursor) must still reach it.
+        auth = self.auth()
+        key = "claude:s1"
+        self.srv.state.emit(key, protocol.event(
+            "message.appended", key, "mbp",
+            protocol.message("assistant", "after wipe")))
+        head = self.srv.state.journal.last_seq(key)
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.srv.port, timeout=5)
+        try:
+            conn.request("GET", f"/v1/sessions/{key}/events?last=500",
+                         headers=auth)
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 200)
+            seen = []
+            got_live = False
+            for _ in range(100):
+                line = resp.readline().decode()
+                if not line:
+                    break
+                seen.append(line)
+                if "journal.caught-up" in line:
+                    self.srv.state.emit(key, protocol.event(
+                        "message.appended", key, "mbp",
+                        protocol.message("assistant", "live")))
+                if '"live"' in line:
+                    got_live = True
+                    break
+            text = "".join(seen)
+            self.assertIn(
+                f'{{"type": "journal.truncated", "seq": {head}}}', text)
+            self.assertTrue(got_live, text)
         finally:
             conn.close()
 
@@ -3469,6 +3968,26 @@ class TestAgentSecurity(HubBase):
         row = pairing.load_devices(self.srv.home)[cred["device_id"]]
         self.assertEqual(row["role"], "phone")
 
+    def test_satellite_credential_is_for_agent_routes_only(self):
+        """Any pair token can mint a satellite row, so that row must not
+        carry a phone's powers: session, launch, pairing and page routes
+        all refuse it, while its own agent route still answers."""
+        auth = self._sat()
+        for method, path, body in (
+            ("GET", "/v1/sessions", None),
+            ("GET", "/v1/devices", None),
+            ("GET", "/v1/app/settings", None),
+            ("POST", "/v1/sessions", {"machine": "m", "harness": "claude",
+                                      "cwd": "/tmp"}),
+            ("POST", "/v1/devices/revoke", {"device_id": "x"}),
+            ("DELETE", "/v1/sessions/claude:s1/task", None),
+        ):
+            status, _ = self.srv.request(method, path, body, headers=auth)
+            self.assertEqual(status, 401, (method, path))
+        status = self._post(
+            "/v1/agent/catalog", {"machine_id": "sat-m1", "rows": []}, auth)
+        self.assertEqual(status, 200)
+
     # -- non-satellite credentials ------------------------------------------
 
     def test_phone_denied_on_every_agent_route(self):
@@ -3704,9 +4223,12 @@ class TestStartNotify(unittest.TestCase):
         home = Path(tempfile.mkdtemp())
         state = HubState(home)
         state.catalog._fetch = lambda: []
-        cfg = {"enabled": True, "url": "https://ntfy.sh",
+        cfg = {"enabled": True, "url": "https://ntfy.invalid",
                "topic": "t", "ntfy_token": "x"}
-        with patch.object(notify, "load_config", return_value=cfg):
+        # The notifier thread really runs: nothing it does may reach a
+        # network.
+        with patch.object(notify, "load_config", return_value=cfg), \
+             patch.object(notify.Notifier, "_post"):
             state.start()
             try:
                 names = [t.name for t in state._threads]

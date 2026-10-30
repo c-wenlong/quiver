@@ -29,10 +29,12 @@ struct ComputeTabContent: View {
         // standing in for the whole tab.
         let temperatureOn = metrics.contains(.temperature)
         VStack(alignment: .leading, spacing: 10) {
-            if model.history.isEmpty && !temperatureOn {
-                note("Collecting, the first points arrive within \(model.trendInterval.span).")
-            } else if metrics.isEmpty {
+            // The user's own setting first: with every chart hidden,
+            // "Collecting" would promise charts that never come.
+            if metrics.isEmpty {
                 note("Every chart is hidden in Menu bar.")
+            } else if model.history.isEmpty && !temperatureOn {
+                note("Collecting, the first points arrive within \(model.trendInterval.span).")
             } else if active.isEmpty && !temperatureOn {
                 note("Nothing a starred harness runs is up right now.")
             } else if shown.isEmpty && !temperatureOn {

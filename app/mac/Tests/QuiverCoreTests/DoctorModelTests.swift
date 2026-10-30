@@ -27,6 +27,14 @@ import Testing
         #expect(report.findings.map(\.harness) == [nil, nil])
     }
 
+    /// Run state and errors are keyed by id, so two findings whose check
+    /// and message only differ in where they split must not share one.
+    @Test func findingIdsKeepCheckAndMessageApart() {
+        let a = DoctorReport.Finding(check: "ab", severity: .error, message: "c")
+        let b = DoctorReport.Finding(check: "a", severity: .error, message: "bc")
+        #expect(a.id != b.id)
+    }
+
     /// An off-PATH finding names its harness, so the page can show its logo.
     @Test func aFindingAboutOneHarnessNamesIt() async {
         let offPath = Data(#"""
@@ -70,17 +78,15 @@ import Testing
     }
 }
 
-/// Replies to each call in turn, after that call's delay.
+/// Replies to each call in turn.
 final class SequencedRunner: CommandRunning, @unchecked Sendable {
     private let lock = NSLock()
-    private var replies: [(Duration, CommandResult)]
+    private var replies: [CommandResult]
 
-    init(_ replies: [(Duration, CommandResult)]) { self.replies = replies }
+    init(_ replies: [CommandResult]) { self.replies = replies }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        let (delay, reply) = lock.withLock { replies.removeFirst() }
-        try await Task.sleep(for: delay)
-        return reply
+        lock.withLock { replies.removeFirst() }
     }
 }
 
@@ -90,18 +96,37 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         .init(status: 1, stdout: Data(#"{"schema":1,"data":{"ok":false,"findings":[{"check":"\#(check)","severity":"warning","message":"m","fix":null}]}}"#.utf8), stderr: "")
     }
 
-    @Test func aSlowerEarlierRefreshCannotOverwriteANewerOne() async {
-        let runner = SequencedRunner([(.milliseconds(400), report("old")), (.milliseconds(10), report("new"))])
+    @Test(.timeLimit(.minutes(1))) func aSlowerEarlierRefreshCannotOverwriteANewerOne() async {
+        let runner = GatedReplies([report("old"), report("new")])
         let model = DoctorModel(swe: SweClient(runner: runner))
-        async let first: Void = model.load()
-        try? await Task.sleep(for: .milliseconds(50))
-        async let second: Void = model.load()
-        _ = await (first, second)
+        let first = Task { await model.load() }
+        #expect(await runner.gates[0].arrived())
+        let second = Task { await model.load() }
+        #expect(await runner.gates[1].arrived())
+        // The newer refresh answers first; the older one lands after it.
+        runner.gates[1].open()
+        await second.value
+        runner.gates[0].open()
+        await first.value
         guard case .loaded(let report) = model.state else {
             Issue.record("expected loaded, got \(model.state)")
             return
         }
         #expect(report.findings.map(\.check) == ["new"])
+    }
+
+    /// A load cancelled with its page puts the previous state back: left
+    /// at .loading, the spinner and isBusy stayed on for good.
+    @Test(.timeLimit(.minutes(1))) func aCancelledLoadDoesNotSpinForever() async throws {
+        // No replies: the one call hangs until the load is cancelled.
+        let runner = GatedReplies([])
+        let model = DoctorModel(swe: SweClient(runner: runner))
+        let task = Task { await model.load() }
+        #expect(await runner.hanging())
+        task.cancel()
+        await task.value
+        #expect(model.state == .idle)
+        #expect(!model.isBusy)
     }
 }
 

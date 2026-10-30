@@ -48,7 +48,8 @@ _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
 _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
     "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
-    "--approve", "--deny", "--public-url", "--model", "--effort",
+    "--approve", "--deny", "--request-id", "--public-url", "--model",
+    "--effort",
 }
 _BOOL_FLAGS = {"--on", "--off", "--app", "--requests", "--install",
                "--uninstall", "--tailnet", "--apply", "--recheck",
@@ -65,7 +66,7 @@ _USAGE = f"""\
   {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app] [--json]')}
                                   Print a pairing URL + token for a phone
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
-  {c('cyan', 'swe remote devices [--revoke=<id>] [--requests] [--approve=<code>] [--deny=<code>]')}
+  {c('cyan', 'swe remote devices [--revoke=<id>] [--requests] [--approve=<code>] [--deny=<code>] [--request-id=<id>]')}
                                   List/revoke devices and approve pair requests
   {c('cyan', 'swe remote attach <session> [--mode=auto|tmux|headless|serve|appserver] [--model=<m>] [--effort=<e>]')}
                                   Move an observed session under supervision
@@ -172,7 +173,7 @@ def _bindable(host: str, port: int) -> str | None:
 
 
 def _probe(host: str, port: int, timeout: float = 3.0) -> dict | None:
-    url = f"http://{host}:{port}/v1/status"
+    url = f"http://{protocol.url_host(host)}:{port}/v1/status"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -258,7 +259,7 @@ def _cmd_serve(flags: dict) -> int:
     # Timestamped and flushed: the log is often a file, and a hub killed
     # by a restart otherwise leaves no trace of when it ran.
     print(
-        f"{_stamp()}  remote hub on {c('cyan', f'http://{host}:{port}')} "
+        f"{_stamp()}  remote hub on {c('cyan', f'http://{protocol.url_host(host)}:{port}')} "
         f"as {c('bold', state.machine['name'])} ({state.machine_id})",
         flush=True,
     )
@@ -548,10 +549,26 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
                 f"{r.get('peer_ip', '?')}  expires in {r['expires_in_s']}s"
             )
         return 0
+    # --request-id holds the code to one row, as the hub's HTTP route
+    # does: a code typed against one request never approves another,
+    # and wrong approve codes count toward that row's lockout.
+    request_id = flags.get("--request-id")
+    if request_id == "":
+        # Empty would quietly widen the code to every pending row.
+        print(c("red", "--request-id needs an id from --requests"),
+              file=error_stream(json_view))
+        return 1
+    if request_id is not None and (
+        flags.get("--approve") is None and flags.get("--deny") is None
+    ):
+        print(c("red", "--request-id goes with --approve=<code> or "
+                       "--deny=<code>"),
+              file=error_stream(json_view))
+        return 1
     approve = flags.get("--approve")
     if approve is not None:
         code = "".join(ch for ch in approve if ch.isdigit())
-        res = pairing.approve_request(None, code)
+        res = pairing.approve_request(None, code, request_id)
         if json_view:
             if res is None:
                 emit({"ok": False})
@@ -569,7 +586,7 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
     deny = flags.get("--deny")
     if deny is not None:
         code = "".join(ch for ch in deny if ch.isdigit())
-        ok = pairing.deny_request(None, code)
+        ok = pairing.deny_request(None, code, request_id)
         if json_view:
             return emit({"ok": ok})
         if not ok:
@@ -581,7 +598,12 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
     revoke = flags.get("--revoke")
     if revoke:
         try:
-            ok = pairing.revoke_device(None, revoke)
+            if revoke.startswith("tailnet:"):
+                # One of the owner's tailnet devices, let in without
+                # pairing: it stops getting in until it pairs again.
+                ok = pairing.revoke_signin(None, revoke[len("tailnet:"):])
+            else:
+                ok = pairing.revoke_device(None, revoke)
         except sshkeys.KeysNotSynced as exc:
             print(c("red", f"revoked {revoke}, but its SSH key is still in "
                            f"~/.ssh/authorized_keys: {exc}"),
@@ -600,13 +622,18 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
               file=error_stream(json_view))
         return 1
     devices = pairing.load_devices()
+    signins = pairing.load_signins()
     if json_view:
+        from quiver.remote import devices as devices_mod
+
         return emit({
             "devices": [
                 pairing.device_view(did, row)
                 for did, row in devices.items()
-            ]
+            ],
+            "signins": devices_mod.signin_rows(None, None),
         })
+    _print_signins(signins)
     if not devices:
         print(c("dim", "no paired devices — swe remote pair"))
         return 0
@@ -624,6 +651,20 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
         detail = f"  {' · '.join(bits)}" if bits else ""
         print(f"  {did}  {label}  {mark}{detail}  last seen {seen_s}")
     return 0
+
+
+def _print_signins(signins: dict) -> None:
+    """The owner's tailnet devices the hub let in without pairing, each
+    revocable with ``--revoke=tailnet:<node>``."""
+    if not signins:
+        return
+    print(c("dim", "signed in through Tailscale (revoke with --revoke=tailnet:<node>):"))
+    for node, row in signins.items():
+        mark = c("red", "revoked") if row.get("revoked_at") else c("green", "active")
+        seen = row.get("last_seen_at")
+        seen_s = time.strftime("%Y-%m-%d %H:%M", time.localtime(seen)) if seen else "never"
+        print(f"  tailnet:{node}  {row.get('node_name') or 'device'}  {mark}  last seen {seen_s}")
+    print(c("dim", "paired devices:"))
 
 
 def _cmd_attach(flags: dict, rest: list[str]) -> int:

@@ -9,6 +9,7 @@ import SwiftUI
 struct RemoteSection: View {
     @Environment(AppModel.self) private var app
     @State private var model: RemoteModel?
+    @State private var requests: PairRequestsModel?
     @State private var showsSetup = false
     @State private var showsAllDevices = false
     @State private var target: PairTarget = .web
@@ -28,6 +29,10 @@ struct RemoteSection: View {
             SettingsDivider()
             cardHeader("Paired devices", detail: "Phones signed in to the hub.")
             deviceRows
+            SettingsDivider()
+            cardHeader("Pending requests",
+                       detail: "Phones asking to pair over Tailscale. Type the code the phone shows, then approve or deny.")
+            requestRows
         }
         .task(id: app.swePath) {
             let remote = RemoteModel(swe: app.swe)
@@ -35,6 +40,13 @@ struct RemoteSection: View {
             async let status: Void = remote.load()
             async let report: Void = setup.load()
             _ = await (status, report)
+        }
+        // Polls only while this section is on screen: SwiftUI cancels the
+        // task when it leaves, which ends the loop.
+        .task(id: app.swePath) {
+            let pending = PairRequestsModel(swe: app.swe)
+            requests = pending
+            await pending.poll()
         }
         // The first-run wizard's "Set up now" lands here once it closes.
         .onChange(of: app.pendingRemoteSetup, initial: true) { _, pending in
@@ -196,6 +208,41 @@ struct RemoteSection: View {
         }
     }
 
+    @ViewBuilder private var requestRows: some View {
+        if let requests, requests.loaded {
+            if requests.requests.isEmpty {
+                Text(requests.loadError.map { "Couldn't read pair requests: \($0)" }
+                     ?? "No one is waiting to pair.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 14)
+            } else {
+                if let error = requests.loadError {
+                    // The rows below are the last good answer; say they've
+                    // stopped updating.
+                    Label("Couldn't refresh pair requests: \(error)",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(Theme.caption).foregroundStyle(Theme.warningText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 10)
+                }
+                ForEach(Array(requests.requests.enumerated()), id: \.element.id) { index, request in
+                    if index > 0 { SettingsDivider() }
+                    PairRequestRow(request: request, model: requests) {
+                        // The new device belongs in the list above.
+                        Task { await model?.load() }
+                    }
+                }
+            }
+        } else {
+            SettingRow(title: "Checking for requests…", detail: "") {
+                ProgressView().controlSize(.small)
+            }
+        }
+    }
+
     private var pairButton: some View {
         HStack(spacing: 10) {
             Button {
@@ -239,6 +286,7 @@ enum PairTarget: String, CaseIterable, Identifiable {
 private struct DeviceRow: View {
     var device: RemoteStatus.Device
     var model: RemoteModel?
+    @State private var confirmingRevoke = false
 
     var body: some View {
         SettingRow(title: title,
@@ -249,12 +297,16 @@ private struct DeviceRow: View {
             if model?.revoking.contains(device.id) == true {
                 ProgressView().controlSize(.small)
             } else {
-                Button("Revoke") {
-                    Task { await model?.revoke(device) }
-                }
-                .secondaryButton()
-                .hoverTip("Sign this device out of the hub")
+                Button("Revoke") { confirmingRevoke = true }
+                    .secondaryButton()
+                    .hoverTip("Sign this device out of the hub")
             }
+        }
+        .confirmationDialog("Revoke \(title)?", isPresented: $confirmingRevoke) {
+            Button("Revoke", role: .destructive) { Task { await model?.revoke(device) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It is signed out of the hub at once and has to pair again to reconnect.")
         }
     }
 
@@ -291,6 +343,75 @@ private struct DeviceRow: View {
             bits.append("seen \(last.formatted(.relative(presentation: .named)))")
         }
         return bits.joined(separator: " · ")
+    }
+}
+
+/// One pending Tailscale pair request: who is asking, a code field for
+/// the digits the phone shows, and Approve / Deny.
+private struct PairRequestRow: View {
+    var request: PairRequest
+    var model: PairRequestsModel
+    var onApproved: () -> Void
+    /// Ticks the age once every few seconds, between polls.
+    @State private var now = Date()
+    @FocusState private var focused: Bool
+    private let tick = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        SettingRow(title: request.name.flatMap { $0.isEmpty ? nil : $0 } ?? "Device",
+                   detail: detail,
+                   icon: "iphone.radiowaves.left.and.right",
+                   warning: model.errors[request.id],
+                   danger: true) {
+            HStack(spacing: 8) {
+                TextField("000000", text: code)
+                    .textFieldStyle(.plain)
+                    .font(Theme.font(size: 14, design: .monospaced))
+                    .focused($focused)
+                    .onSubmit { decide(approve: true) }
+                    .accessibilityLabel("Pair code for \(request.name ?? "device")")
+                    .padding(.horizontal, 10)
+                    .frame(width: 92, height: Theme.fieldHeight)
+                    .background(Theme.field, in: .rect(cornerRadius: Theme.fieldRadius))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.fieldRadius)
+                        .strokeBorder(focused ? Theme.borderHover : Theme.border, lineWidth: 1))
+                    .focusRing(focused, cornerRadius: Theme.fieldRadius, afterPointer: true)
+                if model.deciding.contains(request.id) {
+                    ProgressView().controlSize(.small)
+                }
+                Button("Deny") { decide(approve: false) }
+                    .secondaryButton()
+                    .disabled(!model.canDecide(request))
+                    .hoverTip("Refuse this request. The phone shows it was denied.")
+                Button("Approve") { decide(approve: true) }
+                    .primaryButton()
+                    .disabled(!model.canDecide(request))
+                    .hoverTip("Sign this phone in to the hub")
+            }
+        }
+        .onReceive(tick) { now = $0 }
+    }
+
+    private var code: Binding<String> {
+        Binding(get: { model.code(for: request) },
+                set: { model.setCode($0, for: request) })
+    }
+
+    /// node · login · age; a tagged node has no login, so it drops out.
+    private var detail: String {
+        var bits: [String] = []
+        for field in [request.nodeName, request.login] {
+            if let field, !field.isEmpty { bits.append(field) }
+        }
+        if let age = PairRequestsModel.age(of: request, at: now) { bits.append(age) }
+        return bits.joined(separator: " · ")
+    }
+
+    private func decide(approve: Bool) {
+        guard model.canDecide(request) else { return }
+        Task {
+            if await model.decide(request, approve: approve), approve { onApproved() }
+        }
     }
 }
 

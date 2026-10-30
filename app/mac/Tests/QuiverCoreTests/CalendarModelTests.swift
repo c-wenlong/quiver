@@ -11,15 +11,13 @@ private struct FakeActivity: ActivityProviding {
     }
 }
 
-private final class Flag: @unchecked Sendable { var value = false }
-
 /// A provider the test can flip between a reading and a failure.
 private struct TogglingActivity: ActivityProviding {
     struct Failure: LocalizedError {
         var errorDescription: String? { "ledger read failed" }
     }
     var blocks: [ActivityBlock]
-    var fails: Flag
+    var fails: Box<Bool>
     func activityBlocks(in range: DateInterval, gap: TimeInterval,
                         force: Bool) throws -> [ActivityBlock] {
         if fails.value { throw Failure() }
@@ -49,9 +47,7 @@ private struct TogglingActivity: ActivityProviding {
     }
 
     private func freshDefaults() -> UserDefaults {
-        let name = "CalendarModelTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarModelTests")
         return defaults
     }
 
@@ -70,7 +66,6 @@ private struct TogglingActivity: ActivityProviding {
 
     @Test func theWeekRangeStartsOnTheUsersFirstWeekday() async {
         // 14 Oct 2026 is a Wednesday.
-        var mondayFirst = calendar; mondayFirst.firstWeekday = 2
         let week = model(firstWeekday: 2).visibleRange
         #expect(week.start == utc("2026-10-12T00:00:00Z"))
         #expect(week.end == utc("2026-10-19T00:00:00Z"))
@@ -343,7 +338,10 @@ private struct TogglingActivity: ActivityProviding {
         #expect(model.windowBlocks.count == 1)
     }
 
-    @Test func anAnchorMoveKeepsTheOldBlocksUntilTheLoadLands() async {
+    // The time limit fails the test instead of hanging the suite if the
+    // prefetches never settle or the load never asks the provider.
+    @Test(.timeLimit(.minutes(1)))
+    func anAnchorMoveKeepsTheOldBlocksUntilTheLoadLands() async {
         let held = HeldActivity(blocks: [block("2026-10-14T09:00:00Z")])
         held.held = false
         let model = CalendarModel(providers: [held], defaults: freshDefaults(),
@@ -351,16 +349,22 @@ private struct TogglingActivity: ActivityProviding {
         model.mode = .day
         await model.load()
         #expect(model.blocks.count == 1)
-        // The next day's render range is a cache miss; the provider read
-        // hangs, and the old blocks stay up rather than flashing empty.
+        // The neighbouring days' prefetches land first, so the next read
+        // the provider sees is the landing's own.
+        await settled(model)
+        let calls = held.calls
+        // Oct 20's render range (Oct 19-21) shares no day with anything
+        // read so far: a cache miss. The provider read hangs, and the old
+        // blocks stay up rather than flashing empty.
         held.held = true
-        model.land(on: utc("2026-10-15T00:00:00Z"))
+        model.land(on: utc("2026-10-20T00:00:00Z"))
         async let load: () = model.load()
-        await Task.yield()
-        await Task.yield()
+        await held.started(calls + 1)
         #expect(model.blocks.count == 1)
         held.release()
         await load
+        // Once it lands, the new range's own (empty) blocks replace them.
+        #expect(model.blocks.isEmpty)
     }
 
     @Test func theCacheIsKeyedByRenderRange() async {
@@ -391,7 +395,7 @@ private struct TogglingActivity: ActivityProviding {
     }
 
     @Test func aFailingProviderKeepsItsLastBlocksAndReportsTheError() async {
-        let fail = Flag()
+        let fail = Box(false)
         let provider = TogglingActivity(
             blocks: [block("2026-10-14T09:00:00Z")], fails: fail)
         var cal = calendar; cal.firstWeekday = 2
@@ -420,10 +424,41 @@ private struct TogglingActivity: ActivityProviding {
         let first = model(defaults: defaults)
         first.toggle("codex")
         first.toggle(harness: "claude", accountHome: "/work")
+        first.toggleUsage("claude-default")
 
         let second = model(defaults: defaults)
         #expect(second.hiddenHarnesses == ["codex"])
         #expect(second.hiddenAccounts == ["claude|/work"])
+        #expect(second.hiddenUsage == ["claude-default"])
+    }
+
+    @Test func usageHidingTogglesAndRestores() async {
+        let defaults = freshDefaults()
+        let first = model(defaults: defaults)
+        #expect(!first.isUsageHidden("claude-default"))
+        first.toggleUsage("claude-default")
+        #expect(first.isUsageHidden("claude-default"))
+
+        let second = model(defaults: defaults)
+        #expect(second.isUsageHidden("claude-default"))
+        second.toggleUsage("claude-default")
+        #expect(!second.isUsageHidden("claude-default"))
+    }
+
+    @Test func usageWindowHidingIsSeparateFromItsAccount() async {
+        let defaults = freshDefaults()
+        let first = model(defaults: defaults)
+        #expect(!first.isUsageHidden("claude-default", window: "5h"))
+        first.toggleUsage("claude-default", window: "5h")
+        #expect(first.isUsageHidden("claude-default", window: "5h"))
+        // The window bit never leaks into the account's own toggle or a
+        // sibling window.
+        #expect(!first.isUsageHidden("claude-default"))
+        #expect(!first.isUsageHidden("claude-default", window: "7d"))
+
+        let second = model(defaults: defaults)
+        #expect(second.hiddenUsageWindows == ["claude-default|5h"])
+        #expect(second.isUsageHidden("claude-default", window: "5h"))
     }
 
     @Test func aBlockSpanningMidnightKeepsItsSessionsFromBothSides() async {
@@ -727,9 +762,7 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
     }
 
     private func freshDefaults() -> UserDefaults {
-        let name = "CalendarCacheTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarCacheTests")
         return defaults
     }
 
@@ -743,7 +776,10 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         return block
     }
 
-    @Test func aRestoredSnapshotPaintsBeforeTheLoadLands() async {
+    // The time limit fails the test instead of hanging the suite if the
+    // load never asks the provider.
+    @Test(.timeLimit(.minutes(1)))
+    func aRestoredSnapshotPaintsBeforeTheLoadLands() async {
         // Snapshot entries are keyed by render range: the visible week
         // Oct 12–19 plus one window of buffer on each side.
         let snap = CalendarSnapshot(ranges: [
@@ -754,7 +790,7 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
                                   now: { utc("2026-10-14T12:00:00Z") },
                                   calendar: calendar, restored: snap)
         async let load: () = model.load()
-        await Task.yield()
+        await held.started()
         // The cached range's blocks are on screen while the provider's
         // read is still suspended.
         #expect(model.blocks.count == 1)
@@ -786,19 +822,24 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         #expect(model.blocks.map(\.project) == ["prev", "now"])
     }
 
-    @Test func aCompletedScanKeepsStaleBlocksUntilTheRefetchLands() async {
+    // The time limit fails the test instead of hanging the suite if the
+    // prefetches never settle or the refetch never asks the provider.
+    @Test(.timeLimit(.minutes(1)))
+    func aCompletedScanKeepsStaleBlocksUntilTheRefetchLands() async {
         let held = HeldActivity(blocks: [block("2026-10-14T09:00:00Z")])
         held.held = false
         let model = CalendarModel(providers: [held], defaults: freshDefaults(),
                                   now: { utc("2026-10-14T12:00:00Z") }, calendar: calendar)
         await model.load()
         #expect(model.blocks.count == 1)
+        // The prefetches land first, so the next read is the refetch.
+        await settled(model)
+        let calls = held.calls
         // Next load hangs; the stale range stays visible meanwhile.
         held.held = true
         model.noteScanCompleted()
         async let load: () = model.load(force: true)
-        await Task.yield()
-        await Task.yield()
+        await held.started(calls + 1)
         #expect(model.blocks.count == 1)
         held.release()
         await load
@@ -819,14 +860,12 @@ private final class SnapSpy: SnapshotStoring, @unchecked Sendable {
         #expect(saved.ranges.contains {
             $0.start == utc("2026-10-05T00:00:00Z") && $0.end == utc("2026-10-26T00:00:00Z")
         })
-        // A new model hydrates from it.
+        // A new model hydrates from it, before any load.
         let restored = CalendarModel(providers: [provider], defaults: freshDefaults(),
                                      now: { utc("2026-10-14T12:00:00Z") },
                                      calendar: calendar, restored: saved)
-        async let load: () = restored.load()
-        await Task.yield()
         #expect(restored.blocks.count == 1)
-        await load
+        await restored.load()
     }
 
     // The time limit fails the test instead of hanging the suite if
@@ -918,7 +957,7 @@ extension CalendarCacheTests {
 extension CalendarCacheTests {
     @Test(.timeLimit(.minutes(1)))
     func aFailingPrefetchKeepsTheProvidersCachedBlocks() async {
-        let flag = Flag()
+        let flag = Box(false)
         let good = FakeActivity(blocks: [block("2026-10-14T09:00:00Z", session: "a")])
         let flaky = TogglingActivity(blocks: [block("2026-10-14T10:00:00Z",
                                                     session: "b")], fails: flag)
@@ -1048,9 +1087,7 @@ private final class LaterReadsFail: ActivityProviding, @unchecked Sendable {
     }
 
     private func freshDefaults() -> UserDefaults {
-        let name = "CalendarSessionCacheTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
+        let defaults = TestDefaults("CalendarSessionCacheTests")
         return defaults
     }
 
@@ -1133,14 +1170,13 @@ private final class LaterReadsFail: ActivityProviding, @unchecked Sendable {
         let oct14 = DateInterval(start: utc("2026-10-14T00:00:00Z"), duration: 86400)
         let slice = model.blocks(on: oct14)
         #expect(slice.blocks.map(\.project) == ["a"])
-        final class Flag: @unchecked Sendable { var fired = false }
-        let notified = Flag()
-        withObservationTracking { _ = slice.blocks } onChange: { notified.fired = true }
+        let notified = Box(false)
+        withObservationTracking { _ = slice.blocks } onChange: { notified.value = true }
         // Render range Oct 12 to Oct 20 brings Oct 20's block in: the
         // published list changes, Oct 14's slice does not.
         model.land(on: utc("2026-10-15T00:00:00Z"))
         #expect(model.blocks.map(\.project) == ["a", "b"])
-        #expect(!notified.fired)
+        #expect(!notified.value)
         #expect(model.blocks(on: oct14) === slice)
     }
 

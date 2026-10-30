@@ -20,7 +20,7 @@ import urllib.request
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from quiver.paths import atomic_write_text, cache_dir_for, quiver_dir_for
+from quiver.paths import atomic_write_text, cache_dir_for, quiver_dir_for, read_json_dict
 
 LITELLM_URL = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/"
@@ -347,20 +347,12 @@ def _refresh_download(home: Path | None, now: float) -> None:
     atomic_write_text(path, body.decode("utf-8"))
 
 
-def _read_json(path: Path) -> dict:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
 def _overrides(home: Path | None) -> dict[str, ModelRates]:
     """``config/pricing.json``: ``{"models": {name: {input, output,
     cache_read, cache_write}}}`` in USD per million tokens, read as the
     app's ``PricingOverrides`` reads it: input and output required, a
     missing cache price is $0, and each becomes a LiteLLM-shaped entry."""
-    raw = _read_json(_overrides_path(home)).get("models") or {}
+    raw = read_json_dict(_overrides_path(home)).get("models") or {}
     if not isinstance(raw, dict):
         return {}  # an unsupported shape, ignored as the app ignores it
     out = {}
@@ -441,8 +433,8 @@ def load_catalog(home: Path | None = None, download: bool = True) -> PricingCata
     with _LOCK:
         if download:
             _refresh_download(home, time.time())
-        listed = _read_json(_litellm_cache(home)) or _read_json(BUNDLED)
-    supplement = _read_json(SUPPLEMENT)
+        listed = read_json_dict(_litellm_cache(home)) or read_json_dict(BUNDLED)
+    supplement = read_json_dict(SUPPLEMENT)
     raw = dict(listed)
     quiver = set()
     for key, entry in (supplement.get("prices") or {}).items():

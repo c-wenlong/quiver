@@ -47,7 +47,7 @@ final class SessionSearch {
             guard !Task.isCancelled else { return }
             results = Self.localMatches(app.displaySessions, query: q)
             indexed = false
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            self.error = error.localizedDescription
         }
         answered = q
     }

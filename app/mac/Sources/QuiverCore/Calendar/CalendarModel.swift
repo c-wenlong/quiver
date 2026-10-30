@@ -134,6 +134,12 @@ public final class CalendarModel {
     /// Harnesses whose account rows the legend user collapsed; accounts
     /// expand by default once a harness has more than one.
     public private(set) var collapsedAccounts: Set<String>
+    /// Usage accounts hidden in the legend: their reset markers leave the
+    /// grid. Keyed on the profile id, so a rename keeps the toggle.
+    public private(set) var hiddenUsage: Set<String>
+    /// "profile|window" pairs hidden inside a shown account, like
+    /// hiddenAccounts under a harness.
+    public private(set) var hiddenUsageWindows: Set<String>
     /// The mini-month-and-legend panel pinned away on the page's right.
     /// Collapsing still lets the pointer float it over the grid.
     public var panelCollapsed: Bool {
@@ -210,6 +216,8 @@ public final class CalendarModel {
     static let hiddenHarnessesKey = "calendar.hiddenHarnesses"
     static let hiddenAccountsKey = "calendar.hiddenAccounts"
     static let collapsedAccountsKey = "calendar.collapsedAccounts"
+    static let hiddenUsageKey = "calendar.hiddenUsage"
+    static let hiddenUsageWindowsKey = "calendar.hiddenUsageWindows"
     static let modeKey = "calendar.mode"
     static let panelCollapsedKey = "calendar.panelCollapsed"
 
@@ -233,6 +241,8 @@ public final class CalendarModel {
         hiddenHarnesses = Set(defaults.stringArray(forKey: Self.hiddenHarnessesKey) ?? [])
         hiddenAccounts = Set(defaults.stringArray(forKey: Self.hiddenAccountsKey) ?? [])
         collapsedAccounts = Set(defaults.stringArray(forKey: Self.collapsedAccountsKey) ?? [])
+        hiddenUsage = Set(defaults.stringArray(forKey: Self.hiddenUsageKey) ?? [])
+        hiddenUsageWindows = Set(defaults.stringArray(forKey: Self.hiddenUsageWindowsKey) ?? [])
         mode = Self.decodedMode(defaults.string(forKey: Self.modeKey))
         panelCollapsed = defaults.bool(forKey: Self.panelCollapsedKey)
         self.snapshots = snapshots
@@ -904,6 +914,27 @@ public final class CalendarModel {
         persist()
     }
 
+    /// Whether the usage legend keeps the account's reset markers off
+    /// the grid.
+    public func isUsageHidden(_ account: String) -> Bool { hiddenUsage.contains(account) }
+
+    public func toggleUsage(_ account: String) {
+        if hiddenUsage.remove(account) == nil { hiddenUsage.insert(account) }
+        persist()
+    }
+
+    /// Whether one window's reset marker stays off while its account
+    /// shows.
+    public func isUsageHidden(_ account: String, window: String) -> Bool {
+        hiddenUsageWindows.contains("\(account)|\(window)")
+    }
+
+    public func toggleUsage(_ account: String, window: String) {
+        let key = "\(account)|\(window)"
+        if hiddenUsageWindows.remove(key) == nil { hiddenUsageWindows.insert(key) }
+        persist()
+    }
+
     /// The mode's UserDefaults spelling: "day", "week", "month" or
     /// "days:N". Unknown values restore as the week.
     static func encodedMode(_ mode: Mode) -> String {
@@ -930,6 +961,8 @@ public final class CalendarModel {
         defaults.set(Array(hiddenHarnesses), forKey: Self.hiddenHarnessesKey)
         defaults.set(Array(hiddenAccounts), forKey: Self.hiddenAccountsKey)
         defaults.set(Array(collapsedAccounts), forKey: Self.collapsedAccountsKey)
+        defaults.set(Array(hiddenUsage), forKey: Self.hiddenUsageKey)
+        defaults.set(Array(hiddenUsageWindows), forKey: Self.hiddenUsageWindowsKey)
         defaults.set(Self.encodedMode(mode), forKey: Self.modeKey)
         defaults.set(panelCollapsed, forKey: Self.panelCollapsedKey)
     }

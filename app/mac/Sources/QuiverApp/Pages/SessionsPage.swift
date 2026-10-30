@@ -271,6 +271,8 @@ private struct SessionsContent: View {
                                                     expanded: openedDays.contains(group.day))
                         ForEach(shown) { row in
                             SessionRow(row: row, project: model.project(for: row.session),
+                                       hubModel: app.hub.model(for: HubSessionRow.key(
+                                           harness: row.session.harness, id: row.session.id)),
                                        match: model.searchHit(for: row.session.id),
                                        open: { open(row) }, showDetails: { detail = row },
                                        resume: { resume(row) })
@@ -524,7 +526,7 @@ private struct SummaryStrip: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                if let note { Image(systemName: "info.circle").font(Theme.caption).foregroundStyle(Theme.textSecondary).help(note) }
+                if let note { Image(systemName: "info.circle").font(Theme.caption).foregroundStyle(Theme.textSecondary).hoverTip(note) }
             }
             value.font(Theme.figure).monospacedDigit().foregroundStyle(Theme.textPrimary)
         }
@@ -539,6 +541,9 @@ private struct SessionRow: View {
     var row: SessionsModel.Row
     /// The session's project resolved to its main repository.
     var project: String?
+    /// The model of the session's newest reply, from the hub's row; nil
+    /// when the hub doesn't list it or doesn't know the model.
+    var hubModel: String?
     /// The transcript hit this row surfaced on, for the snippet line; nil
     /// when it matched on metadata or content search is off.
     var match: SearchHit?
@@ -556,7 +561,7 @@ private struct SessionRow: View {
             // on the title line.
             HStack(alignment: .center, spacing: 12) {
                 HarnessIcon(harness: HarnessMark(s.harness).icon ?? s.harness, size: 16)
-                    .help(HarnessMark(s.harness).name)
+                    .hoverTip(HarnessMark(s.harness).name)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(s.title ?? s.id).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
@@ -647,7 +652,8 @@ private struct SessionRow: View {
         if let project { parts.append(project) }
         parts.append(row.account ?? HarnessMark(s.harness).name)
         parts.append(row.location.title)
-        if let models = row.usage?.models, !models.isEmpty { parts.append(models.joined(separator: ", ")) }
+        let models = ModelLabel.rowModels(current: hubModel, used: row.usage?.models ?? [])
+        if !models.isEmpty { parts.append(models.joined(separator: ", ")) }
         parts.append(s.lastActiveAt.formatted(date: .omitted, time: .shortened))
         if let duration = row.duration, duration >= 60 { parts.append(Self.duration(duration)) }
         return parts.joined(separator: " · ")
@@ -787,6 +793,16 @@ private struct SessionRail: View {
 // MARK: - Detail
 
 struct SessionDetail: View {
+    /// The resume argv as a line a shell runs as is: a word with a space,
+    /// quote or other shell character is single-quoted, plain words stay
+    /// bare so the line still reads like a command.
+    static func shellLine(_ argv: [String]) -> String {
+        argv.map { word in
+            !word.isEmpty && word.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "@%_+=:,./-".contains($0)) })
+                ? word : LaunchPlanner.shellQuote(word)
+        }.joined(separator: " ")
+    }
+
     /// The widest a value can be: the 640 pt sheet less its padding and
     /// the label column.
     static let valueWidth: CGFloat = 460
@@ -858,7 +874,7 @@ struct SessionDetail: View {
             if let command = s.resume {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Resume command").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    Text(command.argv.joined(separator: " "))
+                    Text(Self.shellLine(command.argv))
                         .font(Theme.font(size: 12, design: .monospaced))
                         .textSelection(.enabled)
                         .padding(10)

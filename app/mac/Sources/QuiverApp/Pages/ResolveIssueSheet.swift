@@ -114,7 +114,7 @@ struct ResolveIssueSheet: View {
                             .lineLimit(1).truncationMode(.middle)
                     }
                     if let worktree = issue.worktree {
-                        Text(Self.abbreviated(worktree))
+                        Text(displayPath(worktree))
                             .font(Theme.font(size: 12, design: .monospaced))
                             .foregroundStyle(Theme.textSecondary)
                             .lineLimit(1).truncationMode(.head)
@@ -233,7 +233,7 @@ struct ResolveIssueSheet: View {
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
                 .lineLimit(2)
             Spacer(minLength: 12)
-            Button("Cancel") {
+            Button(flow.cancelTitle) {
                 launch?.cancel()
                 dismiss()
             }
@@ -356,11 +356,6 @@ struct ResolveIssueSheet: View {
         dismiss()
         app.openSessionChat(key: key)
     }
-
-    private static func abbreviated(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
-    }
 }
 
 /// One harness the hub can start: its logo and name, outlined when
@@ -396,5 +391,19 @@ struct HarnessTile: View {
         .focusRing(cornerRadius: 12)
         .onHover { hovering = $0 }
         .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+extension IssueLaunchFlow {
+    /// Once the hub has accepted the launch, cancelling only stops this
+    /// sheet waiting: the session starts anyway, so the button says so.
+    /// After the wait gave up unconfirmed there is nothing left to stop,
+    /// and the button only closes.
+    var cancelTitle: String {
+        switch phase {
+        case .waiting, .started: "Stop waiting"
+        case .unconfirmed: "Close"
+        default: "Cancel"
+        }
     }
 }

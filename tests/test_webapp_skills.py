@@ -3,6 +3,8 @@ guard that keeps file reads inside the skill's folder."""
 
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,6 +74,22 @@ class TestPlacement(unittest.TestCase):
             placed, moved, error = page.placement([own, loose, mine], base)
         self.assertEqual([s["plugin"] for s in placed], ["tools@market", None, None])
         self.assertEqual((moved, error), (1, None))
+
+    def test_placement_reuses_the_plugins_pages_catalog(self):
+        # build_catalog walks every marketplace: one read serves both
+        # pages until it expires or a plugin change drops it.
+        from quiver.webapp.pages import plugins
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(plugins.clear_cache)
+        skills = [_skill("lint", base / "lint", source="plugin")]
+        with patch("quiver.plugins.catalog.build_catalog",
+                   return_value={"marketplaces": []}) as build:
+            page.placement(skills, base)
+            page.placement(skills, base)
+            self.assertEqual(build.call_count, 1)
+            plugins._invalidate(base)
+            page.placement(skills, base)
+            self.assertEqual(build.call_count, 2)
 
     def test_unreadable_catalog_keeps_every_skill(self):
         skills = [_skill("lint", "/x/lint", source="plugin")]
@@ -210,11 +228,9 @@ class TestRoute(HubBase):
         self.assertEqual(status, 404, data)
 
     def test_page_assets_are_bundled(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
+        status, data = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("skills"', data)
-        self.assertIn(b'registerPage("agents"', data)
-        self.assertIn(b".sk-row", self.srv.request("GET", "/app/pages.css")[1])
+        self.assertIn(b".sk-row", self.srv.request("GET", "/pages.css")[1])
 
 
 
@@ -576,10 +592,38 @@ class TestWriteRoute(_WriteHome, HubBase):
         self.assertEqual(self.srv.request("POST", "/v1/app/skills/link", body=["codex"], headers=auth)[0], 400)
 
     def test_page_script_carries_the_writes(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
+        status, data = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
         for needle in (b"/v1/app/skills/", b"Link to shared skills", b"Link all (", b"sk-confirm-go"):
             self.assertIn(needle, data)
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFileSheetReplies(unittest.TestCase):
+    """pages/skills.js's file sheet is one dialog on document.body: a read
+    for skill A's file, closed while it loads, must not fill the sheet
+    after the same file name in skill B was opened."""
+
+    def test_a_late_reply_for_another_opening_is_dropped(self):
+        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/skills.js"
+        prelude = (
+            "const esc = (s) => String(s); function registerPage() {}\n"
+            "const sheet = { innerHTML: '', dataset: {}, open: false, showModal() { this.open = true; }, close() { this.open = false; } };\n"
+            "const bodySheet = () => sheet;\n"
+            "const answers = []; const api = () => new Promise((r) => answers.push(r));\n")
+        body = ("(async () => {\n"
+                "  const a = openSkillFile({ skill: { path: '/s/a' }, home: '' }, 'README.md');\n"
+                "  sheet.close();\n"
+                "  const b = openSkillFile({ skill: { path: '/s/b' }, home: '' }, 'README.md');\n"
+                "  answers[1]({ status: 200, data: { text: 'from b' } }); await b;\n"
+                "  answers[0]({ status: 200, data: { text: 'from a' } }); await a;\n"
+                "  process.stdout.write(JSON.stringify([sheet.innerHTML.includes('from b'), sheet.innerHTML.includes('from a')]));\n"
+                "})();\n")
+        done = subprocess.run(["node", "-e", prelude + script.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), [True, False])
 
 
 if __name__ == "__main__":

@@ -69,6 +69,13 @@ class TestPair(unittest.TestCase):
 
 
 class TestStatus(unittest.TestCase):
+    def setUp(self):
+        # Without --host, status reads the saved hub.json; keep it from
+        # reading the real ~/.quiver.
+        patcher = patch.object(commands, "load_hub_config", return_value={})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_unreachable_hub(self):
         home = Path(tempfile.mkdtemp())
         with patch("quiver.remote.commands._probe", return_value=None), \
@@ -522,6 +529,26 @@ class TestProbeAndPair(unittest.TestCase):
                    side_effect=urllib.error.URLError("down")):
             self.assertIsNone(commands._probe("h", 1))
 
+    def test_probe_brackets_an_ipv6_host(self):
+        # "http://::1:8477" doesn't parse; the literal needs brackets,
+        # once, whether or not the caller already added them.
+        seen = []
+
+        def urlopen(url, timeout=None):
+            seen.append(url)
+            raise OSError("no hub")
+
+        with patch("urllib.request.urlopen", side_effect=urlopen):
+            for host in ("::1", "[::1]", "fd7a:115c::1", "100.64.0.1", "h"):
+                commands._probe(host, 8477)
+        self.assertEqual(seen, [
+            "http://[::1]:8477/v1/status",
+            "http://[::1]:8477/v1/status",
+            "http://[fd7a:115c::1]:8477/v1/status",
+            "http://100.64.0.1:8477/v1/status",
+            "http://h:8477/v1/status",
+        ])
+
     def test_pair_without_qrencode(self):
         with patch("quiver.remote.commands._tailscale_ip",
                    return_value="100.1.2.3"), \
@@ -742,9 +769,6 @@ class TestTailscaleIp(unittest.TestCase):
             self.assertEqual(commands.catalog_mod.tailscale_ip(), "")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 _PEER = {
     "node_name": "test-iphone.tail0000.ts.net",
@@ -807,6 +831,58 @@ class TestDeviceRequests(unittest.TestCase):
         self.assertTrue(data["device_id"])
         rc, out, _ = _run(["devices", "--approve=000000"])
         self.assertEqual(rc, 1)
+
+    def test_request_id_holds_the_code_to_its_row(self):
+        """The Mac app's per-row code field: a code typed against one
+        request must not approve a different one, and wrong codes count
+        toward that row's lockout."""
+        a = pairing.request_pair(None, dict(_PEER), name="a")
+        b = pairing.request_pair(
+            None, dict({**_PEER, "node_id": "nOTHER"}), name="b")
+        rc, out, _ = _run([
+            "devices", f"--approve={b['code']}",
+            f"--request-id={a['request_id']}", "--json"])
+        self.assertEqual(rc, 1)
+        self.assertFalse(json.loads(out)["data"]["ok"])
+        # Neither row was approved by the mismatched code.
+        pending = {r["request_id"] for r in pairing.list_requests()}
+        self.assertEqual(pending, {a["request_id"], b["request_id"]})
+        rc, out, _ = _run([
+            "devices", f"--approve={a['code']}",
+            f"--request-id={a['request_id']}", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(out)["data"]["device_id"])
+        rc, out, _ = _run([
+            "devices", f"--deny={b['code']}",
+            f"--request-id={b['request_id']}", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(out)["data"]["ok"])
+        self.assertEqual(pairing.list_requests(), [])
+
+    def test_request_id_wrong_codes_lock_the_row(self):
+        r = pairing.request_pair(None, dict(_PEER))
+        wrong = "000000" if r["code"] != "000000" else "111111"
+        for _ in range(pairing.MAX_CODE_ATTEMPTS):
+            _run(["devices", f"--approve={wrong}",
+                  f"--request-id={r['request_id']}"])
+        rc, _, _ = _run(["devices", f"--approve={r['code']}",
+                         f"--request-id={r['request_id']}"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(pairing.list_requests(), [])
+
+    def test_request_id_alone_or_empty_is_refused(self):
+        # Under --json the refusal goes to stderr, so stdout stays a
+        # document the app can decode.
+        rc, out, err = _run(["devices", "--request-id=abc", "--json"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "")
+        self.assertIn("--approve", err)
+        r = pairing.request_pair(None, dict(_PEER))
+        rc, err, _ = _run(["devices", f"--approve={r['code']}",
+                           "--request-id="])
+        self.assertEqual(rc, 1)
+        self.assertIn("--request-id", err)
+        self.assertEqual(len(pairing.list_requests()), 1)
 
 
 class TestUnwritableHome(unittest.TestCase):
@@ -905,3 +981,7 @@ class TestUnwritableHome(unittest.TestCase):
                           side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 _run(["devices"])
+
+
+if __name__ == "__main__":
+    unittest.main()

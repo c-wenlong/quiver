@@ -15,7 +15,7 @@ private let devin = #"""
  "windows":[
   {"window":"1d","used_percent":0,"remaining_percent":100,"limit_reached":false,"reset_at":1789200000,"window_seconds":86400},
   {"window":"7d","used_percent":4,"remaining_percent":96,"limit_reached":false,"reset_at":1789286400,"window_seconds":604800}],
- "extra_usage_usd":9868.98,"fetched_at":1789190000}
+ "extra_usage_usd":1234.56,"fetched_at":1789190000}
 """#
 
 /// What an older swe prints: one window, no list, no balance.
@@ -30,7 +30,7 @@ private let older = #"""
         #expect(limit.allWindows.map(\.window) == ["1d", "7d"])
         #expect(limit.allWindows.map(\.usedPercent) == [0, 4])
         #expect(limit.allWindows.first?.resetAt == Date(timeIntervalSince1970: 1789200000))
-        #expect(limit.extraUsageUSD == 9868.98)
+        #expect(limit.extraUsageUSD == 1234.56)
     }
 
     @Test func anOlderSweStillGivesItsOneWindow() throws {
@@ -42,8 +42,8 @@ private let older = #"""
 
     @Test func theEmailDecodesAndBlankReadsAsNone() throws {
         let with = older.replacingOccurrences(of: #""fetched_at""#, with:
-            #""email":" kai@work.com ","fetched_at""#)
-        #expect(try decode(with).email == "kai@work.com")
+            #""email":" dev@example.com ","fetched_at""#)
+        #expect(try decode(with).email == "dev@example.com")
         let blank = older.replacingOccurrences(of: #""fetched_at""#, with:
             #""email":"  ","fetched_at""#)
         #expect(try decode(blank).email == nil)
@@ -101,9 +101,7 @@ private let older = #"""
     }
 
     @Test func savedCursorAutoChoicesMoveToIncludedOnce() {
-        let name = "MultiWindowLimitsTests.\(UUID().uuidString)"
-        let store = UserDefaults(suiteName: name)!
-        store.removePersistentDomain(forName: name)
+        let store = TestDefaults("MultiWindowLimitsTests")
         store.set("cursor|auto", forKey: MenuBarDisplay.Key.watchedLimit)
         store.set(["cursor": ["auto", "api"], "claude": ["auto"]], forKey: MenuBarPopup.Key.hiddenWindows)
         MenuBarMigrations.run(on: store)
@@ -145,7 +143,7 @@ private let older = #"""
     }
 
     @Test func aBalanceShowsToTheCent() {
-        #expect(UsageFormat.balance(9868.98) == "$9,868.98")
+        #expect(UsageFormat.balance(1234.56) == "$1,234.56")
         #expect(UsageFormat.balance(0) == "$0.00")
     }
 

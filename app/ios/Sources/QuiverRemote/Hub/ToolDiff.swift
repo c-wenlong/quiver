@@ -19,9 +19,15 @@ struct ToolDiff: Hashable {
 
     static func from(_ tool: ToolCall) -> ToolDiff? {
         let name = tool.name.lowercased()
-        guard tools.contains(name), let full = tool.argsFull,
-              let args = (try? JSONSerialization.jsonObject(with: Data(full.utf8))) as? [String: Any]
-        else { return nil }
+        guard tools.contains(name), let full = tool.argsFull else { return nil }
+        let parsed = try? JSONSerialization.jsonObject(with: Data(full.utf8), options: [.fragmentsAllowed])
+        // Codex's apply_patch is a custom tool whose input is the patch
+        // text itself, so the hub's args_full is a JSON string, not an
+        // object (as the Mac app's ToolDiff reads it).
+        if name == "apply_patch" || name == "patch", let patch = parsed as? String {
+            return patch.isEmpty ? nil : ToolDiff(file: patchFile(patch), lines: patchLines(patch))
+        }
+        guard let args = parsed as? [String: Any] else { return nil }
         let file = (args["file_path"] ?? args["path"] ?? args["filename"]) as? String ?? ""
         switch name {
         case "write", "notebookedit", "file_edit":
@@ -29,15 +35,16 @@ struct ToolDiff: Hashable {
             guard !content.isEmpty else { return nil }
             return ToolDiff(file: file, lines: diff(old: "", new: content))
         case "apply_patch", "patch":
-            let patch = (args["patch"] ?? args["diff"]) as? String ?? full
-            return ToolDiff(file: file, lines: patchLines(patch))
+            let patch = (args["patch"] ?? args["diff"] ?? args["input"]) as? String ?? full
+            return ToolDiff(file: file.isEmpty ? patchFile(patch) : file, lines: patchLines(patch))
         case "multiedit":
             guard let edits = args["edits"] as? [[String: Any]] else { return nil }
             var lines: [DiffLine] = []
-            for (i, e) in edits.prefix(8).enumerated() {
+            for e in edits.prefix(8) {
                 let old = e["old_string"] as? String, new = e["new_string"] as? String
                 guard old != nil || new != nil else { continue }
-                if i > 0 { lines.append(DiffLine(kind: .meta, text: "···")) }
+                // Between the edits shown, not before the first one shown.
+                if !lines.isEmpty { lines.append(DiffLine(kind: .meta, text: "···")) }
                 lines += diff(old: old ?? "", new: new ?? "")
             }
             return lines.isEmpty ? nil : ToolDiff(file: file, lines: lines)
@@ -76,6 +83,20 @@ struct ToolDiff: Hashable {
             if ln.hasPrefix("@@") || ln.hasPrefix("***") { return DiffLine(kind: .meta, text: ln) }
             return DiffLine(kind: .context, text: ln.hasPrefix(" ") ? String(ln.dropFirst()) : ln)
         }
+    }
+
+    /// The file a patch names first (codex's "*** Update File: x"), if
+    /// any.
+    static func patchFile(_ patch: String) -> String {
+        for line in patch.components(separatedBy: "\n") {
+            for kind in ["Update", "Add", "Delete"] {
+                let lead = "*** \(kind) File: "
+                if line.hasPrefix(lead) {
+                    return String(line.dropFirst(lead.count)).trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+        return ""
     }
 }
 

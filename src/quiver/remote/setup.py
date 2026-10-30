@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from quiver.paths import atomic_write_text, remote_dir_for
+from quiver.paths import atomic_write_text, read_json_dict, remote_dir_for
 from quiver.remote import launchd, pairing
 from quiver.remote.tsid import tailscale_exe
 
@@ -401,11 +401,7 @@ def _state_file(home: Path | None) -> Path:
 
 
 def load_state(home: Path | None = None) -> dict:
-    try:
-        data = json.loads(_state_file(home).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return read_json_dict(_state_file(home))
 
 
 def record_move(home: Path | None, url: str, now: float | None = None) -> None:
@@ -495,9 +491,12 @@ def gather(home: Path | None = None, port: int | None = None, run: Runner = subp
     moved = load_state(home)
     if moved.get("url") == f.public_url and moved.get("moved_at"):
         f.moved_at = float(moved["moved_at"])
-    from quiver.remote.catalog import load_machines
+    from quiver.remote.catalog import load_machine_id, load_machines
 
-    f.satellites = len(load_machines(home))
+    # The hub registers its own row in the same table; only the others
+    # are satellites.
+    own = load_machine_id(home)
+    f.satellites = sum(mid != own for mid in load_machines(home))
     return f
 
 

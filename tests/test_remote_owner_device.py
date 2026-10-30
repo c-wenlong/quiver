@@ -33,6 +33,8 @@ class OwnerBase(unittest.TestCase):
         self.srv = _Server(sessions=[_session()])
         self.addCleanup(self.srv.stop)
         self.srv.state.trust_proxy = True
+        # The test client stands in for tailscale serve's connection.
+        self.srv.state.proxy_peer = lambda server, peer: True
         self.srv.state.owner_login = "dev@github"
         self.calls = []
 
@@ -108,6 +110,61 @@ class TestOwnerDevice(OwnerBase):
             self.assertEqual(self.get("/v1/sessions")[0], 200)
         self.assertEqual(self.calls, [_OWNER_IP])
 
+
+    def test_forged_forwarded_for_ignored_without_trust_proxy(self):
+        # No serve in front: X-Forwarded-For is just a client header,
+        # so naming the owner's tailnet IP in it must not let a local
+        # caller borrow the owner's identity.
+        self.srv.state.trust_proxy = False
+        status, _ = self.get("/v1/sessions")
+        self.assertEqual(status, 401)
+        self.assertNotIn(_OWNER_IP, self.calls)
+
+
+class TestClientAddress(unittest.TestCase):
+    """_proxied/_client_ip without a socket: which peer the hub trusts
+    to speak for another address."""
+
+    def _handler(self, peer, forwarded=None, trust_proxy=True,
+                 is_proxy=True):
+        handler = hub_mod._Handler.__new__(hub_mod._Handler)
+        handler.server = MagicMock()
+        handler.server.state.trust_proxy = trust_proxy
+        handler.server.state.proxy_peer = MagicMock(return_value=is_proxy)
+        handler.connection = MagicMock()
+        handler.connection.getsockname.return_value = ("127.0.0.1", 8477)
+        handler.client_address = (peer, 50000)
+        handler.headers = (
+            {"X-Forwarded-For": forwarded} if forwarded is not None else {}
+        )
+        return handler
+
+    def test_non_loopback_peer_is_never_proxied(self):
+        h = self._handler("100.64.0.20", forwarded=_OWNER_IP)
+        self.assertFalse(h._proxied())
+        self.assertEqual(h._client_ip(), "100.64.0.20")
+
+    def test_ipv6_loopback_peer_is_proxied(self):
+        h = self._handler("::1", forwarded=_OWNER_IP)
+        self.assertTrue(h._proxied())
+        self.assertEqual(h._client_ip(), _OWNER_IP)
+
+    def test_last_hop_wins(self):
+        # Serve appends the hop it saw; anything before it is the
+        # client's own claim.
+        h = self._handler("127.0.0.1", forwarded=f"1.2.3.4, {_OWNER_IP}")
+        self.assertEqual(h._client_ip(), _OWNER_IP)
+
+    def test_loopback_without_a_hop_is_the_peer(self):
+        for forwarded in (None, "", " , "):
+            h = self._handler("127.0.0.1", forwarded=forwarded)
+            self.assertEqual(h._client_ip(), "127.0.0.1", forwarded)
+
+    def test_trust_proxy_off_ignores_the_header(self):
+        for peer in ("127.0.0.1", "::1"):
+            h = self._handler(peer, forwarded=_OWNER_IP, trust_proxy=False)
+            self.assertFalse(h._proxied())
+            self.assertEqual(h._client_ip(), peer)
 
 class TestWhoisCache(unittest.TestCase):
     def test_hits_and_misses_expire(self):

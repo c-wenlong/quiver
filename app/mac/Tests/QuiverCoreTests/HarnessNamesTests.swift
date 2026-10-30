@@ -28,10 +28,10 @@ import Testing
     }
 
     /// The tables that used to disagree now give one answer per harness.
+    /// Hand-written names: `UsageFormat.harness` is `HarnessMark(id).name`,
+    /// so comparing the two for every id would only restate it.
     @Test func everyPageReadsTheSameName() {
-        for id in everyHarnessId {
-            #expect(UsageFormat.harness(id) == HarnessMark(id).name, "\(id)")
-        }
+        #expect(UsageFormat.harness("droid") == "Factory Droid")
         #expect(HarnessMark("droid").name == "Factory Droid")
         #expect(HarnessMark("copilot").name == "GitHub Copilot")
         #expect(HarnessMark("grok").name == "Grok Build")
@@ -52,8 +52,7 @@ import Testing
     }
 
     @Test func accountLabelsUseTheTable() {
-        let directory = AccountDirectory(profiles: [], paths: { _ in fatalError() },
-                                         home: URL(fileURLWithPath: "/Users/k"))
+        let directory = AccountDirectory.bare
         #expect(directory.label(for: "/Users/k/.local/share/opencode") == HarnessMark("opencode").name)
         #expect(directory.label(for: DevinCloud.accountHome) == HarnessMark(DevinCloud.harness).name)
     }

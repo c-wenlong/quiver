@@ -36,6 +36,7 @@ class KeyFileError(Exception):
 
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _EXPORT_RE = re.compile(r"^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+_UNSAFE_RE = re.compile(r"^export\s+([A-Za-z_][A-Za-z0-9_]*)=")
 _EXPORT_WORD_RE = re.compile(r"\b(?i:export)\s+[A-Za-z_]")
 _BARE_FORBIDDEN = set("$`\"'\\;&|<>()")
 _LABEL_PUNCT = set(" ().,&/-")
@@ -78,7 +79,10 @@ def heading(line: str) -> str | None:
 
 def unquote(raw: str) -> str | None:
     """The value, or None when the line carries anything after it other
-    than a comment: saving such a line would drop it."""
+    than a comment: saving such a line would drop it. None too for a
+    double-quoted ``$`` or backtick the shell expands (``"$OTHER"``): the
+    text isn't the value, and saving it back escaped would turn the
+    reference into a literal."""
     if raw.startswith('"'):
         value, escaped, closed = [], False, None
         for index in range(1, len(raw)):
@@ -94,6 +98,8 @@ def unquote(raw: str) -> str | None:
             elif char == '"':
                 closed = index
                 break
+            elif char in "$`":
+                return None
             else:
                 value.append(char)
         if closed is None:
@@ -160,14 +166,30 @@ class KeysFile:
     @property
     def keys(self) -> list[Entry]:
         """One per variable, in first-seen order, holding the value a
-        shell ends up with (the later line, for a name exported twice)."""
+        shell ends up with (the later line, for a name exported twice).
+        A name whose last assignment is a line we can't read has no known
+        value, so it isn't listed."""
         last = {e.name: e for e in self.entries}
+        unsafe = self.unsafe_lines
         seen, out = set(), []
         for entry in self.entries:
             if entry.name not in seen:
                 seen.add(entry.name)
-                out.append(last[entry.name])
+                if unsafe.get(entry.name, -1) < last[entry.name].line:
+                    out.append(last[entry.name])
         return out
+
+    @property
+    def unsafe_lines(self) -> dict[str, int]:
+        """The last line index of each name an ``export`` line we can't
+        edit safely assigns (``export A="$OTHER"``, ``export A=x; ...``)."""
+        found = {}
+        for index, line in enumerate(self.lines):
+            if export(line) is None:
+                match = _UNSAFE_RE.match(line.strip(" \t"))
+                if match:
+                    found[match.group(1)] = index
+        return found
 
     def set(self, name: str, value: str, provider: str) -> None:
         """In place if it exists, else at the end of its provider's group,
@@ -183,6 +205,11 @@ class KeysFile:
         matches = [e for e in entries if e.name == name]
         if len(matches) > 1:
             raise KeyFileError("duplicate", _duplicate(name))
+        # A value set in place still wins when it comes after the unsafe
+        # line; a new line, or one the unsafe line overrides, wouldn't.
+        unsafe = self.unsafe_lines.get(name)
+        if unsafe is not None and (matches[0].line if matches else -1) < unsafe:
+            raise KeyFileError("duplicate", _unsafe(name))
         if matches:
             self.lines[matches[0].line] = line
             return
@@ -210,6 +237,8 @@ class KeysFile:
             raise KeyFileError("duplicate", _duplicate(name))
         if not matches:
             raise KeyFileError("not_found", f"{name} isn't in the file any more.")
+        if name in self.unsafe_lines:
+            raise KeyFileError("duplicate", _unsafe(name))
         entry = matches[0]
         siblings = [e for e in entries if e.provider == entry.provider and e.name != name]
         del self.lines[entry.line]
@@ -227,6 +256,11 @@ class KeysFile:
 
 
 _BAD_PROVIDER = "A provider name has to be a short label: up to 60 letters, digits, spaces and ( ) . , & / -."
+
+
+def _unsafe(name: str) -> str:
+    return (f"{name} is also set on a line Quiver can't edit safely. "
+            "Change or remove that line in an editor, then edit it here.")
 
 
 def _duplicate(name: str) -> str:

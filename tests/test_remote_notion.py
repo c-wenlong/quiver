@@ -21,7 +21,7 @@ from quiver.github import gh
 from quiver.mcp import secrets as mcp_secrets
 from quiver.remote import notion
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 from tests.test_remote_hub import _Server, _session
 

@@ -12,6 +12,7 @@ const skillsPage = {
   // or {kind: "link_all", paths}), the last failure and Link all's summary.
   busy: new Set(), confirm: null, actionError: null, summary: null,
   newToken: 0,            // the New skill form on show; older replies are stale
+  fileToken: 0,           // the file sheet's current read, likewise
   detail: {},             // folder -> detail payload
   fmShowsAll: false, treeShowsAll: false, open: new Set(),
 };
@@ -172,8 +173,12 @@ async function renderSkillsList() {
   }
   const { status, data } = await api("/v1/app/skills");
   if (gen !== routeGen || mine !== p.seq) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
-  if (status !== 200 || !data) return pageError(skillsHeader(false), status, data, renderSkills);
+  if (status === 401) return renderGate();
+  if (status !== 200 || !data) {
+    // New skill and Harness links work beside the error too.
+    pageError(skillsHeader(false), status, data, renderSkills);
+    return bindSkillsHeader();
+  }
   p.data = data;
   p.detail = {};
   paintSkills();
@@ -337,8 +342,7 @@ function newSkillProblem(name) {
 /* NewSkillSheet: swe skills new <name> on the hub, POST
  * /v1/app/skills/new. The sheet stays open on "Created …" with Open it. */
 function openNewSkill() {
-  const sheet = document.getElementById("sk-new-sheet");
-  if (!sheet) return;
+  const sheet = bodySheet("sk-new-sheet", "sheet sk-new-sheet", "New skill");
   const where = (skillsPage.data && skillsPage.data.machine) || "the hub";
   sheet.innerHTML = `<form class="sheet-body" id="sk-new-form" novalidate>
     <div class="sheet-title">New skill</div>
@@ -386,7 +390,7 @@ async function createSkill(sheet) {
   if (current) sheet.dataset.working = "";
   if (status === 401) {
     if (current) sheet.close();
-    if (skillsOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (skillsOnRoute()) renderGate();
     return;
   }
   // The skill exists whatever happened to the form: show it in the list.
@@ -405,8 +409,7 @@ async function createSkill(sheet) {
     $("sk-new-create").textContent = "Create";
     $("sk-new-create").disabled = false;
     const err = $("sk-new-error");
-    err.textContent = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    err.textContent = failText(status, data);
     err.hidden = false;
     return;
   }
@@ -456,12 +459,11 @@ async function skillsWrite(c) {
   const { status, data } = await apiPost(`/v1/app/skills/${action}`, body);
   for (const x of paths) p.busy.delete(x);
   if (status === 401) {
-    if (skillsOnRoute()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (skillsOnRoute()) renderGate();
     return;
   }
   if (status !== 200 || !data) {
-    p.actionError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.actionError = failText(status, data);
     // A failed change may still have moved something: read the list again.
     return skillsReload();
   }
@@ -597,8 +599,7 @@ function paintSkills() {
       ${d.catalog_error ? `<p class="caption">Couldn't read the plugin catalog, so plugin skills stay listed here: ${esc(d.catalog_error)}</p>` : ""}
       ${note}
       <div id="sk-list"></div>
-    </div>
-    <dialog class="sheet sk-new-sheet" id="sk-new-sheet" aria-label="New skill"></dialog></div>`;
+    </div></div>`;
   bindSkillsHeader();
   document.getElementById("sk-harness").onchange = (e) => { p.harness = e.target.value; paintSkillRows(); };
   document.getElementById("sk-source").onchange = (e) => { p.source = e.target.value; paintSkillRows(); };
@@ -660,10 +661,9 @@ async function renderSkillDetail(path) {
   }
   const { status, data } = await api(`/v1/app/skills?skill=${encodeURIComponent(path)}`);
   if (gen !== routeGen || mine !== p.seq) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
-    const msg = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    const msg = failText(status, data);
     document.getElementById("panel").innerHTML = `<div class="page">${skillsHeader(false)}${skillsBack()}
       <div class="card"><p class="error">${esc(msg)}</p></div></div>`;
     bindSkillsHeader();
@@ -736,8 +736,7 @@ function paintSkillDetail(d) {
       ${skillsActionCard()}
       <div class="sk-lock">${skillsLockIcon()}<span>${esc(lock)}</span></div>
       ${header}${fm}${skillsContents(d)}
-    </div>
-    <dialog class="sheet sk-sheet" id="sk-sheet"></dialog></div>`;
+    </div></div>`;
   bindSkillsHeader();
   const fmFold = document.getElementById("sk-fm-fold");
   if (fmFold) fmFold.onclick = () => { p.fmShowsAll = !p.fmShowsAll; paintSkillDetail(d); };
@@ -789,18 +788,21 @@ function skillsContents(d) {
 
 /* PrimitiveFileSheet, read only: the file in a large sheet over the page. */
 async function openSkillFile(d, name) {
-  const sheet = document.getElementById("sk-sheet");
+  const sheet = bodySheet("sk-sheet", "sheet sk-sheet");
   const path = d.skill.path + "/" + name;
   const head = (inner) => `<form method="dialog" class="sheet-body">
     <div class="sk-sheet-head"><div class="titles"><div class="card-title">${esc(name.split("/").pop())}</div>
       <div class="card-subtitle sk-mono-sub">${esc(skillsPath(path, d.home))}</div></div>
       <button class="sk-button" value="close">Close</button></div>${inner}</form>`;
   sheet.innerHTML = head('<p class="caption">Reading…</p>');
-  sheet.dataset.file = name;
+  // Each opening has its own token: the same file name in another skill,
+  // opened after this one closed, must not take this read's answer.
+  const token = String(++skillsPage.fileToken);
+  sheet.dataset.token = token;
   if (!sheet.open) sheet.showModal();
   const { status, data } = await api(`/v1/app/skills?skill=${encodeURIComponent(d.skill.path)}&file=${encodeURIComponent(name)}`);
-  // Closed, or another file picked while this one was read.
-  if (!sheet.isConnected || !sheet.open || sheet.dataset.file !== name) return;
+  // Closed, or another file opened while this one was read.
+  if (!sheet.open || sheet.dataset.token !== token) return;
   let body;
   if (status !== 200 || !data) {
     body = `<p class="error">${esc((data && data.error && data.error.message) || `The hub answered ${status}.`)}</p>`;

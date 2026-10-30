@@ -49,5 +49,4 @@
 @media (max-width: 720px) {
   .tk-steps { gap: 4px; }
   .tk-step { padding: 0 8px; }
-  .tk-row-side .badge { display: none; }
 }

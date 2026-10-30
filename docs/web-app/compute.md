@@ -43,7 +43,9 @@ The gear opens the thresholds: "Orphans count as old after" (a minute to a
 year) and "Flag a process above" (1, 2, 4 or 8 GB). The tab, interval,
 temperature lines and thresholds are kept per browser in `localStorage`,
 as the Mac app keeps them in UserDefaults; flags are worked out in the
-page, so a changed threshold reflags at once.
+page, so a changed threshold reflags at once. The same sheet carries the
+auto clean switches, which are the page's one write (below) and live on
+the hub, not in the browser.
 
 The page polls every 3 seconds while it is open and visible, as the Mac
 page samples every 3 seconds.
@@ -65,8 +67,9 @@ sample taken at most every two seconds.
                  "processes": [{"pid": 1, "name": "node", "command_line": "…", "threads": 7,
                                 "memory_bytes": 0, "cpu_percent": 3.1, "started_at": 0, "busy": false}]}],
   "not_running": [],
+  "autoclean": {"enabled": false, "force": false, "orphan_age_seconds": 86400, "grace_seconds": 10.0},
   "orphans": [{"pid": 2, "command": "node server.js --port", "command_line": "…", "cwd": "/home/u/app",
-               "started_at": 0, "memory_bytes": 0, "descendants": 1}],
+               "started_at": 0, "memory_bytes": 0, "descendants": 1, "quitting": false}],
   "system": {"cpu_percent": 4.4, "cores": 12, "load": [1.0, 0.8, 0.6],
              "memory": {"total_bytes": 0, "used_bytes": 0, "swap_used_bytes": 0, "swap_total_bytes": 0}},
   "gpus": [{"index": 0, "name": "NVIDIA GeForce GTX 1070", "utilization_percent": 0.0,
@@ -87,6 +90,34 @@ has answered.
 
 On a hub that is not Linux the answer is `{"supported": false, "os":
 "Darwin", "message": "…"}` and the page shows the message.
+
+## Auto clean
+
+`POST /v1/app/compute/settings` writes the sheet's auto clean section.
+The body is `{"enabled": bool, "force": bool, "orphan_age_seconds": int}`;
+`enabled` is required, the other two keys are optional and keep their
+saved values when left out. `force` is read as "is it the JSON true" so
+it cannot turn on by accident, and the age clamps to the field's
+minute-to-year range. The answer is `{"autoclean": …}`, the settings as
+saved; the errors are 400 `bad_enabled`, 404 `unsupported` on a
+non-Linux hub, 409 `config_unwritable` when `config.json` refuses the
+write.
+
+The three knobs live in the `compute` section of the hub's `config.json`
+(`auto_clean`, `auto_clean_force`, `orphan_age_seconds`), so `swe config`
+can read or set them too. While `auto_clean` is on, the sampler thread
+SIGTERMs an orphan tree older than the age — deepest member first, the
+same plan a manual Quit runs on the Mac, with the same guards: never
+pid 1, the hub or its ancestors, and a pid is signalled only while it is
+still the process the tree recorded, so a recycled pid is somebody
+else's. A signalled tree is marked; the mark is what paints the
+"Quitting" badge, and it prunes once nothing in the tree answers the
+recorded start times. With `auto_clean_force` on, a marked tree still
+alive ten seconds later gets SIGKILL once.
+
+Because the work is the hub's, not the page's, the sampler thread starts
+at hub boot while `auto_clean` is on — a hub restart does not hand the
+orphans it was set to stop a free pass until someone opens Compute.
 
 ## Where the numbers come from
 
@@ -121,20 +152,21 @@ so are the hub and its ancestors.
 ## History
 
 The Mac trend sampler runs from app launch, so its card shows history
-from before the page was opened. To match, the first request starts one
-daemon thread in the hub that samples every 10 seconds for the life of
-the process; until a browser opens the page once, nothing is sampled.
-Page requests sample too (at most every two seconds). Samples go into two
+from before the page was opened. To match, one daemon thread in the hub
+samples every 10 seconds for the life of the process; it starts at hub
+boot while auto clean is on, else on the first page request. Page
+requests sample too (at most every two seconds). Samples go into two
 rings in memory: every 3 s for six minutes (the 3 s view) and every 10 s
 for ten hours (the 5 minute view's window). A hub restart starts the
 history again, as an app relaunch does.
 
 ## Differences from the Mac app
 
-- **Read only.** Quit, Force quit, Quit all and the Clean up sheet are
-  left out: they signal processes, and the web app has no writes for this
-  page yet. The thresholds sheet keeps only what drives the badges and
-  the trend card.
+- **Only auto clean writes.** Quit, Force quit, Quit all and the Clean up
+  sheet stay in the Mac app; the one write the page makes is the auto
+  clean section of the settings sheet, which the hub applies itself.
+  Everything else the sheet holds (the badge and flag thresholds, the
+  tab, the interval, the temperature lines) is per-browser display state.
 - **Fan control is Mac only.** The fan button and its popover write the
   SMC through Quiver's privileged helper on a Mac; there is no Linux
   counterpart, so the page has no fan button and no "Fans up above"

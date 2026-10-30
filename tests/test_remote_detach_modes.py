@@ -447,6 +447,25 @@ class TestHubDetachRoutes(unittest.TestCase):
         self.assertEqual(captured[-1]["ctl"], "detach")
         self.assertEqual(captured[-1]["mode"], "keep")
 
+    def test_satellite_control_carries_the_client_id(self):
+        # The agent echoes client_id on its command.result, which is how
+        # the phone tells its model switch's failure from another's.
+        captured = []
+        self.srv.state.queue_command = (
+            lambda mid, op, key, data: captured.append(data) or {})
+        row = dict(self.srv.state.catalog.row_for(self.key),
+                   machine_id="other", ownership="attached")
+        with patch.object(self.srv.state.catalog, "row_for",
+                          return_value=row):
+            status, data = self._control(
+                {"op": "model", "value": "sonnet", "client_id": "c-1"})
+            self.assertEqual(status, 202, data)
+            self.assertEqual(captured[-1], {"ctl": "model", "value": "sonnet",
+                                            "client_id": "c-1"})
+            status, data = self._control({"op": "interrupt"})
+        self.assertEqual(status, 202, data)
+        self.assertNotIn("client_id", captured[-1])
+
 
 @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
 class TestKeptTmuxSessions(unittest.TestCase):

@@ -80,8 +80,11 @@ struct DevicesView: View {
         do {
             requests = try await client.pairRequests()
             requestsError = nil
+        } catch is CancellationError {
+            // The page closed mid-fetch: nothing failed.
+            return
         } catch {
-            requestsError = (error as? HubError)?.message ?? error.localizedDescription
+            requestsError = error.localizedDescription
         }
         requestsLoaded = true
     }
@@ -99,10 +102,12 @@ struct DevicesView: View {
                 return ($0.lastSeenAt ?? 0) > ($1.lastSeenAt ?? 0)
             }
             devicesError = nil
+        } catch is CancellationError {
+            return
         } catch let error as HubError where error.status == 404 {
             devicesError = "This hub can't list devices yet. Update it, and this page shows everyone paired."
         } catch {
-            devicesError = (error as? HubError)?.message ?? error.localizedDescription
+            devicesError = error.localizedDescription
         }
         devicesLoaded = true
     }
@@ -114,18 +119,21 @@ struct DevicesView: View {
 
     @ViewBuilder private func row(_ device: PairedDevice) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: device.symbol).font(.system(size: 16)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+            Image(systemName: device.symbol).font(Theme.font(size: 16)).foregroundStyle(Theme.textSecondary).iconColumn(20)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(device.label).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     if selfDevice(device) {
-                        Text("This device").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(Theme.subtle, in: .capsule)
+                        // The shared badge: its hairline keeps it visible on
+                        // a light card, where the subtle fill alone vanished.
+                        Badge("This device")
                     }
                 }
+                // Two lines: on one, a phone's OS and client used the
+                // width and "last seen" was cut to "last seen 1…".
                 Text(detail(of: device))
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             if device.revoked == true {
@@ -151,8 +159,8 @@ struct DevicesView: View {
     private func detail(of device: PairedDevice) -> String {
         var bits = [device.isSatellite ? "machine" : nil, device.os, device.client, device.nodeName]
             .compactMap { $0 }
-        let seen = RelativeTime.short(device.lastSeenAt)
-        bits.append(seen.isEmpty ? "never seen" : seen == "now" ? "seen just now" : "last seen \(seen) ago")
+        let seen = RelativeTime.ago(device.lastSeenAt)
+        bits.append(seen.isEmpty ? "never seen" : seen == "just now" ? "seen just now" : "last seen \(seen)")
         return bits.joined(separator: " · ")
     }
 
@@ -168,7 +176,7 @@ struct DevicesView: View {
                 devices[i].revoked = true
             }
         } catch {
-            actionError = (error as? HubError)?.message ?? error.localizedDescription
+            actionError = error.localizedDescription
         }
         await loadDevices()
     }
@@ -186,11 +194,11 @@ private struct PairRequestCard: View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
-                    Image(systemName: "iphone.gen3").font(.system(size: 18)).foregroundStyle(Theme.textSecondary).frame(width: 22)
+                    Image(systemName: "iphone.gen3").font(Theme.font(size: 18)).foregroundStyle(Theme.textSecondary).iconColumn(22)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(request.name ?? "New device").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Text([request.nodeName, request.login, request.createdAt.map { "\(RelativeTime.short($0)) ago" }]
-                            .compactMap { $0 }.joined(separator: " · "))
+                        Text([request.nodeName, request.login, RelativeTime.ago(request.createdAt)]
+                            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                     }
                     Spacer()
@@ -198,7 +206,7 @@ private struct PairRequestCard: View {
                 TextField("000 000", text: $code)
                     .keyboardType(.numberPad)
                     .multilineTextAlignment(.center)
-                    .font(.system(size: 20, weight: .medium, design: .monospaced))
+                    .font(Theme.font(size: 20, weight: .medium, design: .monospaced))
                     .tracking(3)
                     .quiverField()
                     .onChange(of: code) { _, new in code = String(new.filter(\.isNumber).prefix(6)) }
@@ -206,8 +214,10 @@ private struct PairRequestCard: View {
                 HStack(spacing: 8) {
                     Button("Approve") { Task { await decide(true) } }.primaryButton()
                         .disabled(code.count != 6 || busy)
+                    // The hub checks the code on a deny too, so a stray
+                    // tap can't refuse someone else's request.
                     Button("Deny") { Task { await decide(false) } }.secondaryButton(destructive: true)
-                        .disabled(busy)
+                        .disabled(code.count != 6 || busy)
                 }
             }
         }
@@ -221,7 +231,7 @@ private struct PairRequestCard: View {
             try await client.decidePairRequest(id: request.requestId, code: code, approve: approve)
             await reload()
         } catch {
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            self.error = error.localizedDescription
         }
     }
 }

@@ -73,6 +73,13 @@ struct RepositoriesPage: View {
                         await model.loadTabIfStale(model.tab, repo: repo.name,
                                                    swe: swe)
                     }
+                    // The Review requested filter's flags ride along
+                    // with the pull requests they filter.
+                    if model.tab == .pulls {
+                        group.addTask {
+                            await model.loadReviewRequests(repo: repo.name, swe: swe)
+                        }
+                    }
                 }
             }
             // Poll while the page is open so merged PRs and finished CI
@@ -86,6 +93,11 @@ struct RepositoriesPage: View {
                         for tab in tabs {
                             group.addTask {
                                 await model.loadTab(tab, repo: repo.name, swe: swe)
+                            }
+                        }
+                        if model.tab == .pulls {
+                            group.addTask {
+                                await model.loadReviewRequests(repo: repo.name, swe: swe)
                             }
                         }
                     }
@@ -127,6 +139,11 @@ struct RepositoriesPage: View {
                             await model.loadTab(.actions, repo: repo.name, swe: swe)
                         }
                     }
+                    if model.tab == .pulls {
+                        group.addTask {
+                            await model.loadReviewRequests(repo: repo.name, swe: swe, force: true)
+                        }
+                    }
                 }
             }
         }
@@ -164,6 +181,12 @@ struct RepositoriesPage: View {
                         .frame(minWidth: 120, maxWidth: 260)
                         .help("Search titles, branches, authors and states like failing or draft (⌘K)")
                         .padding(.bottom, 4)
+                }
+                if model.tab == .pulls, !model.pullFilters.isEmpty {
+                    PullFilterPicker(options: model.pullFilters,
+                                     count: { model.pullCount($0) },
+                                     selection: Binding(get: { model.activePullFilter },
+                                                        set: { model.pullFilter = $0 }))
                 }
                 if let error = model.pinError ?? model.actionError {
                     ErrorCard(message: error)
@@ -226,6 +249,7 @@ struct RepositoriesPage: View {
                     RepoSurfaces(repo: pin.name, board: model.board(for: pin.name),
                                  tab: model.tab, query: model.query,
                                  unfiltered: model.showsAllRows(pin.name),
+                                 keepsPull: { model.keepsPull($0, repo: pin.name) },
                                  preview: 5,
                                  expandEdge: index == repos.count - 1 ? .cardBottom : .inset,
                                  openPr: { detail = PrSelection(repo: pin.name, number: $0) },
@@ -245,7 +269,9 @@ struct RepositoriesPage: View {
         }
         let place = model.shownRepo ?? "your pinned repos"
         return switch model.tab {
-        case .pulls: "No open pull requests in \(place)."
+        case .pulls: model.activePullFilter == .all
+            ? "No open pull requests in \(place)."
+            : "No open pull requests in \(place) match \(model.activePullFilter.title)."
         case .issues: "No open issues in \(place)."
         case .actions: "No workflow runs in \(place)."
         case .pages: "\(place) has no GitHub Pages site."
@@ -477,6 +503,23 @@ private struct RepoRail: View {
     }
 }
 
+// MARK: - Pull request filter
+
+/// All / Mine / Review requested above a pull request list. Only the
+/// filters the loaded flags can answer show; the caller hides the
+/// picker when none can.
+struct PullFilterPicker: View {
+    var options: [PullFilter]
+    /// The rows each filter would list, shown after its title.
+    var count: (PullFilter) -> Int
+    @Binding var selection: PullFilter
+
+    var body: some View {
+        Tabs(options: options.map { ($0, "\($0.title) \(count($0))") }, selection: $selection)
+            .hoverTip("Mine is pull requests you opened; Review requested is open ones waiting on your review, from gh pr status")
+    }
+}
+
 // MARK: - Repo surfaces
 
 /// One repo's tab surfaces — pull requests, issues, workflow runs,
@@ -495,6 +538,9 @@ struct RepoSurfaces: View {
     /// Skip row filtering — a dashboard section the query named keeps
     /// its whole board.
     var unfiltered = false
+    /// The Mine / Review requested filter on pull requests; applies
+    /// even where the search is skipped.
+    var keepsPull: (GhPr) -> Bool = { _ in true }
     /// The focus page's scroll loading: lists reveal `batch` rows at a
     /// time and the end sentinel grows the fetch window. Off here, the
     /// dashboard's 3-row collapse preview stays.
@@ -603,7 +649,9 @@ struct RepoSurfaces: View {
 
     /// The tab's rows after the search filter.
     private func pullsState() -> Loadable<[GhPr]> {
-        filtered(board.pulls, Self.prParts)
+        var state = board.pulls
+        if case .loaded(let rows) = state { state = .loaded(rows.filter(keepsPull)) }
+        return filtered(state, Self.prParts)
     }
 
     @ViewBuilder
@@ -706,10 +754,7 @@ struct RepoSurfaces: View {
                 Button("Open on GitHub") {
                     if let url = URL(string: issue.url), url.isWebURL { openURL(url) }
                 }
-                Button("Copy link") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(issue.url, forType: .string)
-                }
+                Button("Copy link") { copyToPasteboard(issue.url) }
             }
         }
     }
@@ -1170,6 +1215,8 @@ private struct RepoManager: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
     var onAdd: () -> Void
+    /// The pin whose Unpin waits on the confirmation.
+    @State private var unpinning: String?
 
     private var model: GitHubModel { app.github }
 
@@ -1216,7 +1263,7 @@ private struct RepoManager: View {
                         .plainButton()
                         .help("Open on GitHub")
                         Button {
-                            Task { await model.removeRepo(pin.name, swe: app.swe) }
+                            unpinning = pin.name
                         } label: {
                             Image(systemName: "minus.circle")
                                 .font(Theme.font(size: 13)).foregroundStyle(Theme.dangerText)
@@ -1236,6 +1283,17 @@ private struct RepoManager: View {
         }
         .padding(14)
         .frame(width: 300)
+        // One click on the small minus took the repo off every board.
+        .confirmationDialog("Unpin \(unpinning ?? "")?", isPresented: .init(
+            get: { unpinning != nil }, set: { if !$0 { unpinning = nil } })) {
+            Button("Unpin", role: .destructive) {
+                if let name = unpinning { Task { await model.removeRepo(name, swe: app.swe) } }
+                unpinning = nil
+            }
+            Button("Cancel", role: .cancel) { unpinning = nil }
+        } message: {
+            Text("Its boards leave Repositories. Pin it again any time.")
+        }
     }
 }
 

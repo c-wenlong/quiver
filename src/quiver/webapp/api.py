@@ -9,6 +9,7 @@ waits for it rather than reading the same files again.
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 import threading
 import time
@@ -38,23 +39,68 @@ class WebApp:
         self._catalog_at = 0.0
         self._scanned_at = 0.0
         self._last_scan = None
+        # by_session over the whole ledger, kept until the next scan or
+        # price list: ``(scanned_at, catalog, usage)``.
+        self._usage: tuple | None = None
+        # The Calendar file sources' per-account totals, kept until the
+        # next scan: ``((scanned_at, harnesses), stats)``. The Cursor feed
+        # writes no Pi or Droid rows, so its rounds leave them be.
+        self._activity_stats: tuple | None = None
         # Cursor's feed fetches over the network, so a round runs off
         # this lock on its own thread and store (``keepFresh``); its last
         # notes surface with the next page's.
         self._feed_thread: threading.Thread | None = None
         self._feed_notes: list[str] = []
+        # The LiteLLM price download (up to 15 s) runs on its own thread
+        # too; pages price from the copy on disk meanwhile. A pricing
+        # write bumps ``_prices_gen`` so a download that started before
+        # it can't put back the old overrides.
+        self._prices_thread: threading.Thread | None = None
+        self._prices_gen = 0
 
     def _ensure(self, rescan: bool) -> None:
         if self._store is None:
             self._store = LedgerStore(ledger_path_for(self.home))
         now = time.time()
         if self._catalog is None or now - self._catalog_at > CATALOG_TTL_S:
-            self._catalog = load_catalog(self.home, download=self.download_prices)
+            # With downloads off nothing swaps a fresh list in later, so
+            # an expired one rereads the disk (its copy, the overrides).
+            if self._catalog is None or not self.download_prices:
+                self._catalog = load_catalog(self.home, download=False)
             self._catalog_at = now
+            self._kick_prices()
         if rescan or now - self._scanned_at > SCAN_TTL_S:
-            self._last_scan = scan(self._store, self.home)
+            try:
+                self._last_scan = scan(self._store, self.home)
+            except sqlite3.Error:
+                # End the failed scan's transaction: left open, it keeps
+                # its snapshot, and a busy store would fail every later
+                # page until the hub restarts instead of this one.
+                self._store.db.rollback()
+                raise
             self._scanned_at = time.time()
         self._kick_feed()
+
+    def _kick_prices(self) -> None:
+        """Refresh the LiteLLM download on a background thread; the
+        caller holds the lock, which the download must never hold."""
+        if not self.download_prices:
+            return
+        if self._prices_thread is not None and self._prices_thread.is_alive():
+            return
+        self._prices_thread = threading.Thread(
+            target=self._refresh_prices, args=(self._prices_gen,),
+            name="ledger-prices", daemon=True)
+        self._prices_thread.start()
+
+    def _refresh_prices(self, gen: int) -> None:
+        try:
+            catalog = load_catalog(self.home, download=True)
+        except Exception:  # offline or unreadable: keep the disk copy
+            return
+        with self._lock:
+            if gen == self._prices_gen:
+                self._catalog = catalog
 
     def _kick_feed(self) -> None:
         """Start a background feed round when the cadence says one is
@@ -84,6 +130,8 @@ class WebApp:
             notes.append(f"cursor feed: {exc}")
         with self._lock:
             self._feed_notes = notes
+            # The round may have written usage rows: group them again.
+            self._usage = None
 
     def overview(self, period: str, tz_name: str | None, rescan: bool = False) -> dict:
         with self._lock:
@@ -111,7 +159,7 @@ class WebApp:
         page."""
         with self._lock:
             self._ensure(rescan)
-            usage = by_session(self._store, self._catalog)
+            usage = self.session_usage()
             sessions = sessions_mod.build(
                 rows, usage, hub_machine_id, machines,
                 scanned=(self._last_scan is not None
@@ -131,11 +179,38 @@ class WebApp:
                 "notes": self._notes(),
             }
 
+    def session_usage(self) -> dict:
+        """``by_session`` for the current store and prices; the caller
+        holds the page lock (inside ``ledger()`` or a page method).
+
+        It groups every session in the ledger's history, so the Sessions
+        and Calendar pages share one answer per scan instead of paying
+        for it on each navigation."""
+        cached = self._usage
+        if cached is not None and cached[0] == self._scanned_at \
+                and cached[1] is self._catalog:
+            return cached[2]
+        usage = by_session(self._store, self._catalog)
+        self._usage = (self._scanned_at, self._catalog, usage)
+        return usage
+
+    def activity_session_stats(self, harnesses: tuple[str, ...]) -> dict:
+        """``LedgerStore.activity_session_stats`` for the Calendar's file
+        sources, kept until the next scan like ``session_usage``; the
+        caller holds the page lock."""
+        cached = self._activity_stats
+        if cached is not None and cached[0] == (self._scanned_at, harnesses):
+            return cached[1]
+        stats = self._store.activity_session_stats(list(harnesses))
+        self._activity_stats = ((self._scanned_at, harnesses), stats)
+        return stats
+
     def prices_changed(self) -> None:
         """``config/pricing.json`` was written: the next read builds the
         price list again, so every page prices with the new rates."""
         with self._lock:
             self._catalog = None
+            self._prices_gen += 1
 
     @contextmanager
     def ledger(self, rescan: bool = False):

@@ -155,6 +155,11 @@ public actor DevinCloudSync {
     /// so a page can say why the list stopped updating.
     private let onStatus: (@Sendable (String?) async -> Void)?
     private var snapshot: DevinCloudSnapshot
+    /// `sessions.json` was there but couldn't be read or decoded (locked,
+    /// corrupt, a newer schema). Saving would replace the only copy of the
+    /// archived sessions with whatever this run fetched, so nothing is
+    /// written until the app opens a file it can read.
+    private let storeUnreadable: Bool
     /// Bumped by every sync; a reply from an older one is dropped, so a
     /// slow sync can't overwrite a newer one's result.
     private var generation = 0
@@ -174,14 +179,24 @@ public actor DevinCloudSync {
         self.now = now
         self.onChanged = onChanged
         self.onStatus = onStatus
-        self.snapshot = Self.stored(in: directory)
+        PrivateFile.tighten(directory.appending(path: "sessions.json"))
+        (self.snapshot, self.storeUnreadable) = Self.read(in: directory)
     }
 
     /// What `sessions.json` in `directory` holds; empty when missing or unreadable.
     public static func stored(in directory: URL) -> DevinCloudSnapshot {
+        read(in: directory).snapshot
+    }
+
+    /// The stored snapshot, and whether a file was there that couldn't be
+    /// read: missing is a fresh start, unreadable is not.
+    private static func read(in directory: URL) -> (snapshot: DevinCloudSnapshot, unreadable: Bool) {
         let file = directory.appending(path: "sessions.json")
-        return (try? decoder.decode(DevinCloudSnapshot.self, from: Data(contentsOf: file)))
-            ?? DevinCloudSnapshot()
+        guard FileManager.default.fileExists(atPath: file.path) else { return (DevinCloudSnapshot(), false) }
+        guard let data = try? Data(contentsOf: file),
+              let snapshot = try? decoder.decode(DevinCloudSnapshot.self, from: data)
+        else { return (DevinCloudSnapshot(), true) }
+        return (snapshot, false)
     }
 
     /// The stored sessions, newest activity first.
@@ -412,9 +427,14 @@ public actor DevinCloudSync {
     }()
 
     private func save() {
+        guard !storeUnreadable else {
+            Self.log.error("devin cloud: sessions.json couldn't be read, so it is left as it is")
+            return
+        }
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try Self.encoder.encode(snapshot).write(to: directory.appending(path: "sessions.json"), options: .atomic)
+            // Session titles and folders: this user's only.
+            try PrivateFile.write(Self.encoder.encode(snapshot),
+                                  to: directory.appending(path: "sessions.json"))
         } catch {
             Self.log.error("devin cloud: couldn't save sessions.json: \(error.localizedDescription)")
         }

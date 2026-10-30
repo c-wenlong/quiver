@@ -22,7 +22,8 @@ from __future__ import annotations
 
 from quiver.remote import tasks as tasks_mod
 from quiver.webapp.pages import PageError
-from quiver.webapp.pages import _github as G
+from quiver.webapp.pages import _github as W
+from quiver.webapp.pages.repositories import harnesses
 
 # The catalog fields a session row in the Sessions card draws: the
 # harness logo, the display title, the status badge, where it runs,
@@ -33,8 +34,8 @@ _SESSION_FIELDS = ("id", "harness", "agent", "title", "status", "cwd",
 
 
 def get(ctx, args: dict) -> dict:
-    if G.flag(args, "harnesses"):
-        return {"harnesses": harnesses(),
+    if W.flag(args, "harnesses"):
+        return {"harnesses": harnesses(ctx.home),
                 "machine": (ctx.machine or {}).get("name")}
     # The hub's query dict maps each parameter to a list; the page's
     # flat args keep only the first value of each.
@@ -89,24 +90,3 @@ def _session_row(row: dict | None, key: str, machines: dict) -> dict:
         machine = machines.get(str(row.get("machine_id") or "")) or {}
         brief["machine"] = machine.get("name") or row.get("machine_id")
     return brief
-
-
-def harnesses() -> list[dict]:
-    """``{name, display_name, tracked, launch_model, launch_effort,
-    last_model, recent_models}`` for each harness the hub can start, in Provider
-    visibility order — the same answer ``/v1/app/repositories?harnesses=1``
-    gives the PR sheet. ``recent_models`` is the harness's recently used
-    models, newest first (at most 5); ``last_model`` is its head (""
-    when none), the picker's default."""
-    from quiver.remote import catalog as catalog_mod
-
-    launchable = catalog_mod.launchable_harnesses()
-    recent = catalog_mod.recent_models(
-        None, [h["name"] for h in launchable])
-    return [{"name": h["name"], "display_name": h["display_name"],
-             "tracked": h["tracked"],
-             "launch_model": h["launch_model"],
-             "launch_effort": h["launch_effort"],
-             "last_model": (recent.get(h["name"]) or [""])[0],
-             "recent_models": recent.get(h["name"], [])}
-            for h in launchable]

@@ -20,7 +20,7 @@ from quiver.github import issues as gh_issues
 from quiver.github import pulls as gh_pulls
 from quiver.remote import protocol
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 from tests.test_github_issues import RAW_ISSUE
 from tests.test_remote_pulls import RAW_PR, _row, _pr_status
@@ -66,11 +66,12 @@ class TestTaskRef(unittest.TestCase):
     def test_linear_and_notion_refs(self):
         card = tasks_mod.parse_ref({"source": "linear", "kind": "card",
                                     "project": "QVR", "ref": "QVR-12",
-                                    "title": "x", "url": "u"})
+                                    "title": "x",
+                                    "url": "https://linear.app/a/issue/qvr-12"})
         self.assertEqual(tasks_mod.task_id(card), "linear:card:qvr:qvr-12")
         page = tasks_mod.parse_ref({"source": "notion", "kind": "page",
                                     "ref": "abc-123", "title": "x",
-                                    "url": "u"})
+                                    "url": "https://notion.so/abc-123"})
         self.assertEqual(tasks_mod.task_id(page), "notion:page::abc-123")
 
     def test_bad_refs(self):
@@ -91,10 +92,42 @@ class TestTaskRef(unittest.TestCase):
             {"source": "github", "kind": "issue", "repo": "o/r",
              "ref": "0"},                                      # zero
             {"source": "linear", "kind": "card", "ref": True},  # bool ref
+            {"source": "linear", "kind": "card", "ref": "x" * 201},  # long
+            {"source": "linear", "kind": "card", "ref": "Q-1",
+             "project": "p" * 201},                        # long project
+            {"source": "notion", "kind": "page", "ref": "a",
+             "url": "javascript:alert(1)"},                 # bad scheme
+            {"source": "notion", "kind": "page", "ref": "a",
+             "url": "https:no-host"},                       # no host
+            {"source": "notion", "kind": "page", "ref": "a",
+             "url": "https://:80/path"},                    # port, no host
+            {"source": "notion", "kind": "page", "ref": "a",
+             "url": "http://[bad"},                         # unparsable
+            {"source": "notion", "kind": "page", "ref": "a",
+             "url": "https://x.io/" + "a" * 2048},          # long url
         ]
         for body in bad:
             with self.assertRaises(ValueError, msg=body):
                 tasks_mod.parse_ref(body)
+
+    def test_fields_at_their_bounds_pass(self):
+        base = {"source": "linear", "kind": "card"}
+        url = "https://x.io/"
+        url += "a" * (tasks_mod.MAX_URL - len(url))
+        ok = tasks_mod.parse_ref({**base, "ref": "r" * tasks_mod.MAX_REF,
+                                  "project": "p" * tasks_mod.MAX_PROJECT,
+                                  "url": url})
+        self.assertEqual(len(ok["url"]), tasks_mod.MAX_URL)
+        for field, value in (("ref", "r" * (tasks_mod.MAX_REF + 1)),
+                             ("project", "p" * (tasks_mod.MAX_PROJECT + 1)),
+                             ("url", url + "a")):
+            with self.assertRaises(ValueError, msg=field):
+                tasks_mod.parse_ref({**base, "ref": "Q-1", field: value})
+
+    def test_a_long_title_is_cut_not_refused(self):
+        ref = tasks_mod.parse_ref({"source": "linear", "kind": "card",
+                                   "ref": "Q-1", "title": "t" * 5000})
+        self.assertEqual(len(ref["title"]), tasks_mod.MAX_TITLE)
 
     def test_origin_refs(self):
         issue = gh_issues.shape(RAW_ISSUE, "o/r", Path("/tmp/h"))
@@ -333,6 +366,25 @@ class TestTasksRoute(_Base):
         row = {t["id"]: t for t in body["tasks"]}["github:issue:o/r:5"]
         self.assertEqual(row["state"], "open")
         self.assertIsNone(row["pr"])
+
+    def test_linked_pr_skips_a_forks_pr_listed_first(self):
+        # gh's --head matches the branch name alone: a fork's PR from a
+        # same-named branch can come back first, and a limit of 1 then
+        # hid the repo's own merged PR.
+        fork = {"number": 11, "title": "fork", "state": "OPEN",
+                "headRefName": "quiver/issue-5",
+                "headRepositoryOwner": {"login": "someone-else"}}
+        own = {"number": 9, "title": "mine", "state": "MERGED",
+               "headRefName": "quiver/issue-5",
+               "headRepositoryOwner": {"login": "o"}}
+        with patch("quiver.github.gh.run_json",
+                   return_value=gh.GhResult("ok", data=[fork, own])) as run:
+            answered, pr = tasks_mod.GitHubTasks(
+                self.srv.home)._linked_pr("o/r", 5)
+        args = run.call_args[0][0]
+        self.assertGreater(int(args[args.index("--limit") + 1]), 1)
+        self.assertTrue(answered)
+        self.assertEqual(pr["number"], 9)
 
     def test_linked_session_runs_and_finishes(self):
         tasks_mod.link(self.srv.home, ISSUE_REF, session_key="claude:s1")
@@ -695,8 +747,12 @@ class TestOrigin(_Base):
                        "created": True})), \
              patch("quiver.remote.supervise.launch_new",
                    return_value=(True, "launched", "qv-t")):
-            yield
-            self._wait()
+            try:
+                yield
+            finally:
+                # Even when the test fails: the launch thread must end
+                # while the patches still stand, or it runs for real.
+                self._wait()
 
     def _resolve(self):
         status, data = self.srv.request(

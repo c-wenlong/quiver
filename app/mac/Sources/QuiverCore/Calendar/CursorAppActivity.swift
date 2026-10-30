@@ -19,11 +19,14 @@ public struct CursorAppActivity: ActivityProviding {
             harness: "cursor",
             index: index,
             files: {
-                Dictionary(uniqueKeysWithValues: userDataDirs().compactMap { dir in
+                // Two account roots can name one database (an extra
+                // profile pointed at the app's own folder, a path listed
+                // twice); uniqueKeysWithValues trapped on that.
+                Dictionary(userDataDirs().compactMap { dir in
                     let db = dir.appending(path: "User/globalStorage/state.vscdb")
                     guard let stamp = Self.stamp(db) else { return nil }
                     return (db.path, stamp)
-                })
+                }, uniquingKeysWith: { first, _ in first })
             },
             parse: { try Self.parse(database: $0) })
     }
@@ -48,18 +51,18 @@ public struct CursorAppActivity: ActivityProviding {
     /// One IndexedSession per composer id. Keys without a second ':' and
     /// `task-` composers (subagent tasks) are skipped; `createdAt` may be
     /// an ISO string or epoch milliseconds. The database is opened
-    /// strictly read-only and queried once, retrying a single BUSY.
+    /// strictly read-only and queried once, retrying a single BUSY; the
+    /// retry starts the sessions over, so rows stepped before the BUSY
+    /// never count twice.
     static func parse(database path: String) throws -> [ActivityFileIndex.IndexedSession] {
         var sessions: [String: [Double]] = [:]
         var lastError: Error?
         for attempt in 0..<2 {
+            sessions = [:]
             do {
                 let db = try SQLiteDatabase(readOnlyURI:
                     "file:\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)?mode=ro")
-                let statement = try db.prepare("""
-                    SELECT key, json_extract(value, '$.createdAt')
-                    FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'
-                    """)
+                let statement = try db.prepare(Self.bubbleQuery)
                 while try statement.step() {
                     guard let key = statement.text(0),
                           let created = Self.createdAt(of: statement, column: 1),
@@ -87,6 +90,15 @@ public struct CursorAppActivity: ActivityProviding {
                   timestamps: timestamps.sorted())
         }
     }
+
+    /// Every bubble row. A range on the key, not `LIKE 'bubbleId:%'`:
+    /// LIKE is case-insensitive, so SQLite can't use the key's index for
+    /// it and scanned the whole table, every value blob included, on
+    /// every refresh. `;` is the character after `:`.
+    static let bubbleQuery = """
+        SELECT key, json_extract(value, '$.createdAt')
+        FROM cursorDiskKV WHERE key >= 'bubbleId:' AND key < 'bubbleId;'
+        """
 
     /// The composer id out of `bubbleId:<composer>:<bubble>`; nil for
     /// keys that never got a bubble suffix or belong to a subagent task.

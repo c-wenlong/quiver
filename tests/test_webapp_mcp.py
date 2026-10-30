@@ -16,6 +16,7 @@ from quiver.mcp import cli as mcp_cli
 from quiver.webapp.pages import PageError, mcp
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 SECRET = "lin_api_SECRETVALUE1234567890"
 
@@ -140,6 +141,15 @@ class TestFolders(unittest.TestCase):
         result = mcp.folder_scan(self.root / "file", [])
         self.assertIn("is a file, not a folder", result["error"])
 
+    def test_the_servers_folder_is_shortened_against_the_hubs_home(self):
+        # The folder lives under the hub's home, which need not be the
+        # process's: it was always written out in full.
+        self._server("mcp-hn")
+        result = mcp.folder_scan(self.root, [], home=self.root.parent)
+        self.assertEqual(result["root"], "~/" + self.root.name)
+        self.assertEqual(result["items"][0]["path"],
+                         "~/" + self.root.name + "/mcp-hn")
+
     def test_usage_matches_paths_under_a_folder_only(self):
         hn = self._server("mcp-hn")
         self._server("mcp-hnx")
@@ -155,10 +165,20 @@ class TestFolders(unittest.TestCase):
         self.assertTrue(all(not f["git"]["is_repo"] for f in result["items"]))
 
 
+def _no_hub_secrets(case):
+    """Keep get()'s secrets join off the real ~/.quiver/mcp.json and
+    secrets store, which these cases don't set up."""
+    for p in (patch.object(mcp, "_hub_refs", return_value={}),
+              patch("quiver.mcp.secrets.load_secrets", return_value={})):
+        p.start()
+        case.addCleanup(p.stop)
+
+
 class TestPayload(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.home, True)
+        _no_hub_secrets(self)
         root = self.home / ".quiver" / "mcp" / "servers" / "custom" / "linear-mcp"
         root.mkdir(parents=True)
         (root / "package.json").write_text("{}")
@@ -244,6 +264,10 @@ class TestPayload(unittest.TestCase):
 
 
 class TestRoute(HubBase):
+    def setUp(self):
+        super().setUp()
+        _no_hub_secrets(self)
+
     def test_needs_a_device_and_returns_the_inventory(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/mcp")[0], 401)
         with patch.object(mcp, "inventory", return_value=(["claude"], _pairs())), \
@@ -262,11 +286,6 @@ class TestRoute(HubBase):
             status, data = self.srv.request("GET", "/v1/app/mcp?health=1", headers=self.auth())
         self.assertEqual(status, 200, data)
         self.assertEqual({s["health"] for s in json.loads(data)["servers"]}, {"ok"})
-
-    def test_page_script_is_bundled(self):
-        status, body = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("mcp"', body)
 
 
 LINEAR_TOKEN = "lin_api_LIVEVALUE0987654321"
@@ -629,6 +648,7 @@ const registerPage = () => {};
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
 const Fmt = {}; const localStorage = { getItem: () => null, setItem() {} };
 const document = { getElementById: () => null };
+const window = { addEventListener() {} };
 let answer; const apiPost = () => new Promise((resolve) => { answer = resolve; });
 """
 
@@ -750,6 +770,67 @@ class TestAdd(_SyncHome, unittest.TestCase):
         # Two keys that fold to one name.
         error = self.refused(**cmd, targets=[], vars=[secret, {"key": "api.key", "value": "x", "secret": True}])
         self.assertEqual((error.status, error.code), (422, "secret_clash"))
+
+    def test_a_failed_add_puts_the_secret_store_back(self):
+        from quiver.mcp.secrets import load_secrets, set_secret
+        set_secret("KEPT_API_KEY", "old-value-00000000")
+        before = load_secrets()
+        vars_ = [{"key": "API_KEY", "value": self.TOKEN, "secret": True},
+                 {"key": "NEW_KEY", "value": "new-value-00000000", "secret": True}]
+        for exc, code in ((mcp_cli.AddRefused("disk said no"), "add_refused"), (OSError("full"), "add_failed")):
+            with self.subTest(code=code), patch.object(mcp_cli, "add_server", side_effect=exc):
+                with self.assertRaises(PageError) as caught:
+                    self.add(name="kept", kind="command", command=["x"], targets=[], vars=vars_)
+                self.assertEqual(caught.exception.code, code)
+                # The replaced value comes back and the new one is gone.
+                self.assertEqual(load_secrets(), before)
+
+    def test_a_failed_secret_write_puts_the_earlier_ones_back(self):
+        from quiver.mcp import secrets
+        real = secrets.set_secret
+        calls = []
+
+        def flaky(name, value, home=None):
+            calls.append(name)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real(name, value, home)
+
+        vars_ = [{"key": "A_KEY", "value": self.TOKEN, "secret": True},
+                 {"key": "B_KEY", "value": "second-value-0000", "secret": True}]
+        with patch.object(secrets, "set_secret", side_effect=flaky):
+            with self.assertRaises(PageError) as caught:
+                self.add(name="flaky", kind="command", command=["x"], targets=[], vars=vars_)
+        self.assertEqual(caught.exception.code, "add_failed")
+        self.assertEqual(secrets.load_secrets(), {})
+
+    def test_secrets_stay_when_the_hub_was_written_before_a_harness_failed(self):
+        from quiver.mcp.secrets import load_secrets
+        real = mcp_cli.add_server
+
+        def hub_then_fail(name, canonical, targets, **kw):
+            real(name, canonical, [], **kw)
+            raise OSError("harness config is read-only")
+
+        with patch.object(mcp_cli, "add_server", side_effect=hub_then_fail):
+            with self.assertRaises(PageError):
+                self.add(name="half", kind="command", command=["x"], targets=["claude"],
+                         vars=[{"key": "API_KEY", "value": self.TOKEN, "secret": True}])
+        # The hub's ${HALF_API_KEY} still resolves.
+        self.assertEqual(load_secrets()["HALF_API_KEY"], self.TOKEN)
+
+    def test_cleanup_leaves_a_value_that_changed_since(self):
+        from quiver.mcp.secrets import load_secrets, set_secret
+
+        def someone_else_then_fail(*a, **kw):
+            set_secret("RACE_API_KEY", "written-by-another-0")
+            raise OSError("full")
+
+        with patch.object(mcp_cli, "add_server", side_effect=someone_else_then_fail):
+            with self.assertRaises(PageError):
+                self.add(name="race", kind="command", command=["x"], targets=[],
+                         vars=[{"key": "API_KEY", "value": self.TOKEN, "secret": True}])
+        self.assertEqual(load_secrets()["RACE_API_KEY"], "written-by-another-0")
 
     def test_a_secret_another_server_refers_to_is_not_overwritten(self):
         self.add(name="a-b", kind="command", command=["x"], targets=[],
@@ -949,6 +1030,38 @@ class TestSyncRoute(_SyncHome, HubBase):
                                         headers=self.auth())
         self.assertEqual(status, 409)
         self.assertEqual(json.loads(data)["error"]["code"], "secrets_missing")
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestLeavingForgetsSecrets(unittest.TestCase):
+    """pages/mcp.js under node: navigating away removes both sheets with
+    #panel and fires no close, so the hashchange handler drops the Add
+    draft and the values a server's sheet revealed or had typed in."""
+
+    def test_leaving_drops_the_add_draft_and_revealed_values(self):
+        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/mcp.js"
+        prelude = (
+            "const listeners = [];\n"
+            "globalThis.window = { addEventListener(t, f) { if (t === 'hashchange') listeners.push(f); } };\n"
+            "globalThis.localStorage = { getItem() { return null; }, setItem() {} };\n"
+            "globalThis.location = { hash: '#/mcp' };\n"
+            "function registerPage() {}\n" + app_js_function("currentRoute"))
+        body = (
+            "const st = () => ({ revealed: new Map([['TOKEN', 'shh']]), revealGen: 0,"
+            " drafts: new Map([['KEY', 'typed']]), replacing: new Set(['KEY']), secretError: 'x' });\n"
+            "const fire = (hash) => { location.hash = hash; listeners.forEach((f) => f()); };\n"
+            "mcpPage.add = { line: 'npx srv --token=abc' }; mcpPage.sheet = st();\n"
+            "fire('#/mcp?x=1');\n"
+            "const stayed = [mcpPage.add !== null, mcpPage.sheet.revealed.size];\n"
+            "fire('#/overview');\n"
+            "const s = mcpPage.sheet;\n"
+            "process.stdout.write(JSON.stringify({ stayed, add: mcpPage.add, revealed: s.revealed.size,"
+            " drafts: s.drafts.size, replacing: s.replacing.size, gen: s.revealGen, error: s.secretError }));\n")
+        src = prelude + page.read_text(encoding="utf-8") + "\n" + body
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"stayed": [True, 1], "add": None, "revealed": 0, "drafts": 0,
+                                                  "replacing": 0, "gen": 1, "error": None})
 
 
 if __name__ == "__main__":

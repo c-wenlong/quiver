@@ -5,9 +5,13 @@ import Testing
 /// `IssueStore`: the dedup, re-notify and auto-resolve rules the toasts,
 /// badge and Doctor rows all read from `~/.quiver/data/issues.json`.
 @Suite struct IssueStoreTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func tempStore(clock: TestClock? = nil) -> IssueStore {
         let clock = clock ?? TestClock()
-        var store = IssueStore(url: FileManager.default.temporaryDirectory
+        var store = IssueStore(url: scratch.url
             .appending(path: "issues-\(UUID().uuidString).json"))
         store.now = { clock.now }
         return store
@@ -39,7 +43,7 @@ import Testing
     }
 
     @Test func aToldFailureStaysToldAcrossRestarts() {
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appending(path: "issues-\(UUID().uuidString).json")
         var store = IssueStore(url: url)
         let epoch = Date(timeIntervalSince1970: 1_791_720_000)
@@ -185,6 +189,34 @@ import Testing
         #expect(!renamed.shouldNotify)
         #expect(renamed.issue.message.hasSuffix("(Day job)"))
     }
+
+    /// A file this build can't read (cut off, from a newer build, or with
+    /// a status it doesn't know) reads empty, and no write replaces it:
+    /// writing back the empty list would lose every issue.
+    @Test(arguments: [
+        #"{"version": 1, "issues": {"cursor/auth-required": {"id": "cursor/auth-requ"#,
+        #"{"version": 2, "issues": {}, "added_later": true}"#,
+        #"{"version": 1, "issues": {"x/new": {"id": "x/new", "harness": "x", "status": "brand-new", "firstSeen": 1, "lastSeen": 1, "occurrences": 1, "resolved": false}}}"#,
+    ])
+    func aFileThisBuildCantReadIsNeverOverwritten(_ text: String) throws {
+        let store = tempStore()
+        try Data(text.utf8).write(to: store.url)
+        #expect(store.all().isEmpty)
+        let outcome = store.record(harness: "cursor", status: .authRequired, remedy: remedy())
+        #expect(!outcome.shouldNotify)
+        #expect(outcome.issue.id == "cursor/auth-required")
+        store.markNotified("cursor/auth-required")
+        store.resolve(harness: "cursor")
+        store.resolveMissing(starred: [], accounts: [:])
+        #expect(try String(contentsOf: store.url, encoding: .utf8) == text)
+    }
+
+    @Test func aBlankFileReadsEmptyAndTakesTheFirstWrite() throws {
+        let store = tempStore()
+        try Data("\n".utf8).write(to: store.url)
+        #expect(store.record(harness: "cursor", status: .authRequired, remedy: nil).shouldNotify)
+        #expect(store.open().map(\.id) == ["cursor/auth-required"])
+    }
 }
 
 /// What each surface makes of a status: the card's "Action needed" line
@@ -242,8 +274,12 @@ import Testing
 /// outages stay card-only and Doctor's rows come from the same list.
 @MainActor
 @Suite struct IssuesModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func model() -> (IssuesModel, IssueStore) {
-        let store = IssueStore(url: FileManager.default.temporaryDirectory
+        let store = IssueStore(url: scratch.url
             .appending(path: "issues-\(UUID().uuidString).json"))
         return (IssuesModel(store: store), store)
     }

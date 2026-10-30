@@ -43,13 +43,14 @@ from quiver.table import Table
 from quiver.harness.registry import load_registry as _load_registry
 from quiver.harness.registry import alias_map as _harness_alias_map
 from quiver.mcp.inventory import server_inventory
+from quiver.mcp import gateway as gateway_defaults
 from quiver.flags import expand_value_flags
 from quiver.mcp.secrets import _SECRET_FLAG_RE
 from quiver.mcp.secrets import load_secrets
 from quiver.mcp.secrets import redact as redact_secrets
 from quiver.mcp.secrets import resolve as resolve_secrets
 from quiver.mcp.secrets import scrub_args, scrub_url
-from quiver.mcp.secrets import set_secret
+from quiver.mcp.secrets import remove_secret, set_secret
 from quiver.mcp.secrets import unresolved_names
 from quiver.paths import atomic_write_text, CONFIG_DIR, MCP_SOURCE_FILE
 from quiver.mcp.formats import (
@@ -70,6 +71,7 @@ MCP_CONFIG_MAP = {
         "path": Path.home() / ".claude.json",
         "key": "mcpServers",
         "label": "Claude Code",
+        "format": "claude",
     },
     "claude-desktop": {
         "path": Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
@@ -1357,6 +1359,10 @@ def _sync(args, report: dict | None):
                       f"Set it with: swe mcp secret set {var}")
             return 1
 
+    # Shared hub servers go out as the gateway's URL while it is on.
+    gateway = (gateway_defaults.settings_of(load_json(MCP_SOURCE_FILE))
+               if is_hub(source) else {"enabled": False, "port": 0})
+
     print(f"\n{c('green', f'Selected {len(selected)} server(s)')} from {c('cyan', source)}")
     if dry_run:
         print(f"{c('yellow', 'Dry-run mode: no files will be modified.')}\n")
@@ -1424,11 +1430,17 @@ def _sync(args, report: dict | None):
         unsupported: list[str] = []
         remote_ok = takes_remote(target)
 
+        via_gateway: list[str] = []
+
         for name in selected:
-            if not remote_ok and server_type(source_servers[name]) == "http":
+            server = source_servers[name]
+            on_gateway = remote_ok and gateway_defaults.runs_on_gateway(server, gateway)
+            if on_gateway:
+                server = gateway_defaults.entry_for(name, gateway["port"])
+            if not remote_ok and server_type(server) == "http":
                 unsupported.append(name)
                 continue
-            converted = convert_server_for_target(source_servers[name], source, target)
+            converted = convert_server_for_target(server, source, target)
             if name in target_servers:
                 if force or name in overwrite:
                     target_servers[name] = _merge_format_keys(
@@ -1437,9 +1449,14 @@ def _sync(args, report: dict | None):
                     updated.append(name)
                 else:
                     skipped.append(name)
+                    continue
             else:
                 target_servers[name] = converted
                 added.append(name)
+            if on_gateway:
+                # Only what this run wrote: a skipped entry keeps whatever
+                # the target already had.
+                via_gateway.append(name)
 
         # --only/--except or a picker deselection narrowed the run.
         narrowed = (
@@ -1465,7 +1482,8 @@ def _sync(args, report: dict | None):
         if report is not None:
             report["targets"].append({"name": target, "added": added,
                                       "updated": updated, "skipped": skipped,
-                                      "pruned": pruned, "unsupported": unsupported})
+                                      "pruned": pruned, "unsupported": unsupported,
+                                      "via_gateway": via_gateway})
 
         if (added or updated or pruned) and not dry_run:
             saver = get_tool_saver(target)
@@ -1486,6 +1504,8 @@ def _sync(args, report: dict | None):
             parts.append(
                 f"{len(pruned)} {'would prune' if dry_run else 'pruned'}{names}"
             )
+        if via_gateway:
+            parts.append(f"{len(via_gateway)} through the gateway")
         if unsupported:
             parts.append(f"{len(unsupported)} remote left out ({', '.join(unsupported)}): "
                          f"{get_tool_config(target).get('label', target)} {LOCAL_ONLY_NOTE}")
@@ -1846,10 +1866,13 @@ def cmd_secret(args):
         return 0
     # Under --json stdout is one document, so refusals go to stderr.
     refusal = error_stream(json_view)
+    if args and args[0] == "remove":
+        return _secret_remove(args[1:], json_view, refusal)
     if not args or args[0] != "set":
         if args:
             print(f"Unknown secret command: {args[0]}", file=refusal)
-        print(f"Usage: {c('cyan', 'swe mcp secret set NAME')}", file=refusal)
+        print(f"Usage: {c('cyan', 'swe mcp secret set NAME')} | "
+              f"{c('cyan', 'swe mcp secret remove NAME')}", file=refusal)
         return 1
     rest = args[1:]
     if len(rest) != 1 or rest[0].startswith("-"):
@@ -1865,14 +1888,36 @@ def cmd_secret(args):
         value = sys.stdin.read()
     if value.endswith("\n"):
         value = value[:-1]
+    # Whether the name already held a value, so a caller that stored it
+    # for a step that then failed (the app's Add server) knows whether
+    # removing it again restores the store.
+    replaced = name in load_secrets()
     try:
         path, created = set_secret(name, value)
     except ValueError as exc:
         print(c("red", str(exc)), file=refusal)
         return 1
     if json_view:
-        return emit({"name": name, "path": str(path), "created": created})
+        return emit({"name": name, "path": str(path), "created": created,
+                     "replaced": replaced})
     print(f"Saved {name} to {path}")
+    return 0
+
+
+def _secret_remove(rest, json_view, refusal):
+    """``swe mcp secret remove NAME``: drop a stored value."""
+    if len(rest) != 1 or rest[0].startswith("-"):
+        print(f"Usage: {c('cyan', 'swe mcp secret remove NAME')}", file=refusal)
+        return 1
+    name = rest[0]
+    try:
+        removed = remove_secret(name)
+    except ValueError as exc:
+        print(c("red", str(exc)), file=refusal)
+        return 1
+    if json_view:
+        return emit({"name": name, "removed": removed})
+    print(f"Removed {name}" if removed else f"No value stored for {name}")
     return 0
 
 
@@ -2337,6 +2382,7 @@ MCP_HELP = {
 
     "secret": f"""\
   {c('cyan', 'swe mcp secret set NAME')}       Store a ${'{'}NAME{'}'} value in ~/.quiver/secrets/mcp/.api_keys
+  {c('cyan', 'swe mcp secret remove NAME')}    Drop a stored value
 
   mcp.json keeps ${'{'}NAME{'}'} references; the values live in the secrets
   file, mode 600 and gitignored. Sync refuses to write a harness config
@@ -2372,6 +2418,38 @@ MCP_HELP = {
 {c('bold', 'Examples')}
   swe mcp doctor
   swe mcp doctor --strict""",
+
+    "gateway": f"""\
+  {c('cyan', 'swe mcp gateway')}                     Show the gateway and its shared servers
+  {c('cyan', 'swe mcp gateway share <server...>')}    Run these hub servers once for every session
+  {c('cyan', 'swe mcp gateway unshare <server...>')}  Give each session its own copy again
+  {c('cyan', 'swe mcp gateway install')}             Run the gateway at login (macOS LaunchAgent)
+  {c('cyan', 'swe mcp gateway uninstall')}           Stop it; sync writes commands again
+  {c('cyan', 'swe mcp gateway serve')}               Run it in the foreground (what the agent runs)
+
+  Every harness session starts its own copy of each stdio server it is
+  configured with. The gateway starts each shared server once and serves
+  it at http://127.0.0.1:{gateway_defaults.DEFAULT_PORT}/mcp/<server>; once it is installed,
+  `swe mcp sync quiver ...` writes that URL for shared servers instead of
+  the command. Claude Desktop takes local servers only, so it keeps the
+  command.
+
+  Share only servers that keep no state per session (API clients such as
+  GitHub, Linear, Notion or search). A browser or REPL server would hand
+  every session the same page; share refuses those without --force.
+  The hub entry carries "shared": true; mcp.json's "gateway" key holds
+  the port.
+
+{c('bold', 'Flags')}
+  --port=<n>          install / serve: listen here (default {gateway_defaults.DEFAULT_PORT})
+  --force             share: share a server that looks stateful anyway
+  --json              status: print one JSON document
+
+{c('bold', 'Examples')}
+  swe mcp gateway share dv__github dv__linear sr__brave
+  swe mcp gateway install
+  swe mcp sync quiver --all --force
+  swe mcp gateway status --json""",
 }
 
 def cmd_help(args=None):
@@ -2396,6 +2474,7 @@ def cmd_help(args=None):
   {c('cyan', 'swe mcp remove')}       Remove a server from the hub or harnesses
   {c('cyan', 'swe mcp secret set')}   Store a ${{NAME}} value in the secrets file
   {c('cyan', 'swe mcp doctor')}       Deep diagnostics
+  {c('cyan', 'swe mcp gateway')}      Run shared servers once for every session
 
 {c('bold', 'Examples')}
   swe mcp list
@@ -2405,6 +2484,12 @@ def cmd_help(args=None):
   {c('dim', 'swe mcp <command> help   detailed help for one command')}
 """)
     return 0
+
+
+def cmd_gateway(args):
+    from quiver.mcp.gateway_commands import cmd_gateway as run
+
+    return run(args)
 
 
 def cmd_mcp_discover(args):
@@ -2426,6 +2511,7 @@ COMMANDS = {
     "remove": cmd_remove,
     "secret": cmd_secret,
     "doctor": cmd_doctor,
+    "gateway": cmd_gateway,
     "help": cmd_help,
 }
 

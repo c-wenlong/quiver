@@ -102,8 +102,8 @@ struct LinkCard: View {
     var body: some View {
         Button(action: open) {
             HStack(spacing: 10) {
-                Image(systemName: "link").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    .frame(width: 16)
+                Image(systemName: "link").font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
+                    .iconColumn(16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(LinkCards.host(url)).font(Theme.control).foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
@@ -114,7 +114,7 @@ struct LinkCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Text("Open").font(Theme.control).foregroundStyle(Theme.textSecondary)
-                Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "arrow.up.right").font(Theme.font(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.textMuted)
             }
             .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 44)

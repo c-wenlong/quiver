@@ -2,7 +2,7 @@
 ``GET /v1/pulls/<o>/<r>/<n>`` and ``POST /v1/pulls/<o>/<r>/<n>/open``.
 
 The reads answer from the same 60-second ``gh`` cache the web app's
-Repositories page uses (``webapp/pages/_github.py``), per pinned repo,
+Repositories page uses (``github/shared.py``), per pinned repo,
 so the phone and the page agree and a slow ``gh`` shows up once. A
 repo's row adds ``mine`` and ``review_requested`` (from ``gh pr
 status``) so the client can filter without a second round trip.
@@ -39,7 +39,7 @@ from quiver.remote import catalog as catalog_mod
 from quiver.remote import issues as issues_mod
 from quiver.remote import protocol, supervise
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 # ``swe gh``'s list cap: open PRs per pinned repo in one answer.
 LIST_LIMIT = 50
@@ -73,7 +73,7 @@ def _number_arg(raw) -> int | None:
 
 # ------------------------------------------------------------------ reads
 
-def list(state, args) -> tuple[int, dict]:
+def list_view(state, args) -> tuple[int, dict]:
     """``GET /v1/pulls``: every pinned repo's open PRs.
 
     ``{repos: [{name, status, pulls, error?}], machine, machine_id,
@@ -246,23 +246,10 @@ def request(state, owner: str, name: str, number_raw: str,
             f"{owner}/{name} isn't pinned on this hub: pin it with "
             f"`swe gh repo add {owner}/{name}`")
     harness = cmd["harness"]
-    binary = catalog_mod.launch_command(harness)
-    if binary is None:
-        return 422, protocol.error(
-            "not_launchable",
-            f"{harness} can't start here: archived, switched off in "
-            f"Provider visibility, or not installed")
-    blocked = supervise.fresh_launch_error(
-        harness, cmd["model"], cmd["effort"])
-    if blocked:
-        return 409, protocol.error("unsupported_launch_option", blocked)
-    if not supervise.tmux_bin():
-        return 422, protocol.error("launch_failed", "tmux is not installed")
-    env = gh.probe_env()
-    if env.status != "ok":
-        return 422, protocol.error("gh_unavailable", gh.env_error(env))
-    tracked = harness not in catalog_mod.untracked(
-        catalog_mod.launchable_harnesses())
+    ready = issues_mod.launch_ready(cmd)
+    if isinstance(ready, tuple):
+        return ready
+    binary, tracked = ready.binary, ready.tracked
     rows = state.catalog.tail_rows()
     ref = (repo.lower(), number)
     tree = gh_pulls.worktree_path(repo, number, state.home)
@@ -291,23 +278,15 @@ def request(state, owner: str, name: str, number_raw: str,
 
 def _run(state, launch_id: str, repo: str, number: int, cmd: dict,
          binary: str, tracked: bool, rows) -> None:
-    def fail(text: str) -> None:
-        state.settle_launch(launch_id, state="failed", note=text)
-
-    try:
-        failure = _prepare_and_launch(
-            state, launch_id, repo, number, cmd, binary, rows)
-        if failure:
-            fail(failure)
-        elif not tracked:
-            state.settle_launch(launch_id, state="untracked", note=(
-                f"{cmd['harness']} is running under tmux, but swe can't "
-                f"read its sessions, so there's no chat to open"))
-    except Exception as exc:  # a launch must never stay pending forever
-        fail(f"Open failed: {exc}")
-    finally:
+    def release() -> None:
         with _preparing_lock:
             _preparing.discard((repo.lower(), number))
+
+    issues_mod.run_launch(
+        state, launch_id, cmd["harness"], tracked,
+        lambda: _prepare_and_launch(
+            state, launch_id, repo, number, cmd, binary, rows),
+        "Open", release)
 
 
 def _prepare_and_launch(state, launch_id: str, repo: str, number: int,
@@ -334,11 +313,9 @@ def _prepare_and_launch(state, launch_id: str, repo: str, number: int,
         note("Cloning mirror…")
     else:
         note(f"Checking out PR #{number}…")
-    # One checkout at a time per repo mirror — the same table the web
-    # app's worktree action holds, so a phone open and a page open of
-    # two PRs in one repo can't interleave on FETCH_HEAD.
-    with G.mirror_lock(state.home, repo):
-        made = manage.pr_worktree(repo, str(number), state.home)
+    # pr_worktree holds the repo mirror's lock: a phone open and a page
+    # open of two PRs in one repo can't interleave on FETCH_HEAD.
+    made = manage.pr_worktree(repo, str(number), state.home)
     if made.status != "ok":
         return made.error or made.status
     cwd = made.data["path"]

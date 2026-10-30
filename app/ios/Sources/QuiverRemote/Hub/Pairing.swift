@@ -10,9 +10,11 @@ struct PairedHub: Equatable, Identifiable {
 
     /// The host, with the port when it isn't the hub's default, so two
     /// hubs on one machine read apart.
-    var address: String {
-        let host = baseURL.host ?? id
-        guard let port = baseURL.port, port != Hub.defaultPort else { return host }
+    var address: String { Self.address(of: baseURL) }
+
+    static func address(of url: URL) -> String {
+        let host = url.host ?? url.absoluteString
+        guard let port = url.port, port != Hub.defaultPort else { return host }
         return "\(host):\(port)"
     }
 }
@@ -63,16 +65,28 @@ protocol HubStore {
     func deleteCredential(_ id: String)
 }
 
-/// Keeps the list in memory only, for tests and previews.
+/// Keeps the list in memory only, for tests and previews. Credentials
+/// are kept by hub id, as the Keychain would, so a test can see what
+/// was stored and what was deleted.
 final class MemoryHubStore: HubStore {
     private(set) var list: HubList
+    private(set) var credentials: [String: Credential]
+    /// Stands in for a Keychain that refuses writes (tests).
+    var refusesSaves = false
 
-    init(_ list: HubList = HubList()) { self.list = list }
+    init(_ list: HubList = HubList()) {
+        self.list = list
+        credentials = Dictionary(list.hubs.map { ($0.id, $0.credential) }, uniquingKeysWith: { _, new in new })
+    }
 
     func load() -> HubList { list }
     func saveIndex(_ list: HubList) { self.list = list }
-    func saveCredential(_ hub: PairedHub) -> Bool { true }
-    func deleteCredential(_ id: String) {}
+    func saveCredential(_ hub: PairedHub) -> Bool {
+        guard !refusesSaves else { return false }
+        credentials[hub.id] = hub.credential
+        return true
+    }
+    func deleteCredential(_ id: String) { credentials[id] = nil }
 }
 
 struct KeychainHubStore: HubStore {
@@ -201,12 +215,16 @@ struct KeychainHubStore: HubStore {
         return out as? Data
     }
 
+    /// Updates the item in place, or adds it when there is none. Never
+    /// deletes first: a failed add after a delete would lose the
+    /// credential that was there.
     private func keychainWrite(_ data: Data, account: String) -> Bool {
-        SecItemDelete(query(account: account) as CFDictionary)
-        var q = query(account: account)
-        q[kSecValueData as String] = data
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
+        let q = query(account: account)
+        let fields: [String: Any] = [kSecValueData as String: data,
+                                     kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let updated = SecItemUpdate(q as CFDictionary, fields as CFDictionary)
+        guard updated == errSecItemNotFound else { return updated == errSecSuccess }
+        return SecItemAdd(q.merging(fields) { _, new in new } as CFDictionary, nil) == errSecSuccess
     }
 
     /// Writes a pairing the way the app stored one before the hub list,
@@ -216,6 +234,14 @@ struct KeychainHubStore: HubStore {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         if let data = try? encoder.encode(hub.credential) { _ = keychainWrite(data, account: Self.legacyAccount) }
+    }
+
+    /// Whether any copy of a pre-list pairing is still stored: the old
+    /// Keychain item, the webview shell's JSON or the old address (tests).
+    var legacyPairingLeft: Bool {
+        keychainRead(account: Self.legacyAccount) != nil
+            || defaults.object(forKey: Self.legacyCredentialKey) != nil
+            || defaults.object(forKey: Self.legacyHubKey) != nil
     }
 
     /// Forgets everything this store holds (tests).
@@ -232,7 +258,7 @@ struct KeychainHubStore: HubStore {
 
 /// Parses what a pair QR or link carries:
 /// `quiver://pair?host=…&port=…&token=…[&scheme=https][&name=…]` or the browser form
-/// `http://host:port/app/#pair=<token>[&name=…]` (older `/#pair=` links
+/// `http://host:port/#pair=<token>[&name=…]` (older `/app/#pair=` links
 /// parse the same: the fragment is all that matters).
 struct PairLink: Equatable {
     let baseURL: URL
@@ -256,7 +282,9 @@ struct PairLink: Equatable {
             parts.query = fragment
             let q = Self.query(parts.queryItems)
             guard let token = q["pair"], !token.isEmpty else { return nil }
-            guard let base = URL(string: "\(url.scheme!)://\(host):\(url.port ?? Hub.defaultPort)") else { return nil }
+            // No port on an https link is 443 (`tailscale serve`), not the hub's own.
+            let port = url.port.map { ":\($0)" } ?? (url.scheme == "https" ? "" : ":\(Hub.defaultPort)")
+            guard let base = URL(string: "\(url.scheme!)://\(host)\(port)") else { return nil }
             self.baseURL = base
             self.token = token
             self.name = q["name"]?.isEmpty == false ? q["name"] : nil
@@ -268,6 +296,13 @@ struct PairLink: Equatable {
     private static func query(_ items: [URLQueryItem]?) -> [String: String] {
         Dictionary((items ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
     }
+
+    /// The hub as the confirm sheet names it, the way the hub menu does.
+    var address: String { PairedHub.address(of: baseURL) }
+}
+
+extension PairLink: Identifiable {
+    var id: String { "\(baseURL.absoluteString) \(token)" }
 }
 
 /// Turns what someone types ("100.64.1.2", "mac.tailnet.ts.net:8477",
@@ -277,7 +312,9 @@ func hubURL(from input: String) -> URL? {
     guard !trimmed.isEmpty else { return nil }
     let withScheme = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
     guard var parts = URLComponents(string: withScheme), let host = parts.host, !host.isEmpty else { return nil }
-    if parts.port == nil { parts.port = Hub.defaultPort }
+    // An https address with no port is 443, `tailscale serve` in front of
+    // the hub; only plain http means the hub's own port.
+    if parts.port == nil, parts.scheme != "https" { parts.port = Hub.defaultPort }
     parts.path = ""
     parts.query = nil
     parts.fragment = nil

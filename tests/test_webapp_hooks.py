@@ -188,6 +188,20 @@ class TestDetail(_HooksHome, unittest.TestCase):
         self.assertEqual((d["tier"], d["editable"], d["exists"]), ("foreign", False, True))
         self.assertIn("#!/bin/sh", d["text"])
 
+    def test_a_foreign_script_outside_home_is_not_read(self):
+        # A hooks entry can resolve anywhere on disk; its text must not
+        # reach a paired device unless it lives under the hub's home.
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        outside = Path(folder.name) / "secret.sh"
+        outside.write_text("#!/bin/sh\n# TOKEN=abc in the header\nTOKEN=abc\n")
+        (self.home / ".claude" / "hooks" / "ext.sh").symlink_to(outside)
+        d = page.get(self.ctx, {"hook": "ext.sh", "harness": "claude"})
+        self.assertEqual((d["tier"], d["exists"]), ("foreign", True))
+        self.assertIsNone(d["text"])
+        self.assertEqual(d["summary"], "")
+        self.assertNotIn("abc", json.dumps(d))
+
     def test_a_script_that_vanished_reads_as_missing(self):
         # The inventory only ever lists files that exist, so a missing
         # source is a race: the row the list built, then the file went.
@@ -396,11 +410,41 @@ class TestRoute(HubBase):
         self.assertEqual(json.loads(data)["error"]["code"], "bad_hook")
 
     def test_page_assets_are_bundled(self):
-        status, js = self.srv.request("GET", "/app/pages.js")
+        status, js = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("hooks"', js)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".hk-row", css)
+
+
+class TestFindingMessage(unittest.TestCase):
+    """hkFindingMessage says each fact once: the badge reads "Managed
+    elsewhere", so the note keeps only the path, and home paths read ~/."""
+
+    def test_managed_note_is_its_path_and_home_reads_tilde(self):
+        import re
+        import shutil
+        import subprocess
+
+        if not shutil.which("node"):
+            self.skipTest("node is not installed")
+        js = (Path(page.__file__).resolve().parents[1] / "static/pages/hooks.js").read_text(encoding="utf-8")
+        fn = re.search(r"^function hkFindingMessage\(.*?^\}\n", js, re.S | re.M).group(0)
+        script = fn + """
+process.stdout.write(JSON.stringify([
+  hkFindingMessage({kind: "managed", message: "/Users/k/.claude/settings.json — declaration managed elsewhere"}, "/Users/k"),
+  hkFindingMessage({kind: "unlinked", message: "g.py is not linked into /Users/k/.claude/hooks (swe init will link it)"}, "/Users/k/"),
+  hkFindingMessage({kind: "undeclared", message: "x at /Users/kb/y"}, "/Users/k"),
+  hkFindingMessage({kind: "managed", message: "/backup/Users/k/s.json — declaration managed elsewhere"}, "/Users/k"),
+]));
+"""
+        done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), [
+            "~/.claude/settings.json",
+            "g.py is not linked into ~/.claude/hooks (swe init will link it)",
+            "x at /Users/kb/y",
+            "/backup/Users/k/s.json",
+        ])
 
 
 if __name__ == "__main__":

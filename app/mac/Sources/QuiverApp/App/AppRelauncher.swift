@@ -16,6 +16,8 @@ enum AppRelauncher {
     private static let script = """
         #!/bin/sh
         pid="$1"; src="$2"; dest="$3"
+        # sh already has this file open; nothing reads it again.
+        rm -f "$0"
         i=0
         while kill -0 "$pid" 2>/dev/null; do
           i=$((i + 1))
@@ -94,19 +96,31 @@ enum AppRelauncher {
             return
         }
         let pid = ProcessInfo.processInfo.processIdentifier
-        let args = [String(pid), builtAppURL.path, Bundle.main.bundleURL.path]
-        // nohup plus & detaches the script from our process group so it
-        // outlives the terminate below.
-        let command = "nohup /bin/sh \"$0\" \"$@\" >>\"\(log.path)\" 2>&1 &"
+        // Every path is an argument, never part of the -c text, so a quote
+        // or $ in one can't run as shell. nohup plus & detaches the script
+        // from our process group so it outlives the terminate below; the
+        // echo hands back its pid.
+        let command = #"script="$1"; log="$2"; shift 2; nohup /bin/sh "$script" "$@" >>"$log" 2>&1 & echo $!"#
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", command, scriptURL.path] + args
+        task.arguments = ["-c", command, "sh", scriptURL.path, log.path,
+                          String(pid), builtAppURL.path, Bundle.main.bundleURL.path]
+        let out = Pipe()
+        task.standardOutput = out
         do {
             try task.run()
         } catch {
             NSLog("quiver relauncher: could not start script: \(error)")
+            try? fm.removeItem(at: scriptURL)
             return
         }
+        let watcher = pid_t(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines))
+        task.waitUntilExit()
         NSApp.terminate(nil)
+        // Back here only when the quit was cancelled (unsaved drafts).
+        // The watcher would otherwise swap the app under a later quit
+        // nobody meant as a relaunch.
+        if let watcher, watcher > 0 { kill(watcher, SIGTERM) }
     }
 }

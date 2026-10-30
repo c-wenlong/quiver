@@ -23,7 +23,10 @@ struct DetectSheet: View {
                 Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
             }
             if let registered {
-                Text("Registered \(registered.added.joined(separator: ", ")).")
+                // Everything picked can be skipped, which left "Registered ."
+                Text(registered.added.isEmpty
+                     ? "Nothing was registered."
+                     : "Registered \(registered.added.map { HarnessMark($0).name }.joined(separator: ", ")).")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 ForEach(registered.skipped) { skip in
                     Text("Skipped \(skip.name): \(skip.reason)")

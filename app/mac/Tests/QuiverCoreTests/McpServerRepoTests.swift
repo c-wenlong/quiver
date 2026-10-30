@@ -3,9 +3,9 @@ import Testing
 @testable import QuiverCore
 
 /// `git -C <dir> <args>`, waiting off the cooperative pool the timing
-/// tests share (`runOffPool`, like the code under test).
+/// tests share (`offMain`, like the code under test).
 private func runGit(_ args: [String], in dir: URL) async throws {
-    let status = await runOffPool { () -> Int32 in
+    let status = await offMain { () -> Int32 in
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", dir.path] + args
@@ -24,12 +24,12 @@ private func git(_ args: String..., in dir: URL) async throws {
 
 @Suite struct McpServerRepoTests {
     let fm = FileManager.default
+    /// Each test gets its own instance, so its folder goes when the test
+    /// ends, after any permissions it changed are put back.
+    private let scratch: TempDir
+    init() throws { scratch = try TempDir() }
 
-    private func tempDir() throws -> URL {
-        let url = fm.temporaryDirectory.appending(path: "mcp-repo-\(UUID().uuidString)")
-        try fm.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
+    private func tempDir() throws -> URL { scratch.url }
 
     @discardableResult
     private func mkdir(_ path: String, in root: URL, marker: String? = nil) throws -> URL {

@@ -365,16 +365,173 @@ import Testing
     // MARK: Limits persistence
 
     @Test func limitsRoundTripThroughDefaults() {
-        let suite = "compute-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         var limits = ComputeLimits(defaults: defaults)
         #expect(limits.orphanAge == 24 * 3600)
         #expect(limits.memoryBytes == UInt64(2) << 30)
+        #expect(!limits.autoClean && !limits.autoCleanForce)
         limits.orphanAge = 72 * 3600
         limits.memoryBytes = UInt64(4) << 30
+        limits.autoClean = true
+        limits.autoCleanForce = true
         limits.save(to: defaults)
         #expect(ComputeLimits(defaults: defaults) == limits)
+    }
+
+    // MARK: Auto clean
+
+    /// A mutable table plus a signalled log, as the other model tests use.
+    private final class Fake: ProcessSampling, ProcessSignaller, @unchecked Sendable {
+        var table: [ProcessSample]
+        var signalled: [(Int32, Int32)] = []
+        init(_ table: [ProcessSample]) { self.table = table }
+        func sample() -> [ProcessSample] { table }
+        func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
+    }
+
+    /// A mutable `now` for the model's clock, the trend tests' shape.
+    private final class Clock: @unchecked Sendable {
+        var now: Date
+        init(_ now: Date) { self.now = now }
+    }
+
+    @MainActor
+    private func autoCleanModel(_ fake: Fake,
+                                clock: @escaping @Sendable () -> Date = { .now },
+                                defaults: UserDefaults? = nil) async -> ComputeModel {
+        let model = ComputeModel(sampler: fake, matchers: { [] },
+                                 signaller: fake,
+                                 clock: clock,
+                                 defaults: defaults ?? TestDefaults("compute-test"),
+                                 selfPID: 99)
+        await model.loadMatchers()
+        return model
+    }
+
+    @MainActor @Test func autoCleanSignalsAnOldOrphanOnce() async {
+        let started = Date.now.addingTimeInterval(-30 * 3600)
+        let fake = Fake([
+            Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "x"],
+                      cwd: "/Users/test/proj", started: started),
+            Self.proc(11, 10, path: "/opt/homebrew/bin/node", started: started),
+        ])
+        let model = await autoCleanModel(fake)
+        model.limits.autoClean = true
+        await model.refresh()
+        // Deepest first, then the root — the same plan a manual Quit uses.
+        #expect(fake.signalled.map(\.0) == [11, 10])
+        #expect(Set(fake.signalled.map(\.1)) == [SIGTERM])
+        // A second pass signals nothing: the tree is marked already.
+        await model.refresh()
+        #expect(fake.signalled.count == 2)
+    }
+
+    @MainActor @Test func autoCleanOffLeavesOrphansAlone() async {
+        let fake = Fake([
+            Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "x"],
+                      cwd: "/Users/test/proj",
+                      started: Date.now.addingTimeInterval(-30 * 3600)),
+        ])
+        let model = await autoCleanModel(fake)
+        await model.refresh()
+        #expect(fake.signalled.isEmpty)
+    }
+
+    @MainActor @Test func autoCleanLeavesAYoungOrphanAlone() async {
+        let fake = Fake([
+            Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "x"],
+                      cwd: "/Users/test/proj",
+                      started: Date.now.addingTimeInterval(-3600)),
+        ])
+        let model = await autoCleanModel(fake)
+        model.limits.autoClean = true
+        await model.refresh()
+        #expect(fake.signalled.isEmpty)
+    }
+
+    @MainActor @Test func autoCleanForceEscalatesAfterTheGrace() async {
+        let clock = Clock(.now)
+        let started = clock.now.addingTimeInterval(-30 * 3600)
+        let fake = Fake([
+            Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "x"],
+                      cwd: "/Users/test/proj", started: started),
+            Self.proc(11, 10, path: "/opt/homebrew/bin/node", started: started),
+        ])
+        let model = await autoCleanModel(fake, clock: { clock.now })
+        model.limits.autoClean = true
+        model.limits.autoCleanForce = true
+        await model.refresh()
+        #expect(Set(fake.signalled.map(\.1)) == [SIGTERM])
+        // The tree ignores the quit signal; the grace passes, then SIGKILL.
+        clock.now = clock.now.addingTimeInterval(ComputeModel.autoCleanGrace + 1)
+        await model.refresh()
+        #expect(fake.signalled.map(\.1) == [SIGTERM, SIGTERM, SIGKILL, SIGKILL])
+        #expect(fake.signalled.map(\.0) == [11, 10, 11, 10])
+        // Forced once: a stubborn process is not killed over and over.
+        clock.now = clock.now.addingTimeInterval(60)
+        await model.refresh()
+        #expect(fake.signalled.count == 4)
+    }
+
+    @MainActor @Test func autoCleanWithoutForceNeverEscalates() async {
+        let clock = Clock(.now)
+        let fake = Fake([
+            Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "x"],
+                      cwd: "/Users/test/proj",
+                      started: clock.now.addingTimeInterval(-30 * 3600)),
+        ])
+        let model = await autoCleanModel(fake, clock: { clock.now })
+        model.limits.autoClean = true
+        await model.refresh()
+        clock.now = clock.now.addingTimeInterval(60)
+        await model.refresh()
+        #expect(fake.signalled.map(\.1) == [SIGTERM])
+    }
+
+    @MainActor @Test func autoCleanForceLeavesADeadTreeAndAReusedPidAlone() async {
+        let clock = Clock(.now)
+        let started = clock.now.addingTimeInterval(-30 * 3600)
+        let fake = Fake([
+            Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "x"],
+                      cwd: "/Users/test/proj", started: started),
+        ])
+        let model = await autoCleanModel(fake, clock: { clock.now })
+        model.limits.autoClean = true
+        model.limits.autoCleanForce = true
+        await model.refresh()
+        #expect(fake.signalled.map(\.0) == [10])
+        // The tree exited and the OS recycled pid 10 for a brand-new
+        // process: the recorded mark does not carry over to it, and its
+        // own age is young, so nothing more is signalled.
+        fake.table = [Self.proc(10, 1, path: "/opt/homebrew/bin/node",
+                                args: ["node", "server.js"], cwd: "/Users/test/new",
+                                started: clock.now.addingTimeInterval(-60))]
+        clock.now = clock.now.addingTimeInterval(ComputeModel.autoCleanGrace + 1)
+        await model.refresh()
+        #expect(fake.signalled.count == 1)
+    }
+
+    @MainActor @Test func autoCleanForceStillKillsASurvivingChild() async {
+        let clock = Clock(.now)
+        let started = clock.now.addingTimeInterval(-30 * 3600)
+        let fake = Fake([
+            Self.proc(10, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "x"],
+                      cwd: "/Users/test/proj", started: started),
+            Self.proc(11, 10, path: "/opt/homebrew/bin/node", started: started),
+        ])
+        let model = await autoCleanModel(fake, clock: { clock.now })
+        model.limits.autoClean = true
+        model.limits.autoCleanForce = true
+        await model.refresh()
+        // The root died on SIGTERM; the child reparented to launchd and
+        // is now its own orphan root — but it still sits inside the
+        // recorded tree's mark, so no second SIGTERM goes out and the
+        // mark's grace escalation reaches it instead.
+        fake.table = [Self.proc(11, 1, path: "/opt/homebrew/bin/node",
+                                cwd: "/Users/test/proj", started: started)]
+        clock.now = clock.now.addingTimeInterval(ComputeModel.autoCleanGrace + 1)
+        await model.refresh()
+        #expect(fake.signalled.map(\.1) == [SIGTERM, SIGTERM, SIGKILL])
     }
 
     // MARK: The model
@@ -395,9 +552,7 @@ import Testing
             Self.proc(20, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "studio"],
                       cwd: "/Users/test/proj", started: .now.addingTimeInterval(-30 * 3600)),
         ])
-        let suite = "compute-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         let model = await ComputeModel(sampler: fake, matchers: { [Self.claude] },
                                        signaller: fake, defaults: defaults, selfPID: 99)
         await model.loadMatchers()
@@ -444,7 +599,7 @@ import Testing
         let slow = Task { await model.refresh() }
         // Wait off the main actor and off the cooperative pool, so the
         // refresh can reach its sample call.
-        await runOffPool { gated.waitForEntry() }
+        await offMain { gated.waitForEntry() }
         await model.refresh()
         gated.release.signal()
         await slow.value
@@ -836,9 +991,7 @@ import Testing
         let sharedChild = Self.proc(11, 10, path: "/opt/homebrew/bin/node")
         let other = Self.proc(12, 1, path: "/x/worker")
         let fake = Counting([root, sharedChild, other])
-        let suite = "compute-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         let model = await ComputeModel(sampler: fake, matchers: { [Self.claude] },
                                        signaller: fake, defaults: defaults, selfPID: 99)
         await model.loadMatchers()
@@ -875,29 +1028,21 @@ import Testing
         #expect(OrphanAgeUnit.resolve(value: 400, unit: .day) == ComputeLimits.orphanAgeRange.upperBound)
     }
 
-    private static func defaultsSuite() -> (UserDefaults, String) {
-        let suite = "compute-test-\(UUID().uuidString)"
-        return (UserDefaults(suiteName: suite)!, suite)
-    }
-
     @Test func theLegacyHoursKeyStillLoads() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
         #expect(ComputeLimits(defaults: defaults).orphanAge == 6 * 3600)
     }
 
     @Test func theMinutesKeyWinsOverTheLegacyHoursKey() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         defaults.set(90, forKey: ComputeLimits.orphanAgeKey)
         defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
         #expect(ComputeLimits(defaults: defaults).orphanAge == 5400)
     }
 
     @Test func savingRemovesTheLegacyHoursKey() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
         ComputeLimits(defaults: defaults).save(to: defaults)
         #expect(defaults.object(forKey: ComputeLimits.legacyOrphanAgeKey) == nil)
@@ -905,8 +1050,7 @@ import Testing
     }
 
     @Test func theOrphanAgeClampsToAMinuteAndAYear() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         var limits = ComputeLimits()
         limits.orphanAge = 5
         limits.save(to: defaults)
@@ -914,6 +1058,27 @@ import Testing
         limits.orphanAge = 800 * 86400
         limits.save(to: defaults)
         #expect(defaults.integer(forKey: ComputeLimits.orphanAgeKey) == 365 * 24 * 60)
+    }
+
+    // MARK: Figures
+
+    @Test func noMemoryReadsAsZeroKB() {
+        #expect(ComputeSummary.bytes(0) == "0 KB")
+        #expect(ComputeSummary.bytes(5 << 20) != "0 KB")
+    }
+
+    /// The figures follow the Mac's locale; only the words are pinned.
+    @Test func oneThreadIsSingular() {
+        #expect(ComputeSummary.threads(1) == "1 thread")
+        #expect(ComputeSummary.threads(28) == "28 threads")
+    }
+
+    @Test func theTotalsLineCountsProcessesInWords() {
+        let zero = ComputeSummary.percent(0)
+        #expect(ComputeSummary.totalsLine(.init()) == "0 KB across 0 processes · CPU \(zero)% · 0 threads")
+        let one = ComputeModel.Totals(memoryBytes: 5 << 20, cpuPercent: 12.4, threads: 9, processCount: 1)
+        #expect(ComputeSummary.totalsLine(one)
+                == "\(ComputeSummary.bytes(5 << 20)) across 1 process · CPU \(ComputeSummary.percent(12.4))% · 9 threads")
     }
 
     // MARK: Sampler smoke test

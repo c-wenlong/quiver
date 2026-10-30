@@ -87,6 +87,24 @@ import Testing
         #expect(engine.available)
     }
 
+    /// "Clear search data" deletes the file and makes a new one. A held
+    /// connection kept reading the deleted file, so cleared transcripts
+    /// still answered until the app restarted.
+    @Test func aReplacedIndexIsReopened() throws {
+        let temp = try TempDir()
+        _ = try seeded(temp)
+        let engine = engine(temp)
+        #expect(try engine.search(query: "ledger cursor").map(\.sessionID) == ["sess-claude-1"])
+
+        SearchLocation.removeDatabase(at: engine.url)
+        _ = try store(temp)
+        #expect(engine.available)
+        #expect(try engine.search(query: "ledger cursor") == [])
+
+        SearchLocation.removeDatabase(at: engine.url)
+        #expect(!engine.available)
+    }
+
     @Test func aPhraseHitKeepsTheBestRowPerSession() throws {
         let temp = try TempDir()
         _ = try seeded(temp)

@@ -81,9 +81,13 @@ public struct HubClient: Sendable {
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: req)
-        } catch is CancellationError {
-            throw CancellationError()
         } catch {
+            // URLSession reports a cancelled task as URLError(.cancelled),
+            // not CancellationError: leaving a page is not a down hub.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled
+                || Task.isCancelled {
+                throw CancellationError()
+            }
             throw HubError.unreachable
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -125,6 +129,29 @@ public struct HubClient: Sendable {
     /// prompt box's `/` menu.
     public func commands(_ key: String) async throws -> CommandsResponse {
         try await send(request("GET", Self.sessionPath(key, "commands")))
+    }
+
+    /// The queue-mode sends the hub holds for `key` until its turn ends,
+    /// oldest first: the chat's Queued tray. Empty for a satellite's
+    /// session, whose sends never wait on the hub.
+    public func queue(_ key: String) async throws -> [HubWaitingSend] {
+        try await send(request("GET", Self.sessionPath(key, "queue")), as: HubQueueResponse.self).sends
+    }
+
+    /// Acts on one waiting send: `steer` sends it now, `cancel` drops it,
+    /// `edit` replaces its text in place. A steer's outcome arrives later
+    /// as its `command.result`.
+    public func queueAction(_ key: String, clientId: String, op: String, text: String? = nil) async throws {
+        var body: [String: any Sendable] = ["client_id": clientId, "op": op]
+        if let text { body["text"] = text }
+        _ = try await raw(request("POST", Self.sessionPath(key, "queue"), body: body))
+    }
+
+    /// Paths under the session's working folder matching `query`, for
+    /// the prompt box's `@` menu. Hub-machine sessions only: a
+    /// satellite's session answers `files_unavailable`.
+    public func files(_ key: String, query: String, limit: Int = MentionSearch.limit) async throws -> FilesResponse {
+        try await send(request("GET", Self.sessionPath(key, "files"), query: ["q": query, "limit": "\(limit)"]))
     }
 
     /// `interrupt` stops the agent's turn. Returns true when the hub
@@ -284,8 +311,10 @@ public struct HubClient: Sendable {
     }
 
     /// One session's live events after `last`, reconnecting with backoff
-    /// until the consuming task is cancelled or the hub refuses the
-    /// credential.
+    /// until the hub refuses the credential or the reader goes away: its
+    /// task cancelled, or its loop left by `break` or `return`. Either
+    /// way the stream terminates, and `onTermination` cancels the loop
+    /// and its connection.
     public func events(_ key: String, last: Int) -> AsyncStream<HubStreamEvent> {
         AsyncStream { continuation in
             let task = Task {
@@ -313,7 +342,13 @@ public struct HubClient: Sendable {
                             guard let env = try? HubWire.decoder.decode(HubEnvelope.self, from: Data(payload.utf8))
                             else { continue }
                             if env.type == "journal.truncated" {
-                                continuation.yield(.truncated)
+                                // The hub restarts the stream at `seq`: our
+                                // cursor when its ring dropped events past it,
+                                // its head when the journal was wiped under it.
+                                // Take it even when lower, or every reconnect
+                                // asks from the old cursor again.
+                                if let seq = env.seq { cursor = seq }
+                                continuation.yield(.truncated(seq: env.seq))
                                 continue
                             }
                             if env.type == "journal.caught-up" { continue }
@@ -336,8 +371,10 @@ public struct HubClient: Sendable {
 
 public enum HubStreamEvent: Sendable {
     case connected, disconnected, unauthorized
-    /// The journal dropped events past the cursor: reload history.
-    case truncated
+    /// The journal dropped events past the cursor (or was wiped under
+    /// it): reload history and follow on from `seq`, the hub's restart
+    /// point, which can be lower than the cursor.
+    case truncated(seq: Int?)
     case event(HubEnvelope)
 }
 

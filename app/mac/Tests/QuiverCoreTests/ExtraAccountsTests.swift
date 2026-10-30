@@ -32,8 +32,8 @@ final class LockedRunner: CommandRunning, @unchecked Sendable {
 final class HeldRunner: CommandRunning, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [[String]] = []
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-    private var holding = false
+    /// Where held calls park; nil while nothing is held.
+    private var gate: HoldGate?
     var rules: [(prefix: [String], reply: CommandResult)] = []
 
     var calls: [[String]] { lock.withLock { recorded } }
@@ -41,30 +41,28 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
         calls.filter { $0.starts(with: prefix) }.count
     }
 
-    /// Every `harness usage` call from here suspends until `release()`.
-    func holdUsageCalls() { lock.withLock { holding = true } }
+    /// Every `harness usage` call from here parks on the returned gate
+    /// until `release()`, so a test can wait for one to be in flight.
+    @discardableResult
+    func holdUsageCalls() -> HoldGate {
+        let gate = HoldGate()
+        lock.withLock { self.gate = gate }
+        return gate
+    }
+
     func release() {
-        let pending = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
-            holding = false
-            defer { waiters = [] }
-            return waiters
-        }
-        pending.forEach { $0.resume() }
+        lock.withLock { () -> HoldGate? in
+            defer { gate = nil }
+            return gate
+        }?.open()
     }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        lock.withLock { recorded.append(arguments) }
-        if arguments.starts(with: ["harness", "usage"]) {
-            // Check and register under one lock, or a release() landing in
-            // between would leave this continuation waiting forever.
-            await withCheckedContinuation { cont in
-                let held = lock.withLock { () -> Bool in
-                    if holding { waiters.append(cont) }
-                    return holding
-                }
-                if !held { cont.resume() }
-            }
+        let gate = lock.withLock { () -> HoldGate? in
+            recorded.append(arguments)
+            return arguments.starts(with: ["harness", "usage"]) ? self.gate : nil
         }
+        if let gate { try await gate.pass() }
         return lock.withLock {
             rules.first { arguments.starts(with: $0.prefix) }?.reply
                 ?? CommandResult(status: 1, stdout: Data(), stderr: "unscripted: \(arguments.joined(separator: " "))")
@@ -106,8 +104,22 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
     func model(_ runner: any CommandRunning,
                extras: @escaping @MainActor () -> [(Profile, ProfilePaths)])
         -> OtherLimitsModel {
-        OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(),
-                         names: tempNamesStore(), extraAccounts: extras)
+        OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: snapshotFile(),
+                         names: namesStore(), extraAccounts: extras)
+    }
+
+    /// Each test gets its own instance, so its folder goes when the test ends.
+    private let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
+    /// A snapshot file inside this test's folder, never the real `~/.quiver`.
+    func snapshotFile() -> URL {
+        scratch.url.appending(path: "\(UUID().uuidString)/app-other-limits.json")
+    }
+
+    /// Same for the account names file.
+    func namesStore() -> HarnessAccountNameStore {
+        HarnessAccountNameStore(file: scratch.url.appending(path: "\(UUID().uuidString)/harness-names.json"))
     }
 
     @Test func anExtraAccountIsACardAfterItsOwnHarness() async {
@@ -136,6 +148,28 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
         #expect(model.rows.map(\.id) == ["devin", devin.id])
         #expect(model.rows[1].title == "Devin: Work")
         #expect(model.rows[1].accountTitle == "Devin: Work")
+    }
+
+    /// A failed poll keeps the last cards, but not one for an account
+    /// removed since: deleting it must take its card away at once.
+    @Test func aRemovedAccountLeavesEvenWhenThePollFails() async {
+        let devin = profile(.devin, "devin-work")
+        let runner = LockedRunner([
+            (["list"], .init(status: 0, stdout: listBody, stderr: "")),
+            (["harness", "usage", "devin"], devinUsage),
+        ])
+        var extras = [(devin, paths("devin-work"))]
+        let model = model(runner) { extras }
+        await model.load()
+        #expect(model.cards.map(\.id) == ["devin", devin.id, "cursor"])
+        #expect(model.rows.map(\.id) == ["devin", devin.id])
+
+        extras = []
+        runner.rules = []
+        await model.load()
+        #expect(model.cards.map(\.id) == ["devin", "cursor"])
+        #expect(model.rows.map(\.id) == ["devin"])
+        #expect(model.note?.hasPrefix("Couldn't refresh") == true)
     }
 
     @Test func aGoodReadingIsNotRefetchedInsideTheWindow() async {
@@ -384,10 +418,10 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
         #expect(model.rows.contains { $0.id == devin.id })
         #expect(model.cards.contains { $0.id == devin.id })
 
-        runner.holdUsageCalls()
+        let held = runner.holdUsageCalls()
         let task = Task { await model.load(force: true) }
-        // Spin until the account fetch is actually in flight.
-        while runner.count(["harness", "usage"]) < 2 { await Task.yield() }
+        // Wait until the account fetch is actually in flight.
+        #expect(await held.arrived())
         #expect(model.rows.contains { $0.id == devin.id })
         #expect(model.cards.contains { $0.id == devin.id })
         runner.release()
@@ -415,13 +449,13 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
     @Test func aRemovedProfileDropsItsCardAndSavedReading() async {
         let devin = profile(.devin, "devin-work")
         var current: [(Profile, ProfilePaths)] = [(devin, paths("devin-work"))]
-        let file = tempSnapshotFile()
+        let file = snapshotFile()
         let runner = LockedRunner([
             (["list"], .init(status: 0, stdout: listBody, stderr: "")),
             (["harness", "usage"], devinUsage),
         ])
         let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: file,
-                                     names: tempNamesStore(), extraAccounts: { current })
+                                     names: namesStore(), extraAccounts: { current })
         await model.load()
         #expect(model.cards.contains { $0.profile?.id == devin.id })
 
@@ -432,12 +466,16 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
         // The reading left the snapshot too: a rehydrated model shows nothing.
         let revived = OtherLimitsModel(swe: SweClient(runner: FakeRunner(
             .init(status: 0, stdout: listBody, stderr: ""))), snapshotFile: file,
-            names: tempNamesStore(), extraAccounts: { current })
+            names: namesStore(), extraAccounts: { current })
         #expect(!revived.cards.contains { $0.profile != nil })
     }
 }
 
 @Suite struct ExtraAccountVendorTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     @Test func onlyClaudeAndCodexOwnADefaultProfile() {
         #expect(Vendor.claude.hasDefaultProfile && Vendor.codex.hasDefaultProfile)
         #expect(!Vendor.devin.hasDefaultProfile && !Vendor.cursor.hasDefaultProfile)
@@ -445,7 +483,7 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
     }
 
     @Test func devinAndCursorProfilesGetTheirOwnTrees() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "accounts-\(UUID().uuidString)")
+        let root = scratch.url.appending(path: "accounts-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
 
         // No file yet: only Claude and Codex synthesise defaults.

@@ -157,6 +157,9 @@ final class AppModel {
             hub = Self.localHub(swe: swe)
             others = OtherLimitsModel(swe: swe, extraAccounts: extraAccountsProvider,
                                       issues: issues)
+            // A new model starts at swe's five minutes; keep the window
+            // Settings chose, as start() and its watcher set it.
+            others.cacheTTL = limits.refreshFreshSeconds
             Task { await others.load() }
             doctor = DoctorModel(swe: swe)
             // The "swe too old" verdicts were about the old build.
@@ -835,7 +838,7 @@ final class AppModel {
     /// orphans (ppid 1, a script runner) but are services, not leftovers.
     /// Anything going wrong answers with an empty set.
     private nonisolated static func launchdManagedPIDs() async -> Set<Int32> {
-        await runOffPool { Self.launchdManagedPIDsSync() }
+        await offMain { Self.launchdManagedPIDsSync() }
     }
 
     /// Synchronous so it can block on the child, off the caller's actor.

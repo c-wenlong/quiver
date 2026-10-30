@@ -17,10 +17,11 @@ from unittest.mock import patch
 from quiver import paths
 from quiver.github import gh, repos
 from quiver.webapp.pages import PageError
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 from quiver.webapp.pages import repositories as R
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 OK_ENV = gh.GhEnv(installed=True, authenticated=True, login="octo")
 
@@ -390,6 +391,7 @@ class TestPullRequest(_Base):
                 patch.object(gh, "run_json", return_value=gh.GhResult("ok", data=self.PR)) as run:
             body = R.get(self.ctx, {"repo": "o/a", "pr": "#7"})
             R.get(self.ctx, {"repo": "o/a", "pr": "7"})
+            R.get(self.ctx, {"repo": "o/a", "pr": "007"})  # same entry
         self.assertEqual(run.call_count, 1)
         args = run.call_args[0][0]
         self.assertEqual(args[:5], ["pr", "view", "7", "--repo", "o/a"])
@@ -401,8 +403,11 @@ class TestPullRequest(_Base):
 
     def test_failures_and_a_blocked_env(self):
         _pin(self.home, "o/a")
-        with self.assertRaises(PageError):
-            R.get(self.ctx, {"repo": "o/a", "pr": "abc"})
+        for bad in ("abc", "0", "9" * 5000, "\u0667", "1234567890"):
+            with self.assertRaises(PageError) as caught:
+                R.get(self.ctx, {"repo": "o/a", "pr": bad})
+            self.assertEqual((caught.exception.status, caught.exception.code),
+                             (400, "bad_pr"), bad)
         with patch.object(gh, "probe_env", return_value=OK_ENV), \
                 patch.object(gh, "run_json", return_value=gh.GhResult("not-found", error="no PR")):
             body = R.get(self.ctx, {"repo": "o/a", "pr": "9"})
@@ -805,10 +810,21 @@ process.stdout.write(JSON.stringify({ runs: runs.map((t) => t - 1000000), stoppe
 """
 
     def test_hidden_ticks_are_skipped_and_a_return_catches_up(self):
-        script = self.SCRIPT.replace("GITHUB_JS", (STATIC / "github.js").read_text())
+        script = self.SCRIPT.replace("GITHUB_JS", app_js_function("currentRoute") + (STATIC / "github.js").read_text())
         done = _node(script)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(json.loads(done.stdout), {"runs": [60000, 170000, 260000], "stopped": True})
+
+    def test_a_401_stops_the_poll_under_the_gate(self):
+        """GhUI.gate: the gate, and no later tick paints the page's last
+        rows over it (and its pair fields)."""
+        script = self.SCRIPT.replace("GITHUB_JS", (STATIC / "github.js").read_text()).split("const step =")[0]
+        script = ("const gates = []; global.renderGate = (m) => gates.push(m);\n" + script
+                  + "GhUI.gate('repositories');\n"
+                  "process.stdout.write(JSON.stringify({ gates: gates.length, stopped: tick === null }));\n")
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"gates": 1, "stopped": True})
 
 
 @unittest.skipUnless(shutil.which("git"), "git is not installed")
@@ -831,6 +847,7 @@ class TestPrWorktree(_Base):
         self.head = subprocess.run(git + ["rev-parse", "--short=12", "HEAD"], check=True,
                                    capture_output=True, text=True).stdout.strip()
         self.gh = FakeGh(self, clone_from=str(src))
+        self.src = src
 
     def test_checks_the_head_out_in_the_hubs_home_then_reuses_it(self):
         body = R.post(self.ctx, "worktree", {"repo": "O/A", "number": "7"})
@@ -846,6 +863,21 @@ class TestPrWorktree(_Base):
         self.assertEqual((again["path"], again["created"]), (body["path"], False))
         self.assertEqual(sum(c[:2] == ["repo", "clone"] for c in self.gh.calls()), 1)
 
+    def test_a_reused_checkout_reports_its_own_head(self):
+        # The PR moved on after the first open: the checkout stays put,
+        # and the answer says so instead of naming the new head.
+        first = R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})
+        src = self.src
+        git = ["git", "-C", str(src), "-c", "user.email=t@example.com", "-c", "user.name=t"]
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "more"], check=True)
+        subprocess.run(git + ["update-ref", "refs/pull/7/head", "HEAD"], check=True)
+        new = subprocess.run(git + ["rev-parse", "--short=12", "HEAD"], check=True,
+                             capture_output=True, text=True).stdout.strip()
+        again = R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})
+        self.assertFalse(again["created"])
+        self.assertEqual(again["head"], first["head"])
+        self.assertEqual(again["pr_head"], new)
+
     def test_failures_name_the_step(self):
         with self.assertRaises(PageError) as caught:
             R.post(self.ctx, "worktree", {"repo": "o/a", "number": 8})
@@ -860,7 +892,10 @@ class TestPrWorktree(_Base):
     def test_checkouts_of_one_repo_wait_for_each_other(self):
         # Two PRs of one repo share its mirror's FETCH_HEAD: the second
         # checkout must not start until the first has finished.
-        lock = G.mirror_lock(self.home, "O/A")
+        # The one mirror lock table lives in manage; a differently
+        # cased name is the same mirror.
+        from quiver.github import manage
+        lock = manage._mirror_lock(manage.mirror_path("O/A", self.home))
         lock.acquire()
         done = []
         worker = threading.Thread(target=lambda: done.append(
@@ -873,6 +908,39 @@ class TestPrWorktree(_Base):
         worker.join(30)
         self.assertEqual(done[0]["head"], self.head)
 
+    def test_a_checkout_holds_the_mirror_from_fetch_to_worktree(self):
+        # Two PRs of one repo share the mirror's FETCH_HEAD: a second
+        # call must not fetch while the first is between its fetch and
+        # its checkout, whoever the caller is.
+        from quiver.github import manage
+        R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})  # mirror exists
+        in_fetch, release = threading.Event(), threading.Event()
+        fetches = []
+        real = manage.run_git
+
+        def run_git(args, *a, **k):
+            if "fetch" in args:
+                fetches.append(threading.current_thread().name)
+                if len(fetches) == 1:
+                    in_fetch.set()
+                    release.wait(10)
+            return real(args, *a, **k)
+
+        with patch.object(manage, "run_git", side_effect=run_git):
+            first = threading.Thread(name="first", target=manage.pr_worktree,
+                                     args=("o/a", "7", self.home))
+            second = threading.Thread(name="second", target=manage.pr_worktree,
+                                      args=("o/a", "7", self.home))
+            first.start()
+            self.assertTrue(in_fetch.wait(10))
+            second.start()
+            second.join(0.5)
+            self.assertEqual(fetches, ["first"])
+            release.set()
+            first.join(30)
+            second.join(30)
+        self.assertEqual(fetches, ["first", "second"])
+
     def test_harnesses_are_what_the_hub_can_launch(self):
         rows = [{"name": "claude", "command": "claude",
                  "display_name": "Claude Code", "tracked": True,
@@ -880,8 +948,10 @@ class TestPrWorktree(_Base):
         with patch("quiver.remote.catalog.launchable_harnesses",
                    return_value=rows), \
              patch("quiver.remote.catalog.recent_models",
-                   return_value={"claude": ["opus", "sonnet"]}):
+                   return_value={"claude": ["opus", "sonnet"]}) as recent:
             body = R.get(self.ctx, {"harnesses": "1"})
+        # Models come from the hub's own home, not the process's.
+        self.assertEqual(recent.call_args[0][0], self.ctx.home)
         self.assertEqual(body["harnesses"], [{
             "name": "claude", "display_name": "Claude Code",
             "tracked": True, "launch_model": True,
@@ -898,6 +968,7 @@ class TestMarkdown(unittest.TestCase):
             "global.esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;')"
             ".replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;')"
             ".replace(/'/g, '&#39;');\n"
+            "global.safeHref = (u) => /^(https?:\\/\\/|mailto:)/i.test(String(u || '').trim()) ? esc(String(u).trim()) : '';\n"
             "global.Fmt = { ago: () => '' };\n"
             + (STATIC / "github.js").read_text()
             + "\nprocess.stdout.write(GhUI.markdown(require('fs').readFileSync(0, 'utf8')));"
@@ -959,7 +1030,7 @@ class TestMarkdown(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestBundle(unittest.TestCase):
     def test_both_pages_register_from_the_served_bundle(self):
-        """Each script runs in its own scope in /app/pages.js: GhUI has to
+        """Each script runs in its own scope in /pages.js: GhUI has to
         reach inbox.js and repositories.js as a global."""
         from quiver.webapp import pages
         stubs = (
@@ -1059,11 +1130,138 @@ class TestRoute(HubBase):
         self.assertEqual([r["name"] for r in G.pinned(self.srv.home)], ["o/b"])
 
     def test_page_scripts_are_bundled(self):
-        _, js = self.srv.request("GET", "/app/pages.js")
-        for name in (b'registerPage("repositories"', b'registerPage("inbox"', b"const GhUI"):
-            self.assertIn(name, js)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, js = self.srv.request("GET", "/pages.js")
+        self.assertIn(b"const GhUI", js)
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".gh-row", css)
+
+
+
+PR_FILTER_FLOW = r"""
+const out = {};
+const lastQ = {};
+const qsa = panel.querySelectorAll.bind(panel);
+panel.querySelectorAll = (sel) => (lastQ[sel] = qsa(sel));
+document.querySelector = (sel) => null;
+const html = () => panel.innerHTML;
+const prRows = () => [...html().matchAll(/data-pr="(\d+)" data-repo="([^"]*)"/g)].map((m) => `${m[2]}#${m[1]}`);
+const chips = () => [...html().matchAll(/data-pr-filter="(\w+)">([^<]*)<span class="num">(\d+)/g)]
+  .map((m) => [m[1], m[2].trim(), Number(m[3])]);
+const selected = () => (html().match(/aria-checked="true"[^>]*\s+data-pr-filter="(\w+)"/) || [])[1] || null;
+const click = (attr, value) => lastQ[`[data-${attr}]`].find((e) => e.attrs[`data-${attr}`] === value).onclick();
+const pr = (number, author) => ({ number, title: "PR " + number, state: "open", draft: false, author,
+  branch: "b" + number, base: "main", labels: [], mergeable: "mergeable", review_decision: "none",
+  checks: "none", updated_at: null, url: "" });
+const board = (prs) => ({ surfaces: { pull_requests: { status: "ok", pull_requests: prs },
+  issues: { status: "ok", issues: [] }, runs: { status: "ok", runs: [] } } });
+apiAnswers.push(["/v1/app/repositories", { status: 200, data: { machine: "hub", github: { status: "ok" },
+  repos: [{ name: "o/a" }, { name: "o/b" }],
+  boards: { "o/a": board([pr(1, "me"), pr(2, "bob"), pr(3, "bob")]), "o/b": board([pr(4, "me")]) } } }]);
+let pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+  { name: "o/a", status: "ok", pulls: [
+    { number: 1, mine: true, review_requested: false },
+    { number: 2, mine: false, review_requested: true },
+    { number: 3, mine: false, review_requested: false }] },
+  { name: "O/B", status: "ok", pulls: [{ number: 4, mine: true, review_requested: false }] }] } };
+apiAnswers.push(["/v1/pulls", { get status() { return pulls.status; }, get data() { return pulls.data; } }]);
+(async () => {
+  location.hash = "#/repositories";
+  PAGES.repositories();
+  await tick();
+  out.chips = chips();
+  out.allRows = prRows();
+  click("pr-filter", "mine");
+  out.mineSelected = selected();
+  out.mineRows = prRows();
+  click("pr-filter", "review");
+  out.reviewRows = prRows();
+  // o/b has nothing asking for review: it goes quiet in the rail.
+  out.quiet = /1 quiet/.test(html());
+  // Another tab: no filter bar, every row of that tab.
+  click("tab", "issues");
+  out.issuesBar = /data-pr-filter/.test(html());
+  click("tab", "pulls");
+  await tick();
+  out.backSelected = selected();
+  // gh pr status failed: review_requested is null, so that filter goes
+  // and the pick falls back to All; Mine stays.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [
+      { number: 1, mine: true, review_requested: null },
+      { number: 2, mine: false, review_requested: null },
+      { number: 3, mine: false, review_requested: null }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: null }] }] } };
+  PAGES.repositories();
+  await tick();
+  out.nullChips = chips().map((c) => c[0]);
+  out.nullSelected = selected();
+  out.nullRows = prRows().length;
+  // o/b's review flags unknown, o/a's known: narrowing the list to o/a
+  // still hides Review requested, or o/b would read as quiet in the rail.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [
+      { number: 1, mine: true, review_requested: false },
+      { number: 2, mine: false, review_requested: true },
+      { number: 3, mine: false, review_requested: false }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: null }] }] } };
+  PAGES.repositories();
+  await tick();
+  click("shown", "o/a");
+  out.scopedChips = chips().map((c) => c[0]);
+  out.scopedMineCount = (chips().find((c) => c[0] === "mine") || [])[2];
+  click("shown", "");
+  // A PR the flags don't cover yet (newer than /v1/pulls' cache): no guess, no bar.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [{ number: 1, mine: true, review_requested: false }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: false }] }] } };
+  PAGES.repositories();
+  await tick();
+  out.partialBar = /data-pr-filter/.test(html());
+  // gh blocked on the hub, or the read failing: no bar at all.
+  pulls = { status: 200, data: { env_blocked: "gh is not signed in", repos: [] } };
+  PAGES.repositories();
+  await tick();
+  out.blockedBar = /data-pr-filter/.test(html());
+  pulls = { status: 503, data: null };
+  PAGES.repositories();
+  await tick();
+  out.failedBar = /data-pr-filter/.test(html());
+  out.failedRows = prRows().length;
+  process.stdout.write(JSON.stringify(out));
+  process.exit(0);
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestPrFilter(unittest.TestCase):
+    """The dashboard's Mine / Review requested filters under node, from
+    the flags GET /v1/pulls carries; offered only while they're known."""
+
+    def test_filters_and_null_flags(self):
+        from tests.test_webapp_launch_sheets import PAGES, STUB
+        script = (STUB + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "repositories.js").read_text(encoding="utf-8") + "\n" + PR_FILTER_FLOW)
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        self.assertEqual(out["chips"], [["all", "All", 4], ["mine", "Mine", 2], ["review", "Review requested", 1]])
+        self.assertEqual(out["allRows"], ["o/a#1", "o/a#2", "o/a#3", "o/b#4"])
+        self.assertEqual(out["mineSelected"], "mine")
+        self.assertEqual(out["mineRows"], ["o/a#1", "o/b#4"])
+        self.assertEqual(out["reviewRows"], ["o/a#2"])
+        self.assertTrue(out["quiet"])
+        self.assertFalse(out["issuesBar"])
+        self.assertEqual(out["backSelected"], "review")
+        self.assertEqual(out["nullChips"], ["all", "mine"])
+        self.assertEqual(out["nullSelected"], "all")
+        self.assertEqual(out["nullRows"], 4)
+        self.assertEqual(out["scopedChips"], ["all", "mine"])
+        self.assertEqual(out["scopedMineCount"], 1)
+        self.assertFalse(out["partialBar"])
+        self.assertFalse(out["blockedBar"])
+        self.assertFalse(out["failedBar"])
+        self.assertEqual(out["failedRows"], 4)
 
 
 if __name__ == "__main__":

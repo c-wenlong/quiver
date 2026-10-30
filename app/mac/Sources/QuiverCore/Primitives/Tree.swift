@@ -143,8 +143,48 @@ public struct PrimitiveTree: Sendable, Equatable {
               let handle = try? FileHandle(forReadingFrom: url)
         else { return false }
         defer { try? handle.close() }
-        let head = (try? handle.read(upToCount: 8192)) ?? Data()
+        var head = (try? handle.read(upToCount: 8192)) ?? Data()
         if head.contains(0) { return false }
+        // The cut at 8192 can land inside a multi-byte character, which
+        // alone would fail the decode; the file goes on past it.
+        if size > head.count { head = trimmingPartialCharacter(head) }
         return String(data: head, encoding: .utf8) != nil
+    }
+
+    /// `data` without a UTF-8 sequence its end cut short, so a prefix of
+    /// valid text decodes. Only a real start of a character is trimmed:
+    /// a byte no character can begin with (0xFF, 0xC0) stays and fails
+    /// the decode, as it should.
+    static func trimmingPartialCharacter(_ data: Data) -> Data {
+        let tail = [UInt8](data.suffix(4))
+        var lead = tail.count - 1
+        var continuation = 0
+        while lead >= 0, tail[lead] & 0xC0 == 0x80, continuation < 3 {
+            lead -= 1
+            continuation += 1
+        }
+        guard lead >= 0 else { return data }
+        let byte = tail[lead]
+        let length: Int
+        switch byte {
+        case 0xC2...0xDF: length = 2
+        case 0xE0...0xEF: length = 3
+        case 0xF0...0xF4: length = 4
+        default: return data
+        }
+        guard length > continuation + 1 else { return data }
+        if continuation >= 1 {
+            // The few leads whose second byte has a narrower range.
+            let second: ClosedRange<UInt8>
+            switch byte {
+            case 0xE0: second = 0xA0...0xBF
+            case 0xED: second = 0x80...0x9F
+            case 0xF0: second = 0x90...0xBF
+            case 0xF4: second = 0x80...0x8F
+            default: second = 0x80...0xBF
+            }
+            guard second.contains(tail[lead + 1]) else { return data }
+        }
+        return data.dropLast(continuation + 1)
     }
 }

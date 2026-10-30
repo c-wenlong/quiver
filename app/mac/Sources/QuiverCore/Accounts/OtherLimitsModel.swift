@@ -124,7 +124,8 @@ public final class OtherLimitsModel {
     /// Whether each registered harness's command is on PATH, by name,
     /// Claude and Codex included, for the account cards' Terminal button.
     public private(set) var cliInstalled: [String: Bool] = [:]
-    /// Why there is nothing to show, when that is not simply "nothing starred".
+    /// Why there is nothing to show, when that is not simply "nothing
+    /// starred", or why the cards shown are from an earlier load.
     public private(set) var note: String?
     private let swe: SweClient
     /// The latest load's ticket: a refresh overtaken while it ran (a star
@@ -421,9 +422,15 @@ public final class OtherLimitsModel {
             return
         } catch {
             guard mine == request else { return }
-            rows = []
-            cards = []
-            note = error.localizedDescription
+            // One failed poll (a swe timeout, a busy disk) keeps the last
+            // cards up, as the starred set already is; the note says the
+            // refresh failed. With nothing shown yet it is the only text.
+            // An account removed since is gone either way: it has no
+            // reading to keep.
+            cards.removeAll { $0.profile.map { !live.contains($0.id) } ?? false }
+            rows.removeAll { $0.profile.map { !live.contains($0.id) } ?? false }
+            note = cards.isEmpty ? error.localizedDescription
+                : "Couldn't refresh: \(error.localizedDescription)"
         }
     }
 
@@ -591,13 +598,9 @@ extension SweClient {
     }
 
     /// `swe harness usage <name> --account-dir=<dir> --json`: the account's
-    /// own rate limit, nil when it is not signed in.
-    public func accountUsage(name: String, accountDir: String) async throws -> RateLimit? {
-        try await accountOutcome(name: name, accountDir: accountDir).limit
-    }
-
-    /// Same call returning the typed outcome. `allowFailure` because a
-    /// failed read still carries the document it describes.
+    /// own rate limit (nil when it is not signed in) as a typed outcome.
+    /// `allowFailure` because a failed read still carries the document it
+    /// describes.
     public func accountOutcome(name: String, accountDir: String) async throws -> AccountOutcome {
         struct Reply: Decodable {
             var name: String

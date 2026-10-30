@@ -50,6 +50,9 @@ final class TasksModel {
             case nil, "ok", "disabled": nil
             default: body.linear?.error ?? status ?? "Linear is unreachable"
             }
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message
@@ -58,6 +61,13 @@ final class TasksModel {
             self.error = error.localizedDescription
         }
         loaded = true
+    }
+
+    /// Why GitHub's rows are last-known, for the amber banner over the
+    /// list; nil when there's no banner to draw.
+    var githubBanner: String? {
+        TaskGrouping.githubBanner(envBlocked: envBlocked, githubFailed: githubFailed,
+                                  hasRows: !tasks.isEmpty || !failedRepos.isEmpty)
     }
 
     /// The detail page's row, live as the list refreshes under it.
@@ -80,18 +90,43 @@ final class TasksModel {
 /// hub rows without an actor.
 enum TaskGrouping {
     /// The scope sections as the page draws them under `filter`: the
-    /// repo for GitHub rows, the project elsewhere, ordered by the most
+    /// repo for GitHub rows, the project elsewhere, else the source's
+    /// name (`sectionName`), ordered by the most
     /// recently active task each holds — the reply is already sorted by
     /// `last_active_at`, so first sight of a scope is its rank.
+    /// The GitHub banner's reason: `gh` signed out (`envBlocked`) or
+    /// failing (`githubFailed`). With no rows at all the page's empty
+    /// card already says GitHub can't be reached, in the same words, so
+    /// the banner — which says the rows under it are last-known — goes.
+    static func githubBanner(envBlocked: String?, githubFailed: String?, hasRows: Bool) -> String? {
+        hasRows ? envBlocked ?? githubFailed : nil
+    }
+
     static func sections(of tasks: [TaskRow], filter: TaskFilter) -> [TaskSection] {
         var order: [String] = []
         var buckets: [String: [TaskRow]] = [:]
         for task in tasks where filter.includes(task) {
-            let scope = task.scope.isEmpty ? "Other" : task.scope
+            let scope = sectionName(task)
             if buckets[scope] == nil { order.append(scope) }
             buckets[scope, default: []].append(task)
         }
         return order.map { TaskSection(name: $0, rows: buckets[$0] ?? [], error: nil) }
+    }
+
+    /// The section a task lists under: its repo or project, else its
+    /// source's name ("Linear", "Notion"), as the web and the Mac group
+    /// them; "Other" only when the row names no source either.
+    static func sectionName(_ task: TaskRow) -> String {
+        if !task.scope.isEmpty { return task.scope }
+        guard let source = task.source, !source.isEmpty else { return "Other" }
+        return sourceName(source)
+    }
+
+    /// A source as the pages spell it: GitHub, Linear, Notion; anything
+    /// else capitalized.
+    static func sourceName(_ source: String) -> String {
+        ["github": "GitHub", "linear": "Linear", "notion": "Notion"][source]
+            ?? source.prefix(1).uppercased() + source.dropFirst()
     }
 
     /// `filter`'s matching count across every task — the filter chips.

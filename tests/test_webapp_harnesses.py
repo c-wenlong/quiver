@@ -1,6 +1,8 @@
 """The Harnesses page's data: every registered harness, archived included."""
 
 import json
+import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -72,7 +74,7 @@ class TestRoute(_Registry, HubBase):
         self.assertIn("bad json", data.decode())
 
     def test_page_script_is_served(self):
-        self.assertEqual(self.srv.request("GET", "/app/manage.js")[0], 200)
+        self.assertEqual(self.srv.request("GET", "/manage.js")[0], 200)
 
 
 # ----------------------------------------------------------------- writes
@@ -330,13 +332,34 @@ class TestWriteRoute(_TempRegistry, HubBase):
         self.assertEqual(self.file.read_text(), before)
 
     def test_page_assets_carry_the_writes(self):
-        _, js = self.srv.request("GET", "/app/manage.js")
+        _, js = self.srv.request("GET", "/manage.js")
         self.assertIn(b"/v1/app/harness/", js)
         for action in (b'"edit"', b'"register"', b'"add"', b"view=discover"):
             self.assertIn(action, js)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".harness-archive", css)
         self.assertIn(b".harness-sheet", css)
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestHeaderActions(unittest.TestCase):
+    """manage.js's Harnesses header: Detect and Add harness only where
+    paintHarnesses binds them, never in the loading or error header."""
+
+    def test_actions_only_when_painted(self):
+        manage_js = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/manage.js"
+        prelude = ("const esc = (s) => String(s); const icon = () => '';\n"
+                   "const pageHeader = (t, s, actions = '') => actions;\n")
+        body = "process.stdout.write(JSON.stringify([harnessesHeader(), harnessesHeader(true)]));\n"
+        done = subprocess.run(["node", "-e", prelude + manage_js.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        loading, painted = json.loads(done.stdout)
+        self.assertNotIn("data-sheet", loading)
+        self.assertIn('id="page-refresh"', loading)
+        self.assertIn('data-sheet="detect"', painted)
+        self.assertIn('data-sheet="add"', painted)
 
 
 # ------------------------------------------------------------- the sheets

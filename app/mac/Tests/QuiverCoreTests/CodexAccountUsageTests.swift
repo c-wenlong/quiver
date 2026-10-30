@@ -6,10 +6,20 @@ import Testing
 /// local months, the negative-difference flag, every status's mapping
 /// and the cache round-trip.
 @Suite @MainActor struct CodexAccountUsageTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     /// noon UTC on Thursday 2026-10-15: the current week is Oct 12–18,
     /// the current month October.
     private let now = utc("2026-10-15T12:00:00Z")
-    private let calendar = Calendar(identifier: .gregorian)
+    /// Pinned to UTC: the fixture days are noon UTC, which a machine at
+    /// UTC+12 or later would put on the next local day.
+    private let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
 
     private func day(_ text: String) -> Date {
         utc("\(text)T12:00:00Z")
@@ -18,7 +28,7 @@ import Testing
     private func model(reports: [String: CodexDailyReport] = [:],
                        mac: [Date: Int] = [:],
                        file: String = "usage.json") -> (CodexAccountUsage, URL) {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString)", isDirectory: true)
         let url = dir.appendingPathComponent(file)
         var queue = reports
@@ -70,10 +80,24 @@ import Testing
         #expect(weeks[5].account == 50)
         #expect(weeks[5].inProgress)
         #expect(!weeks[4].inProgress)
-        let fmt = DateFormatter()
-        fmt.dateFormat = "EEEE"
+        // Weekday 2 is Monday in the Gregorian calendar, in any locale.
         for period in weeks {
-            #expect(fmt.string(from: period.start) == "Monday")
+            #expect(calendar.component(.weekday, from: period.start) == 2)
+        }
+    }
+
+    /// The report's dates read in the calendar's own zone, whatever zone
+    /// the machine is in: a calendar far from the system clock (Kiritimati
+    /// at UTC+14, then Baker Island at UTC-12) still keys each day on its
+    /// own midnight.
+    @Test func reportDatesReadInTheCalendarsZone() {
+        for zone in ["Pacific/Kiritimati", "Etc/GMT+12"] {
+            var far = Calendar(identifier: .gregorian)
+            far.timeZone = TimeZone(identifier: zone)!
+            let days = CodexAccountUsage.parseDays(report([("2026-10-13", 10)]), calendar: far)
+            var parts = DateComponents()
+            (parts.year, parts.month, parts.day) = (2026, 10, 13)
+            #expect(days == [far.date(from: parts)!: 10], "\(zone)")
         }
     }
 
@@ -165,7 +189,7 @@ import Testing
 
     @Test func anUnavailableReplyKeepsTheCachedDataMarkedStale() async {
         var calls = 0
-        let dir = FileManager.default.temporaryDirectory
+        let dir = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString)", isDirectory: true)
         let url = dir.appendingPathComponent("usage.json")
         let model = CodexAccountUsage(
@@ -192,7 +216,7 @@ import Testing
     @Test func sweTooOldHidesTheSection() async {
         let (model, _) = model()
         let tooOld = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { _ in
                 throw SweError.commandFailed(
@@ -208,7 +232,7 @@ import Testing
     @Test func aFailedFirstFetchShowsTheFailedStateThenRetries() async {
         var fail = true
         let model = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { _ in
                 if fail {
@@ -230,7 +254,7 @@ import Testing
     @Test func refreshForceRefetchesTheKnownHomes() async {
         var calls: [String] = []
         let model = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { home in
                 calls.append(home)
@@ -244,11 +268,35 @@ import Testing
         #expect(calls == ["/h", "/i", "/h", "/i"])
     }
 
+    /// keepFresh reads its homes on each pass, and Refresh reads them
+    /// live too: an account added after the last pass is fetched.
+    @Test func refreshAfterKeepFreshSeesANewAccount() async throws {
+        var calls: [String] = []
+        var homes = ["/h"]
+        let fetched = CountGate()
+        let model = CodexAccountUsage(
+            cacheFile: scratch.url
+                .appendingPathComponent("\(UUID().uuidString).json"),
+            fetch: { home in
+                calls.append(home)
+                await fetched.bump()
+                return self.report([("2026-10-13", 10)])
+            },
+            macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
+        let poller = Task { await model.keepFresh(homes: { homes }) }
+        defer { poller.cancel() }
+        #expect(await fetched.reach(1))
+        #expect(calls == ["/h"])
+        homes.append("/i")
+        await model.refresh(force: true)
+        #expect(calls == ["/h", "/h", "/i"])
+    }
+
     @Test func recomputeRebuildsTheMacSideWithoutFetching() async {
         var calls = 0
         var mac: [Date: Int] = [day("2026-10-13"): 5]
         let model = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { _ in
                 calls += 1
@@ -268,7 +316,7 @@ import Testing
     @Test func aNewSwePathClearsTheTooOldVerdict() async {
         var tooOld = true
         let model = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { _ in
                 if tooOld {
@@ -310,7 +358,8 @@ import Testing
         // path change's forced refresh runs and succeeds.
         var gate: CheckedContinuation<CodexDailyReport, Error>?
         var entered = false
-        let url = FileManager.default.temporaryDirectory
+        let parked = CountGate()
+        let url = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString).json")
         let model = CodexAccountUsage(
             cacheFile: url,
@@ -318,13 +367,16 @@ import Testing
                 if !entered {
                     entered = true
                     return try await withCheckedThrowingContinuation {
-                        (c: CheckedContinuation<CodexDailyReport, Error>) in gate = c }
+                        (c: CheckedContinuation<CodexDailyReport, Error>) in
+                        gate = c
+                        Task { await parked.bump() }
+                    }
                 }
                 return self.report([("2026-10-13", 10)])
             },
             macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
         let stale = Task { await model.refresh(homes: ["/h"]) }
-        while !entered { await Task.yield() }
+        #expect(await parked.reach(1))
         await model.swePathChanged()
         #expect(model.section(for: "/h")?.kind == .data)
         // Only now does the old path's fetch fail "unknown subcommand":
@@ -343,19 +395,23 @@ import Testing
         // Both fetches park: the older refresh's reply lands while the
         // newer one is still in flight.
         var gates: [CheckedContinuation<CodexDailyReport, Error>] = []
-        let url = FileManager.default.temporaryDirectory
+        let parked = CountGate()
+        let url = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString).json")
         let model = CodexAccountUsage(
             cacheFile: url,
             fetch: { _ in
                 try await withCheckedThrowingContinuation {
-                    (c: CheckedContinuation<CodexDailyReport, Error>) in gates.append(c) }
+                    (c: CheckedContinuation<CodexDailyReport, Error>) in
+                    gates.append(c)
+                    Task { await parked.bump() }
+                }
             },
             macDays: { _, _ in [:] }, now: { self.now }, calendar: calendar)
         let stale = Task { await model.refresh(homes: ["/h"]) }
-        while gates.count < 1 { await Task.yield() }
+        #expect(await parked.reach(1))
         let fresh = Task { await model.refresh(homes: ["/h"]) }
-        while gates.count < 2 { await Task.yield() }
+        #expect(await parked.reach(2))
         #expect(model.fetching == ["/h"])
         // The old reply lands first: dropped, and it must not clear the
         // newer refresh's in-flight flag.

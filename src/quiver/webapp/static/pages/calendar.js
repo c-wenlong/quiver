@@ -75,10 +75,23 @@
   const ISO = (dt) => dt.toISOString().slice(0, 10);
   const addDays = (dt, n) => { const x = new Date(dt); x.setUTCDate(x.getUTCDate() + n); return x; };
   const isoWeekday = (dt) => ((dt.getUTCDay() + 6) % 7) + 1;
-  function isoWeek(dt) {
-    const thursday = addDays(dt, 4 - isoWeekday(dt));
-    const jan1 = Date.UTC(thursday.getUTCFullYear(), 0, 1);
-    return Math.floor((thursday - jan1) / 864e5 / 7) + 1;
+  const weekStart = (dt, fw) => addDays(dt, -((isoWeekday(dt) - fw + 7) % 7));
+  /* Calendar.component(.weekOfYear), as pages/calendar.py's week_of_year
+   * that titles the page "Week N": ISO weeks for a Monday-first calendar
+   * (a first week needs four days of the year), and the week holding
+   * January 1 as week 1 for any other first weekday (ISO, 1 = Monday). */
+  function weekOfYear(dt, fw) {
+    const minDays = fw === 1 ? 4 : 1;
+    const firstWeek = (year) => {
+      const jan1 = new Date(Date.UTC(year, 0, 1));
+      const start = weekStart(jan1, fw);
+      return 7 - (jan1 - start) / 864e5 >= minDays ? start : addDays(start, 7);
+    };
+    const year = dt.getUTCFullYear();
+    if (dt >= firstWeek(year + 1)) return 1;
+    let start = firstWeek(year);
+    if (dt < start) start = firstWeek(year - 1);
+    return Math.floor((dt - start) / 864e5 / 7) + 1;
   }
   const weekdayName = (iso, style) => D(iso).toLocaleDateString("en-US", { weekday: style, timeZone: "UTC" });
   const monthTitle = (y, m) => new Date(Date.UTC(y, m, 1)).toLocaleDateString("en-US",
@@ -119,7 +132,7 @@
     const { status, data } = await api(`/v1/app/calendar?${q}`);
     if (gen !== routeGen || mine !== S.gen) return;
     S.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return renderGate();
     if (status !== 200 || !data) {
       S.data = null;
       return pageError(header(), status, data, () => render("calendar"));
@@ -576,7 +589,7 @@
         return `<div class="cal-mcell${out}${today}${dt.getUTCDate() === 1 ? " first" : ""}" data-i="${r * 7 + c}" data-date="${day.date}">
           <div class="cal-mday"><span>${label}</span></div><div class="cal-mentries"></div></div>`;
       }).join("");
-      rows.push(`<div class="cal-mrow"><span class="cal-mweek">${isoWeek(D(week[0].date))}</span>${cells}</div>`);
+      rows.push(`<div class="cal-mrow"><span class="cal-mweek">${weekOfYear(D(week[0].date), d.first_weekday)}</span>${cells}</div>`);
     }
     return `<div class="cal-month"><div class="cal-mhead"><span class="cal-mweek"></span>${heads}</div>${rows.join("")}</div>`;
   }
@@ -673,14 +686,14 @@
       <div class="cal-legend">${(S.data.legend || []).map(legendRows).join("")}</div></aside>`;
   }
 
-  /* The mini month: ISO weeks down the edge, the visible range lit
+  /* The mini month: week numbers down the edge, the visible range lit
    * (not in month mode), today a red dot, a click jumping there. */
   function miniMonth() {
     const d = S.data, fw = d.first_weekday;
     const { y, m } = S.mini;
     const first = new Date(Date.UTC(y, m, 1));
     const next = new Date(Date.UTC(y, m + 1, 1));
-    let day = addDays(first, -((isoWeekday(first) - fw + 7) % 7));
+    let day = weekStart(first, fw);
     const weeks = [];
     while (weeks.length < 6 && (!weeks.length || day < next)) {
       weeks.push(Array.from({ length: 7 }, (_, i) => addDays(day, i)));
@@ -699,7 +712,7 @@
           inRange && (c === 6 || ISO(week[c + 1]) > hi) ? "lit-end" : ""].filter(Boolean).join(" ");
         return `<button class="${cls}" data-go="${iso}"><span>${dt.getUTCDate()}</span></button>`;
       }).join("");
-      return `<div class="cal-mini-row"><span class="cal-mini-week">${isoWeek(week[0])}</span>${cells}</div>`;
+      return `<div class="cal-mini-row"><span class="cal-mini-week">${weekOfYear(week[0], fw)}</span>${cells}</div>`;
     }).join("");
     return `<div class="cal-mini">
       <div class="cal-mini-head"><span>${monthTitle(y, m)}</span>
@@ -789,12 +802,16 @@
     return rows + more;
   }
 
-  /* The block's figures: range, time, responses, tokens and spend. */
+  /* The block's figures: range, time, responses, tokens and spend. File
+   * sources (Pi, Factory Droid, Freebuff, the Cursor app) carry no
+   * tokens, so their blocks stop at responses, as on the Mac. */
   function figures(block, active) {
     const unpriced = block.unpriced_tokens
       ? ` <span title="Plus ${Fmt.tokens(block.unpriced_tokens)} tokens with no list price">ⓘ</span>` : "";
+    const spend = block.tokens || block.unpriced_tokens
+      ? `<div class="caption num">${Fmt.tokens(block.tokens)} tokens · <span class="spend">${Fmt.dollars(block.cost_usd)}</span>${unpriced}</div>` : "";
     return `<div class="caption num">${esc(span(block.start, block.end))} · ${duration(active)} · ${plural(block.responses, "response")}</div>
-      <div class="caption num">${Fmt.tokens(block.tokens)} tokens · <span class="spend">${Fmt.dollars(block.cost_usd)}</span>${unpriced}</div>`;
+      ${spend}`;
   }
 
   /* BlockCard: icon, project, account when the harness has several,
@@ -934,7 +951,7 @@
 
   /* ------------------------------------------------------------ keys */
 
-  const onCalendar = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "calendar";
+  const onCalendar = () => currentRoute() === "calendar";
 
   document.addEventListener("keydown", (e) => {
     if (!onCalendar() || !S.data || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -978,5 +995,5 @@
   }, 60 * 1000);
 
   registerPage("calendar", render);
-  window.CalendarPage = { _test: { restingIndex, windowDays, snapDays } };
+  window.CalendarPage = { _test: { restingIndex, windowDays, snapDays, weekOfYear, D } };
 })();

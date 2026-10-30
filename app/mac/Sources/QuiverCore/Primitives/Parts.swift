@@ -38,6 +38,13 @@ public enum PrimitiveParts {
     @discardableResult
     public static func create(_ kind: Kind, named name: String, in root: URL,
                               resolve: (String) -> String = FolderOwners.realPath) throws -> URL {
+        // The page checks the name too; checked here as well, since a
+        // slash or `..` would put the part outside its kind's folder.
+        guard isValidName(name) else {
+            throw NSError(domain: "PrimitiveParts", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "Use kebab-case: lowercase letters, numbers and dashes."])
+        }
         let file = path(of: kind, named: name, in: root)
         let resolvedRoot = FolderOwners.trimmed(resolve(root.path))
         let landing = PrimitiveOwnership.resolvedAncestor(

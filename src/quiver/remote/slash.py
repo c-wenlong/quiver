@@ -63,8 +63,6 @@ MAX_READ = 16 * 1024
 MAX_LAYER_ENTRIES = 500
 MAX_PAYLOAD_BYTES = 1 << 20
 
-SOURCES = ("builtin", "user", "project", "skill", "plugin")
-
 # Where the hub keeps each satellite's pushed command lists. Not the
 # catalog's ``satellite/`` folder: that one's ``*.json`` are all rows.
 _SAT_DIR = "slash"
@@ -737,6 +735,9 @@ def satellite_payload(rows: list[dict],
     from quiver.remote import supervise
 
     out: dict = {"harnesses": {}, "attached": {}}
+    # Read once: per row it was a parse of supervised.json for every
+    # session on the machine, on every push.
+    entries = supervise.registry(home)
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -756,7 +757,7 @@ def satellite_payload(rows: list[dict],
             if any(layers.values()):
                 slot["folders"][cwd] = layers
         key = str(row.get("key") or "")
-        meta = supervise.meta_for(home, key) if key else None
+        meta = entries.get(key) if key else None
         if meta and meta.get("mode"):
             out["attached"][key] = str(meta["mode"])
     return bound_payload(out)
@@ -791,14 +792,28 @@ def bound_payload(payload: dict) -> dict | None:
     folders = [(_size(layers), harness, cwd)
                for harness, slot in out["harnesses"].items()
                for cwd, layers in slot["folders"].items()]
-    folders.sort(reverse=True)
-    while _size(out) > MAX_PAYLOAD_BYTES:
+    # Smallest first, so the biggest pops off the end in O(1).
+    folders.sort()
+    # Kept up by arithmetic rather than re-serialising the whole payload
+    # per dropped folder (quadratic in folders). Exact for json.dumps'
+    # default separators: an entry is `key: value`, plus `, ` when it
+    # has a sibling; the flag adds `, "truncated": true` once.
+    total = _size(out)
+    while total > MAX_PAYLOAD_BYTES:
         if not folders:
             return None
-        _n, harness, cwd = folders.pop(0)
-        del out["harnesses"][harness]["folders"][cwd]
-        out["truncated"] = True
+        n, harness, cwd = folders.pop()
+        entries = out["harnesses"][harness]["folders"]
+        total -= _size(cwd) + 2 + n + (2 if len(entries) > 1 else 0)
+        del entries[cwd]
+        if not out.get("truncated"):
+            out["truncated"] = True
+            total += _TRUNCATED_BYTES
     return out
+
+
+# What ``"truncated": true`` adds to a payload that has other keys.
+_TRUNCATED_BYTES = len(', "truncated": true')
 
 
 def _auto_channel(harness: str) -> str:
@@ -839,8 +854,16 @@ def save_satellite(home: Path | None, machine_id: str, payload) -> bool:
 
 
 def load_satellite(home: Path | None, machine_id: str) -> dict | None:
+    from quiver.remote.catalog import _legacy_safe_mid
+
+    path = _sat_file(home, machine_id)
+    if not path.exists():
+        # Saved before ids that map lossily got a hash suffix: an agent
+        # resends its menu only on a change, so the old file still
+        # answers until it does.
+        path = path.with_name(f"{_legacy_safe_mid(machine_id)}.json")
     try:
-        data = json.loads(_sat_file(home, machine_id).read_text())
+        data = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None

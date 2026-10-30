@@ -1,8 +1,10 @@
 import SwiftUI
 
 /// One issue in full: title and meta, the rendered body, its comments
-/// (markdown, as the chat renders agent text), then Open on GitHub and
-/// the primary Resolve with agent. Reads `GET /v1/issues/<o>/<r>/<n>`.
+/// (markdown, as the chat renders agent text) and a comment box, then
+/// Open on GitHub and the primary Resolve with agent. Reads `GET
+/// /v1/issues/<o>/<r>/<n>`; a comment posts through the hub's own `gh`
+/// login (`POST /v1/issues/comment`), as the Mac's posts through `gh`.
 struct IssueDetailView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
@@ -15,6 +17,10 @@ struct IssueDetailView: View {
     @State private var error: String?
     @State private var resolving = false
     @State private var startedKey: String?
+    /// The resolve sheet posted its context as a comment: read the issue
+    /// again once it closes, so the thread lists it.
+    @State private var commentedFromSheet = false
+    @State private var composer = IssueCommentComposer()
     /// Bumped per load so a late reply can't overwrite a newer one.
     @State private var generation = 0
 
@@ -24,7 +30,7 @@ struct IssueDetailView: View {
                 // A failed refresh keeps the issue it already had — the
                 // notice says why it's stale rather than replacing it.
                 if let error {
-                    Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                    Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
                         .font(Theme.caption).foregroundStyle(Theme.warningText)
                         .lineLimit(2)
                 }
@@ -35,6 +41,7 @@ struct IssueDetailView: View {
                     Card { RichText(text: body) }
                 }
                 commentsSection(issue)
+                commentBox
             } else if let error {
                 StateCard(icon: "exclamationmark.triangle", title: "Can't load this issue",
                           message: error, tone: .error,
@@ -77,9 +84,14 @@ struct IssueDetailView: View {
         .sheet(isPresented: $resolving, onDismiss: {
             if let key = startedKey { onStarted(key) }
             startedKey = nil
+            if commentedFromSheet {
+                commentedFromSheet = false
+                Task { await load() }
+            }
         }) {
             ResolveIssueSheet(repo: repo, number: number, detail: reply?.issue,
-                              machineId: reply?.machineId) { startedKey = $0 }
+                              machineId: reply?.machineId,
+                              onCommented: { commentedFromSheet = true }) { startedKey = $0 }
         }
     }
 
@@ -99,9 +111,12 @@ struct IssueDetailView: View {
                 reply = body
                 error = nil
             }
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch {
             guard gen == generation else { return }
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            self.error = error.localizedDescription
         }
     }
 
@@ -153,8 +168,8 @@ struct IssueDetailView: View {
                     Text(bits.joined(separator: " · "))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
-                ForEach(labels.prefix(4), id: \.self) { Badge($0) }
-                ForEach(assignees.prefix(2), id: \.self) { Badge("@\($0)") }
+                ForEach(Array(labels.prefix(4).enumerated()), id: \.offset) { Badge($0.element) }
+                ForEach(Array(assignees.prefix(2).enumerated()), id: \.offset) { Badge("@\($0.element)") }
             }
         }
     }
@@ -176,15 +191,55 @@ struct IssueDetailView: View {
     }
 
     /// The issue's comments, oldest first as `gh` returns them, each a
-    /// card with the author and age over the rendered body.
+    /// card with the author and age over the rendered body. The label
+    /// stays with none, over the comment box.
     @ViewBuilder private func commentsSection(_ issue: IssueDetail) -> some View {
         let comments = issue.comments ?? []
-        if !comments.isEmpty {
-            GroupLabel(text: "Comments", trailing: "\(comments.count)")
-            ForEach(comments, id: \.self) { comment in
-                CommentCard(comment: comment)
+        GroupLabel(text: "Comments", trailing: comments.isEmpty ? nil : "\(comments.count)")
+        ForEach(comments, id: \.self) { comment in
+            CommentCard(comment: comment)
+        }
+    }
+
+    /// The Mac sheet's comment box: posts through the hub's `gh`, then
+    /// reads the issue again (the hub dropped its cached copy). A
+    /// refusal keeps the draft and says why under the box.
+    private var commentBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Add context for whoever picks this up, you or an agent…",
+                      text: $composer.draft, axis: .vertical)
+                .lineLimit(2...8)
+                .font(Theme.body)
+                .foregroundStyle(Theme.textPrimary)
+                .padding(12)
+                .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+                .disabled(composer.posting)
+                .accessibilityLabel("Comment")
+            Button { Task { await postComment() } } label: {
+                HStack(spacing: 8) {
+                    if composer.posting { ProgressView().controlSize(.small) }
+                    Text(composer.posting ? "Posting" : "Comment")
+                }
+            }
+            .secondaryButton()
+            .disabled(!composer.canPost)
+            Text(IssueComments.caption(login: reply?.github?.login, machine: reply?.machine))
+                .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            if let error = composer.error {
+                Text(inlineCode: error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func postComment() async {
+        guard let client = app.client else { return }
+        let posted = await composer.post { text in
+            _ = try await client.commentOnIssue(repo: repo, number: number, body: text)
+        }
+        if posted { await load() }
     }
 }
 
@@ -208,7 +263,7 @@ private struct CommentCard: View {
                     if let url = comment.url.flatMap(URL.init) {
                         Button { openURL(url) } label: {
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                                .font(Theme.font(size: 12)).foregroundStyle(Theme.textMuted)
                         }
                         .buttonStyle(.plain)
                     }
@@ -237,6 +292,8 @@ struct ResolveIssueSheet: View {
     /// The hub's machine id, from the reply that opened the sheet; the
     /// worktree lives there, so only its harnesses are on offer.
     let machineId: String?
+    /// The context posted as a comment, so the page can show it.
+    var onCommented: () -> Void
     var onStarted: (String) -> Void
 
     @State private var detail: IssueDetail?
@@ -248,6 +305,15 @@ struct ResolveIssueSheet: View {
     /// improves the *default*.
     @State private var harnessTouched = false
     @State private var prompt: String
+    @State private var context = ""
+    /// "Also post as a comment", on by default as on the Mac.
+    @State private var postContext = true
+    /// The context that already posted on this opening, so a retried
+    /// Start doesn't post it again.
+    @State private var postedContext: String?
+    @State private var commenting = false
+    /// The context comment didn't post; the launch went ahead anyway.
+    @State private var commentWarning: String?
     /// The Model menu; `follow` re-defaults it on a harness change.
     @State private var model = ModelSelection()
     @State private var flow = LaunchFlow()
@@ -257,10 +323,12 @@ struct ResolveIssueSheet: View {
     @State private var rows: [SessionRow] = []
 
     init(repo: String, number: Int, detail: IssueDetail?, machineId: String?,
+         onCommented: @escaping () -> Void = {},
          onStarted: @escaping (String) -> Void) {
         self.repo = repo
         self.number = number
         self.machineId = machineId
+        self.onCommented = onCommented
         self.onStarted = onStarted
         _detail = State(initialValue: detail)
         _prompt = State(initialValue: detail?.suggestedPrompt ?? "")
@@ -279,16 +347,19 @@ struct ResolveIssueSheet: View {
         NavigationStack {
             PageScroll {
                 if let machine {
-                    startsIn(machine)
-                    harnessSection(machine)
+                    StartsInCard(icon: "exclamationmark.circle", title: "\(repo) · \(branch)",
+                                 trailing: "on \(machine.displayName)")
+                        .padding(.top, 4)
+                    HarnessPicker(machine: machine, harness: $harness, sessions: rows) { harnessTouched = true }
                     ModelField(machine: machine, harness: harness,
                                selection: $model,
                                sessions: rows, disabled: flow.busy)
+                    contextSection
                     promptSection
                     startSection(machine)
                 } else {
                     StateCard(icon: "terminal", title: "No machine can start a session",
-                              message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                              message: NewSessionOptions.noMachineMessage(app.machines))
                 }
             }
             .navigationTitle("Resolve issue")
@@ -302,7 +373,7 @@ struct ResolveIssueSheet: View {
                 }
             }
         }
-        .interactiveDismissDisabled(flow.busy)
+        .interactiveDismissDisabled(flow.busy || commenting)
         .onAppear {
             rows = app.sessions
             if harness == nil { harness = defaultHarness() }
@@ -352,69 +423,36 @@ struct ResolveIssueSheet: View {
             // The worktree is now known, so the last-harness-used
             // default can match it — unless the user already picked.
             if !harnessTouched { harness = defaultHarness() }
+        } catch is CancellationError {
+            // The sheet closed mid-fetch: nothing failed.
         } catch {
-            detailNote = (error as? HubError)?.message ?? error.localizedDescription
+            detailNote = error.localizedDescription
         }
     }
 
-    private func startsIn(_ machine: Machine) -> some View {
-        Card(padding: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "exclamationmark.circle").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Starts in").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    Text("\(repo) · \(branch)")
-                        .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Text("on \(machine.displayName)")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            }
-            .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
-        }
-        .padding(.top, 4)
-    }
-
-    @ViewBuilder private func harnessSection(_ machine: Machine) -> some View {
-        let offered = NewSessionOptions.harnesses(on: machine)
-        GroupLabel(text: "Harness", trailing: harness.map { NewSessionOptions.name($0, on: machine, sessions: rows) })
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 48, maximum: 48), spacing: 8)], alignment: .leading, spacing: 8) {
-            ForEach(offered, id: \.self) { h in
-                let selected = h == harness
-                let name = NewSessionOptions.name(h, on: machine, sessions: rows)
-                Button { harness = h; harnessTouched = true } label: {
-                    HarnessIcon(harness: h, name: name, size: 24)
-                        .font(.system(size: 10))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .frame(width: 48, height: 48)
-                        .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.blockRadius))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius)
-                            .strokeBorder(selected ? Theme.textPrimary : Theme.border, lineWidth: selected ? 1.5 : 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(name)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        if let harness, machine.untrackedHarnesses?.contains(harness) == true {
-            Text("Quiver can't read \(NewSessionOptions.name(harness, on: machine, sessions: rows)) sessions yet: it starts, but no chat opens.")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 4)
-        }
-    }
-
-    private var promptSection: some View {
+    /// The Mac's "Your context (optional)" and its "Also post as a
+    /// comment" switch. The context joins the hub's prompt either way.
+    private var contextSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            GroupLabel(text: "First prompt")
-            TextField("Describe the first task", text: $prompt, axis: .vertical)
-                .lineLimit(4...10)
+            GroupLabel(text: "Your context (optional)")
+            TextField("Anything the agent should know that the issue doesn't say.",
+                      text: $context, axis: .vertical)
+                .lineLimit(2...6)
                 .font(Theme.body)
                 .foregroundStyle(Theme.textPrimary)
                 .padding(12)
                 .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
+                .disabled(flow.busy || commenting)
+            Toggle("Also post as a comment on #\(number)", isOn: $postContext)
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .tint(Theme.accentFill)
+                .disabled(flow.busy || commenting)
+        }
+    }
+
+    private var promptSection: some View {
+        FirstPromptField(prompt: $prompt) {
             if let detailNote {
                 Text("Couldn't load the suggested prompt: \(detailNote) Start anyway and the hub writes it.")
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
@@ -424,35 +462,48 @@ struct ResolveIssueSheet: View {
     }
 
     private func startSection(_ machine: Machine) -> some View {
-        let ready = harness != nil
-        return VStack(alignment: .leading, spacing: 8) {
-            Button { launch = Task { await start(machine) } } label: {
-                HStack(spacing: 8) {
-                    if flow.busy { ProgressView().controlSize(.small).tint(Theme.primaryForeground) }
-                    Text(flow.phase == .waiting ? "Waiting for the session" : flow.opening ? "Opening the chat" : flow.busy ? "Starting" : "Start session")
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            if commenting {
+                Text("Posting your context to GitHub…")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
-            .primaryButton()
-            .disabled(!ready || flow.busy)
-            if case .failed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if case .unconfirmed(let message) = flow.phase {
-                Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            if let commentWarning {
+                Label { Text(inlineCode: commentWarning) } icon: { Image(systemName: "exclamationmark.triangle") }
+                    .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Runs under tmux on \(machine.displayName) on branch \(branch) in a worktree of \(repo). The chat opens once the session shows up.")
-                .font(Theme.caption).foregroundStyle(Theme.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
+            LaunchStartButton(flow: flow, ready: harness != nil && !commenting,
+                              footnote: "Runs under tmux on \(machine.displayName) on branch \(branch) in a worktree of \(repo). The chat opens once the session shows up.") {
+                launch = Task { await start(machine) }
+            }
         }
     }
 
     private func start(_ machine: Machine) async {
-        guard let client = app.client, let harness else { return }
+        guard let client = app.client, let harness, !commenting, !flow.busy else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let note = context.trimmingCharacters(in: .whitespacesAndNewlines)
         let pick = model.model(for: harness, on: machine)
+        commentWarning = nil
+        if IssueComments.postsComment(context: note, ticked: postContext, posted: postedContext) {
+            commenting = true
+            do {
+                _ = try await client.commentOnIssue(repo: repo, number: number, body: note)
+                postedContext = note
+                onCommented()
+            } catch is CancellationError {
+                commenting = false
+                return
+            } catch {
+                commentWarning = IssueComments.contextWarning(
+                    (error as? HubError)?.message ?? error.localizedDescription)
+            }
+            commenting = false
+            guard !Task.isCancelled else { return }
+        }
         let key = await flow.run(
-            post: { try await client.resolveIssue(repo: repo, number: number, harness: harness, prompt: text, model: pick) },
+            post: { try await client.resolveIssue(repo: repo, number: number, harness: harness, prompt: text,
+                                                  context: note, model: pick) },
             fetch: { try await client.launch($0) })
         guard let key, !Task.isCancelled else { return }
         await app.refresh()

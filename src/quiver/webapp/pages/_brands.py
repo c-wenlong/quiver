@@ -86,6 +86,11 @@ BRANDS: list[tuple[str, str, str | None, str | None, tuple[str, ...], tuple[str,
     ("llmgateway", "LLM Gateway", None, "llmgateway", ("llmgateway", "devpass"), ()),
     ("standardcompute", "Standard Compute", None, "standardcompute", ("stdcmpt",), ()),
     ("cheapestinference", "CheapestInference", None, "cheapestinference", ("cheapestinference",), ()),
+    # The Models page's benchmark source; a key filed under its name shows
+    # the mark too. "artificial" alone is too generic to claim, so only
+    # the run-together id matches.
+    ("artificialanalysis", "Artificial Analysis", None, "artificial-analysis",
+     ("artificialanalysis",), ()),
 ]
 
 OTHER = ("other", "Other", "#45454b", None, (), ())
@@ -106,8 +111,8 @@ _ALIASES = _load_aliases()
 
 
 def logo_file(icon: str | None) -> str | None:
-    """The logo shipped in ``/app/`` for a brand icon id, colour version
-    first (``HarnessIcon.exists``), or ``None`` when the web app has none."""
+    """The logo shipped with the web app for a brand icon id, colour
+    version first (``HarnessIcon.exists``), or ``None`` when it has none."""
     if not icon:
         return None
     for name in (f"harness-{icon}-color.svg", f"harness-{icon}.svg"):
@@ -128,7 +133,7 @@ def brand_for(model: str) -> dict:
     ``claude-opus-5-5`` or ``openrouter/qwen3-coder``, through any alias
     first; "Other" when no pattern matches. ``color`` falls back to
     Other's grey, as ``ModelVendor`` does, and ``logo`` names the file
-    under ``/app/``."""
+    beside the web app's page."""
     name = (resolved_name(model) or model).lower()
     name = name[name.rfind("/") + 1:]
     brand = next((b for pattern, b in _PATTERNS if pattern.match(name)), OTHER)

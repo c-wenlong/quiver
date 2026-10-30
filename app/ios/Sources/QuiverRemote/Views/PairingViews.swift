@@ -66,9 +66,12 @@ struct WelcomeView: View {
                 }
             }
             .sheet(isPresented: $scanning) {
+                // Scanning is the person picking this hub, so a scanned
+                // code pairs without the confirm a link from outside gets.
                 QRScannerSheet { url in
                     scanning = false
-                    Task { await app.handle(url) }
+                    guard let link = PairLink(url) else { return }
+                    Task { await app.pair(with: link) }
                 }
             }
             .overlay { if app.pairing.busy && app.pairing.pending == nil { BusyOverlay() } }
@@ -84,6 +87,9 @@ struct WelcomeView: View {
             }
         }
         .tint(Theme.textPrimary)
+        // Open over the hub menu, this sheet is where a pair link's
+        // confirm can show; under it, RootView's can't.
+        .pairOfferSheet(enabled: addingHub)
         .onAppear { startedOn = app.hub }
         // The new hub is on screen (paired by any route: Tailscale, token,
         // scanned code or a link): the sheet's job is done.
@@ -143,7 +149,7 @@ struct PairView: View {
                         .disabled(app.pairing.busy)
                         Button("Use a pair token instead") { path.append(.token) }
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                            .frame(height: 36)
+                            .scaledMinHeight(36)
                     }
                     .padding(.horizontal, Theme.gutter)
                     .padding(.bottom, 8)
@@ -184,10 +190,10 @@ struct PairCodeView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text("swe remote devices --approve=\(pending.started.code)").font(Theme.mono).lineLimit(1).minimumScaleFactor(0.8)
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 12))
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc").font(Theme.font(size: 12))
                     }
                     .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 10).frame(height: 32)
+                    .padding(.horizontal, 10).scaledMinHeight(32)
                     .background(Theme.code, in: .rect(cornerRadius: Theme.controlRadius))
                 }
                 .buttonStyle(.plain)
@@ -221,7 +227,7 @@ struct PairCodeView: View {
                     Button("Try again") { Task { app.cancelPairing(); await app.startTailscalePairing() } }.primaryButton()
                 }
                 Button("Cancel") { app.cancelPairing() }
-                    .font(Theme.body).foregroundStyle(Theme.textSecondary).frame(height: 44)
+                    .font(Theme.body).foregroundStyle(Theme.textSecondary).scaledMinHeight(44)
             }
             .padding(.horizontal, Theme.gutter)
             .padding(.top, 12)
@@ -285,6 +291,96 @@ struct BusyOverlay: View {
         ZStack {
             Color.black.opacity(0.25).ignoresSafeArea()
             ProgressView().padding(24).background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        }
+    }
+}
+
+/// Asks before pairing with the hub a `quiver://pair` link from outside
+/// the app names. Pairing hands that hub every prompt and approval this
+/// phone sends, so a link someone else crafted must not do it unseen.
+struct PairOfferSheet: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.dynamicTypeSize) private var size
+    let link: PairLink
+
+    var body: some View {
+        // Scrolls only when the text size makes it taller than the sheet,
+        // which can then be pulled up to full height too.
+        ViewThatFits(in: .vertical) {
+            offer
+            ScrollView { offer }
+        }
+        .background(Theme.wash)
+        .presentationDetents(size > .large ? [.medium, .large] : [.medium])
+        .interactiveDismissDisabled(app.pairing.busy)
+    }
+
+    private var offer: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Pair with this hub?").font(Theme.sectionTitle).foregroundStyle(Theme.textPrimary)
+            Card(padding: 0) {
+                HStack(spacing: 12) {
+                    Image(systemName: "desktopcomputer").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(link.address).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                            .lineLimit(2).truncationMode(.middle)
+                        Text(link.baseURL.scheme == "https" ? "HTTPS" : "Plain HTTP, not encrypted")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
+            }
+            Text("A pair link opened this. Pair only with a hub you run: it sees your sessions, prompts and approvals.")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let error = app.pairing.error {
+                Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            VStack(spacing: 4) {
+                // A used-up code can't pair again; only a new link can.
+                if !app.pairing.codeSpent {
+                    Button {
+                        Task { await app.acceptPairOffer() }
+                    } label: {
+                        if app.pairing.busy { ProgressView().tint(Theme.primaryForeground) } else { Text("Pair") }
+                    }
+                    .primaryButton()
+                    .disabled(app.pairing.busy)
+                }
+                Button(app.pairing.codeSpent ? "Close" : "Cancel") { app.declinePairOffer() }
+                    .font(Theme.body).foregroundStyle(Theme.textSecondary).scaledMinHeight(44)
+            }
+        }
+        .padding(Theme.gutter)
+        .padding(.top, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension View {
+    /// Shows `PairOfferSheet` while a pair link waits. Only one view on
+    /// screen may present it: RootView, or the pair-another-hub sheet
+    /// while that is open over it.
+    func pairOfferSheet(enabled: Bool = true) -> some View {
+        modifier(PairOfferPresenter(enabled: enabled))
+    }
+}
+
+private struct PairOfferPresenter: ViewModifier {
+    @Environment(AppModel.self) private var app
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        content.sheet(item: Binding(
+            get: { enabled ? app.pairOffer : nil },
+            // Swiped away: the same as Cancel. A pair that just landed
+            // has cleared the offer already.
+            set: { if $0 == nil, enabled, app.pairOffer != nil { app.declinePairOffer() } }
+        )) { link in
+            PairOfferSheet(link: link)
         }
     }
 }

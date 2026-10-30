@@ -19,6 +19,25 @@ struct CalendarPage: View {
     }
 }
 
+/// Where the hour axis's now pill sits against its hour labels.
+enum CalendarHourAxis {
+    /// The pill's reach above and below the current time at 100% zoom:
+    /// 9pt text with 2pt padding, drawn 9pt above the line.
+    static let pillAbove: CGFloat = 9
+    static let pillBelow: CGFloat = 7
+    /// An hour label's height from the top of its hour at 100% zoom.
+    static let labelHeight: CGFloat = 12
+
+    /// Whether the pill, centred on `nowOffset` points down the day,
+    /// overlaps `hour`'s label; that label hides while it does. `scale`
+    /// is View › Zoom's factor on the 9pt text: the pill and the labels
+    /// grow with it, the hours do not.
+    static func pillCovers(hour: Int, nowOffset: CGFloat, hourHeight: CGFloat, scale: CGFloat = 1) -> Bool {
+        let top = CGFloat(hour) * hourHeight
+        return top < nowOffset + pillBelow * scale && top + labelHeight * scale > nowOffset - pillAbove * scale
+    }
+}
+
 private struct CalendarContent: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -215,12 +234,20 @@ private struct CalendarContent: View {
             MiniMonth(model: model)
                 .padding(.bottom, 10)
             Text("Harnesses").font(Theme.font(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary).textCase(.uppercase)
+                .foregroundStyle(Theme.textSecondary)
                 .padding(.bottom, 4)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(model.harnesses, id: \.self) { harness in
                         HarnessLegend(model: model, harness: harness)
+                    }
+                    if !usageCards.isEmpty {
+                        Text("Usage").font(Theme.font(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.top, 8).padding(.bottom, 4)
+                        ForEach(usageCards) { card in
+                            UsageLegend(model: model, card: card)
+                        }
                     }
                 }
             }
@@ -440,8 +467,11 @@ private struct CalendarContent: View {
                            multiAccount: Set<String>) -> some View {
         DayColumn(model: model, day: day, now: now,
                   multiAccount: multiAccount,
+                  resets: resets(on: day),
                   cards: cards,
                   color: { self.color(for: $0) },
+                  resetColor: { self.resetColor($0) },
+                  resetLabel: { self.resetLabel($0) },
                   title: { self.title(for: $0) },
                   cardRows: { self.cardRows(for: $0) },
                   open: { self.open($0) })
@@ -494,9 +524,11 @@ private struct CalendarContent: View {
                         .padding(.top, 4)
                     ForEach(weeks[row], id: \.self) { day in
                         MonthCell(model: model, day: day,
-                                  entries: monthEntries(on: day),
+                                  items: monthItems(on: day),
                                   cards: cards,
                                   color: { self.color(for: $0) },
+                                  resetColor: { self.resetColor($0) },
+                                  resetLabel: { self.resetLabel($0) },
                                   title: { self.title(for: $0) },
                                   cardRows: { self.cardRows(for: $0) }) { block in
                             open(block)
@@ -518,12 +550,53 @@ private struct CalendarContent: View {
         .padding(.leading, 4)
     }
 
-    /// The day's session rows after the legend's hidden toggles apply.
-    private func monthEntries(on day: Date) -> [MonthLayout.Entry] {
+    /// The day's rows after the legend's hidden toggles apply: session
+    /// entries plus the shown accounts' resets, earliest first.
+    private func monthItems(on day: Date) -> [MonthItem] {
         let interval = DateInterval(
             start: day,
             end: model.calendar.date(byAdding: .day, value: 1, to: day) ?? day)
-        return MonthLayout.entries(model.visibleBlocks, day: interval)
+        let entries = MonthLayout.entries(model.visibleBlocks, day: interval).map(MonthItem.block)
+        let markers = resets(on: interval).map(MonthItem.reset)
+        return (entries + markers).sorted { $0.start != $1.start ? $0.start < $1.start : $0.id < $1.id }
+    }
+
+    /// Accounts with any usage window to list; a kept stale reading
+    /// still counts, since its windows show as last-known.
+    private var usageCards: [AccountsModel.Card] {
+        app.starredAccountCards.filter { card in
+            card.usage.map { !$0.windows.isEmpty } ?? false
+        }
+    }
+
+    /// The resets the grid draws: every scheduled reset of every account
+    /// and window the Usage legend has ticked.
+    private var usageResets: [UsageReset] {
+        usageCards.flatMap { card in
+            model.isUsageHidden(card.id) ? [] : card.usageResets.filter {
+                !model.isUsageHidden(card.id, window: $0.window)
+            }
+        }
+    }
+
+    /// The resets landing inside one rendered day, earliest first.
+    private func resets(on day: DateInterval) -> [UsageReset] {
+        usageResets.filter { $0.at >= day.start && $0.at < day.end }
+            .sorted { $0.at != $1.at ? $0.at < $1.at : $0.id < $1.id }
+    }
+
+    /// The marker's colour: the account's own profile colour, so two
+    /// accounts of one vendor mark different lines.
+    private func resetColor(_ reset: UsageReset) -> Color {
+        usageCards.first { $0.id == reset.account }
+            .map { Color(hex: $0.profile.color) } ?? Color(rgb: HarnessColor.of(reset.harness))
+    }
+
+    /// The marker's tag: just the window while one account shows ("5h
+    /// reset"), the account's name too once several do.
+    private func resetLabel(_ reset: UsageReset) -> String {
+        Set(usageResets.map(\.account)).count > 1
+            ? "\(reset.accountName) · \(reset.window)" : "\(reset.window) reset"
     }
 
     /// The fixed hour axis: inside the same vertical scroll as the day
@@ -531,25 +604,34 @@ private struct CalendarContent: View {
     /// outside the horizontal scroll so it stays pinned while the
     /// columns slide underneath it.
     private func hourAxis(now: Date) -> some View {
-        ZStack(alignment: .topLeading) {
+        // Only the visible window's "today" gets the pill, not a buffer
+        // day's.
+        let nowOffset = model.days.first(where: { $0.contains(now) })
+            .map { Self.hourHeight * CGFloat(now.timeIntervalSince($0.start) / 3600) }
+        let scale = Theme.scaled(9) / 9
+        return ZStack(alignment: .topLeading) {
             VStack(spacing: 0) {
                 ForEach(0..<24, id: \.self) { hour in
                     Text(hourLabel(hour))
                         .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                         .frame(width: Self.axisWidth - 8, height: Self.hourHeight,
                                alignment: .topTrailing)
+                        // The pill is narrower than the gutter, so a label
+                        // it half-covers would show its tail beside it.
+                        .opacity(nowOffset.map {
+                            CalendarHourAxis.pillCovers(hour: hour, nowOffset: $0, hourHeight: Self.hourHeight,
+                                                        scale: scale)
+                        } == true ? 0 : 1)
                         .id("h\(hour)")
                 }
             }
-            // Only the visible window's "today" gets the pill, not a
-            // buffer day's.
-            if let today = model.days.first(where: { $0.contains(now) }) {
+            if let nowOffset {
                 Text(now, format: .dateTime.hour().minute())
                     .font(Theme.font(size: 9, weight: .medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.calendarNowText)
                     .padding(.horizontal, 5).padding(.vertical, 2)
-                    .background(.red, in: Capsule())
-                    .offset(y: Self.hourHeight * CGFloat(now.timeIntervalSince(today.start) / 3600) - 9)
+                    .background(Theme.calendarNow, in: Capsule())
+                    .offset(y: nowOffset - CalendarHourAxis.pillAbove * scale)
             }
         }
         .frame(width: Self.axisWidth)
@@ -690,10 +772,10 @@ private struct DayHeaderRow: View, Equatable {
         let isToday = day.contains(now)
         let number = Text(day.start.formatted(.dateTime.day()))
             .font(Theme.font(size: 12, weight: isToday ? .semibold : .regular))
-            .foregroundStyle(isToday ? .white : .primary)
+            .foregroundStyle(isToday ? Theme.calendarNowText : .primary)
             .lineLimit(1)
             .padding(.horizontal, 5).padding(.vertical, 2)
-            .background(isToday ? Color.red : .clear,
+            .background(isToday ? Theme.calendarNow : .clear,
                         in: RoundedRectangle(cornerRadius: 5))
         switch DayHeaderStyle.forWidth(width) {
         case .inline:
@@ -734,9 +816,14 @@ private struct DayColumn: View, Equatable {
     /// Harnesses carrying more than one account in the window; the page
     /// hands down one set so each segment need not recount accounts.
     var multiAccount: Set<String>
+    /// The shown accounts' limit resets inside the day: dashed markers
+    /// drawn over the blocks.
+    var resets: [UsageReset]
     /// The page-level hover card each block and chip anchors.
     var cards: HoverCards
     var color: (ActivityBlock) -> Color
+    var resetColor: (UsageReset) -> Color
+    var resetLabel: (UsageReset) -> String
     var title: (ActivityBlock) -> String
     /// The capped session list a block's card shows.
     var cardRows: (ActivityBlock)
@@ -756,6 +843,7 @@ private struct DayColumn: View, Equatable {
     nonisolated static func == (lhs: DayColumn, rhs: DayColumn) -> Bool {
         lhs.model === rhs.model && lhs.cards === rhs.cards
             && lhs.day == rhs.day && lhs.zoom == rhs.zoom && lhs.multiAccount == rhs.multiAccount
+            && lhs.resets == rhs.resets
             && (lhs.now == rhs.now
                 || !(lhs.day.contains(lhs.now) || rhs.day.contains(rhs.now)))
     }
@@ -802,6 +890,14 @@ private struct DayColumn: View, Equatable {
                         .accessibilityAddTraits(.isButton)
                         .accessibilityAction { activate(item) }
                 }
+                ForEach(resets) { reset in
+                    Color.clear
+                        .frame(width: geo.size.width, height: 9)
+                        .position(x: geo.size.width / 2, y: geometry.y(reset.at))
+                        .accessibilityElement()
+                        .accessibilityLabel("\(reset.title), \(reset.window) limit resets at "
+                                            + Self.clock.string(from: reset.at))
+                }
             }
         }
         .frame(height: gridHeight)
@@ -837,7 +933,7 @@ private struct DayColumn: View, Equatable {
     private func accessibilityLabel(for item: DayColumnGeometry.Item) -> String {
         switch item.kind {
         case .segment(let segment):
-            return "\(segment.block.harness), \(title(segment.block)), "
+            return "\(HarnessMark(segment.block.harness).name), \(title(segment.block)), "
                 + CalendarFormat.range(start: segment.block.start, end: segment.block.end)
         case .overflow(let overflow):
             return "\(overflow.hidden.count) more blocks, "
@@ -860,9 +956,27 @@ private struct DayColumn: View, Equatable {
             case .overflow(let overflow): drawChip(overflow, in: item.frame, context: context)
             }
         }
+        // A reset marker: a dashed line at its minute with a small tag
+        // under it, over the blocks — a marker buried under a busy hour
+        // tells nothing. Markers that land close stagger their tags.
+        var tagY: CGFloat = -.infinity
+        for reset in resets {
+            let y = geometry.y(reset.at)
+            let color = resetColor(reset).opacity(reset.isStale ? 0.45 : 0.9)
+            context.stroke(Path { path in
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+            }, with: .color(color), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            tagY = max(y + 2, tagY)
+            if let tag = Self.fitted(resetLabel(reset), font: Theme.font(size: 8), color: color,
+                                     width: size.width - 4, in: context) {
+                context.draw(tag, at: CGPoint(x: 3, y: tagY), anchor: .topLeading)
+                tagY += 9
+            }
+        }
         if day.contains(now) {
             context.fill(Path(CGRect(x: 0, y: geometry.y(now), width: size.width, height: 1.5)),
-                         with: .color(.red))
+                         with: .color(Theme.calendarNow))
         }
     }
 
@@ -1073,8 +1187,10 @@ private struct MiniMonth: View {
                 Spacer()
                 Button { shiftMonth(-1) } label: { Image(systemName: "chevron.up") }
                     .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                    .accessibilityLabel("Previous month")
                 Button { shiftMonth(1) } label: { Image(systemName: "chevron.down") }
                     .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                    .accessibilityLabel("Next month")
             }
             // Weekday initials above a muted ISO-week column.
             HStack(spacing: 0) {
@@ -1096,9 +1212,9 @@ private struct MiniMonth: View {
                         Button { model.go(to: day) } label: {
                             Text(day.formatted(.dateTime.day()))
                                 .font(Theme.font(size: 9))
-                                .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
+                                .foregroundStyle(isToday ? Theme.calendarNowText : (inMonth ? .primary : Theme.textMuted))
                                 .frame(maxWidth: .infinity).frame(height: 16)
-                                .background(isToday ? Color.red : .clear, in: Circle())
+                                .background(isToday ? Theme.calendarNow : .clear, in: Circle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -1127,6 +1243,44 @@ private struct MiniMonth: View {
     }
 }
 
+/// The Notion-style checkbox both legends share: a filled square with a
+/// white check when shown, an outlined square when hidden.
+private struct LegendCheckbox: View {
+    var shown: Bool
+    var color: Color
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 3)
+            .fill(shown ? color : .clear)
+            .overlay {
+                if shown {
+                    Image(systemName: "checkmark")
+                        .font(Theme.font(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 3)
+                .stroke(color, lineWidth: shown ? 0 : 1.5))
+            .frame(width: 14, height: 14)
+    }
+}
+
+/// A full-width toggle row: the content shape and hover wash cover the
+/// name and time too, not just the checkbox.
+private struct LegendToggle<Label: View>: View {
+    var action: () -> Void
+    @ViewBuilder var label: () -> Label
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(LegendRowStyle())
+    }
+}
+
 /// One legend row: a colour checkbox, the harness mark and title, and its
 /// total time in the range, the whole row toggling visibility like
 /// Notion's calendar list. Account rows sit under it, expanded by
@@ -1142,36 +1296,6 @@ private struct HarnessLegend: View {
     private var accounts: [String] { model.accounts(for: harness) }
     private var expanded: Bool { model.accountsExpanded(harness) }
 
-    /// The Notion-style checkbox: filled square with a white check when
-    /// shown, an outlined square when hidden.
-    private func checkbox(shown: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 3)
-            .fill(shown ? color : .clear)
-            .overlay {
-                if shown {
-                    Image(systemName: "checkmark")
-                        .font(Theme.font(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-            }
-            .overlay(RoundedRectangle(cornerRadius: 3)
-                .stroke(color, lineWidth: shown ? 0 : 1.5))
-            .frame(width: 14, height: 14)
-    }
-
-    /// A full-width toggle row: the content shape and hover wash cover
-    /// the name and time too, not just the checkbox.
-    private func toggleRow<Label: View>(action: @escaping () -> Void,
-                                      shown: Bool,
-                                      @ViewBuilder label: () -> Label) -> some View {
-        Button(action: action) {
-            label()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
-        }
-        .buttonStyle(LegendRowStyle())
-    }
-
     var body: some View {
         HStack(spacing: 0) {
             if accounts.count > 1 {
@@ -1183,14 +1307,14 @@ private struct HarnessLegend: View {
                 }
                 .buttonStyle(.plain)
                 .help(expanded ? "Collapse accounts" : "Expand accounts")
-                .accessibilityLabel(expanded ? "Collapse \(harness) accounts"
-                                           : "Expand \(harness) accounts")
+                .accessibilityLabel(expanded ? "Collapse \(HarnessMark(harness).name) accounts"
+                                           : "Expand \(HarnessMark(harness).name) accounts")
             } else {
                 Spacer().frame(width: 10)
             }
-            toggleRow(action: { model.toggle(harness) }, shown: !model.isHidden(harness)) {
+            LegendToggle(action: { model.toggle(harness) }) {
                 HStack(spacing: 6) {
-                    checkbox(shown: !model.isHidden(harness))
+                    LegendCheckbox(shown: !model.isHidden(harness), color: color)
                     HarnessIcon(harness: harness, size: 13)
                     Text(HarnessMark(harness).name).font(Theme.font(size: 11))
                         .foregroundStyle(model.isHidden(harness) ? .secondary : .primary)
@@ -1208,10 +1332,9 @@ private struct HarnessLegend: View {
         if expanded {
             ForEach(accounts, id: \.self) { home in
                 let shown = !model.isHidden(harness: harness, accountHome: home)
-                toggleRow(action: { model.toggle(harness: harness, accountHome: home) },
-                          shown: shown) {
+                LegendToggle(action: { model.toggle(harness: harness, accountHome: home) }) {
                     HStack(spacing: 6) {
-                        checkbox(shown: shown)
+                        LegendCheckbox(shown: shown, color: color)
                         Text(model.accountName(for: home))
                             .font(Theme.font(size: 10))
                             .foregroundStyle(shown ? .primary : .secondary)
@@ -1237,17 +1360,109 @@ private struct HarnessLegend: View {
     }
 }
 
+/// One account in the Usage section: a checkbox row toggling its reset
+/// markers on the grid, then every window inline with how much of it is
+/// left. The windows always show — there is nothing to expand.
+private struct UsageLegend: View {
+    var model: CalendarModel
+    var card: AccountsModel.Card
+
+    private var color: Color { Color(hex: card.profile.color) }
+    private var hidden: Bool { model.isUsageHidden(card.id) }
+
+    var body: some View {
+        LegendToggle(action: { model.toggleUsage(card.id) }) {
+            HStack(spacing: 6) {
+                LegendCheckbox(shown: !hidden, color: color)
+                HarnessIcon(harness: card.profile.vendor.rawValue, size: 13)
+                Text(card.usageTitle).font(Theme.font(size: 11))
+                    .foregroundStyle(hidden ? .secondary : .primary)
+                    .lineLimit(1)
+                Spacer()
+            }
+        }
+        .help(hidden ? "Show \(card.usageTitle) resets" : "Hide \(card.usageTitle) resets")
+        .accessibilityLabel("\(card.usageTitle), \(hidden ? "hidden" : "shown")")
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(hidden ? "0" : "1")
+        .frame(height: 22)
+        if let usage = card.usage {
+            // The countdown and the reset-passed dimming both depend on
+            // now; the grid's own minute ticker can't reach the panel.
+            TimelineView(.everyMinute) { context in
+                ForEach(usage.windows, id: \.label) { window in
+                    windowRow(window, usage: usage, now: context.date)
+                }
+            }
+        }
+    }
+
+    /// One window's row: a checkbox toggling its reset marker, its
+    /// label, then how much of it is left. A kept older or already-reset
+    /// reading dims; a failed fetch reddens the label — the same
+    /// vocabulary the Accounts page's UsageBar speaks.
+    private func windowRow(_ window: UsageWindow, usage: AccountUsage, now: Date) -> some View {
+        let left = max(0, 100 - Int(window.usedPercent.rounded()))
+        let failed = usage.isStale && usage.status != .ok
+        let past = window.resetsAt.map { $0 <= now } ?? false
+        let reset = !failed && !past ? window.resetsAt : nil
+        let shown = !model.isUsageHidden(card.id, window: window.label)
+        return LegendToggle(action: { model.toggleUsage(card.id, window: window.label) }) {
+            HStack(spacing: 6) {
+                LegendCheckbox(shown: shown, color: color)
+                Text(window.label).font(Theme.font(size: 10))
+                    .foregroundStyle(failed ? Theme.dangerText
+                                     : (shown && !hidden ? .primary : .secondary))
+                Spacer()
+                Text("\(left)% left" + (reset.map { " · \(UsageFormat.resetIn($0, now: now))" } ?? ""))
+                    .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.leading, 18)
+        }
+        .help(shown ? "Hide the \(window.label) reset marker"
+                    : "Show the \(window.label) reset marker")
+        .accessibilityLabel("\(card.usageTitle), \(window.label), \(shown ? "shown" : "hidden")")
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(shown ? "1" : "0")
+        .frame(height: 20)
+        .opacity(!failed && (usage.isStale || past) ? 0.55 : 1)
+    }
+}
+
+/// A month cell's row: a project block's entry or an account's limit
+/// reset, whichever lands first in the day.
+private enum MonthItem: Identifiable, Equatable {
+    case block(MonthLayout.Entry)
+    case reset(UsageReset)
+
+    var id: String {
+        switch self {
+        case .block(let entry): entry.id
+        case .reset(let reset): reset.id
+        }
+    }
+
+    var start: Date {
+        switch self {
+        case .block(let entry): entry.start
+        case .reset(let reset): reset.at
+        }
+    }
+}
+
 /// One month cell: the day number top-right ("October 1" on a 1st,
 /// muted for adjacent-month days, red badge for today), then as many
-/// session entries as fit, the rest under a "N more" button that opens
-/// the day.
+/// session entries and reset markers as fit, the rest under a "N more"
+/// button that opens the day.
 private struct MonthCell: View {
     var model: CalendarModel
     var day: Date
-    var entries: [MonthLayout.Entry]
+    var items: [MonthItem]
     /// The page-level hover card each entry anchors.
     var cards: HoverCards
     var color: (ActivityBlock) -> Color
+    var resetColor: (UsageReset) -> Color
+    var resetLabel: (UsageReset) -> String
     var title: (ActivityBlock) -> String
     var cardRows: (ActivityBlock)
         -> (shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)], more: Int)
@@ -1265,41 +1480,50 @@ private struct MonthCell: View {
         let isToday = cal.isDateInToday(day)
         GeometryReader { geo in
             let fitting = max(0, Int((geo.size.height - 18) / Self.rowHeight))
-            let split = MonthLayout.split(entries, fitting: fitting)
+            // MonthLayout.split's rule, widened to both row kinds.
+            let shown = items.count <= fitting ? items : Array(items.prefix(max(0, fitting - 1)))
+            let moreCount = items.count - shown.count
             VStack(alignment: .leading, spacing: 1) {
                 HStack {
                     Spacer(minLength: 0)
                     if isFirst {
                         Text(day, format: .dateTime.month(.wide).day())
                             .font(Theme.font(size: 9, weight: .semibold))
-                            .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
+                            .foregroundStyle(isToday ? Theme.calendarNowText : (inMonth ? .primary : Theme.textMuted))
                             .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(isToday ? Color.red : .clear,
+                            .background(isToday ? Theme.calendarNow : .clear,
                                         in: RoundedRectangle(cornerRadius: 4))
                     } else {
                         Text(day, format: .dateTime.day())
                             .font(Theme.font(size: 9))
-                            .foregroundStyle(isToday ? .white : (inMonth ? .primary : Theme.textMuted))
+                            .foregroundStyle(isToday ? Theme.calendarNowText : (inMonth ? .primary : Theme.textMuted))
                             .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(isToday ? Color.red : .clear,
+                            .background(isToday ? Theme.calendarNow : .clear,
                                         in: RoundedRectangle(cornerRadius: 4))
                     }
                 }
                 .padding(.horizontal, 3).padding(.top, 2)
-                ForEach(split.shown) { entry in
-                    MonthEntry(entry: entry, model: model,
-                               color: color(entry.block), title: title(entry.block))
-                        .onTapGesture { open(entry.block) }
-                        .hoverCard(cards, key: entry.id) {
-                            let rows = cardRows(entry.block)
-                            BlockCard(block: entry.block, model: model,
-                                      active: entry.active,
-                                      shown: rows.shown, more: rows.more)
-                        }
+                ForEach(shown) { item in
+                    switch item {
+                    case .block(let entry):
+                        MonthEntry(entry: entry, model: model,
+                                   color: color(entry.block), title: title(entry.block))
+                            .onTapGesture { open(entry.block) }
+                            .hoverCard(cards, key: entry.id) {
+                                let rows = cardRows(entry.block)
+                                BlockCard(block: entry.block, model: model,
+                                          active: entry.active,
+                                          shown: rows.shown, more: rows.more)
+                            }
+                    case .reset(let reset):
+                        MonthReset(reset: reset, color: resetColor(reset),
+                                   label: resetLabel(reset))
+                            .onTapGesture { more() }
+                    }
                 }
-                if split.more > 0 {
+                if moreCount > 0 {
                     Button { more() } label: {
-                        Text("\(split.more) more")
+                        Text("\(moreCount) more")
                             .font(Theme.font(size: 9))
                             .foregroundStyle(Theme.textSecondary)
                     }
@@ -1317,6 +1541,37 @@ private struct MonthCell: View {
         .overlay(alignment: .leading) {
             Rectangle().fill(Theme.border).frame(width: 1)
         }
+    }
+}
+
+/// One reset row in a month cell: a clockwise arrow in the account's
+/// colour, then the reset's clock time and window.
+private struct MonthReset: View {
+    var reset: UsageReset
+    var color: Color
+    var label: String
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
+    }()
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.clockwise")
+                .font(Theme.font(size: 8, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 10)
+            Text(Self.clock.string(from: reset.at))
+                .font(Theme.font(size: 8)).foregroundStyle(Theme.textSecondary)
+            Text(label).font(Theme.font(size: 9)).lineLimit(1)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(reset.isStale ? 0.55 : 1)
+        .accessibilityElement()
+        .accessibilityLabel("\(reset.title), \(reset.window) limit resets at "
+                            + Self.clock.string(from: reset.at))
     }
 }
 
@@ -1362,10 +1617,6 @@ private struct SessionRow: View {
     var last: Bool
     /// nil on the read-only hover card.
     var open: (() -> Void)? = nil
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     var body: some View {
         HStack(spacing: 8) {
@@ -1413,10 +1664,6 @@ private struct BlockCard: View {
     var active: TimeInterval
     var shown: [(ref: ActivityBlock.SessionRef, row: SessionsModel.Row)]
     var more: Int
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     private var range: String {
         CalendarFormat.range(start: block.start, end: block.end)
@@ -1471,10 +1718,6 @@ private struct OverflowCard: View {
     /// The row under the pointer; stays put when the pointer moves to
     /// the right pane, so the detail never flickers.
     @State private var selected: ActivityBlock?
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     private var shown: ActivityBlock? {
         // A refresh can swap the hidden list under an open card; fall
@@ -1566,10 +1809,6 @@ private struct ProjectSessionsSheet: View {
 
     @Environment(\.dismissSheet) private var dismiss
     @State private var detail: SessionsModel.Row?
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
-    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

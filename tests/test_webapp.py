@@ -34,19 +34,17 @@ class TestWebAppRoutes(HubBase):
         }) + "\n")
 
     def test_pages_are_public_and_confined(self):
-        status, body = self.srv.request("GET", "/app/")
+        status, body = self.srv.request("GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn(b"/app/app.js", body)
-        self.assertIn(b"/app/model-menu.js", body)
-        for path in ("/app/app.js", "/app/format.js", "/app/model-menu.js", "/app/styles.css",
-                     "/app/harness-devin.svg"):
+        self.assertIn(b'src="/app.js"', body)
+        self.assertIn(b'src="/model-menu.js"', body)
+        for path in ("/app.js", "/format.js", "/model-menu.js", "/styles.css",
+                     "/harness-devin.svg"):
             self.assertEqual(self.srv.request("GET", path)[0], 200, path)
-        self.assertEqual(self.srv.request("GET", "/app")[0], 301)
-        for path in ("/app/../hub.py", "/app/%2e%2e/hub.py", "/app/api.py", "/app/x/y.js"):
+        # Only a flat asset name of a known type: nothing climbs out of
+        # the folder, and a Python module beside it is never served.
+        for path in ("/../hub.py", "/%2e%2e/hub.py", "/api.py", "/x/y.js", "/nope.js"):
             self.assertEqual(self.srv.request("GET", path)[0], 404, path)
-        # The remote PWA's own routes are gone; ``/`` lands here.
-        self.assertEqual(self.srv.request("GET", "/app.js")[0], 404)
-        self.assertEqual(self.srv.request("GET", "/")[0], 301)
 
     def test_overview_needs_a_device_and_reads_the_ledger(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/overview")[0], 401)
@@ -74,6 +72,120 @@ class TestWebAppRoutes(HubBase):
 
 
 APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
+
+
+def app_js_function(name: str) -> str:
+    """The source of a top-level ``function name(...)`` in app.js, for node
+    tests that run one page script with app.js's globals stubbed: a page
+    calls the real helper, not a copy that could drift."""
+    import re
+    found = re.search(r"^(?:async )?function %s\(.*?^\}\n" % re.escape(name), APP_JS.read_text(encoding="utf-8"),
+                      re.S | re.M)
+    assert found, name
+    return found.group(0)
+
+
+class TestPriceDownload(unittest.TestCase):
+    """The LiteLLM download must never run under the page lock."""
+
+    def test_download_runs_off_the_page_lock(self):
+        import threading
+        from unittest.mock import patch
+
+        from quiver.webapp import api
+
+        release = threading.Event()
+        calls = []
+
+        def load(home, download=True):
+            calls.append(download)
+            if download:
+                release.wait(10)  # a slow LiteLLM fetch
+                return "downloaded"
+            return "on disk"
+
+        app = WebApp(None, download_prices=True)
+        app._store = object()
+        app._scanned_at = float("inf")  # no scan
+        try:
+            with patch.object(api, "load_catalog", side_effect=load), \
+                    patch.object(app, "_kick_feed"):
+                with app._lock:
+                    app._ensure(False)  # returns before the download
+                self.assertEqual(app._catalog, "on disk")
+                self.assertTrue(app._lock.acquire(timeout=1))
+                app._lock.release()
+                release.set()
+                app._prices_thread.join(5)
+            self.assertEqual(app._catalog, "downloaded")
+            self.assertEqual(calls, [False, True])
+        finally:
+            release.set()
+
+    def test_without_downloads_the_disk_copy_still_reloads_hourly(self):
+        from unittest.mock import patch
+
+        from quiver.webapp import api
+
+        app = WebApp(None, download_prices=False)
+        app._store = object()
+        app._scanned_at = float("inf")
+        with patch.object(api, "load_catalog", side_effect=["old", "new"]), \
+                patch.object(app, "_kick_feed"):
+            app._ensure(False)
+            self.assertEqual(app._catalog, "old")
+            app._catalog_at -= api.CATALOG_TTL_S + 1
+            app._ensure(False)
+        self.assertEqual(app._catalog, "new")
+
+    def test_a_pricing_write_beats_an_older_download(self):
+        from unittest.mock import patch
+
+        from quiver.webapp import api
+
+        app = WebApp(None, download_prices=True)
+        gen = app._prices_gen
+        app.prices_changed()
+        with patch.object(api, "load_catalog", return_value="stale"):
+            app._refresh_prices(gen)
+        self.assertIsNone(app._catalog)
+
+
+class TestSessionUsage(unittest.TestCase):
+    """by_session groups the whole ledger: once per scan and price list."""
+
+    def test_reused_until_the_next_scan_or_prices(self):
+        from unittest.mock import patch
+
+        from quiver.webapp import api
+
+        app = WebApp(None, download_prices=False)
+        app._store, app._catalog, app._scanned_at = object(), object(), 1.0
+        with patch.object(api, "by_session", side_effect=lambda s, c: {}) as grp:
+            app.session_usage()
+            app.session_usage()
+            self.assertEqual(grp.call_count, 1)
+            app._scanned_at = 2.0
+            app.session_usage()
+            app._catalog = object()
+            app.session_usage()
+            self.assertEqual(grp.call_count, 3)
+
+    def test_a_feed_round_drops_the_cached_usage(self):
+        # The Cursor feed writes usage rows without a scan: the next
+        # read must group again.
+        from unittest.mock import patch
+
+        from quiver.webapp import api
+
+        app = WebApp(None, download_prices=False)
+        app._store, app._catalog, app._scanned_at = object(), object(), 1.0
+        with patch.object(api, "by_session", side_effect=lambda s, c: {}) as grp, \
+                patch.object(api, "LedgerStore"), patch.object(api.feed, "poll"):
+            app.session_usage()
+            app._poll_feed()
+            app.session_usage()
+        self.assertEqual(grp.call_count, 2)
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
@@ -144,6 +256,60 @@ class TestSetupOffer(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestDamagedPairLink(unittest.TestCase):
+    """A #pair= link cut short mid-escape can't be decoded: route() shows
+    the gate saying so, credential or not, instead of throwing on a blank
+    page."""
+
+    def panel_at(self, hash_):
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "const els = { sidebar: { innerHTML: '', querySelector: () => ({ outerHTML: '' }) } };\n"
+            "globalThis.document = { addEventListener() {}, querySelectorAll: () => [],"
+            " getElementById: (id) => (els[id] ||= { innerHTML: '' }) };\n"
+            "globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
+            "globalThis.localStorage = { getItem() { return null; } };\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n"
+            "const sessionsPage = { gen: 0 }, harnessesPage = { gen: 0 }, accountsPage = { gen: 0 };\n")
+        body = "\nlet pairs = 0; pairExchange = () => { pairs++; }; route(); process.stdout.write(JSON.stringify([pairs, (els.panel || {}).innerHTML || '']));\n"
+        done = subprocess.run(["node", "-e", prelude + APP_JS.read_text(encoding="utf-8") + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_the_gate_says_the_link_is_damaged(self):
+        for hash_ in ("#pair=abc%", "#pair=abc&name=ph%E0%A4"):
+            pairs, panel = self.panel_at(hash_)
+            self.assertEqual(pairs, 0, hash_)
+            self.assertIn("This pair link is damaged", panel, hash_)
+
+    def test_a_refused_link_says_why_without_a_credential(self):
+        """The real pairExchange, answered 410, in a browser with no stored
+        credential: the gate shows the hub's reason, not the generic
+        pairing line."""
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "const els = { sidebar: { innerHTML: '', querySelector: () => ({ outerHTML: '' }) } };\n"
+            "globalThis.document = { addEventListener() {}, querySelectorAll: () => [],"
+            " getElementById: (id) => (els[id] ||= { innerHTML: '' }) };\n"
+            "globalThis.location = { hash: '' };\n"
+            "globalThis.navigator = { userAgent: '' };\n"
+            "globalThis.localStorage = { getItem() { return null; } };\n"
+            "globalThis.fetch = async () => ({ status: 410, json: async () => ({ error: { message: 'That token was used.' } }) });\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n"
+            "const sessionsPage = { gen: 0 }, harnessesPage = { gen: 0 }, accountsPage = { gen: 0 };\n")
+        body = "\npairExchange('tok', '').then(() => process.stdout.write(els.panel.innerHTML));\n"
+        done = subprocess.run(["node", "-e", prelude + APP_JS.read_text(encoding="utf-8") + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("The pair link didn&#39;t work: That token was used.", done.stdout)
+        self.assertNotIn("needs pairing", done.stdout)
+
+    def test_a_whole_link_still_pairs(self):
+        self.assertEqual(self.panel_at("#pair=abc%2Bd&name=my%20phone")[0], 1)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMacOnlySidebar(unittest.TestCase):
     """app.js's sidebar and router for the Mac-only pages (Menu bar,
     Widgets), run under node with a two-element DOM stubbed."""
@@ -151,7 +317,8 @@ class TestMacOnlySidebar(unittest.TestCase):
     def run_route(self, hash_):
         prelude = (
             "globalThis.window = { addEventListener() {} };\n"
-            "globalThis.document = { addEventListener() {}, getElementById(id) { return els[id]; } };\n"
+            "globalThis.document = { addEventListener() {}, getElementById(id) { return els[id]; },"
+            " querySelectorAll: () => [] };\n"
             "const els = { sidebar: { innerHTML: '', querySelector: () => ({ outerHTML: '<div class=\"brand\"></div>' }) },"
             " panel: { innerHTML: '' } };\n"
             "globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
@@ -202,6 +369,117 @@ class TestMacOnlySidebar(unittest.TestCase):
 
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestBodySheets(unittest.TestCase):
+    """bodySheet puts a page's sheet on document.body, once, so a #panel
+    repaint can't remove it; route() closes it on every navigation."""
+
+    def test_made_once_on_body_and_closed_by_any_route(self):
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "const body = [], panel = { innerHTML: '' }, stubs = {};\n"
+            "const sidebar = { innerHTML: '', querySelector: () => ({ outerHTML: '' }) };\n"
+            "globalThis.document = { addEventListener() {}, body: { appendChild: (el) => body.push(el) },\n"
+            "  createElement: (tag) => ({ tag, dataset: {}, open: false, attrs: {},\n"
+            "    setAttribute(k, v) { this.attrs[k] = v; }, showModal() { this.open = true; },\n"
+            "    close() { this.open = false; this.closed = (this.closed || 0) + 1; } }),\n"
+            "  getElementById: (id) => (id === 'panel' ? panel : id === 'sidebar' ? sidebar\n"
+            "    : body.find((e) => e.id === id) || (id.startsWith('pair-') ? (stubs[id] ||= {}) : null)),\n"
+            "  querySelectorAll: (sel) => (sel === 'dialog[data-route-sheet][open]'\n"
+            "    ? body.filter((e) => 'routeSheet' in e.dataset && e.open) : []) };\n"
+            "globalThis.location = { hash: '#/skills' };\n"
+            "globalThis.localStorage = { getItem: () => null };\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n"
+            "const sessionsPage = { gen: 0 }, harnessesPage = { gen: 0 }, accountsPage = { gen: 0 };\n")
+        body = (
+            "PAGES.skills = () => {};\n"
+            "const a = bodySheet('sk-new-sheet', 'sheet sk-new-sheet', 'New skill');\n"
+            "const again = bodySheet('sk-new-sheet', 'other') === a;\n"
+            "const idle = bodySheet('sk-sheet', 'sheet');\n"
+            "a.showModal(); route();\n"
+            "idle.showModal(); renderGate('Revoked.');\n"
+            "process.stdout.write(JSON.stringify({ count: body.length, again, cls: a.className,\n"
+            "  label: a.attrs['aria-label'], open: a.open, closed: a.closed, idleClosed: idle.closed || 0,\n"
+            "  gateClosed: !idle.open }));\n")
+        done = subprocess.run(["node", "-e", prelude + APP_JS.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"count": 2, "again": True, "cls": "sheet sk-new-sheet",
+                                                   "label": "New skill", "open": False, "closed": 1,
+                                                   "idleClosed": 1, "gateClosed": True})
+
+    def test_pages_keep_no_sheet_inside_the_panel(self):
+        """Skills and Plugins used to draw their sheets into #panel, where a
+        repaint deleted them; Plugins reopened its sheet on a later visit."""
+        for page in ("skills", "plugins", "hooks"):
+            src = (APP_JS.parent / "pages" / f"{page}.js").read_text(encoding="utf-8")
+            self.assertNotIn("<dialog", src, page)
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestGateLead(unittest.TestCase):
+    """renderGate's lead line: the refusal message only while a credential
+    is stored, unless the caller keeps it (Settings after "Revoke this
+    browser", which has just dropped the credential)."""
+
+    def lead(self, call, stored):
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "const els = {};\n"
+            "globalThis.document = { addEventListener() {}, querySelectorAll: () => [],"
+            " getElementById: (id) => (els[id] ||= { innerHTML: '' }) };\n"
+            "globalThis.location = { hash: '' };\n"
+            "globalThis.localStorage = { getItem: () => " + json.dumps(stored) + " };\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n")
+        src = (prelude + APP_JS.read_text(encoding="utf-8") + "\n" + call
+               + ";\nprocess.stdout.write(els.panel.innerHTML.match(/<p>([^<]*)<\\/p>/)[1]);\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_lead(self):
+        cred = json.dumps({"credential": "c"})
+        self.assertEqual(self.lead('renderGate("Revoked.")', cred), "Revoked.")
+        self.assertIn("needs pairing", self.lead('renderGate("Revoked.")', None))
+        self.assertEqual(self.lead('renderGate("Signed out.", true)', None), "Signed out.")
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestSafeHref(unittest.TestCase):
+    """safeHref: a URL that came from GitHub, a tracker, a status feed or
+    a plugin's manifest becomes a link only when it is http(s) or mailto,
+    so a ``javascript:`` one can't run in the app's origin on a click."""
+
+    def hrefs(self, urls):
+        prelude = ("globalThis.window = { addEventListener() {} };\n"
+                   "globalThis.document = { addEventListener() {} };\n"
+                   "globalThis.location = { hash: '' };\n"
+                   "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n")
+        src = (prelude + APP_JS.read_text(encoding="utf-8")
+               + "\nprocess.stdout.write(JSON.stringify(" + json.dumps(urls) + ".map(safeHref)));\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_web_and_mail_links_pass_escaped(self):
+        self.assertEqual(self.hrefs(["https://github.com/a/b/pull/1", " HTTP://x.dev/?a=1&b=\"2\"", "mailto:me@x.dev"]),
+                         ["https://github.com/a/b/pull/1", "HTTP://x.dev/?a=1&amp;b=&quot;2&quot;", "mailto:me@x.dev"])
+
+    def test_script_and_other_schemes_are_dropped(self):
+        self.assertEqual(self.hrefs(["javascript:alert(1)", " JavaScript:alert(1)", "java\tscript:alert(1)",
+                                     "data:text/html,<b>x", "vbscript:x", "//evil.dev", "", None]),
+                         [""] * 8)
+
+    def test_pages_link_outside_urls_only_through_it(self):
+        """No page builds an href from server data with plain esc(); the
+        one esc() href left is Hooks' own in-app route."""
+        static = APP_JS.parent
+        hits = [f"{p.name}:{n}" for p in sorted([*static.glob("*.js"), *static.glob("pages/*.js")])
+                for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+                if 'href="${esc(' in line]
+        self.assertEqual([h.split(":")[0] for h in hits], ["hooks.js"], hits)
+
+
 FORMAT_JS = APP_JS.with_name("format.js")
 
 
@@ -228,6 +506,73 @@ class TestShellWord(unittest.TestCase):
         self.assertEqual(self.word("$(id)"), "'$(id)'")
         self.assertEqual(self.word("it's"), "'it'\\''s'")
         self.assertEqual(self.word(""), "''")
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestRevealActiveTab(unittest.TestCase):
+    """revealActiveTab: on a phone the sidebar scrolls sideways, and the
+    current page's tab must be scrolled into view."""
+
+    def scroll_left(self, nav_width, scroll_width, tab_left, tab_width=80, active=True):
+        src = app_js_function("revealActiveTab") + """
+const tab = { getBoundingClientRect: () => ({ left: %d, width: %d }) };
+const nav = { scrollLeft: 0, scrollWidth: %d, clientWidth: %d,
+  querySelector: () => %s,
+  getBoundingClientRect: () => ({ left: 0, width: %d }) };
+revealActiveTab(nav);
+process.stdout.write(JSON.stringify(nav.scrollLeft));
+""" % (tab_left, tab_width, scroll_width, nav_width, "tab" if active else "null", nav_width)
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_a_tab_past_the_edge_is_centred(self):
+        # Hooks sat at x=1367 in a 375 px row.
+        self.assertEqual(self.scroll_left(375, 1800, 1367), 1367 - (375 - 80) / 2)
+
+    def test_a_row_that_fits_or_no_active_tab_stays_put(self):
+        self.assertEqual(self.scroll_left(220, 220, 100), 0)
+        self.assertEqual(self.scroll_left(375, 1800, 1367, active=False), 0)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestHarnessMark(unittest.TestCase):
+    """Fmt.mark and Fmt.logo, ported from the Mac's HarnessMark and
+    HarnessIcons: every shipped logo draws, aliases and second accounts
+    draw their base harness's, and a harness with no logo keeps its name
+    as the word."""
+
+    def fmt(self, expr):
+        src = FORMAT_JS.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify(" + expr + "));\n"
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_every_shipped_logo_draws(self):
+        files = sorted(p.name for p in FORMAT_JS.parent.glob("harness-*.svg"))
+        ids = [f[len("harness-"):-len(".svg")].removesuffix("-color") for f in files]
+        drawn = self.fmt(json.dumps(ids) + ".map((id) => (Fmt.logo(id).match(/src=\"\\/([^\"]+)\"/) || [])[1] || null)")
+        self.assertEqual(drawn, files)
+
+    def test_marks_like_the_mac(self):
+        out = self.fmt("['claude', 'claude-desktop', 'grok-bot', 'devin-cloud', 'codex-acc2', 'qwen', 'zed']"
+                       ".map((id) => Fmt.mark(id))")
+        self.assertEqual(out, [
+            {"icon": "claude", "word": "CLI", "name": "Claude Code"},
+            {"icon": "claude", "word": "Desktop", "name": "Claude Desktop"},
+            {"icon": "grok", "word": None, "name": "Grok Bot"},
+            {"icon": "devin", "word": "Cloud", "name": "Devin cloud"},
+            {"icon": "codex", "word": "acc2", "name": "Codex (acc2)"},
+            {"icon": "qwen", "word": None, "name": "Qwen"},
+            {"icon": None, "word": "Zed", "name": "Zed"},
+        ])
+        logos = self.fmt("[Fmt.logo('claude-desktop'), Fmt.logo('codex-acc2'), Fmt.logo('copilot'), Fmt.logo('zed')]")
+        self.assertIn("harness-claude-color.svg", logos[0])
+        self.assertIn('alt="Codex (acc2)"', logos[1])
+        self.assertIn('class="logo mono" src="/harness-copilot.svg"', logos[2])
+        self.assertEqual(logos[3], '<span class="logo" aria-hidden="true"></span>')
+        self.assertEqual(self.fmt("Fmt.harnessName('codex-acc2')"), "Codex (acc2)")
 
 
 if __name__ == "__main__":

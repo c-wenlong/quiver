@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, home_path
 from quiver.webapp.pages.skills import read_text
 
 # AgentsModel.projectFileNames, in the order the page lists them.
@@ -30,7 +30,7 @@ MAX_SUGGESTIONS = 12
 
 
 def get(ctx, args: dict) -> dict:
-    home = Path(ctx.home) if ctx.home is not None else Path.home()
+    home = home_path(ctx)
     if "folder" in args:
         return project(args["folder"], home)
     return global_view(ctx, home)
@@ -42,7 +42,7 @@ def post(ctx, action: str, body: dict) -> dict:
     force = {"link": False, "replace": True}.get(action)
     if force is None:
         raise PageError(404, "unknown_action", f"unknown AGENTS.md action: {action}")
-    home = Path(ctx.home) if ctx.home is not None else Path.home()
+    home = home_path(ctx)
     error = run_init_now(home, force=force)
     return {"ran": action, "error": error, **global_view(ctx, home)}
 

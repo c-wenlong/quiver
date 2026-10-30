@@ -15,6 +15,15 @@ class TestPairing(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
 
+    def test_exchange_caps_name_length(self):
+        token = pairing.mint_pair_token(self.tmp)
+        cred = pairing.exchange(self.tmp, token, "y" * 100_000 + "  ")
+        want = "y" * pairing.MAX_NAME_LEN
+        self.assertEqual(cred["name"], want)
+        self.assertEqual(
+            pairing.load_devices(self.tmp)[cred["device_id"]]["name"], want
+        )
+
     def test_exchange_round_trip(self):
         token = pairing.mint_pair_token(self.tmp)
         cred = pairing.exchange(self.tmp, token, "iphone")
@@ -67,6 +76,12 @@ class TestPairing(unittest.TestCase):
         url = pairing.pair_url("h", 1, "tok", "iphone 13")
         self.assertIn("name=iphone%2013", url)
 
+
+    def test_pair_url_brackets_an_ipv6_host(self):
+        self.assertTrue(pairing.pair_url("fd7a::1", 8477, "t").startswith(
+            "http://[fd7a::1]:8477/#pair="))
+        self.assertTrue(pairing.pair_url("[::1]", 8477, "t").startswith(
+            "http://[::1]:8477/"))
     def test_concurrent_exchange_spend_token_once(self):
         # Two racing requests for one token: exactly one mints a device.
         import threading
@@ -95,8 +110,11 @@ class TestPairing(unittest.TestCase):
         lock = threading.Lock()
 
         def mint():
+            # Only the append is locked: the mints themselves must race
+            # for the test to prove none is lost.
+            tok = pairing.mint_pair_token(self.tmp)
             with lock:
-                tokens.append(pairing.mint_pair_token(self.tmp))
+                tokens.append(tok)
 
         threads = [threading.Thread(target=mint) for _ in range(6)]
         for t in threads:
@@ -111,9 +129,6 @@ class TestPairing(unittest.TestCase):
         }
         self.assertEqual(set(tokens), saved)
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 _PEER = {
@@ -151,6 +166,14 @@ class TestPairRequests(unittest.TestCase):
         ][0]
         self.assertEqual(row["name"], "test-iphone")
 
+    def test_request_caps_name_length(self):
+        r = self._request(name="  " + "x" * 100_000)
+        row = [
+            x for x in pairing._load_requests(self.tmp)
+            if x["request_id"] == r["request_id"]
+        ][0]
+        self.assertEqual(row["name"], "x" * pairing.MAX_NAME_LEN)
+
     def test_poll_bad_secret_and_unknown_id(self):
         r = self._request()
         self.assertIsNone(
@@ -181,6 +204,49 @@ class TestPairRequests(unittest.TestCase):
         self.assertEqual(row["tailscale_node"], "nABC")
         self.assertEqual(row["tailscale_login"], "dev@github")
 
+    def _expire_all(self):
+        rows = pairing._load_requests(self.tmp)
+        for row in rows:
+            row["expires_at"] = time.time() - 1
+        pairing._save_requests(self.tmp, rows)
+
+    def test_poll_drops_an_uncollected_credential_once_expired(self):
+        r = self._request()
+        other = self._request(
+            peer={**_PEER, "node_id": "nOTHER"}, name="other")
+        pairing.approve_request(self.tmp, r["code"])
+        self._expire_all()
+        # Any poll — even for a different, unknown request — clears
+        # the expired rows and the plaintext credential with them.
+        self.assertIsNone(
+            pairing.poll_request(self.tmp, "nope", other["poll_secret"]))
+        self.assertEqual(pairing._load_requests(self.tmp), [])
+        self.assertNotIn(
+            "credential", pairing.requests_file(self.tmp).read_text())
+
+    def test_prune_requests_drops_expired_rows_only(self):
+        old = self._request()
+        live = self._request(
+            peer={**_PEER, "node_id": "nOTHER"}, name="other")
+        pairing.approve_request(self.tmp, old["code"])
+        rows = pairing._load_requests(self.tmp)
+        for row in rows:
+            if row["request_id"] == old["request_id"]:
+                row["expires_at"] = time.time() - 1
+        pairing._save_requests(self.tmp, rows)
+        # Both rows are on disk until prune_requests runs.
+        self.assertEqual(len(pairing._load_requests(self.tmp)), 2)
+        pairing.prune_requests(self.tmp)
+        rows = pairing._load_requests(self.tmp)
+        self.assertEqual(
+            [x["request_id"] for x in rows], [live["request_id"]])
+        self.assertNotIn(
+            "credential", pairing.requests_file(self.tmp).read_text())
+
+    def test_prune_requests_without_a_file_writes_nothing(self):
+        pairing.prune_requests(self.tmp)
+        self.assertFalse(pairing.requests_file(self.tmp).exists())
+
     def test_approve_wrong_code_and_lockout(self):
         r = self._request()
         for _ in range(pairing.MAX_CODE_ATTEMPTS):
@@ -193,10 +259,22 @@ class TestPairRequests(unittest.TestCase):
         out = pairing.poll_request(self.tmp, r["request_id"], r["poll_secret"])
         self.assertEqual(out["status"], "denied")
 
-    def test_wrong_code_without_id_does_not_bump(self):
+    def test_wrong_code_without_id_counts_a_strike(self):
         r = self._request()
         self.assertIsNone(pairing.approve_request(self.tmp, "zzzzzz"))
         self.assertIsNotNone(pairing.approve_request(self.tmp, r["code"]))
+
+    def test_wrong_codes_without_id_lock_out_every_pending_row(self):
+        a = self._request()
+        b = self._request(peer={**_PEER, "node_id": "nOTHER"}, name="b")
+        for _ in range(pairing.MAX_CODE_ATTEMPTS):
+            self.assertIsNone(pairing.approve_request(self.tmp, "zzzzzz"))
+        for r in (a, b):
+            out = pairing.poll_request(
+                self.tmp, r["request_id"], r["poll_secret"])
+            self.assertEqual(out["status"], "denied")
+        # Denied rows no longer take the right code either.
+        self.assertIsNone(pairing.approve_request(self.tmp, a["code"]))
 
     def test_self_approval_refused(self):
         r = self._request()
@@ -545,3 +623,7 @@ class TestDeviceMetadata(unittest.TestCase):
         self.assertNotIn(
             "display_name", pairing.load_devices(self.tmp)[did]
         )
+
+
+if __name__ == "__main__":
+    unittest.main()

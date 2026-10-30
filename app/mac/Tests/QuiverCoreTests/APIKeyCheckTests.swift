@@ -60,42 +60,42 @@ import Testing
 @Suite struct APIKeyCheckRequestTests {
     let key = "sk-fake-TEST-KEY-0001"
 
-    @Test func aBearerProbeSendsAnAuthorizationHeader() async {
+    @Test func aBearerProbeSendsAnAuthorizationHeader() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "OPENAI_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "OPENAI_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
-        let request = try! #require(transport.requests.first)
+        let request = try #require(transport.requests.first)
         #expect(request.httpMethod == "GET")
         #expect(request.url?.absoluteString == "https://api.openai.com/v1/models")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer \(key)")
     }
 
-    @Test func anAnthropicProbeSendsXApiKeyAndTheVersionHeader() async {
+    @Test func anAnthropicProbeSendsXApiKeyAndTheVersionHeader() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "ANTHROPIC_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "ANTHROPIC_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
-        let request = try! #require(transport.requests.first)
+        let request = try #require(transport.requests.first)
         #expect(request.value(forHTTPHeaderField: "x-api-key") == key)
         #expect(request.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
     }
 
-    @Test func aGoogleProbeSendsXGoogApiKey() async {
+    @Test func aGoogleProbeSendsXGoogApiKey() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "GEMINI_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "GEMINI_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
-        let request = try! #require(transport.requests.first)
+        let request = try #require(transport.requests.first)
         #expect(request.value(forHTTPHeaderField: "x-goog-api-key") == key)
     }
 
-    @Test func routingRunPostsAnEmptyJsonBody() async {
+    @Test func routingRunPostsAnEmptyJsonBody() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "ROUTING_RUN_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "ROUTING_RUN_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
-        let request = try! #require(transport.requests.first)
+        let request = try #require(transport.requests.first)
         #expect(request.httpMethod == "POST")
         #expect(request.url?.absoluteString == "https://api.routing.run/v1/chat/completions")
         #expect(request.httpBody == Data("{}".utf8))
@@ -103,10 +103,10 @@ import Testing
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer \(key)")
     }
 
-    @Test func requestsTimeOutAfterTenSeconds() async {
+    @Test func requestsTimeOutAfterTenSeconds() async throws {
         let transport = FakeTransport()
         transport.reply(200)
-        let probe = try! #require(APIKeyProbe.probe(forName: "OPENAI_API_KEY"))
+        let probe = try #require(APIKeyProbe.probe(forName: "OPENAI_API_KEY"))
         _ = await APIKeyChecker(transport: transport).check(key: key, probe: probe)
         #expect(transport.requests.first?.timeoutInterval == 10)
     }
@@ -197,10 +197,10 @@ import Testing
         #expect(message.contains("Invalid authentication credentials"))
     }
 
-    @Test func aMessageInAnotherFieldIsFoundAndTrimmed() {
+    @Test func aMessageInAnotherFieldIsFoundAndTrimmed() throws {
         let long = String(repeating: "x", count: 200)
         let body = Data(#"{"detail":"\#(long)"}"#.utf8)
-        let message = try! #require(APIKeyProbe.errorMessage(in: body, key: key))
+        let message = try #require(APIKeyProbe.errorMessage(in: body, key: key))
         #expect(message.count <= 121)
         #expect(message.hasSuffix("…"))
     }
@@ -256,68 +256,11 @@ import Testing
     }
 }
 
-/// A counter a test can await: `bump` wakes every caller parked in
-/// `reach(_:)` whose target the count has passed. Checking the count and
-/// parking the caller happen in one actor step, so a `bump` can never
-/// slip between them and leave a waiter stranded. The ten-second cap
-/// fails the test instead of hanging the suite.
-actor CountGate {
-    private var count = 0
-    private var nextID = 0
-    private var waiters: [Int: (target: Int,
-                              cont: CheckedContinuation<Bool, Never>)] = [:]
-
-    func bump() {
-        count += 1
-        let ready = waiters.filter { count >= $0.value.target }
-        for id in ready.keys { waiters[id] = nil }
-        for waiter in ready.values { waiter.cont.resume(returning: true) }
-    }
-
-    /// True once the count reaches `target`, false after ten seconds.
-    func reach(_ target: Int) async -> Bool {
-        await withCheckedContinuation { cont in
-            if count >= target {
-                cont.resume(returning: true)
-                return
-            }
-            nextID += 1
-            let id = nextID
-            waiters[id] = (target, cont)
-            Task { await self.expire(id) }
-        }
-    }
-
-    /// The timeout resumes only its own waiter, and only if a `bump` has
-    /// not already answered it.
-    private func expire(_ id: Int) async {
-        try? await Task.sleep(for: .seconds(10))
-        waiters.removeValue(forKey: id)?.cont.resume(returning: false)
-    }
-}
-
-/// Races `wait` against a ten-second deadline: the first to finish wins
-/// and the loser is cancelled. Returns false on timeout so a regression
-/// fails the test instead of hanging the suite.
-@MainActor
-private func withinDeadline(_ wait: @escaping @MainActor @Sendable () async -> Bool) async -> Bool {
-    await withTaskGroup(of: Bool.self) { group in
-        group.addTask { await wait() }
-        group.addTask {
-            try? await Task.sleep(for: .seconds(10))
-            return false
-        }
-        let winner = await group.next() ?? false
-        group.cancelAll()
-        return winner
-    }
-}
-
 /// Holds every request parked until released, so in-flight counts and
 /// queueing behind the limiter are observable.
 final class GateTransport: HTTPTransport {
-    private let state = Mutex<(inFlight: Int, peak: Int, requests: [URLRequest],
-                              waiters: [CheckedContinuation<Void, Never>])>((0, 0, [], []))
+    private let state = Mutex<(inFlight: Int, peak: Int, requests: [URLRequest], open: Bool,
+                              waiters: [CheckedContinuation<Void, Never>])>((0, 0, [], false, []))
     private let sendsStarted = CountGate()
 
     var peak: Int { state.withLock { $0.peak } }
@@ -341,17 +284,30 @@ final class GateTransport: HTTPTransport {
         for waiter in released { waiter.resume() }
     }
 
+    /// Answers every parked request and every later one at once, so a
+    /// test whose waits failed can still end its run.
+    func openAll() {
+        let released = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.open = true
+            defer { s.waiters = [] }
+            return s.waiters
+        }
+        for waiter in released { waiter.resume() }
+    }
+
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         // Count and park under one lock: a release between the two could
         // run before the waiter existed and leave this send parked.
         let started = sendsStarted
         await withCheckedContinuation { waiter in
-            state.withLock { s in
+            let parked = state.withLock { s -> Bool in
                 s.inFlight += 1
                 s.peak = max(s.peak, s.inFlight)
                 s.requests.append(request)
-                s.waiters.append(waiter)
+                if !s.open { s.waiters.append(waiter) }
+                return !s.open
             }
+            if !parked { waiter.resume() }
             Task { await started.bump() }
         }
         state.withLock { $0.inFlight -= 1 }
@@ -360,38 +316,22 @@ final class GateTransport: HTTPTransport {
     }
 }
 
-/// Counts how many requests run at once.
-final class CountingTransport: HTTPTransport {
-    private let state = Mutex<(inFlight: Int, peak: Int, requests: [URLRequest])>((0, 0, []))
-
-    var peak: Int { state.withLock { $0.peak } }
-    var requests: [URLRequest] { state.withLock { $0.requests } }
-
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        state.withLock { s in
-            s.inFlight += 1
-            s.peak = max(s.peak, s.inFlight)
-            s.requests.append(request)
-        }
-        defer { state.withLock { $0.inFlight -= 1 } }
-        try? await Task.sleep(for: .milliseconds(20))
-        return (Data(), HTTPURLResponse(url: request.url!, statusCode: 200,
-                                        httpVersion: nil, headerFields: nil)!)
-    }
-}
-
 @MainActor
 @Suite struct APIKeyCheckModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     func model(text: String, transport: HTTPTransport) throws -> APIKeysModel {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycheck-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycheck-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
         let store = APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups"))
-        return APIKeysModel(store: store, shell: FakeShell(environment: [:]),
+        return APIKeysModel.isolated(store: store, shell: FakeShell(environment: [:]),
                             checker: APIKeyChecker(transport: transport),
                             checkCache: APIKeyCheckStore(url: dir.appending(path: "checks.json")),
-                            defaults: UserDefaults(suiteName: "keycheck-\(UUID().uuidString)")!)
+                            home: dir)
     }
 
     @Test func checkAllSkipsEmptyValues() async throws {
@@ -427,8 +367,8 @@ final class CountingTransport: HTTPTransport {
                     .noCheck("Quiver doesn't know how to check this key."))
     }
 
-    @Test func atMostFourChecksRunAtOnce() async throws {
-        let transport = CountingTransport()
+    @Test(.timeLimit(.minutes(1))) func atMostFourChecksRunAtOnce() async throws {
+        let transport = GateTransport()
         let model = try model(text: """
         export OPENAI_API_KEY="sk-fake-A"
         export ANTHROPIC_API_KEY="sk-fake-B"
@@ -439,10 +379,20 @@ final class CountingTransport: HTTPTransport {
         export DEEPSEEK_API_KEY="sk-fake-G"
         """, transport: transport)
         await model.load()
-        await model.checkAll()
-        #expect(transport.requests.count == 7)
-        #expect(transport.peak <= 4)
-        #expect(transport.peak > 1)
+        let all = Task { await model.checkAll() }
+        // Four run at once and hold their slots...
+        let four = await transport.waitForRequests(4)
+        #expect(four)
+        #expect(transport.inFlight == 4)
+        // ...and the other three start only as those slots free up.
+        transport.release()
+        #expect(four ? await transport.waitForRequests(7) : false)
+        // Lets the rest through even if a wait above failed, so the run
+        // ends instead of hanging on a request still parked.
+        transport.openAll()
+        await all.value
+        #expect(transport.requestCount == 7)
+        #expect(transport.peak == 4)
         #expect(model.rows.allSatisfy { model.check(for: $0)?.result == .works })
     }
 
@@ -481,14 +431,9 @@ final class CountingTransport: HTTPTransport {
         #expect(await transport.waitForRequests(6))
         #expect(transport.inFlight == 4)
         // Wait for the released results to land on the model through its
-        // own change stream, with a deadline so a regression fails
-        // instead of hanging; release on failure so nothing stays parked.
-        let landed = await withinDeadline {
-            for await count in Observations({ model.checks.count }) {
-                if Task.isCancelled || count >= 2 { return count >= 2 }
-            }
-            return false
-        }
+        // own change stream, bounded so a regression fails instead of
+        // hanging; release on failure so nothing stays parked.
+        let landed = await observe { model.checks.count >= 2 }
         if !landed { transport.release() }
         #expect(landed)
         #expect(model.checks.count == 2)
@@ -496,14 +441,7 @@ final class CountingTransport: HTTPTransport {
         // request runs while four are parked.
         let finished = model.checks.keys.sorted().prefix(2)
         let again = finished.map { name in Task { await model.check(name: name) } }
-        let requeued = await withinDeadline {
-            for await checking in Observations({ model.checking }) {
-                if Task.isCancelled || finished.allSatisfy(checking.contains) {
-                    return finished.allSatisfy(checking.contains)
-                }
-            }
-            return false
-        }
+        let requeued = await observe { finished.allSatisfy(model.checking.contains) }
         if !requeued { transport.release() }
         #expect(requeued)
         #expect(transport.inFlight == 4)
@@ -537,22 +475,22 @@ final class CountingTransport: HTTPTransport {
     }
 
     @Test func aCheckFollowsARenameOnlyToANameWithTheSameProbe() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycarry-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycarry-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try "export GEMINI_API_KEY=\"g\"\nexport OPENAI_API_KEY=\"o\"\nexport NVIDIA_API_KEY=\"n\"\nexport LOOSE_A=\"a\"\n"
             .write(to: url, atomically: true, encoding: .utf8)
-        let defaults = UserDefaults(suiteName: "keycarry-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycarry")
         let cache = APIKeyCheckStore(url: dir.appending(path: "checks.json"))
         let check = APIKeyCheck(result: .works, checkedAt: Date(), value: "v",
                                salt: APIKeyCheckStore.salt(from: defaults))
         cache.save(["GEMINI_API_KEY": check, "OPENAI_API_KEY": check,
                     "NVIDIA_API_KEY": check, "LOOSE_A": check],
                    for: url, currentNames: ["GEMINI_API_KEY", "OPENAI_API_KEY", "NVIDIA_API_KEY", "LOOSE_A"])
-        let model = APIKeysModel(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
+        let model = APIKeysModel.isolated(store: APIKeysStore(url: url, backupDirectory: dir.appending(path: "backups")),
                                  shell: FakeShell(environment: [:]),
                                  checker: APIKeyChecker(transport: FakeTransport()),
-                                 checkCache: cache, defaults: defaults)
+                                 checkCache: cache, defaults: defaults, home: dir)
         await model.load()
         // GEMINI and GOOGLE share one probe, so the verdict follows the name.
         try await model.update(name: "GEMINI_API_KEY", newName: "GOOGLE_API_KEY", provider: "", value: "g")
@@ -589,10 +527,14 @@ final class CountingTransport: HTTPTransport {
 
 /// The cache under ~/.quiver/cache and the salt the fingerprints hash against.
 @Suite struct APIKeyCheckCacheTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     let salt = Data(repeating: 7, count: 32)
 
     @Test func aSavedResultComesBackFromDisk() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         let store = APIKeyCheckStore(url: dir.appending(path: "api-key-checks.json"))
         let check = APIKeyCheck(result: .rejected(status: 401, message: "bad key"),
                                 checkedAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -610,7 +552,7 @@ final class CountingTransport: HTTPTransport {
     }
 
     @Test func everyResultShapeSurvivesTheRoundTrip() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         let store = APIKeyCheckStore(url: dir.appending(path: "api-key-checks.json"))
         let checks: [String: APIKeyCheck] = [
             "A": APIKeyCheck(result: .works, checkedAt: .now, value: "a", salt: salt),
@@ -628,7 +570,7 @@ final class CountingTransport: HTTPTransport {
     }
 
     @Test func junkOnDiskReadsAsNoResults() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: "api-key-checks.json")
         let keysURL = dir.appending(path: ".api_keys")
@@ -642,19 +584,17 @@ final class CountingTransport: HTTPTransport {
     }
 
     @Test func theSaltIsMadeOnceAndReused() {
-        let suite = "keysalt-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("keysalt")
         let first = APIKeyCheckStore.salt(from: defaults)
         #expect(first.count == 32)
         #expect(APIKeyCheckStore.salt(from: defaults) == first)
-        let other = UserDefaults(suiteName: "keysalt-\(UUID().uuidString)")!
+        let other = TestDefaults("keysalt")
         #expect(APIKeyCheckStore.salt(from: other) != first)
     }
 
     @MainActor
     @Test func resultsSurviveANewModelAndStaleOnesStayHidden() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keysURL = dir.appending(path: ".api_keys")
         try """
@@ -662,12 +602,12 @@ final class CountingTransport: HTTPTransport {
         export XAI_API_KEY="sk-fake-GONE"
         """.write(to: keysURL, atomically: true, encoding: .utf8)
         let cacheURL = dir.appending(path: "api-key-checks.json")
-        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycache")
         func make(_ transport: HTTPTransport) -> APIKeysModel {
-            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+            APIKeysModel.isolated(store: APIKeysStore(url: keysURL, backupDirectory: dir),
                          shell: FakeShell(environment: [:]),
                          checker: APIKeyChecker(transport: transport),
-                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults, home: dir)
         }
         let transport = FakeTransport()
         transport.reply(401)
@@ -699,19 +639,19 @@ final class CountingTransport: HTTPTransport {
     @Test func aRunWithNothingToCheckStillSaves() async throws {
         // Every key lacks a probe, so no network task ever finishes; the
         // single save at the end must still land the "no check" answers.
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keysURL = dir.appending(path: ".api_keys")
         try """
         export MYSTERY_TOKEN="abc123"
         """.write(to: keysURL, atomically: true, encoding: .utf8)
         let cacheURL = dir.appending(path: "api-key-checks.json")
-        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycache")
         func make(_ transport: HTTPTransport) -> APIKeysModel {
-            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+            APIKeysModel.isolated(store: APIKeysStore(url: keysURL, backupDirectory: dir),
                          shell: FakeShell(environment: [:]),
                          checker: APIKeyChecker(transport: transport),
-                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults, home: dir)
         }
         let first = make(FakeTransport())
         await first.load()
@@ -731,7 +671,7 @@ final class CountingTransport: HTTPTransport {
     @Test func finishedChecksSaveBeforeTheRunEnds() async throws {
         // Two of four checks land while the rest stay parked; a model
         // built over the same cache sees the finished pair already.
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keysURL = dir.appending(path: ".api_keys")
         try """
@@ -741,12 +681,12 @@ final class CountingTransport: HTTPTransport {
         export XAI_API_KEY="sk-4"
         """.write(to: keysURL, atomically: true, encoding: .utf8)
         let cacheURL = dir.appending(path: "api-key-checks.json")
-        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycache")
         func make(_ transport: HTTPTransport) -> APIKeysModel {
-            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+            APIKeysModel.isolated(store: APIKeysStore(url: keysURL, backupDirectory: dir),
                          shell: FakeShell(environment: [:]),
                          checker: APIKeyChecker(transport: transport),
-                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults, home: dir)
         }
         let transport = GateTransport()
         let first = make(transport)
@@ -755,14 +695,9 @@ final class CountingTransport: HTTPTransport {
         #expect(await transport.waitForRequests(4))
         transport.release(2)
         // The two finished results land on the model (and save) one at a
-        // time; a deadline keeps a regression from hanging, and on
+        // time; the bound keeps a regression from hanging, and on
         // failure the parked requests are released so the run can end.
-        let landed = await withinDeadline {
-            for await count in Observations({ first.checks.count }) {
-                if Task.isCancelled || count >= 2 { return count >= 2 }
-            }
-            return false
-        }
+        let landed = await observe { first.checks.count >= 2 }
         if !landed { transport.release() }
         #expect(landed)
         #expect(first.checks.count == 2)
@@ -779,7 +714,7 @@ final class CountingTransport: HTTPTransport {
     @Test func twoKeysFilesShareTheCache() async throws {
         // One cache file, two keys files: each model writes only its own
         // section, so neither loses the other's results.
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keysA = dir.appending(path: "a/.api_keys")
         let keysB = dir.appending(path: "b/.api_keys")
@@ -790,12 +725,12 @@ final class CountingTransport: HTTPTransport {
         try "export OPENAI_API_KEY=\"sk-a\"".write(to: keysA, atomically: true, encoding: .utf8)
         try "export OPENAI_API_KEY=\"sk-b\"".write(to: keysB, atomically: true, encoding: .utf8)
         let cacheURL = dir.appending(path: "api-key-checks.json")
-        let defaults = UserDefaults(suiteName: "keycache-\(UUID().uuidString)")!
+        let defaults = TestDefaults("keycache")
         func make(_ keysURL: URL, _ transport: HTTPTransport) -> APIKeysModel {
-            APIKeysModel(store: APIKeysStore(url: keysURL, backupDirectory: dir),
+            APIKeysModel.isolated(store: APIKeysStore(url: keysURL, backupDirectory: dir),
                          shell: FakeShell(environment: [:]),
                          checker: APIKeyChecker(transport: transport),
-                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults)
+                         checkCache: APIKeyCheckStore(url: cacheURL), defaults: defaults, home: dir)
         }
         let transportA = FakeTransport()
         transportA.reply(200)
@@ -817,7 +752,7 @@ final class CountingTransport: HTTPTransport {
     @Test func aSaveKeepsTheNewerResultPerName() {
         // A writer holding an older snapshot merges by checkedAt: it can
         // replace only the names it checked, and only when it is newer.
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         let store = APIKeyCheckStore(url: dir.appending(path: "api-key-checks.json"))
         let keysURL = dir.appending(path: ".api_keys")
         let newer = APIKeyCheck(result: .works,

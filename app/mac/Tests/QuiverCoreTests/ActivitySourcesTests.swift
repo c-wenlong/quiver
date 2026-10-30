@@ -136,6 +136,38 @@ import Testing
         #expect(two.start.timeIntervalSince1970 == 1_786_352_400)
         #expect(blocks.contains { $0.sessions[0].sessionId.hasPrefix("task-") } == false)
     }
+
+    /// The bubble read seeks the key's index (Cursor's table is
+    /// `key TEXT UNIQUE`) rather than scanning every row.
+    @Test func cursorBubbleQueryUsesTheKeyIndex() throws {
+        let dir = try TempDir()
+        let db = try SQLiteDatabase(url: dir.url.appending(path: "state.vscdb"))
+        try db.execute("CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
+        let plan = try db.prepare("EXPLAIN QUERY PLAN " + CursorAppActivity.bubbleQuery)
+        var details: [String] = []
+        while try plan.step() { details.append(plan.text(3) ?? "") }
+        #expect(details.contains { $0.hasPrefix("SEARCH") && $0.contains("INDEX") }, "\(details)")
+    }
+
+    /// Two account roots naming one database read it once instead of
+    /// trapping in Dictionary(uniqueKeysWithValues:).
+    @Test func cursorReadsADatabaseListedTwiceOnce() async throws {
+        let dir = try TempDir()
+        let dbURL = dir.url.appending(path: "User/globalStorage/state.vscdb")
+        try FileManager.default.createDirectory(
+            at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let db = try SQLiteDatabase(url: dbURL)
+        try db.execute("CREATE TABLE cursorDiskKV(key TEXT, value TEXT)")
+        try db.execute("""
+            INSERT INTO cursorDiskKV VALUES
+            ('bubbleId:composer-1:b1', '{"createdAt":"2026-08-10T08:37:16.298Z"}')
+            """)
+        let provider = CursorAppActivity(userDataDirs: { [dir.url, dir.url] },
+                                         index: index(dir, "cursor"))
+        let blocks = try await provider.activityBlocks(in: range, gap: CalendarModel.gap,
+                                                       force: true)
+        #expect(blocks.map { $0.sessions[0].sessionId } == ["composer-1"])
+    }
 }
 
 /// Pi and Droid sessions reach the calendar through their own log files,

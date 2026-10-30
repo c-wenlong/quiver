@@ -58,7 +58,7 @@ const COMPONENTS = [["skills", "skill", "skills"], ["agents", "agent", "agents"]
   ["commands", "command", "commands"], ["hooks", "hook", "hooks"], ["mcp_servers", "MCP server", "MCP servers"]];
 
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-const onPage = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "plugins";
+const onPage = () => currentRoute() === "plugins";
 
 /* ------------------------------------------------------------ loading */
 
@@ -79,10 +79,9 @@ async function load(view, refresh = false) {
   if (seq !== page.seq[view]) return;
   page.busy[view] = false;
   if (gen !== routeGen || !onPage()) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
-    page.error[view] = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+    page.error[view] = failText(status, data, "then refresh");
   } else {
     page.error[view] = null;
     page.data[view] = data;
@@ -149,8 +148,7 @@ function paint() {
   const active = document.activeElement && document.activeElement.id === "pl-search"
     ? document.activeElement.selectionStart : null;
   document.getElementById("panel").innerHTML = `<div class="page">${header()}
-    <div class="stack">${tabs}${body}</div></div>
-    <dialog class="sheet" id="plugin-sheet"></dialog>`;
+    <div class="stack">${tabs}${body}</div></div>`;
   bindHeader();
   for (const tab of document.querySelectorAll("[data-pl-tab]")) {
     tab.onclick = () => {
@@ -347,7 +345,7 @@ async function runFix(action, ids) {
   page.confirming = null;
   page.confirmAll = [];
   if (status === 401) {
-    if (onPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onPage()) renderGate();
     return;
   }
   if (status === 200 && data && data.health) {
@@ -381,8 +379,7 @@ async function runFix(action, ids) {
     }
     return;
   }
-  page.fixError = (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  page.fixError = failText(status, data);
   if (!onPage()) return;
   paint();
   // A refusal most likely means Health moved on (a finding gone, or
@@ -609,8 +606,8 @@ function bindExplore() {
 function openPlugin(ref) {
   const d = page.data.explore;
   const p = d && d.plugins[ref];
-  const sheet = document.getElementById("plugin-sheet");
-  if (!p || !sheet) { page.sheet = null; return; }
+  if (!p) { page.sheet = null; return; }
+  const sheet = bodySheet("plugin-sheet", "sheet");
   page.sheet = ref;
   sheet.onclose = () => { page.sheet = null; };
   let market = null;
@@ -618,7 +615,7 @@ function openPlugin(ref) {
   const field = (label, value) => (value ? `<div class="field-row"><span class="caption">${label}</span><span>${value}</span></div>` : "");
   const comps = COMPONENTS.filter(([k]) => p.components[k]).map(([k, one, many]) => count(p.components[k], one, many)).join(" · ");
   const home = /^https?:\/\//i.test(p.homepage || "")
-    ? `<a href="${esc(p.homepage)}" target="_blank" rel="noopener noreferrer">${esc(p.homepage)}</a>` : esc(p.homepage || "");
+    ? `<a href="${safeHref(p.homepage)}" target="_blank" rel="noopener noreferrer">${esc(p.homepage)}</a>` : esc(p.homepage || "");
   const harnesses = Object.keys(p.harnesses).filter((h) => p.harnesses[h].status !== "absent");
   const pills = harnesses.map((h) => `<span class="badge pl-pill">${Fmt.logo(h, "logo logo-sm")}${esc(Fmt.harnessName(h))} · ${esc(STATUS_TITLE[p.harnesses[h].status])}</span>`).join("");
   const copies = harnesses.filter((h) => p.harnesses[h].path)
@@ -729,7 +726,7 @@ async function runAction(a) {
   const { status, data } = await apiPost("/v1/app/plugins/plugin", a);
   page.actRunning = null;
   if (status === 401) {
-    if (onPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (onPage()) renderGate();
     return;
   }
   if (status === 200 && data && data.explore) {
@@ -749,8 +746,7 @@ async function runAction(a) {
     else text = `${a.ref} in ${Fmt.harnessName(a.harness)}: ${r.detail || "nothing changed"}`;
     page.actOutcome = { ref: a.ref, text, error: !!data.error };
   } else {
-    page.actOutcome = { ref: a.ref, error: true, text: (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.") };
+    page.actOutcome = { ref: a.ref, error: true, text: failText(status, data) };
   }
   if (!onPage()) return;
   paint();

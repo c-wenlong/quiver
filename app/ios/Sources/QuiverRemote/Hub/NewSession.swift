@@ -12,6 +12,27 @@ enum NewSessionOptions {
         machine.launchable ?? machine.harnesses ?? []
     }
 
+    /// What "No machine can start a session" says, from what the hub
+    /// reported. A machine row with `launchable` answered: nothing is
+    /// installed there or every harness is switched off, so updating swe
+    /// would change nothing. Only rows without the field (a hub older
+    /// than the new-session route), or none at all, mean swe is too old.
+    static func noMachineMessage(_ machines: [Machine]) -> String {
+        guard machines.contains(where: { $0.launchable != nil }) else {
+            return "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility."
+        }
+        return noHarnessMessage(machineCount: machines.count)
+    }
+
+    /// A machine that reports `launchable` but lists none: the Mac and
+    /// web launch pickers' wording, with "Quiver's" because a phone has
+    /// a Settings of its own.
+    static func noHarnessMessage(machineCount: Int) -> String {
+        machineCount > 1
+            ? "No harness can start on any machine: install one, or turn it on in Quiver's Settings › Providers."
+            : "No harness can start on the hub: install one there, or turn it on in Quiver's Settings › Providers."
+    }
+
     /// Online machines first, then by name; a machine that can launch
     /// nothing is left out.
     static func machines(_ machines: [Machine]) -> [Machine] {
@@ -224,7 +245,7 @@ final class LaunchFlow {
         do {
             accepted = try await post()
         } catch {
-            phase = .failed((error as? HubError)?.message ?? error.localizedDescription)
+            phase = .failed(error.localizedDescription)
             return nil
         }
         launchId = accepted.launchId

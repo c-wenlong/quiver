@@ -41,7 +41,7 @@ from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, home_path, tilde
 from quiver.webapp.pages.harness import REGISTRY_LOCK
 
 TEXT_MAX = 4000
@@ -56,9 +56,9 @@ def get(ctx, args) -> dict:
 
 def post(ctx, action: str, body: dict) -> dict:
     if action == "replace":
-        home = _home(ctx)
+        home = home_path(ctx)
         error = run_init_now(home, force=True)
-        return {"ran": "replace", "error": error, "blocked": _blocked_now(home), "report": _report(ctx)}
+        return {"ran": "replace", "error": error, "blocked": blocked_now(home), "report": _report(ctx)}
     if action != "run":
         raise PageError(404, "unknown_action", f"unknown doctor action: {action}")
     check, message = body.get("check"), body.get("message")
@@ -77,10 +77,10 @@ def post(ctx, action: str, body: dict) -> dict:
             raise PageError(422, "no_action", "swe can't run this fix itself. Copy the command and run it on the hub.")
         if finding["action"] == "install":
             run = partial(run, name=finding["harness"], via=finding["via"])
-        home = _home(ctx)
+        home = home_path(ctx)
         error = _guarded(run, home)
         # Setup and init link files, and leave a real one in the way alone.
-        blocked = _blocked_now(home) if finding["action"] in ("setup", "init") else []
+        blocked = blocked_now(home) if finding["action"] in ("setup", "init") else []
         return {"ran": finding["action"], "error": error, "blocked": blocked, "report": _report(ctx)}
 
 
@@ -118,16 +118,12 @@ def run_init_now(home: Path, *, force: bool = False) -> str | None:
         return _guarded(lambda h: _run_init(h, force=force), home)
 
 
-def _home(ctx) -> Path:
-    return (ctx.home if ctx is not None and ctx.home else None) or Path.home()
-
-
 def _report(ctx) -> dict:
     from quiver.harness.commands import doctor_report
 
     # swe doctor names an off-PATH harness's install method itself
     # (action "install", "via"), for the Mac app's Run as well as this one.
-    report = doctor_report(_home(ctx)).to_json()
+    report = doctor_report(home_path(ctx)).to_json()
     # The machine the checks ran on, for the confirm line ("on <machine>").
     report["machine"] = ((ctx.machine or {}).get("name") if ctx is not None else None)
     return report
@@ -168,7 +164,10 @@ def blocked_paths(run, home: Path) -> list[str]:
             if result in ("blocked", "protected", "would-conflict", "keep")]
 
 
-def _blocked_now(home: Path) -> list[str]:
+def blocked_now(home: Path) -> list[str]:
+    """The paths ``swe init --force`` would replace, as the Doctor,
+    Hooks and AGENTS.md pages list them; a check read that fails offers
+    nothing."""
     from quiver.init.commands import run_init
 
     try:
@@ -178,10 +177,7 @@ def _blocked_now(home: Path) -> list[str]:
 
 
 def _short(path: Path, home: Path) -> str:
-    try:
-        return "~/" + str(Path(path).relative_to(home))
-    except ValueError:
-        return str(path)
+    return tilde(path, home)
 
 
 def _run_discover(home: Path) -> str | None:

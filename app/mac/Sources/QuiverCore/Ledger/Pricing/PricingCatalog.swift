@@ -276,9 +276,15 @@ public struct PricingCatalog: Sendable {
     /// Which entry key `model` resolves to, through aliases and the
     /// normalized forms. `userPrices: false` skips the override index and
     /// every user-saved entry, so the answer is always a downloaded price.
-    private func resolvedKey(for model: String, userPrices: Bool = true) -> String? {
+    /// `visited` holds the names an alias chain already passed through, so
+    /// a cycle in the supplement (`a` → `b` → `a`) ends instead of
+    /// recursing until the stack runs out.
+    private func resolvedKey(for model: String, userPrices: Bool = true,
+                             visited: Set<String> = []) -> String? {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowered = trimmed.lowercased()
+        guard !visited.contains(lowered) else { return nil }
+        let visited = visited.union([lowered])
         // The user's own prices are consulted before anything else.
         if userPrices {
             if sources[trimmed] == .yours { return trimmed }
@@ -288,12 +294,12 @@ public struct PricingCatalog: Sendable {
         }
         if (userPrices ? entries : listEntries)[trimmed] != nil { return trimmed }
         if let alias = supplement.aliases[lowered], alias.lowercased() != lowered {
-            return resolvedKey(for: alias, userPrices: userPrices)
+            return resolvedKey(for: alias, userPrices: userPrices, visited: visited)
         }
         let index = userPrices ? self.index : listIndex
         for form in Self.forms(of: lowered, stripDates: true, stripEffort: true) {
-            if let alias = supplement.aliases[form], alias != form {
-                return resolvedKey(for: alias, userPrices: userPrices)
+            if let alias = supplement.aliases[form], alias.lowercased() != form {
+                return resolvedKey(for: alias, userPrices: userPrices, visited: visited)
             }
             if let key = index[form] { return key }
         }
@@ -493,7 +499,6 @@ public struct PricingCatalog: Sendable {
 
 public enum PricingError: Error, Equatable {
     case notACatalog
-    case tooFewModels(Int)
     case missingResource
     case httpStatus(Int)
 }

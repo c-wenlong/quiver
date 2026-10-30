@@ -9,7 +9,6 @@ the summary happen in the page, as in the app.
 
 from __future__ import annotations
 
-import glob
 import os
 from pathlib import Path
 
@@ -50,7 +49,8 @@ def is_trivial(harness: str, usage: dict | None, scanned: bool,
     return scanned and covered and harness in LEDGER_HARNESSES
 
 
-def ledger_covers(row: dict, home: Path | None = None) -> bool:
+def ledger_covers(row: dict, home: Path | None = None,
+                  droid_ids: dict | None = None) -> bool:
     """Whether the ledger's source walk reaches this row's own file.
 
     The catalog is wider than the ledger for two harnesses:
@@ -59,7 +59,10 @@ def ledger_covers(row: dict, home: Path | None = None) -> bool:
     ``.settings.json`` sibling never existed. A row from one of those
     sources is unread, not accidental, and stays visible. ``parse_pi``
     and the ledger read the same ``agent/sessions`` tree, so every pi
-    row is covered by definition."""
+    row is covered by definition.
+
+    ``droid_ids`` is a cache one listing shares across its rows: each
+    Droid sessions folder is listed once, not globbed per row."""
     harness = str(row.get("harness") or "")
     if harness not in ("cline", "droid"):
         return True
@@ -77,8 +80,15 @@ def ledger_covers(row: dict, home: Path | None = None) -> bool:
         # taskHistory index alone does not cover the row.
         return (base / "data" / "sessions" / sid / f"{sid}.json").is_file()
     # ``<project>/<sid>.settings.json`` beside the session's transcript.
-    return any((base / "sessions").glob(
-        f"*/{glob.escape(sid)}.settings.json"))
+    if droid_ids is None:
+        droid_ids = {}
+    ids = droid_ids.get(base)
+    if ids is None:
+        suffix = ".settings.json"
+        ids = droid_ids[base] = {
+            p.name[:-len(suffix)]
+            for p in (base / "sessions").glob(f"*/*{suffix}")}
+    return sid in ids
 
 
 def location(harness: str, session_id: str | None) -> str:
@@ -194,6 +204,7 @@ def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: 
     may only be unread, so it stays visible. ``home`` is the machine's
     home dir for ``ledger_covers``'s source checks."""
     projects: dict[tuple[bool, str | None], str | None] = {}
+    droid_ids: dict = {}
     threads = _codex_threads(usage)
     out = []
     for row in rows:
@@ -236,10 +247,21 @@ def build(rows: list[dict], usage: dict[tuple[str, str], dict], hub_machine_id: 
             "mode": row.get("mode") or "",
             "tmux": row.get("tmux") or "",
             "kept": bool(row.get("kept")),
+            # The model of the transcript's newest reply, as the hub's
+            # catalog row carries it (remote/session_model.py); "" when
+            # the hub doesn't know it, so a client shows nothing.
+            "model": row.get("model") or "",
+            # The hub's pin and name (remote/sessionmeta.py): "title" is
+            # already the override when there is one, "harness_title" the
+            # harness's own. "can_fork": the harness's CLI can fork it.
+            "harness_title": row.get("harness_title") or "",
+            "pinned": bool(row.get("pinned")),
+            "pinned_at": row.get("pinned_at") if row.get("pinned") else None,
+            "can_fork": bool(row.get("can_fork")),
             "usage": u and {k: v for k, v in u.items() if k != "cwd"},
             "duration_s": (u["last_ts"] - u["first_ts"]) if u else None,
             "trivial": (is_trivial(harness, u, scanned,
-                                   covered=ledger_covers(row, home))
+                                   covered=ledger_covers(row, home, droid_ids))
                         if here else False),
         })
     out.sort(key=lambda r: (r["last_active_at"], r["key"] or ""), reverse=True)

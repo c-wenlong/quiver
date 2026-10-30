@@ -158,7 +158,7 @@ function settingsSection() {
 }
 
 function onSettingsPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "settings";
+  return currentRoute() === "settings";
 }
 
 async function renderSettings() {
@@ -183,8 +183,8 @@ async function renderSettings() {
   const signedOut = p.signedOut;
   p.signedOut = false;
   if (status === 401) {
-    return renderGate(signedOut ? "This browser was signed out of the hub. Pair it again to come back."
-      : "The hub doesn't know this browser's credential. It may have been revoked.");
+    return signedOut ? renderGate("This browser was signed out of the hub. Pair it again to come back.", true)
+      : renderGate();
   }
   if (status !== 200 || !data) {
     if (!p.data) return pageError(settingsHeader(), status, data, renderSettings);
@@ -443,7 +443,7 @@ function settingsCatalogSheet() {
   const cell = (c) => {
     const file = PROVIDER_LOGOS[c.id];
     const logo = file
-      ? `<img class="set-cat-logo${file.endsWith("-color.svg") ? "" : " mono"}" src="/app/${file}" alt="">`
+      ? `<img class="set-cat-logo${file.endsWith("-color.svg") ? "" : " mono"}" src="/${file}" alt="">`
       : `<span class="set-cat-logo set-cat-mono" aria-hidden="true">${esc(c.name.slice(0, 1))}</span>`;
     return `<button class="set-cat-cell" data-cat-pick="${esc(c.id)}" title="Add ${esc(c.name)}'s key">
       ${logo}<span class="set-cat-name">${esc(c.name)}${c.has_key ? ' <span class="badge">Set</span>' : ""}</span>
@@ -505,12 +505,12 @@ function settingsKeySheet() {
         ? `<span class="caption">saved as</span><select class="field set-key-var" id="set-key-var" aria-label="Variable"${e.working ? " disabled" : ""}>${picked.env_vars.map((v) =>
             `<option value="${esc(v)}"${v === name ? " selected" : ""}>${esc(v)}</option>`).join("")}</select>`
         : `<code class="caption">saved as ${esc(name)}</code>`;
-      fields += `<div class="set-key-saved">${savedAs}<span class="set-key-spacer"></span>${link ? `<a class="caption" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
+      fields += `<div class="set-key-saved">${savedAs}<span class="set-key-spacer"></span>${safeHref(link) ? `<a class="caption" href="${safeHref(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
       if (existing) fields += `<p class="caption set-warn">${esc(name)} is already set; saving replaces it.</p>`;
     }
   } else {
     fields += `<div class="set-key-saved"><span class="caption">Under</span><span>${esc(row ? row.provider || "Other" : "")}</span>
-      <span class="set-key-spacer"></span>${link ? `<a class="caption" href="${esc(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
+      <span class="set-key-spacer"></span>${safeHref(link) ? `<a class="caption" href="${safeHref(link)}" target="_blank" rel="noopener noreferrer">Get a key</a>` : ""}</div>`;
   }
   fields += `<label class="set-form-field"><span class="caption">Value</span>
     <span class="set-key-input-row"><input class="field set-key-input" id="set-key-value" type="${e.show ? "text" : "password"}"
@@ -593,17 +593,6 @@ function settingsUptime(seconds) {
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }
 
-/* Foundation's .relative(presentation: .named): "now", "5 minutes ago". */
-function settingsRelative(epoch) {
-  const diff = Math.min(0, epoch - Date.now() / 1000);
-  const abs = Math.abs(diff);
-  const rtf = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
-  for (const [unit, size] of [["year", 31536000], ["month", 2592000], ["week", 604800],
-    ["day", 86400], ["hour", 3600], ["minute", 60]]) {
-    if (abs >= size) return rtf.format(Math.trunc(diff / size), unit);
-  }
-  return abs < 1 ? "now" : rtf.format(Math.trunc(diff), "second");
-}
 
 function remoteCards() {
   const d = settingsPage.data;
@@ -619,9 +608,9 @@ function remoteCards() {
       ${p.pairError ? `<span class="caption set-danger">${esc(p.pairError)}</span>` : ""}
     </div>`;
   // The hub owner's own tailnet device gets in without pairing, so it
-  // has no row here and nothing of its own to revoke.
+  // has no row here: it is listed under "Signed in through Tailscale".
   const viaTailnet = r.caller && r.caller.kind === "tailnet"
-    ? `<p class="caption set-caller">This browser is signed in through Tailscale as the hub's owner, so it isn't a paired device: it isn't listed here and has nothing to revoke.</p>`
+    ? `<p class="caption set-caller">This browser is signed in through Tailscale as the hub's owner, so it isn't a paired device. It's listed under Signed in through Tailscale.</p>`
     : "";
   // The Mac folds the list after two rows; the Pair row sits under it.
   const shown = p.showsAllDevices ? live : live.slice(0, 2);
@@ -635,7 +624,12 @@ function remoteCards() {
   // show: the old /#approve page's rows, now inline here.
   const requests = (r.requests || []).length ? setCard(
     r.requests.map(requestRow), "Waiting for approval") : "";
-  return `<div class="set-stack">${setupCard()}${hub}${devices}${requests}</div>${pairSheet()}`;
+  // The owner's own tailnet devices, let in without pairing: revoking a
+  // lost one here is the only way to stop it short of the Tailscale
+  // admin console.
+  const signins = (r.signins || []).filter((x) => !x.revoked);
+  const tailnet = signins.length ? setCard(signins.map(signinRow), "Signed in through Tailscale") : "";
+  return `<div class="set-stack">${setupCard()}${hub}${devices}${tailnet}${requests}</div>${pairSheet()}`;
 }
 
 /* `swe remote setup`'s steps, while any is left: each with its state and
@@ -675,8 +669,8 @@ function setupRow(step) {
   const a = step.action || {};
   let control = SETUP_BADGE[step.state] || "";
   const live = step.state === "needs_you" || step.state === "failed";
-  if (live && a.kind === "open" && a.url) {
-    control += ` <a class="set-button" href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.label || "Open")}</a>`;
+  if (live && a.kind === "open" && safeHref(a.url)) {
+    control += ` <a class="set-button" href="${safeHref(a.url)}" target="_blank" rel="noopener">${esc(a.label || "Open")}</a>`;
   } else if (live && a.kind === "command" && a.command) {
     const label = a.label || "Copy command";
     control += ` <button class="icon-button" data-setup-copy="${esc(step.id)}" aria-label="${esc(label)}" title="${esc(label)}">${Fmt.copyIcon()}</button>`;
@@ -701,7 +695,7 @@ async function settingsLoadSetup() {
   p.setupBusy = false;
   p.setup = status === 200 && data
     ? data.remote_setup
-    : { error: (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.") };
+    : { error: failText(status, data, null) };
   if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote();
 }
 
@@ -735,7 +729,7 @@ function deviceRow(dev) {
     if (f) bits.push(f);
   }
   bits.push(dev.id);
-  if (dev.last_seen_at) bits.push(`seen ${settingsRelative(dev.last_seen_at)}`);
+  if (dev.last_seen_at) bits.push(`seen ${Fmt.relative(dev.last_seen_at)}`);
   if (dev.paired_via === "tailscale") bits.push("paired with Tailscale");
   const title = `${esc(name)}${dev.this_device ? ' <span class="badge set-this">This device</span>' : ""}`;
   const busy = p.revoking.has(dev.id);
@@ -754,6 +748,31 @@ function deviceRow(dev) {
   return setRow(name, bits.join(" · "),
     `<button class="set-button" data-act="revoke" title="Sign this device out of the hub"${busy ? " disabled" : ""}>Revoke</button>`,
     { titleHtml: title, warning: p.revokeErrors[dev.id] || null, danger: true, attrs });
+}
+
+function signinRow(s) {
+  const p = settingsPage;
+  const name = s.node_name || "Tailscale device";
+  const bits = ["your Tailscale login"];
+  if (s.last_seen_at) bits.push(`seen ${Fmt.relative(s.last_seen_at)}`);
+  bits.push(s.id);
+  const title = `${esc(name)}${s.this_device ? ' <span class="badge set-this">This device</span>' : ""}`;
+  const busy = p.revoking.has(s.id);
+  const attrs = ` data-device="${esc(s.id)}"`;
+  if (p.confirming === s.id) {
+    const what = s.this_device
+      ? "This is the browser you're using. Revoking stops this device getting in through Tailscale, so every page here stops working until you pair it with a new code."
+      : `Sign ${name} out of the hub? It stops getting in through Tailscale at once, and any device paired from it is signed out too. Pairing it again brings it back.`;
+    return `<div class="set-row set-confirm"${attrs}>
+      <div class="set-text"><div class="set-title">${title}</div><div class="set-detail">${esc(what)}</div></div>
+      <div class="set-control">
+        <button class="set-button" data-act="cancel"${busy ? " disabled" : ""}>Cancel</button>
+        <button class="set-button danger" data-act="revoke-confirm"${busy ? " disabled" : ""}>${busy ? "Revoking…" : s.this_device ? "Revoke this browser" : "Revoke"}</button>
+      </div></div>`;
+  }
+  return setRow(name, bits.join(" · "),
+    `<button class="set-button" data-act="revoke" title="Stop this device getting in through Tailscale"${busy ? " disabled" : ""}>Revoke</button>`,
+    { titleHtml: title, warning: p.revokeErrors[s.id] || null, danger: true, attrs });
 }
 
 function pairSheet() {
@@ -883,8 +902,7 @@ async function settingsSetSearch(on) {
   if (status === 200 && data && data.session_search) {
     if (p.data) p.data.session_search = data.session_search;
   } else {
-    p.searchError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+    p.searchError = failText(status, data, null);
   }
   if (!onSettingsPage()) return;
   paintSettings();
@@ -905,8 +923,7 @@ async function settingsSearchAction(body, focus) {
   if (status === 200 && data && data.session_search) {
     if (p.data) p.data.session_search = data.session_search;
   } else {
-    p.searchError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+    p.searchError = failText(status, data, null);
   }
   if (!onSettingsPage()) return;
   paintSettings();
@@ -1116,13 +1133,12 @@ function settingsCloseKey() {
 }
 
 function settingsFailure(status, data) {
-  return (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  return failText(status, data);
 }
 
 function settingsSignedOut(status) {
   if (status !== 401) return false;
-  if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (onSettingsPage()) renderGate();
   return true;
 }
 
@@ -1320,7 +1336,7 @@ async function settingsLoadGithub(refresh) {
   const { status, data } = await api(`/v1/app/settings?part=github${refresh ? "&refresh=1" : ""}`);
   p.githubBusy = false;
   if (status === 200 && data) p.github = data.github;
-  else p.github = { error: (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.") };
+  else p.github = { error: failText(status, data, null) };
   if (gen === routeGen && onSettingsPage() && settingsSection() === "integrations") settingsRepaintRemote();
 }
 
@@ -1335,13 +1351,13 @@ async function settingsSyncGithub() {
   settingsRepaintRemote("#set-gh-sync");
   const { status, data } = await apiPost("/v1/app/settings/sync", {});
   p.syncing = false;
-  if (status === 401) { if (gen === routeGen && onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { if (gen === routeGen && onSettingsPage()) renderGate(); return; }
   if (status === 200 && data) {
     p.github = data.github;
     const skipped = (data.failed || []).map((f) => (f.owner === "<orgs>" ? "your organizations" : f.owner));
     p.syncError = skipped.length ? `Skipped ${skipped.join(", ")} — their old repos stayed.` : null;
   } else {
-    p.syncError = (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.syncError = failText(status, data);
     // A 409 for gh means the card's own line is out of date: check again.
     if (status === 409 && data && data.error && String(data.error.code || "").startsWith("gh_")) settingsLoadGithub(true);
   }
@@ -1358,9 +1374,9 @@ async function settingsMint() {
   settingsRepaintRemote();
   const { status, data } = await apiPost("/v1/app/settings/pair", {});
   p.minting = false;
-  if (status === 401) { if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { if (onSettingsPage()) renderGate(); return; }
   if (status !== 200 || !data || !data.ticket) {
-    p.pairError = (data && data.error && data.error.message) || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    p.pairError = failText(status, data);
     p.ticket = null;
     settingsStopClock();
   } else {
@@ -1393,7 +1409,7 @@ async function settingsDecide(rid, act, code) {
   settingsRepaintRemote();
   const { status, data } = await apiPost(`/v1/pair/requests/${act}`, { code, request_id: rid });
   p.deciding = null;
-  if (status === 401) { if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { if (onSettingsPage()) renderGate(); return; }
   if (status === 200) {
     // The request is decided: its draft dies with it, and the device
     // and request lists are read again.
@@ -1401,8 +1417,7 @@ async function settingsDecide(rid, act, code) {
     settingsRefreshRemote();
     return;
   }
-  p.decideErrors[rid] = (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  p.decideErrors[rid] = failText(status, data);
   settingsRepaintRemote(`[data-request="${CSS.escape(rid)}"] [data-act="${act}"]`);
 }
 
@@ -1412,7 +1427,7 @@ async function settingsRefreshRemote(focus) {
   settingsRepaintRemote(focus);
   const { status, data } = await api("/v1/app/settings");
   if (gen !== routeGen || mine !== settingsPage.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status === 200 && data) { settingsPage.data = data; settingsRepaintRemote(focus); }
   settingsPollRequests();
 }
@@ -1426,6 +1441,8 @@ function remoteSig(remote) {
   return JSON.stringify([
     (r.requests || []).map((q) => q.request_id),
     (r.devices || []).map((d) => d.id),
+    // A node seen or revoked from another browser or the CLI.
+    (r.signins || []).map((x) => `${x.id}:${x.revoked ? 1 : 0}`),
   ]);
 }
 
@@ -1435,16 +1452,21 @@ function remoteSig(remote) {
 function settingsPollRequests() {
   const p = settingsPage;
   if (p.reqPoll) return;
-  p.reqPoll = setInterval(async () => {
+  const poll = p.reqPoll = setInterval(async () => {
     if (!onSettingsPage() || settingsSection() !== "integrations") {
-      clearInterval(p.reqPoll);
-      p.reqPoll = null;
+      settingsStopPoll();
       return;
     }
     const gen = routeGen;
     const { status, data } = await api("/v1/app/settings?part=remote");
-    if (gen !== routeGen) return;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    // Left the page, or the poll was stopped (a 401, this browser
+    // revoked) while the read was out.
+    if (gen !== routeGen || p.reqPoll !== poll) return;
+    if (status === 401) {
+      // The gate's inputs would be wiped by the next tick's gate.
+      settingsStopPoll();
+      return renderGate();
+    }
     if (status === 200 && data && p.data
         && remoteSig(data.remote) !== remoteSig(p.data.remote)) {
       p.data.remote = data.remote;
@@ -1453,9 +1475,15 @@ function settingsPollRequests() {
   }, 3000);
 }
 
+function settingsStopPoll() {
+  clearInterval(settingsPage.reqPoll);
+  settingsPage.reqPoll = null;
+}
+
 async function settingsRevoke(id) {
   const p = settingsPage;
-  const dev = p.data && p.data.remote.devices.find((d) => d.id === id);
+  const r = p.data && p.data.remote;
+  const dev = r && (r.devices.find((d) => d.id === id) || (r.signins || []).find((d) => d.id === id));
   if (!dev || p.revoking.has(id)) return;
   p.revoking.add(id);
   delete p.revokeErrors[id];
@@ -1464,26 +1492,31 @@ async function settingsRevoke(id) {
     { device_id: id, confirm_this_device: dev.this_device === true });
   p.revoking.delete(id);
   if (status === 200 && data && data.this_device) {
-    // This browser's credential is gone. The owner's own tailnet device
-    // still gets in without it; anything else now answers 401.
+    // This browser's credential is gone, so it leaves localStorage too.
+    // The owner's own tailnet device still gets in without it; anything
+    // else now answers 401.
+    pairForget();
+    // The remote poll would answer 401 now and replace the signed-out
+    // gate with the generic one.
+    settingsStopPoll();
     p.data = null;
     p.confirming = null;
     p.signedOut = true;
     if (onSettingsPage()) renderSettings();
     return;
   }
-  if (status === 401) { if (onSettingsPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked."); return; }
+  if (status === 401) { if (onSettingsPage()) renderGate(); return; }
   if (status === 200 && data) {
     p.confirming = null;
     p.data.remote.devices = data.devices;
+    if (data.signins) p.data.remote.signins = data.signins;
     settingsRepaintRemote("#set-pair");
     // Revoking the last phone undoes "Pair a phone".
     if (!p.setupBusy) settingsLoadSetup();
     return;
   }
   p.confirming = null;
-  p.revokeErrors[id] = (data && data.error && data.error.message)
-    || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+  p.revokeErrors[id] = failText(status, data);
   settingsRepaintRemote(`[data-device="${CSS.escape(id)}"] [data-act="revoke"]`);
 }
 

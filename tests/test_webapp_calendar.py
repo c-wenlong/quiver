@@ -219,6 +219,24 @@ class TestAccounts(unittest.TestCase):
         self.assertEqual(a.label("/opt/x"), "/opt/x")
         self.assertEqual(len(a.homes["claude"]), 2)
 
+    def test_cursor_accounts_are_the_apps_user_data_dirs(self):
+        home = Path(tempfile.mkdtemp())
+        accounts_dir = home / ".quiver" / "accounts"
+        accounts_dir.mkdir(parents=True)
+        (accounts_dir / "profiles.json").write_text(json.dumps({"schema": 1, "profiles": [
+            {"id": "cursor-a", "vendor": "cursor", "name": "Side", "isDefault": False},
+            {"id": "devin-b", "vendor": "devin", "name": "Ops", "isDefault": False},
+        ]}))
+        a = cal.Accounts(home)
+        app = str(home / "Library/Application Support/Cursor")
+        desktop = str(accounts_dir / "cursor" / "cursor-a" / "desktop")
+        # The app's own folder reads as the harness; a profile's by its name.
+        self.assertEqual((a.label(app), a.label(desktop)), ("Cursor", "Cursor: Side"))
+        # The CLI home is named but never a Cursor account in the legend.
+        self.assertEqual(a.label(str(accounts_dir / "cursor" / "cursor-a" / "home")), "Cursor: Side")
+        self.assertEqual(a.homes["cursor"], [app, desktop])
+        self.assertEqual(a.homes["devin"][1], str(accounts_dir / "devin" / "devin-b" / "home"))
+
     def test_no_profiles_file(self):
         home = Path(tempfile.mkdtemp())
         self.assertEqual(cal.Accounts(home).label(str(home / ".claude")), "Claude: Default")
@@ -232,6 +250,39 @@ class TestTitles(unittest.TestCase):
                          "8bccd4fc…")
         self.assertEqual(cal.session_title(None, "b1", "grok-bot", {"b1": "Scout"}), "Scout")
         self.assertEqual(cal.session_title(None, "sand-subagent-1", "grok-bot"), "Subagent")
+
+
+class TestGrokRoster(unittest.TestCase):
+    """Bot names come from Grok Bot's own roster blob, never from the
+    Mac app's grok-bot-names.json memory."""
+
+    def setUp(self):
+        import base64
+        import tempfile
+        self.home = Path(tempfile.mkdtemp())
+        self.store = self.home / cal._GROK_STORE
+        self.store.mkdir(parents=True)
+        self.b32 = lambda key: base64.b32encode(key.encode()).decode().lower().rstrip("=")
+
+    def test_reads_only_the_roster_blob(self):
+        roster = {"schemaVersion": 1, "value": {"rows": [
+            {"id": "b1", "name": "Scout", "lastEntry": "secret"}, {"id": "b2"}]}}
+        (self.store / f"{self.b32('u.roster.last-roster')}.blob").write_text(json.dumps(roster))
+        (self.store / f"{self.b32('u.transcript')}.blob").write_text(
+            json.dumps({"value": {"rows": [{"id": "x", "name": "nope"}]}}))
+        self.assertEqual(cal._grok_names(self.home), {"b1": "Scout"})
+
+    def test_a_malformed_roster_is_an_empty_map(self):
+        name = f"{self.b32('u.roster.last-roster')}.blob"
+        for body in ('{"value": {"rows": true}}', '{"value": 3}', "[]", "not json"):
+            (self.store / name).write_text(body)
+            self.assertEqual(cal._grok_names(self.home), {}, body)
+
+    def test_the_mac_apps_memory_is_not_read(self):
+        data = self.home / ".quiver" / "data"
+        data.mkdir(parents=True)
+        (data / "grok-bot-names.json").write_text(json.dumps({"b9": "Old"}))
+        self.assertEqual(cal._grok_names(self.home), {})
 
 
 class TestRoute(HubBase):
@@ -307,7 +358,7 @@ class TestRoute(HubBase):
         self.assertEqual(status, 200, data)
 
     def test_an_unreadable_ledger_is_a_503(self):
-        with patch("quiver.webapp.pages.calendar.by_session", side_effect=OSError("disk gone")):
+        with patch("quiver.webapp.api.by_session", side_effect=OSError("disk gone")):
             status, _ = self.srv.request("GET", "/v1/app/calendar", headers=self.auth())
         self.assertEqual(status, 503)
 
@@ -319,11 +370,6 @@ class TestRoute(HubBase):
         # A quiet day still draws the week either side; its legend stays empty.
         self.assertEqual(sorted(b["project"] for b in body["blocks"]), ["next", "proj"])
         self.assertEqual(body["legend"], [])
-
-    def test_page_script_is_bundled(self):
-        status, body = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("calendar"', body)
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
@@ -344,6 +390,19 @@ class TestSlidingScript(unittest.TestCase):
         done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
+
+    def test_week_numbers_match_the_page_title(self):
+        """The mini month's and month grid's week numbers use the rule the
+        hub's "Week N" title does (week_of_year), for every first weekday:
+        a Sunday-first Oct 25 2026 is week 44 in both, not ISO's 43."""
+        from datetime import date, timedelta
+        days = [date(2020, 12, 20) + timedelta(days=i) for i in range(0, 3 * 366, 3)]
+        days += [date(2026, 10, 25), date(2027, 1, 1), date(2021, 1, 3)]
+        for fw in (1, 6, 7):
+            isos = json.dumps([d.isoformat() for d in days])
+            got = self.run_js(f"return {isos}.map((d) => T.weekOfYear(T.D(d), {fw}));")
+            self.assertEqual(got, [cal.week_of_year(d, fw) for d in days], fw)
+        self.assertEqual(self.run_js("return T.weekOfYear(T.D('2026-10-25'), 7);"), 44)
 
     def test_a_swipe_rests_on_the_nearest_day(self):
         # Day mode: 15 columns of 100px, one visible.

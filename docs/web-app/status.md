@@ -11,10 +11,12 @@ serves.
   pages of the services your harnesses use.", and in the header "Checked
   … ago" (the newest answer from any page) beside "Add service" and a
   Refresh button.
-- Two groups, AI providers (Claude, OpenAI / Codex, GitHub / Copilot,
-  Cursor, Gemini, Devin) and Infrastructure (npm, Vercel, Cloudflare), in
-  the app's catalog order, plus any pages tracked from the catalogue
-  after them. Each card has the service's logo, name, a link to its
+- Eight groups, matching the app's `StatusService.Group`: Model
+  providers (Claude, OpenAI / Codex, Gemini), Agent platforms (GitHub /
+  Copilot, Cursor, Devin), Cloud & network (Vercel, Cloudflare), Data,
+  Dev tools & quality, Registries (npm), Observability, and Services &
+  productivity, in the app's catalog order, plus any pages tracked from
+  the catalogue after them. Each card has the service's logo, name, a link to its
   status page, and its health as a coloured dot and label (Operational,
   Under maintenance, Minor incident, Major outage, Critical outage;
   "Checking…" while the first check runs, "Unknown" with no reading in
@@ -38,14 +40,14 @@ serves.
 
 ## The catalogue sheet
 
-"Add service" opens the app's `StatusCatalogueSheet` (the same 23 entries
+"Add service" opens the app's `StatusCatalogueSheet` (the same 104 entries
 as `StatusCatalogue.swift`, in `catalogue.py`): a "Service catalogue"
-sheet with a search field, the All / AI providers / Infrastructure chips,
+sheet with a search field, the All chip plus one per group,
 and two-column rows — logo, name, the feed's host, and either an "Added"
 mark or an Add button. Search and chips filter as the app's
 `StatusCatalogue.filter` does: the query matches the name and the feed's
 host ("docker" finds Docker Hub by name, "notion-status" by its page's
-host). A footer counts "N of 23".
+host). A footer counts "N of 104".
 
 A row is marked Added when its feed's host is already on the page, built-in
 or custom, so the same page can never be tracked twice under different
@@ -59,7 +61,7 @@ card appears behind the sheet and the row reads Added.
 | Module | Swift | What |
 |---|---|---|
 | `catalog.py` | `ServiceStatusModels.swift` | `SERVICES` (same ids, names, page and feed URLs, groups), `Health`, `ComponentState`, the logo each card draws, `StatusService.custom` (`isCustom`) |
-| `catalogue.py` | `StatusCatalogue.swift` | `CATALOGUE` — the 23 one-click entries — and `filter_` (`StatusCatalogue.filter`) |
+| `catalogue.py` | `StatusCatalogue.swift` | `CATALOGUE` — the 104 one-click entries — and `filter_` (`StatusCatalogue.filter`) |
 | `tracked.py` | `CustomStatusServices.swift` | the tracked extras, in `~/.quiver/data/web-status-services.json` |
 | `parsers.py` | `StatusParser.swift` | Statuspage / incident.io `summary.json` and Google Cloud `incidents.json` into a `Report` |
 | `poller.py` | `ServiceStatusService.swift` | polling floors, conditional requests, `Retry-After` cooldowns, the cache file, `forget` (`ServiceStatusService.forget`) |
@@ -89,7 +91,7 @@ exactly like a built-in.
 
 | Query | Effect |
 |---|---|
-| `view=catalogue` | The add sheet's rows: `{entries: [{id, name, host, group, logo, added}]}`, all 23 in catalogue order. `added` is true when the entry's feed host is already tracked. |
+| `view=catalogue` | The add sheet's rows: `{entries: [{id, name, host, group, logo, added}]}`, all 104 in catalogue order. `added` is true when the entry's feed host is already tracked. |
 | `cached=1` | The last readings, no request to any status page. The page paints this first. |
 | `force=1` | Refresh: the one-minute floor instead of five. |
 
@@ -115,10 +117,10 @@ and shows on the next load.
   "cached": false,
   "server_time": 1791720030.0,
   "groups": [{
-    "id": "providers", "title": "AI providers",
+    "id": "modelProviders", "title": "Model providers",
     "services": [{
       "id": "claude", "name": "Claude", "page_url": "https://status.claude.com",
-      "group": "providers", "note": null, "logo": "claude", "custom": false,
+      "group": "modelProviders", "note": null, "logo": "claude", "custom": false,
       "health": "minor", "health_title": "Minor incident",
       "summary": "Partially Degraded Service",
       "components": [{"name": "Claude Console (platform.claude.com)", "state": "degraded",
@@ -156,5 +158,5 @@ zone. Incident `url` is passed only when it is an `http(s)` address.
   follows none, so its catalog URLs are already the final ones.
 - A catalogue row or card with no shipped mark draws the service's
   initial on a tile (the app's `CatalogueRow` leaves the square empty);
-  all 23 entries currently ship a mark, so this only covers future ones.
+  all 104 entries currently ship a mark, so this only covers future ones.
 - The menu bar line (`ServiceStatusSummary`) is Mac only and not ported.
