@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iOS app: merge, auto-merge and re-run on the pull request
+  page.** The detail page has the Mac and web merge controls: a
+  strategy menu (Squash and merge, Rebase and merge, Create a merge
+  commit), Merge and Auto-merge. Both ask first, naming the PR, the
+  base branch and the strategy, as the web's inline confirm does. Why a
+  button is off ("Draft PRs can't merge", "Resolve the conflicts
+  first", "Auto-merge is already armed") shows under the buttons, and
+  an armed auto-merge shows as a badge. A check row from a GitHub
+  Actions run has a menu with Re-run failed jobs (when a check in that
+  run failed) and Re-run all jobs. The phone calls the web app's
+  routes the hub already serves to paired devices,
+  `POST /v1/app/repositories/merge` and `…/rerun`. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **Remote: a `limit` notification when a session hits its usage
   limit.** The hub and satellites now raise `notify` kind `limit` when
   a Claude Code session writes its rate-limit record ("You've hit your
