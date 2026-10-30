@@ -155,6 +155,42 @@ func fileAppears(_ name: String, in directory: URL, timeout: Duration = gateTime
     }
 }
 
+/// Waits until process `pid` has exited, woken by the kernel's exit event
+/// (kqueue) instead of polling `kill(pid, 0)`: for a grandchild a test
+/// expects dead, where no in-process gate can reach. A process that has
+/// exited but is not yet reaped (a zombie, reaped on launchd's schedule
+/// once orphaned) counts as ended. False after `timeout`.
+func processEnds(_ pid: pid_t, timeout: Duration = gateTimeout) async -> Bool {
+    /// Touched only on `queue`, so the first answer wins without a lock.
+    final class Once: @unchecked Sendable { var answered = false }
+    let once = Once()
+    let queue = DispatchQueue(label: "processEnds")
+    let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: queue)
+    return await withCheckedContinuation { cont in
+        @Sendable func answer(_ value: Bool) {
+            guard !once.answered else { return }
+            once.answered = true
+            source.cancel()
+            cont.resume(returning: value)
+        }
+        source.setEventHandler { answer(true) }
+        let (seconds, attoseconds) = timeout.components
+        let interval = Double(seconds) + Double(attoseconds) / 1e18
+        queue.asyncAfter(deadline: .now() + interval) { answer(!isLive(pid)) }
+        source.activate()
+        // It may have exited before the watch started.
+        queue.async { if !isLive(pid) { answer(true) } }
+    }
+}
+
+/// Whether `pid` names a running process: neither gone nor a zombie.
+func isLive(_ pid: pid_t) -> Bool {
+    var info = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return false }
+    return info.pbi_status != SZOMB
+}
+
 /// Answers call `i` with `replies[i]`, each held at its own gate until the
 /// test opens it, so a test picks the order replies land in. A call past
 /// the last reply hangs until cancelled, like a command that never ends.

@@ -53,6 +53,9 @@ public struct ProcessRunner: CommandRunning {
     /// it per call. Long enough for swe's slowest replies (a `--usage`
     /// list polling every provider); a wedged child still gets found.
     public var defaultTimeout: Duration
+    /// When the deadline fires. Tests replace it to fire at a point they
+    /// pick, once the command tree they mean to stop exists.
+    var deadlineTimer: DeadlineTimer = .wallClock
 
     public init(executable: String = SweLocation.executable(override: nil),
                 environment: [String: String]? = nil,
@@ -97,6 +100,7 @@ public struct ProcessRunner: CommandRunning {
         process.standardOutput = out
         process.standardError = err
         let gate = LaunchGate(process)
+        let deadlineTimer = self.deadlineTimer
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -225,13 +229,21 @@ public struct ProcessRunner: CommandRunning {
                     }
                     stopTree()
                 }
-                DispatchQueue.global().asyncAfter(
-                    deadline: .now() + timeout.timeInterval, execute: deadlineBlock)
+                deadlineTimer.arm(timeout, deadlineBlock)
                 group.notify(queue: .global()) {
-                    // A finished run disarms the deadline; a timed-out
-                    // or cancelled one keeps the kill pass so survivors
-                    // cannot outlive the call.
-                    if !deadline.isExpired, !stopping.started {
+                    // A run past its deadline throws however it ended:
+                    // the termination handler leaves the group before it
+                    // reports the timeout, so this block can get there
+                    // first and must not hand back the killed child's
+                    // exit status as an answer.
+                    if deadline.isExpired {
+                        once.resume(throwing: SweError.timedOut)
+                        return
+                    }
+                    // A finished run disarms the deadline; a cancelled
+                    // one keeps the kill pass so survivors cannot
+                    // outlive the call.
+                    if !stopping.started {
                         deadlineBlock.cancel()
                         killBlock.cancel()
                     }
@@ -300,6 +312,18 @@ public struct ProcessRunner: CommandRunning {
         return TaggedPid(pid: pid,
                          seconds: info.pbi_start_tvsec,
                          micros: info.pbi_start_tvusec)
+    }
+}
+
+/// When a run's deadline fires. Production counts the timeout down on
+/// the wall clock. A test fires it at the moment it means to test, once
+/// the command tree it wants stopped exists, so a starved machine cannot
+/// move the deadline in front of the child's own setup.
+struct DeadlineTimer: Sendable {
+    let arm: @Sendable (_ timeout: Duration, _ fire: DispatchWorkItem) -> Void
+
+    static let wallClock = DeadlineTimer { timeout, fire in
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval, execute: fire)
     }
 }
 
@@ -453,12 +477,21 @@ public enum LoginShell {
     /// A slow or hanging shell startup file must not freeze the app: after
     /// `timeout` the shell is stopped and `base` comes back unchanged.
     public static func resolve(shell: String, base: [String: String], timeout: Duration) async -> [String: String] {
-        await resolveIfAnswered(shell: shell, base: base, timeout: timeout) ?? scrubbed(base)
+        await resolve(shell: shell, base: base, timeout: timeout, deadline: .wallClock)
+    }
+
+    /// `resolve` with the deadline fired by `deadline`, for tests.
+    static func resolve(shell: String, base: [String: String], timeout: Duration,
+                        deadline: DeadlineTimer) async -> [String: String] {
+        await resolveIfAnswered(shell: shell, base: base, timeout: timeout, deadline: deadline)
+            ?? scrubbed(base)
     }
 
     /// `resolve`, or nil when the shell gave no PATH in time.
-    static func resolveIfAnswered(shell: String, base: [String: String], timeout: Duration) async -> [String: String]? {
-        guard let output = await envOutput(shell: shell, base: base, timeout: timeout),
+    static func resolveIfAnswered(shell: String, base: [String: String], timeout: Duration,
+                                  deadline: DeadlineTimer = .wallClock) async -> [String: String]? {
+        guard let output = await envOutput(shell: shell, base: base, timeout: timeout,
+                                           deadline: deadline),
               let path = path(fromEnvOutput: output) else { return nil }
         var env = base
         env["PATH"] = path
@@ -487,7 +520,8 @@ public enum LoginShell {
         return env
     }
 
-    private static func envOutput(shell: String, base: [String: String], timeout: Duration) async -> String? {
+    private static func envOutput(shell: String, base: [String: String], timeout: Duration,
+                                  deadline: DeadlineTimer = .wallClock) async -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-ilc", "/usr/bin/env"]
@@ -510,7 +544,7 @@ public enum LoginShell {
                 process.waitUntilExit()
                 once.resume(String(decoding: data, as: UTF8.self))
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout.timeInterval) {
+            deadline.arm(timeout, DispatchWorkItem {
                 // SIGKILL, children first: an interactive zsh ignores
                 // SIGTERM, so a terminate left the shell (and whatever its
                 // startup file was waiting on) running for good.
@@ -520,7 +554,7 @@ public enum LoginShell {
                     if process.isRunning { kill(pid, SIGKILL) }
                 }
                 once.resume(nil)
-            }
+            })
         }
         return output
     }
@@ -559,6 +593,12 @@ actor ShellEnvironmentCache {
             _ = start()
         }
         return fallback()
+    }
+
+    /// Waits for the read in flight, if any, so a test sees a background
+    /// retry land without polling for it.
+    func settle() async {
+        await inFlight?.value
     }
 
     private func start() -> Task<Void, Never> {
