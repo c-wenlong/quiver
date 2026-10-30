@@ -211,13 +211,14 @@ class TestBodySheets(unittest.TestCase):
     def test_made_once_on_body_and_closed_by_any_route(self):
         prelude = (
             "globalThis.window = { addEventListener() {} };\n"
-            "const body = [], panel = { innerHTML: '' };\n"
+            "const body = [], panel = { innerHTML: '' }, stubs = {};\n"
             "const sidebar = { innerHTML: '', querySelector: () => ({ outerHTML: '' }) };\n"
             "globalThis.document = { addEventListener() {}, body: { appendChild: (el) => body.push(el) },\n"
             "  createElement: (tag) => ({ tag, dataset: {}, open: false, attrs: {},\n"
             "    setAttribute(k, v) { this.attrs[k] = v; }, showModal() { this.open = true; },\n"
             "    close() { this.open = false; this.closed = (this.closed || 0) + 1; } }),\n"
-            "  getElementById: (id) => (id === 'panel' ? panel : id === 'sidebar' ? sidebar : body.find((e) => e.id === id) || null),\n"
+            "  getElementById: (id) => (id === 'panel' ? panel : id === 'sidebar' ? sidebar\n"
+            "    : body.find((e) => e.id === id) || (id.startsWith('pair-') ? (stubs[id] ||= {}) : null)),\n"
             "  querySelectorAll: (sel) => (sel === 'dialog[data-route-sheet][open]'\n"
             "    ? body.filter((e) => 'routeSheet' in e.dataset && e.open) : []) };\n"
             "globalThis.location = { hash: '#/skills' };\n"
@@ -230,14 +231,16 @@ class TestBodySheets(unittest.TestCase):
             "const again = bodySheet('sk-new-sheet', 'other') === a;\n"
             "const idle = bodySheet('sk-sheet', 'sheet');\n"
             "a.showModal(); route();\n"
+            "idle.showModal(); renderGate('Revoked.');\n"
             "process.stdout.write(JSON.stringify({ count: body.length, again, cls: a.className,\n"
-            "  label: a.attrs['aria-label'], open: a.open, closed: a.closed, idleClosed: idle.closed || 0 }));\n")
+            "  label: a.attrs['aria-label'], open: a.open, closed: a.closed, idleClosed: idle.closed || 0,\n"
+            "  gateClosed: !idle.open }));\n")
         done = subprocess.run(["node", "-e", prelude + APP_JS.read_text(encoding="utf-8") + "\n" + body],
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(json.loads(done.stdout), {"count": 2, "again": True, "cls": "sheet sk-new-sheet",
                                                    "label": "New skill", "open": False, "closed": 1,
-                                                   "idleClosed": 0})
+                                                   "idleClosed": 1, "gateClosed": True})
 
     def test_pages_keep_no_sheet_inside_the_panel(self):
         """Skills and Plugins used to draw their sheets into #panel, where a
@@ -246,6 +249,34 @@ class TestBodySheets(unittest.TestCase):
             src = (APP_JS.parent / "pages" / f"{page}.js").read_text(encoding="utf-8")
             self.assertNotIn("<dialog", src, page)
 
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestGateLead(unittest.TestCase):
+    """renderGate's lead line: the refusal message only while a credential
+    is stored, unless the caller keeps it (Settings after "Revoke this
+    browser", which has just dropped the credential)."""
+
+    def lead(self, call, stored):
+        prelude = (
+            "globalThis.window = { addEventListener() {} };\n"
+            "const els = {};\n"
+            "globalThis.document = { addEventListener() {}, querySelectorAll: () => [],"
+            " getElementById: (id) => (els[id] ||= { innerHTML: '' }) };\n"
+            "globalThis.location = { hash: '' };\n"
+            "globalThis.localStorage = { getItem: () => " + json.dumps(stored) + " };\n"
+            "function renderSessions() {} function renderHarnesses() {} function renderAccounts() {}\n")
+        src = (prelude + APP_JS.read_text(encoding="utf-8") + "\n" + call
+               + ";\nprocess.stdout.write(els.panel.innerHTML.match(/<p>([^<]*)<\\/p>/)[1]);\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_lead(self):
+        cred = json.dumps({"credential": "c"})
+        self.assertEqual(self.lead('renderGate("Revoked.")', cred), "Revoked.")
+        self.assertIn("needs pairing", self.lead('renderGate("Revoked.")', None))
+        self.assertEqual(self.lead('renderGate("Signed out.", true)', None), "Signed out.")
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestSafeHref(unittest.TestCase):

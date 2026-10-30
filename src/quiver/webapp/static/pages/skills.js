@@ -12,6 +12,7 @@ const skillsPage = {
   // or {kind: "link_all", paths}), the last failure and Link all's summary.
   busy: new Set(), confirm: null, actionError: null, summary: null,
   newToken: 0,            // the New skill form on show; older replies are stale
+  fileToken: 0,           // the file sheet's current read, likewise
   detail: {},             // folder -> detail payload
   fmShowsAll: false, treeShowsAll: false, open: new Set(),
 };
@@ -793,11 +794,14 @@ async function openSkillFile(d, name) {
       <div class="card-subtitle sk-mono-sub">${esc(skillsPath(path, d.home))}</div></div>
       <button class="sk-button" value="close">Close</button></div>${inner}</form>`;
   sheet.innerHTML = head('<p class="caption">Reading…</p>');
-  sheet.dataset.file = name;
+  // Each opening has its own token: the same file name in another skill,
+  // opened after this one closed, must not take this read's answer.
+  const token = String(++skillsPage.fileToken);
+  sheet.dataset.token = token;
   if (!sheet.open) sheet.showModal();
   const { status, data } = await api(`/v1/app/skills?skill=${encodeURIComponent(d.skill.path)}&file=${encodeURIComponent(name)}`);
-  // Closed, or another file picked while this one was read.
-  if (!sheet.isConnected || !sheet.open || sheet.dataset.file !== name) return;
+  // Closed, or another file opened while this one was read.
+  if (!sheet.open || sheet.dataset.token !== token) return;
   let body;
   if (status !== 200 || !data) {
     body = `<p class="error">${esc((data && data.error && data.error.message) || `The hub answered ${status}.`)}</p>`;

@@ -206,8 +206,10 @@ private struct PairRequestCard: View {
                 HStack(spacing: 8) {
                     Button("Approve") { Task { await decide(true) } }.primaryButton()
                         .disabled(code.count != 6 || busy)
+                    // The hub checks the code on a deny too, so a stray
+                    // tap can't refuse someone else's request.
                     Button("Deny") { Task { await decide(false) } }.secondaryButton(destructive: true)
-                        .disabled(busy)
+                        .disabled(code.count != 6 || busy)
                 }
             }
         }

@@ -141,12 +141,20 @@ function bodySheet(id, className, label = "") {
   return sheet;
 }
 
+function closeRouteSheets() {
+  for (const sheet of document.querySelectorAll("dialog[data-route-sheet][open]")) sheet.close();
+}
+
 /* Only a device the hub can't place reaches this: the owner's own tailnet
  * devices are let in without pairing. The card is the old remote page's
  * pair view: ask the tailnet for a code the owner approves elsewhere, or
- * paste a token a ``swe remote pair`` or Settings' QR minted. */
-function renderGate(message) {
-  const lead = credential() ? message
+ * paste a token a ``swe remote pair`` or Settings' QR minted. ``message``
+ * explains a credential the hub refused; with none stored the card says
+ * the device needs pairing, unless ``always`` keeps the message. */
+function renderGate(message, always = false) {
+  // A page's open sheet would stay modal above the gate.
+  closeRouteSheets();
+  const lead = credential() || always ? message
     : "This device isn't signed in to the hub owner's Tailscale account, so it needs pairing.";
   document.getElementById("panel").innerHTML = `<div class="page"><div class="card gate">
     <div class="card-title">Pair this browser</div>
@@ -221,6 +229,12 @@ function pairStillLive(gen, rgen) {
 /* Bank a minted credential where every page looks for it. */
 function pairStore(data) {
   try { localStorage.setItem("quiver.remote", JSON.stringify(data)); } catch { }
+}
+
+/* And drop it once the hub has revoked it, so this browser stops
+ * presenting a dead credential. */
+function pairForget() {
+  try { localStorage.removeItem("quiver.remote"); } catch { }
 }
 
 /* ``#pair=<token>[&name=]``: the address `swe remote pair` and Settings'
@@ -377,7 +391,7 @@ function route() {
   }
   // A response still in flight belongs to the page left behind, and so
   // does any sheet it opened.
-  for (const sheet of document.querySelectorAll("dialog[data-route-sheet][open]")) sheet.close();
+  closeRouteSheets();
   routeGen++;
   overview.gen++;
   sessionsPage.gen++;
