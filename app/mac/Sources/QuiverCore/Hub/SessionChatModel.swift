@@ -327,6 +327,12 @@ public final class SessionChatModel {
             // A truncation reload replaced the history meanwhile.
             guard nextBefore == before else { return }
             if prepend(page) { return }
+            // A cursor that didn't move back would ask for the same page
+            // forever: treat it as the start of the history.
+            if hasEarlier, (nextBefore ?? before) >= before {
+                hasEarlier = false
+                showOrphans()
+            }
         }
     }
 
