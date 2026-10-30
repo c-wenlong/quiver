@@ -966,12 +966,18 @@ class TestUntrackOnce(unittest.TestCase):
         out = self.run_js(
             "statusPage.removing = 'x';"
             " const first = statusUntrack('x'); statusUntrack('x');"
-            " const during = { posts: posts.length, busy: statusPage.untracking };"
+            " const during = { posts: posts.length, busy: [...statusPage.untracking] };"
             " replies[0]({ status: 200, data: { services: [] } }); await first;"
             " process.stdout.write(JSON.stringify({ during, removing: statusPage.removing,"
-            "   busy: statusPage.untracking, error: statusPage.removeError, paints }));")
-        self.assertEqual(out, {"during": {"posts": 1, "busy": "x"}, "removing": None,
-                               "busy": None, "error": "", "paints": 1})
+            "   busy: [...statusPage.untracking], error: statusPage.removeError, paints }));")
+        self.assertEqual(out, {"during": {"posts": 1, "busy": ["x"]}, "removing": None,
+                               "busy": [], "error": "", "paints": 1})
+
+    def test_another_cards_write_keeps_this_cards_guard(self):
+        out = self.run_js(
+            "statusUntrack('a'); statusUntrack('b'); statusUntrack('a');"
+            " process.stdout.write(JSON.stringify({ posts, busy: [...statusPage.untracking] }));")
+        self.assertEqual(out, {"posts": ["a", "b"], "busy": ["a", "b"]})
 
     def test_a_page_already_gone_reads_the_list_again(self):
         out = self.run_js(
@@ -982,6 +988,17 @@ class TestUntrackOnce(unittest.TestCase):
             " process.stdout.write(JSON.stringify({ removing: statusPage.removing, error: statusPage.removeError,"
             "   expanded: statusPage.expanded.has('x'), reloads, paints }));")
         self.assertEqual(out, {"removing": None, "error": "", "expanded": False, "reloads": 1, "paints": 0})
+
+    def test_a_superseded_gone_reply_leaves_the_newer_write_be(self):
+        """A's 404 landing while B's write is out must not start a read
+        that could beat B's write, nor close B's confirm."""
+        out = self.run_js(
+            "const a = statusUntrack('a'); statusPage.removing = 'b'; const b = statusUntrack('b');"
+            " replies[0]({ status: 404, data: { error: { code: 'unknown_service', message: 'gone' } } }); await a;"
+            " const mid = { reloads, removing: statusPage.removing };"
+            " replies[1]({ status: 200, data: { services: [] } }); await b;"
+            " process.stdout.write(JSON.stringify({ mid, reloads, paints, removing: statusPage.removing }));")
+        self.assertEqual(out, {"mid": {"reloads": 0, "removing": "b"}, "reloads": 0, "paints": 1, "removing": None})
 
 
 

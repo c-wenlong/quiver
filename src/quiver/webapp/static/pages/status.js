@@ -9,7 +9,7 @@
 "use strict";
 
 const statusPage = { data: null, loading: false, gen: 0, expanded: new Set(), loadedAt: 0, timer: null,
-  catalogue: null, removing: null, removeError: "", untracking: null };
+  catalogue: null, removing: null, removeError: "", untracking: new Set() };
 
 const STATUS_ICONS = {
   open: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
@@ -249,7 +249,7 @@ function statusCard(raw) {
       <span class="status-confirm-buttons">
         <button class="status-confirm-button" data-status-remove-cancel>Cancel</button>
         <button class="status-confirm-button danger" data-status-remove-go="${esc(s.id)}"${
-          p.untracking === s.id ? " disabled" : ""}>Stop tracking</button>
+          p.untracking.has(s.id) ? " disabled" : ""}>Stop tracking</button>
       </span></div>` : "";
   return `<article class="card status-card">
     <div class="status-body">
@@ -285,19 +285,18 @@ async function statusUntrack(id) {
   const p = statusPage;
   // One write per card: a second click would move the generation past
   // the first's 200 and come back 404, leaving the card with an error.
-  if (p.untracking === id) return;
-  p.untracking = id;
+  if (p.untracking.has(id)) return;
+  p.untracking.add(id);
   // Bump the generation like renderStatus does: a list read still in
   // flight began before this write and must not put the card back. The
   // same stamp orders two writes, so only the latest reply is applied.
   const mine = ++p.gen;
   const { status, data } = await apiPost("/v1/app/status/untrack", { id });
-  if (p.untracking === id) p.untracking = null;
+  p.untracking.delete(id);
   if (status === 401) return statusGate();
   if (status === 200 && data) {
     if (mine !== p.gen) return;
-    p.removing = null;
-    p.removeError = "";
+    if (p.removing === id) { p.removing = null; p.removeError = ""; }
     p.expanded.delete(id);
     statusKeep(data);
     if (statusOnPage()) paintStatus();
@@ -305,10 +304,12 @@ async function statusUntrack(id) {
   }
   // Already gone (another browser, or an earlier write whose reply was
   // dropped): the hub's list no longer has the card, so read it again.
+  // A newer write or read is out already and its answer repaints, so a
+  // superseded reply starts nothing (its read could beat that write).
   if (status === 404 && data && data.error && data.error.code === "unknown_service") {
-    p.removing = null;
-    p.removeError = "";
     p.expanded.delete(id);
+    if (mine !== p.gen) return;
+    if (p.removing === id) { p.removing = null; p.removeError = ""; }
     if (statusOnPage()) renderStatus("status");
     return;
   }
