@@ -81,13 +81,13 @@ struct InboxView: View {
             if item.isGitHub {
                 Image(systemName: "bell.badge")
                     .font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
-                    .frame(width: Theme.statusDot + 4)
+                    .iconColumn(Theme.statusDot + 4)
             } else {
                 StatusDot(status: item.sessionStatus)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.displayTitle).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                HStack(spacing: 6) {
+                Text(item.displayTitle).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1, larger: 3)
+                WrappingHStack(spacing: 6) {
                     if !item.isGitHub {
                         HarnessIcon(harness: item.harness, name: item.harnessName, size: 13)
                     }

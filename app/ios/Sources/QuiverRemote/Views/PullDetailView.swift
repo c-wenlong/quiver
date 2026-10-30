@@ -262,7 +262,7 @@ struct PullDetailView: View {
             }
             .disabled(merging)
             .accessibilityLabel("Merge strategy, \(method.title)")
-            HStack(spacing: 8) {
+            StackingRow {
                 Button {
                     mergeError = nil
                     asking = .merge
@@ -310,6 +310,7 @@ struct PullDetailView: View {
                 } else {
                     Image(systemName: "ellipsis.circle").font(Theme.font(size: 16))
                         .foregroundStyle(Theme.textSecondary)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 }
             }
             .frame(width: 44, height: 44)

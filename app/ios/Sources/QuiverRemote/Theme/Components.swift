@@ -44,7 +44,7 @@ struct GroupLabel: View {
 
     var body: some View {
         HStack {
-            Text(text).font(Theme.groupLabel).foregroundStyle(color).lineLimit(1)
+            Text(text).font(Theme.groupLabel).foregroundStyle(color).lineLimit(1, larger: 2)
             Spacer(minLength: 8)
             if let trailing { Text(trailing).font(Theme.caption).foregroundStyle(Theme.textMuted) }
         }
@@ -453,5 +453,111 @@ extension StateCard {
         StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub",
                   message: HubError.detail(underUnreachableTitle: error), tone: .error,
                   actionTitle: "Try again", action: retry)
+    }
+}
+
+// MARK: - Larger text sizes
+
+/// Views in a row that wraps onto more lines when it runs out of width,
+/// like words in a paragraph; each line is centred vertically, as an
+/// HStack's is. A view wider than a whole line gets the line's width.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let lines = arrange(proposal.width ?? .infinity, subviews)
+        let height = lines.reduce(0) { $0 + $1.height } + lineSpacing * CGFloat(max(0, lines.count - 1))
+        return CGSize(width: lines.map(\.width).max() ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for line in arrange(bounds.width, subviews) {
+            var x = bounds.minX
+            for item in line.items {
+                subviews[item.index].place(at: CGPoint(x: x, y: y + (line.height - item.size.height) / 2),
+                                           proposal: ProposedViewSize(item.size))
+                x += item.size.width + spacing
+            }
+            y += line.height + lineSpacing
+        }
+    }
+
+    private struct Line {
+        var items: [(index: Int, size: CGSize)] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func arrange(_ maxWidth: CGFloat, _ subviews: Subviews) -> [Line] {
+        var lines: [Line] = []
+        var line = Line()
+        for (index, subview) in subviews.enumerated() {
+            var size = subview.sizeThatFits(.unspecified)
+            if size.width > maxWidth { size = subview.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil)) }
+            if !line.items.isEmpty && line.width + spacing + size.width > maxWidth {
+                lines.append(line)
+                line = Line()
+            }
+            line.width += (line.items.isEmpty ? 0 : spacing) + size.width
+            line.height = max(line.height, size.height)
+            line.items.append((index, size))
+        }
+        if !line.items.isEmpty { lines.append(line) }
+        return lines
+    }
+}
+
+/// An HStack at the default text size; above it, a `FlowLayout`, so
+/// filter chips and a row's "·" details wrap onto another line instead
+/// of squeezing their words letter by letter or cutting off.
+struct WrappingHStack<Content: View>: View {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 4
+    @ViewBuilder var content: Content
+    @Environment(\.dynamicTypeSize) private var size
+
+    var body: some View {
+        let layout = size > .large
+            ? AnyLayout(FlowLayout(spacing: spacing, lineSpacing: lineSpacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        layout { content }
+    }
+}
+
+/// Views side by side, or one under the other at accessibility sizes,
+/// where two full-size buttons or three figures no longer fit beside
+/// each other and their words broke mid-word.
+struct StackingRow<Content: View>: View {
+    var spacing: CGFloat = 8
+    @ViewBuilder var content: Content
+    @Environment(\.dynamicTypeSize) private var size
+
+    var body: some View {
+        let layout = size.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: spacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        layout { content }
+    }
+}
+
+/// See `View.lineLimit(_:larger:)`.
+struct GrowingLineLimit: ViewModifier {
+    var lines: Int
+    var larger: Int
+    @Environment(\.dynamicTypeSize) private var size
+
+    func body(content: Content) -> some View {
+        content.lineLimit(size > .large ? max(lines, larger) : lines)
+    }
+}
+
+extension View {
+    /// `lines` at the default text size and `larger` above it, so a title
+    /// that fit one line at the default keeps about as many words on
+    /// screen when its text grows.
+    func lineLimit(_ lines: Int, larger: Int) -> some View {
+        modifier(GrowingLineLimit(lines: lines, larger: larger))
     }
 }

@@ -129,14 +129,14 @@ struct IssuesView: View {
     }
 
     private var filterBar: some View {
-        HStack(spacing: 6) {
+        WrappingHStack {
             ForEach(IssueFilter.allCases) { f in
                 FilterChip(title: f.title, count: count(f), selected: filter == f) {
                     filter = f
                 }
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 4)
     }
 
@@ -234,8 +234,8 @@ struct IssueRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(issue.title ?? "Untitled")
                     .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.tail)
-                HStack(spacing: 6) {
+                    .lineLimit(1, larger: 3).truncationMode(.tail)
+                WrappingHStack(spacing: 6) {
                     Text("#\(issue.number)")
                     if let author = issue.author, !author.isEmpty, author != "-" {
                         Text("· \(author)").lineLimit(1)
@@ -248,7 +248,7 @@ struct IssueRowView: View {
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 if let badges = badges, !badges.isEmpty {
-                    HStack(spacing: 4) {
+                    WrappingHStack(spacing: 4) {
                         ForEach(Array(badges.enumerated()), id: \.offset) { Badge($0.element) }
                     }
                 }
