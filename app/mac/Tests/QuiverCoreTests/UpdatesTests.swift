@@ -101,10 +101,9 @@ struct UpdatePreferencesTests {
     }
 
     @Test func stampedPathIsUsedWhenItExists() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let dir = temp.url
         let prefs = UpdatePreferences(defaults: try! freshDefaults())
         #expect(prefs.checkout(build: BuildInfo(sourcePath: dir.path)) == dir.path)
         #expect(prefs.checkout(build: BuildInfo(sourcePath: nil)) == nil)
