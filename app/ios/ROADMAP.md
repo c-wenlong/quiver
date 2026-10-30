@@ -101,7 +101,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Composer: Queue and Steer segment, Stop, a round send button
 - [x] Send states on your bubble: sending, queued (with the hub's reason), failed with retry
 - [ ] `/` command shortcuts and `@` file completion
-- [ ] Photo and file attach, landing as `@` refs on the machine
+- [x] Photo and file attach, landing as `@` refs on the machine (paperclip in the composer: Photos or Files, chips with upload progress; photos go up as JPEG, long edge 2048 px)
 - [ ] Hub: `@` file completion proxied from the machine
 
 ### P7. Inbox
