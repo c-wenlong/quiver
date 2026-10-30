@@ -386,3 +386,53 @@ class TestLookalikeCleanup(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPageReadsAndTheFeedConnection(unittest.TestCase):
+    """A page read on the shared connection must not pin a WAL snapshot.
+
+    The pricing reads fill a temp ``thresholds`` table, and that DELETE
+    once opened an implicit transaction no read path ever closed. The
+    feed round then committed on its own connection, so the page
+    connection's next write (the scan's ``scanned_at``) had to upgrade a
+    stale snapshot: SQLite answers ``database is locked`` at once, and
+    with the transaction still open every later scan failed the same way
+    until the hub restarted."""
+
+    def setUp(self):
+        from quiver.webapp.api import WebApp
+        self.home = Path(tempfile.mkdtemp())
+        self.webapp = WebApp(self.home, download_prices=False)
+        self.addCleanup(self.webapp.close)
+
+    def test_a_feed_commit_after_a_page_read_leaves_the_next_scan_working(self):
+        from quiver.webapp.api import WebApp
+        # Hold the round back so it lands after the page's read, the
+        # order the wedged hub's WAL shows (scan, read, feed commit).
+        with mock.patch.object(WebApp, "_kick_feed"):
+            self.webapp.overview("month", None)
+        self.assertFalse(self.webapp._store.db.in_transaction)
+        self.webapp._poll_feed()
+        self.assertEqual(self.webapp._feed_notes, [])
+        for _ in range(2):  # the wedge was permanent: every scan failed
+            self.webapp.overview("month", None, rescan=True)
+            self.webapp.sessions([], "hub", {}, rescan=True)
+
+    def test_a_failed_scan_ends_its_transaction(self):
+        import sqlite3
+
+        from quiver.webapp import api
+
+        def fails(store, home):
+            store.set_meta("probe", "1")  # opens the implicit transaction
+            raise sqlite3.OperationalError("database is locked")
+
+        with mock.patch.object(api, "scan", fails), \
+                mock.patch.object(api.WebApp, "_kick_feed"):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.webapp.overview("month", None)
+        # Rolled back: nothing half-written, no snapshot left pinned for
+        # the next request to trip over.
+        self.assertFalse(self.webapp._store.db.in_transaction)
+        self.assertIsNone(self.webapp._store.meta("probe"))
+        self.webapp.overview("month", None, rescan=True)

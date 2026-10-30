@@ -268,9 +268,19 @@ class LedgerStore:
         ).fetchall()
 
     def _load_thresholds(self, thresholds: dict[str, int]) -> None:
+        # Filling the temp table is DML, so sqlite3 opens an implicit
+        # transaction for it. Commit that here, or the read that follows
+        # runs inside it and pins a WAL snapshot nothing ever releases:
+        # once another connection (the feed round's) commits, this
+        # connection's next write must upgrade a stale snapshot, which
+        # SQLite refuses at once with "database is locked", every time.
+        # A caller already inside its own transaction keeps it.
+        ours = not self.db.in_transaction
         self.db.execute("CREATE TEMP TABLE IF NOT EXISTS thresholds (model TEXT PRIMARY KEY, n INTEGER)")
         self.db.execute("DELETE FROM thresholds")
         self.db.executemany("INSERT INTO thresholds VALUES (?, ?)", list(thresholds.items()))
+        if ours:
+            self.db.commit()
 
     def models(self) -> list[str]:
         return [r[0] for r in self.db.execute("SELECT DISTINCT model FROM events")]
