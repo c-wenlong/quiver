@@ -199,5 +199,80 @@ class TestJournal(unittest.TestCase):
         self.assertEqual(journal2.append(key, big)["seq"], 3)
 
 
+class TestReadTail(unittest.TestCase):
+    """``read_tail``: the newest events, read backward from the end."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.journal = Journal(Path(self.tmp))
+        self.key = "a:t"
+        self.path = self.journal.dir / f"{protocol.key_slug(self.key)}.jsonl"
+
+    def _write(self, records, prefix=""):
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write(prefix)
+            for rec in records:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def test_newest_events_oldest_first(self):
+        self._write([{"seq": i, "type": "t"} for i in range(1, 11)])
+        events = self.journal.read_tail(self.key, 3)
+        self.assertEqual([e["seq"] for e in events], [8, 9, 10])
+
+    def test_before_seq_and_keep(self):
+        self._write([{"seq": i, "type": "m" if i % 2 else "s"}
+                     for i in range(1, 11)])
+        events = self.journal.read_tail(
+            self.key, 2, before_seq=9,
+            keep=lambda e: dict(e, kept=True) if e["type"] == "m" else None,
+        )
+        # Odd seqs below 9, the newest two, mapped by keep.
+        self.assertEqual([e["seq"] for e in events], [5, 7])
+        self.assertTrue(all(e["kept"] for e in events))
+
+    def test_lines_across_chunk_boundaries(self):
+        # Multibyte text and one line longer than a whole chunk: every
+        # record must come back whole, in order, wherever chunks split.
+        records = [{"seq": i, "type": "t", "text": "\u00e9\u6f22" * (i * 997)}
+                   for i in range(1, 40)]
+        records.append({"seq": 40, "type": "t",
+                        "text": "y" * (journal_mod._TAIL_CHUNK * 3)})
+        self._write(records)
+        events = self.journal.read_tail(self.key, 100)
+        self.assertEqual([e["seq"] for e in events], list(range(1, 41)))
+        self.assertEqual(events[10]["text"], records[10]["text"])
+        self.assertEqual(events[-1]["text"], records[-1]["text"])
+
+    def test_skips_corrupt_and_partial_lines(self):
+        self._write([{"seq": 1, "type": "t"}, {"seq": 2, "type": "t"}],
+                    prefix='not json\n[1, 2]\n{"type": "t"}\n')
+        with open(self.path, "a", encoding="utf-8") as fh:
+            fh.write('{"seq": 3, "ty')  # a write cut short
+        self.assertEqual(
+            [e["seq"] for e in self.journal.read_tail(self.key, 10)], [1, 2])
+
+    def test_missing_file_and_zero_limit(self):
+        self.assertEqual(self.journal.read_tail("ghost", 5), [])
+        self._write([{"seq": 1, "type": "t"}])
+        self.assertEqual(self.journal.read_tail(self.key, 0), [])
+
+    def test_reads_only_the_end_of_a_large_journal(self):
+        # A page of the newest events must not parse the whole ring.
+        self._write([{"seq": i, "type": "t", "pad": "x" * 200}
+                     for i in range(1, 5001)])
+        from unittest.mock import patch
+        real = journal_mod._parse_line
+        calls = []
+
+        def counting(raw):
+            calls.append(raw)
+            return real(raw)
+
+        with patch.object(journal_mod, "_parse_line", side_effect=counting):
+            events = self.journal.read_tail(self.key, 5)
+        self.assertEqual([e["seq"] for e in events], [4996, 4997, 4998, 4999, 5000])
+        self.assertLess(len(calls), 400)
+
+
 if __name__ == "__main__":
     unittest.main()

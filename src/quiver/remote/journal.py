@@ -19,6 +19,7 @@ import json
 import os
 import threading
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 
 from quiver.paths import remote_dir_for
@@ -229,3 +230,75 @@ class Journal:
                 return [], False
             truncated = bool(oldest and after_seq and after_seq < oldest - 1)
             return events, truncated
+
+    def read_tail(
+        self,
+        session_key: str,
+        limit: int,
+        before_seq: int = 0,
+        keep: Callable[[dict], dict | None] | None = None,
+    ) -> list[dict]:
+        """The newest ``limit`` events with seq < ``before_seq`` (any seq
+        when 0), oldest first, reading the file backward from its end.
+
+        ``keep`` maps each event to what is returned, or None to skip it;
+        only kept events count toward ``limit``. A page of the newest
+        messages costs a read of the last few of them, not a parse of
+        the whole ring (up to ``RING_MAX_BYTES``). Under the file's lock
+        for the reason ``read_since`` gives.
+        """
+        if limit <= 0:
+            return []
+        path = self._file(session_key)
+        out: list[dict] = []
+        with _lock_for(path):
+            try:
+                fh = open(path, "rb")
+            except OSError:
+                return []
+            with fh:
+                try:
+                    pos = fh.seek(0, os.SEEK_END)
+                    rest = b""
+                    while pos > 0 and len(out) < limit:
+                        step = min(_TAIL_CHUNK, pos)
+                        pos -= step
+                        fh.seek(pos)
+                        lines = (fh.read(step) + rest).split(b"\n")
+                        # Until the read reaches the file's start, its
+                        # first line may begin in the next chunk back.
+                        rest = lines.pop(0) if pos > 0 else b""
+                        for raw in reversed(lines):
+                            rec = _parse_line(raw)
+                            if rec is None:
+                                continue
+                            if before_seq and rec["seq"] >= before_seq:
+                                continue
+                            picked = keep(rec) if keep is not None else rec
+                            if picked is None:
+                                continue
+                            out.append(picked)
+                            if len(out) >= limit:
+                                break
+                except OSError:
+                    return []
+        out.reverse()
+        return out
+
+
+# Bytes read per step of ``read_tail``'s backward walk.
+_TAIL_CHUNK = 64 << 10
+
+
+def _parse_line(raw: bytes) -> dict | None:
+    """One journal line as an event with an int seq, or None."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        rec = json.loads(raw.decode("utf-8", errors="replace"))
+    except ValueError:
+        return None
+    if not isinstance(rec, dict) or not isinstance(rec.get("seq"), int):
+        return None
+    return rec
