@@ -22,7 +22,7 @@ struct ChatView: View {
             ToolbarItem(placement: .principal) {
                 let row = app.session(key)
                 VStack(spacing: 1) {
-                    Text(row?.displayTitle ?? "Session").font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                    Text(row?.displayTitle ?? "Session").font(Theme.barTitle).lineLimit(1)
                     HStack(spacing: 4) {
                         HarnessIcon(harness: row?.harness, name: row?.harnessName ?? "", size: 11)
                         Text(SessionGrouping.shortDir(row?.cwd))
@@ -37,7 +37,7 @@ struct ChatView: View {
                                 .accessibilityLabel("Model \(current)")
                         }
                     }
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    .font(Theme.small).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 .frame(maxWidth: 240)
             }
@@ -370,12 +370,12 @@ private struct ToolRunCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "wrench.and.screwdriver").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 16)
+                    Image(systemName: "wrench.and.screwdriver").font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
+                        .iconColumn(16)
                     Text("Used \(items.count) tools").font(Theme.control).foregroundStyle(Theme.textPrimary)
                     Text(names).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold))
+                    Image(systemName: open ? "chevron.up" : "chevron.down").font(Theme.disclosure)
                         .foregroundStyle(Theme.textMuted)
                 }
                 .padding(.horizontal, 12).frame(minHeight: 40)
@@ -459,7 +459,7 @@ struct WorkingIndicator: View {
                 WorkingVerb()
             }
             .font(Theme.caption)
-            .padding(.leading, 9).padding(.trailing, 12).frame(height: 30)
+            .padding(.leading, 9).padding(.trailing, 12).scaledMinHeight(30)
             .background(Theme.card, in: .capsule)
             .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
             WorkingClock(since: since)
@@ -490,13 +490,13 @@ private struct UserBubble: View {
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
                 .opacity(send == .sending ? 0.6 : 1)
             switch send {
-            case .sending?: Text("Sending").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-            case .queued(let note)?: Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-            case .delivered(let note?)?: Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            case .sending?: Text("Sending").font(Theme.small).foregroundStyle(Theme.textMuted)
+            case .queued(let note)?: Text(note).font(Theme.small).foregroundStyle(Theme.textMuted)
+            case .delivered(let note?)?: Text(note).font(Theme.small).foregroundStyle(Theme.textMuted)
             case .delivered(nil)?: EmptyView()
             case .failed(let note)?:
                 Button(action: retry) {
-                    Label("\(note). Tap to retry", systemImage: "arrow.clockwise").font(.system(size: 11))
+                    Label("\(note). Tap to retry", systemImage: "arrow.clockwise").font(Theme.small)
                 }
                 .foregroundStyle(Theme.dangerText)
             case nil: EmptyView()
@@ -548,7 +548,7 @@ private struct BlockView: View {
         switch block {
         case .heading(let level, let text):
             Text(RichText.inline(text))
-                .font(.system(size: level == 1 ? 20 : level == 2 ? 17 : 15, weight: .semibold))
+                .font(Theme.font(size: level == 1 ? 20 : level == 2 ? 17 : 15, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, level <= 2 ? 6 : 2)
@@ -558,7 +558,7 @@ private struct BlockView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if let (box, rest) = Markdown.taskBox(text) {
                     Image(systemName: box == .done ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 14))
+                        .font(Theme.font(size: 14))
                         .foregroundStyle(box == .done ? Theme.accent : Theme.textSecondary)
                         .frame(minWidth: 14, alignment: .trailing)
                         .accessibilityLabel(box == .done ? "Done" : "To do")
@@ -685,7 +685,7 @@ private struct NoteChip: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 14)).foregroundStyle(Theme.textSecondary).frame(width: 18)
+            Image(systemName: icon).font(Theme.font(size: 14)).foregroundStyle(Theme.textSecondary).iconColumn(18)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(2)
                 Text(detail).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1).truncationMode(.middle)
@@ -725,9 +725,9 @@ private struct ThinkingCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "brain").font(.system(size: 12))
+                    Image(systemName: "brain").font(Theme.font(size: 12))
                     Text("Thought").font(Theme.control)
-                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold))
+                    Image(systemName: open ? "chevron.up" : "chevron.down").font(Theme.disclosure)
                 }
                 .foregroundStyle(Theme.textSecondary)
             }
@@ -754,8 +754,8 @@ private struct ToolCard: View {
             HStack(spacing: 0) {
                 Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: Self.icon(call.name)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                            .frame(width: 16)
+                        Image(systemName: Self.icon(call.name)).font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
+                            .iconColumn(16)
                         Text(ToolArgs.summary(call))
                             .font(Theme.mono).foregroundStyle(Theme.textPrimary)
                             .lineLimit(1).truncationMode(.middle)
@@ -764,7 +764,7 @@ private struct ToolCard: View {
                             Text("+\(diff.added)").font(Theme.mono).foregroundStyle(Theme.success)
                             Text("−\(diff.removed)").font(Theme.mono).foregroundStyle(Theme.dangerText)
                         }
-                        Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold))
+                        Image(systemName: open ? "chevron.up" : "chevron.down").font(Theme.disclosure)
                             .foregroundStyle(Theme.textMuted)
                     }
                     .padding(.leading, 12).padding(.trailing, pages.isEmpty ? 12 : 8).frame(minHeight: 40)
@@ -815,7 +815,7 @@ private struct ToolCard: View {
     private var previewLabel: some View {
         Label("Preview", systemImage: "eye").labelStyle(.titleAndIcon)
             .font(Theme.control).foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, 10).frame(height: Theme.controlHeight - 4)
+            .padding(.horizontal, 10).scaledMinHeight(Theme.controlHeight - 4)
             .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.borderStrong, lineWidth: 1))
             .contentShape(.rect)
@@ -846,7 +846,7 @@ struct DiffView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 HStack(alignment: .top, spacing: 6) {
-                    Text(sign(line.kind)).foregroundStyle(color(line.kind)).frame(width: 8)
+                    Text(sign(line.kind)).foregroundStyle(color(line.kind)).iconColumn(8)
                     Text(line.text.isEmpty ? " " : line.text)
                         .foregroundStyle(line.kind == .meta ? Theme.textMuted : Theme.textLabel)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -959,7 +959,7 @@ private struct AttachCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                Image(systemName: "eye").font(.system(size: 16)).foregroundStyle(Theme.textSecondary)
+                Image(systemName: "eye").font(Theme.font(size: 16)).foregroundStyle(Theme.textSecondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Watching only").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                     Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -1020,7 +1020,7 @@ struct SendOrStopButton: View {
                     RoundedRectangle(cornerRadius: 3).fill(.white).frame(width: 13, height: 13)
                         .transition(swap)
                 } else {
-                    Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold))
+                    Image(systemName: "arrow.up").font(Theme.font(size: 16, weight: .semibold))
                         .foregroundStyle(Theme.primaryForeground)
                         .transition(swap)
                 }
@@ -1165,10 +1165,10 @@ private struct EditBar: View {
     var body: some View {
         HStack(spacing: 8) {
             if editing {
-                Image(systemName: "pencil").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                Image(systemName: "pencil").font(Theme.badge).foregroundStyle(Theme.textSecondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Editing queued message").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    if let note { Text(note).font(.system(size: 11)).foregroundStyle(Theme.dangerText).lineLimit(1) }
+                    if let note { Text(note).font(Theme.small).foregroundStyle(Theme.dangerText).lineLimit(1) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if saving { ProgressView().controlSize(.mini) }
@@ -1215,7 +1215,7 @@ struct QueuedTray: View {
             .padding(.leading, 14)
             .padding(.trailing, 2)
             if let note {
-                Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                Text(note).font(Theme.small).foregroundStyle(Theme.textMuted)
                     .padding(.horizontal, 14).padding(.bottom, 4)
             }
             if sends.count > visibleRows {
@@ -1266,11 +1266,11 @@ private struct QueuedRow: View {
                     SendingSpinner()
                 } else {
                     Image(systemName: editing ? "pencil.circle" : "circle.dashed")
-                        .font(.system(size: 15))
+                        .font(Theme.rowIcon)
                         .foregroundStyle(Theme.textMuted)
                 }
             }
-            .frame(width: 18)
+            .iconColumn(18)
             HStack(spacing: 6) {
                 Text(send.text.replacingOccurrences(of: "\n", with: " "))
                     .font(Theme.body).foregroundStyle(editing ? Theme.textSecondary : Theme.textPrimary)
@@ -1318,7 +1318,7 @@ private struct TrayIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 15))
+            Image(systemName: symbol).font(Theme.rowIcon)
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: 44, height: 44)
                 .contentShape(.rect)

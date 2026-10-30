@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count), and a retry or an edit on an older hub resends the same refs.
   Detaching clears the chips, since the hub drops the staged files.
   Part of [#516](https://github.com/c-wenlong/quiver/issues/516).
+- **iOS app: comment on an issue, and post your Resolve context as a
+  comment.** The issue page has the Mac's comment box under the thread,
+  and the Resolve sheet gains "Your context (optional)", now sent with
+  the resolve, and "Also post as a comment on #<n>", on by default.
+  Both post through the hub's `gh` login with `POST /v1/issues/comment`.
+  A context comment that fails is a warning; the launch still goes
+  ahead. Part of [#970](https://github.com/c-wenlong/quiver/issues/970).
 - **Web app: the Cursor app on the Calendar.** The hub reads each Cursor
   account's `state.vscdb` (the app's own folder and every extra Cursor
   profile's) as the Mac app does, so editor chats show as blocks with
@@ -672,6 +679,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `detail` for it.
 
 ### Fixed
+
+- **MCP gateway: a session's burst of connections is queued, not
+  reset.** A Claude Code session connects to every shared server at
+  once, and the Python 3.13 that Quiver.app bundles queues only 5
+  connections on a listening socket. With 18 shared servers, 13 of 18
+  probes at once got "connection reset" and those servers would fail to
+  connect for that session. The gateway now queues 128.
 
 - **`swe mcp sync` writes remote servers Claude Code can see.** Claude
   Code skips an `mcpServers` entry that has a `url` and no `type`

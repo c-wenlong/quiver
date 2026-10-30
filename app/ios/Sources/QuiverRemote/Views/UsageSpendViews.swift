@@ -74,7 +74,7 @@ private struct Figure: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(Theme.caption).foregroundStyle(Theme.textSecondary)
             Text(value)
-                .font(.system(size: 28, weight: .semibold).monospacedDigit())
+                .font(Theme.font(size: 28, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
@@ -99,7 +99,7 @@ struct DailyChart: View {
                 AxisGridLine().foregroundStyle(Theme.border)
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        Text(UsageFormat.usdAxis(v)).font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.textMuted)
+                        Text(UsageFormat.usdAxis(v)).font(Theme.font(size: 11).monospacedDigit()).foregroundStyle(Theme.textMuted)
                     }
                 }
             }
@@ -108,7 +108,7 @@ struct DailyChart: View {
             AxisMarks(values: .automatic(desiredCount: days.count > 10 ? 4 : days.count)) { _ in
                 AxisValueLabel(format: days.count > 10 ? .dateTime.month(.abbreviated).day() : .dateTime.day(),
                                centered: true)
-                    .font(.system(size: 11))
+                    .font(Theme.small)
                     .foregroundStyle(Theme.textMuted)
             }
         }

@@ -139,7 +139,7 @@ struct ActivityHeatmapCard: View {
                             Color.clear.frame(width: OverviewFormat.heatGutter, height: 1)
                             ForEach(columns.indices, id: \.self) { w in
                                 Text(months[w] ?? "")
-                                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                                    .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
                                     .fixedSize()
                                     .frame(width: cell, alignment: .leading)
                                     .accessibilityHidden(true)
@@ -149,7 +149,7 @@ struct ActivityHeatmapCard: View {
                             HStack(spacing: gap) {
                                 // Mon, Wed, Fri, as the web; the hub's weeks start on Sunday.
                                 Text(weekday % 2 == 1 ? Calendar.current.shortWeekdaySymbols[weekday] : "")
-                                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                                    .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
                                     .fixedSize()
                                     .frame(width: OverviewFormat.heatGutter, height: cell, alignment: .leading)
                                     .accessibilityHidden(true)
