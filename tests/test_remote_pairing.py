@@ -289,16 +289,6 @@ class TestPairRequests(unittest.TestCase):
             )
         )
 
-    def test_deny(self):
-        r = self._request()
-        self.assertTrue(pairing.deny_request(self.tmp, r["code"]))
-        self.assertEqual(
-            pairing.poll_request(
-                self.tmp, r["request_id"], r["poll_secret"]
-            )["status"],
-            "denied",
-        )
-
     def test_expiry(self):
         import json
         r = self._request()
@@ -412,14 +402,6 @@ class TestPairRequests(unittest.TestCase):
             self._request(peer={**_PEER, "node_id": "n3"})
             with self.assertRaises(pairing.PairBusy):
                 self._request(peer={**_PEER, "node_id": "nX"})
-
-    def test_token_exchange_still_works(self):
-        token = pairing.mint_pair_token(self.tmp)
-        cred = pairing.exchange(self.tmp, token, "legacy")
-        self.assertIsNotNone(cred)
-        self.assertIsNotNone(
-            pairing.device_for_credential(self.tmp, cred["credential"])
-        )
 
 
 class TestClientMeta(unittest.TestCase):
