@@ -80,7 +80,7 @@ final class ConsoleModel {
             store.save(fresh, for: hub.id)
             target = fresh
             offlineTarget = false
-        } catch let error as HubError where error.status == 0 {
+        } catch let error as HubError where Self.hubIsDown(error) {
             guard gen == generation else { return }
             // The hub is down: exactly when the console matters, so dial
             // the machine with what the hub said last time.
@@ -96,6 +96,12 @@ final class ConsoleModel {
             return
         }
         await connect(identity: identity, generation: gen)
+    }
+
+    /// No answer at all, or a proxy in front of the hub (`tailscale
+    /// serve`) answering for it that the hub is down or not answering.
+    static func hubIsDown(_ error: HubError) -> Bool {
+        [0, 502, 503, 504].contains(error.status)
     }
 
     /// Dials the target again after a logout or a dropped connection.

@@ -6,8 +6,6 @@ import XCTest
 /// with every figure, name and time made up. Fields the app ignores are
 /// kept so decoding is shown to skip them.
 enum UsageFixtures {
-    static let serverTime: Double = 1_800_000_000
-
     static let usage = #"""
     {
       "harnesses": [
