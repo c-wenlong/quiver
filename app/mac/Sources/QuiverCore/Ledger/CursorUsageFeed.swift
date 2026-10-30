@@ -172,8 +172,16 @@ public actor CursorUsageFeed {
         // when it cannot. Two profiles on one account therefore write the
         // same keys, and `accountHome` stays with the first-seen profile.
         let accountKey = reply.accountId ?? account.home
+        // An instant that isn't finite, or lies past tomorrow, is garbage
+        // from the feed: its millisecond key would overflow Int64 (a trap),
+        // and as the `through` mark it would push every later window, and
+        // `--since`, past all real events.
+        let latest = Date().timeIntervalSince1970 + 86_400
+        let events = reply.events.filter {
+            $0.timestamp.isFinite && $0.timestamp >= 0 && $0.timestamp <= latest
+        }
         guard generation == requestGeneration else { return 0 }
-        let changed = try await ledger.ingest(reply.events.map {
+        let changed = try await ledger.ingest(events.map {
             Self.record(for: $0, accountKey: accountKey, accountHome: account.home)
         })
         if let accountId = reply.accountId {
@@ -183,7 +191,7 @@ public actor CursorUsageFeed {
             // the window may be missing, so the next poll asks for the
             // same range again (re-ingest is idempotent).
             if reply.status == "ok",
-               let newest = reply.events.map(\.timestamp).max() {
+               let newest = events.map(\.timestamp).max() {
                 progress.accounts[accountId, default: .init()].through = max(
                     progress.accounts[accountId]?.through ?? 0, newest)
             }
