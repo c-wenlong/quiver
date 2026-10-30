@@ -182,6 +182,9 @@ def detail(ctx, home: Path, args: dict) -> dict:
     row = matches[0]
     source = Path(row.source)
     exists = source.exists()
+    # A foreign hook's command can name any file on disk; a paired
+    # device reads its contents (header or text) only under home.
+    readable = _inside(source, home)
     return {
         "machine": ctx.machine.get("name"),
         "home": str(home),
@@ -193,12 +196,12 @@ def detail(ctx, home: Path, args: dict) -> dict:
             "command": d.command,
             "file": str(d.settings),
         } for d in row.declared],
-        "summary": script_summary(source) if source.is_file() else "",
+        "summary": script_summary(source) if readable and source.is_file() else "",
         "exists": exists,
         "is_dir": source.is_dir(),
         # HookScript.editable: the source resolves inside the hooks root.
         "editable": exists and _inside(source, _paths.hooks_dir_for(home)),
-        "text": read_text(source),
+        "text": read_text(source) if readable else None,
     }
 
 

@@ -81,7 +81,7 @@ struct DevicesView: View {
             requests = try await client.pairRequests()
             requestsError = nil
         } catch {
-            requestsError = (error as? HubError)?.message ?? error.localizedDescription
+            requestsError = error.localizedDescription
         }
         requestsLoaded = true
     }
@@ -102,7 +102,7 @@ struct DevicesView: View {
         } catch let error as HubError where error.status == 404 {
             devicesError = "This hub can't list devices yet. Update it, and this page shows everyone paired."
         } catch {
-            devicesError = (error as? HubError)?.message ?? error.localizedDescription
+            devicesError = error.localizedDescription
         }
         devicesLoaded = true
     }
@@ -168,7 +168,7 @@ struct DevicesView: View {
                 devices[i].revoked = true
             }
         } catch {
-            actionError = (error as? HubError)?.message ?? error.localizedDescription
+            actionError = error.localizedDescription
         }
         await loadDevices()
     }
@@ -223,7 +223,7 @@ private struct PairRequestCard: View {
             try await client.decidePairRequest(id: request.requestId, code: code, approve: approve)
             await reload()
         } catch {
-            self.error = (error as? HubError)?.message ?? error.localizedDescription
+            self.error = error.localizedDescription
         }
     }
 }

@@ -226,6 +226,13 @@ class HubState:
         # Satellite presence: command-stream subscribers are the online
         # signal — a sleeping MacBook just drops offline until it dials in.
         self._sat_subs: dict[str, int] = {}
+        # (machine, session key) -> command id of its last queued
+        # ``tail``, so a chat reopened (or an SSE reconnecting) while
+        # the satellite is offline queues one tail, not one per GET.
+        self._sat_tail_cmds: dict[tuple[str, str], str] = {}
+        # Spans queue_tail's check, enqueue and record, so two opens at
+        # once can't both queue. Taken before ``_cmd_lock``, never under.
+        self._sat_tail_lock = threading.Lock()
         self._cmd_seq = 0
         # Guards ``_cmd_seq`` and every piece of satellite ack
         # bookkeeping below — command streams, result uploads and
@@ -293,19 +300,22 @@ class HubState:
         # with the real tailnet client, so loopback requests carrying
         # them are read as that client. Off, the headers are ignored.
         self.trust_proxy = False
-        # session key -> request_id for every approval.requested that has
-        # not yet been answered — local panes and satellites both flow
-        # through emit(), so the inbox sees them uniformly.
+        # session key -> request_id of its newest approval.requested
+        # that has not yet been answered — local panes and satellites
+        # both flow through emit(), so the inbox sees them uniformly.
+        # Derived from ``_approval_at`` by ``_sync_pending_approval``.
         self.pending_approvals: dict[str, str] = {}
         # One-shot, minutes-lived bearer tokens the ntfy action buttons
         # send instead of a device credential (notify.ApprovalTokens).
         self.approval_tokens = notify.ApprovalTokens()
-        # When each pending approval was requested: entries expire on
+        # session key -> {request_id: requested_at} for every open
+        # approval. A Codex app-server holds overlapping approvals, so
+        # resolving one must leave the others pending. Entries expire on
         # APPROVAL_TTL_S, since a dead satellite or killed pane can
         # never emit the approval.resolved that would clear them.
         # ``_approval_lock`` covers both dicts — the expiry sweep and
         # emit's updates run on different request threads.
-        self._approval_at: dict[str, float] = {}
+        self._approval_at: dict[str, dict[str, float]] = {}
         self._approval_lock = threading.Lock()
         # launch_id -> {machine, harness, cwd, state, key, note,
         # created_at} for every POST /v1/sessions. ``state`` goes pending
@@ -428,16 +438,20 @@ class HubState:
             rid = str((event.get("data") or {}).get("request_id") or "")
             if rid:
                 with self._approval_lock:
-                    self.pending_approvals[key] = rid
-                    self._approval_at[key] = time.time()
+                    self._approval_at.setdefault(key, {})[rid] = time.time()
+                    self._sync_pending_approval(key)
         elif etype == "approval.resolved":
-            with self._approval_lock:
-                self.pending_approvals.pop(key, None)
-                self._approval_at.pop(key, None)
-            # Retire only the resolved request's token — a different
-            # still-pending request on the session (a Codex app-server
-            # holds approvals independently) keeps its buttons live.
+            # Retire only the resolved request — a different still-
+            # pending request on the session (a Codex app-server holds
+            # approvals independently) stays in the inbox and keeps its
+            # buttons live. A resolve naming no request clears them all.
             rid = str((event.get("data") or {}).get("request_id") or "")
+            with self._approval_lock:
+                if rid:
+                    (self._approval_at.get(key) or {}).pop(rid, None)
+                else:
+                    self._approval_at.pop(key, None)
+                self._sync_pending_approval(key)
             self.approval_tokens.drop(key, rid)
         elif etype in {"session.launched", "command.result"}:
             data = event.get("data") or {}
@@ -489,10 +503,22 @@ class HubState:
         """
         with self._approval_lock:
             cutoff = time.time() - APPROVAL_TTL_S
-            for key, at in list(self._approval_at.items()):
-                if at <= cutoff:
-                    self._approval_at.pop(key, None)
-                    self.pending_approvals.pop(key, None)
+            for key, open_ in list(self._approval_at.items()):
+                for rid, at in list(open_.items()):
+                    if at <= cutoff:
+                        del open_[rid]
+                self._sync_pending_approval(key)
+
+    def _sync_pending_approval(self, key: str) -> None:
+        """Point ``pending_approvals[key]`` at the session's newest open
+        request, or drop both entries when none is left. Caller holds
+        ``_approval_lock``."""
+        open_ = self._approval_at.get(key)
+        if open_:
+            self.pending_approvals[key] = max(open_, key=open_.__getitem__)
+        else:
+            self._approval_at.pop(key, None)
+            self.pending_approvals.pop(key, None)
 
     # -- GitHub notifications ---------------------------------------------
     # The catalog polls ``fetch_github`` on its refresh cadence and feeds
@@ -663,6 +689,23 @@ class HubState:
             # A map entry at or under the floor can never move it.
             for cid in [c for c, s in seqs.items() if s <= floor]:
                 del seqs[cid]
+
+    def queue_tail(self, mid: str, session_key: str, status: str) -> None:
+        """Ask a satellite to tail ``session_key``, unless a tail for it
+        is already queued and not yet acked."""
+        with self._sat_tail_lock:
+            with self._cmd_lock:
+                cid = self._sat_tail_cmds.get((mid, session_key))
+                if cid and cid in self._sat_cmd_seqs.get(mid, {}):
+                    return
+            cmd = self.queue_command(
+                mid, "tail", session_key, {"status": status})
+            if cmd is None:
+                return
+            if len(self._sat_tail_cmds) > 4096:
+                self._sat_tail_cmds.clear()
+            self._sat_tail_cmds[(mid, session_key)] = str(
+                (cmd.get("data") or {}).get("command_id") or "")
 
     def queue_command(
         self, mid: str, op: str, session_key: str, data: dict
@@ -1160,6 +1203,29 @@ class _Handler(BaseHTTPRequestHandler):
             return None
         return row
 
+    def _require_satellite(self) -> bool:
+        """The agent routes' first gate: a satellite credential. Sends
+        the 403 and returns False for anything else."""
+        if self._agent_row() is None:
+            self._send_error(
+                403, "forbidden", "agent routes need a satellite credential"
+            )
+            return False
+        return True
+
+    def _require_machine(
+        self, device_id: str, mid: str | None, *, bind: bool = False
+    ) -> bool:
+        """``_agent_machine_ok`` as a gate: sends the 403 and returns
+        False when ``mid`` is missing or not this credential's machine."""
+        if mid is None or not self._agent_machine_ok(
+                device_id, mid, bind=bind):
+            self._send_error(
+                403, "forbidden", "credential is bound to another machine"
+            )
+            return False
+        return True
+
     def _agent_machine_ok(
         self, device_id: str, mid: str, *, bind: bool = False
     ) -> bool:
@@ -1251,6 +1317,16 @@ class _Handler(BaseHTTPRequestHandler):
             return ""
         return str((peer or {}).get("node_name") or "")
 
+    def _local_host_gate(self) -> bool:
+        """``_local_host_ok`` as a gate: sends the 403 and returns False
+        for a Host this hub doesn't answer to."""
+        if self._local_host_ok():
+            return True
+        self._send_error(
+            403, "bad_origin", "request blocked by origin policy"
+        )
+        return False
+
     def _local_host_ok(self) -> bool:
         """The DNS-rebinding gate on the unauthenticated routes: once
         ``allowed_hosts`` names the addresses this hub answers to, a
@@ -1310,10 +1386,7 @@ class _Handler(BaseHTTPRequestHandler):
         return True
 
     def _pair_request(self) -> None:
-        if not self._local_host_ok():
-            self._send_error(
-                403, "bad_origin", "request blocked by origin policy"
-            )
+        if not self._local_host_gate():
             return
         # Rate limit BEFORE the whois fork — a flood must not spawn a
         # subprocess per request.
@@ -1411,6 +1484,13 @@ class _Handler(BaseHTTPRequestHandler):
             replay, truncated = self._state.journal.read_since(
                 journal_key, after_seq
             )
+            last = self._state.journal.last_seq(journal_key)
+            if after_seq > last:
+                # A cursor from before the journal was wiped: nothing
+                # replays, and every new event (seq <= the old cursor)
+                # would be dropped as already delivered. Restart the
+                # client at the journal's head and tell it to refetch.
+                replay, truncated, after_seq = [], True, last
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")
@@ -1559,10 +1639,7 @@ class _Handler(BaseHTTPRequestHandler):
         args = parse_qs(parsed.query)
 
         if path == "/v1/status":
-            if not self._local_host_ok():
-                self._send_error(
-                    403, "bad_origin", "request blocked by origin policy"
-                )
+            if not self._local_host_gate():
                 return
             # A reachability check only: machine id, version and uptime
             # tell the whole tailnet more than a caller needs.
@@ -1575,10 +1652,7 @@ class _Handler(BaseHTTPRequestHandler):
         # The requester's poll is unauthenticated — the request id +
         # poll secret it carries are the capability.
         if path.startswith("/v1/pair/request/"):
-            if not self._local_host_ok():
-                self._send_error(
-                    403, "bad_origin", "request blocked by origin policy"
-                )
+            if not self._local_host_gate():
                 return
             rid = unquote(path[len("/v1/pair/request/"):])
             secret = str((args.get("secret") or [""])[0])
@@ -1782,11 +1856,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/commands":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             mid = str((args.get("machine") or [""])[0])
             if not mid:
@@ -1794,22 +1864,14 @@ class _Handler(BaseHTTPRequestHandler):
                     422, "bad_command", "machine is required"
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid):
                 return
             after = self._sse_after(args)
             self._agent_stream(mid, after, device_id=device_id)
             return
 
         if path.startswith("/v1/agent/attachments/"):
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             stem = path[len("/v1/agent/attachments/"):]
             key_part, _sep, ref = stem.rpartition("/")
@@ -1817,14 +1879,7 @@ class _Handler(BaseHTTPRequestHandler):
             # The staged key is hub-scoped ``local@mid``; the pull must
             # stay inside the machine this credential speaks for.
             _local, key_mid = protocol.split_remote_key(key)
-            if (
-                key_mid is None
-                or not self._agent_machine_ok(device_id, key_mid)
-            ):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, key_mid):
                 return
             self._pull_attachment(key, unquote(ref))
             return
@@ -1853,9 +1908,9 @@ class _Handler(BaseHTTPRequestHandler):
                 elif row.get("remote") and row.get("machine_id"):
                     # A satellite session has no local Session to tail —
                     # ask its agent to start one instead.
-                    self._state.queue_command(
-                        str(row["machine_id"]), "tail", key,
-                        {"status": str(row.get("status") or "")},
+                    self._state.queue_tail(
+                        str(row["machine_id"]), key,
+                        str(row.get("status") or ""),
                     )
             if sep and action == "events":
                 after = self._sse_after(args)
@@ -1892,10 +1947,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/v1/pair":
-            if not self._local_host_ok():
-                self._send_error(
-                    403, "bad_origin", "request blocked by origin policy"
-                )
+            if not self._local_host_gate():
                 return
             # Same per-source cap as /v1/pair/request: the 192-bit
             # token isn't brute-forceable, but a flood shouldn't get
@@ -1979,11 +2031,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/register":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             body = self._read_body()
             machine = (body or {}).get("machine") or {}
@@ -2000,11 +2048,7 @@ class _Handler(BaseHTTPRequestHandler):
                     403, "forbidden", "cannot register the hub machine"
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid, bind=True):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid, bind=True):
                 return
             catalog_mod.upsert_machine(
                 self._state.home,
@@ -2014,11 +2058,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/catalog":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             body = self._read_body()
             if body is None:
@@ -2032,11 +2072,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "machine_id and rows are required",
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid):
                 return
             # Snapshot ownership before the merge so attach/detach done
             # on the satellite surfaces as an event the clients react to.
@@ -2075,11 +2111,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/usage":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             body = self._read_body()
             if body is None:
@@ -2091,11 +2123,7 @@ class _Handler(BaseHTTPRequestHandler):
                     422, "bad_command", "machine_id is required"
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid):
                 return
             try:
                 usage_mod.save_satellite(self._state.home, mid, body)
@@ -2109,11 +2137,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/agent/events":
-            if self._agent_row() is None:
-                self._send_error(
-                    403, "forbidden",
-                    "agent routes need a satellite credential",
-                )
+            if not self._require_satellite():
                 return
             body = self._read_body()
             if body is None:
@@ -2131,11 +2155,7 @@ class _Handler(BaseHTTPRequestHandler):
                     422, "bad_command", "events must be a list"
                 )
                 return
-            if not self._agent_machine_ok(device_id, mid):
-                self._send_error(
-                    403, "forbidden",
-                    "credential is bound to another machine",
-                )
+            if not self._require_machine(device_id, mid):
                 return
             accepted = self._accept_agent_events(mid, events)
             self._send_json(200, {"ok": True, "accepted": accepted})

@@ -69,6 +69,13 @@ class TestPair(unittest.TestCase):
 
 
 class TestStatus(unittest.TestCase):
+    def setUp(self):
+        # Without --host, status reads the saved hub.json; keep it from
+        # reading the real ~/.quiver.
+        patcher = patch.object(commands, "load_hub_config", return_value={})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_unreachable_hub(self):
         home = Path(tempfile.mkdtemp())
         with patch("quiver.remote.commands._probe", return_value=None), \
@@ -742,9 +749,6 @@ class TestTailscaleIp(unittest.TestCase):
             self.assertEqual(commands.catalog_mod.tailscale_ip(), "")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 _PEER = {
     "node_name": "test-iphone.tail0000.ts.net",
@@ -905,3 +909,7 @@ class TestUnwritableHome(unittest.TestCase):
                           side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 _run(["devices"])
+
+
+if __name__ == "__main__":
+    unittest.main()
