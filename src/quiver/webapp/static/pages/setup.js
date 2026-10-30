@@ -44,20 +44,9 @@ function machineName() {
   return (page.data && page.data.machine) || "this machine";
 }
 
-/* Logos shipped in /app/ that Fmt.logo doesn't list yet. */
-const MORE_LOGOS = {
-  copilot: "harness-copilot.svg", grok: "harness-grok.svg", kimi: "harness-kimi.svg",
-  "mistral-vibe": "harness-mistral-vibe-color.svg", "qwen-code": "harness-qwen-code-color.svg",
-};
-
 function agentLogo(id) {
   const img = Fmt.logo(id, "setup-logo");
   if (img.startsWith("<img")) return img;
-  const file = MORE_LOGOS[id];
-  if (file) {
-    const mono = file.endsWith("-color.svg") ? "" : " mono";
-    return `<img class="setup-logo${mono}" src="/app/${file}" alt="">`;
-  }
   return `<span class="setup-logo setup-monogram" aria-hidden="true">${esc(agentName(id).slice(0, 1))}</span>`;
 }
 
