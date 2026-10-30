@@ -30,11 +30,6 @@ public struct SetupPreview: Decodable, Sendable, Equatable {
             self.detail = detail
         }
 
-        /// Linked now, or would be once setup runs.
-        public var isLinked: Bool {
-            ["linked", "would-create", "would-relink", "would-absorb"].contains(result)
-        }
-
         /// A real file or folder setup leaves where it is.
         public var isLeftAlone: Bool {
             ["blocked", "protected", "conflict", "keep", "would-conflict", "would-keep"].contains(result)

@@ -104,6 +104,13 @@ public final class GitHubModel {
     /// The focus page's tab; the dashboard's `tab` is left alone so a
     /// trip through a repo never moves it.
     public var focusTab: RepoTab = .pulls
+    /// The dashboard's pull request filter (All, Mine, Review
+    /// requested). `activePullFilter` falls back to All while the flags
+    /// it needs are unknown.
+    public var pullFilter: PullFilter = .all
+    /// Per repo, the open PRs `gh pr status` says ask for the login's
+    /// review (`loadReviewRequests`). A repo missing here is unknown.
+    public internal(set) var reviewRequests: [String: PrReviewRequests] = [:]
     /// The page's filter text: repo names, PR titles, branch names and
     /// the rest of the row text. Lives on the model so a banner's
     /// click-through can clear it and land on its repo's section.

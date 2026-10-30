@@ -17,11 +17,6 @@ public enum CalendarLayout {
         /// How many lanes the cluster needs; a lone block gets 1.
         public var laneCount: Int
 
-        /// The block's own span; `start`/`end` are the display times, which
-        /// `minimumDuration` can stretch past the real end.
-        public var realStart: Date { block.start }
-        public var realEnd: Date { block.end }
-
         public var id: String { "\(block.id)|\(start.timeIntervalSince1970)" }
     }
 

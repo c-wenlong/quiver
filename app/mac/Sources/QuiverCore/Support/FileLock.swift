@@ -25,3 +25,19 @@ final class FileLock {
 
     deinit { release() }
 }
+
+extension FileLock {
+    /// Runs `body` holding an exclusive lock on `<url>.lock`, after creating
+    /// `url`'s folder (0700). For a read-change-write another running copy
+    /// may do at once: an atomic rename alone would let it write back the
+    /// file it read before this save. If the lock can't be taken, `body`
+    /// still runs, unlocked, rather than dropping the write.
+    static func whileHeld(beside url: URL, _ body: () -> Void) {
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        let lock = try? FileLock(at: url.appendingPathExtension("lock"))
+        defer { lock?.release() }
+        body()
+    }
+}
