@@ -664,26 +664,6 @@ function splitAge(seconds) {
   return [minutes, "minute"];
 }
 
-/* app.js's api() only reads; the settings write sends JSON with the same
- * headers (authHeaders: the bearer when one is stored, and X-Quiver-Pair
- * so an owner's tailnet device is admitted without one). Never throws:
- * { status: 0 } when the hub is unreachable. */
-async function computePost(path, body) {
-  let resp;
-  try {
-    resp = await fetch(path, {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return { status: 0, data: null };
-  }
-  let data = null;
-  try { data = await resp.json(); } catch { /* empty body */ }
-  return { status: resp.status, data };
-}
-
 /* The settings page's set-switch as a button: the same markup so the
  * shared stylesheet draws the Mac's switch. `type="button"` matters —
  * the sheet is a form, and a bare button would submit and close it. */
@@ -785,7 +765,7 @@ function openComputeLimits() {
     p.acBusy = true;
     p.acError = null;
     drawAutoclean();
-    computePost("/v1/app/compute/settings", body).then(({ status, data }) => {
+    apiPost("/v1/app/compute/settings", body).then(({ status, data }) => {
       p.acBusy = false;
       if (status === 200 && data && data.autoclean) {
         if (p.data) p.data.autoclean = data.autoclean;

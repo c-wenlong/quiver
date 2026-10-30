@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import QuiverCore
 
@@ -435,9 +436,9 @@ import Testing
 
     @Test func theInstallScriptChecksTheCopyAndWritesTheJobAsRoot() throws {
         let command = AdministratorInstaller.installCommand(
-            executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", sha256: "abc123",
+            executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", sha256: "abc123", team: nil,
             control: URL(fileURLWithPath: "/Users/o'neil/.quiver/fan/control.json"))
-        #expect(command.contains(#"/usr/bin/install -m 755 -o root -g wheel '/Users/o'\''neil/Apps/Quiver.app/Contents/MacOS/Quiver' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'"#))
+        #expect(command.contains(#"/usr/bin/install -m 755 -o root -g wheel '/Users/o'\''neil/Apps/Quiver.app/Contents/MacOS/Quiver' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"#))
         // The hash is checked on the root-owned copy, before re-signing
         // changes its bytes.
         let hash = try #require(command.range(of: "/usr/bin/shasum -a 256 '/Library/PrivilegedHelperTools/"))
@@ -453,6 +454,91 @@ import Testing
         #expect(AdministratorInstaller.uninstallCommand.contains("/bin/rm -f '/Library/LaunchDaemons/"))
         #expect(AdministratorInstaller.script(#"echo "a\b" 'c'"#, prompt: #"Say "hi""#)
             == #"do shell script "echo \"a\\b\" 'c'" with prompt "Say \"hi\"" with administrator privileges"#)
+    }
+
+    /// A team-signed app checks the helper's signature on the root-owned
+    /// copy, after the hash and before the ad-hoc re-sign erases it: a
+    /// helper patched in the user-writable bundle never runs as root.
+    @Test func aSignedAppChecksTheHelpersTeamBeforeRunningItAsRoot() throws {
+        let command = AdministratorInstaller.installCommand(
+            executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", team: "ABCDE12345",
+            control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"))
+        let hash = try #require(command.range(of: "/usr/bin/shasum -a 256 "))
+        let verify = try #require(command.range(
+            of: #"/usr/bin/codesign --verify --strict -R '=identifier "QuiverFanHelper" and anchor apple generic"#
+                + #" and certificate leaf[subject.OU] = "ABCDE12345"' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"#))
+        let sign = try #require(command.range(of: "/usr/bin/codesign --force --sign -"))
+        let bootout = try #require(command.range(of: "/bin/launchctl bootout"))
+        let move = try #require(command.range(of: "/bin/mv -f '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"
+            + " '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'"))
+        let job = try #require(command.range(of: "/usr/bin/printf '%s'"))
+        #expect(hash.lowerBound < verify.lowerBound)
+        #expect(verify.lowerBound < sign.lowerBound)
+        // The live executable an old KeepAlive job could relaunch changes
+        // only after every check, and only once that job is unloaded.
+        #expect(sign.lowerBound < bootout.lowerBound)
+        #expect(bootout.lowerBound < move.lowerBound)
+        #expect(move.lowerBound < job.lowerBound)
+        // Nothing but the move writes the live path.
+        #expect(command.components(separatedBy: "'/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan'").count == 2)
+        #expect(!command.contains("\n"))
+        // An ad-hoc build has no team to check against and keeps the hash.
+        let adHoc = AdministratorInstaller.installCommand(
+            executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", team: nil,
+            control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"))
+        #expect(!adHoc.contains("--verify"))
+        #expect(adHoc.contains("/usr/bin/shasum -a 256 "))
+    }
+
+    /// The check itself, run: a helper that isn't the team's (here an
+    /// ad-hoc signed copy) is deleted and the script stops with a reason.
+    @Test func aHelperWithoutTheTeamsSignatureIsRefusedAndDeleted() throws {
+        let tool = scratch.url.appending(path: "it's a helper").path
+        try FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: tool)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", AdministratorInstaller.signatureCheck(tool: tool, team: "ABCDE12345")
+            + " && echo installed"]
+        let out = Pipe(), err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 1)
+        #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).isEmpty)
+        #expect(String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .contains("not signed by the team that signed Quiver"))
+        #expect(!FileManager.default.fileExists(atPath: tool))
+    }
+
+    @Test func theHelperRequirementCompiles() throws {
+        var requirement: SecRequirement?
+        let text = String(AdministratorInstaller.helperRequirement(team: "ABCDE12345").dropFirst())
+        #expect(SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess)
+        #expect(requirement != nil)
+    }
+
+    @Test func onlyRealTeamIdentifiersReachTheScript() async {
+        #expect(AdministratorInstaller.isTeamIdentifier("ABCDE12345"))
+        for odd in ["", "abcde12345", "ABCDE1234", "ABCDE123456", "ABCDE\"1234", "ABCDE 1234"] {
+            #expect(!AdministratorInstaller.isTeamIdentifier(odd), "\(odd)")
+        }
+        // Refused before any prompt: neither the hash nor osascript runs.
+        let odd = AdministratorInstaller(team: { "AB'; rm -rf" })
+        await #expect(throws: FanHelperInstallError.self) {
+            try await odd.install(executable: "/nonexistent", control: URL(fileURLWithPath: "/tmp/c.json"))
+        }
+        let unreadable = AdministratorInstaller(team: { throw FanHelperInstallError.failed("no signature") })
+        await #expect(throws: FanHelperInstallError.failed("no signature")) {
+            try await unreadable.install(executable: "/nonexistent", control: URL(fileURLWithPath: "/tmp/c.json"))
+        }
+    }
+
+    /// The test runner's own signature reads without error: a team for a
+    /// signed build, nil for an ad-hoc one.
+    @Test func theRunningCodesTeamReads() throws {
+        let team = try AdministratorInstaller.signingTeam()
+        if let team { #expect(AdministratorInstaller.isTeamIdentifier(team)) }
     }
 
     /// The job names the helper's version, so an install from before it
