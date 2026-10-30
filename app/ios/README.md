@@ -35,7 +35,8 @@ copies the Mac app's `harness-*.svg` into `Assets.xcassets/Harnesses`.
 - **QR:** on the hub machine, open Quiver › Settings › Remote › Pair a
   device (the Mac app, or the hub's web app), choose Quiver app, and
   scan its code, either in the app or with the Camera app (the
-  `quiver://pair` link opens the app). A server with neither runs
+  `quiver://pair` link opens the app, which names the hub and asks
+  before pairing with it). A server with neither runs
   `swe remote setup` and then `swe remote pair --app`.
 - **Token:** paste the token `swe remote pair` prints.
 
@@ -43,7 +44,8 @@ The app can be paired with several hubs at once, say a Mac and a home
 server: pairing another hub (Pair another hub in the hub menu, or a
 scanned code) adds it instead of replacing the first, and the hub menu
 at the top right of Sessions switches between them. Unpair drops only
-the hub on screen. Each hub's credential is its own Keychain item; the
+the hub on screen, and asks that hub to sign this phone out (its
+device row and console key go too) when it can be reached. Each hub's credential is its own Keychain item; the
 addresses, names and the hub on screen are in UserDefaults. A phone
 paired before this keeps its hub: the app moves the old single pairing
 into the list on first launch, and a phone paired under the old webview
@@ -122,7 +124,6 @@ Developer Mode).
 
 - Push: ntfy still sends notifications, including the lock-screen
   approve and deny buttons. APNs is on the roadmap.
-- Listing and removing paired devices needs a hub route (roadmap P8).
 - Decoding stays on the hub; the app only reads protocol DTOs.
 - The console reaches the hub's own machine only; satellites don't
   install phone keys or report host keys yet.

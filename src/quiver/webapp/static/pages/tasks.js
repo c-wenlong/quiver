@@ -54,7 +54,7 @@
   const LAUNCH_POLLS = 60;
 
   const page = {
-    data: null, status: 0, error: null, loading: false,
+    data: null, error: null, loading: false,
     filter: "all", busy: new Set(), actionError: null,
     seq: 0, forTask: null,
     // The list: the rail's chosen group (null is every task), the groups
@@ -812,7 +812,7 @@
     const { status, data } = await api(`/v1/app/tasks${refresh ? "?refresh=1" : ""}`);
     if (gen !== routeGen || seq !== page.seq) return;
     page.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("tasks");
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the other pages do.
       if (!page.data) {
@@ -825,7 +825,6 @@
       return paint();
     }
     page.data = data;
-    page.status = status;
     page.error = null;
     // The rail's group went away (all closed out, unpinned): back to All.
     if (page.shown && !tasks().some((t) => groupName(t) === page.shown)

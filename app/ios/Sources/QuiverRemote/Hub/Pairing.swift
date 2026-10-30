@@ -10,9 +10,11 @@ struct PairedHub: Equatable, Identifiable {
 
     /// The host, with the port when it isn't the hub's default, so two
     /// hubs on one machine read apart.
-    var address: String {
-        let host = baseURL.host ?? id
-        guard let port = baseURL.port, port != Hub.defaultPort else { return host }
+    var address: String { Self.address(of: baseURL) }
+
+    static func address(of url: URL) -> String {
+        let host = url.host ?? url.absoluteString
+        guard let port = url.port, port != Hub.defaultPort else { return host }
         return "\(host):\(port)"
     }
 }
@@ -256,7 +258,9 @@ struct PairLink: Equatable {
             parts.query = fragment
             let q = Self.query(parts.queryItems)
             guard let token = q["pair"], !token.isEmpty else { return nil }
-            guard let base = URL(string: "\(url.scheme!)://\(host):\(url.port ?? Hub.defaultPort)") else { return nil }
+            // No port on an https link is 443 (`tailscale serve`), not the hub's own.
+            let port = url.port.map { ":\($0)" } ?? (url.scheme == "https" ? "" : ":\(Hub.defaultPort)")
+            guard let base = URL(string: "\(url.scheme!)://\(host)\(port)") else { return nil }
             self.baseURL = base
             self.token = token
             self.name = q["name"]?.isEmpty == false ? q["name"] : nil
@@ -268,6 +272,13 @@ struct PairLink: Equatable {
     private static func query(_ items: [URLQueryItem]?) -> [String: String] {
         Dictionary((items ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { first, _ in first })
     }
+
+    /// The hub as the confirm sheet names it, the way the hub menu does.
+    var address: String { PairedHub.address(of: baseURL) }
+}
+
+extension PairLink: Identifiable {
+    var id: String { "\(baseURL.absoluteString) \(token)" }
 }
 
 /// Turns what someone types ("100.64.1.2", "mac.tailnet.ts.net:8477",
@@ -277,7 +288,9 @@ func hubURL(from input: String) -> URL? {
     guard !trimmed.isEmpty else { return nil }
     let withScheme = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
     guard var parts = URLComponents(string: withScheme), let host = parts.host, !host.isEmpty else { return nil }
-    if parts.port == nil { parts.port = Hub.defaultPort }
+    // An https address with no port is 443, `tailscale serve` in front of
+    // the hub; only plain http means the hub's own port.
+    if parts.port == nil, parts.scheme != "https" { parts.port = Hub.defaultPort }
     parts.path = ""
     parts.query = nil
     parts.fragment = nil

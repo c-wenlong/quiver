@@ -495,9 +495,12 @@ def gather(home: Path | None = None, port: int | None = None, run: Runner = subp
     moved = load_state(home)
     if moved.get("url") == f.public_url and moved.get("moved_at"):
         f.moved_at = float(moved["moved_at"])
-    from quiver.remote.catalog import load_machines
+    from quiver.remote.catalog import load_machine_id, load_machines
 
-    f.satellites = len(load_machines(home))
+    # The hub registers its own row in the same table; only the others
+    # are satellites.
+    own = load_machine_id(home)
+    f.satellites = sum(mid != own for mid in load_machines(home))
     return f
 
 

@@ -135,6 +135,9 @@ FOLDER_LIST_CAP = 500
 # owner-identity path of /v1/pair/requests*) allow this many attempts
 # per source IP per window.
 _PAIR_ATTEMPT_MAX = 5
+# The catalog loop drops expired pair requests (and any uncollected
+# credential on them) at most this often.
+_PAIR_PRUNE_S = 60.0
 _PAIR_ATTEMPT_S = 600
 
 # A launch the phone started stays answerable at /v1/launches/<id> this
@@ -276,6 +279,7 @@ class HubState:
         self._pair_ex_times: dict[str, list[float]] = {}
         self._pair_dec_times: dict[str, list[float]] = {}
         self._pair_req_lock = threading.Lock()
+        self._pair_pruned_at = 0.0
         # Host values this hub answers to — the owner-identity approval
         # path requires one, and the unauthenticated routes answer only
         # these (filled by serve() from the bind host + whois); empty
@@ -708,6 +712,16 @@ class HubState:
             )
         return written
 
+    def _prune_pair_requests(self) -> None:
+        now = time.time()
+        if now - self._pair_pruned_at < _PAIR_PRUNE_S:
+            return
+        self._pair_pruned_at = now
+        try:
+            pairing.prune_requests(self.home)
+        except Exception:
+            pass
+
     def _catalog_loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -745,6 +759,7 @@ class HubState:
                 rows, as_of = self.catalog.tail_snapshot()
                 self.tail_manager.sync(rows, as_of=as_of)
                 supervise.reap_kept(self.home, self.catalog.session_for)
+                self._prune_pair_requests()
                 # GitHub last: a slow ``gh`` must never hold up adoption
                 # or tail sync, which don't need it.
                 self.catalog.poll_github()
@@ -1107,6 +1122,10 @@ class _Handler(BaseHTTPRequestHandler):
         presentation — a mismatched ``request_id`` is a failed spend,
         not a free probe — so a topic reader holding it can answer
         exactly the one prompt it was minted for and nothing else.
+
+        The buttons only ever send allow, deny or always, so that is
+        all the token can answer with: a menu row number (which could
+        pick any option of a digit menu) burns it and is refused.
         """
         prefix = "/v1/sessions/"
         suffix = "/approval"
@@ -1120,6 +1139,11 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._read_body() or {}
         rid = str(body.get("request_id") or "")
         if not self._state.approval_tokens.consume(token, key, rid):
+            return None
+        decision = body.get("decision")
+        # A list is unhashable: check the type before ``in``.
+        if not isinstance(decision, str) or (
+                decision not in notify.ACTION_DECISIONS):
             return None
         # The approval route never reads the device id back; non-None
         # is the whole grant.
@@ -2326,7 +2350,13 @@ class _Handler(BaseHTTPRequestHandler):
         machine = cmd["machine"] or state.machine_id
         harness, cwd = cmd["harness"], cmd["cwd"]
         if machine != state.machine_id:
-            row = catalog_mod.load_machines(state.home).get(machine) or {}
+            row = catalog_mod.load_machines(state.home).get(machine)
+            if row is None:
+                # No satellite by that id would ever drain the queue:
+                # the launch would sit pending in a fresh journal.
+                self._send_error(404, "unknown_machine",
+                                 f"no machine {machine} on this hub")
+                return
             # A satellite older than the launchable field reports none;
             # it checks its own registry when the command arrives.
             offered = row.get("launchable")
