@@ -163,9 +163,6 @@ class TestScan(unittest.TestCase):
         self.assertIn("codex:rollout-1:2026-10-03T10:00:00Z", keys)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestDatabaseSources(unittest.TestCase):
     """OpenCode and Devin read through scan(), against minimal schemas."""
@@ -284,3 +281,7 @@ class TestReadsLeaveNoTransaction(unittest.TestCase):
         other.close()
         store.set_meta("y", "1")
         store.db.commit()
+
+
+if __name__ == "__main__":
+    unittest.main()

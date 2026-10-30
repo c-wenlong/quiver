@@ -384,9 +384,6 @@ class TestLookalikeCleanup(unittest.TestCase):
             "SELECT input FROM events WHERE key = ?", (rec.key,)).fetchone()[0], 1100)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestPageReadsAndTheFeedConnection(unittest.TestCase):
     """A page read on the shared connection must not pin a WAL snapshot.
@@ -436,3 +433,7 @@ class TestPageReadsAndTheFeedConnection(unittest.TestCase):
         self.assertFalse(self.webapp._store.db.in_transaction)
         self.assertIsNone(self.webapp._store.meta("probe"))
         self.webapp.overview("month", None, rescan=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
