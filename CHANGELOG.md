@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac app: approve pair requests in Settings › Remote.** A "Pending
+  requests" group under Paired devices lists the phones asking to pair
+  over Tailscale, with each one's name, tailnet node, login and how long
+  it has waited, a code field for the 6 digits the phone shows, and
+  Approve / Deny. It reads `swe remote devices --requests --json` every
+  3 seconds, only while the section is on screen, and an approval
+  refreshes the device list. This covers a hub on the same Mac; a hub on
+  another machine is [#681](https://github.com/c-wenlong/quiver/issues/681).
+  `swe remote devices --approve=<code>` and `--deny=<code>` gain
+  `--request-id=<id>`, which holds the code to that one request, as the
+  hub's HTTP route already did: a code typed against one row never
+  decides another, and five wrong codes deny it. The app always sends it.
+  Part of [#522](https://github.com/c-wenlong/quiver/issues/522).
+
 - **Remote hub: session rows say which model each session runs.**
   `/v1/sessions` rows, the hub's own and a satellite's, carry `model`,
   the model of the newest reply in the session's transcript (left out

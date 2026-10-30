@@ -77,7 +77,7 @@ hosts the hub; the web app and the iOS app are its clients.
 
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
-| Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval |
+| Pair a device | host | yes | yes | Tailscale, pair token, QR scan, 6-digit approval. Mac: Settings › Remote › Pending requests approves or denies a code for a hub on the same Mac (`swe remote devices --requests`, polled while shown); a hub on another machine is #681 |
 | Devices list and revoke | yes | yes | yes | Mac and Web: Settings. iOS: under the hub chip menu |
 | Launch a new session | yes | yes | yes | All three: machine, folder and harness pickers, first prompt, launch poll, then the chat opens. All sheets carry the model picker prefilled with the last-used model (`last_models`/`last_model`, #914); on all three it is a menu of Harness default, the harness's `recent_models` newest first, then Other… (web: `static/model-menu.js`; iOS: `ModelSelection`) |
 | Machine switcher | - | - | planned | iOS P4: one machine today |
