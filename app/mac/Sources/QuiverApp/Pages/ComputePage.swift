@@ -452,6 +452,9 @@ private struct ProcessRowView: View {
             .menuStyle(.borderlessButton)
             .accessibilityLabel("More for \(row.sample.name)")
         }
+        // The web app's 9px: without it each name sat on the hairline
+        // above, where orphan rows (10pt) had room.
+        .padding(.vertical, 9)
         .help(row.sample.commandLine)
         .alert(row.isMain ? "Quit \(UsageFormat.harness(harness))?" : "Quit \(row.sample.name)?",
                isPresented: $confirmingQuit) {
