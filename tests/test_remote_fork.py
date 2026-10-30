@@ -330,18 +330,29 @@ class TestOverlappingForks(unittest.TestCase):
         ok, _n, _ = self._fork(src, ["codex", "fork", CODEX_THREAD])
         self.assertTrue(ok)
 
+    def _age_markers(self):
+        for marker in supervise._pending_dir(self.home).glob("*.json"):
+            data = json.loads(marker.read_text())
+            data["launched_at"] -= 600
+            marker.write_text(json.dumps(data))
+
     def test_a_stale_marker_with_a_dead_pane_does_not_block(self):
         src = _session("d1", "droid", self.proj)
         self._fork(src, ["droid", "--fork", "d1"])
-        marker = next(supervise._pending_dir(self.home).glob("*.json"))
-        data = json.loads(marker.read_text())
-        data["launched_at"] -= 600
-        marker.write_text(json.dumps(data))
+        self._age_markers()
         ok, _n, _ = self._fork(src, ["droid", "--fork", "d1"])
         self.assertTrue(ok)
-        # ... but a live pane still holds the folder.
-        ok, _n, _ = self._fork(src, ["droid", "--fork", "d1"])
+        # A fresh marker blocks on its own ...
+        ok, note, _ = self._fork(src, ["droid", "--fork", "d1"])
         self.assertFalse(ok)
+        self.assertIn("still waiting", note)
+        # ... and a live pane still holds the folder once every marker
+        # is past the reservation window.
+        self._age_markers()
+        ok, note, _ = self._fork(src, ["droid", "--fork", "d1"],
+                                 tmux_up=True)
+        self.assertFalse(ok)
+        self.assertIn("still waiting", note)
 
     def test_claude_forks_name_their_id_and_never_wait(self):
         src = _session("abc", path=self.proj)
