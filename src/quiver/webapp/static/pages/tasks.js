@@ -812,7 +812,7 @@
     const { status, data } = await api(`/v1/app/tasks${refresh ? "?refresh=1" : ""}`);
     if (gen !== routeGen || seq !== page.seq) return;
     page.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("tasks");
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the other pages do.
       if (!page.data) {

@@ -124,6 +124,9 @@ function statusKeep(data) {
 function statusGate() {
   statusPage.data = null;
   statusPage.loading = false;
+  // A Track or Untrack reply can land after the browser moved on, and
+  // the gate would replace whatever page shows now.
+  if (!statusOnPage()) return;
   renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
 }
 
