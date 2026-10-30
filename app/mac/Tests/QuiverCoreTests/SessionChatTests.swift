@@ -39,8 +39,9 @@ final class HubStub: URLProtocol, @unchecked Sendable {
         return URLSession(configuration: config)
     }
 
-    /// The body a POST carried: URLSession hands a protocol the stream.
-    static func body(_ request: URLRequest) -> [String: String] {
+    /// The bytes a request carried: URLSession hands a protocol the body
+    /// as a stream, not as `httpBody`.
+    static func bodyData(_ request: URLRequest) -> Data {
         var data = request.httpBody ?? Data()
         if data.isEmpty, let stream = request.httpBodyStream {
             stream.open()
@@ -52,7 +53,18 @@ final class HubStub: URLProtocol, @unchecked Sendable {
             }
             stream.close()
         }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: String] ?? [:]
+        return data
+    }
+
+    /// The body a POST carried, as flat string fields.
+    static func body(_ request: URLRequest) -> [String: String] {
+        (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: String] ?? [:]
+    }
+
+    /// A request's query as a name → value dict.
+    static func query(_ request: URLRequest) -> [String: String] {
+        let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return Dictionary(items.map { ($0.name, $0.value ?? "") }) { _, b in b }
     }
 }
 

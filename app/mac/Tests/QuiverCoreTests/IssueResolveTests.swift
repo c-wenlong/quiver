@@ -499,18 +499,7 @@ extension HubStubbed {
         }
 
         private static func json(_ request: URLRequest) -> [String: Any] {
-            var data = request.httpBody ?? Data()
-            if data.isEmpty, let stream = request.httpBodyStream {
-                stream.open()
-                var buffer = [UInt8](repeating: 0, count: 4096)
-                while stream.hasBytesAvailable {
-                    let n = stream.read(&buffer, maxLength: buffer.count)
-                    guard n > 0 else { break }
-                    data.append(buffer, count: n)
-                }
-                stream.close()
-            }
-            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            (try? JSONSerialization.jsonObject(with: HubStub.bodyData(request))) as? [String: Any] ?? [:]
         }
 
         @Test func resolvePostsAndPollsTheLaunch() async throws {

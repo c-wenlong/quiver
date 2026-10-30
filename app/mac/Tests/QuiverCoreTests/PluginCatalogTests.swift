@@ -141,8 +141,8 @@ let catalogInventoryJSON = #"""
  ]}
 """#
 
-func catalogRunner(_ extra: [([String], CommandResult)] = []) -> RoutingRunner {
-    RoutingRunner(extra + [
+func catalogRunner(_ extra: [([String], CommandResult)] = []) -> ScriptedRunner {
+    ScriptedRunner(extra + [
         (["plugins", "catalog", "--json"], json(catalogJSON)),
         (["skills", "--json"], json(catalogInventoryJSON)),
     ])
@@ -647,7 +647,7 @@ func decodedInventory() throws -> [Skill] {
     }
 
     @Test func aCatalogSweCannotReadIsUnavailableNotEmpty() async {
-        let runner = RoutingRunner([(["plugins", "catalog", "--json"], CommandResult(
+        let runner = ScriptedRunner([(["plugins", "catalog", "--json"], CommandResult(
             status: 1, stdout: Data(), stderr: "Unknown subcommand: catalog\n"))])
         let model = PluginCatalogModel()
         await model.load(swe: SweClient(runner: runner))
@@ -787,7 +787,7 @@ func decodedInventory() throws -> [Skill] {
     @Test func aFixWaitsWhileAnActionRuns() async throws {
         let work = PluginWork()
         let fixes = PluginsModel(work: work)
-        let drift = RoutingRunner([(["find", "plugins", "--json"], json(#"""
+        let drift = ScriptedRunner([(["find", "plugins", "--json"], json(#"""
             {"sources": 1, "drift": [
               {"id": "codex:stale:canva@openai-curated", "harness": "codex", "marketplace": "openai-curated",
                "plugin": "canva", "ref": "canva@openai-curated", "kind": "stale", "detail": "d",
@@ -897,12 +897,12 @@ func decodedInventory() throws -> [Skill] {
     }
 }
 
-/// A RoutingRunner that also runs a hook before answering, outside any lock.
+/// A ScriptedRunner that also runs a hook before answering, outside any lock.
 final class HookRunner: CommandRunning, @unchecked Sendable {
-    private let inner: RoutingRunner
+    private let inner: ScriptedRunner
     var onCall: (@Sendable ([String]) async -> Void)?
 
-    init(_ inner: RoutingRunner) { self.inner = inner }
+    init(_ inner: ScriptedRunner) { self.inner = inner }
 
     var calls: [[String]] { inner.calls }
 

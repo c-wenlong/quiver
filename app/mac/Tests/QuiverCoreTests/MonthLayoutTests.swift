@@ -161,7 +161,7 @@ import Testing
 
     @Test func monthTotalsCountOnlyTheAnchorMonth() async {
         // A block wholly in the adjacent September days must not count.
-        let provider = CalendarMonthFake(blocks: [
+        let provider = FakeActivity(blocks: [
             ActivityBlock(harness: "claude", accountHome: "/h", sessionId: "sep",
                           start: utc("2026-09-29T09:00:00Z"),
                           end: utc("2026-09-29T10:00:00Z"), responses: 1),
@@ -287,15 +287,6 @@ import Testing
         #expect(model.panelCollapsed)
         model.apply(.togglePanel)
         #expect(!model.panelCollapsed)
-    }
-}
-
-/// Same filter-by-overlap fake the other calendar tests use.
-private struct CalendarMonthFake: ActivityProviding {
-    var blocks: [ActivityBlock]
-    func activityBlocks(in range: DateInterval, gap: TimeInterval,
-                        force: Bool) throws -> [ActivityBlock] {
-        blocks.filter { $0.end >= range.start && $0.start < range.end }
     }
 }
 

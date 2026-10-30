@@ -42,3 +42,15 @@ extension FileManager {
         try handle.write(contentsOf: Data(text.utf8))
     }
 }
+
+extension SearchStore {
+    /// The rowids of the indexed messages an FTS query matches, in order.
+    func ftsRowIDs(_ query: String) throws -> [Int64] {
+        let statement = try db.prepare(
+            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid")
+        statement.bind([.text(query)])
+        var ids: [Int64] = []
+        while try statement.step() { ids.append(statement.int(0)) }
+        return ids
+    }
+}
