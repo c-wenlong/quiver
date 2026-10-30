@@ -519,14 +519,14 @@ function totalCard(d) {
       <div class="total-cost num" id="total-cost">${Fmt.dollars(t.cost_usd)}</div>
       <div class="total-range num" id="total-detail">${esc(rangeCaption(d, overview.scale))}</div>
       ${t.unpriced_tokens ? `<div class="total-range" title="${esc((t.unpriced_models || []).join(", "))}">${Fmt.tokens(t.unpriced_tokens)} tokens from models with no list price aren't in this total</div>` : ""}
-      <div class="harness-row" id="harness-row">${chips}</div>
+      <div class="harness-chips" id="harness-chips">${chips}</div>
     </div>
     <svg class="marbles" id="marbles" preserveAspectRatio="xMidYMax meet"></svg>
   </div>`;
 }
 
 function bindHarnessFocus() {
-  const row = document.getElementById("harness-row");
+  const row = document.getElementById("harness-chips");
   if (!row) return;
   const d = overview.data;
   const reset = () => {
@@ -590,7 +590,7 @@ function drawMarbles() {
   // "1 marble = …" matches what is drawn.
   const shares = overview.data.harnesses.filter((h) => h.tokens > 0);
   overview.scale = Fmt.marbleScale(shares, Math.min(marbleCapacity(), slots.length));
-  const row = document.getElementById("harness-row");
+  const row = document.getElementById("harness-chips");
   const detail = document.getElementById("total-detail");
   if (detail && !(row && row.classList.contains("focusing"))) {
     detail.textContent = rangeCaption(overview.data, overview.scale);
