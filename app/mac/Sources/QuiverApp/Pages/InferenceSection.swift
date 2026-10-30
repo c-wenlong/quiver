@@ -633,7 +633,7 @@ private struct StatusLabel: View {
             .font(Theme.caption)
         }
         .buttonStyle(.plain)
-        .help(tooltip)
+        .hoverTip(tooltip, replacesLabel: false)
     }
 
     private var style: APIKeyCheckStyle { APIKeyCheckStyle(check?.result) }
@@ -707,17 +707,6 @@ struct KeyDraft: Identifiable {
     /// A catalogue pick on a new key: the `APIKeyProvider.id` to start
     /// the provider picker with. Nil on a blank add and on edits.
     var providerID: String? = nil
-}
-
-/// The model dropdown's row-hover fill, as the picker lists get.
-private struct DropdownRowHover: ViewModifier {
-    @State private var hovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(hovering ? Theme.rowHover : .clear)
-            .onHover { hovering = $0 }
-    }
 }
 
 /// Add, change or remove one key. A new key first picks its provider from
@@ -1129,7 +1118,7 @@ private struct KeyEditor: View {
                         .contentShape(.rect)
                     }
                     .plainButton(cornerRadius: 0)
-                    .modifier(DropdownRowHover())
+                    .modifier(RowHover())
                 }
             }
             .padding(.vertical, 4)

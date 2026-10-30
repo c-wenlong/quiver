@@ -22,7 +22,7 @@ const LOOKS = [
 const LEFT_ALONE = new Set(["blocked", "protected", "conflict", "keep", "would-conflict", "would-keep"]);
 
 const page = {
-  data: null, loadError: null, loading: false,
+  data: null, loadError: null, loading: false, loadSeq: 0,
   wizard: false, step: 0, selected: new Set(), start: "seed",
   applying: false, outcome: null, applyError: null, appliedSelection: null, adopted: false,
   showingMore: false, installing: null, finished: false,
@@ -44,20 +44,9 @@ function machineName() {
   return (page.data && page.data.machine) || "this machine";
 }
 
-/* Logos shipped in /app/ that Fmt.logo doesn't list yet. */
-const MORE_LOGOS = {
-  copilot: "harness-copilot.svg", grok: "harness-grok.svg", kimi: "harness-kimi.svg",
-  "mistral-vibe": "harness-mistral-vibe-color.svg", "qwen-code": "harness-qwen-code-color.svg",
-};
-
 function agentLogo(id) {
   const img = Fmt.logo(id, "setup-logo");
   if (img.startsWith("<img")) return img;
-  const file = MORE_LOGOS[id];
-  if (file) {
-    const mono = file.endsWith("-color.svg") ? "" : " mono";
-    return `<img class="setup-logo${mono}" src="/app/${file}" alt="">`;
-  }
   return `<span class="setup-logo setup-monogram" aria-hidden="true">${esc(agentName(id).slice(0, 1))}</span>`;
 }
 
@@ -66,12 +55,17 @@ const CHECK = `<svg class="setup-check" viewBox="0 0 24 24" aria-hidden="true"><
 
 /* ------------------------------------------------------------------ data */
 
+/* Only the newest read lands: an older one answering last would put its
+ * stale preview back. */
 async function load(gen) {
+  const seq = ++page.loadSeq;
   page.loading = true;
   page.loadError = null;
   const { status, data } = await api("/v1/app/setup");
-  if (gen !== routeGen) return false;
+  if (seq !== page.loadSeq) return false;
+  // Done even when the page was left meanwhile, so Refresh works on return.
   page.loading = false;
+  if (gen !== routeGen) return false;
   if (status === 401) {
     renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
     return false;
@@ -186,7 +180,7 @@ function finish() {
 }
 
 function onPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "setup";
+  return currentRoute() === "setup";
 }
 
 /* --------------------------------------------------------------- render */
@@ -215,7 +209,8 @@ function bindRefreshButton() {
   if (!btn) return;
   btn.disabled = page.applying;
   btn.onclick = async () => {
-    if (page.applying) return;
+    // One read at a time: a second click while one runs waits for it.
+    if (page.applying || page.loading) return;
     const gen = routeGen;
     btn.classList.add("spinning");
     const ok = await load(gen);

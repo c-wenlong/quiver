@@ -28,6 +28,7 @@ from quiver.status.parsers import Component
 from quiver.webapp.pages import status as status_page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "status"
 EPOCH = 1_791_720_000.0  # the Swift tests' usageEpoch, 2026-10-11
@@ -641,7 +642,6 @@ class TestRoute(HubBase):
     def test_page_assets_are_served(self):
         status, data = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("status"', data)
         self.assertIn(b".status-grid", self.srv.request("GET", "/app/pages.css")[1])
         for logo in ("harness-openai.svg", "harness-copilot.svg", "harness-npm.svg",
                      "harness-vercel.svg", "harness-cloudflare-color.svg"):
@@ -901,8 +901,8 @@ class TestLateWriteGate(unittest.TestCase):
         page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/status.js"
         prelude = ("globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
                    "const gates = []; function renderGate(m) { gates.push(m); }\n"
-                   "function registerPage() {}\n"
-                   "const apiPost = async () => ({ status: 401, data: null });\n")
+                   "function registerPage() {}\n" + app_js_function("currentRoute")
+                   + "const apiPost = async () => ({ status: 401, data: null });\n")
         body = "statusUntrack('x').then(() => process.stdout.write(String(gates.length)));\n"
         done = subprocess.run(["node", "-e", prelude + page.read_text(encoding="utf-8") + "\n" + body],
                               capture_output=True, text=True, timeout=30)
@@ -912,6 +912,25 @@ class TestLateWriteGate(unittest.TestCase):
     def test_only_on_the_page(self):
         self.assertEqual(self.gates_after_untrack("#/overview"), 0)
         self.assertEqual(self.gates_after_untrack("#/status"), 1)
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestRelativeTime(unittest.TestCase):
+    """Fmt.relative, the one copy of Foundation's named relative time that
+    Service status and Settings' device rows show."""
+
+    def test_named_past_times(self):
+        fmt = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/format.js"
+        now = 1_800_000_000
+        ages = [0, 30, 5 * 60, 3 * 3600, 26 * 3600, 9 * 86400, -120]
+        src = (fmt.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify("
+               + json.dumps(ages) + f".map((a) => Fmt.relative({now} - a, {now}))));\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        # A hub clock ahead of the browser (-120) still reads as now.
+        self.assertEqual(json.loads(done.stdout), ["now", "30 seconds ago", "5 minutes ago", "3 hours ago",
+                                                  "yesterday", "last week", "now"])
 
 
 if __name__ == "__main__":

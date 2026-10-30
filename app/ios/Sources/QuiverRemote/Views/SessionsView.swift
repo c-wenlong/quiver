@@ -142,8 +142,8 @@ struct SessionsView: View {
             Button("Unpair", role: .destructive) { app.unpair() }
         } message: {
             Text(app.hubs.hubs.count > 1
-                 ? "Your other hubs stay paired. You'll need to pair again to see this hub's sessions."
-                 : "You'll need to pair again to see sessions.")
+                 ? "This phone asks the hub to sign it out; if the hub can't be reached, remove it under Pair requests and devices on another device. Your other hubs stay paired."
+                 : "This phone asks the hub to sign it out; if the hub can't be reached, remove it under Pair requests and devices on another device. You'll need to pair again to see sessions.")
         }
     }
 

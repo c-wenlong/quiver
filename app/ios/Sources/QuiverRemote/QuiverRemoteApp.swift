@@ -38,6 +38,8 @@ struct RootView: View {
         }
         .tint(Theme.textPrimary)
         .background(Theme.wash.ignoresSafeArea())
+        // A `quiver://pair` link from outside waits here for a yes.
+        .pairOfferSheet()
     }
 }
 
