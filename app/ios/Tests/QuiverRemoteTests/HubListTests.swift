@@ -216,4 +216,13 @@ final class HubListTests: XCTestCase {
         await app.handle(URL(string: "quiver://pair?host=box.example&token=t2")!)
         XCTAssertFalse(app.pairing.codeSpent)
     }
+
+    func testATokenTheHubTurnsDownCantBeSentAgain() {
+        // What the hub answers for an expired or used pair token.
+        let refused = HubClient.error(status: 403, body: Data(#"{"error":{"code":"pair_failed","message":"unknown or expired pair token"}}"#.utf8))
+        XCTAssertTrue(PairingFlow.spendsCode(refused), "Pair would only get the same refusal; the sheet offers Close")
+        // A retry can work after these.
+        XCTAssertFalse(PairingFlow.spendsCode(HubClient.error(status: 429, body: Data(#"{"error":{"code":"rate_limited"}}"#.utf8))))
+        XCTAssertFalse(PairingFlow.spendsCode(URLError(.cannotConnectToHost)))
+    }
 }
