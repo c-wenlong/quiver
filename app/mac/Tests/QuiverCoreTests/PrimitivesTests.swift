@@ -332,6 +332,36 @@ final class PrimitiveHome {
         let edited = MarkdownFrontmatter.update("# Hi\n", set: [(key: "name", value: "s")])
         #expect(edited.hasPrefix("---\nname: s\n---\n\n# Hi"))
     }
+
+    /// A value YAML would read as something else is written quoted, and
+    /// reads back as the text typed.
+    @Test func aValueYAMLWouldMisreadIsQuoted() {
+        let cases: [(typed: String, written: String)] = [
+            ("Fix: the bug", #""Fix: the bug""#),
+            ("#tag", ##""#tag""##),
+            ("yes", #""yes""#),
+            ("1.0", #""1.0""#),
+            ("- item", #""- item""#),
+            ("say \"hi\"\nthen go", #""say \"hi\"\nthen go""#),
+            ("Plain words, fine.", "Plain words, fine."),
+        ]
+        for (typed, written) in cases {
+            let edited = MarkdownFrontmatter.update(skill, set: [(key: "description", value: typed)])
+            #expect(edited.contains("description: \(written)\n"), "\(typed)")
+            #expect(MarkdownFrontmatter(text: edited)?.fields.first { $0.key == "description" }?.value == typed)
+        }
+    }
+
+    /// A quoted value reads without its quotes, and saving the form
+    /// unchanged leaves the line exactly as written.
+    @Test func aQuotedValueReadsBareAndAnUnchangedOneStays() {
+        let text = "---\nname: 'it''s'\ndescription: \"a: b\" # note\nkind: \"x\"\n---\nbody\n"
+        let fields = MarkdownFrontmatter(text: text)?.fields.map { ($0.key, $0.value) } ?? []
+        #expect(fields.map(\.0) == ["name", "description", "kind"])
+        #expect(fields[0].1 == "it's")
+        #expect(fields[2].1 == "x")
+        #expect(MarkdownFrontmatter.update(text, set: fields) == text)
+    }
 }
 
 @Suite struct PrimitivePartsTests {

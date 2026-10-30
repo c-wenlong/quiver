@@ -123,7 +123,7 @@ public struct MarkdownFrontmatter: Sendable, Equatable {
                 let next = i + 1 < inside.count ? inside[i + 1] : ""
                 let simple = next.isEmpty || !(next.first == " " || next.first == "\t")
                 if simple {
-                    fields.append(Field(key: key, value: parsed.value))
+                    fields.append(Field(key: key, value: MarkdownFrontmatter.unquote(parsed.value)))
                 } else {
                     other.append(line)
                 }
@@ -133,6 +133,71 @@ public struct MarkdownFrontmatter: Sendable, Equatable {
             i += 1
         }
         if other.last == "" { other.removeLast() }
+    }
+
+    /// A YAML scalar's text as the form shows it: a double-quoted value
+    /// has its escapes read, a single-quoted one its `''`, and a plain
+    /// value is as written.
+    static func unquote(_ raw: String) -> String {
+        guard raw.count >= 2, let first = raw.first, raw.last == first,
+              first == "\"" || first == "'" else { return raw }
+        let inner = raw.dropFirst().dropLast()
+        if first == "'" { return inner.replacingOccurrences(of: "''", with: "'") }
+        var out = ""
+        var escaped = false
+        for ch in inner {
+            if escaped {
+                switch ch {
+                case "n": out.append("\n")
+                case "t": out.append("\t")
+                case "r": out.append("\r")
+                case "0": out.append("\0")
+                default: out.append(ch)   // \\, \", \/ and the rest
+                }
+                escaped = false
+            } else if ch == "\\" {
+                escaped = true
+            } else {
+                out.append(ch)
+            }
+        }
+        return out
+    }
+
+    /// `value` as a YAML scalar: plain when YAML reads it back as this
+    /// same string, else double-quoted. A plain `Fix: the bug`, `#tag`,
+    /// `yes` or `1.0` would read as a mapping, a comment, a bool or a
+    /// number, and a harness would get the wrong description.
+    static func scalar(_ value: String) -> String {
+        guard !value.isEmpty else { return value }
+        let indicators = Set("-?:,[]{}#&*!|>'\"%@`")
+        let reserved: Set = ["true", "false", "yes", "no", "on", "off", "y", "n",
+                             "null", "~", ".inf", "-.inf", "+.inf", ".nan"]
+        let plain = !indicators.contains(value.first!)
+            && !(value.first!.isWhitespace || value.last!.isWhitespace)
+            && value.last != ":"
+            && !value.contains(": ") && !value.contains(" #")
+            && !value.unicodeScalars.contains { $0.properties.generalCategory == .control }
+            && !reserved.contains(value.lowercased())
+            && value.range(of: #"^[-+]?(\.[0-9]|[0-9])"#, options: .regularExpression) == nil
+        guard !plain else { return value }
+        var out = "\""
+        for scalar in value.unicodeScalars {
+            switch scalar {
+            case "\\": out += "\\\\"
+            case "\"": out += "\\\""
+            case "\n": out += "\\n"
+            case "\t": out += "\\t"
+            case "\r": out += "\\r"
+            default:
+                if scalar.properties.generalCategory == .control {
+                    out += String(format: "\\u%04X", scalar.value)
+                } else {
+                    out.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return out + "\""
     }
 
     /// `(key, value)` for a `key: value` line, else nil.
@@ -172,7 +237,7 @@ public struct MarkdownFrontmatter: Sendable, Equatable {
     /// frontmatter one is created at the top.
     public static func update(_ text: String, set values: [(key: String, value: String)]) -> String {
         guard let range = range(in: text) else {
-            let block = values.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
+            let block = values.map { "\($0.key): \(scalar($0.value))" }.joined(separator: "\n")
             return "---\n\(block)\n---\n\n\(text)"
         }
         var lines = text[range].split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -186,12 +251,14 @@ public struct MarkdownFrontmatter: Sendable, Equatable {
             let value = left.remove(at: at).value
             let next = i + 1 < lines.count ? lines[i + 1] : ""
             guard next.isEmpty || !(next.first == " " || next.first == "\t") else { continue }
-            lines[i] = value.isEmpty ? parsed.key + ":" : parsed.key + ": " + value
+            // Unchanged keeps its line, quoting and comment included.
+            guard value != unquote(parsed.value) else { continue }
+            lines[i] = value.isEmpty ? parsed.key + ":" : parsed.key + ": " + scalar(value)
         }
         // Insert before the closing fence: a trailing "" is the newline
         // that already ends the last line, so new keys go ahead of it.
         let at = lines.last == "" ? lines.count - 1 : lines.count
-        lines.insert(contentsOf: left.map { "\($0.key): \($0.value)" }, at: at)
+        lines.insert(contentsOf: left.map { "\($0.key): \(scalar($0.value))" }, at: at)
         return String(text[..<range.lowerBound])
             + lines.joined(separator: "\n")
             + String(text[range.upperBound...])
