@@ -114,6 +114,30 @@ final class HubListTests: XCTestCase {
     }
 
     @MainActor
+    func testAPairLinkFromOutsideWaitsForAYes() async {
+        let app = AppModel(hub: nil)
+        let url = URL(string: "quiver://pair?host=box.example&port=9000&token=t")!
+        await app.handle(url)
+        XCTAssertEqual(app.pairOffer, PairLink(url))
+        XCTAssertEqual(app.pairOffer?.address, "box.example:9000", "the sheet names the hub")
+        XCTAssertFalse(app.pairing.busy, "nothing went to the hub")
+        XCTAssertNil(app.hub)
+        app.declinePairOffer()
+        XCTAssertNil(app.pairOffer)
+        XCTAssertNil(app.hub)
+    }
+
+    @MainActor
+    func testASecondPairWhileOneIsOutIsDropped() async {
+        let app = AppModel(hub: nil)
+        app.pairing.busy = true
+        let paired = await app.pair(with: PairLink(URL(string: "quiver://pair?host=mac&token=t")!)!)
+        XCTAssertFalse(paired)
+        XCTAssertTrue(app.pairing.busy, "the pair already out still owns the spinner")
+        XCTAssertNil(app.pairing.error)
+    }
+
+    @MainActor
     func testACancelledRefreshDoesntReadAsOffline() async {
         let app = AppModel(hub: hub("mac"))
         let refresh = Task { await app.refresh() }

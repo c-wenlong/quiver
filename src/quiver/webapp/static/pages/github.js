@@ -87,7 +87,7 @@ const GhUI = (() => {
   /* GhSetupCard, with a line saying which machine's gh it means. */
   function setupCard(status, machine) {
     const title = status === "unavailable"
-      ? "Download gh cli to enable github features." : "Sign in to GitHub to enable github features.";
+      ? "Download the gh CLI to enable GitHub features." : "Sign in to GitHub to enable GitHub features.";
     const command = status === "unavailable" ? "brew install gh" : "gh auth login";
     return `<div class="card gh-setup">
       <div class="gh-setup-title">${ico("terminal")}<span>${esc(title)}</span></div>
