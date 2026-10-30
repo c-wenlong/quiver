@@ -103,8 +103,13 @@ enum AttachmentRules {
             // The home folder may hold spaces; the staged part after the
             // inbox folder never does (`_safe_name`), so the path ends at
             // the first space after it.
-            guard let inbox = rest.range(of: "/remote/inbox/"),
+            // The injector writes an absolute path, `.../remote/inbox/<24
+            // hex slug>/<ref>`; a typed `@src/x` that mentions an inbox
+            // path later on is the user's own text.
+            guard rest.hasPrefix("@/"), let inbox = rest.range(of: "/remote/inbox/"),
                   let space = rest[inbox.upperBound...].firstIndex(of: " ") else { break }
+            let staged = rest[inbox.upperBound..<space].split(separator: "/", omittingEmptySubsequences: false)
+            guard staged.count == 2, staged[0].count == 24, staged[0].allSatisfy(\.isHexDigit) else { break }
             let path = rest[rest.index(after: rest.startIndex)..<space]
             let base = (String(path) as NSString).lastPathComponent
             let name = displayName(ref: base)
