@@ -112,9 +112,10 @@ class TestCursor(unittest.TestCase):
         read = _activity.cursor_created_at
         self.assertEqual([read(1786352400000), read(1786352400000.0), read("1786352400000"),
                           read(True), read(0), read(-5), read(None), read("soon"),
-                          read(" 1786352400000"), read("1_786_352_400_000"), read("0x10")],
+                          read(" 1786352400000"), read("1_786_352_400_000"), read("0x10"),
+                          read("0x1p1024"), read("-0x1p1024")],
                          [1786352400.0, 1786352400.0, 1786352400.0, 0.001, None, None, None,
-                          None, None, None, 0.016])
+                          None, None, None, 0.016, float("inf"), None])
 
     def test_the_composer_splits_like_swift(self):
         comp = _activity.cursor_composer
@@ -146,6 +147,33 @@ class TestCursor(unittest.TestCase):
         Path(str(db) + "-wal").write_bytes(b"x" * 10)
         after = _activity.cursor_stamp(str(db))
         self.assertEqual(after[1], before[1] + 10)
+
+    def test_a_live_wal_database_is_read_through_its_wal(self):
+        db = self.dir / _activity.CURSOR_DB
+        db.parent.mkdir(parents=True)
+        writer = sqlite3.connect(db)
+        self.addCleanup(writer.close)
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
+        writer.commit()
+        main_stamp = os.stat(db).st_mtime_ns
+
+        def write(bubble, at):
+            writer.execute("INSERT INTO cursorDiskKV VALUES (?, ?)",
+                           (f"bubbleId:c1:{bubble}", json.dumps({"createdAt": at})))
+            writer.commit()
+
+        index = _activity.FileIndex()
+        read = lambda: index.sessions(  # noqa: E731
+            lambda: _activity.cursor_files([str(self.dir)]), _activity.parse_cursor, force=True)
+        write("b1", "2026-08-10T08:00:00Z")
+        self.assertEqual([s["timestamps"] for s in read()], [[_utc("2026-08-10T08:00:00Z")]])
+        # The commit lands in the WAL only: the main file stands still, and
+        # the folded stamp still makes the index read it again.
+        write("b2", "2026-08-10T08:05:00Z")
+        self.assertEqual(os.stat(db).st_mtime_ns, main_stamp)
+        self.assertEqual([len(s["timestamps"]) for s in read()], [2])
 
     def test_a_broken_database_drops_out_of_the_index(self):
         db = self.dir / _activity.CURSOR_DB

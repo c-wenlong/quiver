@@ -258,7 +258,11 @@ def swift_double(text: str) -> float | None:
     if _SWIFT_DOUBLE.fullmatch(text):
         return float(text)
     if _SWIFT_HEX.fullmatch(text):
-        return float.fromhex(text)
+        try:
+            return float.fromhex(text)
+        except OverflowError:
+            # Swift rounds a hex float past the largest double to infinity.
+            return float("-inf") if text.startswith("-") else float("inf")
     return None
 
 
@@ -328,13 +332,20 @@ def cursor_files(dirs: list[str]) -> dict[str, tuple]:
 def parse_cursor(path: str) -> list[dict]:
     """``CursorAppActivity.parse``: one session per composer id, the
     database opened strictly read-only and queried once, retrying a
-    single BUSY. The account is the user-data dir three levels up."""
-    rows = []
+    single BUSY. The rows are read as the query steps; a retry starts
+    the sessions over, so rows read before a BUSY never count twice."""
+    sessions: dict[str, list[float]] = {}
     for attempt in range(2):
+        sessions = {}
         try:
             con = sqlite3.connect(f"file:{quote(path)}?mode=ro", uri=True, timeout=2)
             try:
-                rows = con.execute(CURSOR_BUBBLES).fetchall()
+                for key, value in con.execute(CURSOR_BUBBLES):
+                    if not isinstance(key, str):
+                        continue
+                    created, composer = cursor_created_at(value), cursor_composer(key)
+                    if created is not None and composer is not None:
+                        sessions.setdefault(composer, []).append(created)
             finally:
                 con.close()
             break
@@ -344,14 +355,7 @@ def parse_cursor(path: str) -> list[dict]:
                 time.sleep(0.1)
                 continue
             raise
-    sessions: dict[str, list[float]] = {}
-    for key, value in rows:
-        if not isinstance(key, str):
-            continue
-        created, composer = cursor_created_at(value), cursor_composer(key)
-        if created is None or composer is None:
-            continue
-        sessions.setdefault(composer, []).append(created)
+    # The account is the user-data dir three levels up.
     account = str(Path(path).parent.parent.parent)
     return [{"session": composer, "account": account, "cwd": None, "timestamps": sorted(stamps)}
             for composer, stamps in sessions.items()]

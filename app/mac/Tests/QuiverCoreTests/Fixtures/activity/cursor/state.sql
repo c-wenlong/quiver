@@ -14,6 +14,8 @@ INSERT INTO cursorDiskKV VALUES
   ('bubbleId:composer-2:b7', '{}'),
   ('bubbleId:composer-2:b8', '{"createdAt":" 1786352580000"}'),
   ('bubbleId:composer-2:b9', '{"createdAt":"1_786_352_640_000"}'),
+  ('bubbleId:composer-2:b10', '{"createdAt":"0x1p1024"}'),
+  ('bubbleId:composer-2:b11', '{"createdAt":"1e400"}'),
   ('bubbleId:composer-3::b1', '{"createdAt":"2026-08-10T15:00:00Z"}'),
   ('bubbleId:composer-4:', '{"createdAt":"2026-08-10T15:00:00Z"}'),
   ('bubbleId::b1', '{"createdAt":"2026-08-10T15:00:00Z"}'),
