@@ -827,10 +827,13 @@ class TestTailer(unittest.TestCase):
                 fh.write(json.dumps(_claude_user("b")) + "\n")
             t.poll(time.time(), True)
             self.assertTrue(t.moved)
-        # A replaced source is read fresh, not compared with the old one.
-        t.source = tail.JsonlTailSource(path, "claude")
-        t.poll(time.time(), True)
-        self.assertTrue(t.moved)
+        # A replaced source is read fresh, not compared with the old
+        # one's state: an empty new file reads as not moved.
+        empty = self.tmp / "empty.jsonl"
+        empty.write_text("")
+        t.source = tail.JsonlTailSource(empty, "claude")
+        self.assertEqual(t.poll(time.time(), True), [])
+        self.assertFalse(t.moved)
 
     def test_cursor_commits_only_after_emit(self):
         # The cursor must lag the journal write: a crash between poll
