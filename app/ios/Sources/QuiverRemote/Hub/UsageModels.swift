@@ -125,17 +125,27 @@ struct OnDemand: Decodable, Hashable {
 
 // MARK: - /v1/app/overview
 
+/// The overview's seven periods, in the Mac and web picker's order and
+/// words (`overview.PERIODS`).
 enum UsagePeriod: String, CaseIterable, Identifiable {
     case today
     case week = "7d"
-    case month = "30d"
+    case thisMonth = "month"
+    case thirtyDays = "30d"
+    case ninetyDays = "90d"
+    case year = "365d"
+    case allTime = "all"
 
     var id: String { rawValue }
     var title: String {
         switch self {
         case .today: "Today"
         case .week: "7 days"
-        case .month: "30 days"
+        case .thisMonth: "This month"
+        case .thirtyDays: "30 days"
+        case .ninetyDays: "90 days"
+        case .year: "365 days"
+        case .allTime: "All time"
         }
     }
 }
@@ -167,16 +177,58 @@ struct OverviewResponse: Decodable {
         let date: String
         let tokens: Int?
         let costUsd: Double?
+        var input: Int? = nil
+        var output: Int? = nil
+        /// Cache reads plus cache writes.
+        var cached: Int? = nil
         var id: String { date }
+    }
+
+    struct Quick: Decodable, Hashable {
+        let activeDays: Int?
+        let tokensPerDay: Int?
+        /// The busiest day's ISO date, nil with no usage.
+        let busiestDay: String?
+    }
+
+    /// One of the period's five biggest models by tokens.
+    struct TopModel: Decodable, Hashable, Identifiable {
+        let model: String
+        let tokens: Int?
+        let share: Double?
+        /// The harnesses that ran it, most tokens first.
+        let harnesses: [String]?
+        var id: String { model }
+    }
+
+    /// The last 26 weeks, Sunday-first week columns, oldest first;
+    /// the period doesn't change it.
+    struct Heatmap: Decodable, Hashable {
+        struct Cell: Decodable, Hashable {
+            let date: String
+            let tokens: Int?
+            let costUsd: Double?
+            /// 0 (none) to 4, quartiles of the busy days.
+            let level: Int?
+            /// A day after today, drawn as a gap.
+            let future: Bool?
+        }
+        let weeks: Int?
+        let days: [Cell]?
     }
 
     let period: String?
     let timeZone: String?
     let range: Range?
+    /// The ledger's first day: where All time (no range) starts.
+    let firstDay: String?
     let totals: Totals?
     let harnesses: [Harness]?
     /// Active days only, newest first.
     let days: [Day]?
+    let quick: Quick?
+    let topModels: [TopModel]?
+    let heatmap: Heatmap?
     let scannedAt: Double?
     let notes: [String]?
     /// The hub machine's name: the ledger reads that machine's logs only.

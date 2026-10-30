@@ -229,7 +229,7 @@ and per-source env blocks so a missing token explains an empty page.
 - [ ] Dictation in the composer
 - [x] Search sessions from Sessions: transcripts through the hub's FTS index when present, titles and folders as text always (`GET /v1/search`)
 - [ ] Search satellite transcripts (the index covers the hub machine only)
-- [x] Usage and limits view from `swe list --usage --json`. Hub: `GET /v1/usage` serves those rows for the hub machine, and the web app shows them. The app's Usage tab adds tokens and cost from `GET /v1/app/overview`
+- [x] Usage and limits view from `swe list --usage --json`. Hub: `GET /v1/usage` serves those rows for the hub machine, and the web app shows them. The app's Usage tab adds tokens and cost from `GET /v1/app/overview` over the overview's seven periods, with quick figures, top models, the activity heatmap and the daily table
 - [x] Hub: satellites report their own usage, so a MacBook's quota shows too (`POST /v1/agent/usage`, `machines` in `GET /v1/usage`)
 - [ ] Diff viewer with commit and push through `swe gh`
 - [ ] iPad layout: sessions list and chat side by side
