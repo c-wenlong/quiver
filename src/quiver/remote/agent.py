@@ -10,29 +10,37 @@ simply drops offline on the hub until it wakes and replays the queue.
 
 import json
 import os
-import queue as queue_mod
 import ssl
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from pathlib import Path
 
 from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
-from quiver.remote import inject, journal, protocol, supervise, tail
+from quiver.remote import inject, journal, protocol, sendq, supervise, tail
 from quiver.remote import fork as fork_mod, usage as usage_mod
 from quiver.remote.detach import PendingDetaches
 
 AGENT_FILE = "agent.json"          # satellite's stored hub credential
-PUSH_BATCH = 50                    # events per /v1/agent/events POST
+PUSH_BATCH = 50                    # most events per /v1/agent/events POST
 RECONNECT_S = 5.0
 CATALOG_PUSH_S = 10.0
 # The hub refuses JSON bodies over 4 MiB (hub._MAX_BODY); a catalog push
 # stays under it with room to spare.
 CATALOG_BODY_MAX = (4 << 20) - (64 << 10)
+# An events POST is held to the same size: a batch is cut by encoded
+# bytes as well as count, and an event too big to go alone is clipped.
+EVENTS_BODY_MAX = CATALOG_BODY_MAX
+# Commands that run on the session's queue, in order, off the stream.
+_SESSION_QUEUED_OPS = frozenset({"message", "attachment"})
 OUTBOX_KEY = "_outbox"             # journal key for unsent uplink events
+# The in-memory uplink buffer keeps no more than the outbox journal's
+# ring does across a restart; while the hub is down the oldest go first.
+OUTBOX_MAX = journal.RING_MAX
 
 
 def agent_file_for(home: Path | None) -> Path:
@@ -84,6 +92,32 @@ def _urlopen(req: urllib.request.Request, timeout: float | None):
         resp = urllib.request.urlopen(req, timeout=timeout, context=ctx)
         _fallback_ctx = ctx
         return resp
+
+
+def _encoded_len(event: dict) -> int:
+    return len(json.dumps(event, ensure_ascii=False).encode("utf-8"))
+
+
+def _clip_strings(value, cap: int):
+    if isinstance(value, str):
+        return value if len(value) <= cap else value[:cap] + "… (truncated)"
+    if isinstance(value, dict):
+        return {k: _clip_strings(v, cap) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clip_strings(v, cap) for v in value]
+    return value
+
+
+def _clip_event(event: dict, limit: int) -> dict | None:
+    """``event`` with its long strings cut until it encodes within
+    ``limit`` bytes, or None when even 1 KiB strings don't fit it."""
+    cap = limit // 2
+    while cap >= 1024:
+        clipped = _clip_strings(event, cap)
+        if _encoded_len(clipped) <= limit:
+            return clipped
+        cap //= 4
+    return None
 
 
 def _headers(credential: str, ctype: str | None = "application/json") -> dict:
@@ -166,6 +200,8 @@ class RemoteAgent:
         # Last "/" menu payload the hub accepted; see _push_catalog.
         self._slash_digest: str | None = None
         self._slash_skipped: str | None = None
+        # Row count last trimmed to fit a push, so the note prints once.
+        self._rows_trimmed: int | None = None
         # Set after a printed 403 register refusal, so the loop retries
         # without re-printing; cleared on the next accepted register.
         self._register_denied: str | None = None
@@ -174,8 +210,10 @@ class RemoteAgent:
         self._stop = threading.Event()
         # Commands dispatch on the stream thread except ``message``,
         # which can run minutes (headless claude): those go through
-        # ``_work_q`` so a queued interrupt/detach isn't stuck behind it.
-        self._work_q: "queue_mod.Queue" = queue_mod.Queue()
+        # ``_sendq``, one worker per session like the hub's, so a queued
+        # interrupt/detach isn't stuck behind a run and one session's
+        # turn doesn't hold every other session's messages.
+        self._sendq = sendq.SendQueue()
         # ``detach`` with ``mode: when_idle``, waiting out a turn here.
         self.detaches = PendingDetaches(self._stop)
         # Fresh per-session status for those waits; tests stub it.
@@ -193,6 +231,11 @@ class RemoteAgent:
         # The stream thread, the work loop and fork threads all finish
         # commands; the cursor advance must not interleave.
         self._done_lock = threading.Lock()
+        # Bumped when the hub's command journal starts over under our
+        # cursor (``_reset_cmd_cursor``); see ``_mark_done``.
+        self._cmd_epoch = 0
+        # The ``?last=`` the current command stream sent.
+        self._stream_cursor = self._done_cmd_seq
         from quiver.sessions.status import session_statuses
         # Same status re-probe as the hub: the satellite's tailer emits
         # session.status itself, and its catalog push carries the
@@ -209,7 +252,7 @@ class RemoteAgent:
         self._outbox = journal.Journal(self.home)
         events, _truncated = self._outbox.read_since(
             OUTBOX_KEY, self._outbox_ack)
-        self.outbox = list(events)
+        self.outbox = list(events)[-OUTBOX_MAX:]
 
     def _on_probed_status(self, key: str, status: str, at: float) -> None:
         """Same as the hub's: patch the catalog row, and let a pending
@@ -248,7 +291,9 @@ class RemoteAgent:
         path = self._cmd_cursor_file()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({
+            # Atomic: a crash mid-write left a torn file that loaded as
+            # no cursor, so the whole backlog replayed and re-ran.
+            atomic_write_text(path, json.dumps({
                 "hub": self.hub,
                 "seq": self._done_cmd_seq,
                 # Done seqs above the contiguous floor — without them a
@@ -275,15 +320,23 @@ class RemoteAgent:
 
     def _save_outbox_ack(self) -> None:
         try:
-            self._outbox_ack_file().write_text(str(self._outbox_ack))
+            # Atomic: a torn file reads as ack 0 and resends the outbox.
+            atomic_write_text(self._outbox_ack_file(), str(self._outbox_ack))
         except OSError:
             pass
 
-    def _mark_done(self, seq: int | None) -> None:
-        """Advance the completed cursor to the highest contiguous seq."""
+    def _mark_done(self, seq: int | None, epoch: int | None = None) -> None:
+        """Advance the completed cursor to the highest contiguous seq.
+
+        ``epoch`` is ``_cmd_epoch`` when the command arrived: a command
+        from before a journal reset finishing late must not mark the
+        new journal's seq of the same number done.
+        """
         if not isinstance(seq, int):
             return
         with self._done_lock:
+            if epoch is not None and epoch != self._cmd_epoch:
+                return
             self._done_set.add(seq)
             while self._done_cmd_seq + 1 in self._done_set:
                 self._done_cmd_seq += 1
@@ -304,24 +357,63 @@ class RemoteAgent:
             # Buffer the stamped copy: the seq is what the ack file
             # records once the hub accepts the batch.
             self.outbox.append(stamped or event)
+            self._trim_outbox()
         return stamped or event
 
-    def _push_events(self) -> bool:
+    def _trim_outbox(self) -> None:
+        """Drop the oldest buffered events past ``OUTBOX_MAX``; the
+        caller holds ``_outbox_lock``. The next accepted batch acks past
+        them, so they are gone for good, as the ring would drop them."""
+        over = len(self.outbox) - OUTBOX_MAX
+        if over > 0:
+            del self.outbox[:over]
+
+    def _take_batch(self) -> tuple[list[dict], list[dict]]:
+        """Pop the next POST off the outbox: (events taken, events to
+        send). At most ``PUSH_BATCH`` events and ``EVENTS_BODY_MAX``
+        encoded bytes go at once. An event over that alone goes
+        clipped, or not at all when clipping can't fit it, so one huge
+        tool result can't get a 400 on every retry and wedge the
+        uplink."""
+        taken: list[dict] = []
+        batch: list[dict] = []
+        size = 0
         with self._outbox_lock:
-            batch, self.outbox = self.outbox[:PUSH_BATCH], \
-                self.outbox[PUSH_BATCH:]
-        if not batch:
+            for orig in self.outbox:
+                if len(batch) >= PUSH_BATCH:
+                    break
+                ev, n = orig, _encoded_len(orig) + 1
+                if n > EVENTS_BODY_MAX:
+                    ev = _clip_event(orig, EVENTS_BODY_MAX - 1)
+                    if ev is None:
+                        taken.append(orig)  # dropped, acked with the rest
+                        continue
+                    n = _encoded_len(ev) + 1
+                if batch and size + n > EVENTS_BODY_MAX:
+                    break
+                taken.append(orig)
+                batch.append(ev)
+                size += n
+            del self.outbox[:len(taken)]
+        return taken, batch
+
+    def _push_events(self) -> bool:
+        taken, batch = self._take_batch()
+        if not taken:
             return True
-        status, _payload = _post(
-            self.hub, "/v1/agent/events", self.cred,
-            {"machine_id": self.machine_id, "events": batch},
-        )
-        if status != 200:
-            with self._outbox_lock:
-                self.outbox = batch + self.outbox
-            return False
-        seq = batch[-1].get("seq")
-        if isinstance(seq, int) and seq > self._outbox_ack:
+        if batch:
+            status, _payload = _post(
+                self.hub, "/v1/agent/events", self.cred,
+                {"machine_id": self.machine_id, "events": batch},
+            )
+            if status != 200:
+                with self._outbox_lock:
+                    self.outbox[:0] = taken
+                    self._trim_outbox()
+                return False
+        seqs = [ev.get("seq") for ev in taken]
+        seq = max((s for s in seqs if isinstance(s, int)), default=None)
+        if seq is not None and seq > self._outbox_ack:
             self._outbox_ack = seq
             self._save_outbox_ack()
         return True
@@ -347,7 +439,8 @@ class RemoteAgent:
                     "session.launched", key, self.machine_id,
                     {"launch_id": lid},
                 ))
-        body = {"machine_id": self.machine_id, "rows": rows}
+        body = {"machine_id": self.machine_id,
+                "rows": self._fit_rows(rows)}
         # The "/" menu's custom commands live on this machine's disk; send
         # them only when they changed, so the 10 s push stays small.
         try:
@@ -376,6 +469,31 @@ class RemoteAgent:
         if self._refresh_launchable():
             self._register()
         return status == 200
+
+    def _fit_rows(self, rows: list[dict]) -> list[dict]:
+        """The newest rows whose push fits under ``CATALOG_BODY_MAX``.
+
+        A machine with thousands of sessions can list more than the hub
+        takes in one body; refused whole, the push failed every 10 s
+        and the hub never heard of a new session. Rows come newest
+        first, so the oldest are the ones left out.
+        """
+        base = len(json.dumps({"machine_id": self.machine_id, "rows": []},
+                              ensure_ascii=False).encode("utf-8"))
+        total = base
+        for n, row in enumerate(rows):
+            # _post's json.dumps puts ", " between rows.
+            total += len(json.dumps(row, ensure_ascii=False)
+                         .encode("utf-8")) + (2 if n else 0)
+            if total > CATALOG_BODY_MAX:
+                if self._rows_trimmed != len(rows):
+                    self._rows_trimmed = len(rows)
+                    print(f"swe remote agent: {len(rows)} sessions are too "
+                          f"many for one catalog push; sending the newest "
+                          f"{n}", file=sys.stderr)
+                return rows[:n]
+        self._rows_trimmed = None
+        return rows
 
     def _push_usage(self) -> bool:
         body = usage_mod.snapshot()
@@ -422,9 +540,13 @@ class RemoteAgent:
 
     def _command_stream(self) -> None:
         """GET /v1/agent/commands as an SSE stream; dispatch each command."""
+        # The cursor this connection asks from: a journal.truncated
+        # reply is judged against it, not against a floor that commands
+        # finishing meanwhile moved on.
+        self._stream_cursor = self._done_cmd_seq
         url = (
             f"{self.hub}/v1/agent/commands"
-            f"?machine={self.machine_id}&last={self._done_cmd_seq}"
+            f"?machine={self.machine_id}&last={self._stream_cursor}"
         )
         req = urllib.request.Request(url, headers=_headers(self.cred, None))
         try:
@@ -441,8 +563,12 @@ class RemoteAgent:
                     line = raw.rstrip(b"\n")
                     if line == b"":
                         if data_lines:
-                            self._handle_frame(b"\n".join(data_lines))
+                            frame = b"\n".join(data_lines)
                             data_lines = []
+                            if self._handle_frame(frame) == "reset":
+                                # Reconnect from the new cursor, so the
+                                # hub's backlog floor follows it down.
+                                break
                         continue
                     if line.startswith(b"data:"):
                         data_lines.append(line[5:].lstrip())
@@ -451,13 +577,20 @@ class RemoteAgent:
         if not self._stop.is_set():
             time.sleep(1)
 
-    def _handle_frame(self, blob: bytes) -> None:
+    def _handle_frame(self, blob: bytes) -> str | None:
+        """Act on one SSE frame; "reset" when it moved the command
+        cursor back (the stream should reconnect from there)."""
         try:
             ev = json.loads(blob.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            return
-        if not isinstance(ev, dict) or ev.get("type") != "command":
-            return
+            return None
+        if not isinstance(ev, dict):
+            return None
+        if ev.get("type") == "journal.truncated":
+            return self._reset_cmd_cursor(ev.get("seq"))
+        if ev.get("type") != "command":
+            return None
+        epoch = self._cmd_epoch
         seq = ev.get("seq")
         if isinstance(seq, int):
             if seq in self._done_set:
@@ -465,43 +598,70 @@ class RemoteAgent:
                 # floor the replay started from: seen it, don't run
                 # it again. The wire cursor still moves.
                 self._last_cmd_seq = max(self._last_cmd_seq, seq)
-                return
+                return None
             if seq <= self._last_cmd_seq:
-                return
+                return None
             self._last_cmd_seq = seq
-        if (ev.get("data") or {}).get("op") == "message":
-            # Headless sends block for the whole turn — queue them so a
-            # later interrupt/detach isn't stuck behind the run.
-            self._work_q.put((seq, ev))
-            return
-        if (ev.get("data") or {}).get("op") == "fork":
-            # Booting the fork's pane can take 30 s: run it beside the
-            # stream so an interrupt or detach behind it goes at once.
-            # The cursor still waits for it, so a crash replays it.
+        op = (ev.get("data") or {}).get("op")
+        if op in _SESSION_QUEUED_OPS:
+            # Headless sends block for the whole turn and an attachment
+            # pull is a download: queue them so a later interrupt/detach
+            # isn't stuck behind them. One session's queued commands stay
+            # in order, so a message still finds its staged attachment.
+            # attach stays on the stream: queued behind a turn it could
+            # land after a later detach and undo it. One still queued at
+            # shutdown is left undone, so the replay runs it.
+            self._sendq.submit(
+                str(ev.get("session") or ""),
+                lambda: self._dispatch_then_done(seq, ev, epoch),
+                lambda: None,
+            )
+            return None
+        if op in ("fork", "launch"):
+            # Booting a new session's pane can take 30 s: run it beside
+            # the stream so an interrupt or detach behind it goes at
+            # once. The cursor still waits for it, so a crash replays it.
             threading.Thread(
-                target=self._dispatch_then_done, args=(seq, ev),
-                name=f"agent-fork-{seq}", daemon=True,
+                target=self._dispatch_then_done, args=(seq, ev, epoch),
+                name=f"agent-{op}-{seq}", daemon=True,
             ).start()
-            return
+            return None
         self._dispatch(ev)
-        self._mark_done(seq)
+        self._mark_done(seq, epoch)
+        return None
 
-    def _dispatch_then_done(self, seq, ev: dict) -> None:
+    def _dispatch_then_done(self, seq, ev: dict,
+                            epoch: int | None = None) -> None:
         try:
             self._dispatch(ev)
         finally:
-            self._mark_done(seq)
+            self._mark_done(seq, epoch)
 
-    def _work_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                seq, cmd = self._work_q.get(timeout=0.5)
-            except queue_mod.Empty:
-                continue
-            try:
-                self._dispatch(cmd)
-            finally:
-                self._mark_done(seq)
+    def _reset_cmd_cursor(self, seq) -> str | None:
+        """The hub answered ``journal.truncated``: start over if it says
+        our cursor is past its command journal (wiped, or a hub that
+        lost its data). Its seqs restart below us, and every new
+        command would be dropped as already seen.
+
+        The cursor goes to 0, not to the head the hub names: every
+        command in the new journal was queued after ours ended, so the
+        reconnect replays them all rather than skipping those queued
+        while we were away. Behind the ring the hub echoes the cursor
+        this connection sent, and nothing changes: compared with that,
+        not the live floor, which commands finishing since have moved."""
+        if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+            return None
+        with self._done_lock:
+            if seq >= self._stream_cursor:
+                return None
+            self._cmd_epoch += 1
+            self._done_cmd_seq = 0
+            self._last_cmd_seq = 0
+            # Done seqs above the old floor name the old journal's
+            # commands, not the new one's.
+            self._done_set.clear()
+            self._save_cmd_cursor()
+        return "reset"
 
     def _dispatch(self, cmd: dict) -> None:
         """Execute one command envelope; report back as command.result."""
@@ -527,9 +687,7 @@ class RemoteAgent:
 
     def _buffer_result(self, event: dict) -> None:
         """Journal + buffer a command.result the same way _capture does."""
-        stamped = self._outbox.append(OUTBOX_KEY, event)
-        with self._outbox_lock:
-            self.outbox.append(stamped or event)
+        self._capture(str(event.get("session") or ""), event)
 
     def _execute(
         self, key: str, op: str, data: dict
@@ -565,7 +723,10 @@ class RemoteAgent:
                 hub_key = str(data.get("hub_key") or key)
                 blob = _get_bytes(
                     self.hub,
-                    f"/v1/agent/attachments/{hub_key}/{ref}", self.cred,
+                    # Both quoted whole: a key can hold "/" or "#",
+                    # and the hub unquotes each part.
+                    f"/v1/agent/attachments/{quote(hub_key, safe='')}/"
+                    f"{quote(ref, safe='')}", self.cred,
                 )
                 if blob is None:
                     return False, "attachment fetch failed", False
@@ -660,6 +821,10 @@ class RemoteAgent:
                 result = injector.control(
                     session, ctl, str(data.get("value") or ""),
                 )
+                if result.ok and ctl in {"kill", "detach"}:
+                    # As on the hub: the session is no longer ours, so
+                    # its staged files go (a kept one returned above).
+                    attachments.drop_session(self.home, key)
                 return result.ok, result.note, result.degraded
             return False, f"unknown op {op}", False
         except Exception as exc:
@@ -690,6 +855,8 @@ class RemoteAgent:
                 self.home, key, supervise.meta_for(self.home, key),
                 emit=self._capture, machine=self.machine_id,
             ).control(current, "detach", "")
+            if result.ok:
+                attachments.drop_session(self.home, key)
             return result.ok, result.note
 
         def report(ok: bool, note: str, cancelled: bool) -> None:
@@ -739,12 +906,31 @@ class RemoteAgent:
             )
 
     def _tail_loop(self) -> None:
+        sweeps = 0
         while not self._stop.is_set():
             try:
                 self.tail_manager.tick()
             except Exception:
                 pass
+            sweeps += 1
+            if sweeps >= 1200:  # ~5 min at a 250 ms tick, as on the hub
+                sweeps = 0
+                self._sweep()
             self.tail_manager.wait(0.25)
+
+    def _sweep(self) -> None:
+        """Delete files this satellite stopped needing: cursors of
+        sessions idle past ``tail.STALE_FILE_AGE_S`` (the uplink outbox
+        is its own and stays), and staged attachments past
+        ``attachments.MAX_AGE_S``, as the hub's loop does."""
+        try:
+            self.tail_manager.sweep_stale(self._outbox, keep=(OUTBOX_KEY,))
+        except Exception:
+            pass
+        try:
+            attachments.sweep(self.home)
+        except Exception:
+            pass
 
     def _downlink_loop(self) -> None:
         while not self._stop.is_set():
@@ -775,8 +961,6 @@ class RemoteAgent:
                              name="agent-tail"),
             threading.Thread(target=self._downlink_loop, daemon=True,
                              name="agent-downlink"),
-            threading.Thread(target=self._work_loop, daemon=True,
-                             name="agent-worker"),
         ]
         for t in threads:
             t.start()
@@ -788,6 +972,7 @@ class RemoteAgent:
         except KeyboardInterrupt:
             pass
         self._stop.set()
+        self._sendq.close()
         self.tail_manager.interrupt()
         self.detaches.close()
         for t in threads:

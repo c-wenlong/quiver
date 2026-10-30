@@ -115,8 +115,22 @@ struct SessionRow: Codable, Identifiable, Hashable {
     /// names it ("claude-opus-4-5-20251101", "anthropic/claude-opus-4-5").
     /// Nil when the hub doesn't know it, or is older than the field.
     var model: String? = nil
+    /// On an attached row, the supervised channel: tmux, headless,
+    /// serve or appserver.
+    var mode: String? = nil
+    /// The channels (`mode` values) in which the hub can switch this
+    /// harness's model: `["tmux"]` for Claude Code and Codex today.
+    /// Nil on a hub or satellite older than the field.
+    var modelModes: [String]? = nil
 
     var id: String { key }
+    /// The chat offers its Model menu: attached through a channel whose
+    /// `model` control op works. Everywhere else the op is refused, so
+    /// the menu is hidden rather than offered.
+    var canSwitchModel: Bool {
+        guard isAttached, let mode else { return false }
+        return modelModes?.contains(mode) == true
+    }
     /// `model` short enough for a header or a list row, or nil.
     var modelLabel: String? { ModelLabel.short(model) }
     var displayTitle: String { (title?.isEmpty == false ? title : nil) ?? "Untitled session" }
@@ -178,13 +192,6 @@ struct SessionMeta: Codable, Equatable {
     var harnessTitle: String?
     var pinned: Bool?
     var pinnedAt: Double?
-}
-
-/// `POST .../control {op: "detach", mode: "when_idle"}` answers 202 with this.
-struct DetachQueued: Decodable {
-    let queued: Bool?
-    let mode: String?
-    let note: String?
 }
 
 struct SessionsResponse: Codable {
@@ -268,7 +275,11 @@ struct MessagesResponse: Decodable {
 }
 
 struct StatusData: Decodable { let status: String? }
-struct OwnershipData: Decodable { let ownership: String? }
+struct OwnershipData: Decodable {
+    let ownership: String?
+    /// The channel an attach took (nil once observed again).
+    var mode: String? = nil
+}
 struct ApprovalRequested: Decodable { let requestId: String?; let prompt: String? }
 struct ApprovalResolved: Decodable { let requestId: String?; let decision: String?; let source: String? }
 struct CommandResult: Decodable {

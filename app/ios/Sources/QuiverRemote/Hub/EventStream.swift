@@ -26,13 +26,40 @@ struct SSEParser {
 }
 
 /// One session's live events, resuming from `last` and reconnecting
-/// with backoff until the consuming task is cancelled.
+/// with backoff until the consuming task is cancelled, or until the hub
+/// says the stream will never open (`ends(status:)`).
 enum EventStream {
+    /// The `?last=` to reconnect with once `env` arrived: the highest seq
+    /// seen, except that a `journal.truncated` frame's seq always wins,
+    /// even when lower. That seq is the client's own cursor when the
+    /// ring overflowed, or the journal's head when the cursor was above
+    /// it (a wiped journal starts its seqs again, and a cursor left above
+    /// the head hears nothing).
+    static func resume(after env: Envelope, from cursor: Int) -> Int {
+        guard let seq = env.seq else { return cursor }
+        return env.type == "journal.truncated" ? seq : max(cursor, seq)
+    }
+
+    /// A refusal no retry will change: 403 (this device may not read
+    /// it) at once, and 404 `unknown_session` once it has come back
+    /// `notFoundLimit` times in a row. A hub that just restarted answers
+    /// 404 for every session until its first catalog scan lands, so one
+    /// 404 isn't proof the session is gone. Anything else, a restart's
+    /// 502 say, is always worth reconnecting for.
+    static func ends(status: Int, notFoundInARow: Int) -> Bool {
+        status == 403 || (status == 404 && notFoundInARow >= notFoundLimit)
+    }
+
+    /// With the backoff (1, 2, 4, 8, 15 s) that is about half a minute of
+    /// 404s, longer than a hub takes to scan its sessions after a start.
+    static let notFoundLimit = 6
+
     static func events(client: HubClient, key: String, last: Int) -> AsyncStream<StreamEvent> {
         AsyncStream { continuation in
             let task = Task {
                 var cursor = last
                 var delay: UInt64 = 1
+                var notFoundInARow = 0
                 while !Task.isCancelled {
                     var req = client.request("GET", "/v1/sessions/\(HubClient.encodeKey(key))/events",
                                              query: ["last": "\(cursor)"])
@@ -41,6 +68,13 @@ enum EventStream {
                         let (bytes, response) = try await HubClient.streamSession.bytes(for: req)
                         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                         if status == 401 { continuation.yield(.unauthorized); break }
+                        notFoundInARow = status == 404 ? notFoundInARow + 1 : 0
+                        if ends(status: status, notFoundInARow: notFoundInARow) {
+                            var body = Data()
+                            do { for try await byte in bytes.prefix(4096) { body.append(byte) } } catch {}
+                            continuation.yield(.gone(HubClient.error(status: status, body: body)))
+                            break
+                        }
                         guard status == 200 else { throw HubError(status: status, code: "stream", message: "stream \(status)") }
                         continuation.yield(.connected)
                         delay = 1
@@ -51,9 +85,9 @@ enum EventStream {
                         for try await line in bytes.lines {
                             guard let payload = parser.feed(line) ?? parser.feed("") else { continue }
                             guard let env = try? Hub.decoder.decode(Envelope.self, from: Data(payload.utf8)) else { continue }
-                            if env.type == "journal.truncated" { continuation.yield(.truncated); continue }
+                            cursor = resume(after: env, from: cursor)
+                            if env.type == "journal.truncated" { continuation.yield(.truncated(head: env.seq)); continue }
                             if env.type == "journal.caught-up" { continue }
-                            if let seq = env.seq { cursor = max(cursor, seq) }
                             continuation.yield(.event(env))
                         }
                     } catch {
@@ -71,6 +105,12 @@ enum EventStream {
 }
 
 enum StreamEvent {
-    case connected, disconnected, unauthorized, truncated
+    case connected, disconnected, unauthorized
+    /// The replay can't cover the gap. `head` is the seq the next resume
+    /// starts from: the journal's head after a wipe, or the cursor sent
+    /// when the ring overflowed.
+    case truncated(head: Int?)
+    /// The stream won't open again; the error says why.
+    case gone(HubError)
     case event(Envelope)
 }

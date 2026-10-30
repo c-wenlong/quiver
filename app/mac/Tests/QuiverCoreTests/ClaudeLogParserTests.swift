@@ -54,6 +54,16 @@ func ledgerFixtureURL(_ relativePath: String) throws -> URL {
         #expect(ClaudeLogParser.records(fromLine: lines[9], accountHome: "/h").isEmpty) // truncated
     }
 
+    @Test func absurdCountsAreCappedSoTheirSumCannotTrap() throws {
+        // `1e19` once clamped to Int.max, and `totalTokens` trapped adding
+        // it; the cursor was never saved, so every launch crashed again.
+        let line = Data(#"{"type":"assistant","timestamp":"2026-10-03T10:00:03Z","sessionId":"s","requestId":"r","message":{"id":"m","model":"claude-opus-5","usage":{"input_tokens":1e19,"output_tokens":5,"cache_read_input_tokens":1e30}}}"#.utf8)
+        let record = try #require(ClaudeLogParser.records(fromLine: line, accountHome: "/h").first)
+        #expect(record.event.inputTokens == JSONValue.maxTokens)
+        #expect(record.event.cacheReadTokens == JSONValue.maxTokens)
+        #expect(record.event.totalTokens == 2 * JSONValue.maxTokens + 5)
+    }
+
     @Test func aLineWithoutRequestIdIsKeyedByMessageIdAlone() throws {
         let lines = try fixtureLines(mainSession)
         let record = try #require(ClaudeLogParser.records(fromLine: lines[6], accountHome: "/h").first)

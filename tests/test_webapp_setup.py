@@ -12,6 +12,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import redirect_stdout
@@ -25,6 +26,7 @@ from quiver.webapp.pages import PageError
 from quiver.webapp.pages import setup as setup_page
 from tests.test_init_hub import _hub_repo
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 GIT = shutil.which("git")
 
@@ -184,6 +186,21 @@ class TestApply(_Home, unittest.TestCase):
         self.assertEqual(reg["claude"]["state"], "starred")
         self.assertEqual(reg["gemini"]["state"], "starred")
         self.assertTrue(list((self.home / ".quiver" / "backups").rglob("*CLAUDE.md*")))
+
+    def test_apply_holds_the_shared_config_lock(self):
+        # Setup writes mcp.json and relinks skills: it must wait for an
+        # MCP or Skills page write, which hold this same lock.
+        from quiver.webapp import pages
+        from quiver.webapp.pages import mcp, skills
+
+        self.assertIs(mcp._WRITE_LOCK, pages.CONFIG_LOCK)
+        self.assertIs(skills._WRITE_LOCK, pages.CONFIG_LOCK)
+        held = []
+        with patch("quiver.setup.commands.apply_setup",
+                   side_effect=lambda *a, **k: held.append(
+                       pages.CONFIG_LOCK.locked()) or {}):
+            self.post(starred=[], adopt=None)
+        self.assertEqual(held, [True])
 
     def test_apply_with_the_starter_file_leaves_your_file_alone(self):
         applied = self.post(starred=[], adopt=None)["applied"]
@@ -475,11 +492,38 @@ class TestHubClone(_HubClone, unittest.TestCase):
             err = self.refused(url=str(self.src))
         self.assertEqual((err.status, err.code), (409, "busy"))
 
-    def test_apply_waits_for_no_clone(self):
-        setup_page._JOBS[str(self.home)] = {"state": "cloning", "url": "u", "error": None, "cloned": None}
-        with self.assertRaises(PageError) as caught:
+    def _apply_behind_a_clone(self, claim_after: float) -> tuple[PageError | None, float]:
+        """Apply while a clone holds (or comes to hold) the setup lock."""
+        setup_page._LOCK.acquire()
+        self.addCleanup(setup_page._release_claim)
+        timer = threading.Timer(claim_after, setup_page._claim_clone)
+        timer.start()
+        started = time.monotonic()
+        try:
             setup_page.post(self.ctx(), "apply", {"starred": []})
-        self.assertEqual((caught.exception.status, caught.exception.code), (409, "busy"))
+        except PageError as exc:
+            return exc, time.monotonic() - started
+        finally:
+            timer.cancel()
+            setup_page._LOCK.release()
+        return None, time.monotonic() - started
+
+    def test_apply_is_a_409_not_a_wait_while_a_clone_holds_the_lock(self):
+        err, waited = self._apply_behind_a_clone(claim_after=0)
+        self.assertEqual((err.status, err.code), (409, "busy"))
+        self.assertLess(waited, 2)
+
+    def test_apply_already_waiting_gives_up_when_a_clone_claims_the_lock(self):
+        # The race: apply found no clone, then a clone took the lock first.
+        err, waited = self._apply_behind_a_clone(claim_after=0.3)
+        self.assertEqual((err.status, err.code), (409, "busy"))
+        self.assertLess(waited, 2)
+
+    def test_a_clone_cant_start_while_another_has_claimed(self):
+        self.assertTrue(setup_page._claim_clone())
+        self.addCleanup(setup_page._release_claim)
+        err = self.refused(url=str(self.src))
+        self.assertEqual((err.status, err.code), (409, "busy"))
 
 
 class TestRoute(_Home, HubBase):
@@ -567,12 +611,54 @@ class TestRoute(_Home, HubBase):
 
     def test_page_assets_are_served(self):
         _, js = self.srv.request("GET", "/app/pages.js")
-        self.assertIn(b'registerPage("setup"', js)
         self.assertIn(b"/v1/app/setup/apply", js)
         # The look step saves where Settings › General reads it.
         self.assertIn(b'"quiver.appearance"', js)
         _, css = self.srv.request("GET", "/app/pages.css")
         self.assertIn(b".setup-sheet", css)
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestLoadOrder(unittest.TestCase):
+    """pages/setup.js's load() under node: of two reads in flight only
+    the newer one lands, whichever answers last, and a read that finishes
+    after the page was left still clears the loading flag."""
+
+    def run_js(self, body):
+        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/setup.js"
+        prelude = ("let routeGen = 1; const answers = [];\n"
+                   "const api = () => new Promise((resolve) => answers.push(resolve));\n"
+                   "function registerPage() {}\n" + app_js_function("currentRoute"))
+        done = subprocess.run(["node", "-e", prelude + page.read_text(encoding="utf-8") + "\n(async () => {" + body + "})();"],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_check_again_ignores_clicks_while_a_read_runs(self):
+        out = self.run_js(
+            "const btn = { classList: { add() {}, remove() {} } };"
+            " globalThis.document = { getElementById: (id) => (id === 'page-refresh' ? btn : null) };"
+            " globalThis.location = { hash: '#/overview' };"
+            " bindRefreshButton();"
+            " const first = btn.onclick(); btn.onclick();"
+            " const during = answers.length;"
+            " answers[0]({ status: 200, data: { n: 1 } }); await first;"
+            " btn.onclick();"
+            " process.stdout.write(JSON.stringify({ during, after: answers.length }));")
+        self.assertEqual(out, {"during": 1, "after": 2})
+
+    def test_the_newer_read_wins(self):
+        out = self.run_js("const a = load(1), b = load(1);"
+                          " answers[1]({ status: 200, data: { n: 2 } }); answers[0]({ status: 200, data: { n: 1 } });"
+                          " const r = [await a, await b];"
+                          " process.stdout.write(JSON.stringify({ r, n: page.data.n, loading: page.loading }));")
+        self.assertEqual(out, {"r": [False, True], "n": 2, "loading": False})
+
+    def test_leaving_still_ends_the_read(self):
+        out = self.run_js("const a = load(1); routeGen = 2; answers[0]({ status: 200, data: { n: 1 } });"
+                          " const r = await a; process.stdout.write(JSON.stringify({ r, data: page.data, loading: page.loading }));")
+        self.assertEqual(out, {"r": False, "data": None, "loading": False})
 
 
 if __name__ == "__main__":

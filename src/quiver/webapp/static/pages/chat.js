@@ -15,7 +15,9 @@
 const SessionChat = (() => {
   const chat = {
     key: null, gen: 0, row: null, rowKnown: false, details: null,
-    stream: null, retryTimer: null,
+    stream: null, retryTimer: null, retries: 0,
+    // Events held while a resync reads the transcript again, or null.
+    held: null,
     // Live events not yet shown. The hub polls a busy transcript about
     // once a second, so several messages arrive together; they are shown
     // one at a time instead of as a block.
@@ -47,25 +49,11 @@ const SessionChat = (() => {
 
   /* ------------------------------------------------------------ requests */
 
-  /* Every request carries app.js's authHeaders: the paired bearer when
+  /* app.js's apiPost, with its authHeaders: the paired bearer when
    * there is one, and X-Quiver-Pair, which lets the hub owner's own
    * tailnet devices in without pairing. status 0 means the hub never
    * answered (offline, connection lost). */
-  async function post(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "POST", credentials: "same-origin",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  const post = (path, body) => apiPost(path, body);
 
   const sessionPath = (key, action) => `/v1/sessions/${encodeURIComponent(key)}/${action}`;
   const errorText = (data) => (data && data.error && data.error.message) || "";
@@ -406,11 +394,13 @@ const SessionChat = (() => {
       // Bare URLs are set aside first, so emphasis never reaches inside one.
       // esc() wrote `<`, `>`, `"` and `'` as entities: an `&` starting one
       // of them ends a URL, while `&amp;` — a real `&` — stays inside it.
+      // They go back only after emphasis has run: a `__init__.py` in a
+      // path is part of the link, never bold.
       const urls = [];
       return emphasis(part
         .replace(/\bhttps?:\/\/(?:[^\s<>"&\u0001]|&(?!lt;|gt;|quot;|#39;))+[^\s<>"&\u0001.,;:!?)\]']/g,
-          (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; })
-        .replace(/\u0002(\d+)\u0002/g, (_m, n) => `<a href="${urls[+n]}" target="_blank" rel="noopener">${urls[+n]}</a>`));
+          (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; }))
+        .replace(/\u0002(\d+)\u0002/g, (_m, n) => `<a href="${urls[+n]}" target="_blank" rel="noopener">${urls[+n]}</a>`);
     }).join("");
     t = t.replace(/\u0004(\d+)\u0004/g, (_m, i) => esc(escaped[+i]));
     return t.replace(/\u0001(\d+)\u0001/g, (_m, i) => `<code>${esc(codes[+i])}</code>`);
@@ -503,9 +493,9 @@ const SessionChat = (() => {
      The code a transcript shows — shell commands, tool arguments, file
      bodies and fenced blocks — tokenised by a small hand-rolled scanner
      (the web app has no build step, so no highlighter library). The same
-     rules live in src/quiver/remote/web/app.js and, in Swift, in
+     rules live, in Swift, in
      app/mac/Sources/QuiverCore/Syntax/SyntaxHighlight.swift; keep the
-     three in step. Token classes live in chat.css, their colours in
+     two in step. Token classes live in chat.css, their colours in
      styles.css's --tk-* variables (Theme.swift's syntax* colours). */
 
   const tkPattern = (k, src, boundary, flags) => ({ k, r: new RegExp(src, flags || "y"), b: !!boundary });
@@ -1370,7 +1360,7 @@ const SessionChat = (() => {
   function linkCardsHtml(text) {
     const urls = linkUrls(text);
     if (!urls.length) return "";
-    return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${esc(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
+    return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${safeHref(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
       <span class="link-card-ic">${iconSvg("link")}</span>
       <span class="link-card-main"><span class="link-card-host">${esc(linkHost(u))}</span>${linkPath(u) ? `<span class="link-card-path">${esc(linkPath(u))}</span>` : ""}</span>
       <span class="link-card-open">Open ${iconSvg("out")}</span></a>`).join("")}</div>`;
@@ -1566,7 +1556,7 @@ const SessionChat = (() => {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg></button>` : ""}`;
     setConn(chat.connState || "connecting");
     const chip = $("chat-tmux");
-    if (chip) Fmt.copyTick(chip, () => `tmux attach -t ${(chat.row || {}).tmux}`);
+    if (chip) Fmt.copyTick(chip, () => `tmux attach -t ${Fmt.shellWord((chat.row || {}).tmux || "")}`);
     const detachBtn = $("chat-detach");
     if (detachBtn) detachBtn.onclick = openDetachSheet;
     const details = $("chat-details");
@@ -1652,7 +1642,7 @@ const SessionChat = (() => {
       const where = r.remote && r.machine ? ` on ${r.machine}` : "";
       const [title, note, go] = kept
         ? ["Reattach to the running tmux session?",
-          `The pane ${r.tmux || ""} is still alive${esc(where)}: attach takes it back as it is, mid-turn included. Nothing is stopped or relaunched.`,
+          `The pane ${esc(r.tmux || "")} is still alive${esc(where)}: attach takes it back as it is, mid-turn included. Nothing is stopped or relaunched.`,
           "Reattach"]
         : ["Attach this session?",
           `Attach stops ${esc(harnessLabel(r) || "the harness")} in the terminal running this session${esc(where)},
@@ -2166,10 +2156,13 @@ const SessionChat = (() => {
          <button type="button" class="tab" data-dec="always">Always</button>
          <button type="button" class="tab deny" data-dec="deny">Deny</button>`) : "";
     // The generic "Approval requested" fallback repeats the role line —
-    // only a real question or context goes under it.
+    // only a real question or context goes under it. The prompt is text
+    // scraped from the agent's pane, so it shows as plain monospace text
+    // with its spacing kept, never as markdown: a link, image or heading
+    // in the pane must not render (as the iOS app shows it).
     const prompt = (msg.text || "").trim();
     const textRow = prompt && prompt !== "Approval requested"
-      ? `<div class="text">${md(msg.text)}</div>` : "";
+      ? `<div class="text approval-prompt">${esc(prompt)}</div>` : "";
     div.innerHTML = `
       <button type="button" class="approval-toggle" hidden aria-expanded="false">
         <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
@@ -2303,6 +2296,11 @@ const SessionChat = (() => {
 
   /* --------------------------------------------------------------- stream */
 
+  /* How long the nth reconnect in a row waits: 2s, doubling, at most 30s.
+   * A hub that stays down is asked twice a minute, not every 2 seconds. */
+  const RETRY_MS = 2000, RETRY_MAX_MS = 30000;
+  const retryDelay = (n) => Math.min(RETRY_MS * 2 ** Math.min(n, 10), RETRY_MAX_MS);
+
   function openStream(gen, after) {
     closeStream();
     const key = chat.key;
@@ -2317,7 +2315,7 @@ const SessionChat = (() => {
       if (resp.status === 401) {
         chat.stream = null;
         close();
-        renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+        renderGate();
         return;
       }
       if (resp.status === 404) {
@@ -2328,6 +2326,7 @@ const SessionChat = (() => {
       }
       if (!resp.ok || !resp.body) throw new Error(`sse ${resp.status}`);
       setConn(true);
+      chat.retries = 0;
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -2349,17 +2348,25 @@ const SessionChat = (() => {
       if (chat.stream !== mine) return;
       chat.stream = null;
       setConn("err");
-      // Reconnect with replay from the last seq shown.
+      // Reconnect with replay from the last seq shown, backing off while
+      // it keeps failing. A hidden tab waits: coming back reconnects at
+      // once (the visibilitychange handler below).
       clearTimeout(chat.retryTimer);
       chat.retryTimer = setTimeout(() => {
-        if (gen === chat.gen && !chat.stream) openStream(gen, resumeSeq());
-      }, 2000);
+        if (gen === chat.gen && !chat.stream && !document.hidden) openStream(gen, resumeSeq());
+      }, retryDelay(chat.retries++));
     });
   }
 
   function handleFrame(key, frame) {
     const ev = parseFrame(frame);
     if (!ev || key !== chat.key) return;
+    // A resync is reading the transcript again: what streams meanwhile
+    // waits for it, so nothing lands above the history it redraws.
+    if (chat.held) {
+      if (ev.type !== "journal.truncated" && ev.type !== "journal.caught-up") chat.held.push(ev);
+      return;
+    }
     const h = chat.history;
     if (h) {
       // Replaying what came before the backfill's last message, only to
@@ -2373,20 +2380,64 @@ const SessionChat = (() => {
         return;
       }
     }
-    if (ev.type === "journal.truncated" && chat.seq) {
-      // The hub's ring dropped events past where this view stopped (a long
-      // disconnect on a busy session): say so rather than look complete.
-      const stick = nearBottom();
-      appendMessage({ kind: "system", text: "Some events were missed while the connection was down, and the hub's journal no longer has them." }, true);
-      if (stick) scrollBottom();
+    if (ev.type === "journal.truncated") {
+      resync(ev.seq);
+      return;
     }
-    if (ev.type === "journal.truncated" || ev.type === "journal.caught-up") {
+    if (ev.type === "journal.caught-up") {
       if (ev.seq && !chat.pending.length) remember(ev.seq);
       return;
     }
     // The cursor advances as each event is shown (showLive), so events
     // still waiting when the stream drops are replayed on reconnect.
     enqueue(ev);
+  }
+
+  /* journal.truncated: the journal no longer holds what this view needs
+   * to carry on from its cursor. Its ring dropped events past where the
+   * view stopped, or it was wiped (hub state reset) and its numbering now
+   * starts below the cursor, which would skip every new event as already
+   * seen. The view adopts the seq the hub sent, lower or not, and reads
+   * the transcript again, as the phone does. The stream stays open; what
+   * arrives meanwhile is held, then applied, except messages the redrawn
+   * history already shows. */
+  async function resync(head) {
+    const gen = chat.gen, key = chat.key;
+    dropPending();
+    chat.held = [];
+    chat.history = null;
+    chat.seq = typeof head === "number" && head >= 0 ? head : 0;
+    const { status, data } = await api(`${sessionPath(key, "messages")}?limit=500`);
+    if (gen !== chat.gen) return;
+    const held = chat.held || [];
+    chat.held = null;
+    if (status === 401) {
+      close();
+      renderGate();
+      return;
+    }
+    const log = $("chat-log");
+    // A failed read leaves the history on screen rather than an error.
+    if (status === 200 && data && log) {
+      // Unanswered approval cards stay, buttons and all: the transcript
+      // has no approvals, and their asks are behind the cursor.
+      const open = [...log.querySelectorAll(".msg.approval:not(.resolved)")];
+      log.innerHTML = "";
+      chat.toolCards.clear();
+      const messages = data.messages || [];
+      for (const ev of messages) appendEvent(ev, false);
+      if (messages.length) remember(messages[messages.length - 1].seq);
+      for (const card of open) log.appendChild(card);
+      scrollBottom();
+    }
+    // Status, ownership, command results and approvals aren't in the
+    // transcript, so they apply whatever their seq.
+    for (const ev of held) {
+      if (ev.type === "message.appended" && typeof ev.seq === "number" && ev.seq <= chat.seq) continue;
+      enqueue(ev);
+    }
+    // An attach or detach may have happened behind the cursor as well.
+    loadRow(gen);
   }
 
   function closeStream() {
@@ -2568,7 +2619,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     chat.rail.loading = false;
     if (status === 401) {
-      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      renderGate();
       return;
     }
     if (status !== 200 || !data) {
@@ -2628,6 +2679,7 @@ const SessionChat = (() => {
     close();
     const gen = ++chat.gen;
     chat.key = key;
+    chat.retries = 0;
     chat.details = opts.details || null;
     chat.row = opts.row ? Object.assign({}, opts.row) : null;
     chat.rowKnown = false;
@@ -2664,7 +2716,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     if (rowStatus === 401 || logStatus === 401) {
       close();
-      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      renderGate();
       return;
     }
     if (rowStatus === 404) { setConn("err"); return; }
@@ -2685,6 +2737,7 @@ const SessionChat = (() => {
 
   function close() {
     chat.gen++;
+    chat.held = null;
     closeStream();
     document.body.classList.remove("chat-open");
     chat.key = null;
@@ -3156,6 +3209,7 @@ const SessionChat = (() => {
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && chat.key && chat.opened && !chat.stream) {
+      chat.retries = 0;
       openStream(chat.gen, resumeSeq());
     }
   });
@@ -3167,7 +3221,7 @@ const SessionChat = (() => {
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
       inlineImagesAsText, inline, taskBox, tableHtml,
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
-      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
+      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post, handleFrame, approvalCard,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,

@@ -24,7 +24,7 @@ const LOOKS = [
 const LEFT_ALONE = new Set(["blocked", "protected", "conflict", "keep", "would-conflict", "would-keep"]);
 
 const page = {
-  data: null, loadError: null, loading: false,
+  data: null, loadError: null, loading: false, loadSeq: 0,
   wizard: false, step: 0, selected: new Set(), start: "seed",
   applying: false, outcome: null, applyError: null, appliedSelection: null, adopted: false,
   showingMore: false, installing: null, finished: false,
@@ -33,6 +33,9 @@ const page = {
   // Step 2's hub field: what's typed, a refusal from the hub, and whether
   // this page is polling a clone.
   hubUrl: "", hubError: null, hubPolling: false,
+  // A clone finished while the page wasn't shown: read the machine again
+  // before the next paint, so no choice from the old preview is sent.
+  hubStale: false,
 };
 
 // What swe setup prints beside its hub prompt (init/hub.py FORK_NOTE).
@@ -53,20 +56,9 @@ function machineName() {
   return (page.data && page.data.machine) || "this machine";
 }
 
-/* Logos shipped in /app/ that Fmt.logo doesn't list yet. */
-const MORE_LOGOS = {
-  copilot: "harness-copilot.svg", grok: "harness-grok.svg", kimi: "harness-kimi.svg",
-  "mistral-vibe": "harness-mistral-vibe-color.svg", "qwen-code": "harness-qwen-code-color.svg",
-};
-
 function agentLogo(id) {
   const img = Fmt.logo(id, "setup-logo");
   if (img.startsWith("<img")) return img;
-  const file = MORE_LOGOS[id];
-  if (file) {
-    const mono = file.endsWith("-color.svg") ? "" : " mono";
-    return `<img class="setup-logo${mono}" src="/app/${file}" alt="">`;
-  }
   return `<span class="setup-logo setup-monogram" aria-hidden="true">${esc(agentName(id).slice(0, 1))}</span>`;
 }
 
@@ -75,19 +67,23 @@ const CHECK = `<svg class="setup-check" viewBox="0 0 24 24" aria-hidden="true"><
 
 /* ------------------------------------------------------------------ data */
 
+/* Only the newest read lands: an older one answering last would put its
+ * stale preview back. */
 async function load(gen) {
+  const seq = ++page.loadSeq;
   page.loading = true;
   page.loadError = null;
   const { status, data } = await api("/v1/app/setup");
-  if (gen !== routeGen) return false;
+  if (seq !== page.loadSeq) return false;
+  // Done even when the page was left meanwhile, so Refresh works on return.
   page.loading = false;
+  if (gen !== routeGen) return false;
   if (status === 401) {
-    renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    renderGate();
     return false;
   }
   if (status !== 200 || !data) {
-    page.loadError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    page.loadError = failText(status, data);
     return true;
   }
   page.data = data;
@@ -168,8 +164,7 @@ async function apply() {
     // Harnesses page's copy so it reads them afresh, as the Mac app reloads.
     if (typeof harnessesPage !== "undefined") harnessesPage.data = null;
   } else {
-    page.applyError = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    page.applyError = failText(status, data);
   }
 }
 
@@ -195,7 +190,7 @@ function finish() {
 }
 
 function onPage() {
-  return (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "setup";
+  return currentRoute() === "setup";
 }
 
 /* --------------------------------------------------------------- render */
@@ -205,6 +200,8 @@ async function render() {
   if (!page.data) {
     paintShell(`<div class="card"><p class="empty">Looking for coding agents on this machine…</p></div>`);
     if (!(await load(gen))) return;
+  } else if (page.hubStale && !(await reloadAfterClone())) {
+    return;
   }
   paint();
   // A clone started before the page was left is still followed when you
@@ -227,7 +224,8 @@ function bindRefreshButton() {
   if (!btn) return;
   btn.disabled = page.applying;
   btn.onclick = async () => {
-    if (page.applying) return;
+    // One read at a time: a second click while one runs waits for it.
+    if (page.applying || page.loading) return;
     const gen = routeGen;
     btn.classList.add("spinning");
     const ok = await load(gen);
@@ -407,7 +405,7 @@ function missingBanner(p) {
     const site = /^https?:\/\//i.test(p.website || "") ? p.website : null;
     const host = site ? site.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") : "";
     const websiteLink = site
-      ? `<a class="setup-site-link" href="${esc(site)}" target="_blank" rel="noopener noreferrer">Get ${esc(agentName(p.id))} from ${esc(host)}</a>`
+      ? `<a class="setup-site-link" href="${safeHref(site)}" target="_blank" rel="noopener noreferrer">Get ${esc(agentName(p.id))} from ${esc(host)}</a>`
       : "";
     panel = methods.length
       ? `<p class="caption">Install it on ${esc(machineName())} with one of these, or copy a command to run in a terminal there.</p>
@@ -422,7 +420,7 @@ function missingBanner(p) {
         <p class="caption">A cask or install script that asks for a password can't finish here. Copy it into a terminal instead.</p>
         ${websiteLink}`
       : `<p class="caption">swe doesn't know an installer for ${esc(agentName(p.id))}. Get it from its own website.</p>
-        ${site ? `<div class="setup-download"><code>${esc(host)}</code><a class="setup-button small" href="${esc(site)}" target="_blank" rel="noopener noreferrer">Download</a></div>` : ""}`;
+        ${site ? `<div class="setup-download"><code>${esc(host)}</code><a class="setup-button small" href="${safeHref(site)}" target="_blank" rel="noopener noreferrer">Download</a></div>` : ""}`;
   }
   return `<div class="setup-missing">
     <div class="setup-missing-row">
@@ -455,15 +453,14 @@ async function runInstall(id, via) {
   // result rather than a row still installing.
   const here = onPage();
   if (status === 401) {
-    if (here) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (here) renderGate();
     return;
   }
   if (status === 200 && data && data.setup) {
     page.data = data.setup;
     if (data.error) page.installErrors[id] = data.error;
   } else {
-    page.installErrors[id] = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then try again.");
+    page.installErrors[id] = failText(status, data);
   }
   if (!here || !page.wizard) return;
   paint();
@@ -574,23 +571,32 @@ async function pollHub() {
       const { status, data } = await api("/v1/app/setup?hub=1");
       if (status !== 200 || !data || !data.hub) continue;
       page.data.hub = data.hub;
+      if (hubJob().state === "done") page.hubStale = true;
     }
     if (!onPage() || cloning()) return;
-    if (hubJob().state === "done") {
-      const job = page.data.hub.job;
-      const gen = routeGen;
-      if (!(await load(gen))) return;
-      if (page.data) {
-        page.start = defaultStart(page.data.preview.instructions);
-        // The reload carries the same finished job; keep it either way.
-        if (page.data.hub && page.data.hub.job.state === "idle") page.data.hub.job = job;
-      }
-      page.hubUrl = "";
-    }
+    if (page.hubStale && !(await reloadAfterClone())) return;
     paint();
   } finally {
     page.hubPolling = false;
   }
+}
+
+/* Read the machine again once a clone is done: the preview is of the
+ * cloned hub from then on (its AGENTS.md, nothing to adopt), and the
+ * start choice from the old one is dropped. False when the route moved
+ * on, so the reload is still owed when the page comes back. */
+async function reloadAfterClone() {
+  const job = page.data.hub.job;
+  const gen = routeGen;
+  if (!(await load(gen))) return false;
+  page.hubStale = false;
+  if (page.data) {
+    page.start = defaultStart(page.data.preview.instructions);
+    // The reload carries the same finished job; keep it either way.
+    if (page.data.hub && page.data.hub.job.state === "idle") page.data.hub.job = job;
+  }
+  page.hubUrl = "";
+  return true;
 }
 
 function row(iconName, title, detail, extra = "") {

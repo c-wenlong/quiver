@@ -106,6 +106,18 @@ class TestCommandValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             protocol.parse_control_command({"op": "detonate"})
 
+    def test_model_and_effort_values_are_one_token(self):
+        """They are typed as ``/model <value>``: a newline or space would
+        put a second line (or prompt text) into the pane."""
+        ok = protocol.parse_control_command({"op": "model", "value": "opus"})
+        self.assertEqual(ok["value"], "opus")
+        bare = protocol.parse_control_command({"op": "effort", "value": ""})
+        self.assertIsNone(bare["value"])
+        for bad in ("sonnet\r!rm -rf ~", "a b", "-x", "x" * 200):
+            for op in ("model", "effort"):
+                with self.assertRaises(ValueError, msg=(op, bad)):
+                    protocol.parse_control_command({"op": op, "value": bad})
+
     def test_unhashable_values_are_value_errors(self):
         # A JSON list or object in a field checked against a set must
         # raise ValueError (the route's 422), never TypeError.

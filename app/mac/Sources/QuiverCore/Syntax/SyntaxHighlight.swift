@@ -3,8 +3,8 @@ import Foundation
 /// The code a transcript shows — shell commands, tool arguments, file
 /// bodies and fenced blocks — tokenised by a small hand-rolled scanner
 /// (no highlighter dependency, matching the web app's no-build rule).
-/// A port of the `hl()` machinery in `src/quiver/webapp/static/pages/chat.js`
-/// and `src/quiver/remote/web/app.js`; keep the three in step. Token
+/// A port of the `hl()` machinery in `src/quiver/webapp/static/pages/chat.js`;
+/// keep the two in step. Token
 /// colours live in `Theme.swift` (the web app's `--tk-*` variables carry
 /// the same values).
 public struct SyntaxToken: Equatable, Sendable {
@@ -510,7 +510,8 @@ public enum SyntaxHighlight {
                 if has(u, j, s0.close) { j += s0.close.utf16.count; state = nil; break }
                 j += 1
             }
-            emit(s0.kind, j)
+            // A backslash ending the chunk skips past it.
+            emit(s0.kind, min(j, n))
         }
 
         while i < n {

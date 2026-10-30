@@ -258,6 +258,93 @@ class TestOpencodeServe(unittest.TestCase):
         self.assertEqual(set(serve.subs), {"ses_a", "ses_b"})
 
 
+    def test_release_after_respawn_keeps_the_new_serve(self):
+        # A and B share serve 1; it dies and B's next send spawns
+        # serve 2. A never subscribed to serve 2, so A detaching must
+        # not drop B's hold and kill it.
+        procs = [_FakeServeProc(), _FakeServeProc()]
+        spawned = iter(procs)
+        supervise.mark(self.home, "k1", _meta("serve", "opencode"))
+        supervise.mark(self.home, "k2", _meta("serve", "opencode"))
+        a, b = _session(sid="ses_a"), _session(sid="ses_b")
+        inj_a = inject.OpencodeServeInjector(self.home, "k1")
+        inj_b = inject.OpencodeServeInjector(self.home, "k2")
+        with patch.object(inject.OpencodeServeInjector, "_spawn",
+                          staticmethod(lambda *a_, **k: next(spawned))):
+            inj_a.send(a, {"text": "a", "mode": "queue"}, "idle")
+            inj_b.send(b, {"text": "b", "mode": "queue"}, "idle")
+            procs[0].killed = True  # serve 1 exits on its own
+            inj_b.send(b, {"text": "b2", "mode": "queue"}, "idle")
+        inj_a._release(a)
+        self.assertFalse(procs[1].killed)
+        serve = next(iter(inject.OpencodeServeInjector._serves.values()))
+        self.assertIs(serve.proc, procs[1])
+        self.assertEqual(serve.refs, 1)
+        inj_b._release(b)
+        self.assertTrue(procs[1].killed)
+
+    def test_ready_probe_after_another_waiter_gave_up_is_refused(self):
+        # Waiter B times out and kills the proc while waiter A's probe
+        # is in flight; A must not subscribe to (and send through) it.
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+
+        def probe(base, method, path, payload, timeout=20.0):
+            serves = inject.OpencodeServeInjector._serves
+            for cwd, serve in list(serves.items()):
+                serve.dead = True  # B's cleanup lands mid-probe
+                serves.pop(cwd, None)
+            return (200, b"[]")
+
+        with patch.object(inject, "_serve_call", probe):
+            res = self._injector().send(
+                _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+
+    def test_serve_exiting_before_ready_is_unregistered(self):
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+        self.proc.killed = True  # poll() reports it exited
+        res = self._injector().send(
+            _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+        self.assertEqual(inject.OpencodeServeInjector._serves, {})
+
+    def test_timed_out_waiter_leaves_a_held_serve_alone(self):
+        # Another session already holds the proc: a waiter that gives
+        # up must not kill it under them.
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+        held = inject._ServeProc(self.proc, "http://127.0.0.1:1")
+        held.refs = 1
+        held.reader_started = True
+        cwd = os.path.realpath("/tmp/proj")
+        inject.OpencodeServeInjector._serves[cwd] = held
+        self.routes = {"session": (0, b"")}
+        with patch.object(inject, "_SERVE_READY_S", 0.3):
+            res = self._injector().send(
+                _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+        self.assertFalse(self.proc.killed)
+        self.assertIs(inject.OpencodeServeInjector._serves[cwd], held)
+
+    def test_kill_failure_on_timeout_still_unregisters(self):
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+        self.routes = {"session": (0, b"")}
+        with patch.object(inject, "_SERVE_READY_S", 0.3), \
+             patch.object(self.proc, "kill", side_effect=OSError("gone")):
+            res = self._injector().send(
+                _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+        self.assertEqual(inject.OpencodeServeInjector._serves, {})
+
+    def test_serve_that_never_gets_ready_is_killed(self):
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+        self.routes = {"session": (0, b"")}  # never answers
+        with patch.object(inject, "_SERVE_READY_S", 0.3):
+            res = self._injector().send(
+                _session(), {"text": "x", "mode": "queue"}, "idle")
+        self.assertFalse(res.ok)
+        self.assertTrue(self.proc.killed)
+        self.assertEqual(inject.OpencodeServeInjector._serves, {})
+
 # -- codex app-server ---------------------------------------------------
 
 

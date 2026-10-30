@@ -48,10 +48,7 @@ struct SessionChatPage: View {
 
     /// harness · folder, as the web app's chat bar has it.
     private var subtitle: String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let folder = (model?.row?.cwd ?? row.session.cwd).map {
-            $0.hasPrefix(home + "/") ? "~" + $0.dropFirst(home.count) : $0
-        }
+        let folder = (model?.row?.cwd ?? row.session.cwd).map { displayPath($0) }
         return [HarnessMark(row.session.harness).name, folder].compactMap { $0 }.joined(separator: " · ")
     }
 }
@@ -990,8 +987,13 @@ private struct ApprovalCard: View {
             if !folded {
                 Text("Approval needed").font(Theme.caption).foregroundStyle(Theme.warningText)
                 if showsPrompt {
-                    MarkdownBlocks(blocks: GitHubMarkdown.blocks(prompt))
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                    // Verbatim, never markdown: `rm *.log *.tmp` must not
+                    // lose its stars to italics, nor a link's text hide
+                    // where it goes. This is what Allow agrees to.
+                    Text(verbatim: prompt)
+                        .font(Theme.font(size: 12, design: .monospaced)).foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 rows
                 if let note {

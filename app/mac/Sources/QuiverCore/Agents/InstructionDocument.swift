@@ -70,9 +70,16 @@ public final class InstructionDocument: Identifiable {
         }
     }
 
-    /// Throws away unsaved edits.
+    /// Throws away unsaved edits. When the file changed on disk meanwhile,
+    /// that change is what comes back: the edits were the only reason not
+    /// to load it, and keeping the stale text would leave the conflict
+    /// flag up with nothing left to conflict.
     public func revert() {
-        text = savedText
+        if changedOnDisk {
+            load()
+        } else {
+            text = savedText
+        }
     }
 
     /// Looks at the disk again: picks up an outside change when there are no
@@ -97,6 +104,12 @@ public final class InstructionDocument: Identifiable {
     /// `overwrite` is false.
     @discardableResult
     public func save(overwrite: Bool = false) -> SaveOutcome {
+        // Only a file that was read can be written: while loading, or after
+        // a failed read (not UTF-8, a broken link), `text` is not the file,
+        // and an overwrite would replace the file with it.
+        guard state == .ready else {
+            return .failed("\(url.lastPathComponent) hasn't been read, so it can't be saved.")
+        }
         let target = writeURL
         let current: Data?
         switch Self.read(target) {

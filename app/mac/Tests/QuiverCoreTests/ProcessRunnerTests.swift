@@ -76,6 +76,49 @@ import Testing
         #expect(result.status == SIGTERM)
     }
 
+    @Test func cancellingTheCallerStopsTheWholeCommandTree() async throws {
+        // The child reports the pid of a sleep it spawned, then waits on
+        // it. The sleep ignores SIGTERM, as a build tool mid-write may:
+        // a terminate alone (which reaches the child's process group)
+        // left it running, holding the pipes, after its page went away.
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pidFile = dir.appending(path: "child.pid")
+        let ready = dir.appending(path: "ready")
+        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        // The sleep outlasts the runner's 120 s default bound, so neither
+        // its own exit nor the bound can stand in for a working cancel.
+        let script = "(trap '' TERM; touch '\(ready.path)'; exec sleep 300) & "
+            + "echo $! > '\(pidFile.path)'; wait"
+        let task = Task { try await runner.run(["-c", script]) }
+        // Cancel only once the trap is in place and the pid is written.
+        let startDeadline = Date().addingTimeInterval(20)
+        while !FileManager.default.fileExists(atPath: ready.path)
+                || (try? String(contentsOf: pidFile, encoding: .utf8))?.hasSuffix("\n") != true,
+              Date() < startDeadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        task.cancel()
+        let cancelledAt = Date()
+        let grandchild = pid_t(
+            (try? String(contentsOf: pidFile, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        try #require(FileManager.default.fileExists(atPath: ready.path))
+        try #require(grandchild != nil && grandchild! > 0)
+
+        _ = try? await task.value
+        // The SIGKILL pass comes two seconds after the cancel; the bound
+        // only catches a call left waiting on the pipes.
+        #expect(Date().timeIntervalSince(cancelledAt) < 60)
+        // Dead already, but reaped on launchd's schedule: poll the pid.
+        let reapDeadline = Date().addingTimeInterval(10)
+        while kill(grandchild!, 0) == 0, Date() < reapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(kill(grandchild!, 0) != 0)
+    }
+
     @Test func aCancelBeforeLaunchNeverStartsTheChild() async throws {
         // The task cancels itself before calling run, so the cancel handler
         // fires before the launch every time, with no timing involved. A
@@ -127,7 +170,9 @@ import Testing
         // The child reports the pid of a sleep it spawned, then waits on
         // it. Stopping only the direct child would leave the sleep
         // running — the rebuild case is `bash` under a timed-out
-        // `build-app.sh` leaving `swift build` alive.
+        // `build-app.sh` leaving `swift build` alive. The sleep ignores
+        // SIGTERM, so only the tree walk's SIGKILL pass can end it (the
+        // terminate already reaches the child's process group).
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -135,8 +180,10 @@ import Testing
         let runner = ProcessRunner(executable: "/bin/sh", environment: env)
         let task = Task {
             try await runner.run(
-                ["-c", "sleep 60 & echo $! > '\(pidFile.path)'; wait"],
-                input: nil, timeout: .milliseconds(500))
+                ["-c", "(trap '' TERM; exec sleep 60) & echo $! > '\(pidFile.path)'; wait"],
+                // Two seconds, so the trap is in place well before the
+                // deadline's SIGTERM even on a busy runner.
+                input: nil, timeout: .seconds(2))
         }
         // Poll rather than guess when the grandchild exists.
         let startDeadline = Date().addingTimeInterval(10)
@@ -196,6 +243,55 @@ import Testing
         #expect(env["PATH"] == "/usr/bin:/bin")
     }
 
+    @Test func aShellThatIgnoresSIGTERMIsKilledAtTheTimeout() async throws {
+        // An interactive zsh ignores SIGTERM. A terminate alone left the
+        // shell and its startup file's child running after the fallback.
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pidFile = dir.appending(path: "pids")
+        let shell = dir.appending(path: "stubborn-shell")
+        try "#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $$ $! > '\(pidFile.path)'\nwait\n"
+            .write(to: shell, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+
+        let env = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"], timeout: .milliseconds(500))
+        #expect(env["PATH"] == "/usr/bin:/bin")
+        let pids = ((try? String(contentsOf: pidFile, encoding: .utf8)) ?? "")
+            .split(whereSeparator: \.isWhitespace).compactMap { pid_t($0) }
+        try #require(pids.count == 2)
+        // The shell and the child its startup file was waiting on.
+        let reapDeadline = Date().addingTimeInterval(10)
+        while pids.contains(where: { kill($0, 0) == 0 }), Date() < reapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(pids.allSatisfy { kill($0, 0) != 0 })
+    }
+
+    @Test func aTimedOutShellsNestedCommandsAreKilledToo() async throws {
+        // The shell waits on a helper that waits on its own command. Killing
+        // the helper before listing its children let the grandchild
+        // reparent to launchd and outlive the timeout.
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pidFile = dir.appending(path: "grandchild.pid")
+        let shell = dir.appending(path: "nested-shell")
+        try "#!/bin/sh\ntrap '' TERM\n/bin/sh -c \"sleep 30 & echo \\$! > '\(pidFile.path)'; wait\" &\nwait\n"
+            .write(to: shell, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+
+        _ = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"], timeout: .milliseconds(500))
+        let pid = pid_t((try? String(contentsOf: pidFile, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        try #require(pid != nil && pid! > 0)
+        let reapDeadline = Date().addingTimeInterval(10)
+        while kill(pid!, 0) == 0, Date() < reapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(kill(pid!, 0) != 0)
+    }
+
     @Test func aWorkingShellSuppliesItsPATH() async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -235,5 +331,69 @@ import Testing
         #expect(env["PATH"] == "/fake/answered/bin")
         #expect(env["SWE_RATE_LIMITS_TTL"] == nil)
         #expect(env["HOME"] == "/tmp")
+    }
+}
+
+/// A login shell that didn't answer in time must not leave the whole
+/// launch on launchd's bare PATH, and must not stall every call either.
+@Suite struct ShellEnvironmentCacheTests {
+    final class Reads: @unchecked Sendable {
+        private let lock = NSLock()
+        private var answers: [[String: String]?]
+        private(set) var count = 0
+        init(_ answers: [[String: String]?]) { self.answers = answers }
+        func next() -> [String: String]? {
+            lock.withLock {
+                count += 1
+                return answers.isEmpty ? nil : answers.removeFirst()
+            }
+        }
+        var calls: Int { lock.withLock { count } }
+    }
+
+    @Test func aFailedReadIsRetriedAndASuccessIsKept() async throws {
+        let reads = Reads([nil, ["PATH": "/login/bin"]])
+        let cache = ShellEnvironmentCache(retryAfter: .zero) {
+            reads.next()
+        } fallback: {
+            ["PATH": "/usr/bin"]
+        }
+        // The first call waits for the first read, which failed.
+        #expect(await cache.environment() == ["PATH": "/usr/bin"])
+        #expect(reads.calls == 1)
+        // The next call answers at once and starts a retry behind it.
+        #expect(await cache.environment() == ["PATH": "/usr/bin"])
+        let deadline = Date().addingTimeInterval(10)
+        while await cache.environment() != ["PATH": "/login/bin"], Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await cache.environment() == ["PATH": "/login/bin"])
+        #expect(reads.calls == 2)
+    }
+
+    @Test func noRetryInsideTheWindow() async {
+        let reads = Reads([nil, ["PATH": "/login/bin"]])
+        let cache = ShellEnvironmentCache(retryAfter: .seconds(3600)) {
+            reads.next()
+        } fallback: {
+            ["PATH": "/usr/bin"]
+        }
+        for _ in 0..<5 { _ = await cache.environment() }
+        #expect(reads.calls == 1)
+    }
+
+    @Test func earlyCallersShareTheFirstRead() async {
+        let reads = Reads([["PATH": "/login/bin"]])
+        let cache = ShellEnvironmentCache(retryAfter: .zero) {
+            try? await Task.sleep(for: .milliseconds(100))
+            return reads.next()
+        } fallback: {
+            ["PATH": "/usr/bin"]
+        }
+        async let a = cache.environment()
+        async let b = cache.environment()
+        let results = await [a, b]
+        #expect(results == [["PATH": "/login/bin"], ["PATH": "/login/bin"]])
+        #expect(reads.calls == 1)
     }
 }
