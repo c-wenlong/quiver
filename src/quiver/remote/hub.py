@@ -1846,7 +1846,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/pulls":
             # pulls.py: every pinned repo's open PRs, behind the gh cache.
-            self._send_json(*pulls_mod.list(self._state, args))
+            self._send_json(*pulls_mod.list_view(self._state, args))
             return
 
         if path.startswith("/v1/pulls/"):
@@ -1862,7 +1862,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/issues":
             # issues.py: every pinned repo's open issues, behind the cache.
-            self._send_json(*issues_mod.list(self._state, args))
+            self._send_json(*issues_mod.list_view(self._state, args))
             return
 
         if path.startswith("/v1/issues/"):

@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import socket
 import struct
 import tempfile
@@ -261,6 +262,18 @@ class TestRemoteCatalog(unittest.TestCase):
                          {"claude": "opus", "codex": "gpt-5"})
         self.assertEqual(catalog_mod.last_used_models(
             Path(tempfile.mkdtemp())), {})
+
+    def test_app_prefs_follow_the_current_home(self):
+        # Bound to Path.home() at import, the path ignored a HOME set
+        # later (a test home, a hub started for another user's home).
+        import plistlib
+        home = Path(tempfile.mkdtemp())
+        prefs = home / catalog_mod._APP_PREFS_REL
+        prefs.parent.mkdir(parents=True)
+        prefs.write_bytes(plistlib.dumps({"providerOrder": ["codex"]}))
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            order, _off = catalog_mod._provider_visibility()
+        self.assertEqual(order, ["codex"])
 
     def _launchable(self, reg, prefs=None, on_path=None):
         import plistlib
@@ -566,8 +579,19 @@ class TestAgentState(unittest.TestCase):
                 {"ref": "1-shot.png", "hub_key": "claude:s1@m1"})
         self.assertTrue(ok)
         url = get.call_args[0][1]
-        self.assertIn("claude:s1@m1/1-shot.png", url)
+        self.assertIn("claude%3As1%40m1/1-shot.png", url)
         self.assertEqual(staged[0][1], "1-shot.png")
+
+    def test_attachment_pull_quotes_a_key_with_slashes(self):
+        # A session id can be a path: unquoted, its "/" split the route
+        # at the wrong place and "#" ended the URL early.
+        a = self._agent()
+        with patch.object(agent_mod, "_get_bytes", return_value=None) as get:
+            a._execute("droid:/a/b#c", "attachment",
+                       {"ref": "1 shot.png", "hub_key": "droid:/a/b#c@m1"})
+        url = get.call_args[0][1]
+        self.assertEqual(
+            url, "/v1/agent/attachments/droid%3A%2Fa%2Fb%23c%40m1/1%20shot.png")
 
 
 class _AgentHub(_Hub):
@@ -1835,6 +1859,21 @@ class TestCatalogEdge(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
 
+    def test_lookups_use_the_index_built_with_the_rows(self):
+        sessions = [_session(f"s{i}") for i in range(300)]
+        cat = catalog_mod.Catalog(self.home, "m1",
+                                  fetch_sessions=lambda: sessions,
+                                  status_of=lambda ss: [""] * len(ss),
+                                  model_of=lambda ss: [""] * len(ss))
+        cat.refresh()
+        self.assertIs(cat.session_for("claude:s299"), sessions[299])
+        self.assertEqual(cat.row_for("claude:s7")["key"], "claude:s7")
+        self.assertIsNone(cat.row_for("claude:nope"))
+        cat.note_status("claude:s5", "active", time.time() + 60)
+        self.assertEqual(cat.row_for("claude:s5")["status"], "active")
+        self.assertEqual(catalog_mod._index_of([("a", 0), ("b", 1), ("a", 2)]),
+                         {"a": 0, "b": 1})
+
     def test_merge_skips_non_dict_rows(self):
         out = catalog_mod.merge_remote_rows(
             self.home, "m1", ["bad", {"key": "claude:r1"}])
@@ -2077,6 +2116,42 @@ class TestReviewFixes(unittest.TestCase):
             "data": {"op": "control", "command_id": "c2"},
         }).encode())
         ag._dispatch.assert_called_once()
+
+    def test_slow_ops_leave_the_stream_thread(self):
+        # A launch boots a pane (up to 30 s) and an attachment pull
+        # downloads; inline, every command behind them waited.
+        ag = self._agent()
+        ran = []
+        ag._dispatch = lambda ev: ran.append(ev["data"]["op"])
+        ag._sendq = MagicMock()
+        threads = []
+        with patch.object(agent_mod.threading, "Thread") as thread:
+            thread.side_effect = lambda **kw: threads.append(kw) or MagicMock()
+            for seq, op in enumerate(("launch", "attachment", "message"), 1):
+                ag._handle_frame(json.dumps({
+                    "type": "command", "seq": seq, "session": "claude:a",
+                    "data": {"op": op}}).encode())
+        self.assertEqual(ran, [])  # nothing ran on the stream thread
+        self.assertEqual(len(threads), 1)  # launch: its own thread
+        threads[0]["target"](*threads[0]["args"])
+        queued = ag._sendq.submit.call_args_list
+        self.assertEqual([c[0][0] for c in queued], ["claude:a", "claude:a"])
+        for c in queued:
+            c[0][1]()  # the session queue runs them in submit order
+        self.assertEqual(ran, ["launch", "attachment", "message"])
+        self.assertEqual(ag._done_cmd_seq, 3)
+
+    def test_attach_stays_on_the_stream(self):
+        # Queued behind a headless turn, an attach could run after a
+        # later detach and undo it.
+        ag = self._agent()
+        ag._dispatch = MagicMock()
+        ag._sendq = MagicMock()
+        ag._handle_frame(json.dumps({
+            "type": "command", "seq": 1, "session": "claude:a",
+            "data": {"op": "attach"}}).encode())
+        ag._dispatch.assert_called_once()
+        ag._sendq.submit.assert_not_called()
 
     def test_one_sessions_turn_does_not_hold_another(self):
         # A headless send blocks for its whole turn; a message to a
