@@ -941,6 +941,49 @@ class TestLateWriteGate(unittest.TestCase):
         self.assertEqual(self.gates_after_untrack("#/status"), 1)
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestUntrackOnce(unittest.TestCase):
+    """pages/status.js under node: a double-click on Stop tracking sends
+    one write (the second used to move the generation past the first's
+    200 and come back 404, leaving the card up with an error), and a 404
+    for a page already gone reads the list again instead of erroring."""
+
+    def run_js(self, body):
+        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/status.js"
+        prelude = ("globalThis.location = { hash: '#/status' };\n"
+                   "function registerPage() {}\n" + app_js_function("currentRoute")
+                   + "const posts = []; const replies = [];\n"
+                   "const apiPost = (path, body) => { posts.push(body.id); return new Promise((r) => replies.push(r)); };\n")
+        tail = ("let paints = 0, reloads = 0;\n"
+                "paintStatus = () => { paints++; }; renderStatus = () => { reloads++; };\n"
+                "(async () => {" + body + "})();\n")
+        done = subprocess.run(["node", "-e", prelude + page.read_text(encoding="utf-8") + "\n" + tail],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_a_double_click_sends_one_write(self):
+        out = self.run_js(
+            "statusPage.removing = 'x';"
+            " const first = statusUntrack('x'); statusUntrack('x');"
+            " const during = { posts: posts.length, busy: statusPage.untracking };"
+            " replies[0]({ status: 200, data: { services: [] } }); await first;"
+            " process.stdout.write(JSON.stringify({ during, removing: statusPage.removing,"
+            "   busy: statusPage.untracking, error: statusPage.removeError, paints }));")
+        self.assertEqual(out, {"during": {"posts": 1, "busy": "x"}, "removing": None,
+                               "busy": None, "error": "", "paints": 1})
+
+    def test_a_page_already_gone_reads_the_list_again(self):
+        out = self.run_js(
+            "statusPage.removing = 'x'; statusPage.expanded.add('x');"
+            " const done = statusUntrack('x');"
+            " replies[0]({ status: 404, data: { error: { code: 'unknown_service', message: 'No tracked page has id x.' } } });"
+            " await done;"
+            " process.stdout.write(JSON.stringify({ removing: statusPage.removing, error: statusPage.removeError,"
+            "   expanded: statusPage.expanded.has('x'), reloads, paints }));")
+        self.assertEqual(out, {"removing": None, "error": "", "expanded": False, "reloads": 1, "paints": 0})
+
+
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestRelativeTime(unittest.TestCase):

@@ -655,6 +655,20 @@ class TestLoadOrder(unittest.TestCase):
                           " process.stdout.write(JSON.stringify({ r, n: page.data.n, loading: page.loading }));")
         self.assertEqual(out, {"r": [False, True], "n": 2, "loading": False})
 
+    def test_clone_sends_one_request_however_often_it_is_asked(self):
+        """Enter twice sent two clones; the second's 409 said "already
+        running" under the clone the first had started."""
+        out = self.run_js(
+            "globalThis.location = { hash: '#/overview' }; const posts = [];"
+            " globalThis.apiPost = (path, body) => new Promise((r) => posts.push(r));"
+            " page.data = { hub: { can_clone: true, job: { state: 'idle' } } }; page.hubUrl = 'https://x/h.git';"
+            " const first = cloneHub(); cloneHub();"
+            " const during = { posts: posts.length, posting: page.hubPosting };"
+            " posts[0]({ status: 200, data: { hub: { can_clone: true, job: { state: 'failed', error: 'no' } } } });"
+            " await first;"
+            " process.stdout.write(JSON.stringify({ during, posting: page.hubPosting }));")
+        self.assertEqual(out, {"during": {"posts": 1, "posting": True}, "posting": False})
+
     def test_leaving_still_ends_the_read(self):
         out = self.run_js("const a = load(1); routeGen = 2; answers[0]({ status: 200, data: { n: 1 } });"
                           " const r = await a; process.stdout.write(JSON.stringify({ r, data: page.data, loading: page.loading }));")
