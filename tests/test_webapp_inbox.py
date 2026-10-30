@@ -216,9 +216,6 @@ class TestReadRoute(HubBase):
         self.assertEqual(status, 404)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 NEEDS_FLOW = r"""
 document.querySelector = (sel) => panel.querySelector(sel);
@@ -265,6 +262,32 @@ fetchRoutes.push(["/v1/inbox/dismiss", { status: 200, body: { ok: true } }]);
   PAGES.inbox("inbox");
   await tick();
   out.stillHidden = !rowKeys().includes("m:e1");
+  // An approval on a cleared session shows at once, before its stamp moves.
+  items = ITEMS.map((i) => (i.key === "m:e1" ? { ...i, status: "approval", request_id: "r2" } : i));
+  PAGES.inbox("inbox");
+  await tick();
+  out.approvalShows = rowKeys().includes("m:e1");
+  items = ITEMS;
+  PAGES.inbox("inbox");
+  await tick();
+  out.hiddenAgain = !rowKeys().includes("m:e1");
+  // Two reads answering out of order: the older one, still listing the
+  // cleared row at its old stamp, must not land after the newer one.
+  const realApi = api;
+  const held = [];
+  globalThis.api = (path) => (path.startsWith("/v1/inbox")
+    ? new Promise((resolve) => held.push(resolve)) : realApi(path));
+  PAGES.inbox("inbox");
+  PAGES.inbox("inbox");
+  await tick();
+  globalThis.api = realApi;
+  // The newer read has the session waiting again (new activity, so the
+  // clear retires); the older still has it in Errors.
+  held[1]({ status: 200, data: { items: ITEMS.map((i) => (i.key === "m:e1" ? { ...i, status: "followup", last_active_at: 81 } : i)) } });
+  await tick();
+  held[0]({ status: 200, data: { items: ITEMS } });
+  await tick();
+  out.newestWins = rowKeys().indexOf("m:e1") === 2 && heads().length === 3;
   // New activity past the stamp brings it back.
   items = ITEMS.map((i) => (i.key === "m:e1" ? { ...i, last_active_at: 81 } : i));
   PAGES.inbox("inbox");
@@ -324,6 +347,9 @@ class TestNeedsYou(unittest.TestCase):
         self.assertNotIn("m:e1", out["afterRow"])
         self.assertEqual(out["rowPost"], [{"key": "m:e1", "last_active_at": 80}])
         self.assertTrue(out["stillHidden"])
+        self.assertTrue(out["approvalShows"])
+        self.assertTrue(out["hiddenAgain"])
+        self.assertTrue(out["newestWins"])
         self.assertTrue(out["back"])
         self.assertEqual(sorted(out["sectionPost"]), ["m:w1", "m:x1"])
         self.assertIn("m:a1", out["afterSection"])
@@ -331,3 +357,7 @@ class TestNeedsYou(unittest.TestCase):
         self.assertTrue(out["failText"])
         self.assertTrue(out["restored"])
         self.assertTrue(out["empty"])
+
+
+if __name__ == "__main__":
+    unittest.main()

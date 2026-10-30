@@ -56,11 +56,13 @@ const NeedsYou = (() => {
   /* Dismissals posted but maybe not in a fetched list yet: ``ledger``
    * maps key -> the stamp posted. A fetched row at or before its stamp
    * stays hidden; one that moved past it has new activity, comes back,
-   * and retires the entry (the hub's own rule). */
+   * and retires the entry (the hub's own rule). A pending approval
+   * always shows, as the hub ignores dismissals for one: it can arrive
+   * on a cleared session before that session's stamp moves. */
   function overlay(items, ledger) {
     const out = [];
     for (const item of items || []) {
-      if (!(item.key in ledger)) { out.push(item); continue; }
+      if (item.status === "approval" || !(item.key in ledger)) { out.push(item); continue; }
       if (stamp(item) > ledger[item.key]) {
         delete ledger[item.key];
         out.push(item);
@@ -79,7 +81,7 @@ const NeedsYou = (() => {
   };
   /* Needs you: the hub's rows (null until the first answer), the last
    * read's or clear's error, and the dismissals still in flight. */
-  const needs = { items: null, error: null, actionError: null, ledger: {} };
+  const needs = { items: null, error: null, actionError: null, ledger: {}, seq: 0 };
 
   const unreadCount = () => ((inbox.data && inbox.data.notifications) || []).filter((n) => n.unread).length;
 
@@ -176,8 +178,11 @@ const NeedsYou = (() => {
    * failed read keeps the last rows and says so. */
   async function loadNeeds() {
     const gen = routeGen;
+    // Only the newest read lands: an older one answering last would undo
+    // what the newer one's overlay retired, and bring a cleared row back.
+    const seq = ++needs.seq;
     const { status, data } = await api("/v1/inbox?done=1");
-    if (gen !== routeGen || !onInbox()) return;
+    if (gen !== routeGen || seq !== needs.seq || !onInbox()) return;
     // The GitHub read answers 401 too, and gates the page.
     if (status === 401) return;
     if (status === 200 && data && Array.isArray(data.items)) {
