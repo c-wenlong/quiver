@@ -3463,9 +3463,14 @@ class _ShortHeartbeat:
                   patch.object(hub_mod._Handler, "_sse_stream", sse_stream)):
             p.start()
             self.addCleanup(p.stop)
-        # Runs before the patches stop: the clients have hung up by now,
-        # so each stream ends within a couple of heartbeats.
-        self.addCleanup(lambda: [t.join(timeout=3) for t in streams])
+        def join_streams():
+            # Runs before the patches stop: the clients have hung up by
+            # now, so each stream ends within a couple of heartbeats.
+            for t in streams:
+                t.join(timeout=3)
+                self.assertFalse(t.is_alive(), "SSE stream still running")
+
+        self.addCleanup(join_streams)
 
 
 class TestGlobalEvents(_ShortHeartbeat, HubBase):
