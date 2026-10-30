@@ -12,6 +12,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
 <style>
 :root {
   --bg: #08090a;
@@ -505,6 +509,31 @@ dialog .close { margin-left: auto; }
         setTimeout(function () { btn.textContent = "Copy"; }, 1500);
       }, function () {});
     });
+  });
+
+  // Vercel Web Analytics counts page views on its own; clicks go in as
+  // custom events, one name per kind of control, tagged with where it sits.
+  function place(el) {
+    var p = el.closest("header, .hero, #features, #install, .final, footer, dialog");
+    return p ? (p.id || p.classList[0] || p.tagName.toLowerCase()) : "page";
+  }
+  document.addEventListener("click", function (e) {
+    var el = e.target.closest("a, button");
+    if (!el) return;
+    var name, data = { place: place(el) };
+    if (el.hasAttribute("data-dmg")) {
+      name = "Install"; data.dmg = /\.dmg$/i.test(el.href);
+    } else if (el.classList.contains("copy")) {
+      name = "Copy command"; data.command = el.getAttribute("data-copy");
+    } else if (el.hasAttribute("data-clip")) {
+      name = el.classList.contains("card") ? "Feature card" : "Tour tab";
+      data.clip = el.getAttribute("data-clip");
+    } else if (el.tagName === "A") {
+      name = "Link"; data.href = el.getAttribute("href");
+    } else {
+      return;
+    }
+    window.va("event", { name: name, data: data });
   });
 })();
 </script>
