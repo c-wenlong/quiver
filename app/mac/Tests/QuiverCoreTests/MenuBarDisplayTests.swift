@@ -19,9 +19,7 @@ private var today: UsageTotals {
 
 @Suite struct MenuBarDisplayTests {
     private func defaults() -> UserDefaults {
-        let name = "MenuBarDisplayTests.\(UUID().uuidString)"
-        let suite = UserDefaults(suiteName: name)!
-        suite.removePersistentDomain(forName: name)
+        let suite = TestDefaults("MenuBarDisplayTests")
         return suite
     }
 

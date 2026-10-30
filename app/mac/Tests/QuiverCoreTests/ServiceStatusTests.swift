@@ -564,9 +564,7 @@ private func openGeminiIncident() throws -> Data {
     }
 
     @Test func storeRoundTripsThroughUserDefaults() throws {
-        let suite = "quiver-test-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("quiver-test")
         let store = CustomStatusServices(defaults: defaults)
         #expect(store.load() == StatusServicePrefs())
         var prefs = StatusServicePrefs()
@@ -585,9 +583,7 @@ private func openGeminiIncident() throws -> Data {
 
     /// Records written before feeds could sit off /api/v2 still load.
     @Test func aLegacyStoreFileStillReads() throws {
-        let suite = "quiver-test-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("quiver-test")
         let store = CustomStatusServices(defaults: defaults)
         defaults.set(Data(#"[{"id":"custom-x","name":"X","pageURL":"https://x.test","group":"providers"}]"#.utf8),
                      forKey: CustomStatusServices.defaultsKey)
@@ -598,9 +594,7 @@ private func openGeminiIncident() throws -> Data {
     }
 
     @Test func badStoreDataReadsAsEmpty() throws {
-        let suite = "quiver-test-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("quiver-test")
         let store = CustomStatusServices(defaults: defaults)
         defaults.set(Data("<not json".utf8), forKey: CustomStatusServices.defaultsKey)
         #expect(store.load() == StatusServicePrefs())

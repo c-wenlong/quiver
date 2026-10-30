@@ -558,7 +558,7 @@ import Testing
                                  isInstalled: { _ in installer.checks += 1; return installer.installed.value },
                                  executable: "/Apps/Quiver", owner: 77, clock: { clock.value },
                                  sleep: { await sleeper.sleep($0) },
-                                 defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
+                                 defaults: TestDefaults("fan"))
         return (control, url)
     }
 
@@ -780,7 +780,7 @@ import Testing
         let fans = FanControl(control: url,
                               reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
                               status: { nil }, installer: installer, isInstalled: { _ in true }, executable: "/Apps/Quiver", owner: 77,
-                              defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
+                              defaults: TestDefaults("fan"))
         await fans.refresh()
         fans.thresholdEnabled = true
         gate.armed = true
@@ -884,7 +884,7 @@ import Testing
                               reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
                               status: { nil }, installer: installer, isInstalled: { _ in true },
                               executable: "/Apps/Quiver", owner: 77, sleep: { await sleeper.sleep($0) },
-                              defaults: UserDefaults(suiteName: "fan-\(UUID().uuidString)")!)
+                              defaults: TestDefaults("fan"))
         await fans.refresh()
         gate.armed = true
         let takeover = Task { await fans.applyManual() }
@@ -982,7 +982,7 @@ import Testing
     }
 
     @MainActor @Test func theThresholdIsClampedAndRemembered() async {
-        let defaults = UserDefaults(suiteName: "fan-\(UUID().uuidString)")!
+        let defaults = TestDefaults("fan")
         let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                               isInstalled: { _ in false }, defaults: defaults)
@@ -1021,7 +1021,7 @@ import Testing
     }
 
     @MainActor @Test func theOffTemperatureStaysUnderTheOnLine() async {
-        let defaults = UserDefaults(suiteName: "fan-\(UUID().uuidString)")!
+        let defaults = TestDefaults("fan")
         let url = FileManager.default.temporaryDirectory.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
                               isInstalled: { _ in false }, defaults: defaults)

@@ -19,9 +19,10 @@ final class GitHubNotifier {
     /// Inbox page is hidden. Off means banners stop; polling still runs so
     /// the inbox, badge and board invalidations stay live.
     var bannersEnabled: Bool {
-        didSet { UserDefaults.standard.set(bannersEnabled, forKey: "githubNotifications") }
+        didSet { defaults.set(bannersEnabled, forKey: "githubNotifications") }
     }
 
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let model: GitHubModel
     @ObservationIgnored private let stateFile: URL
     @ObservationIgnored private let interval: TimeInterval
@@ -41,11 +42,13 @@ final class GitHubNotifier {
     private static let deliveredCap = 500
 
     init(quiver: URL, model: GitHubModel, interval: TimeInterval = 60,
+         defaults: UserDefaults = .standard,
          post: (([GhNotification]) async -> Void)? = nil) {
+        self.defaults = defaults
         self.model = model
         self.interval = interval
         self.post = post ?? { notes in await Self.postToSystem(notes) }
-        bannersEnabled = UserDefaults.standard.object(forKey: "githubNotifications") as? Bool ?? false
+        bannersEnabled = defaults.object(forKey: "githubNotifications") as? Bool ?? false
         stateFile = quiver.appending(path: "cache/github-notified.json")
         let saved = (try? Data(contentsOf: stateFile))
             .flatMap { try? JSONDecoder().decode(State.self, from: $0) }

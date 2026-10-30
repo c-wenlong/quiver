@@ -4,9 +4,7 @@ import Testing
 
 @Suite struct PopupTabsTests {
     private func defaults() -> UserDefaults {
-        let name = "PopupTabsTests.\(UUID().uuidString)"
-        let suite = UserDefaults(suiteName: name)!
-        suite.removePersistentDomain(forName: name)
+        let suite = TestDefaults("PopupTabsTests")
         return suite
     }
 

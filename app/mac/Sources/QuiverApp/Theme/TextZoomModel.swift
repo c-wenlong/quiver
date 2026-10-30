@@ -7,16 +7,22 @@ import QuiverCore
 /// when it changes, with its state (scroll, selection, open cards) intact.
 @MainActor @Observable
 final class TextZoomModel {
-    static let shared = TextZoomModel()
+    /// A `var` only so tests can put in a model over a scratch suite.
+    static var shared = TextZoomModel()
     private static let defaultsKey = "textZoom"
 
-    var zoom: Double = {
+    @ObservationIgnored private let defaults: UserDefaults
+
+    var zoom: Double {
+        didSet { defaults.set(zoom, forKey: Self.defaultsKey) }
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         // double(forKey:) also reads a `-textZoom 0.8` launch argument,
         // which arrives as a string.
-        guard UserDefaults.standard.object(forKey: defaultsKey) != nil else { return TextZoom.standard }
-        return TextZoom.clamped(UserDefaults.standard.double(forKey: defaultsKey))
-    }() {
-        didSet { UserDefaults.standard.set(zoom, forKey: Self.defaultsKey) }
+        zoom = defaults.object(forKey: Self.defaultsKey) == nil
+            ? TextZoom.standard : TextZoom.clamped(defaults.double(forKey: Self.defaultsKey))
     }
 
     var canZoomIn: Bool { zoom < TextZoom.range.upperBound }
