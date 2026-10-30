@@ -598,13 +598,9 @@ extension SweClient {
     }
 
     /// `swe harness usage <name> --account-dir=<dir> --json`: the account's
-    /// own rate limit, nil when it is not signed in.
-    public func accountUsage(name: String, accountDir: String) async throws -> RateLimit? {
-        try await accountOutcome(name: name, accountDir: accountDir).limit
-    }
-
-    /// Same call returning the typed outcome. `allowFailure` because a
-    /// failed read still carries the document it describes.
+    /// own rate limit (nil when it is not signed in) as a typed outcome.
+    /// `allowFailure` because a failed read still carries the document it
+    /// describes.
     public func accountOutcome(name: String, accountDir: String) async throws -> AccountOutcome {
         struct Reply: Decodable {
             var name: String

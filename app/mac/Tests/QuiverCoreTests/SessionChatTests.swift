@@ -873,7 +873,7 @@ extension HubStubbed {
         // Semaphore waits are off the cooperative pool (and the wait is
         // banned in async contexts outright on newer SDKs): park a GCD
         // thread on `posted` until the POST lands.
-        _ = await runOffPool { posted.wait(timeout: .now() + 10) }
+        _ = await offMain { posted.wait(timeout: .now() + 10) }
         chat.apply(event("approval.resolved", #"{"request_id": "r11", "decision": "allow"}"#))
         released.signal()
         await answer.value
