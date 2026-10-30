@@ -103,7 +103,7 @@ Taking part in this project means agreeing to the [Code of Conduct](CODE_OF_COND
 
 Use the [bug report template](https://github.com/c-wenlong/quiver/issues/new?template=bug_report.yml) and include:
 
-- Your OS and Python version, plus the quiver version from `pip show quiver`
+- Your OS and Python version, plus the quiver version from `swe version`
 - The exact command that failed and its full output
 - Steps to reproduce
 
