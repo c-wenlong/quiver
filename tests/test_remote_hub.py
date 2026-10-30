@@ -3186,6 +3186,51 @@ class TestServeEntry(unittest.TestCase):
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
         self.assertFalse(state.tail_manager.is_hot("claude:b"))
 
+    def test_failing_loop_step_logs_once_per_window(self):
+        # A loop step that raises used to vanish without a trace; it
+        # must reach stderr, but not on every 250 ms tick.
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+        ticks = iter(range(3))
+
+        def tick():
+            if next(ticks) == 2:
+                state._stop.set()
+            raise RuntimeError("tick broke")
+
+        state.tail_manager.tick = tick
+        state.tail_manager.wait = lambda _t: None
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            state._tail_loop()
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 1, out)
+        self.assertIn("RuntimeError: tick broke", out)
+
+    def test_loop_error_log_throttles_per_step_and_window(self):
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+
+        def fail(step):
+            try:
+                raise RuntimeError(step)
+            except RuntimeError:
+                state._log_loop_error(step)
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            fail("tail tick")
+            fail("tail tick")          # same window: quiet
+            fail("catalog refresh")    # another step logs in that window
+            # The window passes: the same step logs again.
+            state._loop_error_at["tail tick"] -= hub_mod._LOOP_ERROR_LOG_S + 1
+            fail("tail tick")
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 2, out)
+        self.assertEqual(out.count("catalog refresh failed"), 1, out)
+
     def test_catalog_loop_prunes_pair_requests_at_most_once_a_minute(self):
         home = Path(tempfile.mkdtemp())
         state = HubState(home)

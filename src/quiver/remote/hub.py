@@ -24,6 +24,7 @@ import secrets
 import signal
 import socket
 import sqlite3
+import sys
 import threading
 import time
 import traceback
@@ -135,10 +136,14 @@ FOLDER_LIST_CAP = 500
 # owner-identity path of /v1/pair/requests*) allow this many attempts
 # per source IP per window.
 _PAIR_ATTEMPT_MAX = 5
+_PAIR_ATTEMPT_S = 600
+# A background loop that keeps failing logs its traceback at most this
+# often per loop step, so a stuck step shows in the unit log without
+# flooding it every 250 ms.
+_LOOP_ERROR_LOG_S = 300.0
 # The catalog loop drops expired pair requests (and any uncollected
 # credential on them) at most this often.
 _PAIR_PRUNE_S = 60.0
-_PAIR_ATTEMPT_S = 600
 
 # A launch the phone started stays answerable at /v1/launches/<id> this
 # long; past it the tmux pane has long since been adopted or abandoned.
@@ -286,6 +291,7 @@ class HubState:
         self._pair_ex_times: dict[str, list[float]] = {}
         self._pair_dec_times: dict[str, list[float]] = {}
         self._pair_req_lock = threading.Lock()
+        self._loop_error_at: dict[str, float] = {}
         self._pair_pruned_at = 0.0
         # Host values this hub answers to — the owner-identity approval
         # path requires one, and the unauthenticated routes answer only
@@ -755,6 +761,19 @@ class HubState:
             )
         return written
 
+    def _log_loop_error(self, step: str) -> None:
+        """From an ``except`` in a background loop: print the traceback
+        to stderr (the launchd/systemd log), at most once per
+        _LOOP_ERROR_LOG_S for each step. The loop carries on."""
+        now = time.monotonic()
+        last = self._loop_error_at.get(step)
+        if last is not None and now - last < _LOOP_ERROR_LOG_S:
+            return
+        self._loop_error_at[step] = now
+        print(f"swe remote hub: {step} failed (kept running):",
+              file=sys.stderr)
+        traceback.print_exc()
+
     def _prune_pair_requests(self) -> None:
         now = time.time()
         if now - self._pair_pruned_at < _PAIR_PRUNE_S:
@@ -763,7 +782,7 @@ class HubState:
         try:
             pairing.prune_requests(self.home)
         except Exception:
-            pass
+            self._log_loop_error("pair request prune")
 
     def _catalog_loop(self) -> None:
         while not self._stop.is_set():
@@ -807,7 +826,7 @@ class HubState:
                 # or tail sync, which don't need it.
                 self.catalog.poll_github()
             except Exception:
-                pass
+                self._log_loop_error("catalog refresh")
             self._catalog_wake.wait(catalog_mod.REFRESH_INTERVAL_S)
             self._catalog_wake.clear()
 
@@ -868,14 +887,14 @@ class HubState:
             try:
                 self.tail_manager.tick()
             except Exception:
-                pass
+                self._log_loop_error("tail tick")
             sweeps += 1
             if sweeps >= 1200:  # ~5 min at a 250 ms tick
                 sweeps = 0
                 try:
                     attachments.sweep(self.home)
                 except Exception:
-                    pass
+                    self._log_loop_error("attachment sweep")
             # A write to a session (tail_manager.wake) cuts this short.
             self.tail_manager.wait(0.25)
 
