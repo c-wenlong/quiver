@@ -274,6 +274,8 @@ class Notifier:
     def __init__(self, state, base_url: str, *, subscribe_key: str) -> None:
         self._state = state
         self._base = base_url.rstrip("/")
+        # One stderr line per outage, not one per push.
+        self._post_warned = False
         self._subscribe_key = subscribe_key
         self._stop = state._stop
         self._q: queue.Queue | None = None
@@ -426,5 +428,17 @@ class Notifier:
         token = cfg.get("ntfy_token")
         if token:
             req.add_header("Authorization", f"Bearer {token}")
-        with urllib.request.urlopen(req, timeout=_POST_TIMEOUT_S):
-            pass
+        # The bundled python.org build has no CA store: agent._urlopen
+        # retries a certificate failure against the OS bundle.
+        from quiver.remote.agent import _urlopen
+
+        try:
+            with _urlopen(req, _POST_TIMEOUT_S):
+                pass
+        except Exception as exc:
+            if not self._post_warned:
+                self._post_warned = True
+                _warn(f"push failed ({exc}); later failures stay quiet "
+                      "until one succeeds")
+            raise
+        self._post_warned = False
