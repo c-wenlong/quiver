@@ -262,7 +262,7 @@ struct SessionsView: View {
     private func show(_ t: ListToast) { toast = t }
 
     private static func message(_ error: Error) -> String {
-        (error as? HubError)?.message ?? error.localizedDescription
+        error.localizedDescription
     }
 
     private var filterBar: some View {
