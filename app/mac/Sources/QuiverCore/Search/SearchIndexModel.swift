@@ -65,6 +65,10 @@ public final class SearchIndexModel {
     /// Internal so tests can check what got attached under `@testable`.
     var store: SearchStore?
     var indexer: SearchIndexer?
+    /// Index reads `refreshStatus` started, and poll ticks run, so tests
+    /// can tell a hidden poll skipped the index.
+    private(set) var statusReads = 0
+    private(set) var pollTicks = 0
     /// A failure the status line shows instead of the counts.
     private var statusError: String?
 
@@ -258,6 +262,7 @@ public final class SearchIndexModel {
     /// failed read lands on the status line too — the app keeps running.
     func refreshStatus() async {
         guard let store else { return }
+        statusReads += 1
         let polled: Result<SearchStatus, Error> = await Task
             .detached(priority: .utility) { [store] in
                 Result(catching: { try store.status() })
@@ -308,6 +313,7 @@ public final class SearchIndexModel {
                 } else {
                     noteScan()
                 }
+                pollTicks += 1
                 do {
                     try await Task.sleep(
                         for: overview?.isLoading ?? false ? pollScanning : pollSettled)
