@@ -1468,6 +1468,7 @@ class TailManager:
                     self._status_at.pop(key, None)
                 self._probe_due.discard(key)
                 self._probed_at.pop(key, None)
+                self._forget(key)
         for key, session, status in wanted:
             tailer = self.tailers.get(key)
             if tailer is None:
@@ -1493,6 +1494,20 @@ class TailManager:
             tailer.session = session
             self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=False)
+
+    def _forget(self, key: str) -> None:
+        """Drop what the pane watcher and the attach check kept for a
+        session that left the catalog. A prompt still outstanding is
+        retired with ``approval.resolved``, so a phone's card for it
+        doesn't wait forever on a session that's gone."""
+        self.last_append.pop(key, None)
+        self._approval_checked_at.pop(key, None)
+        outstanding = self._approval_outstanding.pop(key, None)
+        if outstanding is not None:
+            supervise.set_pending_approval(key, None)
+            self._emit_approval(
+                "approval.resolved", key,
+                {"request_id": outstanding[0], "source": "gone"})
 
     def _take_status(
         self,
