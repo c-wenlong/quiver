@@ -307,8 +307,12 @@ def _invalidate(home: Path) -> None:
     before the fix cannot land after this and keep its old answer."""
     for view in VIEWS:
         with _locks[view]:
+            if view == "explore":
+                # Under Explore's lock, before its answer goes: a read
+                # waiting on the lock must not rebuild from the old
+                # catalog. The Skills page's placement reads it too.
+                _drop_catalog(home)
             _cache.pop((view, str(home)), None)
-    _drop_catalog(home)  # the Skills page's placement reads it too
 
 
 # ---------------------------------------------------------------- Explore
