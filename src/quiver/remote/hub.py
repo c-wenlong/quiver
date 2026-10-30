@@ -131,8 +131,9 @@ MAX_SAT_PENDING = 2000
 # /v1/folders lists at most this many subfolders of one folder.
 FOLDER_LIST_CAP = 500
 
-# The unauthenticated pair routes (/v1/pair, /v1/pair/request) allow
-# this many attempts per source IP per window.
+# The unauthenticated pair routes (/v1/pair, /v1/pair/request, and the
+# owner-identity path of /v1/pair/requests*) allow this many attempts
+# per source IP per window.
 _PAIR_ATTEMPT_MAX = 5
 # The catalog loop drops expired pair requests (and any uncollected
 # credential on them) at most this often.
@@ -272,10 +273,11 @@ class HubState:
         self.owner_retry = None
         self._owner_tried_at = 0.0
         # Unauthenticated pair-route rate limits: ip → timestamps, one
-        # bucket per route so token tries and request floods don't
-        # share a budget. One lock guards both.
+        # bucket per route so token tries, request floods and owner-
+        # identity approvals don't share a budget. One lock guards all.
         self._pair_req_times: dict[str, list[float]] = {}
         self._pair_ex_times: dict[str, list[float]] = {}
+        self._pair_dec_times: dict[str, list[float]] = {}
         self._pair_req_lock = threading.Lock()
         self._pair_pruned_at = 0.0
         # Host values this hub answers to — the owner-identity approval
@@ -1120,6 +1122,10 @@ class _Handler(BaseHTTPRequestHandler):
         presentation — a mismatched ``request_id`` is a failed spend,
         not a free probe — so a topic reader holding it can answer
         exactly the one prompt it was minted for and nothing else.
+
+        The buttons only ever send allow, deny or always, so that is
+        all the token can answer with: a menu row number (which could
+        pick any option of a digit menu) burns it and is refused.
         """
         prefix = "/v1/sessions/"
         suffix = "/approval"
@@ -1133,6 +1139,11 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._read_body() or {}
         rid = str(body.get("request_id") or "")
         if not self._state.approval_tokens.consume(token, key, rid):
+            return None
+        decision = body.get("decision")
+        # A list is unhashable: check the type before ``in``.
+        if not isinstance(decision, str) or (
+                decision not in notify.ACTION_DECISIONS):
             return None
         # The approval route never reads the device id back; non-None
         # is the whole grant.
@@ -1265,6 +1276,39 @@ class _Handler(BaseHTTPRequestHandler):
             bucket[ip] = times
         return True
 
+    def _approver_ok(self) -> bool:
+        """Auth for the pair-approval routes: a paired bearer, or the
+        owner's tailnet identity. Sends the refusal and returns False.
+
+        Every check that needs no subprocess runs first, so a caller
+        that can't pass them never forks ``tailscale whois``; the
+        identity path is rate-limited like the other unauthenticated
+        pair routes, and its lookup goes through the whois cache."""
+        if self._client_device() is not None:
+            if self._bad_origin():
+                self._send_error(
+                    403, "bad_origin", "request blocked by origin policy"
+                )
+                return False
+            return True
+        if (self.headers.get("X-Quiver-Pair") or "") != "1":
+            # Without the header the identity path can't pass at all.
+            self._send_error(401, "unauthorized", "pair this device first")
+            return False
+        if self._bad_origin() or not self._identity_ok():
+            self._send_error(
+                403, "bad_origin", "request blocked by origin policy"
+            )
+            return False
+        if not self._attempt_ok(self._state._pair_dec_times):
+            self._send_error(429, "rate_limited", "too many pair attempts")
+            return False
+        peer = self._state.whois_cached(self._client_ip())
+        if self._approver_node(peer) is None:
+            self._send_error(401, "unauthorized", "pair this device first")
+            return False
+        return True
+
     def _pair_request(self) -> None:
         if not self._local_host_ok():
             self._send_error(
@@ -1306,24 +1350,17 @@ class _Handler(BaseHTTPRequestHandler):
                 403, "bad_origin", "request blocked by origin policy"
             )
             return
-        device_id = self._client_device()
+        if not self._approver_ok():
+            return
         # The peer's node decides self-approval no matter how the
-        # caller proved itself — bearer or owner identity alike.
-        peer = self._state.whois(self._client_ip())
+        # caller proved itself — bearer or owner identity alike. A
+        # cached miss is re-checked: with no node the self-approval
+        # check can't run, and the caller is already authenticated.
+        ip = self._client_ip()
+        peer = self._state.whois_cached(ip) or self._state.whois(ip)
         node_id = (
             str(peer.get("node_id") or "") or None
         ) if peer else None
-        if device_id is None and self._approver_node(peer) is None:
-            self._send_error(401, "unauthorized",
-                             "pair this device first")
-            return
-        if self._bad_origin() or (
-            device_id is None and not self._identity_ok()
-        ):
-            self._send_error(
-                403, "bad_origin", "request blocked by origin policy"
-            )
-            return
         body = self._read_body() or {}
         code = str(body.get("code") or "")
         rid = body.get("request_id")
@@ -1557,18 +1594,7 @@ class _Handler(BaseHTTPRequestHandler):
         # Approving devices get in two ways: a paired bearer, or the
         # tailnet login that owns this hub node.
         if path == "/v1/pair/requests":
-            peer = self._state.whois(self._client_ip())
-            device_id = self._client_device()
-            if device_id is None and self._approver_node(peer) is None:
-                self._send_error(401, "unauthorized",
-                                 "pair this device first")
-                return
-            if self._bad_origin() or (
-                device_id is None and not self._identity_ok()
-            ):
-                self._send_error(
-                    403, "bad_origin", "request blocked by origin policy"
-                )
+            if not self._approver_ok():
                 return
             self._send_json(
                 200, {"requests": pairing.list_requests(self._state.home)}
@@ -3358,7 +3384,7 @@ class _Handler(BaseHTTPRequestHandler):
         if body is None:
             self._send_error(400, "bad_body", "unreadable JSON body")
             return
-        name = str(body.get("name") or "").strip()[:80]
+        name = pairing.clean_name(body.get("name"))
         if not pairing.update_device(
             self._state.home, device_id, display_name=name or None
         ):

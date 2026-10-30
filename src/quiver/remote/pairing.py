@@ -133,6 +133,8 @@ def _save_devices(home: Path | None, devices: dict[str, dict]) -> None:
 META_KEYS = ("kind", "model", "client", "os")
 _META_FIELD_KEYS = META_KEYS + ("node_name",)
 _MAX_META_LEN = 120
+# A device name the pairing client sends is cut to this, like a rename.
+MAX_NAME_LEN = 80
 
 # Darwin major → Apple OS, for CFNetwork UAs that name no platform.
 # Both families share one kernel; the product token picks the map.
@@ -235,6 +237,11 @@ def client_meta(user_agent: str) -> dict:
         # we didn't recognise; curl/python-style UAs are just unknown.
         meta["kind"] = "browser" if ua.startswith("Mozilla/") else "unknown"
     return meta
+
+
+def clean_name(name: object) -> str:
+    """A client-sent device name, trimmed and length-capped; "" if none."""
+    return str(name or "").strip()[:MAX_NAME_LEN]
 
 
 def clean_device_meta(fields: dict | None) -> dict:
@@ -371,6 +378,7 @@ def exchange(
     home_path = Path(home) if home is not None else None
     if not token:
         return None
+    name = clean_name(name)
     with _state_lock(home_path):
         if not _consume_token(home_path, token):
             return None
@@ -564,6 +572,7 @@ def request_pair(
     minted into the device when it's approved — the requester supplied
     it, not the approver."""
     home_path = Path(home) if home is not None else None
+    name = clean_name(name)
     with _state_lock(home_path):
         now = time.time()
         node_id = str(peer.get("node_id") or "")
