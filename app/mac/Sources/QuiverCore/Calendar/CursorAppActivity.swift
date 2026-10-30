@@ -59,10 +59,7 @@ public struct CursorAppActivity: ActivityProviding {
             do {
                 let db = try SQLiteDatabase(readOnlyURI:
                     "file:\(path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path)?mode=ro")
-                let statement = try db.prepare("""
-                    SELECT key, json_extract(value, '$.createdAt')
-                    FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'
-                    """)
+                let statement = try db.prepare(Self.bubbleQuery)
                 while try statement.step() {
                     guard let key = statement.text(0),
                           let created = Self.createdAt(of: statement, column: 1),
@@ -90,6 +87,15 @@ public struct CursorAppActivity: ActivityProviding {
                   timestamps: timestamps.sorted())
         }
     }
+
+    /// Every bubble row. A range on the key, not `LIKE 'bubbleId:%'`:
+    /// LIKE is case-insensitive, so SQLite can't use the key's index for
+    /// it and scanned the whole table, every value blob included, on
+    /// every refresh. `;` is the character after `:`.
+    static let bubbleQuery = """
+        SELECT key, json_extract(value, '$.createdAt')
+        FROM cursorDiskKV WHERE key >= 'bubbleId:' AND key < 'bubbleId;'
+        """
 
     /// The composer id out of `bubbleId:<composer>:<bubble>`; nil for
     /// keys that never got a bubble suffix or belong to a subagent task.

@@ -137,6 +137,18 @@ import Testing
         #expect(blocks.contains { $0.sessions[0].sessionId.hasPrefix("task-") } == false)
     }
 
+    /// The bubble read seeks the key's index (Cursor's table is
+    /// `key TEXT UNIQUE`) rather than scanning every row.
+    @Test func cursorBubbleQueryUsesTheKeyIndex() throws {
+        let dir = try TempDir()
+        let db = try SQLiteDatabase(url: dir.url.appending(path: "state.vscdb"))
+        try db.execute("CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
+        let plan = try db.prepare("EXPLAIN QUERY PLAN " + CursorAppActivity.bubbleQuery)
+        var details: [String] = []
+        while try plan.step() { details.append(plan.text(3) ?? "") }
+        #expect(details.contains { $0.hasPrefix("SEARCH") && $0.contains("INDEX") }, "\(details)")
+    }
+
     /// Two account roots naming one database read it once instead of
     /// trapping in Dictionary(uniqueKeysWithValues:).
     @Test func cursorReadsADatabaseListedTwiceOnce() async throws {
