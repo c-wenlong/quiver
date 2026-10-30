@@ -96,7 +96,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Tool card: `Edit · app.js` with an added and removed line count, tap to expand
 - [x] Diff view inside tool cards for edit and write tools
 - [x] Runs of tool calls fold into "Used 6 tools"
-- [x] Approval card: the prompt, then Allow, Always and Deny; queued, resolved and failed states
+- [x] Approval card: the prompt, then the pane's numbered menu rows when the hub read them (the row number is the decision), else Allow, Always and Deny; queued, resolved and failed states
 - [x] Compaction divider
 - [x] Composer: Stop and a round send button. No Queue/Steer segment: a send while the agent works steers in, or waits in the queued tray when the session holds sends, and a tray row's Send now steers it
 - [x] Send states on your bubble: sending, queued (with the hub's reason), failed with retry
