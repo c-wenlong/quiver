@@ -74,6 +74,32 @@ import Testing
         #expect(SVGPath.path("hello").isEmpty)
         #expect(SVGPath.path("M").isEmpty)
     }
+
+    @Test func aNumberAfterCloseStopsInsteadOfLooping() {
+        // Z takes no arguments, so a stray number after it used to make
+        // the parser run Z forever.
+        let p = SVGPath.path("M0 0L8 0L8 8Z 5")
+        #expect(p.boundingBox == CGRect(x: 0, y: 0, width: 8, height: 8))
+    }
+
+    @Test func anArcWhoseRadiiOnlyJustReachStaysFinite() {
+        // Radii scaled up to reach the end leave a tiny negative under the
+        // centre's square root here, which used to put NaN in the path.
+        // (boundingBox skips NaN points, so check every point.)
+        let p = SVGPath.path("M0 0A1.2 0.71 17 0 1 10.44 -1.11L12 0")
+        var points: [CGPoint] = []
+        p.applyWithBlock { element in
+            let count = switch element.pointee.type {
+            case .moveToPoint, .addLineToPoint: 1
+            case .addQuadCurveToPoint: 2
+            case .addCurveToPoint: 3
+            default: 0
+            }
+            for k in 0..<count { points.append(element.pointee.points[k]) }
+        }
+        #expect(points.count > 3)
+        #expect(points.allSatisfy { $0.x.isFinite && $0.y.isFinite })
+    }
 }
 
 /// The vendored glyphs, so a path-regression upstream (or an edit to
