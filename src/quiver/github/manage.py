@@ -342,6 +342,13 @@ def _is_registered(mirror: str, path: str) -> bool:
     return os.path.realpath(path) in registered
 
 
+def pr_worktree_path(repo: str, number, home: Path | None = None) -> str:
+    """Where ``pr_worktree`` puts PR ``number``'s checkout. The hub names
+    the folder before it exists (a pending launch's cwd, the phone's
+    detail page), so this is the one place the name is built."""
+    return str(worktrees_dir(home) / f"{repo.replace('/', '__')}-pr{number}")
+
+
 def pr_worktree(repo: str, number: str, home: Path | None = None) -> gh.GhResult:
     """``swe gh pr worktree``: a detached checkout of PR ``number``'s
     head under the home's ``~/.quiver/worktrees``.
@@ -376,7 +383,7 @@ def _pr_worktree_locked(repo: str, number: str,
     head = (sha.data or "").strip() if sha.status == "ok" else None
 
     trees = worktrees_dir(home)
-    path = str(trees / f"{repo.replace('/', '__')}-pr{number}")
+    path = pr_worktree_path(repo, number, home)
     created = False
     if not _is_registered(mirror, path):
         trees.mkdir(parents=True, exist_ok=True)

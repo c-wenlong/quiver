@@ -366,6 +366,10 @@ public final class FirstRunSetupModel {
         // and swe refuses a second --adopt (rightly) as "your own text".
         let adopt: String? = if case .file(let path) = start, !adopted { path } else { nil }
         let picks = selected
+        // setup rewrites harness.json, so it waits behind the gate every
+        // other registry write takes.
+        await HarnessesModel.registryWrites.acquire()
+        defer { HarnessesModel.registryWrites.release() }
         do {
             outcome = try await swe().applySetup(starred: starredList(order: order), adopt: adopt)
             appliedSelection = picks

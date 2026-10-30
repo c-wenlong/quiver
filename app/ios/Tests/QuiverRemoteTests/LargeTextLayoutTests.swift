@@ -53,6 +53,15 @@ final class LargeTextLayoutTests: XCTestCase {
         XCTAssertEqual(size(row.fixedSize().dynamicTypeSize(.accessibility1)), CGSize(width: 50, height: 28))
     }
 
+    func testAStaleNoticeGrowsPastTwoLinesAtLargerSizes() {
+        let error = "Can't reach the hub. Check that Tailscale is on, then pull to refresh the list again."
+        let notice = StaleNotice(error: error).frame(width: 200)
+        let twoLines = Text("A\nB").font(Theme.caption).lineLimit(2).frame(width: 200)
+        // Capped at two lines, the advice at the end was what got cut.
+        XCTAssertGreaterThan(size(notice.dynamicTypeSize(.accessibility1)).height,
+                             size(twoLines.dynamicTypeSize(.accessibility1)).height)
+    }
+
     @ViewBuilder private var details: some View {
         Text("#1214")
         Text("· c-wenlong")

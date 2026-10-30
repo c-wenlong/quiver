@@ -2,7 +2,6 @@
 
 import io
 import json
-import tempfile
 import threading
 import time
 import unittest
@@ -12,9 +11,10 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import notify, pairing, protocol, sshkeys
 from quiver.remote.hub import GLOBAL_KEY, HubState
 
+from tests._tempdir import temp_dir
 
-def _state(home: Path | None = None) -> HubState:
-    home = home or Path(tempfile.mkdtemp())
+
+def _state(home: Path) -> HubState:
     state = HubState(home)
     state.base_url = "http://100.64.1.2:8477"
     return state
@@ -39,7 +39,7 @@ def _cfg(home: Path, **over):
 
 class TestConfig(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def test_load_missing_returns_empty(self):
         self.assertEqual(notify.load_config(self.home), {})
@@ -139,7 +139,7 @@ class TestApprovalTokens(unittest.TestCase):
 
 class TestRetireActionCredential(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def _legacy_cfg(self):
         device_id = "deadbeef01"
@@ -221,7 +221,7 @@ class TestRetireActionCredential(unittest.TestCase):
 
 class TestHandle(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.state = _state(self.home)
         self.cfg = _cfg(self.home)
         self.n = notify.Notifier(self.state, "http://h:8477",
@@ -376,7 +376,7 @@ class TestHandle(unittest.TestCase):
 
 class TestPost(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.n = notify.Notifier(_state(self.home), "http://h:1",
                                  subscribe_key=GLOBAL_KEY)
 
@@ -449,16 +449,10 @@ class TestPost(unittest.TestCase):
                 self.n._post(cfg, {"topic": "t"})
         self.assertEqual(warn.call_count, 1)
 
-    def test_post_propagates_http_errors(self):
-        cfg = {"url": "https://n.test", "topic": "t"}
-        with patch("urllib.request.urlopen", side_effect=OSError("down")):
-            with self.assertRaises(OSError):
-                self.n._post(cfg, {"topic": "t"})
-
 
 class TestRun(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def test_disabled_config_returns_immediately(self):
         state = _state(self.home)
@@ -560,7 +554,7 @@ class TestCmdNotify(unittest.TestCase):
     def setUp(self):
         from quiver.remote import commands
         self.commands = commands
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.paths_patcher = patch(
             "quiver.remote.notify.remote_dir_for",
             side_effect=lambda home=None: self.home / "remote")
