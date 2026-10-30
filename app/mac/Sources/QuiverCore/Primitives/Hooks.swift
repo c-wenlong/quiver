@@ -229,7 +229,12 @@ public struct HookFinding: Codable, Sendable, Equatable, Identifiable {
             text = String(text[..<cut.lowerBound])
         }
         let root = home.hasSuffix("/") ? String(home.dropLast()) : home
-        return root.isEmpty ? text : text.replacingOccurrences(of: root + "/", with: "~/")
+        guard !root.isEmpty else { return text }
+        // Only where a path starts: `/backup/Users/k/x` is not under home.
+        let pattern = #"(?<![^\s("'])"# + NSRegularExpression.escapedPattern(for: root + "/")
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        return regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text),
+                                              withTemplate: "~/")
     }
 }
 

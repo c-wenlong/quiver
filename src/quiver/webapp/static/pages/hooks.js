@@ -50,7 +50,10 @@ function hkFindingMessage(f, home) {
   const cut = text.indexOf(" — declaration managed elsewhere");
   if (f.kind === "managed" && cut >= 0) text = text.slice(0, cut);
   const h = (home || "").replace(/\/$/, "");
-  return h ? text.split(h + "/").join("~/") : text;
+  if (!h) return text;
+  // Only where a path starts: `/backup/Users/k/x` is not under home.
+  const escaped = (h + "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`(?<![^\\s("'])${escaped}`, "g"), "~/");
 }
 
 /* HarnessMarkView: the logo, a word after it when the logo is shared,

@@ -434,6 +434,7 @@ process.stdout.write(JSON.stringify([
   hkFindingMessage({kind: "managed", message: "/Users/k/.claude/settings.json — declaration managed elsewhere"}, "/Users/k"),
   hkFindingMessage({kind: "unlinked", message: "g.py is not linked into /Users/k/.claude/hooks (swe init will link it)"}, "/Users/k/"),
   hkFindingMessage({kind: "undeclared", message: "x at /Users/kb/y"}, "/Users/k"),
+  hkFindingMessage({kind: "managed", message: "/backup/Users/k/s.json — declaration managed elsewhere"}, "/Users/k"),
 ]));
 """
         done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
@@ -442,6 +443,7 @@ process.stdout.write(JSON.stringify([
             "~/.claude/settings.json",
             "g.py is not linked into ~/.claude/hooks (swe init will link it)",
             "x at /Users/kb/y",
+            "/backup/Users/k/s.json",
         ])
 
 
