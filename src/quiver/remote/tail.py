@@ -1234,6 +1234,11 @@ def _cursor_path(cursors_dir: Path, key: str) -> Path:
     return cursors_dir / f"{protocol.key_slug(key)}.json"
 
 
+def _resolve_stamp(session: Session) -> tuple:
+    """What a transcript path was resolved from; see ``_may_have_moved``."""
+    return (session.session_id, session.account_home, session.timestamp)
+
+
 class Tailer:
     """One session's source plus its durable cursor."""
 
@@ -1263,6 +1268,9 @@ class Tailer:
                 # First sight of this session: recent history only.
                 source.start_near_end()
         self.next_poll_at = 0.0
+        # The session timestamp the transcript path was last resolved
+        # at; see ``TailManager._may_have_moved``.
+        self.resolved_stamp = _resolve_stamp(session)
         # A source waiting to replace ``source``; see ``hand_off``.
         self._handoff = None
         self._handoff_lock = threading.Lock()
@@ -1523,6 +1531,32 @@ class TailManager:
         path = getattr(source, "path", None)
         return Path(path) if path else None
 
+    def _may_have_moved(self, tailer: Tailer, session: Session) -> bool:
+        """Whether ``_reresolve`` needs to look for a new transcript.
+
+        Resolving globs every project folder (Claude) or walks the
+        session tree, and ran for every tailer on every catalog
+        refresh. A transcript can only have moved when the catalog saw
+        a write since the last look, so this says yes only once the
+        session's timestamp (or its id or account home) changed. For
+        Claude the timestamp is the newest copy's mtime in ms: when it
+        is the tailed file's own, nothing moved either.
+        """
+        stamp = _resolve_stamp(session)
+        if stamp == tailer.resolved_stamp:
+            return False
+        path = self._source_path(tailer.source)
+        same_file = stamp[:2] == tailer.resolved_stamp[:2]
+        if session.tool_name == "claude" and same_file and path is not None:
+            try:
+                if path.stat().st_mtime * 1000 >= session.timestamp:
+                    tailer.resolved_stamp = stamp
+                    return False
+            except OSError:
+                pass
+        tailer.resolved_stamp = stamp
+        return True
+
     def _reresolve(self, tailer: Tailer, session: Session) -> None:
         """Follow a resumed session into its new transcript file.
 
@@ -1592,7 +1626,8 @@ class TailManager:
                 # aggregator re-parses; the source may need re-resolving
                 # when a resume moved the transcript file.
                 tailer.session = session
-                self._reresolve(tailer, session)
+                if self._may_have_moved(tailer, session):
+                    self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=True)
         # On-demand tailers past the cap: refresh session/status but
         # keep them alive while their session still exists.
@@ -1603,7 +1638,8 @@ class TailManager:
             if session is None:
                 continue
             tailer.session = session
-            self._reresolve(tailer, session)
+            if self._may_have_moved(tailer, session):
+                self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=False)
 
     def sweep_stale(
