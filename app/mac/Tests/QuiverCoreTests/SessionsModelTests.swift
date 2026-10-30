@@ -28,6 +28,19 @@ import Testing
 @Suite struct ResumeCommandTests {
     let resume = SessionInfo.Resume(argv: ["claude", "--resume", "aaa 111"], cwd: "/Users/k/my code")
 
+    /// A resumed rollout's stem ends in its own uuid after the thread's;
+    /// `codex resume` takes the thread's, the first (as swe does).
+    @MainActor @Test func codexResumesTheThreadNotTheResumesRollout() {
+        let thread = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+        let rollout = "0199ffff-0000-7111-8222-333344445555"
+        #expect(SessionsModel.resumeArgv(harness: "codex", id: "rollout-2026-10-01T09-30-00-\(thread)")
+                == ["codex", "resume", thread])
+        #expect(SessionsModel.resumeArgv(harness: "codex",
+                                         id: "rollout-2026-10-01T09-30-00-\(thread.uppercased())_\(rollout)")
+                == ["codex", "resume", thread])
+        #expect(SessionsModel.resumeArgv(harness: "codex", id: "rollout-no-uuid") == nil)
+    }
+
     @Test func theDefaultAccountClearsAnyOverride() {
         let line = SessionResume.shellLine(resume, harness: "claude", accountHome: "/Users/k/.claude", isDefaultHome: true)
         // Every step depends on the one before: a missing folder stops it all.

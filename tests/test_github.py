@@ -885,6 +885,26 @@ class TestCommands(unittest.TestCase):
         notes = json.loads(out)["data"]["notifications"]
         self.assertEqual(len(notes), 101)  # 100 + 1; no page=3 stubbed
 
+    def test_a_failed_later_page_marks_the_inbox_partial(self):
+        # The first page's rows stay, but the listing must not read as
+        # complete when page 2 failed.
+        page1 = [{"id": str(i), "subject": {"title": f"n{i}"},
+                  "repository": {}, "unread": False} for i in range(100)]
+
+        def run(cmd, **kw):
+            joined = " ".join(cmd)
+            if "&page=1" in joined:
+                return _Proc(stdout=json.dumps(page1))
+            return _Proc(returncode=1, stderr="rate limited")
+        rc, out, _ = self._run_cli(["inbox", "--limit=150", "--json"], run=run)
+        data = json.loads(out)["data"]
+        self.assertEqual(len(data["notifications"]), 100)
+        self.assertTrue(data["partial"])
+        self.assertIn("page 2", data["error"])
+        tags = ghcli._repo_result("o/r", "tags", gh.GhResult(
+            "ok", data=[{"name": "v1"}], error="page 2 failed: x"), dict)
+        self.assertEqual((tags["status"], tags["partial"]), ("ok", True))
+
     def test_pages_build_fetch_failure_is_kept(self):
         def run(cmd, **kw):
             joined = " ".join(cmd)
@@ -1872,22 +1892,6 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(data["failed"][0]["id"], "2")
         self.assertIn("notifications/threads/1", seen[0])
 
-    def test_inbox_read_all(self):
-        seen = []
-
-        def run(cmd, **kw):
-            seen.append(" ".join(str(a) for a in cmd))
-            return _Proc(stdout="{}")
-
-        rc, out, _ = self._run_cli(["inbox", "read", "--all", "--json"],
-                                   run=run)
-        self.assertEqual(rc, 0)
-        data = json.loads(out)["data"]
-        self.assertTrue(data["all"])
-        self.assertEqual(data["marked"], ["*"])
-        self.assertIn("last_read_at=", seen[0])
-        self.assertIn("PUT", seen[0])
-
     def test_inbox_read_ids_and_all_rejected(self):
         rc, out, _ = self._run_cli(["inbox", "read", "1", "--all"])
         self.assertEqual(rc, 1)
@@ -2027,13 +2031,24 @@ class TestCommands(unittest.TestCase):
         self.assertIn("Re-run", out)
 
     def test_inbox_read_all(self):
-        run = _gh_run({"PUT notifications": _Proc(stdout="")})
+        # One test: a second def of this name in the class used to
+        # replace the first, so the PUT's shape was never checked.
+        seen = []
+        inner = _gh_run({"PUT notifications": _Proc(stdout="")})
+
+        def run(cmd, **kw):
+            seen.append(" ".join(str(a) for a in cmd))
+            return inner(cmd, **kw)
+
         rc, out, _ = self._run_cli(
             ["inbox", "read", "--all", "--json"], run=run)
         data = json.loads(out)["data"]
         self.assertEqual(rc, 0)
         self.assertTrue(data["all"])
         self.assertEqual(data["marked"], ["*"])
+        put = [c for c in seen if "PUT" in c]
+        self.assertTrue(put)
+        self.assertIn("last_read_at=", put[0])
         rc, out, _ = self._run_cli(["inbox", "read", "--all"], run=run)
         self.assertEqual(rc, 0)
         self.assertIn("All notifications marked read", out)
