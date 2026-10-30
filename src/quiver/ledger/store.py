@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from quiver.ledger.models import LedgerRecord
+from quiver.ledger.models import MAX_TOKENS, LedgerRecord
 from quiver.paths import data_dir_for
 
 SCHEMA = 1
@@ -60,6 +60,19 @@ class LedgerStore:
         event_columns = {row[1] for row in self.db.execute("PRAGMA table_info(events)")}
         if "session_total" not in event_columns:
             self.db.execute("ALTER TABLE events ADD COLUMN session_total INTEGER NOT NULL DEFAULT 0")
+        # Every reader caps a count at MAX_TOKENS now, but the OpenCode and
+        # Devin readers once saved corrupt counts uncapped, and a row near
+        # int64 overflows every SUM over the table. Neither a rescan (the
+        # source is unchanged) nor an upsert (the larger total wins) would
+        # replace it, so such rows are clamped here, once per store.
+        if self.meta("tokens_capped") is None:
+            counts = ("input", "output", "cache_read", "cache_write",
+                      "cache_write_1h", "reasoning")
+            self.db.execute(
+                "UPDATE events SET "
+                + ", ".join(f"{c} = MIN(MAX({c}, 0), {MAX_TOKENS})" for c in counts)
+                + " WHERE " + " OR ".join(f"{c} > {MAX_TOKENS} OR {c} < 0" for c in counts))
+            self.set_meta("tokens_capped", "1")
         self.db.commit()
 
     def close(self) -> None:
