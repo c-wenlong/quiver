@@ -141,7 +141,6 @@ enum Theme {
     @MainActor static var pageTitle: Font { font(size: 28, weight: .semibold) }
     @MainActor static var pageSubtitle: Font { font(size: 14) }
     @MainActor static var sectionTitle: Font { font(size: 20, weight: .semibold) }
-    @MainActor static var display: Font { font(size: 72, weight: .bold) }
     @MainActor static var figure: Font { font(size: 20, weight: .bold) }
     @MainActor static var cardTitle: Font { font(size: 14, weight: .medium) }
     @MainActor static var rowTitle: Font { font(size: 14, weight: .medium) }

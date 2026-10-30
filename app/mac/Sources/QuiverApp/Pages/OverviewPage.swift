@@ -372,7 +372,8 @@ private struct TotalCard: View {
         .padding(.vertical, 12)
     }
 
-    // The AppKit fonts behind `Theme.caption`, `.display` and `.figure`.
+    // The AppKit fonts behind `Theme.caption` and `.figure`, and the 72 pt
+    // display size the total is drawn at.
     static var captionDigitsFont: NSFont { Theme.nsFont(size: 12, monospacedDigits: true) }
     static var displayFont: NSFont { Theme.nsFont(size: 72, weight: .bold, monospacedDigits: true) }
     static var figureFont: NSFont { Theme.nsFont(size: 20, weight: .bold, monospacedDigits: true) }

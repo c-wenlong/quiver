@@ -22,7 +22,6 @@ struct FirstRunSetupSheet: View {
         }
         .frame(width: 820, height: 680)
         .background(Theme.panel)
-        .interactiveDismissDisabled()
         .task {
             let starred = app.others.starred ?? []
             let setup = FirstRunSetupModel(swe: { [app] in app.swe }, starred: starred)
