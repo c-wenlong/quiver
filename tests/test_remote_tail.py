@@ -829,6 +829,28 @@ class TestTailer(unittest.TestCase):
         self.assertTrue(src.restore(
             {"source": "opencode", "session_id": "s2", "cursor": [5, "x"]}))
 
+    def test_poll_reads_the_source_state_once(self):
+        path = self.tmp / "t.jsonl"
+        path.write_text(json.dumps(_claude_user("a")) + "\n")
+        src = tail.JsonlTailSource(path, "claude")
+        t = tail.Tailer("k", _session_for(), src, self.tmp / "c", False)
+        t.poll(time.time(), True)
+        with patch.object(src, "state", wraps=src.state) as state:
+            t.poll(time.time(), True)
+            self.assertEqual(state.call_count, 1)
+            self.assertFalse(t.moved)
+            with open(path, "a") as fh:
+                fh.write(json.dumps(_claude_user("b")) + "\n")
+            t.poll(time.time(), True)
+            self.assertTrue(t.moved)
+        # A replaced source is read fresh, not compared with the old
+        # one's state: an empty new file reads as not moved.
+        empty = self.tmp / "empty.jsonl"
+        empty.write_text("")
+        t.source = tail.JsonlTailSource(empty, "claude")
+        self.assertEqual(t.poll(time.time(), True), [])
+        self.assertFalse(t.moved)
+
     def test_cursor_commits_only_after_emit(self):
         # The cursor must lag the journal write: a crash between poll
         # and commit replays events (duplicates) instead of losing them.

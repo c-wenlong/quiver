@@ -1208,6 +1208,8 @@ class Tailer:
                 source.start_near_end()
         self.next_poll_at = 0.0
         self._pending_save = False
+        # (source, state) as the last poll left them; see ``poll``.
+        self._polled: tuple | None = None
         # Whether the last poll moved the source (bytes, rows or
         # fingerprints read), with or without a message to show: a
         # turn-ending record that decodes to nothing still moves it.
@@ -1253,9 +1255,15 @@ class Tailer:
         (duplicates, recoverable) instead of skipping messages forever.
         """
         self.next_poll_at = now + self.interval(active, hot)
-        before = self.source.state()
+        # The state the last poll left is this poll's "before", unless
+        # the source was replaced since (a resume moved the transcript):
+        # one state() per poll, not two.
+        last = self._polled
+        before = last[1] if last and last[0] is self.source \
+            else self.source.state()
         out = self.source.poll()
         after = self.source.state()
+        self._polled = (self.source, after)
         self.moved = bool(out) or after != before
         # A source can move without emitting (records that decode to
         # nothing, an opencode row still streaming), so compare the
