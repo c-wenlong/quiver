@@ -217,6 +217,32 @@ struct HubClient: Sendable {
                                       body: body))
     }
 
+    /// `POST /v1/app/repositories/merge {repo, number, method, auto}`:
+    /// the web app's merge, which the hub serves to any paired device.
+    /// The hub reads the PR again first and refuses (409) a merge the
+    /// detail page wouldn't offer any more; GitHub's own refusals come
+    /// back as a 502 in its words.
+    func mergePull(repo: String, number: Int, method: MergeMethod, auto: Bool) async throws {
+        _ = try await raw(mergeRequest(repo: repo, number: number, method: method, auto: auto))
+    }
+
+    func mergeRequest(repo: String, number: Int, method: MergeMethod, auto: Bool) -> URLRequest {
+        request("POST", "/v1/app/repositories/merge",
+                body: ["repo": repo, "number": number, "method": method.rawValue, "auto": auto])
+    }
+
+    /// `POST /v1/app/repositories/rerun {repo, run, failed}`: re-run a
+    /// workflow run's failed jobs, or all of them. GitHub decides what
+    /// can re-run; its refusal comes back as a 502 in its words.
+    func rerunRun(repo: String, run: Int, failed: Bool) async throws {
+        _ = try await raw(rerunRequest(repo: repo, run: run, failed: failed))
+    }
+
+    func rerunRequest(repo: String, run: Int, failed: Bool) -> URLRequest {
+        request("POST", "/v1/app/repositories/rerun",
+                body: ["repo": repo, "run": run, "failed": failed])
+    }
+
     /// "o/r" as the `/v1/pulls/<owner>/<repo>` path pair, each part
     /// percent-encoded on its own.
     static func repoPath(_ repo: String) -> String {
