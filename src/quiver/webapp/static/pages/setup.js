@@ -579,6 +579,11 @@ async function pollHub() {
     while (cloning() && onPage()) {
       await new Promise((resolve) => setTimeout(resolve, HUB_POLL_MS));
       const { status, data } = await api("/v1/app/setup?hub=1");
+      // A revoked credential stays revoked: stop polling and say so.
+      if (status === 401) {
+        if (onPage()) renderGate();
+        return;
+      }
       if (status !== 200 || !data || !data.hub) continue;
       page.data.hub = data.hub;
       if (hubJob().state === "done") page.hubStale = true;

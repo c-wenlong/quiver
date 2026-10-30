@@ -323,12 +323,17 @@ class TestUnreadRows(unittest.TestCase):
         with patch("quiver.github.cli._fetch_inbox", return_value=failed), \
                 patch.object(gh, "probe_env", return_value=ok_env):
             self.assertIsNone(gh_inbox.unread_rows(self.home))
-        # And a never-authed gh stops at the probe, before the listing.
+
+    def test_a_never_authed_gh_stops_at_the_probe(self):
+        # Its own test: after a failed listing the cache answers None
+        # before either the probe or the listing runs.
         with patch.object(
                 gh, "probe_env",
-                return_value=gh.GhEnv(installed=True, authenticated=False)), \
+                return_value=gh.GhEnv(installed=True,
+                                      authenticated=False)) as probe, \
                 patch("quiver.github.cli._fetch_inbox") as fetch:
             self.assertIsNone(gh_inbox.unread_rows(self.home))
+        probe.assert_called()
         fetch.assert_not_called()
 
 

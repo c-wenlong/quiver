@@ -306,6 +306,9 @@ class TestRoutes(unittest.TestCase):
         _s, data = self.srv.request("GET", "/v1/search?q=Release",
                                     headers=self.hdr)
         self.assertEqual(_s, 200)
+        # Search finds the session by its new name.
+        self.assertIn("claude:a1",
+                      [r["key"] for r in json.loads(data)["results"]])
         status, body = self.post("claude:a1", "title", {"title": ""})
         self.assertEqual(body["title"], "test")
         self.assertEqual(self.rows()["claude:a1"]["title"], "test")

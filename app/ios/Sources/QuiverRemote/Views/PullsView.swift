@@ -24,9 +24,7 @@ struct PullsView: View {
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
             if let error = model.error, !model.repos.isEmpty {
-                Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
-                    .font(Theme.caption).foregroundStyle(Theme.warningText)
-                    .lineLimit(2)
+                StaleNotice(error: error)
             }
             if !model.loaded {
                 LoadingRow(text: "Loading pull requests")

@@ -380,20 +380,14 @@ const CAT_GROUPS = [[null, "All"], ["modelProviders", "Model providers"],
 const CAT_TITLES = Object.fromEntries(CAT_GROUPS.slice(1));
 
 /* The sheet lives on document.body, so a page repaint behind it does not
- * close it (the app's sheet stays up while adds land). */
+ * close it (the app's sheet stays up while adds land). It is a route
+ * sheet (app.js bodySheet): leaving the page closes it. */
 function statusCatalogueDialog() {
-  let dlg = document.getElementById("status-catalogue");
-  if (dlg) return dlg;
-  dlg = document.createElement("dialog");
-  dlg.id = "status-catalogue";
-  dlg.className = "sheet status-catalogue";
+  const made = document.getElementById("status-catalogue");
+  if (made) return made;
+  const dlg = bodySheet("status-catalogue", "sheet status-catalogue");
   dlg.setAttribute("aria-labelledby", "status-catalogue-title");
   dlg.addEventListener("close", () => { statusPage.catalogue = null; dlg.replaceChildren(); });
-  document.body.appendChild(dlg);
-  // A sheet belongs to the status page: leaving it closes the sheet.
-  window.addEventListener("hashchange", () => {
-    if (currentRoute() !== "status" && dlg.open) dlg.close();
-  });
   return dlg;
 }
 
