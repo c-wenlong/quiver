@@ -715,8 +715,9 @@ extension HubStubbed {
     @Test func aFailedResultMarksTheBubble() async throws {
         let chat = try await opened(send: (202, #"{"ok": true, "waiting": true}"#))
         await chat.send("later", mode: "queue")
-        #expect(chat.items.first?.kind == .user("later", send: .accepted(waiting: true)))
-        let cid = String(try #require(chat.items.first?.id).dropFirst("send-".count))
+        // Held for the turn's end: it waits in the tray, not the transcript.
+        #expect(chat.items.isEmpty)
+        let cid = try #require(chat.tray.sends.first?.clientId)
         chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(cid)", "ok": false, "note": "tmux gone"}"#))
         #expect(chat.items.first?.kind == .user("later", send: .failed("tmux gone")))
         #expect(!chat.working)

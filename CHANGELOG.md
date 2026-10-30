@@ -450,6 +450,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its flag is unknown instead of guessing
   ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 
+- **Mac app: the Queued tray in the session chat.** A Queue-mode
+  send the hub holds until the agent's turn ends now waits in a tray
+  above the prompt box instead of the transcript, as on the web and the
+  iPhone: Edit puts its text in the box and Save writes it back in
+  place, Remove drops it, Send now steers it into the running turn, and
+  Remove all clears the tray after a confirm. It moves to the
+  transcript once it goes out, and reopening the chat shows what the
+  hub still holds (`GET`/`POST /v1/sessions/{key}/queue`). Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 ### Changed
 
 - **Remote: the web app lives at the hub's root.** `https://<hub>/`

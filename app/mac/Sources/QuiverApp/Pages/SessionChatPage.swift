@@ -331,10 +331,17 @@ extension ChatEntry {
 /// a pick puts the command's text in the box, and Send delivers it as
 /// a plain message the harness expands on arrival. Typing `@` opens the
 /// file menu: paths under the session's folder, a pick puts `@path` in
-/// the box (a folder stays open to pick inside it).
+/// the box (a folder stays open to pick inside it). A queue-mode send
+/// the hub holds until the turn ends waits in the Queued tray above the
+/// box, where Edit brings its text back into the box to save.
 private struct Composer: View {
     var model: SessionChatModel
-    @State private var draft = ""
+    /// The box's text, kept on the tray so Edit can swap a queued
+    /// message into it.
+    private var draft: String {
+        get { model.tray.draft }
+        nonmutating set { model.tray.draft = newValue }
+    }
     /// The caret or selection, so Shift-Return breaks the line there.
     @State private var selection: TextSelection?
     /// The `/` menu opens only while the box is being typed in.
@@ -378,7 +385,21 @@ private struct Composer: View {
 
     var body: some View {
         let observed = !model.canSend
+        let tray = model.tray
+        let editing = tray.editingId != nil
         VStack(alignment: .leading, spacing: 8) {
+            if !tray.sends.isEmpty {
+                QueuedTrayCard(tray: tray,
+                               onEdit: { edit($0) },
+                               onRemove: { cid in Task { await tray.remove(cid) } },
+                               onSendNow: { cid in Task { await tray.sendNow(cid) } },
+                               onRemoveAll: { Task { await tray.removeAll() } })
+                    .transition(.opacity)
+            }
+            if editing || tray.editNote != nil {
+                QueuedEditBar(editing: editing, note: tray.editNote) { tray.cancelEdit() }
+                    .transition(.opacity)
+            }
             if model.commands.isOpen {
                 SlashCommandMenuCard(menu: model.commands, row: model.row, active: $active) { pick($0) }
                     .transition(.opacity)
@@ -392,8 +413,9 @@ private struct Composer: View {
                                selection: $mode, width: 96)
                         .hoverTip("Queue waits for the agent to finish its turn; Steer writes now.", title: "Send mode")
                 }
-                TextField(observed ? "Read-only until this session is attached" : "Message the session",
-                          text: $draft, selection: $selection, axis: .vertical)
+                TextField(observed ? "Read-only until this session is attached"
+                            : editing ? "Edit the queued message" : "Message the session",
+                          text: Bindable(tray).draft, selection: $selection, axis: .vertical)
                     .lineLimit(1...8)
                     .quiverField(multiline: true)
                     .disabled(observed)
@@ -451,6 +473,8 @@ private struct Composer: View {
                             model.commands.dismiss()
                         } else if model.mentions.isOpen {
                             model.mentions.dismiss()
+                        } else if editing {
+                            tray.cancelEdit()
                         } else {
                             return .ignored
                         }
@@ -463,13 +487,16 @@ private struct Composer: View {
                 .disabled(observed || model.stopping)
                 .hoverTip("Stop the agent's turn")
                 .accessibilityLabel("Stop")
-                Button("Send", action: submit)
+                Button(editing ? "Save" : "Send", action: submit)
                     .primaryButton()
-                    .disabled(observed || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(observed || tray.savingEdit
+                              || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .animation(.easeOut(duration: 0.15), value: model.commands.isOpen)
         .animation(.easeOut(duration: 0.15), value: model.mentions.isOpen)
+        .animation(.easeOut(duration: 0.2), value: tray.sends.isEmpty)
+        .animation(.easeOut(duration: 0.2), value: editing)
         .onChange(of: slash, initial: true) { _, token in
             model.commands.track(token)
             active = 0
@@ -522,10 +549,22 @@ private struct Composer: View {
         selection = TextSelection(insertionPoint: draft.index(draft.startIndex, offsetBy: at + 1))
     }
 
+    /// Edit: the queued message's text replaces the box's, caret at its end.
+    private func edit(_ cid: String) {
+        guard model.tray.beginEdit(cid) else { return }
+        selection = TextSelection(insertionPoint: draft.endIndex)
+        focused = true
+    }
+
     private func submit() {
         let text = draft
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, model.canSend else { return }
+        if model.tray.editingId != nil {
+            Task { await model.tray.saveEdit() }
+            return
+        }
         draft = ""
+        model.tray.clearEditNote()
         Task { await model.send(text, mode: mode) }
     }
 }
