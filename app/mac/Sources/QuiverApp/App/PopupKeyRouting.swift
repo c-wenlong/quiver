@@ -20,7 +20,8 @@ import AppKit
             let chars = event.charactersIgnoringModifiers?.lowercased()
             let flags = event.modifierFlags
             let act = MainActor.assumeIsolated {
-                action(chars: chars, flags: flags, key: NSApp.keyWindow)
+                action(chars: chars, flags: flags, key: NSApp.keyWindow,
+                       inModal: NSApp.modalWindow != nil)
             }
             let consumed = MainActor.assumeIsolated { perform(act, key: NSApp.keyWindow) }
             return consumed ? nil : event
@@ -46,14 +47,17 @@ import AppKit
 
     /// Pure ⌘ + w/q on a popup window routes here; everything else —
     /// other modifiers, other keys, a normal key window — stays with the
-    /// system's responder chain.
+    /// system's responder chain. ⌘Q during an app-modal run (the app's own
+    /// "Quit with unsaved edits?" alert is one) is left alone too: quitting
+    /// from inside `runModal` asks `applicationShouldTerminate` again and
+    /// stacks a second alert.
     static func action(chars: String?, flags: NSEvent.ModifierFlags,
-                       key: NSWindow?) -> Action {
+                       key: NSWindow?, inModal: Bool = false) -> Action {
         guard flags.intersection(.deviceIndependentFlagsMask) == .command,
               let key, isPopupWindow(key) else { return .passThrough }
         switch chars {
         case "w": return .sendEscape
-        case "q": return .quit
+        case "q": return inModal ? .passThrough : .quit
         default: return .passThrough
         }
     }
