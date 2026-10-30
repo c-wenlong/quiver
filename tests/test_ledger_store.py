@@ -209,6 +209,23 @@ class TestDatabaseSources(unittest.TestCase):
         # Unchanged database: nothing read again.
         self.assertEqual(scan(self.store, self.home).files_read, 0)
 
+    def test_a_home_whose_name_holds_uri_characters_still_reads(self):
+        # The database opens as a file: URI; "#", "?" and "%20" in the
+        # folder name must be encoded, not end the path or decode away.
+        self.home = Path(tempfile.mkdtemp(suffix=" a#b?c%20d"))
+        self.store = LedgerStore(ledger_path_for(self.home))
+        self.addCleanup(self.store.close)
+        reply = json.dumps({"role": "assistant", "modelID": "gpt-x", "tokens": {
+            "input": 4, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}}})
+        self._db(".local/share/opencode/opencode.db", f"""
+            CREATE TABLE session (id TEXT, directory TEXT);
+            CREATE TABLE message (id TEXT, session_id TEXT, time_created INT, time_updated INT, data TEXT);
+            INSERT INTO message VALUES ('m1', 's1', 1790000000000, 1, '{reply}');
+        """)
+        result = scan(self.store, self.home)
+        self.assertEqual(result.errors, [])
+        self.assertIn("opencode:m1", self._rows())
+
     def test_devin(self):
         def node(rid, metrics=True):
             meta = {"request_id": rid, "generation_model": "swe-2",
