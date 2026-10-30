@@ -61,7 +61,7 @@ class RefusalTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def snapshot(self):
-        return {p.name: p.read_text() for p in self.out.iterdir()}
+        return {p.name: p.read_text() for p in self.out.iterdir() if p.is_file()}
 
     def test_a_table_missing_columns_changes_nothing(self):
         before = self.snapshot()
@@ -70,6 +70,20 @@ class RefusalTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.mod.main(str(table))
         self.assertEqual(self.snapshot(), before)
+
+    def test_an_id_that_leaves_the_folder_changes_nothing(self):
+        # harness-x/../../evil.svg resolves to root/evil.svg once the
+        # harness-x folder exists, so without the id check this writes.
+        (self.out / "harness-x").mkdir()
+        before = self.snapshot()
+        table = self.root / "sources.tsv"
+        table.write_text("id\tkind\tfile\tsource_url\tlicence\tnotes\n"
+                         "x/../../evil\tmono\ta.svg\thttps://e\tMIT\t\n")
+        with self.assertRaises(SystemExit) as raised:
+            self.mod.main(str(table))
+        self.assertIn("id must be", str(raised.exception))
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.root / "evil.svg").exists())
 
     def test_a_good_table_replaces_the_set(self):
         table = self.root / "sources.tsv"

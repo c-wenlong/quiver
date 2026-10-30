@@ -43,7 +43,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import CONFIG_LOCK, PageError
 
 # ProviderCatalog.all in QuiverCore/Providers/ProviderVisibility.swift,
 # row for row: (id, commands on PATH, paths that exist). Only ids swe
@@ -130,8 +130,10 @@ def post(ctx, action: str, body: dict) -> dict:
 
     home = _home(ctx)
     # The Harnesses page's writes and Doctor's fixes rewrite harness.json
-    # too, under the same registry lock, so setup waits for them.
-    with _LOCK, REGISTRY_LOCK:
+    # too, under the same registry lock, so setup waits for them; it also
+    # writes mcp.json and relinks skills, under the MCP and Skills pages'
+    # CONFIG_LOCK.
+    with _LOCK, REGISTRY_LOCK, CONFIG_LOCK:
         registry = load_registry_readonly()
         for name in starred:
             if name not in PROVIDER_IDS and resolve(registry, name) is None:

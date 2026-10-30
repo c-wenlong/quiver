@@ -38,7 +38,7 @@ function mcpSaveHidden() {
   try { localStorage.setItem(MCP_HIDDEN_KEY, JSON.stringify([...mcpPage.hidden].sort())); } catch { /* private window */ }
 }
 
-const mcpOnPage = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "mcp";
+const mcpOnPage = () => currentRoute() === "mcp";
 
 const MCP_SVG = {
   health: '<path d="M2 12h3l2-5 3 10 3-12 3 9 2-2h4"/>',
