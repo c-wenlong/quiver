@@ -1568,6 +1568,38 @@ class TestAgentEdges(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("unknown attachment", note)
 
+    def test_detach_and_kill_drop_staged_files_keep_does_not(self):
+        # As on the hub: a session this machine no longer drives loses
+        # its staged attachments; a kept one still runs and may read them.
+        ag = self._agent()
+        sess = _session()
+        ag.catalog.session_for = lambda k: sess
+        fake = MagicMock()
+        fake.control.return_value = inject.InjectResult(True, "ok")
+
+        def staged(key):
+            attachments.place(self.home, key, "r.png", b"png")
+            return attachments.resolve(self.home, key, "r.png")
+
+        with patch.object(inject, "injector_for", return_value=fake):
+            for ctl in ("detach", "kill"):
+                self.assertIsNotNone(staged("claude:k"))
+                ok, _n, _d = ag._execute("claude:k", "control", {"ctl": ctl})
+                self.assertTrue(ok)
+                self.assertIsNone(
+                    attachments.resolve(self.home, "claude:k", "r.png"), ctl)
+            self.assertIsNotNone(staged("claude:k"))
+            fake.control.return_value = inject.InjectResult(False, "no")
+            ag._execute("claude:k", "control", {"ctl": "detach"})
+            # A failed detach keeps them.
+            self.assertIsNotNone(
+                attachments.resolve(self.home, "claude:k", "r.png"))
+        with patch.object(supervise, "keep", return_value=(True, "kept")):
+            ag._execute("claude:k", "control",
+                        {"ctl": "detach", "mode": "keep"})
+        self.assertIsNotNone(
+            attachments.resolve(self.home, "claude:k", "r.png"))
+
     def test_execute_approval_and_control_and_error(self):
         ag = self._agent()
         sess = _session()
@@ -2053,9 +2085,13 @@ class TestR3FinalEdges(unittest.TestCase):
 
         ag.tail_manager.tick = lambda: None
         ag.tail_manager.wait = lambda _t: None
-        with patch.object(ag.tail_manager, "sweep_stale", sweep):
+        swept = []
+        with patch.object(ag.tail_manager, "sweep_stale", sweep), \
+             patch.object(attachments, "sweep", side_effect=swept.append):
             ag._tail_loop()
         self.assertEqual(calls, [(ag._outbox, (agent_mod.OUTBOX_KEY,))])
+        # Staged attachments age out here too, as on the hub.
+        self.assertEqual(swept, [self.home])
 
     def test_load_remote_rows_glob_failure(self):
         with patch.object(Path, "glob", side_effect=OSError):
