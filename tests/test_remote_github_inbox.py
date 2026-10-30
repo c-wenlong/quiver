@@ -14,7 +14,7 @@ from quiver.github import gh
 from quiver.remote.catalog import Catalog
 from quiver.remote import notify
 from quiver.remote.hub import GLOBAL_KEY, HubState
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 from quiver.webapp.pages import inbox as gh_inbox
 
 from tests.test_remote_hub import HubBase, _session

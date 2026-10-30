@@ -468,7 +468,7 @@ def _provider_registry(ctx) -> dict:
 def _github(ctx, refresh: bool = False) -> dict:
     from quiver import paths
     from quiver.github import catalog
-    from quiver.webapp.pages import _github as gh_shared
+    from quiver.github import shared as gh_shared
 
     env = gh_shared.probe(ctx.home, refresh=refresh)
     return {
@@ -484,7 +484,7 @@ def _sync(ctx) -> dict:
     plus ``failed``, the owners that did not list, whose old rows stay."""
     from quiver import paths
     from quiver.github import catalog, gh, manage
-    from quiver.webapp.pages import _github as gh_shared
+    from quiver.github import shared as gh_shared
 
     if not _SYNC_LOCK.acquire(blocking=False):
         raise PageError(409, "busy", "A sync is already running. Wait for it, then try again.")

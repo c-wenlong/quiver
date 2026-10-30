@@ -15,7 +15,8 @@ from __future__ import annotations
 from quiver.github import cli as ghcli
 
 from quiver.webapp.pages import PageError
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
+from quiver.webapp.pages import _github as W
 
 LIMIT = 50  # GitHubModel.loadInbox -> swe gh inbox --limit=50 --all
 # The hub's feed can't cap at the page's LIMIT: an old unread thread
@@ -82,7 +83,7 @@ def unread_rows(home) -> list[dict] | None:
 
 
 def get(ctx, args: dict) -> dict:
-    refresh = G.flag(args, "refresh")
+    refresh = W.flag(args, "refresh")
     payload, at = _listing(ctx.home, refresh)
     env = G.env_after(ctx.home, [payload], refresh=refresh)
     machine = (ctx.machine or {}).get("name")

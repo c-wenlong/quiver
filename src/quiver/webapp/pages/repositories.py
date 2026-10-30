@@ -42,7 +42,8 @@ from quiver.github import cli as ghcli
 from quiver.github import gh, manage, repos
 
 from quiver.webapp.pages import PageError
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
+from quiver.webapp.pages import _github as W
 
 # The focus page's surfaces and first windows (GitHubModel's
 # focusDefaultLimit): pull requests and issues come back in every state.
@@ -59,14 +60,14 @@ MAX_LIMIT = 200  # swe gh's own --limit cap
 
 
 def get(ctx, args: dict) -> dict:
-    refresh = G.flag(args, "refresh")
+    refresh = W.flag(args, "refresh")
     machine = (ctx.machine or {}).get("name")
     if "search" in args:
         body = search(ctx.home, args["search"], refresh)
-    elif G.flag(args, "harnesses"):
+    elif W.flag(args, "harnesses"):
         body = {"harnesses": harnesses(ctx.home)}
     elif args.get("repo"):
-        repo = G.pinned_name(ctx.home, args["repo"])
+        repo = W.pinned_name(ctx.home, args["repo"])
         if args.get("pr"):
             body = pull_request(ctx.home, repo, args["pr"], refresh)
         elif args.get("surface"):
@@ -411,7 +412,7 @@ def _pinned_arg(home, raw) -> str:
     if not isinstance(raw, str) or not raw.strip():
         raise PageError(422, "bad_repo", "repo must be owner/name")
     try:
-        return G.pinned_name(home, raw)
+        return W.pinned_name(home, raw)
     except PageError as exc:
         if exc.status == 400:  # malformed, as opposed to not pinned
             raise PageError(422, exc.code, exc.message) from exc

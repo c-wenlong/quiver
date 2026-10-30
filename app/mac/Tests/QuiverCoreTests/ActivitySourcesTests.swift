@@ -136,6 +136,26 @@ import Testing
         #expect(two.start.timeIntervalSince1970 == 1_786_352_400)
         #expect(blocks.contains { $0.sessions[0].sessionId.hasPrefix("task-") } == false)
     }
+
+    /// Two account roots naming one database read it once instead of
+    /// trapping in Dictionary(uniqueKeysWithValues:).
+    @Test func cursorReadsADatabaseListedTwiceOnce() async throws {
+        let dir = try TempDir()
+        let dbURL = dir.url.appending(path: "User/globalStorage/state.vscdb")
+        try FileManager.default.createDirectory(
+            at: dbURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let db = try SQLiteDatabase(url: dbURL)
+        try db.execute("CREATE TABLE cursorDiskKV(key TEXT, value TEXT)")
+        try db.execute("""
+            INSERT INTO cursorDiskKV VALUES
+            ('bubbleId:composer-1:b1', '{"createdAt":"2026-08-10T08:37:16.298Z"}')
+            """)
+        let provider = CursorAppActivity(userDataDirs: { [dir.url, dir.url] },
+                                         index: index(dir, "cursor"))
+        let blocks = try await provider.activityBlocks(in: range, gap: CalendarModel.gap,
+                                                       force: true)
+        #expect(blocks.map { $0.sessions[0].sessionId } == ["composer-1"])
+    }
 }
 
 /// Pi and Droid sessions reach the calendar through their own log files,
