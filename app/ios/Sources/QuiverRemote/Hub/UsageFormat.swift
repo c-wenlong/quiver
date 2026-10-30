@@ -161,9 +161,13 @@ enum UsageFormat {
         return f
     }
 
-    /// "$800", "$1.2K" for a chart axis.
+    /// "$800", "$1.2K" for a chart axis. A week of small spend scales
+    /// the axis to $1, with a tick at $0.50: rounded, that read "$1" twice
+    /// up the axis, so a tick between whole dollars keeps its cents.
     static func usdAxis(_ value: Double) -> String {
-        value >= 1000 ? "$" + tokens(Int(value.rounded())) : "$\(Int(value.rounded()))"
+        if value >= 1000 { return "$" + tokens(Int(value.rounded())) }
+        if value == value.rounded() { return "$\(Int(value))" }
+        return String(format: value < 10 ? "$%.2f" : "$%.1f", value)
     }
 
     /// One bar per day from `start` to `end` (ISO dates, inclusive), with

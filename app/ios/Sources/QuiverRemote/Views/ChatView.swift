@@ -478,7 +478,11 @@ private struct UserBubble: View {
                 .font(Theme.body).foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Theme.selected, in: .rect(cornerRadius: 16))
+                // The Mac app's user bubble: `subtle` with a hairline. In
+                // light mode `selected` is the page's own colour, so a
+                // fill alone left the message with no bubble at all.
+                .background(Theme.subtle, in: .rect(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
                 .opacity(send == .sending ? 0.6 : 1)
             switch send {
             case .sending?: Text("Sending").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
