@@ -18,6 +18,7 @@ from quiver.webapp.pages import PageError
 from quiver.webapp.pages import compute as page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 HOME = "/home/u"
 TICK = 100
@@ -811,6 +812,59 @@ class TestStoredChoices(unittest.TestCase):
         self.assertEqual(self.choices({"tab": "disk", "interval": "7", "temperatureLines": '{"cpu":1}'}),
                          {"tab": "ram", "interval": 10, "lines": ["cpu", "gpu", "ssd", "battery"]})
         self.assertEqual(self.choices({"temperatureLines": '["cpu","fan",3]'})["lines"], ["cpu"])
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestSettingsSheetLeavesWithThePage(unittest.TestCase):
+    """pages/compute.js's settings sheet under node with app.js's real
+    bodySheet and closeRouteSheets: route() closes it on navigation, its
+    close handler keeps a typed age and takes the sheet off the page. It
+    used to be a plain dialog route() never saw, so Back left it modal
+    over the next page."""
+
+    def test_navigation_closes_and_removes_the_sheet(self):
+        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/compute.js"
+        prelude = (
+            "const stored = {};\n"
+            "globalThis.localStorage = { getItem: (k) => stored[k] ?? null, setItem: (k, v) => { stored[k] = v; } };\n"
+            "function registerPage() {}\n"
+            "let routeGen = 1; const esc = (s) => String(s);\n"
+            "const options = (list, sel) => list.map(([v, t]) => `<option${v === sel ? ' selected' : ''}>${t}</option>`).join('');\n"
+            "const body = [];\n"
+            "function makeEl(tag) {\n"
+            "  const el = { tag, dataset: {}, attrs: {}, open: false, listeners: {}, kids: {}, innerHTML: '', value: '',\n"
+            "    setAttribute(k, v) { this.attrs[k] = v; },\n"
+            "    addEventListener(t, f) { (this.listeners[t] ||= []).push(f); },\n"
+            "    showModal() { this.open = true; },\n"
+            "    close() { if (!this.open) return; this.open = false;\n"
+            "      setTimeout(() => { for (const f of this.listeners.close || []) f(); }); },\n"
+            "    remove() { const i = body.indexOf(this); if (i >= 0) body.splice(i, 1); },\n"
+            "    querySelector(sel) { return (this.kids[sel] ||= makeEl('input')); },\n"
+            "    querySelectorAll() { return []; } };\n"
+            "  return el;\n"
+            "}\n"
+            "globalThis.document = { body: { appendChild: (el) => body.push(el) }, createElement: makeEl,\n"
+            "  getElementById: (id) => body.find((e) => e.id === id) || null,\n"
+            "  querySelectorAll: (sel) => (sel === 'dialog[data-route-sheet][open]'\n"
+            "    ? body.filter((e) => 'routeSheet' in e.dataset && e.open) : []) };\n"
+            + app_js_function("bodySheet") + app_js_function("closeRouteSheets"))
+        body = (
+            "openComputeLimits();\n"
+            "const sheet = document.getElementById('compute-limits');\n"
+            "const opened = !!sheet && sheet.open;\n"
+            "sheet.querySelector('#compute-age').value = '3';\n"
+            "sheet.querySelector('#compute-age-unit').value = 'hour';\n"
+            "// route()'s order; the browser fires close later, as a task.\n"
+            "closeRouteSheets(); routeGen++;\n"
+            "const before = { open: sheet.open, left: body.length };\n"
+            "setTimeout(() => process.stdout.write(JSON.stringify({ opened, before,\n"
+            "  routeSheet: 'routeSheet' in sheet.dataset, left: body.length, age: computePage.limits.orphanAge })));\n")
+        done = subprocess.run(["node", "-e", prelude + script.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout),
+                         {"opened": True, "before": {"open": False, "left": 1}, "routeSheet": True,
+                          "left": 0, "age": 3 * 3600})
 
 
 if __name__ == "__main__":

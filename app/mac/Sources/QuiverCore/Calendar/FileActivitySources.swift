@@ -61,15 +61,13 @@ public enum ActivityParsers {
 
     /// `~`-aware recursive `*.jsonl` listing under a sessions root, with
     /// each file's stamp; files that fail to stat are skipped.
-    public static func jsonlFiles(root: URL,
-                                  skip: @Sendable (URL) -> Bool = { _ in false })
-        -> [String: ActivityFileIndex.FileStamp] {
+    public static func jsonlFiles(root: URL) -> [String: ActivityFileIndex.FileStamp] {
         var files: [String: ActivityFileIndex.FileStamp] = [:]
         let enumerator = FileManager.default.enumerator(
             at: root, includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles])
         while let url = enumerator?.nextObject() as? URL {
-            guard url.pathExtension == "jsonl", !skip(url),
+            guard url.pathExtension == "jsonl",
                   let stamp = ActivityFileIndex.stamp(url) else { continue }
             files[url.path] = stamp
         }
@@ -88,9 +86,7 @@ public struct DroidActivity: ActivityProviding {
         source = FileActivitySource(
             harness: "droid",
             index: index,
-            files: { ActivityParsers.jsonlFiles(root: sessionsRoot) {
-                $0.lastPathComponent.hasSuffix(".settings.json") || $0.lastPathComponent == "settings.json"
-            } },
+            files: { ActivityParsers.jsonlFiles(root: sessionsRoot) },
             parse: { try Self.parse(file: $0, accountHome: accountHome) },
             filter: filter)
     }
