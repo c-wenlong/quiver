@@ -2394,6 +2394,23 @@ class TestPairRoutes(unittest.TestCase):
             r["code"], r["request_id"], node=_MAC, auth=auth)
         self.assertEqual(status, 200, d)
 
+    def test_satellite_bearer_cannot_list_or_approve(self):
+        """A satellite credential is a machine's, not an approver's: it
+        neither lists pending requests nor mints a phone by approving."""
+        cred = self.srv.pair(role="satellite")
+        auth = {"Authorization": f"Bearer {cred['credential']}"}
+        _, data = self._req()
+        r = json.loads(data)
+        self.srv.state.owner_login = "other@github"  # no owner identity
+        status, _ = self.srv.request("GET", "/v1/pair/requests",
+                                     headers=auth)
+        self.assertEqual(status, 401)
+        status, _ = self._approve(
+            r["code"], r["request_id"], node=_MAC, auth=auth)
+        self.assertEqual(status, 401)
+        status, pdata = self._poll(r["request_id"], r["poll_secret"])
+        self.assertEqual(json.loads(pdata)["status"], "pending")
+
     def test_approve_unauthenticated_401(self):
         _, data = self._req()
         r = json.loads(data)
@@ -3468,6 +3485,26 @@ class TestAgentSecurity(HubBase):
         cred = self.srv.pair(role="actions")
         row = pairing.load_devices(self.srv.home)[cred["device_id"]]
         self.assertEqual(row["role"], "phone")
+
+    def test_satellite_credential_is_for_agent_routes_only(self):
+        """Any pair token can mint a satellite row, so that row must not
+        carry a phone's powers: session, launch, pairing and page routes
+        all refuse it, while its own agent route still answers."""
+        auth = self._sat()
+        for method, path, body in (
+            ("GET", "/v1/sessions", None),
+            ("GET", "/v1/devices", None),
+            ("GET", "/v1/app/settings", None),
+            ("POST", "/v1/sessions", {"machine": "m", "harness": "claude",
+                                      "cwd": "/tmp"}),
+            ("POST", "/v1/devices/revoke", {"device_id": "x"}),
+            ("DELETE", "/v1/sessions/claude:s1/task", None),
+        ):
+            status, _ = self.srv.request(method, path, body, headers=auth)
+            self.assertEqual(status, 401, (method, path))
+        status = self._post(
+            "/v1/agent/catalog", {"machine_id": "sat-m1", "rows": []}, auth)
+        self.assertEqual(status, 200)
 
     # -- non-satellite credentials ------------------------------------------
 

@@ -1060,13 +1060,25 @@ class _Handler(BaseHTTPRequestHandler):
         node = self._approver_node(self._state.whois_cached(self._client_ip()))
         return f"tailnet:{node}" if node else None
 
+    def _client_device(self) -> str | None:
+        """The paired device behind the bearer, unless it is a satellite.
+
+        A satellite credential is a machine's, for /v1/agent/* only.
+        Any pair token can mint one, so without this it would carry
+        every phone power: launch agents, approve pair requests, read
+        API keys through /v1/app."""
+        device_id = self._device()
+        if device_id is not None and (
+                (self._device_row or {}).get("role") == "satellite"):
+            return None
+        return device_id
+
     def _caller(self, path: str) -> str | None:
         """The paired device, else the owner's own device. Satellite
         routes stay bearer-only: a satellite is a paired machine."""
-        device_id = self._device()
-        if device_id is None and not path.startswith("/v1/agent/"):
-            device_id = self._owner_device()
-        return device_id
+        if path.startswith("/v1/agent/"):
+            return self._device()
+        return self._client_device() or self._owner_device()
 
     def _scoped_approval_device(self, path: str) -> str | None:
         """A minted ntfy action token as caller identity.
@@ -1263,7 +1275,7 @@ class _Handler(BaseHTTPRequestHandler):
                 403, "bad_origin", "request blocked by origin policy"
             )
             return
-        device_id = self._device()
+        device_id = self._client_device()
         # The peer's node decides self-approval no matter how the
         # caller proved itself — bearer or owner identity alike.
         peer = self._state.whois(self._client_ip())
@@ -1515,7 +1527,7 @@ class _Handler(BaseHTTPRequestHandler):
         # tailnet login that owns this hub node.
         if path == "/v1/pair/requests":
             peer = self._state.whois(self._client_ip())
-            device_id = self._device()
+            device_id = self._client_device()
             if device_id is None and self._approver_node(peer) is None:
                 self._send_error(401, "unauthorized",
                                  "pair this device first")
