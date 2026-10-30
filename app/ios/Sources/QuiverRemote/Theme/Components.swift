@@ -220,14 +220,17 @@ struct StateCard: View {
 }
 
 /// Over what a failed refresh left on screen: the rows stay, and this
-/// says why they may be out of date, in the hub's words.
+/// says why they may be out of date, in the hub's words. Two lines at
+/// the default text size; more as the text grows, so the advice at the
+/// end ("Check that Tailscale is on") isn't the part cut off.
 struct StaleNotice: View {
     let error: String
 
     var body: some View {
         Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
             .font(Theme.caption).foregroundStyle(Theme.warningText)
-            .lineLimit(2)
+            .lineLimit(2, larger: 6)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
