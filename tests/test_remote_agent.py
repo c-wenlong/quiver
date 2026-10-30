@@ -2177,7 +2177,7 @@ class TestReviewFixes(unittest.TestCase):
         # so with journal.truncated at its head. Without acting on it,
         # every new command (seq 1, 2, ...) was dropped as already seen.
         ag = self._agent()
-        ag._done_cmd_seq = ag._last_cmd_seq = 50
+        ag._done_cmd_seq = ag._last_cmd_seq = ag._stream_cursor = 50
         ag._done_set = {52}
         ag._dispatch = MagicMock()
         self.assertEqual(ag._handle_frame(
@@ -2194,18 +2194,22 @@ class TestReviewFixes(unittest.TestCase):
         self.assertEqual(ag._done_cmd_seq, 3)
 
     def test_truncated_at_our_own_cursor_changes_nothing(self):
-        # Behind the ring the hub echoes the cursor we sent.
+        # Behind the ring the hub echoes the cursor we sent, even when
+        # a command finished meanwhile and moved the floor past it.
         ag = self._agent()
         ag._done_cmd_seq, ag._last_cmd_seq = 5, 7
+        ag._stream_cursor = 5
+        ag._mark_done(6)
+        self.assertEqual(ag._done_cmd_seq, 6)
         self.assertIsNone(ag._handle_frame(
             self._frame(type="journal.truncated", seq=5)))
-        self.assertEqual((ag._done_cmd_seq, ag._last_cmd_seq), (5, 7))
+        self.assertEqual((ag._done_cmd_seq, ag._last_cmd_seq), (6, 7))
 
     def test_command_from_before_a_reset_cannot_mark_a_new_one_done(self):
         # A message queued under the old journal finishes after the
         # reset: its seq must not count as done in the new journal.
         ag = self._agent()
-        ag._done_cmd_seq = ag._last_cmd_seq = 9
+        ag._done_cmd_seq = ag._last_cmd_seq = ag._stream_cursor = 9
         ag._dispatch = MagicMock()
         ag._sendq = MagicMock()
         ag._handle_frame(self._frame(

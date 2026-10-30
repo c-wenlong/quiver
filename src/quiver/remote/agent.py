@@ -234,6 +234,8 @@ class RemoteAgent:
         # Bumped when the hub's command journal starts over under our
         # cursor (``_reset_cmd_cursor``); see ``_mark_done``.
         self._cmd_epoch = 0
+        # The ``?last=`` the current command stream sent.
+        self._stream_cursor = self._done_cmd_seq
         from quiver.sessions.status import session_statuses
         # Same status re-probe as the hub: the satellite's tailer emits
         # session.status itself, and its catalog push carries the
@@ -538,9 +540,13 @@ class RemoteAgent:
 
     def _command_stream(self) -> None:
         """GET /v1/agent/commands as an SSE stream; dispatch each command."""
+        # The cursor this connection asks from: a journal.truncated
+        # reply is judged against it, not against a floor that commands
+        # finishing meanwhile moved on.
+        self._stream_cursor = self._done_cmd_seq
         url = (
             f"{self.hub}/v1/agent/commands"
-            f"?machine={self.machine_id}&last={self._done_cmd_seq}"
+            f"?machine={self.machine_id}&last={self._stream_cursor}"
         )
         req = urllib.request.Request(url, headers=_headers(self.cred, None))
         try:
@@ -640,12 +646,13 @@ class RemoteAgent:
         The cursor goes to 0, not to the head the hub names: every
         command in the new journal was queued after ours ended, so the
         reconnect replays them all rather than skipping those queued
-        while we were away. Behind the ring the hub echoes our own
-        cursor, and nothing changes."""
+        while we were away. Behind the ring the hub echoes the cursor
+        this connection sent, and nothing changes: compared with that,
+        not the live floor, which commands finishing since have moved."""
         if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
             return None
         with self._done_lock:
-            if seq >= self._done_cmd_seq:
+            if seq >= self._stream_cursor:
                 return None
             self._cmd_epoch += 1
             self._done_cmd_seq = 0
