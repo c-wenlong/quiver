@@ -219,6 +219,24 @@ class TestAccounts(unittest.TestCase):
         self.assertEqual(a.label("/opt/x"), "/opt/x")
         self.assertEqual(len(a.homes["claude"]), 2)
 
+    def test_cursor_accounts_are_the_apps_user_data_dirs(self):
+        home = Path(tempfile.mkdtemp())
+        accounts_dir = home / ".quiver" / "accounts"
+        accounts_dir.mkdir(parents=True)
+        (accounts_dir / "profiles.json").write_text(json.dumps({"schema": 1, "profiles": [
+            {"id": "cursor-a", "vendor": "cursor", "name": "Side", "isDefault": False},
+            {"id": "devin-b", "vendor": "devin", "name": "Ops", "isDefault": False},
+        ]}))
+        a = cal.Accounts(home)
+        app = str(home / "Library/Application Support/Cursor")
+        desktop = str(accounts_dir / "cursor" / "cursor-a" / "desktop")
+        # The app's own folder reads as the harness; a profile's by its name.
+        self.assertEqual((a.label(app), a.label(desktop)), ("Cursor", "Cursor: Side"))
+        # The CLI home is named but never a Cursor account in the legend.
+        self.assertEqual(a.label(str(accounts_dir / "cursor" / "cursor-a" / "home")), "Cursor: Side")
+        self.assertEqual(a.homes["cursor"], [app, desktop])
+        self.assertEqual(a.homes["devin"][1], str(accounts_dir / "devin" / "devin-b" / "home"))
+
     def test_no_profiles_file(self):
         home = Path(tempfile.mkdtemp())
         self.assertEqual(cal.Accounts(home).label(str(home / ".claude")), "Claude: Default")

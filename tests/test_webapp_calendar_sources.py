@@ -6,6 +6,7 @@ drawing them. Every log here is made up."""
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -35,6 +36,16 @@ def _write(path: Path, *lines: str, newline: bool = True) -> Path:
     return path
 
 
+def _cursor_db(user_data: Path) -> Path:
+    """The shared fixture's ``state.vscdb``, built under ``user_data``."""
+    db = user_data / _activity.CURSOR_DB
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db)
+    con.executescript((FIXTURES / "cursor" / "state.sql").read_text(encoding="utf-8"))
+    con.close()
+    return db
+
+
 def _blocks(harness: str, root: Path, account: str, lo: float, hi: float, gap: float):
     """One source's per-session blocks, the way the Mac provider reports
     them: listing, parse, then ``ActivityBlocks.make``."""
@@ -49,7 +60,7 @@ class TestParity(unittest.TestCase):
     def test_every_source_matches_the_shared_expectation(self):
         expected = json.loads((FIXTURES / "expected.json").read_text(encoding="utf-8"))
         lo, hi = expected["range"]
-        for harness in PARSERS:
+        for harness in [h for h in expected["sources"] if h != "cursor"]:
             source = expected["sources"][harness]
             root = FIXTURES / source["root"]
             prefix = str(root) + os.sep
@@ -68,6 +79,80 @@ class TestParity(unittest.TestCase):
                     self.assertAlmostEqual(actual["start"], want["start"], places=3)
                     self.assertAlmostEqual(actual["end"], want["end"], places=3)
                     self.assertEqual(actual["responses"], want["responses"])
+
+
+    def test_cursor_matches_the_shared_expectation(self):
+        expected = json.loads((FIXTURES / "expected.json").read_text(encoding="utf-8"))
+        lo, hi = expected["range"]
+        user_data = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, user_data, True)
+        _cursor_db(user_data)
+        sessions = _activity.FileIndex().sessions(
+            _activity.cursor_files([str(user_data)]), _activity.parse_cursor)
+        got = sorted(cal.file_pieces([("cursor", s) for s in sessions], lo, hi, timezone.utc,
+                                     expected["gap"]),
+                     key=lambda p: (p["session"], p["start"]))
+        want = expected["sources"]["cursor"]["blocks"]
+        self.assertEqual(len(got), len(want), got)
+        for actual, block in zip(got, want):
+            self.assertEqual((actual["session"], actual["cwd"], actual["account"]),
+                             (block["session"], block["cwd"], str(user_data)))
+            self.assertAlmostEqual(actual["start"], block["start"], places=3)
+            self.assertAlmostEqual(actual["end"], block["end"], places=3)
+            self.assertEqual(actual["responses"], block["responses"])
+
+
+class TestCursor(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def test_created_at_reads_like_swifts_text_column(self):
+        read = _activity.cursor_created_at
+        self.assertEqual([read(1786352400000), read(1786352400000.0), read("1786352400000"),
+                          read(True), read(0), read(-5), read(None), read("soon"),
+                          read(" 1786352400000"), read("1_786_352_400_000"), read("0x10")],
+                         [1786352400.0, 1786352400.0, 1786352400.0, 0.001, None, None, None,
+                          None, None, None, 0.016])
+
+    def test_the_composer_splits_like_swift(self):
+        comp = _activity.cursor_composer
+        self.assertEqual([comp("bubbleId:c:b"), comp("bubbleId:c::b"), comp("bubbleId::b"),
+                          comp("bubbleId:c:"), comp("bubbleId:task-1:b"), comp("other:c:b")],
+                         ["c", "c", None, None, None, None])
+
+    def test_the_bubble_read_seeks_the_key_index(self):
+        con = sqlite3.connect(self.dir / "s.vscdb")
+        con.execute("CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)")
+        plan = [row[3] for row in con.execute("EXPLAIN QUERY PLAN " + _activity.CURSOR_BUBBLES)]
+        con.close()
+        self.assertTrue(any(d.startswith("SEARCH") and "INDEX" in d for d in plan), plan)
+
+    def test_extra_profiles_add_their_desktop_folder_once(self):
+        profiles = [{"id": "c1", "vendor": "cursor", "isDefault": False},
+                    {"id": "c2", "vendor": "cursor", "isDefault": True},
+                    {"id": "x1", "vendor": "claude", "isDefault": False}]
+        dirs = _activity.cursor_user_data_dirs(self.dir, profiles)
+        self.assertEqual(dirs, [str(self.dir / "Library/Application Support/Cursor"),
+                                str(self.dir / ".quiver/accounts/cursor/c1/desktop")])
+        _cursor_db(self.dir / "a")
+        files = _activity.cursor_files([str(self.dir / "a"), str(self.dir / "a")])
+        self.assertEqual(list(files), [str(self.dir / "a" / _activity.CURSOR_DB)])
+
+    def test_the_wal_folds_into_the_stamp(self):
+        db = _cursor_db(self.dir)
+        before = _activity.cursor_stamp(str(db))
+        Path(str(db) + "-wal").write_bytes(b"x" * 10)
+        after = _activity.cursor_stamp(str(db))
+        self.assertEqual(after[1], before[1] + 10)
+
+    def test_a_broken_database_drops_out_of_the_index(self):
+        db = self.dir / _activity.CURSOR_DB
+        db.parent.mkdir(parents=True)
+        db.write_text("not sqlite")
+        index = _activity.FileIndex()
+        self.assertEqual(index.sessions(_activity.cursor_files([str(self.dir)]),
+                                        _activity.parse_cursor), [])
 
 
 class TestReaders(unittest.TestCase):
@@ -238,6 +323,12 @@ class TestRoute(HubBase):
         _write(home / ".factory/sessions/-tmp-app/u1.jsonl",
                '{"type":"session_start","cwd":"/tmp/droid-proj"}',
                '{"type":"message","timestamp":"2026-10-21T10:00:00Z"}')
+        cursor_app = home / "Library/Application Support/Cursor"
+        con = sqlite3.connect(_cursor_db(cursor_app))
+        con.execute("INSERT INTO cursorDiskKV VALUES ('bubbleId:comp-9:b1', ?)",
+                    (json.dumps({"createdAt": "2026-10-23T12:00:00Z"}),))
+        con.commit()
+        con.close()
         sent = int(_utc("2026-10-22T11:00:00Z") * 1000)
         _write(home / ".config/manicode/projects/fb/chats/chat-1/run-state.json",
                json.dumps({"sessionState": {"mainAgentState": {
@@ -247,7 +338,10 @@ class TestRoute(HubBase):
         self.assertEqual(status, 200, data)
         body = json.loads(data)
         blocks = {b["harness"]: b for b in body["blocks"]}
-        self.assertEqual(set(blocks), {"pi", "droid", "freebuff"})
+        self.assertEqual(set(blocks), {"pi", "droid", "freebuff", "cursor"})
+        self.assertEqual((blocks["cursor"]["project"], blocks["cursor"]["account_label"],
+                          blocks["cursor"]["sessions"][0]["id"]),
+                         ("No folder", "Cursor", "comp-9"))
         self.assertEqual((blocks["freebuff"]["project"], blocks["freebuff"]["account"],
                           blocks["freebuff"]["sessions"][0]["id"]),
                          ("fb-proj", str(home / ".config/manicode"), "chat-1"))
@@ -259,8 +353,8 @@ class TestRoute(HubBase):
         # A session the listing lacks opens a stand-in row named for its harness.
         row = body["sessions"][blocks["droid"]["sessions"][0]["row"]]
         self.assertEqual((row["harness"], row["agent"]), ("droid", "Factory Droid"))
-        self.assertEqual([e["harness"] for e in body["legend"]], ["droid", "freebuff", "pi"])
-        self.assertEqual(body["legend"][2]["total_s"], 1200)
+        self.assertEqual([e["harness"] for e in body["legend"]], ["cursor", "droid", "freebuff", "pi"])
+        self.assertEqual(body["legend"][3]["total_s"], 1200)
 
 
 if __name__ == "__main__":
