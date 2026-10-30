@@ -46,17 +46,37 @@ import Testing
                     HubWaitingSend(clientId: "a", text: "server text"),
                     HubWaitingSend(clientId: "shown", text: "echoed already")],
                    known: ["shown"])
-        // The hub's order; what's known here about a send is kept.
+        // The hub's order and text (another client may have edited it).
         #expect(tray.sends.map(\.clientId) == ["b", "a"])
-        #expect(tray.sends.map(\.text) == ["from the phone", "mine"])
+        #expect(tray.sends.map(\.text) == ["from the phone", "server text"])
     }
 
-    @Test func anEchoTakesTheMatchingSend() {
+    @Test func aListAskedForBeforeASendWasHeldKeepsIt() {
+        let tray = QueuedTray()
+        tray.hold("old", text: "gone from the hub")
+        let asked = tray.holds
+        // The send's `waiting` answer lands while the list is out.
+        tray.hold("new", text: "just queued")
+        tray.merge([], asked: asked)
+        #expect(tray.sends.map(\.clientId) == ["new"])
+        // A list asked for after it was held is trusted.
+        tray.merge([])
+        #expect(tray.sends.isEmpty)
+    }
+
+    @Test func anEchoMarksARowButOnlyItsResultTakesIt() {
         let tray = QueuedTray()
         tray.hold("a", text: "run the tests")
-        #expect(!tray.wentOut(echo: "something else", echoes: SessionChatModel.echoes))
-        #expect(tray.wentOut(echo: "@shot.png run the tests", echoes: SessionChatModel.echoes))
-        #expect(tray.sends.isEmpty)
+        tray.hold("b", text: "run the tests")
+        #expect(!tray.noteEcho("something else", echoes: SessionChatModel.echoes))
+        #expect(tray.noteEcho("@shot.png run the tests", echoes: SessionChatModel.echoes))
+        // Text alone can't say which send went out: both rows stay.
+        #expect(tray.sends.map(\.clientId) == ["a", "b"])
+        // A second echo claims the next row, not the same one again.
+        #expect(tray.noteEcho("run the tests", echoes: SessionChatModel.echoes))
+        #expect(!tray.noteEcho("run the tests", echoes: SessionChatModel.echoes))
+        #expect(tray.take("b")?.echoed == true)
+        #expect(tray.take("a")?.echoed == true)
         #expect(tray.take("a") == nil)
     }
 
@@ -89,7 +109,7 @@ import Testing
         await tray.remove("a")
         #expect(!tray.beginEdit("a"))
         #expect(calls.made.map(\.op) == ["steer"])
-        #expect(tray.take("a")?.text == "x")
+        #expect(tray.take("a")?.send.text == "x")
     }
 
     @Test func removeHidesAtOnceAndComesBackIfRefused() async {
@@ -165,6 +185,42 @@ import Testing
         #expect(tray.editingId == "a")
         #expect(tray.editNote == "Can't reach the hub")
         #expect(tray.draft == "q2")
+    }
+
+    @Test func typingDuringASaveIsKept() async {
+        let calls = Calls()
+        let tray = tray(calls)
+        tray.hold("a", text: "q")
+        tray.draft = "mine"
+        tray.beginEdit("a")
+        tray.draft = "q2"
+        let gate = HoldGate()
+        tray.act = { _, _, _ in try await gate.pass() }
+        let saving = Task { await tray.saveEdit() }
+        #expect(await gate.arrived())
+        tray.draft = "q2 and more"
+        gate.open()
+        await saving.value
+        #expect(tray.sends.first?.text == "q2")
+        #expect(tray.editingId == nil)
+        #expect(tray.draft == "q2 and more")
+
+        // A late "already went out" keeps it too.
+        tray.hold("b", text: "r")
+        tray.beginEdit("b")
+        tray.draft = "r2"
+        let late = HoldGate()
+        tray.act = { _, _, _ in
+            try await late.pass()
+            throw Self.notWaiting
+        }
+        let refused = Task { await tray.saveEdit() }
+        #expect(await late.arrived())
+        tray.draft = "r2 typed on"
+        late.open()
+        await refused.value
+        #expect(tray.draft == "r2 typed on")
+        #expect(tray.editNote == "That message already went out")
     }
 
     @Test func tooLateToEditKeepsTheNewTextToSend() async {
@@ -279,8 +335,10 @@ extension HubStubbed {
             await chat.send("ping", mode: "queue")
             let cid = try #require(chat.tray.sends.first?.clientId)
             chat.apply(event("message.appended", seq: 4, #"{"kind": "user", "text": "ping"}"#))
-            #expect(chat.tray.sends.isEmpty)
+            // Only its own result can say it went out.
+            #expect(chat.tray.sends.map(\.clientId) == [cid])
             chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(cid)", "ok": true}"#))
+            #expect(chat.tray.sends.isEmpty)
             #expect(chat.items.map(\.kind) == [.user("ping", send: nil)])
         }
 

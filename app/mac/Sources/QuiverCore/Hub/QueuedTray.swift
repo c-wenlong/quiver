@@ -77,6 +77,13 @@ public final class QueuedTray {
     /// Sends that left the tray (went out, failed or were removed): a
     /// queue list fetched before that can't bring them back.
     private var settled = Set<String>()
+    /// How many sends `hold` has taken, and when each came: a list the
+    /// hub answered before a send was held can't drop it.
+    public private(set) var holds = 0
+    private var heldAt: [String: Int] = [:]
+    /// Rows a transcript echo already stands for: their result then
+    /// needs no entry of its own.
+    private var echoed = Set<String>()
 
     /// Acts on one waiting send: client id, `steer`, `cancel` or `edit`,
     /// and the new text for `edit`. SessionChatModel points it at the hub.
@@ -96,18 +103,30 @@ public final class QueuedTray {
     /// The hub answered a queue-mode send with `waiting`: it holds it.
     public func hold(_ cid: String, text: String) {
         guard !settled.contains(cid), !queued.contains(where: { $0.clientId == cid }) else { return }
+        heldAt[cid] = holds
+        holds += 1
         queued.append(QueuedSend(clientId: cid, text: text))
     }
 
-    /// Takes the hub's list after the chat opens: what it holds shows in
-    /// its order, keeping what's known here about each; the rest leaves.
-    /// `known` are sends already shown in the transcript.
-    public func merge(_ hub: [HubWaitingSend], known: Set<String> = []) {
+    /// Takes the hub's list after the chat opens or its stream recovers:
+    /// what it holds shows in its order with the hub's text, keeping the
+    /// state of each row known here; the rest leaves, except sends held
+    /// since `asked` (the `holds` count when the list was asked for),
+    /// which the list is too old to know. `known` are sends already shown
+    /// in the transcript.
+    public func merge(_ hub: [HubWaitingSend], known: Set<String> = [], asked: Int? = nil) {
         let skip = settled.union(known)
         var out: [QueuedSend] = []
         for send in hub where !skip.contains(send.clientId) && !out.contains(where: { $0.clientId == send.clientId }) {
-            out.append(queued.first { $0.clientId == send.clientId }
-                ?? QueuedSend(clientId: send.clientId, text: send.text ?? ""))
+            var row = queued.first { $0.clientId == send.clientId }
+                ?? QueuedSend(clientId: send.clientId, text: send.text ?? "")
+            // Another client may have edited it meanwhile.
+            if let text = send.text { row.text = text }
+            out.append(row)
+        }
+        let mark = asked ?? holds
+        out += queued.filter { mine in
+            !out.contains { $0.clientId == mine.clientId } && (heldAt[mine.clientId] ?? -1) >= mark
         }
         if let id = editingId, !out.contains(where: { $0.clientId == id }) { cancelEdit() }
         queued = out
@@ -115,9 +134,9 @@ public final class QueuedTray {
 
     /// The send's `command.result` arrived: it leaves the tray. Returns
     /// it, so the chat can show it in the transcript, unless it was in
-    /// the tray at all.
+    /// the tray at all; `echoed` says an echo already shows it.
     @discardableResult
-    public func take(_ cid: String) -> QueuedSend? {
+    public func take(_ cid: String) -> (send: QueuedSend, echoed: Bool)? {
         guard let i = queued.firstIndex(where: { $0.clientId == cid }) else { return nil }
         if editingId == cid {
             // It went out mid-edit: the new text stays in the box to send
@@ -127,16 +146,19 @@ public final class QueuedTray {
             editNote = "That message already went out"
         }
         settled.insert(cid)
-        return queued.remove(at: i)
+        return (queued.remove(at: i), echoed.remove(cid) != nil)
     }
 
-    /// The transcript echoed a user message: a queued send with that text
-    /// went out, and the echo stands for it. `echoes(echo, sent)` is the
-    /// chat's matching rule.
+    /// The transcript echoed a user message that may be a queued send
+    /// going out. Text alone can't say which send it was (another client
+    /// can send the same words), so the row stays until its own result;
+    /// the oldest unclaimed row with that text is marked, and its result
+    /// then adds no second entry. `echoes(echo, sent)` is the chat's rule.
     @discardableResult
-    public func wentOut(echo: String, echoes: (String, String) -> Bool) -> Bool {
-        guard let i = queued.firstIndex(where: { echoes(echo, $0.text) }) else { return false }
-        _ = take(queued[i].clientId)
+    public func noteEcho(_ echo: String, echoes: (String, String) -> Bool) -> Bool {
+        guard let row = queued.first(where: { !echoed.contains($0.clientId) && echoes(echo, $0.text) })
+        else { return false }
+        echoed.insert(row.clientId)
         return true
     }
 
@@ -227,10 +249,11 @@ public final class QueuedTray {
     /// Saves the prompt box's text over the message being edited.
     public func saveEdit() async {
         guard let cid = editingId, !savingEdit else { return }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typed = draft
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard queued.contains(where: { $0.clientId == cid && $0.phase == .waiting }) else {
-            return editWentOut(cid, text: text)
+            return editWentOut(cid, text: text, typed: typed)
         }
         savingEdit = true
         defer { savingEdit = false }
@@ -240,11 +263,19 @@ public final class QueuedTray {
                 queued[i].text = text
                 queued[i].note = nil
             }
-            if editingId == cid { cancelEdit() }
+            guard editingId == cid else { return }
+            if draft == typed {
+                cancelEdit()
+            } else {
+                // Typed on while it saved: the edit ends, the typing stays.
+                editingId = nil
+                draftBeforeEdit = ""
+                editNote = nil
+            }
         } catch {
             guard editingId == cid else { return }
             if (error as? HubError)?.code == "not_waiting" {
-                editWentOut(cid, text: text)
+                editWentOut(cid, text: text, typed: typed)
             } else {
                 editNote = Self.note(for: error)
             }
@@ -252,15 +283,15 @@ public final class QueuedTray {
     }
 
     /// Too late to edit: the new text stays in the box to send as a new
-    /// message.
-    private func editWentOut(_ cid: String, text: String) {
+    /// message (and anything typed since the save stays as typed).
+    private func editWentOut(_ cid: String, text: String, typed: String) {
         if let i = queued.firstIndex(where: { $0.clientId == cid }), queued[i].phase == .waiting {
             queued[i].phase = .left
             queued[i].note = "Already sent"
         }
         editingId = nil
         draftBeforeEdit = ""
-        draft = text
+        if draft == typed { draft = text }
         editNote = "That message already went out"
     }
 

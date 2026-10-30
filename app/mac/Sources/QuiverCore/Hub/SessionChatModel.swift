@@ -235,11 +235,7 @@ public final class SessionChatModel {
             // after history, so the list is no older than what's shown;
             // a send that leaves after this has its echo and result in
             // the stream.
-            if let sends = try? await hub.withClient({ [key] in try await $0.queue(key) }), gen == generation {
-                tray.merge(sends, known: Set(items.compactMap {
-                    $0.id.hasPrefix("send-") ? String($0.id.dropFirst("send-".count)) : nil
-                }))
-            }
+            await refreshQueue(gen) { [hub, key] in try await hub.withClient { try await $0.queue(key) } }
         } catch is CancellationError {
             return
         } catch {
@@ -307,12 +303,26 @@ public final class SessionChatModel {
                         try? await Task.sleep(for: delay)
                         delay = min(delay * 2, .seconds(15))
                     }
+                    // Results and echoes past the cursor were dropped too:
+                    // the tray may hold sends that left meanwhile.
+                    await self.refreshQueue(gen) { try await client.queue(key) }
                     self.follow(gen, from: self.cursor)
                     return
                 case .event(let env): self.apply(env)
                 }
             }
         }
+    }
+
+    /// Takes the hub's list of held sends into the tray. Read after
+    /// history, so the list is no older than what's shown; a send held
+    /// while it was asked for stays.
+    private func refreshQueue(_ gen: Int, _ fetch: () async throws -> [HubWaitingSend]) async {
+        let asked = tray.holds
+        guard let sends = try? await fetch(), gen == generation else { return }
+        tray.merge(sends, known: Set(items.compactMap {
+            $0.id.hasPrefix("send-") ? String($0.id.dropFirst("send-".count)) : nil
+        }), asked: asked)
     }
 
     /// Replaces what's shown with the newest page of history.
@@ -525,7 +535,7 @@ public final class SessionChatModel {
         } else if !replaying, msg.kind == "user", let text = msg.text {
             // A queued send went out: it leaves the tray, and the echo
             // lands in the transcript where it really is.
-            tray.wentOut(echo: text, echoes: Self.echoes)
+            tray.noteEcho(text, echoes: Self.echoes)
         } else if !replaying, msg.kind != "user", msg.kind != "tool_result" {
             awaiting.removeAll()
         }
@@ -573,11 +583,12 @@ public final class SessionChatModel {
     /// a degraded result, gets a line of its own.
     private func settle(_ r: HubCommandResult) {
         if r.op == "message", let cid = r.clientId, let held = tray.take(cid) {
-            // A queued send's result: removed, it's simply gone; sent or
-            // failed, it shows in the transcript as any send, settled
-            // below (an echo still replaces it).
-            if r.cancelled == true { return }
-            items.append(HubChatItem(id: "send-\(cid)", kind: .user(held.text, send: .accepted(waiting: false))))
+            // A queued send's result: removed, it's simply gone; sent and
+            // already echoed, the echo stands for it; otherwise it shows
+            // in the transcript as any send, settled below (an echo still
+            // replaces it).
+            if r.cancelled == true || (r.ok != false && held.echoed) { return }
+            items.append(HubChatItem(id: "send-\(cid)", kind: .user(held.send.text, send: .accepted(waiting: false))))
             sentAt[cid] = Date().timeIntervalSince1970
         }
         if r.op == "message", let cid = r.clientId {
