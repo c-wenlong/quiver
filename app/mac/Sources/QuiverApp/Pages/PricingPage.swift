@@ -332,17 +332,6 @@ private struct PricingRow: View {
     }
 }
 
-/// `rowHover` under the pointer (the same modifier Overview's breakdown rows use).
-private struct RowHover: ViewModifier {
-    @State private var hovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(hovering ? Theme.rowHover : .clear)
-            .onHover { hovering = $0 }
-    }
-}
-
 /// Who bills the row's logged charges ("Cursor", or "Cursor and Devin").
 private func billers(_ row: PricingModel.PricedModel) -> String {
     var names: [String] = []

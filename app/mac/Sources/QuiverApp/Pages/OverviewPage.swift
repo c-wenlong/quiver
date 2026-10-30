@@ -548,17 +548,6 @@ private struct BreakdownCard: View {
     }
 }
 
-/// `rowHover` under the pointer.
-private struct RowHover: ViewModifier {
-    @State private var hovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(hovering ? Theme.rowHover : .clear)
-            .onHover { hovering = $0 }
-    }
-}
-
 /// The date takes the slack; the figures sit in equal right-aligned columns.
 private struct DailyRow: View {
     var cells: [String]
