@@ -95,6 +95,32 @@ class TestLoad(unittest.TestCase):
         self.assertEqual(out.stdout, "one,two", out.stderr)
 
 
+class TestStylesheets(unittest.TestCase):
+    """The web app's stylesheets against its own rules."""
+
+    STATIC = Path(pages.__file__).resolve().parent.parent / "static"
+
+    def sheets(self):
+        return {p.name: p.read_text(encoding="utf-8")
+                for p in [self.STATIC / "styles.css", *sorted((self.STATIC / "pages").glob("*.css"))]}
+
+    def test_every_variable_used_is_defined(self):
+        """A var() with no definition renders the property's initial
+        value (chat's approval toggle had black text in dark mode)."""
+        import re
+        scripts = [p.read_text(encoding="utf-8") for p in [*self.STATIC.glob("*.js"), *self.STATIC.glob("pages/*.js")]]
+        defined = set()
+        for text in [*self.sheets().values(), *scripts]:  # scripts set some inline, as style="--c: …"
+            defined |= set(re.findall(r"(--[a-z0-9-]+)\s*:", text))
+        missing = sorted({f"{name}: {v}" for name, text in self.sheets().items()
+                          for v in re.findall(r"var\((--[a-z0-9-]+)\)?", text) if v not in defined})
+        self.assertEqual(missing, [])
+
+    def test_no_all_caps_labels(self):
+        """Sentence case only, as the Mac app."""
+        self.assertEqual([n for n, t in self.sheets().items() if "uppercase" in t], [])
+
+
 class TestLedgerAccess(HubBase):
     def test_pages_share_the_ledger(self):
         from quiver.webapp.api import WebApp

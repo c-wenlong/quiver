@@ -500,6 +500,7 @@ class TestSatellite(_Home):
                     title="t", session_id="r1", tool_name="claude")]
         ag.catalog._status_of = lambda ss: [""] * len(ss)
         _write(self.home / ".claude/commands/a.md", "x" * 50 + "\n")
+        # The row alone fits the cap; the row plus the menu does not.
         sent = []
 
         def post(_hub, _path, _cred, body):
@@ -507,7 +508,16 @@ class TestSatellite(_Home):
             return 200, {"ok": True, "slash": "slash" in body}
 
         with patch.object(agent_mod, "_post", side_effect=post), \
-                patch.object(agent_mod, "CATALOG_BODY_MAX", 300), \
+                patch.object(agent_mod, "CATALOG_BODY_MAX", 10**9), \
+                patch.object(slash, "_auto_channel", return_value="tmux"):
+            ag._push_catalog()  # measure the row-only body
+        sent.clear()
+        rows_only = len(json.dumps(
+            {"machine_id": ag.machine_id, "rows": ag.catalog.rows()},
+            ensure_ascii=False).encode("utf-8"))
+        ag._slash_digest = None
+        with patch.object(agent_mod, "_post", side_effect=post), \
+                patch.object(agent_mod, "CATALOG_BODY_MAX", rows_only + 20), \
                 patch.object(slash, "_auto_channel", return_value="tmux"), \
                 patch("sys.stderr"):
             self.assertTrue(ag._push_catalog())
