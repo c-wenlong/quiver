@@ -129,6 +129,48 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(overrides.models["swe-2"] == nil)
     }
 
+    @Test func `one bad entry skips only itself and survives a save`() throws {
+        let temp = try TempDir()
+        let url = temp.path("config/pricing.json")
+        try FileManager.default.createDirectory(
+            at: temp.path("config"), withIntermediateDirectories: true)
+        try Data(#"""
+            {"schema": 1, "note": "mine", "models": {
+              "swe-1": {"input": 2, "output": 8},
+              "draft": "fill in later",
+              "half": {"input": 1}}}
+            """#.utf8).write(to: url)
+        var overrides = PricingOverrides(url: url)
+        #expect(overrides.models == ["swe-1": .init(input: 2, output: 8)])
+
+        try overrides.set("swe-2", prices: .init(input: 1, output: 4))
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let models = try #require(object["models"] as? [String: Any])
+        #expect(Set(models.keys) == ["swe-1", "swe-2", "draft", "half"])
+        #expect(models["draft"] as? String == "fill in later")
+        #expect(object["note"] as? String == "mine")
+        #expect(PricingOverrides(url: url).models.count == 2)
+    }
+
+    @Test func `a file that isn't JSON is never overwritten`() throws {
+        let temp = try TempDir()
+        let url = temp.path("config/pricing.json")
+        try FileManager.default.createDirectory(
+            at: temp.path("config"), withIntermediateDirectories: true)
+        // Cut off mid-entry. (A trailing comma is no good here: Foundation's
+        // JSONSerialization accepts one on recent macOS.)
+        let text = Data(#"{"models": {"swe-1": {"input": 2, "output""#.utf8)
+        try text.write(to: url)
+        var overrides = PricingOverrides(url: url)
+        #expect(overrides.models.isEmpty)
+        #expect(throws: (any Error).self) {
+            try overrides.set("swe-2", prices: .init(input: 1, output: 4))
+        }
+        #expect(overrides.models.isEmpty)
+        #expect(try Data(contentsOf: url) == text)
+    }
+
     @Test func `save then load round-trips, missing file is empty`() throws {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "pricing-\(UUID().uuidString).json")
