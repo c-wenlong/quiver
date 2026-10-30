@@ -113,6 +113,9 @@ public final class SessionChatModel {
     /// The prompt box's `/` menu: the commands this session's harness
     /// will run, fetched once while the menu is open.
     public let commands = SlashCommandMenu()
+    /// The prompt box's `@` menu: files under the session's folder,
+    /// searched as the `@word` is typed.
+    public let mentions = MentionSearch()
 
     /// Messages per `/messages` page.
     public static let pageSize = 100
@@ -172,6 +175,10 @@ public final class SessionChatModel {
         commands.fetch = { [hub, key] in
             try await hub.withClient { try await $0.commands(key) }
         }
+        mentions.fetch = { [hub, key] query in
+            try await hub.withClient { try await $0.files(key, query: query) }
+        }
+        mentions.machine = { [weak self] in self?.row?.machine ?? self?.row?.machineId ?? "that machine" }
     }
 
     /// The agent is mid-turn, or a send waits for its first reply.
@@ -237,6 +244,7 @@ public final class SessionChatModel {
         // The prompt box's menu may still be open from before stop();
         // the kept list fills it again at once on the next open.
         commands.reset()
+        mentions.reset()
     }
 
     private func follow(_ gen: Int, from last: Int) {
