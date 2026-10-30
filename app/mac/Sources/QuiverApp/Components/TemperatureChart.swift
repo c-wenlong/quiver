@@ -186,7 +186,13 @@ struct TemperatureChart: View {
         }
         .chartXScale(domain: domain)
         .chartYScale(domain: yDomain)
-        .chartXAxis { AxisMarks(values: .automatic(desiredCount: compact ? 4 : 6)) }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: compact ? 4 : 6)) { value in
+                AxisGridLine()
+                AxisTick()
+                if ChartTimeAxis.labels(value.as(Date.self), in: domain, compact: compact) { AxisValueLabel() }
+            }
+        }
         .chartYAxis {
             // The scale sits on the left, so the line names at the right
             // ends have the trailing edge to themselves.
