@@ -1122,6 +1122,164 @@ return div.innerHTML;
         self.assertEqual(out["liveRows"], ["compact"])
         self.assertEqual(out["newest"], ["new"])
 
+    def test_mention_token_and_insert_match_the_iphone(self):
+        """The @ menu's token and insertion rules, case for case with
+        PromptCompletion.swift's Mention."""
+        out = self.run_js("""
+          const tok = (t, c) => T.mentionToken(t, c === undefined ? t.length : c);
+          return {
+            tok: [tok("@src"), tok("look at @sr", 11), tok("mail a@b.com"), tok("@"),
+                  tok("x @src/main.py y", 6), tok("@a b"), tok("hi"),
+                  tok('@"My Doc'), tok('see @"My Documents/no'), tok('@"a b" c', 4),
+                  tok('x@"a b'), tok('@"a\\nb')],
+            file: T.insertMention("see @ma", { start: 4, end: 7 }, "src/main.py", false),
+            reuse: T.insertMention("@ma now", { start: 0, end: 3 }, "main.py", false),
+            dir: T.insertMention("@sr", { start: 0, end: 3 }, "src/", true),
+            quoted: T.insertMention('@My', { start: 0, end: 3 }, "My Documents/a b.txt", false),
+            qdir: T.insertMention('@My', { start: 0, end: 3 }, "My Documents", true),
+            split: [T.splitPath("src/app/main.py"), T.splitPath("README.md"), T.splitPath("src/")],
+          };""")
+        self.assertEqual(out["tok"], [
+            {"start": 0, "end": 4, "query": "src"},
+            {"start": 8, "end": 11, "query": "sr"},
+            None,  # an @ inside a word (an email) never starts one
+            {"start": 0, "end": 1, "query": ""},
+            # The caret mid-word: the token runs to the word's end.
+            {"start": 2, "end": 14, "query": "src"},
+            None,  # a space ends it
+            None,
+            {"start": 0, "end": 8, "query": "My Doc"},
+            {"start": 4, "end": 21, "query": "My Documents/no"},
+            {"start": 0, "end": 6, "query": "a "},  # runs to its closing quote
+            None,  # @" inside a word
+            None,  # a newline ends a quoted token
+        ])
+        # A file gets a trailing space with the caret after it; an existing
+        # space is reused; a folder keeps the menu open with its slash.
+        self.assertEqual(out["file"], {"text": "see @src/main.py ", "caret": 17})
+        self.assertEqual(out["reuse"], {"text": "@main.py now", "caret": 9})
+        self.assertEqual(out["dir"], {"text": "@src/", "caret": 5})
+        self.assertEqual(out["quoted"], {"text": '@"My Documents/a b.txt" ', "caret": 24})
+        self.assertEqual(out["qdir"], {"text": '@"My Documents/', "caret": 15})
+        self.assertEqual(out["split"], [{"name": "main.py", "parent": "src/app"},
+                                        {"name": "README.md", "parent": ""},
+                                        {"name": "src", "parent": ""}])
+
+    def test_mention_search_debounces_encodes_and_renders(self):
+        """Typing @ asks the hub's files route once per query after the
+        debounce, encodes the query, renders rows in the / menu's box and
+        words the hub's refusals."""
+        out = self.run_js("""
+          const els = {
+            "chat-text": { value: "", selectionStart: 0, selectionEnd: 0, disabled: false,
+              setAttribute() {}, removeAttribute() {}, focus() {}, setSelectionRange(a, b) {
+                this.selectionStart = a; this.selectionEnd = b; },
+              style: {} },
+            "chat-menu": { innerHTML: "", classList: { toggle() {} }, setAttribute(k, v) { this[k] = v; },
+              querySelector() { return null; } },
+          };
+          document.getElementById = (id) => els[id] || null;
+          Object.defineProperty(document, "activeElement", { get: () => els["chat-text"] });
+          const input = els["chat-text"];
+          const type = (v) => { input.value = v; input.selectionStart = input.selectionEnd = v.length; T.trackMenus(); };
+          T.FILES.debounce = 0;
+          T.chat.key = "claude:s 1";
+          T.chat.row = { machine: "mini" };
+          const urls = [];
+          globalThis.api = async (u) => { urls.push(u); return { status: 200, data: { entries: [
+            { path: "src/a b.py", kind: "file" }, { path: "src", kind: "dir" }] } }; };
+          const out = {};
+          type("see @s");
+          out.searching = els["chat-menu"].innerHTML;
+          type("see @s&x");
+          await new Promise((r) => setTimeout(r, 20));
+          out.urls = urls.slice();
+          out.label = els["chat-menu"]["aria-label"];
+          out.html = els["chat-menu"].innerHTML;
+          out.rows = T.menu.rows.map((r) => r.path);
+          // A caret move inside the same word doesn't search again.
+          T.trackMenus();
+          await new Promise((r) => setTimeout(r, 20));
+          out.again = urls.length;
+          // The Enter key picks the highlighted file.
+          T.menu.active = 0;
+          out.key = T.menuKey({ key: "Enter" }, T.menu.rows.length, false);
+          // The satellite refusal, worded with the machine.
+          globalThis.api = async () => ({ status: 409, data: { error: { code: "files_unavailable" } } });
+          type("see @q");
+          await new Promise((r) => setTimeout(r, 20));
+          out.error = els["chat-menu"].innerHTML;
+          out.errors = [T.filesError(404, null, ""), T.filesError(0, null, ""), T.filesError(500, null, "")];
+          return out;
+        """)
+        self.assertIn("Searching files", out["searching"])
+        # The first keystroke's search was replaced before it fired.
+        self.assertEqual(out["urls"], ["/v1/sessions/claude%3As%201/files?q=s%26x&limit=50"])
+        self.assertEqual(out["label"], "Files")
+        self.assertIn('aria-label="a b.py, in src"', out["html"])
+        self.assertIn('<span class="menu-sub">src</span>', out["html"])
+        self.assertEqual(out["rows"], ["src/a b.py", "src"])
+        self.assertEqual(out["again"], 1)
+        self.assertEqual(out["key"], "pick")
+        self.assertIn("File search isn&#39;t available for sessions on mini", out["error"])
+        self.assertEqual(out["errors"], ["Update the hub to search files from here",
+                                         "Can't reach the hub", "Couldn't search files"])
+
+    def test_mention_search_drops_late_answers(self):
+        """A newer query aborts the older request, and an older answer that
+        lands after the newer one (or after the menu closed) changes
+        nothing."""
+        out = self.run_js("""
+          const els = {
+            "chat-text": { value: "", selectionStart: 0, selectionEnd: 0, disabled: false,
+              setAttribute() {}, removeAttribute() {}, style: {} },
+            "chat-menu": { innerHTML: "", classList: { toggle() {} }, setAttribute() {},
+              querySelector() { return null; } },
+          };
+          document.getElementById = (id) => els[id] || null;
+          Object.defineProperty(document, "activeElement", { get: () => els["chat-text"] });
+          const input = els["chat-text"];
+          const type = (v) => { input.value = v; input.selectionStart = input.selectionEnd = v.length; T.trackMenus(); };
+          const tick = () => new Promise((r) => setTimeout(r, 10));
+          T.FILES.debounce = 0;
+          T.chat.key = "s1";
+          T.chat.row = {};
+          // Each request waits for its own release; the signal is kept.
+          const reqs = {};
+          globalThis.api = (u, opts) => new Promise((r) => {
+            const q = new URLSearchParams(u.split("?")[1]).get("q");
+            reqs[q] = { signal: opts && opts.signal,
+              release: (path) => r({ status: 200, data: { entries: [{ path, kind: "file" }] } }) };
+          });
+          const out = {};
+          type("@a");
+          await tick();
+          type("@ab");
+          await tick();
+          out.oldAborted = reqs.a.signal.aborted;
+          out.newAborted = reqs.ab.signal.aborted;
+          reqs.ab.release("ab.py");
+          await tick();
+          reqs.a.release("a.py");
+          await tick();
+          out.rows = T.menu.rows.map((r) => r.path);
+          out.answered = T.files.answered;
+          // An answer after the menu closed leaves it closed and empty.
+          type("@abc");
+          await tick();
+          type("plain");
+          reqs.abc.release("abc.py");
+          await tick();
+          out.closed = { open: T.menu.open, entries: T.files.entries.length, answered: T.files.answered,
+                         aborted: reqs.abc.signal.aborted };
+          return out;
+        """)
+        self.assertTrue(out["oldAborted"])
+        self.assertFalse(out["newAborted"])
+        self.assertEqual(out["rows"], ["ab.py"])
+        self.assertEqual(out["answered"], "ab")
+        self.assertEqual(out["closed"], {"open": False, "entries": 0, "answered": None, "aborted": True})
+
 
 SESSIONS_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/sessions.js"
 

@@ -397,7 +397,7 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
 
 /* The composer's / menu (the remote PWA's #prompt-menu): the commands the
  * session's harness runs, straight above the box; past six rows it
- * scrolls. */
+ * scrolls. An @ token reuses it for files under the session's folder. */
 .chat-menu {
   flex: none; background: var(--card); border: 1px solid var(--border);
   border-radius: 12px; margin-bottom: 8px; padding: 4px 0;
@@ -416,6 +416,13 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
   flex: 1 1 0; min-width: 0; font-size: 12px; color: var(--text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* The @ menu's rows: a file or folder glyph, the name, then its folder. */
+.menu-row.file { height: 40px; }
+.file-icon {
+  flex: none; width: 16px; height: 16px; color: var(--text-secondary);
+  fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round;
+}
+.menu-row.file .menu-sub { flex: 0 1 auto; }
 .menu-note { padding: 10px 12px; font-size: 12px; color: var(--text-secondary); }
 .menu-note.error-note { color: var(--danger-text); }
 .cmd-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
