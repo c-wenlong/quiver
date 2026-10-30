@@ -44,7 +44,8 @@ The app can be paired with several hubs at once, say a Mac and a home
 server: pairing another hub (Pair another hub in the hub menu, or a
 scanned code) adds it instead of replacing the first, and the hub menu
 at the top right of Sessions switches between them. Unpair drops only
-the hub on screen. Each hub's credential is its own Keychain item; the
+the hub on screen, and asks that hub to sign this phone out (its
+device row and console key go too) when it can be reached. Each hub's credential is its own Keychain item; the
 addresses, names and the hub on screen are in UserDefaults. A phone
 paired before this keeps its hub: the app moves the old single pairing
 into the list on first launch, and a phone paired under the old webview
