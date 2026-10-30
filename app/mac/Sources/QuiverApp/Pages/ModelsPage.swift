@@ -164,7 +164,9 @@ private struct ModelsContent: View {
         }
         .iconButton()
         .disabled(model.isRefreshing || !model.hasKey)
-        .hoverTip(reloadHelp)
+        // A stable name; the stamp or the last error is the hint.
+        .accessibilityLabel("Reload benchmarks")
+        .hoverTip(reloadHelp, replacesLabel: false)
     }
 
     // MARK: - Content

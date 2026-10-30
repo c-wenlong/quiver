@@ -382,6 +382,8 @@ private struct ModelBrandLogo: View {
                     .frame(width: 12, height: 12)
             }
         }
+        // Its own element: HarnessLogo hides itself from VoiceOver.
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(([ModelBrands.forModel(model).name] + harnesses.map { UsageFormat.harness($0) })
             .joined(separator: " · "))
     }
