@@ -401,11 +401,12 @@ def expand_user(value: "str | Path") -> "Path":
 def read_json_dict(path: "Path") -> dict:
     """The JSON object in ``path``, or ``{}``.
 
-    For state a later run can rebuild: a missing or unreadable file, bytes
-    that are not UTF-8 or not JSON, and any top-level value other than an
-    object all read as ``{}``. Never use it on a file swe may save back
-    over, where ``{}`` would erase whatever it couldn't parse; that is
-    ``configuration.read_json_object``'s job.
+    For reads that can live with nothing: a missing or unreadable file,
+    bytes that are not UTF-8 or not JSON, and any top-level value other
+    than an object all read as ``{}``. Never build a write from its
+    result: an edit of ``{}`` saved back erases whatever couldn't be
+    parsed. A read-change-write needs a strict read, such as
+    ``configuration.read_json_object`` or pricing's ``_write_overrides``.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
