@@ -335,8 +335,12 @@ final class GateTransport: HTTPTransport {
 
 @MainActor
 @Suite struct APIKeyCheckModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     func model(text: String, transport: HTTPTransport) throws -> APIKeysModel {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycheck-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycheck-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try text.write(to: url, atomically: true, encoding: .utf8)
@@ -500,7 +504,7 @@ final class GateTransport: HTTPTransport {
     }
 
     @Test func aCheckFollowsARenameOnlyToANameWithTheSameProbe() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycarry-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycarry-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
         try "export GEMINI_API_KEY=\"g\"\nexport OPENAI_API_KEY=\"o\"\nexport NVIDIA_API_KEY=\"n\"\nexport LOOSE_A=\"a\"\n"
@@ -552,10 +556,14 @@ final class GateTransport: HTTPTransport {
 
 /// The cache under ~/.quiver/cache and the salt the fingerprints hash against.
 @Suite struct APIKeyCheckCacheTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     let salt = Data(repeating: 7, count: 32)
 
     @Test func aSavedResultComesBackFromDisk() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         let store = APIKeyCheckStore(url: dir.appending(path: "api-key-checks.json"))
         let check = APIKeyCheck(result: .rejected(status: 401, message: "bad key"),
                                 checkedAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -573,7 +581,7 @@ final class GateTransport: HTTPTransport {
     }
 
     @Test func everyResultShapeSurvivesTheRoundTrip() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         let store = APIKeyCheckStore(url: dir.appending(path: "api-key-checks.json"))
         let checks: [String: APIKeyCheck] = [
             "A": APIKeyCheck(result: .works, checkedAt: .now, value: "a", salt: salt),
@@ -591,7 +599,7 @@ final class GateTransport: HTTPTransport {
     }
 
     @Test func junkOnDiskReadsAsNoResults() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: "api-key-checks.json")
         let keysURL = dir.appending(path: ".api_keys")
@@ -615,7 +623,7 @@ final class GateTransport: HTTPTransport {
 
     @MainActor
     @Test func resultsSurviveANewModelAndStaleOnesStayHidden() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keysURL = dir.appending(path: ".api_keys")
         try """
@@ -660,7 +668,7 @@ final class GateTransport: HTTPTransport {
     @Test func aRunWithNothingToCheckStillSaves() async throws {
         // Every key lacks a probe, so no network task ever finishes; the
         // single save at the end must still land the "no check" answers.
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keysURL = dir.appending(path: ".api_keys")
         try """
@@ -692,7 +700,7 @@ final class GateTransport: HTTPTransport {
     @Test func finishedChecksSaveBeforeTheRunEnds() async throws {
         // Two of four checks land while the rest stay parked; a model
         // built over the same cache sees the finished pair already.
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keysURL = dir.appending(path: ".api_keys")
         try """
@@ -740,7 +748,7 @@ final class GateTransport: HTTPTransport {
     @Test func twoKeysFilesShareTheCache() async throws {
         // One cache file, two keys files: each model writes only its own
         // section, so neither loses the other's results.
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keysA = dir.appending(path: "a/.api_keys")
         let keysB = dir.appending(path: "b/.api_keys")
@@ -778,7 +786,7 @@ final class GateTransport: HTTPTransport {
     @Test func aSaveKeepsTheNewerResultPerName() {
         // A writer holding an older snapshot merges by checkedAt: it can
         // replace only the names it checked, and only when it is newer.
-        let dir = FileManager.default.temporaryDirectory.appending(path: "keycache-\(UUID().uuidString)")
+        let dir = scratch.url.appending(path: "keycache-\(UUID().uuidString)")
         let store = APIKeyCheckStore(url: dir.appending(path: "api-key-checks.json"))
         let keysURL = dir.appending(path: ".api_keys")
         let newer = APIKeyCheck(result: .works,

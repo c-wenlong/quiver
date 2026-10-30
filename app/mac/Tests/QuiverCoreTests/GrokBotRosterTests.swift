@@ -5,13 +5,17 @@ import Testing
 /// The Grok Bot persistence roster: filename keys are base32, the roster
 /// blob names the user's Bots, and labelling never opens anything else.
 @Suite struct GrokBotRosterTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
 
     /// A temp `sand-client-persistence` folder holding one blob named by
     /// the base32 of `key` with `json` as contents.
     private func persistence(key: String = "user-1.roster.last-roster",
                              json: String,
                              extras: [(key: String, json: String)] = []) throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = scratch.url
             .appendingPathComponent("grok-roster-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         func write(_ json: String, key: String) throws {
@@ -77,7 +81,7 @@ import Testing
 
     /// A temp file for the remembered names, never `~/.quiver`.
     private func memoryFile() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appendingPathComponent("grok-names-\(UUID().uuidString)/grok-bot-names.json")
     }
 
@@ -99,7 +103,7 @@ import Testing
     /// read: the Bot is deleted on the next roster read, and still named.
     @Test func aFailedSaveKeepsNamesAlreadyRead() throws {
         // A memory path under a regular file can never be written.
-        let blocker = FileManager.default.temporaryDirectory
+        let blocker = scratch.url
             .appendingPathComponent("grok-blocker-\(UUID().uuidString)")
         try Data().write(to: blocker)
         let dir = try persistence(json: rosterJSON)

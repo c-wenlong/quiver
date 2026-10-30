@@ -12,6 +12,10 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct GitHubNotifierTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     /// argv-suffix router, same pattern as the core `GitHubModelTests`:
     /// values are envelope payloads wrapped into `{"schema":1,"data":…}`.
     final class Router: CommandRunning, @unchecked Sendable {
@@ -60,8 +64,7 @@ struct GitHubNotifierTests {
     }
 
     private func quiverDir() -> URL {
-        FileManager.default.temporaryDirectory
-            .appending(path: "quiver-notifier-tests-\(UUID().uuidString)")
+        scratch.url.appending(path: "quiver-\(UUID().uuidString)")
     }
 
     private func deliveredIds(_ quiver: URL) throws -> [String] {

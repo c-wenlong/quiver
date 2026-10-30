@@ -6,6 +6,10 @@ import Testing
 /// The Cursor usage feed: `swe harness usage-events cursor --json` mapped
 /// into ledger records, deduplicated across overlapping fetches.
 @Suite struct CursorUsageFeedTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     let allTime = DateInterval(start: .distantPast, end: .distantFuture)
     let account = "/home/user/Library/Application Support/Cursor"
 
@@ -50,7 +54,7 @@ import Testing
         CursorUsageFeed(ledger: ledger, swe: { SweClient(runner: runner) },
                         accounts: { accounts },
                         progressFile: progressFile
-                            ?? FileManager.default.temporaryDirectory
+                            ?? scratch.url
                                 .appending(path: "cursor-feed-\(UUID().uuidString).json"))
     }
 

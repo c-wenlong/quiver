@@ -460,6 +460,10 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
 }
 
 @Suite struct ExtraAccountVendorTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     @Test func onlyClaudeAndCodexOwnADefaultProfile() {
         #expect(Vendor.claude.hasDefaultProfile && Vendor.codex.hasDefaultProfile)
         #expect(!Vendor.devin.hasDefaultProfile && !Vendor.cursor.hasDefaultProfile)
@@ -467,7 +471,7 @@ final class HeldRunner: CommandRunning, @unchecked Sendable {
     }
 
     @Test func devinAndCursorProfilesGetTheirOwnTrees() throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "accounts-\(UUID().uuidString)")
+        let root = scratch.url.appending(path: "accounts-\(UUID().uuidString)")
         let store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
 
         // No file yet: only Claude and Codex synthesise defaults.

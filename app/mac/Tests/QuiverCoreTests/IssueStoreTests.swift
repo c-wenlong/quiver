@@ -5,9 +5,13 @@ import Testing
 /// `IssueStore`: the dedup, re-notify and auto-resolve rules the toasts,
 /// badge and Doctor rows all read from `~/.quiver/data/issues.json`.
 @Suite struct IssueStoreTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func tempStore(clock: TestClock? = nil) -> IssueStore {
         let clock = clock ?? TestClock()
-        var store = IssueStore(url: FileManager.default.temporaryDirectory
+        var store = IssueStore(url: scratch.url
             .appending(path: "issues-\(UUID().uuidString).json"))
         store.now = { clock.now }
         return store
@@ -39,7 +43,7 @@ import Testing
     }
 
     @Test func aToldFailureStaysToldAcrossRestarts() {
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appending(path: "issues-\(UUID().uuidString).json")
         var store = IssueStore(url: url)
         let epoch = Date(timeIntervalSince1970: 1_791_720_000)
@@ -270,8 +274,12 @@ import Testing
 /// outages stay card-only and Doctor's rows come from the same list.
 @MainActor
 @Suite struct IssuesModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func model() -> (IssuesModel, IssueStore) {
-        let store = IssueStore(url: FileManager.default.temporaryDirectory
+        let store = IssueStore(url: scratch.url
             .appending(path: "issues-\(UUID().uuidString).json"))
         return (IssuesModel(store: store), store)
     }

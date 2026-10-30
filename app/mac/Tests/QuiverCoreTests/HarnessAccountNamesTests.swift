@@ -3,8 +3,12 @@ import Testing
 @testable import QuiverCore
 
 @Suite struct HarnessAccountNameStoreTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func tempFile() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appendingPathComponent("quiver-names-\(UUID().uuidString)")
             .appendingPathComponent("harness-names.json")
     }

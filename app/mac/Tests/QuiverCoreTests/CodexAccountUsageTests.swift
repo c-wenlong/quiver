@@ -6,6 +6,10 @@ import Testing
 /// local months, the negative-difference flag, every status's mapping
 /// and the cache round-trip.
 @Suite @MainActor struct CodexAccountUsageTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     /// noon UTC on Thursday 2026-10-15: the current week is Oct 12–18,
     /// the current month October.
     private let now = utc("2026-10-15T12:00:00Z")
@@ -24,7 +28,7 @@ import Testing
     private func model(reports: [String: CodexDailyReport] = [:],
                        mac: [Date: Int] = [:],
                        file: String = "usage.json") -> (CodexAccountUsage, URL) {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString)", isDirectory: true)
         let url = dir.appendingPathComponent(file)
         var queue = reports
@@ -185,7 +189,7 @@ import Testing
 
     @Test func anUnavailableReplyKeepsTheCachedDataMarkedStale() async {
         var calls = 0
-        let dir = FileManager.default.temporaryDirectory
+        let dir = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString)", isDirectory: true)
         let url = dir.appendingPathComponent("usage.json")
         let model = CodexAccountUsage(
@@ -212,7 +216,7 @@ import Testing
     @Test func sweTooOldHidesTheSection() async {
         let (model, _) = model()
         let tooOld = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { _ in
                 throw SweError.commandFailed(
@@ -228,7 +232,7 @@ import Testing
     @Test func aFailedFirstFetchShowsTheFailedStateThenRetries() async {
         var fail = true
         let model = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { _ in
                 if fail {
@@ -250,7 +254,7 @@ import Testing
     @Test func refreshForceRefetchesTheKnownHomes() async {
         var calls: [String] = []
         let model = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { home in
                 calls.append(home)
@@ -270,7 +274,7 @@ import Testing
         var calls: [String] = []
         var homes = ["/h"]
         let model = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { home in
                 calls.append(home)
@@ -291,7 +295,7 @@ import Testing
         var calls = 0
         var mac: [Date: Int] = [day("2026-10-13"): 5]
         let model = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { _ in
                 calls += 1
@@ -311,7 +315,7 @@ import Testing
     @Test func aNewSwePathClearsTheTooOldVerdict() async {
         var tooOld = true
         let model = CodexAccountUsage(
-            cacheFile: FileManager.default.temporaryDirectory
+            cacheFile: scratch.url
                 .appendingPathComponent("\(UUID().uuidString).json"),
             fetch: { _ in
                 if tooOld {
@@ -353,7 +357,7 @@ import Testing
         // path change's forced refresh runs and succeeds.
         var gate: CheckedContinuation<CodexDailyReport, Error>?
         var entered = false
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString).json")
         let model = CodexAccountUsage(
             cacheFile: url,
@@ -386,7 +390,7 @@ import Testing
         // Both fetches park: the older refresh's reply lands while the
         // newer one is still in flight.
         var gates: [CheckedContinuation<CodexDailyReport, Error>] = []
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("codex-usage-\(UUID().uuidString).json")
         let model = CodexAccountUsage(
             cacheFile: url,
