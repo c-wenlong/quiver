@@ -1378,10 +1378,10 @@ def cmd_add(args):
     i = 2
     while i < len(args):
         if args[i] == "--aliases":
-            aliases = [a.strip() for a in args[i + 1].split(",")]
+            aliases = _split_csv(args[i + 1])
             i += 2
         elif args[i] == "--tags":
-            tags = [t.strip() for t in args[i + 1].split(",")]
+            tags = _split_csv(args[i + 1])
             i += 2
         elif args[i] == "--description":
             desc = args[i + 1]
@@ -1442,6 +1442,12 @@ def _add_entry(tools: dict, name: str, command: str, desc, aliases, tags,
     if not _ADD_NAME.fullmatch(name):
         raise HarnessRefusal(f"{name!r} isn't a valid harness name: letters, digits,"
                              " then . _ - too")
+    # Same cleaning `swe edit` applies: no blanks, no repeats. add_harness
+    # callers hand lists straight in, so the CLI's parse is not enough.
+    if aliases is not None:
+        aliases = _normalize_field_value("aliases", aliases)
+    if tags is not None:
+        tags = _normalize_field_value("tags", tags)
     if no_replace and resolve(tools, name):
         raise AlreadyRegistered(f"{name} is already registered")
     # An alias another harness answers to would redirect `swe use` and

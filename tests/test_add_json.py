@@ -57,6 +57,26 @@ class AddJsonTest(unittest.TestCase):
         code, out, _ = self.run_add("other", "missingcmd", "--json")
         self.assertEqual(json.loads(out)["data"]["installed"], False)
 
+    def test_blank_and_repeated_list_items_are_dropped(self):
+        """`--aliases=` stored [""] and `--tags=a,,a` stored a blank and a
+        repeat; `swe edit` and `swe add -i` already cleaned both."""
+        code, _, _ = self.run_add("mytool", "mytool", "--aliases=", "--tags=a,,a, b")
+        self.assertFalse(code)          # the text path returns None on success
+        row = self.registry()["mytool"]
+        self.assertEqual(row["aliases"], [])
+        self.assertEqual(row["tags"], ["a", "b"])
+
+    def test_add_harness_cleans_lists_handed_in(self):
+        from quiver.harness import registry as reg
+        from quiver.harness.commands import add_harness
+
+        with mock.patch.object(reg, "HARNESS_FILE", self.home / "harness.json"), \
+             mock.patch.dict(os.environ, {"HOME": str(self.home), "PATH": str(self.bin)}):
+            reply = add_harness("mytool", "mytool", aliases=["mt", " ", "mt"],
+                                tags=["x", ""])
+        self.assertEqual(reply["aliases"], ["mt"])
+        self.assertEqual(reply["tags"], ["x"])
+
     def test_json_updated_then_no_replace_refused(self):
         self.run_add("s", "s-cmd")
         code, out, _ = self.run_add("s", "s-cmd2", "--json")
