@@ -131,13 +131,13 @@ final class UsageDecodingTests: XCTestCase {
         let devin = try XCTUnwrap(rows[4].rateLimit)
         XCTAssertEqual(devin.displayWindows.map(\.label), ["Daily", "Weekly"])
         XCTAssertEqual(devin.extraUsageUsd, 100)
-        XCTAssertEqual(LimitCard.extraLines(devin), ["$100.00 extra usage left"])
+        XCTAssertEqual(LimitCard.extraLines(devin), ["$100 extra usage left"])
         let cursor = try XCTUnwrap(rows[3].rateLimit)
         XCTAssertEqual(cursor.onDemand?.state, "unlimited")
         XCTAssertEqual(cursor.displayWindows[1].unavailable, true)
         XCTAssertEqual(cursor.displayWindows[1].asOf, 1_799_990_000)
         XCTAssertEqual(cursor.displayWindows.map(\.label), ["Included", "Grok bot"])
-        XCTAssertEqual(LimitCard.extraLines(cursor), ["On-demand: $0.00, no limit"])
+        XCTAssertEqual(LimitCard.extraLines(cursor), ["On-demand: $0, no limit"])
     }
 
     func testMachinesAndStatus() throws {
@@ -237,21 +237,29 @@ final class UsageFormatTests: XCTestCase {
         XCTAssertEqual(UsageFormat.tokens(0), "0")
         XCTAssertEqual(UsageFormat.tokens(842), "842")
         XCTAssertEqual(UsageFormat.tokens(12_340), "12.3K")
+        // The Mac's and the web's figures: no ".0", and a decimal past 100.
+        XCTAssertEqual(UsageFormat.tokens(12_000), "12K")
+        XCTAssertEqual(UsageFormat.tokens(150_400), "150.4K")
         XCTAssertEqual(UsageFormat.tokens(1_234_567), "1.2M")
-        XCTAssertEqual(UsageFormat.tokens(123_456_789), "123M")
-        XCTAssertEqual(UsageFormat.tokens(13_000_000_000), "13.0B")
-        XCTAssertEqual(UsageFormat.tokens(999_960), "1.0M")
-        XCTAssertEqual(UsageFormat.tokens(999_400), "999K")
+        XCTAssertEqual(UsageFormat.tokens(123_456_789), "123.5M")
+        XCTAssertEqual(UsageFormat.tokens(13_000_000_000), "13B")
+        XCTAssertEqual(UsageFormat.tokens(999_960), "1M")
+        XCTAssertEqual(UsageFormat.tokens(999_400), "999.4K")
         XCTAssertEqual(UsageFormat.tokens(99_960), "100K")
+        XCTAssertEqual(UsageFormat.tokens(-5), "0")
         XCTAssertEqual(UsageFormat.tokens(nil), "0")
     }
 
     func testUSD() {
         XCTAssertEqual(UsageFormat.usd(0.42), "$0.42")
         XCTAssertEqual(UsageFormat.usd(12.3), "$12.30")
-        XCTAssertEqual(UsageFormat.usd(999.994), "$999.99")
+        XCTAssertEqual(UsageFormat.usd(99.5), "$99.50")
+        // Whole dollars from $100, as the Mac and the web print a spend.
+        XCTAssertEqual(UsageFormat.usd(123.45), "$123")
         XCTAssertEqual(UsageFormat.usd(5432.1), "$5,432")
-        XCTAssertEqual(UsageFormat.usd(nil), "$0.00")
+        XCTAssertEqual(UsageFormat.usd(0.004), "<$0.01")
+        XCTAssertEqual(UsageFormat.usd(0), "$0")
+        XCTAssertEqual(UsageFormat.usd(nil), "$0")
         XCTAssertEqual(UsageFormat.usdAxis(800), "$800")
         XCTAssertEqual(UsageFormat.usdAxis(1260), "$1.3K")
         XCTAssertEqual(UsageFormat.usdAxis(0), "$0")
@@ -404,7 +412,7 @@ final class OverviewFormatTests: XCTestCase {
         let map = try heatmap()
         let cells = try XCTUnwrap(map.days)
         XCTAssertEqual(OverviewFormat.cellDetail(cells[0]), "No usage")
-        XCTAssertEqual(OverviewFormat.cellDetail(cells[3]), "3.0K tokens · $1.50")
+        XCTAssertEqual(OverviewFormat.cellDetail(cells[3]), "3K tokens · $1.50")
         XCTAssertEqual(OverviewFormat.longDay("2026-01-03", locale: en), "Sat, Jan 3")
         XCTAssertNil(OverviewFormat.shortDay("junk", locale: en))
     }
@@ -419,6 +427,6 @@ final class OverviewFormatTests: XCTestCase {
         XCTAssertEqual(OverviewFormat.dailyMore(total: 400, shown: 400), 0)
         let body = try UsageFixtures.decode(UsageFixtures.overview, as: OverviewResponse.self)
         XCTAssertEqual(OverviewFormat.dailyCells(try XCTUnwrap(body.days?.first)),
-                       ["2026-01-08", "3.0M", "100K", "50.0K", "2.9M", "$200.00"])
+                       ["2026-01-08", "3M", "100K", "50K", "2.9M", "$200"])
     }
 }

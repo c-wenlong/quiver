@@ -137,10 +137,16 @@ public struct PrimitiveTree: Sendable, Equatable {
 
     /// Whether `url` can open in the text editor: under a megabyte and
     /// decodable UTF-8, so binaries show "Can't preview" instead.
+    ///
+    /// The size is the target's: attributes of a symlink describe the link
+    /// (a few bytes), which let a link to a huge file past the cap. Only a
+    /// regular file qualifies, since opening a FIFO blocks until a writer.
     public static func isTextFile(_ url: URL) -> Bool {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+        let target = url.resolvingSymlinksInPath()
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: target.path),
+              attrs[.type] as? FileAttributeType == .typeRegular,
               let size = attrs[.size] as? Int, size <= 1_000_000,
-              let handle = try? FileHandle(forReadingFrom: url)
+              let handle = try? FileHandle(forReadingFrom: target)
         else { return false }
         defer { try? handle.close() }
         var head = (try? handle.read(upToCount: 8192)) ?? Data()

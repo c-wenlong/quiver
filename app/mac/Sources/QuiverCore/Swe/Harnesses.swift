@@ -348,6 +348,9 @@ public final class HarnessesModel {
 final class SerialGate {
     private var running = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
+    /// How many callers wait for the gate; tests read it to know a run
+    /// reached the gate rather than guess with yields.
+    var waiters: Int { waiting.count }
 
     func acquire() async {
         guard running else {
