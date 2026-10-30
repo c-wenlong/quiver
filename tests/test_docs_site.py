@@ -115,6 +115,7 @@ class StageTests(unittest.TestCase):
             "app/landing-page/index.html": "<h1>landing</h1>",
             "app/landing-page/mascot.jpg": "jpg",
             "app/landing-page/media/sessions.mp4": "mp4",
+            "app/landing-page/vercel.json": "{}",
         })
         pages = [("README.md", "index.md"), ("ARCHITECTURE.md", "architecture/index.md")]
         stage_dir = root / "build" / "docs-site"
@@ -135,6 +136,7 @@ class StageTests(unittest.TestCase):
         self.assertEqual((stage_dir / "index.html").read_text(), "<h1>landing</h1>")
         self.assertTrue((stage_dir / "mascot.jpg").is_file())
         self.assertTrue((stage_dir / "media/sessions.mp4").is_file())
+        self.assertFalse((stage_dir / "vercel.json").exists())
 
     def test_stage_fails_without_landing_page(self):
         root = _repo(self, {"README.md": "hi"})

@@ -52,6 +52,8 @@ ASSETS = ["app/mac/Icons/AppIcon-light.png", "app/mac/Icons/AppIcon-dark.png"]
 # it is (media/ included), so app/landing-page/index.html becomes the
 # front page.
 LANDING = "app/landing-page"
+# Vercel's project config lives beside the page but is no part of the site.
+LANDING_SKIP = ("vercel.json",)
 
 # Extensions copied into the site and served, rather than linked to GitHub.
 ASSET_SUFFIXES = {
@@ -197,7 +199,8 @@ def stage(root: Path = ROOT, stage_dir: Path = STAGE) -> int:
 
     landing = root / LANDING
     if (landing / "index.html").is_file():
-        shutil.copytree(landing, stage_dir, dirs_exist_ok=True)
+        shutil.copytree(landing, stage_dir, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns(*LANDING_SKIP))
     else:
         missing.append(f"{LANDING}/index.html: landing page is missing")
 

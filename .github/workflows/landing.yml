@@ -1,0 +1,49 @@
+name: Landing page
+
+# Vercel's own Git deploys are off (app/landing-page/vercel.json): main
+# takes hundreds of commits a day and the Hobby plan allows 100 deployments,
+# so pushes that never touched the page used up the day's deploys. This
+# workflow deploys only when the landing page itself changes: a preview for
+# a PR, production for main.
+on:
+  push:
+    branches: [main]
+    paths: ["app/landing-page/**", ".github/workflows/landing.yml"]
+  pull_request:
+    paths: ["app/landing-page/**", ".github/workflows/landing.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: landing-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # IDs, not secrets: they name the Vercel team and project to deploy to.
+  VERCEL_ORG_ID: team_3RwDblsQVK0MHQPOndO1vDl8
+  VERCEL_PROJECT_ID: prj_kLuqMAtWBkv2HgNwhpyAZASA80mI
+  VERCEL_CLI: vercel@65.3.1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      TARGET: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && 'production' || 'preview' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Fork PRs get no secrets, and the secret may not be set yet.
+      - name: Skip without a Vercel token
+        if: env.VERCEL_TOKEN == ''
+        run: echo "::notice::VERCEL_TOKEN is not set, so nothing was deployed."
+      - name: Deploy
+        if: env.VERCEL_TOKEN != ''
+        run: |
+          prod=""
+          if [ "$TARGET" = production ]; then prod="--prod"; fi
+          npx --yes "$VERCEL_CLI" pull --yes --environment="$TARGET" --token="$VERCEL_TOKEN"
+          npx --yes "$VERCEL_CLI" build $prod --token="$VERCEL_TOKEN"
+          url=$(npx --yes "$VERCEL_CLI" deploy --prebuilt $prod --token="$VERCEL_TOKEN")
+          echo "Deployed $TARGET: $url" >> "$GITHUB_STEP_SUMMARY"
