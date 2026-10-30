@@ -3360,7 +3360,7 @@ class _Handler(BaseHTTPRequestHandler):
         if body is None:
             self._send_error(400, "bad_body", "unreadable JSON body")
             return
-        name = str(body.get("name") or "").strip()[:80]
+        name = pairing.clean_name(body.get("name"))
         if not pairing.update_device(
             self._state.home, device_id, display_name=name or None
         ):
