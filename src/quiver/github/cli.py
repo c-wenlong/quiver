@@ -415,6 +415,10 @@ def _gh_paginated(path: str, limit: int) -> gh.GhResult:
     ``--limit=200``. Pages are pulled explicitly — never
     ``--paginate``, which would fetch the endpoint's *entire* history —
     and a short page means the listing ended.
+
+    A later page that fails keeps the rows already read, but the answer
+    says so: ``ok`` with ``error`` set means partial, and the callers
+    mark the listing ``partial`` rather than pass it off as complete.
     """
     items: list = []
     per_page = min(limit, 100)
@@ -425,7 +429,9 @@ def _gh_paginated(path: str, limit: int) -> gh.GhResult:
             ["api", f"{path}{sep}per_page={per_page}&page={page}"])
         if result.status != "ok":
             if items:
-                break  # later page failed: keep what we already have
+                # A later page failed: keep what we already have.
+                return gh.GhResult("ok", data=items[:limit], error=(
+                    f"page {page} failed: {result.error or result.status}"))
             return result
         batch = result.data if isinstance(result.data, list) else []
         items += batch
@@ -447,7 +453,10 @@ def _repo_result(repo: str, key: str, result: gh.GhResult,
                     "error": "gh returned an unexpected reply"}
         rows = [shape(item) for item in result.data
                 if isinstance(item, dict)]
-        return {"repo": repo, "status": "ok", key: rows}
+        out = {"repo": repo, "status": "ok", key: rows}
+        if result.error:  # rows from the pages that answered
+            out.update(partial=True, error=result.error)
+        return out
     return {"repo": repo, "status": result.status, key: [],
             "error": result.error or result.status}
 
@@ -561,12 +570,15 @@ def _fetch_inbox(limit: int, fetch_all: bool = False) -> dict:
     if result.status != "ok":
         return {"status": result.status, "notifications": [],
                 "error": result.error or result.status}
-    return {
+    out = {
         "status": "ok",
         "notifications": [_notification_row(i)
                           for i in (result.data or [])
                           if isinstance(i, dict)],
     }
+    if result.error:  # rows from the pages that answered
+        out.update(partial=True, error=result.error)
+    return out
 
 
 # ------------------------------------------------------------------ rendering

@@ -271,6 +271,8 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
   background: var(--card); padding: 12px 14px;
 }
 .msg.approval .role { color: var(--warning-text); }
+.approval-prompt { white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
 .approval-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 .approval-actions .tab { border: 1px solid var(--border-strong); height: 30px; padding: 0 16px; font-size: 13px; }
 /* The pane's real menu, stacked like the TUI shows it; the rows can be

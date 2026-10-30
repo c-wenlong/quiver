@@ -38,6 +38,9 @@ class WebApp:
         self._catalog_at = 0.0
         self._scanned_at = 0.0
         self._last_scan = None
+        # by_session over the whole ledger, kept until the next scan or
+        # price list: ``(scanned_at, catalog, usage)``.
+        self._usage: tuple | None = None
         # Cursor's feed fetches over the network, so a round runs off
         # this lock on its own thread and store (``keepFresh``); its last
         # notes surface with the next page's.
@@ -115,6 +118,8 @@ class WebApp:
             notes.append(f"cursor feed: {exc}")
         with self._lock:
             self._feed_notes = notes
+            # The round may have written usage rows: group them again.
+            self._usage = None
 
     def overview(self, period: str, tz_name: str | None, rescan: bool = False) -> dict:
         with self._lock:
@@ -142,7 +147,7 @@ class WebApp:
         page."""
         with self._lock:
             self._ensure(rescan)
-            usage = by_session(self._store, self._catalog)
+            usage = self.session_usage()
             sessions = sessions_mod.build(
                 rows, usage, hub_machine_id, machines,
                 scanned=(self._last_scan is not None
@@ -161,6 +166,21 @@ class WebApp:
                 "scanned_at": self._scanned_at,
                 "notes": self._notes(),
             }
+
+    def session_usage(self) -> dict:
+        """``by_session`` for the current store and prices; the caller
+        holds the page lock (inside ``ledger()`` or a page method).
+
+        It groups every session in the ledger's history, so the Sessions
+        and Calendar pages share one answer per scan instead of paying
+        for it on each navigation."""
+        cached = self._usage
+        if cached is not None and cached[0] == self._scanned_at \
+                and cached[1] is self._catalog:
+            return cached[2]
+        usage = by_session(self._store, self._catalog)
+        self._usage = (self._scanned_at, self._catalog, usage)
+        return usage
 
     def prices_changed(self) -> None:
         """``config/pricing.json`` was written: the next read builds the

@@ -824,10 +824,12 @@ class OpencodeSource:
 
     def _open(self) -> sqlite3.Connection | None:
         try:
+            # as_uri() percent-encodes the path: a raw "?" or "#" in a
+            # home folder name would end the file: URI early.
             return sqlite3.connect(
-                f"file:{self.db_path}?mode=ro", uri=True
+                Path(self.db_path).absolute().as_uri() + "?mode=ro", uri=True
             )
-        except sqlite3.Error:
+        except (sqlite3.Error, ValueError):
             return None
 
     def _role_for(self, conn: sqlite3.Connection, message_id: str) -> str:
@@ -1135,8 +1137,9 @@ def _devin_token(session_id: str) -> tuple | None:
     """Devin's newest message row and chain head for one session."""
     path = Path(os.path.expanduser(DEVIN_DB))
     try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
-    except sqlite3.Error:
+        conn = sqlite3.connect(path.absolute().as_uri() + "?mode=ro",
+                               uri=True, timeout=1.0)
+    except (sqlite3.Error, ValueError):
         return None
     try:
         rows = conn.execute(
@@ -1205,6 +1208,8 @@ class Tailer:
                 source.start_near_end()
         self.next_poll_at = 0.0
         self._pending_save = False
+        # (source, state) as the last poll left them; see ``poll``.
+        self._polled: tuple | None = None
         # Whether the last poll moved the source (bytes, rows or
         # fingerprints read), with or without a message to show: a
         # turn-ending record that decodes to nothing still moves it.
@@ -1250,9 +1255,15 @@ class Tailer:
         (duplicates, recoverable) instead of skipping messages forever.
         """
         self.next_poll_at = now + self.interval(active, hot)
-        before = self.source.state()
+        # The state the last poll left is this poll's "before", unless
+        # the source was replaced since (a resume moved the transcript):
+        # one state() per poll, not two.
+        last = self._polled
+        before = last[1] if last and last[0] is self.source \
+            else self.source.state()
         out = self.source.poll()
         after = self.source.state()
+        self._polled = (self.source, after)
         self.moved = bool(out) or after != before
         # A source can move without emitting (records that decode to
         # nothing, an opencode row still streaming), so compare the
@@ -1466,6 +1477,9 @@ class TailManager:
                     self.tailers.pop(key, None)
                     self.statuses.pop(key, None)
                     self._status_at.pop(key, None)
+                    # Under the lock too: the pane watcher raises a card
+                    # only while the tailer is registered, checked here.
+                    self._forget(key)
                 self._probe_due.discard(key)
                 self._probed_at.pop(key, None)
         for key, session, status in wanted:
@@ -1493,6 +1507,20 @@ class TailManager:
             tailer.session = session
             self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=False)
+
+    def _forget(self, key: str) -> None:
+        """Drop what the pane watcher and the attach check kept for a
+        session that left the catalog. A prompt still outstanding is
+        retired with ``approval.resolved``, so a phone's card for it
+        doesn't wait forever on a session that's gone."""
+        self.last_append.pop(key, None)
+        self._approval_checked_at.pop(key, None)
+        outstanding = self._approval_outstanding.pop(key, None)
+        if outstanding is not None:
+            supervise.set_pending_approval(key, None)
+            self._emit_approval(
+                "approval.resolved", key,
+                {"request_id": outstanding[0], "source": "gone"})
 
     def _take_status(
         self,
@@ -1691,6 +1719,10 @@ class TailManager:
             pane = supervise.capture_pane(
                 supervise.channel_name(self.home, key)
             )
+            if key not in self.tailers:
+                # sync dropped the session while its pane was read:
+                # _forget already retired it; don't raise a new card.
+                continue
             if supervise.pane_shows_approval(pane):
                 fp = supervise.approval_fingerprint(pane)
                 outstanding = self._approval_outstanding.get(key)
@@ -1706,22 +1738,25 @@ class TailManager:
                     )
                     outstanding = None
                 if outstanding is None:
-                    rid = f"req-{secrets.token_hex(6)}"
-                    self._approval_outstanding[key] = (rid, fp)
-                    supervise.set_pending_approval(key, rid, fp)
-                    prompt = _approval_prompt_line(pane)
-                    # The menu rows the pane offers, so a client can show
-                    # and answer the real prompt instead of guessing at
-                    # allow/always/deny. Labels are pane text: redact.
-                    options = [
-                        {"n": n, "label": _tr._redact_secrets(label)[:140]}
-                        for n, label in supervise.menu_options(pane)
-                    ]
-                    self._emit_approval(
-                        "approval.requested", key,
-                        {"request_id": rid, "prompt": prompt,
-                         "options": options},
-                    )
+                    with self._status_lock:
+                        if key not in self.tailers:
+                            continue  # dropped since the check above
+                        rid = f"req-{secrets.token_hex(6)}"
+                        self._approval_outstanding[key] = (rid, fp)
+                        supervise.set_pending_approval(key, rid, fp)
+                        prompt = _approval_prompt_line(pane)
+                        # The menu rows the pane offers, so a client can show
+                        # and answer the real prompt instead of guessing at
+                        # allow/always/deny. Labels are pane text: redact.
+                        options = [
+                            {"n": n, "label": _tr._redact_secrets(label)[:140]}
+                            for n, label in supervise.menu_options(pane)
+                        ]
+                        self._emit_approval(
+                            "approval.requested", key,
+                            {"request_id": rid, "prompt": prompt,
+                             "options": options},
+                        )
             else:
                 cur = self._approval_outstanding.pop(key, None)
                 if cur is not None:

@@ -49,8 +49,9 @@ class TestJournal(unittest.TestCase):
                 fh.write(json.dumps({"seq": i + 1, "type": "t",
                                      "data": "x" * 300}) + "\n")
         self._append(key, 1)  # triggers _maybe_trim
-        events, truncated = self.journal.read_since(key, 0)
-        self.assertGreater(truncated or len(events) <= 4000, 0)
+        events, _truncated = self.journal.read_since(key, 0)
+        # The ring kept its newest RING_KEEP lines, the append included.
+        self.assertEqual(len(events), journal_mod.RING_KEEP)
         seqs = [e["seq"] for e in events]
         self.assertEqual(seqs[-1], 5001)  # newest survived
         self.assertLess(len(events), 5001)  # ring was trimmed
@@ -127,21 +128,59 @@ class TestJournal(unittest.TestCase):
         self.assertEqual(ev["seq"], 1)
 
     def test_read_since_runs_under_the_lock(self):
-        # The read holds _LOCK like appends and trims do, so it can't
-        # answer from a file a trim is mid-way through replacing. While
-        # the lock is held elsewhere the read cannot even start.
+        # The read holds the file's lock like appends and trims do, so
+        # it can't answer from a file a trim is mid-way through
+        # replacing. While the lock is held elsewhere the read cannot
+        # even start.
         self._append("a:x", 1)
         done = []
         t = threading.Thread(
             target=lambda: done.append(self.journal.read_since("a:x", 0))
         )
-        with journal_mod._LOCK:
+        with journal_mod._lock_for(self.journal._file("a:x")):
             t.start()
             t.join(timeout=0.5)
             self.assertEqual(done, [])
         t.join(timeout=5)
         self.assertEqual(len(done), 1)
         self.assertEqual([e["seq"] for e in done[0][0]], [1])
+
+    def test_one_sessions_lock_does_not_hold_another(self):
+        self._append("a:x", 1)
+        self._append("b:y", 1)
+        done = []
+        t = threading.Thread(
+            target=lambda: done.append(self.journal.read_since("b:y", 0)))
+        with journal_mod._lock_for(self.journal._file("a:x")):
+            t.start()
+            t.join(timeout=5)
+        self.assertEqual(len(done), 1)
+
+    def test_locks_are_not_kept_once_released(self):
+        import gc
+        for i in range(50):
+            self._append(f"a:s{i}", 1)
+        gc.collect()
+        mine = [k for k in journal_mod._LOCKS.keys()
+                if k.startswith(str(self.journal.dir))]
+        self.assertEqual(mine, [])
+
+    def test_ring_is_bounded_by_bytes(self):
+        # A few hundred large tool events stay under RING_MAX lines but
+        # grew the file without bound.
+        from unittest.mock import patch
+        key = "a:fat"
+        big = protocol.event("message.appended", key, "m",
+                             {"kind": "assistant", "text": "x" * 10_000})
+        with patch.object(journal_mod, "RING_MAX_BYTES", 200_000), \
+                patch.object(journal_mod, "RING_KEEP_BYTES", 100_000):
+            for _ in range(60):
+                self.journal.append(key, big)
+        size = self.journal._file(key).stat().st_size
+        self.assertLessEqual(size, 200_000 + 11_000)
+        events, _ = self.journal.read_since(key, 0)
+        self.assertEqual(events[-1]["seq"], 60)  # newest survived
+        self.assertLess(len(events), 60)
 
     def test_seq_recovers_past_large_final_event(self):
         # A final record bigger than the initial tail window must not
