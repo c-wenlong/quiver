@@ -14,11 +14,15 @@ struct ModelMenu: View {
     var label: String? = nil
     var width: CGFloat? = 280
 
+    private var options: [(value: ModelChoice, title: String)] {
+        Self.options(for: recent).map { (value: $0, title: $0.title) }
+    }
+
     /// One row per model, newest kept: a repeat would give the menu two
     /// rows with one id.
-    private var options: [(value: ModelChoice, title: String)] {
+    static func options(for recent: [String]) -> [ModelChoice] {
         var seen = Set<String>()
-        return ModelPick.options(recent.filter { seen.insert($0).inserted }).map { (value: $0, title: $0.title) }
+        return ModelPick.options(recent.filter { seen.insert($0).inserted })
     }
 
     /// Each recent model's brand logo, as every view naming a model draws.

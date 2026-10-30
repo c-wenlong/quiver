@@ -10,4 +10,9 @@ import Testing
         #expect(icons[.recent("claude-opus-4-1")] != nil)
         #expect(icons.count == 2)
     }
+
+    @Test func aRepeatedRecentModelIsOneRowInOrder() {
+        #expect(ModelMenu.options(for: ["gpt-5", "claude-opus-4-1", "gpt-5"])
+                == [.harnessDefault, .recent("gpt-5"), .recent("claude-opus-4-1"), .other])
+    }
 }
