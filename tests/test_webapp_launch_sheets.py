@@ -710,6 +710,27 @@ class TestLaunchModelMenu(unittest.TestCase):
         self.assertTrue(out["folderNodeKeptOn"],
                         "the folder input is rebuilt when the row returns, so focus is lost")
 
+    def test_sessions_no_machine_note(self):
+        """A hub that answers ``launchable: []`` is current, so the sheet
+        says to install or turn a harness on; only a row without the
+        field (an older hub), or none, says to update swe."""
+        out = self.run_node(STUB + MENU_JS.read_text(encoding="utf-8") + "\n"
+                            + (PAGES.parent / "sessions.js").read_text(encoding="utf-8") + "\n"
+                            + """
+const hub = { id: "m1", harnesses: ["claude"], launchable: [] };
+process.stdout.write(JSON.stringify({
+  current: nsNoMachineNote([hub]),
+  fleet: nsNoMachineNote([hub, { id: "s1", launchable: [] }]),
+  old: nsNoMachineNote([{ id: "m1", harnesses: [] }]),
+  none: nsNoMachineNote([]),
+}));
+""")
+        self.assertEqual(out["current"], "No harness can start on the hub: install one there, "
+                                         "or turn it on in Settings › Providers.")
+        self.assertTrue(out["fleet"].startswith("No harness can start on any machine"))
+        self.assertTrue(out["old"].startswith("No machine can start a session. Update swe on the hub"))
+        self.assertTrue(out["none"].startswith("No machine can start a session. Update swe on the hub"))
+
     def test_menu_rules(self):
         out = self.run_node(STUB + MENU_JS.read_text(encoding="utf-8") + "\n" + MENU_UNIT)
         self.assertEqual(out["untouched"], ["recent", "a"])
