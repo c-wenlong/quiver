@@ -54,6 +54,7 @@ final class KeychainHubStoreTests: XCTestCase {
         let first = store.load()
         XCTAssertEqual(first.hubs.map(\.credential.credential), ["old-single"])
         XCTAssertEqual(first.active?.baseURL.host, "mac")
+        XCTAssertFalse(store.legacyPairingLeft, "the old copies go once the new one is stored")
         // Moved: the next load reads the list, not the old copy.
         XCTAssertEqual(store.load(), first)
     }
@@ -66,9 +67,11 @@ final class KeychainHubStoreTests: XCTestCase {
         list.adopt(hub("mac", "old-single"))
         store.saveIndex(list)
 
+        XCTAssertTrue(store.legacyPairingLeft)
         XCTAssertEqual(store.load().hubs.map(\.credential.credential), ["old-single"])
         // That load moved it and dropped the old copy, so this one reads
         // the new item.
+        XCTAssertFalse(store.legacyPairingLeft)
         XCTAssertEqual(store.load().hubs.map(\.credential.credential), ["old-single"])
     }
 }

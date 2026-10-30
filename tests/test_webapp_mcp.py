@@ -156,10 +156,20 @@ class TestFolders(unittest.TestCase):
         self.assertTrue(all(not f["git"]["is_repo"] for f in result["items"]))
 
 
+def _no_hub_secrets(case):
+    """Keep get()'s secrets join off the real ~/.quiver/mcp.json and
+    secrets store, which these cases don't set up."""
+    for p in (patch.object(mcp, "_hub_refs", return_value={}),
+              patch("quiver.mcp.secrets.load_secrets", return_value={})):
+        p.start()
+        case.addCleanup(p.stop)
+
+
 class TestPayload(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.home, True)
+        _no_hub_secrets(self)
         root = self.home / ".quiver" / "mcp" / "servers" / "custom" / "linear-mcp"
         root.mkdir(parents=True)
         (root / "package.json").write_text("{}")
@@ -245,6 +255,10 @@ class TestPayload(unittest.TestCase):
 
 
 class TestRoute(HubBase):
+    def setUp(self):
+        super().setUp()
+        _no_hub_secrets(self)
+
     def test_needs_a_device_and_returns_the_inventory(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/mcp")[0], 401)
         with patch.object(mcp, "inventory", return_value=(["claude"], _pairs())), \
