@@ -656,6 +656,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Remote: a local process can no longer claim the owner's tailnet
+  identity.** Behind `tailscale serve` the hub read the client from
+  `X-Forwarded-For` on every loopback connection, so any process on the
+  hub machine, another user's included, could name the owner's phone
+  and get owner powers (launch agents, approve pair requests, read API
+  keys). It now believes the header only when the OS places the
+  connection's far end in the Tailscale daemon: a root-owned socket in
+  `/proc/net/tcp` on Linux, a root process or a binary in a root-owned
+  `/Applications/Tailscale.app` per `netstat -anv` on macOS. Anyone else
+  is read as a loopback client with no tailnet identity. The hub
+  machine's own tailnet node also stops counting as the owner's device:
+  serve's local listener forwards any local process as that node. The
+  owner's phones and other computers get in as before, and paired
+  devices are unaffected; a browser on the hub machine now pairs
+  ([#965](https://github.com/c-wenlong/quiver/issues/965)).
+
 - **The remote hub refuses wildcard and non-tailnet binds.** `swe
   remote serve --host=0.0.0.0` — or a LAN address, a link-local
   address, or a name that resolves to one — used to be taken

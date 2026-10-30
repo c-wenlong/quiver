@@ -33,6 +33,8 @@ class OwnerBase(unittest.TestCase):
         self.srv = _Server(sessions=[_session()])
         self.addCleanup(self.srv.stop)
         self.srv.state.trust_proxy = True
+        # The test client stands in for tailscale serve's connection.
+        self.srv.state.proxy_peer = lambda server, peer: True
         self.srv.state.owner_login = "dev@github"
         self.calls = []
 
@@ -123,10 +125,14 @@ class TestClientAddress(unittest.TestCase):
     """_proxied/_client_ip without a socket: which peer the hub trusts
     to speak for another address."""
 
-    def _handler(self, peer, forwarded=None, trust_proxy=True):
+    def _handler(self, peer, forwarded=None, trust_proxy=True,
+                 is_proxy=True):
         handler = hub_mod._Handler.__new__(hub_mod._Handler)
         handler.server = MagicMock()
         handler.server.state.trust_proxy = trust_proxy
+        handler.server.state.proxy_peer = MagicMock(return_value=is_proxy)
+        handler.connection = MagicMock()
+        handler.connection.getsockname.return_value = ("127.0.0.1", 8477)
         handler.client_address = (peer, 50000)
         handler.headers = (
             {"X-Forwarded-For": forwarded} if forwarded is not None else {}
