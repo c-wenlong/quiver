@@ -268,9 +268,21 @@ public final class SessionChatModel {
                         self.cursor = seq
                         self.seen = self.seen.filter { $0 <= seq }
                     }
-                    guard let page = try? await client.messages(key, limit: Self.pageSize),
-                          gen == self.generation else { continue }
-                    self.load(page)
+                    // Until the newer history lands, nothing shown can be
+                    // trusted, and with the cursor lowered a reconnect won't
+                    // say truncated again: retry, backing off, rather than
+                    // go on applying events over the old transcript.
+                    var delay = Duration.seconds(1)
+                    while true {
+                        let page = try? await client.messages(key, limit: Self.pageSize)
+                        guard gen == self.generation, !Task.isCancelled else { return }
+                        if let page {
+                            self.load(page)
+                            break
+                        }
+                        try? await Task.sleep(for: delay)
+                        delay = min(delay * 2, .seconds(15))
+                    }
                     self.follow(gen, from: self.cursor)
                     return
                 case .event(let env): self.apply(env)
