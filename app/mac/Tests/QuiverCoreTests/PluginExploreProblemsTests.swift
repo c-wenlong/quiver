@@ -15,7 +15,7 @@ import Testing
     /// Seven registrations synced from another Mac, six of them hub
     /// folders, next to one real marketplace and one real problem.
     private var syncedCatalog: PluginCatalog {
-        let gone = ["design", "development", "harness-meta", "learning", "nus", "personal"]
+        let gone = ["cooking", "garden", "hiking", "music", "poetry", "woodwork"]
         var markets = gone.map { name in
             PluginMarketplace(name: name, hub: true, path: "/Users/someone/.quiver/plugins/\(name)",
                               harnesses: ["claude": .init(sourceType: "directory",
@@ -38,8 +38,8 @@ import Testing
 
     @Test func missingMarketplacesAreOneLineAndOtherProblemsStay() {
         let problems = CatalogProblems(syncedCatalog)
-        #expect(problems.missing == ["claude-code-warp", "design", "development", "harness-meta",
-                                     "learning", "nus", "personal"])
+        #expect(problems.missing == ["claude-code-warp", "cooking", "garden", "hiking",
+                                     "music", "poetry", "woodwork"])
         #expect(problems.missingLine == "7 marketplaces are registered but missing on this Mac")
         #expect(problems.other.map(\.marketplace) == ["odd"])
     }
@@ -76,13 +76,13 @@ import Testing
         // Nothing else registered: no list, so no line above one, and the
         // empty card says why instead of "none registered".
         let catalog = PluginCatalog(harnesses: ["claude"], actions: ["claude"], marketplaces: [
-            PluginMarketplace(name: "design", hub: true, harnesses: ["claude": .init(sourceType: "directory",
+            PluginMarketplace(name: "garden", hub: true, harnesses: ["claude": .init(sourceType: "directory",
                                                                                      readable: false)],
                               plugins: []),
-            PluginMarketplace(name: "nus", hub: true, harnesses: ["claude": .init(sourceType: "directory",
-                                                                                  readable: false)],
+            PluginMarketplace(name: "poetry", hub: true, harnesses: ["claude": .init(sourceType: "directory",
+                                                                                     readable: false)],
                               plugins: []),
-        ], errors: [missing("design"), missing("nus")])
+        ], errors: [missing("garden"), missing("poetry")])
         let index = PluginExploreIndex(catalog: catalog, skills: [])
         #expect(index.total == 0)
         #expect(index.sources.isEmpty)
