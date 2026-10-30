@@ -874,6 +874,49 @@ class TestHubWriteRoutes(unittest.TestCase):
             [m["data"]["text"] for m in msgs], ["m0", "m1"]
         )
 
+    def test_messages_page_reads_the_journal_tail(self):
+        # A page comes from the end of the journal, not a parse of all
+        # of it; other event types and has_more/next_before still hold.
+        for i in range(5):
+            self.srv.state.emit(
+                "claude:s1",
+                protocol.event(
+                    "message.appended", "claude:s1", "mbp",
+                    protocol.message("assistant", f"m{i}"),
+                ),
+            )
+            self.srv.state.emit(
+                "claude:s1",
+                protocol.event("session.status", "claude:s1", "mbp",
+                               {"state": "idle"}),
+            )
+        with patch.object(
+            self.srv.state.journal, "read_since",
+            side_effect=AssertionError("whole-journal read"),
+        ):
+            status, data = self.srv.request(
+                "GET", "/v1/sessions/claude:s1/messages?limit=2",
+                headers=self.hdr,
+            )
+            self.assertEqual(status, 200)
+            body = json.loads(data)
+            self.assertEqual(
+                [m["data"]["text"] for m in body["messages"]], ["m3", "m4"])
+            self.assertTrue(body["has_more"])
+            self.assertEqual(body["next_before"], body["messages"][0]["seq"])
+            status, data = self.srv.request(
+                "GET",
+                f"/v1/sessions/claude:s1/messages?limit=3"
+                f"&before={body['next_before']}",
+                headers=self.hdr,
+            )
+            body = json.loads(data)
+            self.assertEqual(
+                [m["data"]["text"] for m in body["messages"]],
+                ["m0", "m1", "m2"])
+            self.assertFalse(body["has_more"])
+            self.assertIsNone(body["next_before"])
+
     def test_events_unknown_key_404(self):
         status, _ = self.srv.request(
             "GET", "/v1/sessions/ghost/events", headers=self.hdr
@@ -3258,6 +3301,37 @@ class TestServeEntry(unittest.TestCase):
         out = err.getvalue()
         self.assertEqual(out.count("tail tick failed"), 1, out)
         self.assertIn("RuntimeError: tick broke", out)
+
+    def test_tail_loop_sweeps_stale_journals_keeping_its_own(self):
+        # Every ~5 min the tail loop sweeps idle journals and cursors,
+        # sparing the global stream and each satellite's command queue.
+        state = HubState(Path(tempfile.mkdtemp()))
+        catalog_mod.upsert_machine(state.home, {"id": "sat1", "name": "s"})
+        # A satellite session has no tailer or cursor on the hub: its
+        # journal must stay while the catalog lists it.
+        state.catalog.rows = lambda: [
+            {"key": "claude:x@sat1", "remote": True},
+            {"key": "claude:local"},
+        ]
+        calls = []
+
+        def sweep(journal, keep=(), now=None):
+            calls.append((journal, list(keep)))
+            state._stop.set()
+            return 0
+
+        state.tail_manager.tick = lambda: None
+        state.tail_manager.wait = lambda _t: None
+        with patch.object(state.tail_manager, "sweep_stale", sweep), \
+             patch.object(hub_mod.attachments, "sweep", lambda home: 0):
+            state._tail_loop()
+        self.assertEqual(len(calls), 1)
+        journal, keep = calls[0]
+        self.assertIs(journal, state.journal)
+        self.assertIn(hub_mod.GLOBAL_KEY, keep)
+        self.assertIn(state.sat_journal_key("sat1"), keep)
+        self.assertIn("claude:x@sat1", keep)
+        self.assertNotIn("claude:local", keep)
 
     def test_loop_error_log_throttles_per_step_and_window(self):
         import io

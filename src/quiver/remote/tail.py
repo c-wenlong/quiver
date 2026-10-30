@@ -38,7 +38,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from quiver.paths import expand_user, remote_dir_for
 from quiver.remote import injected, protocol, supervise
@@ -102,9 +102,20 @@ def _approval_prompt_line(pane: str) -> str:
 # How many of the most recent sessions get a live tailer.
 TAIL_MAX_SESSIONS = 100
 
+# A session's journal and cursor files, untouched this long and not
+# being tailed, are deleted by ``TailManager.sweep_stale``. Without it
+# every session ever tailed kept up to 16 MB of journal forever.
+STALE_FILE_AGE_S = 30 * 86_400
+
 # Partial-line safety: never decode more than this many bytes of tail at
 # once; the remainder waits for the next poll.
 _MAX_CHUNK = 4 << 20
+
+# ``JsonlTailSource.continue_from``: how much of the old transcript
+# before its cursor identifies the boundary, and how far from the same
+# offset the new file is searched for it.
+_BOUNDARY_BYTES = 4096
+_HANDOFF_SPAN = 1 << 20
 
 # How much of a transcript's head the tailer keeps to tell a truncation
 # that kept the stream (copytruncate, in-place rewrite) from one that
@@ -541,6 +552,51 @@ class JsonlTailSource:
         if size > max_bytes:
             self.offset = size - max_bytes
             self._align = True
+
+    def continue_from(self, old: "JsonlTailSource") -> bool:
+        """Place this source right after the last line ``old`` read,
+        found in this file; False (unplaced) when it isn't here.
+
+        Claude ``--resume`` from another folder copies the transcript
+        line for line into a new file, then appends the new turns. The
+        catalog sees the new file a refresh later, so turns can already
+        sit past the copy: starting at the end would lose them.
+
+        The boundary is the last ``_BOUNDARY_BYTES`` before ``old``'s
+        offset: several lines of context, so one repeated short line
+        can't match early, and bounded however large the last record
+        is. It is looked for at the same offset first (a real resume
+        copies byte for byte), then within ``_HANDOFF_SPAN`` of it.
+        """
+        end = old.offset
+        if old._align or end <= 0:
+            return False  # never polled, or nothing read
+        start = max(0, end - _BOUNDARY_BYTES)
+        try:
+            with open(old.path, "rb") as fh:
+                fh.seek(start)
+                mark = fh.read(end - start)
+        except OSError:
+            return False
+        if len(mark) != end - start or not mark.endswith(b"\n"):
+            return False
+        lo = max(0, start - _HANDOFF_SPAN)
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(lo)
+                window = fh.read(start - lo + _HANDOFF_SPAN + len(mark))
+        except OSError:
+            return False
+        if window[start - lo:end - lo] == mark:
+            at = start
+        else:
+            found = window.find(mark)
+            if found < 0:
+                return False
+            at = lo + found
+        self.offset = at + len(mark)
+        self._prime_head()
+        return True
 
     def _file_head(self, span: int) -> bytes:
         try:
@@ -1207,6 +1263,9 @@ class Tailer:
                 # First sight of this session: recent history only.
                 source.start_near_end()
         self.next_poll_at = 0.0
+        # A source waiting to replace ``source``; see ``hand_off``.
+        self._handoff = None
+        self._handoff_lock = threading.Lock()
         self._pending_save = False
         # (source, state) as the last poll left them; see ``poll``.
         self._polled: tuple | None = None
@@ -1218,6 +1277,32 @@ class Tailer:
         # here writes nothing, so the 0.25 s hot cadence and the 1 s
         # active one cost a read, not a file write, while nothing moves.
         self._saved: dict | None = state or None
+
+    def hand_off(self, source) -> None:
+        """Replace the source at the next ``poll``, on the tail thread
+        (any thread may call this). A JSONL source continues after the
+        last line the current one read when that line is in its file;
+        otherwise it keeps the placement it came with."""
+        with self._handoff_lock:
+            self._handoff = source
+
+    def next_source(self):
+        """The source ``poll`` reads next: a pending hand-off, else the
+        current one."""
+        with self._handoff_lock:
+            return self._handoff or self.source
+
+    def _take_handoff(self) -> None:
+        with self._handoff_lock:
+            source, self._handoff = self._handoff, None
+        if source is None:
+            return
+        old = self.source
+        if isinstance(old, JsonlTailSource) and isinstance(
+                source, JsonlTailSource):
+            source.continue_from(old)
+        self.source = source
+        self._pending_save = True
 
     def _load_cursor(self) -> dict:
         try:
@@ -1255,6 +1340,7 @@ class Tailer:
         (duplicates, recoverable) instead of skipping messages forever.
         """
         self.next_poll_at = now + self.interval(active, hot)
+        self._take_handoff()
         # The state the last poll left is this poll's "before", unless
         # the source was replaced since (a resume moved the transcript):
         # one state() per poll, not two.
@@ -1345,6 +1431,10 @@ class TailManager:
         self._status_at: dict[str, float] = {}
         self._probe_due: set[str] = set()
         self._probed_at: dict[str, float] = {}
+        # Orders tailer creation (which reads a key's cursor and asks
+        # whether it has a journal) against ``sweep_stale`` deleting
+        # them; see ``_add_tailer``.
+        self._files_lock = threading.Lock()
 
     def last_append_at(self, key: str) -> float | None:
         return self.last_append.get(key)
@@ -1410,15 +1500,18 @@ class TailManager:
     def _add_tailer(self, key: str, session: Session, source) -> bool:
         """Register a tailer for ``key`` unless another thread got there
         first; two tailers on one session would journal it twice."""
-        tailer = Tailer(
-            key, session, source, self.cursors_dir,
-            self._journal_has(key),
-        )
-        with self._status_lock:
-            if key in self.tailers:
-                return False
-            self.tailers[key] = tailer
-            return True
+        # Under ``_files_lock``: a sweep can't delete this key's journal
+        # and cursor between the tailer reading them and registering.
+        with self._files_lock:
+            tailer = Tailer(
+                key, session, source, self.cursors_dir,
+                self._journal_has(key),
+            )
+            with self._status_lock:
+                if key in self.tailers:
+                    return False
+                self.tailers[key] = tailer
+                return True
 
     def _tailer_items(self) -> list[tuple[str, "Tailer"]]:
         """A snapshot of the tailers, safe to walk while ``ensure``
@@ -1435,18 +1528,23 @@ class TailManager:
 
         Claude ``--resume`` from another folder writes a new JSONL under
         that project; the old source would keep polling a dead path.
-        The journal already holds the history the new file rewrites, so
-        the fresh source starts at its end — only new turns stream.
+        The journal already holds the history the new file copies, so
+        the fresh source continues after the last line the old one read
+        (``continue_from``): turns written past the copy before this
+        refresh still stream. That runs on the tail thread at its next
+        poll (``Tailer.hand_off``), so the old source can't read on
+        meanwhile. When the line isn't there, it starts at the end the
+        file has now.
         """
         new_path = resolve_jsonl_path(session)
-        if new_path is None or new_path == self._source_path(tailer.source):
+        if new_path is None or new_path == self._source_path(
+                tailer.next_source()):
             return
         source = make_source(session)
         if source is None:
             return
         source.skip_to_end()
-        tailer.source = source
-        tailer.save_cursor()
+        tailer.hand_off(source)
 
     def sync(
         self,
@@ -1507,6 +1605,62 @@ class TailManager:
             tailer.session = session
             self._reresolve(tailer, session)
             self._take_status(key, status, as_of, announce_first=False)
+
+    def sweep_stale(
+        self,
+        journal,
+        keep: Iterable[str] = (),
+        now: float | None = None,
+    ) -> int:
+        """Delete the journal and cursor files of sessions nothing has
+        touched for ``STALE_FILE_AGE_S``; returns how many files went.
+
+        A journal goes once no append and no cursor save has reached it
+        for that long; a cursor goes once its journal is gone too, so a
+        session never keeps one without the other (a cursor alone would
+        resume past history the phone no longer has; a journal alone
+        would skip backfill). Keys being tailed and ``keep`` (the
+        caller's own journals, like the global stream) are never swept.
+        A session that comes back is tailed like a new one: recent
+        history only. Holds ``_files_lock``, so no tailer starts on a
+        key's files while they are being judged and deleted.
+        """
+        with self._files_lock:
+            return self._sweep_stale(journal, keep, now)
+
+    def _sweep_stale(self, journal, keep: Iterable[str],
+                     now: float | None) -> int:
+        now = time.time() if now is None else now
+        cutoff = now - STALE_FILE_AGE_S
+        held = {protocol.key_slug(k) for k in keep}
+        held.update(protocol.key_slug(k) for k, _t in self._tailer_items())
+
+        def fresh(path: Path) -> bool:
+            try:
+                return path.stat().st_mtime >= cutoff
+            except OSError:
+                return False
+
+        def kept(slug: str) -> bool:
+            return slug in held or fresh(self.cursors_dir / f"{slug}.json")
+
+        removed = journal.sweep(cutoff, kept)
+        try:
+            cursors = list(self.cursors_dir.glob("*.json"))
+        except OSError:
+            cursors = []
+        for path in cursors:
+            slug = path.stem
+            if slug in held or fresh(path):
+                continue
+            if (journal.dir / f"{slug}.jsonl").exists():
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed += 1
+        return removed
 
     def _forget(self, key: str) -> None:
         """Drop what the pane watcher and the attach check kept for a

@@ -2042,6 +2042,21 @@ class TestR3FinalEdges(unittest.TestCase):
         with patch.object(agent_mod, "RECONNECT_S", 0):
             ag._downlink_loop()
 
+    def test_tail_loop_sweeps_keeping_the_outbox(self):
+        ag = agent_mod.RemoteAgent("http://h:1", "c", self.home)
+        calls = []
+
+        def sweep(journal, keep=(), now=None):
+            calls.append((journal, tuple(keep)))
+            ag._stop.set()
+            return 0
+
+        ag.tail_manager.tick = lambda: None
+        ag.tail_manager.wait = lambda _t: None
+        with patch.object(ag.tail_manager, "sweep_stale", sweep):
+            ag._tail_loop()
+        self.assertEqual(calls, [(ag._outbox, (agent_mod.OUTBOX_KEY,))])
+
     def test_load_remote_rows_glob_failure(self):
         with patch.object(Path, "glob", side_effect=OSError):
             self.assertEqual(catalog_mod.load_remote_rows(self.home), [])

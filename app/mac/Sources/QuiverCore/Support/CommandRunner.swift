@@ -134,8 +134,13 @@ public struct ProcessRunner: CommandRunning {
                     try? err.fileHandleForWriting.close()
                     once.resume(throwing: error)
                 }
+                // Set below, before anything can call it: a cancel
+                // arriving after the launch stops the tree through it.
+                let stopper = StopperBox()
                 do {
-                    guard try gate.launch() else { return abandon(CancellationError()) }
+                    guard try gate.launch(onCancel: { stopper.run() }) else {
+                        return abandon(CancellationError())
+                    }
                 } catch let error as NSError {
                     // env(1) itself failed to spawn — the box is out of
                     // processes or env is broken — which is a system
@@ -160,10 +165,12 @@ public struct ProcessRunner: CommandRunning {
                 // deadline the whole command tree is stopped — a child
                 // like `bash` leaves `swift build` running otherwise —
                 // and the call throws once the run's own process is gone
-                // (the termination handler may report it sooner). Both
-                // blocks are cancelled when the run answers, so a pid
+                // (the termination handler may report it sooner). A
+                // cancelled caller stops the same tree. Both blocks are
+                // cancelled when a run nobody stopped answers, so a pid
                 // reused after the child exited is never signalled.
                 let tagged = PidBox()
+                let stopping = StopOnce()
                 let killBlock = DispatchWorkItem {
                     if process.isRunning {
                         kill(process.processIdentifier, SIGKILL)
@@ -179,19 +186,20 @@ public struct ProcessRunner: CommandRunning {
                         kill(descendant.pid, SIGKILL)
                     }
                     // SIGKILL cannot be ignored, so this waits out the
-                    // kernel's reaping rather than a live child.
+                    // kernel's reaping rather than a live child. A
+                    // cancelled run whose pipes an orphan still holds
+                    // answers here too.
                     process.waitUntilExit()
-                    once.resume(throwing: SweError.timedOut)
+                    once.resume(throwing: deadline.isExpired
+                                ? SweError.timedOut : CancellationError())
                 }
-                let deadlineBlock = DispatchWorkItem {
-                    deadline.expire()
+                /// Stops the whole tree, once: SIGTERM now, SIGKILL for
+                /// whatever is left two seconds later.
+                func stopTree() {
                     // A child that already exited left nothing to
                     // signal, and its pid may already belong to another
-                    // process — report the timeout, never sweep.
-                    guard process.isRunning else {
-                        once.resume(throwing: SweError.timedOut)
-                        return
-                    }
+                    // process — never sweep then.
+                    guard process.isRunning, stopping.begin() else { return }
                     // Children first: the parent must stay alive until
                     // the tree is tagged or they reparent and vanish.
                     tagged.set(Self.stopDescendants(
@@ -206,13 +214,24 @@ public struct ProcessRunner: CommandRunning {
                     DispatchQueue.global().asyncAfter(
                         deadline: .now() + .seconds(2), execute: killBlock)
                 }
+                stopper.set(stopTree)
+                let deadlineBlock = DispatchWorkItem {
+                    deadline.expire()
+                    // A child that already exited reports the timeout
+                    // without a sweep.
+                    guard process.isRunning else {
+                        once.resume(throwing: SweError.timedOut)
+                        return
+                    }
+                    stopTree()
+                }
                 DispatchQueue.global().asyncAfter(
                     deadline: .now() + timeout.timeInterval, execute: deadlineBlock)
                 group.notify(queue: .global()) {
                     // A finished run disarms the deadline; a timed-out
-                    // one keeps the kill pass so survivors cannot
-                    // outlive the call.
-                    if !deadline.isExpired {
+                    // or cancelled one keeps the kill pass so survivors
+                    // cannot outlive the call.
+                    if !deadline.isExpired, !stopping.started {
                         deadlineBlock.cancel()
                         killBlock.cancel()
                     }
@@ -223,7 +242,8 @@ public struct ProcessRunner: CommandRunning {
                 }
             }
         } onCancel: {
-            // Leaving a page cancels its task; the child should not outlive it.
+            // Leaving a page cancels its task; the child should not outlive
+            // it, and neither should anything it started.
             gate.cancel()
         }
     }
@@ -242,11 +262,16 @@ public struct ProcessRunner: CommandRunning {
         var queue = [pid]
         while let parent = queue.popLast() {
             var buffer = [pid_t](repeating: 0, count: 512)
-            let bytes = proc_listchildpids(parent, &buffer,
-                                         Int32(MemoryLayout<pid_t>.stride * buffer.count))
-            guard bytes > 0 else { continue }
-            for child in buffer.prefix(Int(bytes) / MemoryLayout<pid_t>.stride)
-            where seen.insert(child).inserted {
+            // libproc answers a count of pids here, not bytes (unlike
+            // proc_listpids). Read as bytes it dropped every child of a
+            // parent with fewer than four, so the sweep found nothing and
+            // a child that ignored SIGTERM outlived the run. The zero
+            // filter keeps a bytes answer harmless too.
+            let count = proc_listchildpids(parent, &buffer,
+                                           Int32(MemoryLayout<pid_t>.stride * buffer.count))
+            guard count > 0 else { continue }
+            for child in buffer.prefix(min(Int(count), buffer.count))
+            where child > 0 && seen.insert(child).inserted {
                 // A child that exited since the listing has no start tag
                 // and its number may already serve another process, so
                 // only a tagged pid is ever signalled. Its own children
@@ -284,6 +309,50 @@ private final class DeadlineBox: @unchecked Sendable {
     func expire() { lock.withLock { expired = true } }
 }
 
+/// Lets the tree be stopped only once, by whichever of the deadline and
+/// a cancel comes first.
+private final class StopOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var begun = false
+
+    var started: Bool { lock.withLock { begun } }
+
+    /// True for the first caller only.
+    func begin() -> Bool {
+        lock.withLock {
+            defer { begun = true }
+            return !begun
+        }
+    }
+}
+
+/// The run's stop-the-tree action, handed to the launch gate before the
+/// action itself exists (it needs the kill pass built after the launch).
+private final class StopperBox: @unchecked Sendable {
+    private let lock = NSLock()
+    // Not @Sendable: it captures the kill work item. Every call goes
+    // through the lock-guarded hand-off below.
+    private var action: (() -> Void)?
+    private var pending = false
+
+    func set(_ newValue: @escaping () -> Void) {
+        let runNow = lock.withLock { () -> Bool in
+            action = newValue
+            return pending
+        }
+        if runNow { newValue() }
+    }
+
+    /// Runs the action, or runs it as soon as it is set.
+    func run() {
+        let now = lock.withLock { () -> (() -> Void)? in
+            if action == nil { pending = true }
+            return action
+        }
+        now?()
+    }
+}
+
 /// A descendant process's pid plus its start instant. The pair survives
 /// the process reparenting to launchd, so a later signal can still tell
 /// the tagged process from an unrelated one that reused the number.
@@ -313,25 +382,29 @@ private final class LaunchGate: @unchecked Sendable {
     private let process: Process
     private var cancelled = false
     private var launched = false
+    private var onCancel: (@Sendable () -> Void)?
 
     init(_ process: Process) { self.process = process }
 
     /// Starts the process, or returns false without starting it when the
-    /// run was already cancelled.
-    func launch() throws -> Bool {
+    /// run was already cancelled. A later cancel calls `onCancel`, which
+    /// stops the child and everything under it.
+    func launch(onCancel: @escaping @Sendable () -> Void) throws -> Bool {
         try lock.withLock {
             if cancelled { return false }
             try process.run()
             launched = true
+            self.onCancel = onCancel
             return true
         }
     }
 
     func cancel() {
-        lock.withLock {
+        let stop = lock.withLock { () -> (@Sendable () -> Void)? in
             cancelled = true
-            if launched, process.isRunning { process.terminate() }
+            return launched ? onCancel : nil
         }
+        stop?()
     }
 }
 
