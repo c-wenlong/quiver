@@ -234,6 +234,33 @@ class TestTitles(unittest.TestCase):
         self.assertEqual(cal.session_title(None, "sand-subagent-1", "grok-bot"), "Subagent")
 
 
+class TestGrokRoster(unittest.TestCase):
+    """Bot names come from Grok Bot's own roster blob, never from the
+    Mac app's grok-bot-names.json memory."""
+
+    def setUp(self):
+        import base64
+        import tempfile
+        self.home = Path(tempfile.mkdtemp())
+        self.store = self.home / cal._GROK_STORE
+        self.store.mkdir(parents=True)
+        self.b32 = lambda key: base64.b32encode(key.encode()).decode().lower().rstrip("=")
+
+    def test_reads_only_the_roster_blob(self):
+        roster = {"schemaVersion": 1, "value": {"rows": [
+            {"id": "b1", "name": "Scout", "lastEntry": "secret"}, {"id": "b2"}]}}
+        (self.store / f"{self.b32('u.roster.last-roster')}.blob").write_text(json.dumps(roster))
+        (self.store / f"{self.b32('u.transcript')}.blob").write_text(
+            json.dumps({"value": {"rows": [{"id": "x", "name": "nope"}]}}))
+        self.assertEqual(cal._grok_names(self.home), {"b1": "Scout"})
+
+    def test_the_mac_apps_memory_is_not_read(self):
+        data = self.home / ".quiver" / "data"
+        data.mkdir(parents=True)
+        (data / "grok-bot-names.json").write_text(json.dumps({"b9": "Old"}))
+        self.assertEqual(cal._grok_names(self.home), {})
+
+
 class TestRoute(HubBase):
     def seed(self):
         with self.srv.state.webapp.ledger() as (store, _catalog, _ok):
