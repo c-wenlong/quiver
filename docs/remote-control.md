@@ -186,10 +186,30 @@ remote/
   systemd.py     # serve --install on Linux: the hub as a systemd user unit
   setup.py       # swe remote setup: every step to a paired phone, --apply
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
+  attachments.py # phone uploads staged on the session's machine
+  sendq.py       # per-key FIFO send queue: message writes off the HTTP handler
+  injected.py    # strip harness-injected context from chat messages
+  slash.py       # the "/" menu: commands a session's harness will run
+  slash_builtins.py  # curated built-in slash commands per harness
+  issues.py      # /v1/issues: pinned repos' issues, resolve, comment
+  pulls.py       # /v1/pulls: pinned repos' PRs, open in a session
+  linear.py      # the Linear task source
+  search.py      # /v1/search over the session-search index
+  usage.py       # /v1/usage: usage and limits
+  session_model.py   # the model each session's last reply ran
+  recent_models.py   # the models each harness ran lately, for the pickers
+  launch_model.py    # how a fresh launch starts a harness on a picked model
+  sshkeys.py     # phone SSH keys in authorized_keys, host keys for /v1/ssh
+  tsid.py        # Tailscale node identity: whois for a peer IP
 ```
 
-Layering: `remote` may import `sessions`, `reports`, `github`, `paths`,
-`console`, `flags`; nothing imports `remote` back. State under
+Layering: `remote` imports `sessions`, `reports`, `github`, `ledger`
+(session models), `mcp.secrets` (the Linear key), `webapp` (the hub
+serves it), `paths`, `console` and `flags`. The web app's pages import
+`remote` modules back (catalog, devices, pairing, setup, supervise), most
+of them function-local, and two other packages borrow from it:
+`mcp/gateway_commands.py` uses `remote.launchd` and `ledger/pricing.py`
+uses `remote.agent._urlopen`. State under
 `~/.quiver/data/remote/` (`devices.json` 0600, `inbox_dismissals.json`
 0600, `session_meta.json` 0600, `tasks.json` 0600, `cursors/`, `journal/`) —
 gitignored like the rest of `data/`. New commands run the usual
