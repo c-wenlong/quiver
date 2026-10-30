@@ -11,15 +11,13 @@ private struct FakeActivity: ActivityProviding {
     }
 }
 
-private final class Flag: @unchecked Sendable { var value = false }
-
 /// A provider the test can flip between a reading and a failure.
 private struct TogglingActivity: ActivityProviding {
     struct Failure: LocalizedError {
         var errorDescription: String? { "ledger read failed" }
     }
     var blocks: [ActivityBlock]
-    var fails: Flag
+    var fails: Box<Bool>
     func activityBlocks(in range: DateInterval, gap: TimeInterval,
                         force: Bool) throws -> [ActivityBlock] {
         if fails.value { throw Failure() }
@@ -388,7 +386,7 @@ private struct TogglingActivity: ActivityProviding {
     }
 
     @Test func aFailingProviderKeepsItsLastBlocksAndReportsTheError() async {
-        let fail = Flag()
+        let fail = Box(false)
         let provider = TogglingActivity(
             blocks: [block("2026-10-14T09:00:00Z")], fails: fail)
         var cal = calendar; cal.firstWeekday = 2
@@ -928,7 +926,7 @@ extension CalendarCacheTests {
 extension CalendarCacheTests {
     @Test(.timeLimit(.minutes(1)))
     func aFailingPrefetchKeepsTheProvidersCachedBlocks() async {
-        let flag = Flag()
+        let flag = Box(false)
         let good = FakeActivity(blocks: [block("2026-10-14T09:00:00Z", session: "a")])
         let flaky = TogglingActivity(blocks: [block("2026-10-14T10:00:00Z",
                                                     session: "b")], fails: flag)
@@ -1141,14 +1139,13 @@ private final class LaterReadsFail: ActivityProviding, @unchecked Sendable {
         let oct14 = DateInterval(start: utc("2026-10-14T00:00:00Z"), duration: 86400)
         let slice = model.blocks(on: oct14)
         #expect(slice.blocks.map(\.project) == ["a"])
-        final class Flag: @unchecked Sendable { var fired = false }
-        let notified = Flag()
-        withObservationTracking { _ = slice.blocks } onChange: { notified.fired = true }
+        let notified = Box(false)
+        withObservationTracking { _ = slice.blocks } onChange: { notified.value = true }
         // Render range Oct 12 to Oct 20 brings Oct 20's block in: the
         // published list changes, Oct 14's slice does not.
         model.land(on: utc("2026-10-15T00:00:00Z"))
         #expect(model.blocks.map(\.project) == ["a", "b"])
-        #expect(!notified.fired)
+        #expect(!notified.value)
         #expect(model.blocks(on: oct14) === slice)
     }
 

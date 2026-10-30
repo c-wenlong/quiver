@@ -44,7 +44,9 @@ import Testing
         #expect(CalendarFormat.sessionTitle("", sessionId: "s") == "s")
     }
 
-    @Test func aMissingTitleShortensOnlyUUIDLikeIds() {
+    /// A UUID-like id, or any id past 24 characters, is cut to its first
+    /// eight; a short readable slug stays whole.
+    @Test func aMissingTitleShortensUUIDLikeAndLongIds() {
         let uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         let packed = "a1b2c3d4e5f67890abcdef1234567890"
         #expect(CalendarFormat.sessionTitle(nil, sessionId: uuid) == "a1b2c3d4…")

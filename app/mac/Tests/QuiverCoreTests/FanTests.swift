@@ -201,7 +201,7 @@ import Testing
 
     @Test func theOwnerQuittingHandsTheFansBack() {
         let smc = FakeSMC.twoFans(gate: false)
-        let alive = Flag(true)
+        let alive = Box(true)
         var modeAfterQuit: Double?
         let counter = Counter()
         smc.onWrite = { key, _ in if key == "F0Md" { modeAfterQuit = smc.number("F0Md") } }
@@ -633,7 +633,7 @@ import Testing
         #expect(installer.checks == checks + 1)
     }
 
-    @MainActor @Test func automaticIsOnlyClaimedOnceTheRequestIsGone() async throws {
+    @MainActor @Test(skippedAsRoot) func automaticIsOnlyClaimedOnceTheRequestIsGone() async throws {
         let installer = FakeInstaller()
         installer.installed.value = true
         let (fans, url) = control(FakeSMC.twoFans(), installer: installer)
@@ -1175,15 +1175,5 @@ import Testing
             }
             all.forEach { $0.resume() }
         }
-    }
-
-    final class Flag: @unchecked Sendable {
-        var value: Bool
-        init(_ value: Bool) { self.value = value }
-    }
-
-    final class Box<T>: @unchecked Sendable {
-        var value: T
-        init(_ value: T) { self.value = value }
     }
 }

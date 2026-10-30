@@ -28,9 +28,9 @@ public enum CalendarFormat {
     }
 
     /// A session row's label: its title, else the id — whole when it is
-    /// a readable slug ("natural-riverbed"), chopped to its first eight
-    /// characters plus an ellipsis only for UUID-like ids, where the
-    /// whole string carries no words.
+    /// a short readable slug ("natural-riverbed"), chopped to its first
+    /// eight characters plus an ellipsis for UUID-like ids (the whole
+    /// string carries no words) and for ids past 24 characters.
     public static func sessionTitle(_ title: String?, sessionId: String) -> String {
         if let title, !title.isEmpty { return title }
         return sessionTitleFallback(sessionId)
@@ -48,12 +48,13 @@ public enum CalendarFormat {
         return sessionTitleFallback(sessionId)
     }
 
-    /// The id-only fallback: whole for readable slugs, chopped for
-    /// UUID-like ids.
+    /// The id-only fallback: whole for short readable slugs, chopped for
+    /// UUID-like ids and anything past 24 characters, which would crowd a
+    /// calendar block either way.
     private static func sessionTitleFallback(_ sessionId: String) -> String {
         let bare = sessionId.replacingOccurrences(of: "-", with: "")
-        let looksUUID = sessionId.count > 24
+        let chop = sessionId.count > 24
             || (bare.count == 32 && bare.allSatisfy(\.isHexDigit))
-        return looksUUID ? String(sessionId.prefix(8)) + "…" : sessionId
+        return chop ? String(sessionId.prefix(8)) + "…" : sessionId
     }
 }

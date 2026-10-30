@@ -658,8 +658,7 @@ private final class Changes: Sendable {
     }
 
     @Test func accountLabelIsNotAFolder() {
-        let directory = AccountDirectory(profiles: [], paths: { _ in fatalError() },
-                                         home: URL(fileURLWithPath: "/Users/k"))
+        let directory = AccountDirectory.bare
         #expect(directory.label(for: DevinCloud.accountHome) == "Devin cloud")
     }
 }
