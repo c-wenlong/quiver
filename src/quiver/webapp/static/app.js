@@ -23,6 +23,16 @@ const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
+/* An href for a URL the hub passed on from somewhere else (GitHub, a
+ * tracker, a status feed, a plugin's manifest), escaped for an attribute.
+ * Only http(s) and mailto pass: a `javascript:` or `data:` URL in that
+ * data would run in the app's origin on a click, so it comes back "" and
+ * the caller shows no link. */
+const safeHref = (url) => {
+  const s = String(url == null ? "" : url).trim();
+  return /^(https?:\/\/|mailto:)/i.test(s) ? esc(s) : "";
+};
+
 /* status 0 means the hub didn't answer at all (offline, connection lost). */
 async function api(path) {
   let resp;
