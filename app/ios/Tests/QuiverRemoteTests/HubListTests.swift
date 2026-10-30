@@ -136,4 +136,14 @@ final class HubListTests: XCTestCase {
         XCTAssertTrue(app.pairing.busy, "the pair already out still owns the spinner")
         XCTAssertNil(app.pairing.error)
     }
+
+    @MainActor
+    func testACancelledRefreshDoesntReadAsOffline() async {
+        let app = AppModel(hub: hub("mac"))
+        let refresh = Task { await app.refresh() }
+        refresh.cancel()
+        await refresh.value
+        XCTAssertEqual(app.connection, .connecting, "a cancel isn't the hub being unreachable")
+        XCTAssertNil(app.loadError)
+    }
 }
