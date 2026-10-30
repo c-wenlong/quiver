@@ -395,7 +395,7 @@ function missingBanner(p) {
     const site = /^https?:\/\//i.test(p.website || "") ? p.website : null;
     const host = site ? site.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") : "";
     const websiteLink = site
-      ? `<a class="setup-site-link" href="${esc(site)}" target="_blank" rel="noopener noreferrer">Get ${esc(agentName(p.id))} from ${esc(host)}</a>`
+      ? `<a class="setup-site-link" href="${safeHref(site)}" target="_blank" rel="noopener noreferrer">Get ${esc(agentName(p.id))} from ${esc(host)}</a>`
       : "";
     panel = methods.length
       ? `<p class="caption">Install it on ${esc(machineName())} with one of these, or copy a command to run in a terminal there.</p>
@@ -410,7 +410,7 @@ function missingBanner(p) {
         <p class="caption">A cask or install script that asks for a password can't finish here. Copy it into a terminal instead.</p>
         ${websiteLink}`
       : `<p class="caption">swe doesn't know an installer for ${esc(agentName(p.id))}. Get it from its own website.</p>
-        ${site ? `<div class="setup-download"><code>${esc(host)}</code><a class="setup-button small" href="${esc(site)}" target="_blank" rel="noopener noreferrer">Download</a></div>` : ""}`;
+        ${site ? `<div class="setup-download"><code>${esc(host)}</code><a class="setup-button small" href="${safeHref(site)}" target="_blank" rel="noopener noreferrer">Download</a></div>` : ""}`;
   }
   return `<div class="setup-missing">
     <div class="setup-missing-row">
