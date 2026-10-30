@@ -369,6 +369,32 @@ class TestModel(_Model):
         self.model.sample()
         self.assertEqual(held, [False, False])
 
+    def test_overlapping_samples_run_nvidia_smi_once(self):
+        # A sample paused in nvidia-smi: a second due sample waits for it
+        # and then finds it fresh, while payload reads go on meanwhile.
+        import threading
+        inside, release = threading.Event(), threading.Event()
+        calls = []
+
+        def nvidia():
+            calls.append(1)
+            inside.set()
+            release.wait(10)
+            return None
+
+        self.model.nvidia = nvidia
+        first = threading.Thread(target=self.model.sample)
+        second = threading.Thread(target=self.model.sample)
+        first.start()
+        self.assertTrue(inside.wait(10))
+        second.start()
+        self.model.payload(10)  # the data lock stays free
+        release.set()
+        first.join(10)
+        second.join(10)
+        self.assertEqual(calls, [1])
+        self.assertEqual(len(self.model.history.fine), 1)
+
     def test_a_fresh_sample_skips_nvidia_smi(self):
         calls = []
         self.model.sample()

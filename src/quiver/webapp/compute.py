@@ -689,6 +689,10 @@ class ComputeModel:
         self.nvidia_processes = nvidia_processes
         self.self_pid = os.getpid() if self_pid is None else self_pid
         self.lock = threading.Lock()
+        # One sample at a time, held across the nvidia-smi calls but
+        # apart from ``lock``, so a payload read never waits on the GPU
+        # and two due samples don't both run the commands.
+        self._sample_lock = threading.Lock()
         self.meter = CPUMeter()
         self.history = History()
         self.home: Path = Path.home()
@@ -720,16 +724,20 @@ class ComputeModel:
         """Take a fresh sample unless the last one is under
         ``MIN_SAMPLE`` old, and record it in the history.
 
-        ``nvidia-smi`` runs before the lock is taken: two calls of up to
-        ``NVIDIA_TIMEOUT`` each must not hold up every Compute read."""
+        ``nvidia-smi`` runs before ``lock`` is taken: two calls of up to
+        ``NVIDIA_TIMEOUT`` each must not hold up every Compute read. A
+        second caller waits on ``_sample_lock`` and then finds the first
+        caller's sample fresh."""
+        with self._sample_lock:
+            with self.lock:
+                if not force and self._fresh():
+                    return
+            gpus = self.nvidia()
+            gpu_by_pid = self.nvidia_processes()
+            self._take_sample(gpus, gpu_by_pid)
+
+    def _take_sample(self, gpus, gpu_by_pid) -> None:
         with self.lock:
-            if not force and self._fresh():
-                return
-        gpus = self.nvidia()
-        gpu_by_pid = self.nvidia_processes()
-        with self.lock:
-            if not force and self._fresh():
-                return  # another request sampled meanwhile
             self._load_matchers()
             samples = read_processes(self.proc)
             at = self.clock()
