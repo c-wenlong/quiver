@@ -19,7 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-tmux sessions) keep Allow, Always and Deny. Part of
   [#970](https://github.com/c-wenlong/quiver/issues/970).
 
-
 - **Mac app: Needs you on the Inbox page.** Above the GitHub
   notifications, the Inbox now lists the sessions this Mac's hub says
   wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the
