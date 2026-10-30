@@ -137,12 +137,24 @@ class TestRanking(_Tmp):
             first = threading.Thread(target=keystroke, args=("o",))
             first.start()
             self.assertTrue(started.wait(5))
+            # The second keystroke must wait on the first's build, not
+            # arrive after it and hit the cache: note when it waits.
+            waiting = threading.Event()
+
+            class _NotedDone(threading.Event):
+                def wait(self, timeout=None):
+                    waiting.set()
+                    return super().wait(timeout)
+
+            (pending,) = files._building.values()
+            pending.done = _NotedDone()
             second = threading.Thread(target=keystroke, args=("on",))
             second.start()
-            time.sleep(0.2)  # let the second keystroke reach the wait
+            self.assertTrue(waiting.wait(5))
             release.set()
             first.join(5)
             second.join(5)
+            self.assertFalse(first.is_alive() or second.is_alive())
         self.assertEqual(len(calls), 1)
         self.assertEqual(len(results), 2)
         for body in results:
