@@ -185,9 +185,11 @@ struct ManifestCard: View {
             self.error = "Couldn't write the manifest: \(error.localizedDescription)"
             return
         }
+        // What this save writes: a field edited while it runs stays dirty.
+        let submitted = fields
         Task {
             switch await document.save(overwrite: overwrite) {
-            case .saved: loaded = fields; error = nil; onSaved()
+            case .saved: loaded = submitted; error = nil; onSaved()
             case .changedOnDisk: error = nil
             case .failed(let message): error = message
             }
@@ -305,9 +307,11 @@ struct FrontmatterCard: View {
     private func save(overwrite: Bool) {
         guard let document else { return }
         document.text = MarkdownFrontmatter.update(document.text, set: fields)
+        // What this save writes: a field edited while it runs stays dirty.
+        let submitted = fields
         Task {
             switch await document.save(overwrite: overwrite) {
-            case .saved: loaded = fields; error = nil; onSaved()
+            case .saved: loaded = submitted; error = nil; onSaved()
             case .changedOnDisk: error = nil
             case .failed(let message): error = message
             }
@@ -729,6 +733,10 @@ struct PrimitiveFileSheet: View {
         guard let document else { dismiss(); return }
         Task {
             switch await document.save() {
+            case .saved where document.isDirty:
+                // Typed while the save ran: that text isn't on disk yet.
+                saveError = "New edits came in while saving. Save again to keep them."
+                onSaved()
             case .saved:
                 saveError = nil
                 onSaved()
@@ -853,7 +861,9 @@ struct PluginDetailView: View {
         Task {
             var failed: [String] = []
             for (path, document) in drafts.dirty {
-                if await document.save() != .saved {
+                // A save that leaves the file dirty (typed while it ran)
+                // hasn't kept everything either.
+                if await document.save() != .saved || document.isDirty {
                     failed.append(URL(fileURLWithPath: path).lastPathComponent)
                 }
             }
@@ -1086,7 +1096,9 @@ struct SkillDetailView: View {
         Task {
             var failed: [String] = []
             for (path, document) in drafts.dirty {
-                if await document.save() != .saved {
+                // A save that leaves the file dirty (typed while it ran)
+                // hasn't kept everything either.
+                if await document.save() != .saved || document.isDirty {
                     failed.append(URL(fileURLWithPath: path).lastPathComponent)
                 }
             }

@@ -56,17 +56,29 @@ public final class InstructionDocument: Identifiable {
     /// The save in flight, so a second save waits for the first and
     /// compares against what it wrote rather than reporting a conflict.
     private var saving: Task<SaveOutcome, Never>?
+    /// Test seam: awaited just before a save's disk write, so a test can
+    /// hold a save in flight.
+    var beforeWrite: (@MainActor () async -> Void)?
 
     /// Reads the file, replacing any edits. The read (and the symlink walk
     /// before it) runs off the main actor: a file under a synced or stale
     /// folder can block `stat` or `read` for as long as it likes.
     public func load() async {
         let url = self.url
+        // The editor stays open while a reload reads; typing in that window
+        // must not be thrown away by the text the read brings back.
+        let typed = text
         let (target, result) = await offMain { () -> (URL, Result<Data?, Error>) in
             let target = Self.resolveLinks(url)
             return (target, Self.read(target))
         }
         writeURL = target
+        if text != typed, state == .ready {
+            // Edited while reading: keep the edits, and flag the file when
+            // it no longer holds what they were made against.
+            if case .success(let data) = result, data != baseline { changedOnDisk = true }
+            return
+        }
         switch result {
         case .success(let data):
             guard let data else {
@@ -124,7 +136,12 @@ public final class InstructionDocument: Identifiable {
     /// as one step; text typed while it runs stays as unsaved edits.
     @discardableResult
     public func save(overwrite: Bool = false) async -> SaveOutcome {
-        while let running = saving { _ = await running.value }
+        while let running = saving {
+            _ = await running.value
+            // A finished save's own frame may not have run yet to clear
+            // the slot; clear it here so this loop can't spin on it.
+            if saving == running { saving = nil }
+        }
         // Only a file that was read can be written: while loading, or after
         // a failed read (not UTF-8, a broken link), `text` is not the file,
         // and an overwrite would replace the file with it.
@@ -135,6 +152,7 @@ public final class InstructionDocument: Identifiable {
         let edited = text
         let known = baseline
         let task = Task { () -> SaveOutcome in
+            await beforeWrite?()
             let (target, written) = await offMain { () -> (URL, Result<Data, SaveFailure>) in
                 let target = Self.resolveLinks(url)
                 return (target, Self.write(edited, to: target, ifStill: overwrite ? nil : .some(known)))
@@ -157,7 +175,7 @@ public final class InstructionDocument: Identifiable {
         }
         saving = task
         let outcome = await task.value
-        saving = nil
+        if saving == task { saving = nil }
         return outcome
     }
 

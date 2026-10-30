@@ -732,7 +732,7 @@ private struct HookDetailView: View {
     /// and says why.
     private func saveAndLeave() {
         Task {
-            if let draft, await draft.save() != .saved {
+            if let draft, await draft.save() != .saved || draft.isDirty {
                 leaveError = "Couldn't save \(hook.script)."
             } else {
                 leaveError = nil

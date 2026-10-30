@@ -12,7 +12,7 @@ public final class PrimitiveDrafts {
     public init() {}
 
     /// Reads still running, by path, for `settled()`.
-    private var loading: [String: Task<Void, Never>] = [:]
+    private var loading: [String: (id: UUID, task: Task<Void, Never>)] = [:]
 
     /// The document for `path`, opened on first ask. It reads in the
     /// background, off the main actor (a file under a synced or stale
@@ -22,16 +22,18 @@ public final class PrimitiveDrafts {
         if let document = documents[path] { return document }
         let document = InstructionDocument(url: URL(fileURLWithPath: path))
         documents[path] = document
-        loading[path] = Task { [weak self] in
+        let id = UUID()
+        loading[path] = (id, Task { [weak self] in
             await document.load()
-            self?.loading[path] = nil
-        }
+            // A reopened path's newer read owns the entry now.
+            if self?.loading[path]?.id == id { self?.loading[path] = nil }
+        })
         return document
     }
 
     /// Waits for every read `document(for:)` started.
     public func settled() async {
-        while let next = loading.values.first { await next.value }
+        while let next = loading.values.first { await next.task.value }
     }
 
     /// The paths with unsaved text.

@@ -139,18 +139,20 @@ public final class AgentsModel {
         let document = InstructionDocument(url: key)
         projectDocuments[key] = document
         // Read off the main actor; the editor shows .loading until then.
-        loads[key] = Task { [weak self] in
+        let id = UUID()
+        loads[key] = (id, Task { [weak self] in
             await document.load()
-            self?.loads[key] = nil
-        }
+            // A reopened project's newer read owns the entry now.
+            if self?.loads[key]?.id == id { self?.loads[key] = nil }
+        })
         return document
     }
 
     /// Reads `document(for:)` started and hasn't finished.
-    private var loads: [URL: Task<Void, Never>] = [:]
+    private var loads: [URL: (id: UUID, task: Task<Void, Never>)] = [:]
 
     /// Waits for every read `document(for:)` started.
     public func settled() async {
-        while let next = loads.values.first { await next.value }
+        while let next = loads.values.first { await next.task.value }
     }
 }

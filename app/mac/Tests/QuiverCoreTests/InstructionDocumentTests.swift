@@ -218,6 +218,54 @@ final class TempFolder {
         #expect(!FileManager.default.fileExists(atPath: folder.url.appending(path: "NEW.md").path))
     }
 
+    /// A second save waits for the first and writes on top of it with no
+    /// false conflict; text typed while the first ran stays unsaved.
+    @Test(.timeLimit(.minutes(1))) func overlappingSavesQueueAndKeepNewerTyping() async throws {
+        let folder = try TempFolder()
+        let file = try folder.write("AGENTS.md", "v0\n")
+        let doc = InstructionDocument(url: file)
+        await doc.load()
+        let gate = AsyncStream<Void>.makeStream()
+        let held = AsyncStream<Void>.makeStream()
+        var first = true
+        doc.beforeWrite = {
+            guard first else { return }
+            first = false
+            held.continuation.yield()
+            for await _ in gate.stream { break }
+        }
+        doc.text = "one\n"
+        let a = Task { await doc.save() }
+        for await _ in held.stream { break }
+        doc.text = "two\n"
+        let b = Task { await doc.save() }
+        await Task.yield()
+        gate.continuation.yield()
+        #expect(await a.value == .saved)
+        #expect(await b.value == .saved)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "two\n")
+        #expect(!doc.isDirty)
+        #expect(!doc.changedOnDisk)
+
+        // Typing during a save that nothing follows stays dirty.
+        first = true
+        let gate2 = AsyncStream<Void>.makeStream()
+        let held2 = AsyncStream<Void>.makeStream()
+        doc.beforeWrite = {
+            held2.continuation.yield()
+            for await _ in gate2.stream { break }
+        }
+        doc.text = "three\n"
+        let c = Task { await doc.save() }
+        for await _ in held2.stream { break }
+        doc.text = "four\n"
+        gate2.continuation.yield()
+        #expect(await c.value == .saved)
+        #expect(try String(contentsOf: file, encoding: .utf8) == "three\n")
+        #expect(doc.isDirty)
+        #expect(doc.text == "four\n")
+    }
+
     @Test func aFileThatIsNotUTF8IsNotOpenedForEditing() async throws {
         let folder = try TempFolder()
         let file = folder.url.appending(path: "AGENTS.md")
