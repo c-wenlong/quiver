@@ -88,9 +88,12 @@ def placement(skills: list[dict], home: Path) -> tuple[list[dict], int, str | No
     ``quiver.plugins.catalog.owners`` decides.
     """
     try:
-        from quiver.plugins.catalog import build_catalog, owners, plugin_dirs
+        from quiver.plugins.catalog import owners, plugin_dirs
+        from quiver.webapp.pages.plugins import shared_catalog
 
-        dirs = plugin_dirs(build_catalog(home))
+        # The Plugins page's read: walking every marketplace per Skills
+        # load cost seconds on a machine with many plugins.
+        dirs = plugin_dirs(shared_catalog(home))
     except Exception as exc:  # the Mac app's CatalogLookup.unavailable
         return [{**s, "plugin": None} for s in skills], 0, str(exc) or exc.__class__.__name__
     placed = []

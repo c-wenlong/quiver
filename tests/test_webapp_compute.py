@@ -356,6 +356,55 @@ class _Model(unittest.TestCase):
 
 
 class TestModel(_Model):
+    def test_nvidia_smi_runs_off_the_lock(self):
+        # Two nvidia-smi calls of up to 3 s each ran under the model's
+        # lock, so every Compute read waited for them.
+        held = []
+
+        def nvidia():
+            held.append(self.model.lock.locked())
+            return None
+
+        self.model.nvidia = nvidia
+        self.model.nvidia_processes = lambda: held.append(
+            self.model.lock.locked())
+        self.model.sample()
+        self.assertEqual(held, [False, False])
+
+    def test_overlapping_samples_run_nvidia_smi_once(self):
+        # A sample paused in nvidia-smi: a second due sample waits for it
+        # and then finds it fresh, while payload reads go on meanwhile.
+        import threading
+        inside, release = threading.Event(), threading.Event()
+        calls = []
+
+        def nvidia():
+            calls.append(1)
+            inside.set()
+            release.wait(10)
+            return None
+
+        self.model.nvidia = nvidia
+        first = threading.Thread(target=self.model.sample)
+        second = threading.Thread(target=self.model.sample)
+        first.start()
+        self.assertTrue(inside.wait(10))
+        second.start()
+        self.model.payload(10)  # the data lock stays free
+        release.set()
+        first.join(10)
+        second.join(10)
+        self.assertEqual(calls, [1])
+        self.assertEqual(len(self.model.history.fine), 1)
+
+    def test_a_fresh_sample_skips_nvidia_smi(self):
+        calls = []
+        self.model.sample()
+        self.model.nvidia = lambda: calls.append(1)
+        self.now[0] += 1.0
+        self.model.sample()  # inside MIN_SAMPLE
+        self.assertEqual(calls, [])
+
     def test_two_samples_make_the_payload(self):
         self.model.sample()
         self.m.process(101, 100, ["claude"], exe="/usr/bin/node", start=200, anon_kb=3 * 1024 * 1024,
