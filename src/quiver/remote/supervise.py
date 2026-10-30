@@ -263,6 +263,12 @@ def meta_for(home: Path | None, session_key: str) -> dict | None:
     return _load_registry(home).get(session_key)
 
 
+def registry(home: Path | None) -> dict[str, dict]:
+    """Every supervised entry as stored, read once: ``meta_for`` for a
+    caller looking up many keys (no tmux liveness check)."""
+    return _load_registry(home)
+
+
 def launch_tmux(
     session_key: str, argv: list[str], cwd: str | None,
     env: dict | None = None,

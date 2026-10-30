@@ -9,6 +9,7 @@ waits for it rather than reading the same files again.
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 import threading
 import time
@@ -65,7 +66,14 @@ class WebApp:
             self._catalog_at = now
             self._kick_prices()
         if rescan or now - self._scanned_at > SCAN_TTL_S:
-            self._last_scan = scan(self._store, self.home)
+            try:
+                self._last_scan = scan(self._store, self.home)
+            except sqlite3.Error:
+                # End the failed scan's transaction: left open, it keeps
+                # its snapshot, and a busy store would fail every later
+                # page until the hub restarts instead of this one.
+                self._store.db.rollback()
+                raise
             self._scanned_at = time.time()
         self._kick_feed()
 
