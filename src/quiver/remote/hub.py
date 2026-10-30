@@ -3308,22 +3308,19 @@ class _Handler(BaseHTTPRequestHandler):
         before = _int_arg(args.get("before"), 0)
         limit = _int_arg(args.get("limit"), 500)
         limit = max(1, min(limit, 2000))
-        events, _trunc = self._state.journal.read_since(key, 0)
-        messages = [
-            cleaned for ev in events
-            if ev.get("type") == "message.appended"
-            and (cleaned := injected_mod.clean_event(ev)) is not None
-        ]
-        if before:
-            messages = [m for m in messages if m.get("seq", 0) < before]
+        # One past the page tells whether an older page exists, without
+        # reading the rest of the journal.
+        messages = self._state.journal.read_tail(
+            key, limit + 1, before_seq=before, keep=_served_message,
+        )
+        has_more = len(messages) > limit
         tail_events = messages[-limit:]
         self._send_json(200, {
             "session": key,
             "messages": tail_events,
             "next_before": tail_events[0]["seq"]
-            if len(messages) > len(tail_events) and tail_events
-            else None,
-            "has_more": len(messages) > len(tail_events),
+            if has_more and tail_events else None,
+            "has_more": has_more,
         })
 
     def _usage_machines(self, own: dict) -> list[dict]:
@@ -3638,6 +3635,14 @@ def _parse_multipart(ctype: str, body: bytes) -> tuple[str, bytes | None]:
     except Exception:
         pass
     return "", None
+
+
+def _served_message(ev: dict) -> dict | None:
+    """A ``message.appended`` journal event as ``/messages`` serves it
+    (cleaned), or None for any other event or one cleaning drops."""
+    if ev.get("type") != "message.appended":
+        return None
+    return injected_mod.clean_event(ev)
 
 
 def _int_arg(values, default: int) -> int:
