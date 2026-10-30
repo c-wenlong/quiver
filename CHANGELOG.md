@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Remove all asks first. The hub holds the sends, so the tray comes
   back when the chat reopens, with sends queued, edited or removed on
   another device ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+- **Web app: pin, rename and fork sessions.** Each Sessions row has a
+  More actions button (and a right-click menu) with the iPhone's
+  swipe-left actions: Pin or Unpin, Rename, and Fork where the harness
+  can fork. Pinned rows lead the list in a Pinned group, in the order
+  they were pinned, whatever the time filter. Rename follows the hub's
+  rules (one line, 120 characters) and offers the harness's own name
+  back; Fork takes a first message and opens the new chat once the hub
+  names it. The chat's header has the same menu, and a rename made on
+  another device shows there live
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 - **Mac app: Needs you on the Inbox page.** Above the GitHub
   notifications, the Inbox now lists the sessions this Mac's hub says
   wait on you, broke or finished today (`GET /v1/inbox?done=1`), in the

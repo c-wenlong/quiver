@@ -1564,6 +1564,8 @@ const SessionChat = (() => {
       <span class="chat-conn" id="chat-conn"><span class="dot"></span><span class="caption" id="chat-conn-label"></span></span>
       ${r.ownership === "attached" ? `<button type="button" class="icon-button" id="chat-detach" aria-label="Detach" title="Detach, or keep it running in tmux">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg></button>` : ""}
+      ${chat.row && typeof openSessionMenu === "function" ? `<button type="button" class="icon-button" id="chat-more"
+        aria-label="More actions" aria-haspopup="menu" title="Pin, rename or fork">${MORE_ICON}</button>` : ""}
       ${chat.details ? `<button type="button" class="icon-button" id="chat-details" aria-label="Details" title="Details">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg></button>` : ""}`;
     setConn(chat.connState || "connecting");
@@ -1571,6 +1573,9 @@ const SessionChat = (() => {
     if (chip) Fmt.copyTick(chip, () => `tmux attach -t ${Fmt.shellWord((chat.row || {}).tmux || "")}`);
     const detachBtn = $("chat-detach");
     if (detachBtn) detachBtn.onclick = openDetachSheet;
+    // sessions.js's row menu: Pin, Rename and Fork, on this session.
+    const more = $("chat-more");
+    if (more) more.onclick = () => openSessionMenu(Object.assign({ key: chat.key }, chat.row), more);
     const details = $("chat-details");
     if (details) {
       details.onclick = async () => {
@@ -1896,6 +1901,20 @@ const SessionChat = (() => {
 
   /* --------------------------------------------------------------- events */
 
+  /* A pin or rename (`session.meta`, or sessions.js after its own write):
+   * the header's title, and the row the menu reads. */
+  function applyMeta(d) {
+    if (!chat.row) return;
+    if ("harness_title" in d) chat.row.harness_title = d.harness_title || "";
+    if ("title" in d) chat.row.title = d.title || chat.row.harness_title || "";
+    if ("pinned" in d) {
+      chat.row.pinned = !!d.pinned;
+      chat.row.pinned_at = d.pinned ? d.pinned_at ?? null : null;
+    }
+    paintBar();
+    paintRail();
+  }
+
   function appendEvent(ev, live = true) {
     const stick = live && nearBottom();
     const d = ev.data || {};
@@ -1925,6 +1944,13 @@ const SessionChat = (() => {
         if ("kept" in d) chat.row.kept = !!d.kept;
         if (chat.row.ownership !== "attached") chat.detaching = false;
         updateOwnership();
+      }
+    } else if (ev.type === "session.meta") {
+      // Through sessions.js when it's there, so the list's row (and a
+      // pin chosen here and not yet answered) agree; it calls applyMeta.
+      if (ev.session === chat.key) {
+        if (typeof patchMeta === "function") patchMeta(chat.key, d);
+        else applyMeta(d);
       }
     } else if (ev.type === "approval.requested") {
       appendMessage({ kind: "approval", text: d.prompt || "Approval requested", request_id: d.request_id || "", options: d.options || [] }, live, ev.seq);
@@ -2646,6 +2672,9 @@ const SessionChat = (() => {
     chat.rail.loading = true;
     chat.rail.error = "";
     paintRail();
+    // sessions.js's pin ledger: a pin chosen while this read was out
+    // isn't undone by it.
+    const mark = typeof pinLedger !== "undefined" ? pinLedger.clock : 0;
     const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
     if (gen !== chat.gen) return;
     chat.rail.loading = false;
@@ -2659,6 +2688,7 @@ const SessionChat = (() => {
       paintRail();
       return;
     }
+    if (typeof pinOverlay === "function") pinOverlay(data.sessions || [], mark);
     const page = railPage();
     if (page) page.data = data; else chat.railData = data;
     paintRail();
@@ -4006,7 +4036,7 @@ const SessionChat = (() => {
   });
 
   return {
-    open, close, keyFromHash,
+    open, close, keyFromHash, applyMeta,
     get key() { return chat.key; },
     // Pure helpers, for tests.
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
