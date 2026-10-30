@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and their share, an activity heatmap with as many recent weeks as
   the phone fits (tap a day for its tokens and cost), and the daily
   table (date, total, input, output, cached, spend), newest ten days
-  first with Show all. All of it comes from the `GET /v1/app/overview`
+  first, then 30 more a tap. All of it comes from the `GET /v1/app/overview`
   payload the tab already read. Part of
   [#970](https://github.com/c-wenlong/quiver/issues/970).
 

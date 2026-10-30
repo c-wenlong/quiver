@@ -142,6 +142,7 @@ struct ActivityHeatmapCard: View {
                                     .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                                     .fixedSize()
                                     .frame(width: cell, alignment: .leading)
+                                    .accessibilityHidden(true)
                             }
                         }
                         ForEach(0..<7, id: \.self) { weekday in
@@ -151,32 +152,45 @@ struct ActivityHeatmapCard: View {
                                     .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                                     .fixedSize()
                                     .frame(width: OverviewFormat.heatGutter, height: cell, alignment: .leading)
+                                    .accessibilityHidden(true)
                                 ForEach(columns.indices, id: \.self) { w in
                                     square(columns[w][weekday])
                                 }
                             }
                         }
                     }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Activity heatmap, last \(columns.count) weeks")
+                    // Each day is its own element, so VoiceOver reads them
+                    // one by one with their figures.
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Activity, last \(columns.count) weeks")
+                }
+                // On its own row, so a long day line wraps instead of
+                // losing its cost to the legend.
+                if let picked, let day = columns.joined().compactMap({ $0 }).first(where: { $0.date == picked }) {
+                    Text(Self.dayLine(day))
+                        .font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityHidden(true)
+                } else {
+                    Text("Tap a day for its tokens").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .accessibilityHidden(true)
                 }
                 HStack(spacing: 4) {
-                    if let picked, let day = columns.joined().compactMap({ $0 }).first(where: { $0.date == picked }) {
-                        Text("\(OverviewFormat.longDay(day.date) ?? day.date) · \(OverviewFormat.cellDetail(day))")
-                            .font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1).minimumScaleFactor(0.8)
-                    } else {
-                        Text("Tap a day for its tokens").font(Theme.caption).foregroundStyle(Theme.textMuted)
-                    }
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 0)
                     Text("Less").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     ForEach(0..<5, id: \.self) { level in
                         RoundedRectangle(cornerRadius: 2).fill(Theme.heatmap[level]).frame(width: 10, height: 10)
                     }
                     Text("More").font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 }
+                .accessibilityHidden(true)
             }
         }
+    }
+
+    /// "Sat, Jan 3 · 12.3M tokens · $4.20"
+    private static func dayLine(_ day: OverviewResponse.Heatmap.Cell) -> String {
+        "\(OverviewFormat.longDay(day.date) ?? day.date) · \(OverviewFormat.cellDetail(day))"
     }
 
     @ViewBuilder private func square(_ day: OverviewResponse.Heatmap.Cell?) -> some View {
@@ -190,6 +204,10 @@ struct ActivityHeatmapCard: View {
                 .frame(width: cell, height: cell)
                 .contentShape(.rect)
                 .onTapGesture { picked = picked == day.date ? nil : day.date }
+                .accessibilityElement()
+                .accessibilityLabel(Self.dayLine(day))
+                .accessibilityAddTraits(picked == day.date ? [.isButton, .isSelected] : .isButton)
+                .accessibilityAction { picked = picked == day.date ? nil : day.date }
         } else {
             Color.clear.frame(width: cell, height: cell)
         }
@@ -198,16 +216,17 @@ struct ActivityHeatmapCard: View {
 
 /// Date, total, input, output, cached and spend per active day, newest
 /// first. Six columns are wider than a small phone, so the table
-/// scrolls sideways there; long periods show the newest ten days until
-/// "Show all".
+/// scrolls sideways there. It shows the newest ten days, then 30 more
+/// a tap, so a years-long All time never builds every row at once.
 struct DailyTable: View {
     var days: [OverviewResponse.Day]
-    @State private var expanded = false
+    @State private var shown = OverviewFormat.dailyPreview
 
     private static let headers = ["Date", "Total", "Input", "Output", "Cached", "Spend"]
 
     var body: some View {
-        let rows = OverviewFormat.dailyRows(days, expanded: expanded)
+        let rows = OverviewFormat.dailyRows(days, shown: shown)
+        let more = OverviewFormat.dailyMore(total: days.count, shown: shown)
         Card(padding: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -228,9 +247,11 @@ struct DailyTable: View {
                 if days.count > OverviewFormat.dailyPreview {
                     Rectangle().fill(Theme.border).frame(height: 1)
                     Button {
-                        withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            shown = more > 0 ? shown + OverviewFormat.dailyPage : OverviewFormat.dailyPreview
+                        }
                     } label: {
-                        Text(expanded ? "Show less" : "Show all \(days.count) days")
+                        Text(more > 0 ? "Show \(more) more" : "Show less")
                             .font(Theme.control).foregroundStyle(Theme.textSecondary)
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .contentShape(.rect)

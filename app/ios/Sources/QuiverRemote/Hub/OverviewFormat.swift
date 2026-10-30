@@ -129,12 +129,19 @@ enum OverviewFormat {
 
     // MARK: Daily table
 
-    /// The table shows this many days before "Show all".
+    /// The table shows this many days first, then `dailyPage` more a tap.
     static let dailyPreview = 10
+    static let dailyPage = 30
 
-    /// The rows on screen: the newest `dailyPreview` until expanded.
-    static func dailyRows(_ days: [OverviewResponse.Day], expanded: Bool) -> [OverviewResponse.Day] {
-        expanded ? days : Array(days.prefix(dailyPreview))
+    /// The rows on screen: the newest `shown`.
+    static func dailyRows(_ days: [OverviewResponse.Day], shown: Int) -> [OverviewResponse.Day] {
+        Array(days.prefix(max(0, shown)))
+    }
+
+    /// What the next "Show N more" adds; 0 once every day is shown,
+    /// and the button reads "Show less".
+    static func dailyMore(total: Int, shown: Int) -> Int {
+        min(dailyPage, max(0, total - shown))
     }
 
     /// One row's cells: date, total, input, output, cached, spend.

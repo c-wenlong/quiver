@@ -403,11 +403,14 @@ final class OverviewFormatTests: XCTestCase {
         XCTAssertNil(OverviewFormat.shortDay("junk", locale: en))
     }
 
-    func testDailyTableShowsTenUntilExpanded() throws {
+    func testDailyTablePagesInThirties() throws {
         let days = (1...14).map { OverviewResponse.Day(date: String(format: "2026-01-%02d", 15 - $0), tokens: $0, costUsd: 0) }
-        XCTAssertEqual(OverviewFormat.dailyRows(days, expanded: false).count, 10)
-        XCTAssertEqual(OverviewFormat.dailyRows(days, expanded: false).first?.date, "2026-01-14")
-        XCTAssertEqual(OverviewFormat.dailyRows(days, expanded: true).count, 14)
+        XCTAssertEqual(OverviewFormat.dailyRows(days, shown: 10).count, 10)
+        XCTAssertEqual(OverviewFormat.dailyRows(days, shown: 10).first?.date, "2026-01-14")
+        XCTAssertEqual(OverviewFormat.dailyRows(days, shown: 40).count, 14)
+        XCTAssertEqual(OverviewFormat.dailyMore(total: 14, shown: 10), 4)
+        XCTAssertEqual(OverviewFormat.dailyMore(total: 400, shown: 10), 30)
+        XCTAssertEqual(OverviewFormat.dailyMore(total: 400, shown: 400), 0)
         let body = try UsageFixtures.decode(UsageFixtures.overview, as: OverviewResponse.self)
         XCTAssertEqual(OverviewFormat.dailyCells(try XCTUnwrap(body.days?.first)),
                        ["2026-01-08", "3.0M", "100K", "50.0K", "2.9M", "$200.00"])
