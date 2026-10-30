@@ -40,6 +40,23 @@ class ConfigRoundTripTest(unittest.TestCase):
         self.load.start(); self.save.start()
         self.addCleanup(self.load.stop); self.addCleanup(self.save.stop)
 
+    def test_a_list_section_that_is_not_an_object_reads_as_unset(self):
+        """`swe config set list 5` is accepted, and every `swe list` then
+        died calling .get on the 5."""
+        for bad in (5, "cols", ["desc"]):
+            self.store.clear()
+            self.store["list"] = bad
+            self.assertEqual(C.load_columns(), list(C.DEFAULT_COLUMNS))
+            self.assertEqual(C.load_window(), C.DEFAULT_WINDOW)
+            C.save_window(30)
+            self.assertEqual(C.load_window(), 30)
+
+    def test_wrong_typed_column_entries_are_ignored(self):
+        self.store["list"] = {"columns": [["desc"], {"k": 1}, "version"]}
+        self.assertEqual(C.load_columns(), ["mark", "name", "version"])
+        self.store["list"] = {"columns": "version"}
+        self.assertEqual(C.load_columns(), list(C.LOCKED))
+
     def test_unset_config_returns_the_default_set(self):
         self.assertEqual(C.load_columns(), list(C.DEFAULT_COLUMNS))
 

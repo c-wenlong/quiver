@@ -535,14 +535,16 @@ class RemoteAgent:
             # A permanent refusal — pre-roles satellites pair as phones
             # and the binding gate rejects them forever, so explain
             # once instead of letting the retry loop look flaky.
-            detail = ""
-            if isinstance(reply, dict):
-                detail = str(reply.get("message") or "")
+            # The hub answers {"error": {"code", "message"}}.
+            err = reply.get("error") if isinstance(reply, dict) else None
+            detail = str(err.get("message") or "") \
+                if isinstance(err, dict) else ""
             self._register_denied = detail or "forbidden"
             print(
                 "swe remote agent: the hub refused this credential "
-                f"(403 {self._register_denied}); re-pair this machine "
-                "with `swe remote pair --hub <url> --token <token>`",
+                f"(403 {self._register_denied}); re-pair this machine: "
+                "run `swe remote pair` on the hub, then "
+                "`swe remote agent --hub=<url> --token=<token>` here",
                 file=sys.stderr,
             )
         if status == 200:
