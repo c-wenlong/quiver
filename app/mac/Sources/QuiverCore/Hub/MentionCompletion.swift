@@ -80,7 +80,10 @@ public enum Mention {
 
     /// `@"` at the start of the text or after whitespace, with no quote or
     /// newline between it and the caret. It runs to its closing quote, or,
-    /// left open, to the end of the word the caret is in.
+    /// left open, to the end of the word the caret is in. Only a quote
+    /// that closes a word counts as its closing one: after a folder pick
+    /// the quote stays open, and `say "hello"` later in the line opens a
+    /// quote of its own, which the pick must not swallow.
     private static func quotedToken(_ chars: [Character], caret: Int) -> MentionToken? {
         var q = caret - 1
         while q >= 0, chars[q] != "\"", !chars[q].isNewline { q -= 1 }
@@ -89,13 +92,20 @@ public enum Mention {
         guard start == 0 || chars[start - 1].isWhitespace else { return nil }
         var end = caret
         while end < chars.count, chars[end] != "\"", !chars[end].isNewline { end += 1 }
-        if end < chars.count, chars[end] == "\"" {
+        if end < chars.count, chars[end] == "\"", closesWord(chars, at: end) {
             end += 1
         } else {
             end = caret
             while end < chars.count, !chars[end].isWhitespace { end += 1 }
         }
         return MentionToken(start: start, end: end, query: String(chars[(q + 1)..<caret]))
+    }
+
+    /// The quote at `i` ends a word: text before it, and whitespace or
+    /// the end after it.
+    private static func closesWord(_ chars: [Character], at i: Int) -> Bool {
+        guard i > 0, !chars[i - 1].isWhitespace else { return false }
+        return i + 1 == chars.count || chars[i + 1].isWhitespace
     }
 
     /// The draft after picking `path`, and where the caret goes. A file

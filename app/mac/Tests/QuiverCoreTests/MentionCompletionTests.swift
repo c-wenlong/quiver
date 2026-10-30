@@ -101,6 +101,19 @@ import Testing
         #expect(inside?.text == "@\"My Documents/notes.txt\" ")
     }
 
+    @Test func aFolderPickBeforeAQuotedWordKeepsTheWordsAfterIt() {
+        // Caret after "@my", then a folder with a space, then a file in it:
+        // the quote before "hello" opens a word of its own.
+        let text = "open @my and say \"hello\""
+        let dir = insert(text, cursor: 8, "My Documents", dir: true)
+        #expect(dir?.text == "open @\"My Documents/ and say \"hello\"")
+        #expect(Mention.token(in: dir!.text, cursor: dir!.cursor)
+            == MentionToken(start: 5, end: dir!.cursor, query: "My Documents/"))
+        let file = insert(dir!.text, cursor: dir!.cursor, "My Documents/note.txt")
+        #expect(file?.text == "open @\"My Documents/note.txt\" and say \"hello\"")
+        #expect(file?.cursor == 30)
+    }
+
     @Test func splitsTheNameFromItsFolder() {
         #expect(Mention.split("src/app/main.py") == (name: "main.py", parent: "src/app"))
         #expect(Mention.split("README.md").parent == "")
