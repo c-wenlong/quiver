@@ -598,7 +598,7 @@ private struct IncidentView: View {
                         .plainButton(cornerRadius: Theme.smallRadius)
                         .font(Theme.font(size: 11))
                         .foregroundStyle(Theme.textSecondary)
-                        .help(url.absoluteString)
+                        .hoverTip(url.absoluteString, replacesLabel: false)
                 }
             }
             Text(meta).font(Theme.caption).foregroundStyle(Theme.textSecondary)

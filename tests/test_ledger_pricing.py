@@ -157,6 +157,45 @@ class TestLoading(unittest.TestCase):
         # The download replaces the snapshot rather than adding to it.
         self.assertEqual(cat.resolve("claude-opus-5", None)[0], "unpriced")
 
+    def test_a_certificate_failure_retries_against_the_os_bundle(self):
+        # python.org builds have no CA store of their own: the download
+        # must retry against the OS bundle (still verified), not fall
+        # back to the snapshot for good.
+        import ssl
+        import urllib.error
+
+        from quiver.remote import agent as agent_mod
+
+        home = Path(tempfile.mkdtemp())
+        listing = {f"model-{i}": {"input_cost_per_token": 1e-06, "output_cost_per_token": 2e-06}
+                   for i in range(120)}
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return json.dumps(listing).encode()
+
+        bundle = object()
+        calls = []
+
+        def urlopen(req, timeout=None, context=None):
+            calls.append(context)
+            if context is None:
+                raise urllib.error.URLError(ssl.SSLCertVerificationError("no CA"))
+            return Resp()
+
+        with patch.object(agent_mod, "_fallback_ctx", None), \
+             patch("quiver.harness.rate_limits._verified_context", return_value=bundle), \
+             patch.object(pricing.urllib.request, "urlopen", side_effect=urlopen):
+            cat = load_catalog(home)
+        self.assertEqual(calls, [None, bundle])
+        self.assertEqual(cat.resolve("model-7", None)[0], "priced")
+
     def test_a_short_or_broken_download_keeps_the_snapshot(self):
         home = Path(tempfile.mkdtemp())
 

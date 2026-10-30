@@ -1,7 +1,6 @@
 """sessionmeta.py and the pin/title routes: store, overlay, hub dispatch."""
 
 import json
-import tempfile
 import threading
 import time
 import unittest
@@ -10,12 +9,13 @@ from pathlib import Path
 
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import protocol, sessionmeta
+from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server, _session
 
 
 class TestStore(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def test_pin_round_trip_and_order(self):
         sessionmeta.set_pinned(self.home, "claude:a", True, now=10.0)
@@ -122,7 +122,7 @@ def _note_lock(cat):
 
 class TestLimitsAndRaces(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def test_full_store_evicts_other_rename_not_the_write(self):
         with mock.patch.object(sessionmeta, "MAX_ENTRIES", 3):
@@ -306,6 +306,9 @@ class TestRoutes(unittest.TestCase):
         _s, data = self.srv.request("GET", "/v1/search?q=Release",
                                     headers=self.hdr)
         self.assertEqual(_s, 200)
+        # Search finds the session by its new name.
+        self.assertIn("claude:a1",
+                      [r["key"] for r in json.loads(data)["results"]])
         status, body = self.post("claude:a1", "title", {"title": ""})
         self.assertEqual(body["title"], "test")
         self.assertEqual(self.rows()["claude:a1"]["title"], "test")

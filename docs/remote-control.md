@@ -328,6 +328,8 @@ One schema for phone↔hub and satellite↔hub (satellites forward the same
 events upstream and receive command envelopes downstream):
 
 ```
+GET  /v1/status                      reachability check {ok, v}; no credential needed
+GET  /v1/events                      SSE stream of every session's events; Last-Event-ID or ?last=seq resumes
 GET  /v1/sessions                    catalog: SessionRow shape + machine + ownership
 GET  /v1/sessions/{id}/events        SSE stream; ?last=seq replays journal
 GET  /v1/sessions/{id}/commands      the "/" menu: commands this session's harness will run
@@ -369,6 +371,14 @@ GET  /v1/devices/me                  this device's row: kind, model, client, os,
 POST /v1/devices/rename              {name} → this device's display_name; "" clears it
 GET  /v1/ssh                         SSH console setup: user, port, listening, host_keys, this device's key
 POST /v1/ssh/key                     {public_key} ("" clears) → stored on the device, authorized_keys synced
+
+# satellite credentials only, each bound to one machine id
+POST /v1/agent/register              {machine} → binds the credential to machine.id (never the hub's own)
+GET  /v1/agent/commands?machine=     SSE stream of commands queued for that machine
+POST /v1/agent/events                {machine_id, events[]} the satellite's transcript events
+POST /v1/agent/catalog               {machine_id, rows[], slash?} the satellite's session rows
+POST /v1/agent/usage                 {machine_id, harnesses, window_days, ...} its rows for /v1/usage
+GET  /v1/agent/attachments/{key}/{ref}  pull a file the hub staged for one of the machine's sessions
 ```
 
 Events: `message.appended`, `message.delta` (tier A only),

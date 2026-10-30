@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Optional FastMCP server exposing recent AI sessions as an MCP tool.
 
-Requires the optional ``mcp`` dependency: ``pip install quiver[server]``.
+Requires the optional ``mcp`` dependency: ``pip install -e ".[server]"``
+from a Quiver checkout. Not ``pip install quiver[server]``: the PyPI
+package named quiver is an unrelated project.
 """
 import sys
 import time
@@ -16,8 +18,9 @@ try:
     from mcp.server.fastmcp import FastMCP
 except ImportError:
     print(
-        "The 'mcp' package is required to run the MCP server. "
-        "Please run: pip install quiver[server]",
+        "The 'mcp' package is required to run the MCP server. From your "
+        "Quiver checkout, run: pip install -e \".[server]\" "
+        "(the PyPI package named quiver is a different project).",
         file=sys.stderr,
     )
     sys.exit(1)

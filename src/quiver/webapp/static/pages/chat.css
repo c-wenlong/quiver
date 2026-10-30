@@ -385,6 +385,12 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
   background: transparent; padding: 8px 6px; line-height: 1.4; font-size: 14px;
 }
 .chat-text:focus-visible { outline: none; }
+/* A placeholder stays on one line: on a phone the observed session's
+ * "Read-only until this session is attached" would wrap inside the
+ * one-line box, and Chrome counts it in scrollHeight, so growComposer
+ * showed a clipped second line and a scrollbar. */
+.chat-text:placeholder-shown { overflow: hidden; }
+.chat-text::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-text:disabled { cursor: not-allowed; }
 .chat-mode { flex: none; height: 36px; }
 .chat-clip { flex: none; border: 0; background: transparent; color: var(--text-secondary); }

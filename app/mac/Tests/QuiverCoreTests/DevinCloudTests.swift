@@ -118,49 +118,6 @@ private final class Statuses: Sendable {
     }
 }
 
-/// Parks the first `pass()` until `release()`; later calls go straight
-/// through. Parking and announcing happen in one locked section.
-private final class ParkFirstCall: Sendable {
-    private struct State {
-        var used = false
-        var parked: CheckedContinuation<Void, Never>?
-        var didPark = false
-        var waiter: CheckedContinuation<Void, Never>?
-    }
-    private let state = Mutex(State())
-
-    func pass() async {
-        let park = state.withLock { s -> Bool in
-            defer { s.used = true }
-            return !s.used
-        }
-        guard park else { return }
-        await withCheckedContinuation { continuation in
-            state.withLock { s in
-                s.parked = continuation
-                s.didPark = true
-                s.waiter?.resume()
-                s.waiter = nil
-            }
-        }
-    }
-
-    func waitUntilParked() async {
-        await withCheckedContinuation { continuation in
-            state.withLock { s in
-                if s.didPark { continuation.resume() } else { s.waiter = continuation }
-            }
-        }
-    }
-
-    func release() {
-        state.withLock { s in
-            s.parked?.resume()
-            s.parked = nil
-        }
-    }
-}
-
 /// Collects what `onChanged` was handed, in order.
 private final class Changes: Sendable {
     private let list = Mutex<[[String]]>([])
@@ -474,16 +431,27 @@ private final class Changes: Sendable {
         let api = FakeDevinAPI()
         standardRoutes(api)
         let statuses = Statuses()
-        let gate = ParkFirstCall()
+        // Only the first onChanged parks: the newer sync fails at /v3/self
+        // and should never get there, but if it does it must not hang.
+        let gate = HoldGate()
+        let changes = Mutex(0)
         let sync = DevinCloudSync(
             directory: dir.url, credentials: { .init(token: "cog_test", orgId: nil) },
-            transport: api, onChanged: { _ in await gate.pass() }, onStatus: { statuses.record($0) })
+            transport: api,
+            onChanged: { _ in
+                let first = changes.withLock { n -> Bool in
+                    n += 1
+                    return n == 1
+                }
+                if first { try? await gate.pass() }
+            },
+            onStatus: { statuses.record($0) })
         // The older sync succeeds and parks inside onChanged.
         let older = Task { await sync.sync() }
-        await gate.waitUntilParked()
+        #expect(await gate.arrived())
         api.route("/v3/self", "{}", status: 500)
         await sync.sync()
-        gate.release()
+        gate.open()
         await older.value
         #expect(statuses.values.count == 1)
         #expect(statuses.values.first??.contains("500") == true)

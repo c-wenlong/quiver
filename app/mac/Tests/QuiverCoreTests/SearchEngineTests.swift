@@ -184,8 +184,10 @@ import Testing
         let temp = try TempDir()
         _ = try seeded(temp)
 
+        // Two seeded sessions match; a limit below one still answers one.
+        #expect(try engine(temp).search(query: "ledger").count == 2)
         #expect(try engine(temp).search(query: "ledger", limit: 1).count == 1)
-        #expect(try engine(temp).search(query: "ledger", limit: 0).count <= 1)
+        #expect(try engine(temp).search(query: "ledger", limit: 0).count == 1)
     }
 
     @Test func anEmptyOrSeparatorQueryAnswersNothing() throws {

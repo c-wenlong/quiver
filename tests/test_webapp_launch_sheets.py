@@ -19,7 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.test_webapp import app_js_function
+from tests.test_webapp import MANAGE_JS, app_js_function
 
 PAGES = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages"
 
@@ -167,12 +167,14 @@ const picked = (sel) => { const o = sel && optionsOf(sel).find((x) => x[0] === s
 const choose = (sel, label) => { sel.value = optionsOf(sel).find((x) => x[1] === label)[0]; sel.onchange(); };
 """
 
-STUB += app_js_function("currentRoute")
+STUB += app_js_function("currentRoute") + app_js_function("bindSearch", MANAGE_JS)
 
 MENU_JS = (Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/model-menu.js")
 
 # Writes go through app.js's own send(), over the stubbed fetch.
 STUB += app_js_function("apiSend") + "const apiPost = (path, body) => apiSend(\"POST\", path, body);\n"
+# GhUI.failMessage is failText ending "then refresh".
+STUB += app_js_function("failText")
 
 # The four harnesses every flow offers: claude and codex take a model
 # pick and have recent models, gemini takes none, and pi is what an old
@@ -188,6 +190,9 @@ const harnesses = [
   { name: "pi", display_name: "Pi", tracked: true,
     launch_model: true, launch_effort: false, last_model: "pi-model" }];
 """
+
+# Sheets on <body> are app.js's bodySheets, closed by route().
+STUB += app_js_function("bodySheet") + app_js_function("closeRouteSheets")
 
 # tasks.js: detail of a github issue, open "New agent session", walk the
 # menu, post, and watch the body and the sheet.
@@ -279,6 +284,7 @@ fetchRoutes.push(
   await tick();
   const d = created.get("gh-pr-sheet");
   out.sheetOpened = !!d;
+  out.routeSheet = "routeSheet" in d.dataset; // route() closes it on navigation
   const q = (s) => d.querySelector(s);
   const harness = (h) => { q("#gh-session-harness").value = h; q("#gh-session-harness").onchange(); };
   q("#gh-session-open").onclick();
@@ -391,6 +397,7 @@ ISSUE_FLOW = ISSUE_SETUP + r"""
   await tick();
   const d = created.get("gh-issue-sheet");
   out.sheetOpened = !!d && d.open;
+  out.routeSheet = "routeSheet" in d.dataset;
   const q = (s) => d.querySelector(s);
   out.body = d._html.includes("It <strong>breaks</strong> on save.");
   out.comment = d._html.includes("Same here") && d._html.includes("Comments · 1");
@@ -745,6 +752,7 @@ class TestLaunchModelMenu(unittest.TestCase):
         out = self.run_flow("repositories.js", REPOS_FLOW)
         self.assert_walk(out)
         self.assertTrue(out["sheetOpened"])
+        self.assertTrue(out["routeSheet"], "the PR sheet is a bodySheet")
         self.assertEqual(out["postCwd"], "/tmp/wt")
         self.assertEqual(out["freshPrefill"], "gpt-5-codex")
         self.assertTrue(out["boxGone"])
@@ -755,6 +763,7 @@ class TestLaunchModelMenu(unittest.TestCase):
         self.assert_walk(out)
         self.assertTrue(out["rowIsButton"], "an issue row opens the sheet, not github.com")
         self.assertTrue(out["sheetOpened"])
+        self.assertTrue(out["routeSheet"], "the issue sheet is a bodySheet")
         self.assertTrue(out["body"], "the body renders as markdown")
         self.assertTrue(out["comment"])
         self.assertTrue(out["github"], "Open on GitHub stays")

@@ -8,28 +8,6 @@
  * nothing here comes from skills.js (its CSS classes do). */
 "use strict";
 
-/* `~/…` for a path under the hub's home. */
-function agentsPath(path, home) {
-  return home && path.startsWith(home + "/") ? "~" + path.slice(home.length) : path;
-}
-
-/* HarnessMarkView: the logo, a word after it when the logo is shared,
- * or the name alone when there is no logo. */
-function agentsMark(h) {
-  const name = Fmt.harnessName(h);
-  const has = (id) => Fmt.logo(id).startsWith("<img");
-  let inner;
-  if (h === "claude") inner = `${Fmt.logo("claude")}<span>CLI</span>`;
-  else if (h === "claude-desktop") inner = `${Fmt.logo("claude")}<span>Desktop</span>`;
-  else if (has(h)) inner = Fmt.logo(h);
-  else {
-    const dash = h.lastIndexOf("-");
-    const base = dash > 0 ? h.slice(0, dash) : "", suffix = dash > 0 ? h.slice(dash + 1) : "";
-    inner = base && suffix && has(base) ? `${Fmt.logo(base)}<span>${esc(suffix)}</span>` : `<span>${esc(name)}</span>`;
-  }
-  return `<span class="sk-mark" title="${esc(name)}" aria-label="${esc(name)}">${inner}</span>`;
-}
-
 const agentsPage = {
   // Global and Project reads count separately, so finishing one never
   // drops the other's answer.
@@ -168,10 +146,10 @@ function agentsGlobal(d) {
     ${p.runError ? `<p class="error ag-run-error" role="alert">${esc(p.runError)}</p>` : ""}
   </div>`;
   let inner;
-  if (!d.agents_file_exists) inner = `<p class="empty">${esc(agentsPath(d.agents_file, d.home))} doesn't exist yet. Link with swe init writes it.</p>`;
+  if (!d.agents_file_exists) inner = `<p class="empty">${esc(Fmt.tilde(d.agents_file, d.home))} doesn't exist yet. Link with swe init writes it.</p>`;
   else if (d.text == null) inner = '<p class="caption">Can\'t preview this file.</p>';
   else inner = `<pre class="sk-text ag-text">${esc(d.text)}</pre>`;
-  return strip + agentsDoc(agentsPath(d.agents_file, d.home),
+  return strip + agentsDoc(Fmt.tilde(d.agents_file, d.home),
     linked === 1 ? "Linked into 1 harness" : `Linked into ${linked} harnesses`, inner);
 }
 
@@ -228,8 +206,8 @@ function agentsLinkRow(h, home) {
   const s = h.instructions.state, title = agentStateTitle(s);
   const color = s === "linked" ? "linked" : agentBlocked(s) ? "danger" : agentInitFixes(s) ? "fixes" : "other";
   const name = Fmt.harnessName(h.name);
-  return `<span class="ag-link" title="${esc(name)}, ${esc(title.toLowerCase())}: ${esc(agentsPath(h.instructions.path, home))}"
-      aria-label="${esc(name)}: ${esc(title)}"><span class="ag-dot ${color}" aria-hidden="true"></span>${agentsMark(h.name)}${
+  return `<span class="ag-link" title="${esc(name)}, ${esc(title.toLowerCase())}: ${esc(Fmt.tilde(h.instructions.path, home))}"
+      aria-label="${esc(name)}: ${esc(title)}"><span class="ag-dot ${color}" aria-hidden="true"></span>${Fmt.markView(h.name, "sk-mark")}${
     s === "linked" ? "" : `<span class="caption">${esc(title.toLowerCase())}</span>`}</span>`;
 }
 

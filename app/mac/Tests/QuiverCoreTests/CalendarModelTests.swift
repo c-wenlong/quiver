@@ -2,7 +2,8 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
-private struct FakeActivity: ActivityProviding {
+/// Shared with MonthLayoutTests.
+struct FakeActivity: ActivityProviding {
     var blocks: [ActivityBlock]
     /// Like the ledger, only blocks overlapping the range come back.
     func activityBlocks(in range: DateInterval, gap: TimeInterval,

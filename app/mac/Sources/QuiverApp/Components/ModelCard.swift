@@ -105,15 +105,15 @@ struct ModelCard: View {
         }
     }
 
-    /// The list price as input, output and cache-read tiles; the hover
-    /// names the LiteLLM key they came from.
+    /// The list price as input, output and cache-read tiles. The card
+    /// takes no hover, so the LiteLLM key they came from is left to the
+    /// table's Cost column tip.
     private func priceTiles() -> some View {
         HStack(spacing: 6) {
             priceTile("Input", row.listPrice?.input, highlighted: true)
             priceTile("Output", row.listPrice?.output)
             priceTile("Cache read", row.listPrice?.cacheRead)
         }
-        .help(row.listPrice.map { "\($0.key) in the price list" } ?? "No LiteLLM price for this model")
     }
 
     private func priceTile(_ label: String, _ price: Double?,

@@ -23,6 +23,7 @@ from quiver.remote import agent as agent_mod
 from quiver.remote import detach, inject, protocol, supervise
 from quiver.sessions.models import Session
 
+from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server
 
 
@@ -218,8 +219,8 @@ class TestPendingDetaches(unittest.TestCase):
 
     def test_probed_idle_status_nudges_hub_and_satellite_detaches(self):
         from quiver.remote.hub import HubState
-        state = HubState(Path(tempfile.mkdtemp()))
-        ag = agent_mod.RemoteAgent("http://h:1", "c", Path(tempfile.mkdtemp()))
+        state = HubState(temp_dir(self))
+        ag = agent_mod.RemoteAgent("http://h:1", "c", temp_dir(self))
         for owner in (state, ag):
             with patch.object(owner.detaches, "nudge") as nudge, \
                  patch.object(owner.catalog, "note_status") as note:
@@ -517,7 +518,7 @@ class TestKeptTmuxSessions(unittest.TestCase):
     """keep, adopt and reap against a real, private tmux server."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.socket = f"qv-test-{secrets.token_hex(4)}"
         # The socket file goes in a scratch folder, removed afterwards.
         sockets = tempfile.mkdtemp(prefix="qvt", dir="/tmp")
@@ -670,7 +671,7 @@ class TestKeptRecordsWithFakes(unittest.TestCase):
     """Record moves and the reaper's edge cases, no tmux needed."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:s1"
         self.name = supervise.tmux_name(self.key)
         self.alive = {self.name: True}
@@ -826,7 +827,7 @@ class TestKeptRecordsWithFakes(unittest.TestCase):
         # A fork from the kept session (or any launch) in its folder
         # leaves a pending marker; the kept key must not be bound to
         # that new pane, even when its transcript looks new enough.
-        proj = Path(tempfile.mkdtemp())
+        proj = temp_dir(self)
         key = protocol.session_key("claude", "s1", str(proj))
         supervise._save_kept(self.home, {key: dict(
             _tmux_meta(self.name), cwd=str(proj), pane_pid=4242,
@@ -860,7 +861,7 @@ class TestKeptRecordsWithFakes(unittest.TestCase):
 
 class TestSatelliteDetachModes(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.agent = agent_mod.RemoteAgent("http://hub", "cred",
                                            home=self.home)
         self.addCleanup(self.agent._stop.set)

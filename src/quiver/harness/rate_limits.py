@@ -2366,9 +2366,19 @@ def _cursor_session_cookie(token: str, claims: dict) -> str | None:
     return f"WorkosCursorSessionToken={value}"
 
 
+# The last second of year 9999: no real Cursor timestamp lies past it, and
+# datetime cannot hold one that does.
+_CURSOR_MAX_EPOCH = 253_402_300_799.0
+# A usage event stamped further ahead than this is junk, not clock skew.
+_CURSOR_EVENT_MAX_AHEAD = 24 * 60 * 60
+
+
 def _cursor_ms_to_epoch(value) -> float:
     """Cursor sends epoch milliseconds as decimal strings; accept a bare
-    number too. ``bool`` is excluded because it subclasses ``int``."""
+    number too. ``bool`` is excluded because it subclasses ``int``. A value
+    past year 9999 reads as 0.0 (unknown), like any other junk: the Mac
+    app turns these into Int64 milliseconds, which traps far below the
+    largest float."""
     if isinstance(value, bool):
         return 0.0
     if isinstance(value, str):
@@ -2381,7 +2391,8 @@ def _cursor_ms_to_epoch(value) -> float:
         return 0.0
     if not math.isfinite(number) or number <= 0:
         return 0.0
-    return number / 1000 if number > 100_000_000_000 else number
+    seconds = number / 1000 if number > 100_000_000_000 else number
+    return seconds if seconds <= _CURSOR_MAX_EPOCH else 0.0
 
 
 def _parse_cursor_usage(data: dict) -> RateLimitInfo | None:
@@ -2564,9 +2575,13 @@ def _cursor_email(state_db: str | None, token: str, claims: dict) -> str | None:
     for row in rows:
         profile = row.get("cursorAuth/cachedScopedProfile")
         try:
-            auth_id = json.loads(profile).get("authId") if profile else None
+            parsed = json.loads(profile) if profile else None
         except (ValueError, RecursionError):
-            auth_id = None
+            parsed = None
+        # The row is the editor's to write: JSON that is not an object
+        # (a list, a string) used to raise AttributeError here, which threw
+        # away the whole Cursor reading over a display-only email.
+        auth_id = parsed.get("authId") if isinstance(parsed, dict) else None
         if isinstance(auth_id, str) and auth_id and auth_id == claims.get("sub"):
             return row.get("cursorAuth/cachedEmail")
     return None
@@ -2723,15 +2738,20 @@ _CURSOR_USAGE_EVENTS_MAX_PAGES = 50
 _CURSOR_USAGE_EVENTS_CHUNK = 7 * 24 * 60 * 60
 
 
-def _usage_event_fields(event: dict) -> dict | None:
+def _usage_event_fields(event: dict, now: float | None = None) -> dict | None:
     """One ``usageEventsDisplay`` entry mapped to the CLI's keys.
 
     ``tokenUsage`` is a per-request counter, so missing fields are zeros,
     not unknowns. ``totalCents`` is the charge Cursor itself computed, in
-    US cents; absent means unpriced rather than free.
+    US cents; absent means unpriced rather than free. An event stamped more
+    than a day past ``now`` is dropped: the Mac app's feed takes the newest
+    event time as where the next poll starts, so one would hide every real
+    event after it.
     """
     timestamp = _cursor_ms_to_epoch(event.get("timestamp"))
     if not timestamp:
+        return None
+    if now is not None and timestamp > now + _CURSOR_EVENT_MAX_AHEAD:
         return None
     usage = event.get("tokenUsage")
     usage = usage if isinstance(usage, dict) else {}
@@ -2881,7 +2901,7 @@ def fetch_cursor_usage_events(
                 return "unavailable", [], account_id
             for row in rows:
                 if isinstance(row, dict):
-                    mapped = _usage_event_fields(row)
+                    mapped = _usage_event_fields(row, now)
                     if mapped is not None:
                         events.append(mapped)
             if len(rows) < _CURSOR_USAGE_EVENTS_PAGE_SIZE:

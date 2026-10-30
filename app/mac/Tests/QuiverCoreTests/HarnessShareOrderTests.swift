@@ -11,9 +11,9 @@ struct HarnessShareOrderTests {
     }
 
     @Test func biggestSpenderComesFirst() {
-        // October's Settings order and spend.
-        let shares = [share("claude", cost: 8102), share("codex", cost: 1973), share("devin", cost: 3725),
-                      share("cursor", cost: 1225), share("opencode", cost: 0.05), share("grok-bot", cost: 1417)]
+        // Made-up spend for a heavy month, in Settings order.
+        let shares = [share("claude", cost: 8150), share("codex", cost: 1950), share("devin", cost: 3750),
+                      share("cursor", cost: 1250), share("opencode", cost: 0.05), share("grok-bot", cost: 1400)]
         #expect(shares.sortedBySpend().map(\.harness) == ["claude", "devin", "codex", "grok-bot", "cursor", "opencode"])
     }
 

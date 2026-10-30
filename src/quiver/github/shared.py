@@ -17,7 +17,6 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -183,9 +182,5 @@ def env_after(home: Path | None, entries: list[dict],
     return probe(home, refresh=refresh)
 
 
-def fan(names: list[str], fetch: Callable[[str], Any]) -> list[Any]:
-    """One worker per repo, at most eight, as ``swe gh`` fans out."""
-    if len(names) <= 1:
-        return [fetch(n) for n in names]
-    with ThreadPoolExecutor(max_workers=min(8, len(names))) as pool:
-        return list(pool.map(fetch, names))
+# One worker per repo, at most eight: ``swe gh``'s own fan-out.
+fan = ghcli._fan

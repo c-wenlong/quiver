@@ -15,14 +15,15 @@ import os
 import socket
 import struct
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from quiver.remote import hub as hub_mod
 from quiver.remote import peer
 
+from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server, _session
 
 _PHONE_IP = "100.64.0.9"
@@ -144,7 +145,7 @@ class TestOwnNode(_Owner):
 
 class TestConfigureOwnNode(unittest.TestCase):
     def setUp(self):
-        self.state = hub_mod.HubState(Path(tempfile.mkdtemp()))
+        self.state = hub_mod.HubState(temp_dir(self))
         self.state.whois = MagicMock(return_value=dict(_PEERS[_HUB_IP]))
 
     def test_behind_serve(self):
@@ -193,7 +194,7 @@ def _proc_line(local, remote, uid, v6=False):
 
 class TestLinux(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = temp_dir(self)
 
     def write(self, name, *lines):
         (self.root / name).write_text(_PROC_HEAD + "".join(lines))
@@ -281,12 +282,36 @@ class TestDarwin(unittest.TestCase):
         ok_path.assert_called_once_with(path)
 
     def test_app_store_binary_needs_a_root_owned_bundle(self):
-        app = Path(tempfile.mkdtemp()) / "Tailscale.app"
+        app = temp_dir(self) / "Tailscale.app"
         exe = app / "Contents" / "MacOS" / "Tailscale"
         exe.parent.mkdir(parents=True)
         exe.write_text("")
-        owned_by_root = os.stat(app).st_uid == 0
-        self.assertEqual(peer.app_store_binary(str(exe), str(app)), owned_by_root)
+        # Ownership can't be given away without root: fake what stat
+        # reports for the bundle and the binary, (uid, mode) each.
+        real_stat = os.stat
+        owners = {}
+
+        def stat(path, *args, **kwargs):
+            st = real_stat(path, *args, **kwargs)
+            if str(path) in owners:
+                uid, mode = owners[str(path)]
+                return SimpleNamespace(st_uid=uid, st_mode=mode)
+            return st
+
+        def check(bundle, binary):
+            owners[str(app)] = bundle
+            owners[os.path.realpath(exe)] = binary
+            with patch.object(peer.os, "stat", side_effect=stat):
+                return peer.app_store_binary(str(exe), str(app))
+
+        root_dir, root_exe = (0, 0o40755), (0, 0o100755)
+        self.assertTrue(check(root_dir, root_exe))
+        self.assertFalse(check((501, 0o40755), root_exe))
+        self.assertFalse(check(root_dir, (501, 0o100755)))
+        self.assertFalse(check((0, 0o40775), root_exe))  # group-writable
+        self.assertFalse(check(root_dir, (0, 0o100757)))  # world-writable
+        # Paths outside the bundle never count, whoever owns them.
+        owners.clear()
         self.assertFalse(peer.app_store_binary("/tmp/Tailscale", str(app)))
         self.assertFalse(peer.app_store_binary(str(app) + "x/evil", str(app)))
 

@@ -8,7 +8,6 @@ Repo resolution is ``--repo=`` first, the working directory's remote
 second, then every pinned repo — so a bare ``swe gh pr`` is the dashboard.
 """
 
-import json
 import re
 import sys
 import time
@@ -17,7 +16,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quiver import paths
 from quiver.console import c, sanitize, sanitize_document, truncate
 from quiver.flags import expand_value_flags
 from quiver.github import catalog, gh, manage, repos
@@ -1165,11 +1163,13 @@ def _limit(opts: dict, default: int = 30) -> int:
     return max(1, min(n, 200))
 
 
-def _fan(names: list[str], fetch) -> list[dict]:
-    """One ``gh`` subprocess per repo, overlapped — GitHub latency
-    dominates, so serial fetches cost pins × per-call seconds."""
-    if len(names) == 1:
-        return [fetch(names[0])]
+def _fan(names: list[str], fetch) -> list:
+    """One ``gh`` subprocess per repo, overlapped, at most eight at once
+    — GitHub latency dominates, so serial fetches cost pins × per-call
+    seconds. The hub's GitHub surfaces fan out through this too
+    (``shared.fan``). No names, no pool: an empty pool can't be built."""
+    if len(names) <= 1:
+        return [fetch(n) for n in names]
     with ThreadPoolExecutor(max_workers=min(8, len(names))) as pool:
         return list(pool.map(fetch, names))
 

@@ -808,10 +808,11 @@ def server_summary(cfg: dict) -> str:
                 break
         return " ".join(sanitize(str(p)) for p in parts)
     if st == "wrapped":
-        args = cfg.get("args", [])
-        url = next((a for a in args if a.startswith("http")), "?")
-        url = scrub_url(url) if isinstance(url, str) else url
-        return f"wrapped → {sanitize(url)}"
+        # Hand-edited args can hold numbers (`"--port", 3334`): skip them
+        # rather than crash `swe mcp doctor` and discover on one entry.
+        url = next((a for a in cfg.get("args", [])
+                    if isinstance(a, str) and a.startswith("http")), "?")
+        return f"wrapped → {sanitize(scrub_url(url))}"
     return "unknown"
 
 

@@ -847,7 +847,7 @@ const PrFilter = (() => {
     bindDrag(panel);
     const search = document.getElementById("gh-search");
     if (search) {
-      search.oninput = () => { page.filter = search.value; GhUI.keepFocus("gh-search", paintDashboard); };
+      bindSearch(search, (text) => { page.filter = text; }, () => GhUI.keepFocus("gh-search", paintDashboard));
     }
   }
 
@@ -995,7 +995,8 @@ const PrFilter = (() => {
     const f = page.focus;
     const seq = ++f.seq; // newest read wins, as on the dashboard
     f.loading = true;
-    paintFocus();
+    // The minute poll comes through here too: keep the filter's caret.
+    GhUI.keepFocus("gh-search", paintFocus);
     const q = `repo=${encodeURIComponent(repo)}`;
     const { status, data } = await api(`/v1/app/repositories?${q}${refresh ? "&refresh=1" : ""}`);
     if (gen !== routeGen || page.focus !== f || seq !== f.seq) return;
@@ -1137,7 +1138,7 @@ const PrFilter = (() => {
     }
     bindRows(panel, paintFocus);
     const search = document.getElementById("gh-search");
-    if (search) search.oninput = () => { f.filter = search.value; GhUI.keepFocus("gh-search", paintFocus); };
+    if (search) bindSearch(search, (text) => { f.filter = text; }, () => GhUI.keepFocus("gh-search", paintFocus));
     const sentinel = panel.querySelector("[data-sentinel]");
     if (!sentinel) return;
     sentinel.onclick = () => { f.stalled.delete(sentinel.dataset.sentinel); advance(sentinel.dataset.sentinel); };
@@ -1158,16 +1159,12 @@ const PrFilter = (() => {
   /* ---------------------------------------------------------- PR sheet */
 
   function sheetEl() {
-    let dlg = document.getElementById("gh-pr-sheet");
-    if (!dlg) {
-      dlg = document.createElement("dialog");
-      dlg.className = "sheet gh-sheet";
-      dlg.id = "gh-pr-sheet";
-      dlg.setAttribute("aria-label", "Pull request");
+    const made = !document.getElementById("gh-pr-sheet");
+    const dlg = bodySheet("gh-pr-sheet", "sheet gh-sheet", "Pull request");
+    if (made) {
       // A click on the backdrop (the dialog box itself) closes it.
       dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
       dlg.addEventListener("close", () => { page.sheet = null; });
-      document.body.appendChild(dlg);
     }
     return dlg;
   }
@@ -1590,15 +1587,11 @@ const PrFilter = (() => {
    * in the sheet. A comment posts through the hub's own gh login (POST
    * /v1/issues/comment), as the Mac's posts through gh on the Mac. */
   function issueSheetEl() {
-    let dlg = document.getElementById("gh-issue-sheet");
-    if (!dlg) {
-      dlg = document.createElement("dialog");
-      dlg.className = "sheet gh-sheet";
-      dlg.id = "gh-issue-sheet";
-      dlg.setAttribute("aria-label", "Issue");
+    const made = !document.getElementById("gh-issue-sheet");
+    const dlg = bodySheet("gh-issue-sheet", "sheet gh-sheet", "Issue");
+    if (made) {
       dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
       dlg.addEventListener("close", () => { page.issue = null; });
-      document.body.appendChild(dlg);
     }
     return dlg;
   }
@@ -1906,18 +1899,14 @@ const PrFilter = (() => {
    * account's repos and orgs (the hub's synced catalog first, then
    * GitHub) and pin a hit. Typing is the search, after a 350 ms pause. */
   function addEl() {
-    let dlg = document.getElementById("gh-add-sheet");
-    if (!dlg) {
-      dlg = document.createElement("dialog");
-      dlg.className = "sheet gh-sheet gh-add-sheet";
-      dlg.id = "gh-add-sheet";
-      dlg.setAttribute("aria-label", "Pin a repository");
+    const made = !document.getElementById("gh-add-sheet");
+    const dlg = bodySheet("gh-add-sheet", "sheet gh-sheet gh-add-sheet", "Pin a repository");
+    if (made) {
       dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
       dlg.addEventListener("close", () => {
         if (page.add) clearTimeout(page.add.timer);
         page.add = null;
       });
-      document.body.appendChild(dlg);
     }
     return dlg;
   }
@@ -2122,11 +2111,10 @@ const PrFilter = (() => {
     }
   });
 
-  /* The PR sheet lives on <body>, outside the panel a route repaints, so
-   * leaving the page (Back, a sidebar link) has to close it here. */
+  /* The sheets live on <body> as app.js's bodySheets, so route() closes
+   * them on every navigation; the run menu and a stale action error go
+   * here. */
   window.addEventListener("hashchange", () => {
-    const here = currentRoute();
-    if (here !== "repositories") closeSheets();
     closeRunMenu();
     page.actionError = null;
   });
