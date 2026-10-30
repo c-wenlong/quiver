@@ -54,6 +54,21 @@ class PageContext:
         return self.state.machine
 
 
+def tilde(path: Path | str, home: Path | str | None = None) -> str:
+    """``path`` with ``home`` (the process's own when None) written as
+    ``~``, as the pages show hub paths: ``~`` for the home itself,
+    ``~/…`` inside it, anything else as is."""
+    text = str(path)
+    root = str(home if home is not None else Path.home()).rstrip("/")
+    if not root:
+        return text
+    if text == root:
+        return "~"
+    if text.startswith(root + "/"):
+        return "~" + text[len(root):]
+    return text
+
+
 def load(name: str) -> ModuleType | None:
     """The page module for ``name``, or ``None`` when there is none. Only
     a plain lower-case name whose module file exists here is imported."""

@@ -32,6 +32,7 @@ from quiver.paths import data_dir_for, quiver_dir_for
 from quiver.remote import catalog as catalog_mod
 from quiver.sessions.parsers import codex_thread_id
 from quiver.webapp import sessions as sessions_mod
+from quiver.webapp.pages import tilde
 
 # A project's responses read as one block until this much silence.
 GAP_S = 30 * 60
@@ -414,9 +415,7 @@ class Accounts:
             return _account_name(self.owner[path])
         if path == os.path.join(self.user, ".local/share/opencode"):
             return _name("opencode")
-        if path.startswith(self.user + "/"):
-            return "~" + path[len(self.user):]
-        return path
+        return tilde(path, self.user) if path else path
 
 
 # ---------------------------------------------------------------- titles

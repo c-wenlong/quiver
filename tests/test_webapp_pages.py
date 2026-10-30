@@ -26,6 +26,12 @@ class TestLoad(unittest.TestCase):
         for bad in ("", "_private", "Upper", "a-b", "../x", "nope", "__init__"):
             self.assertIsNone(pages.load(bad), bad)
 
+    def test_tilde_writes_the_home_as_a_tilde(self):
+        self.assertEqual(pages.tilde("/h/u", "/h/u/"), "~")
+        self.assertEqual(pages.tilde("/h/u/a/b", "/h/u"), "~/a/b")
+        self.assertEqual(pages.tilde("/h/user2/a", "/h/u"), "/h/user2/a")
+        self.assertEqual(pages.tilde("/elsewhere", "/h/u"), "/elsewhere")
+
     def test_bundle_concatenates_in_name_order(self):
         folder = Path(tempfile.mkdtemp())
         (folder / "b.js").write_text("B")

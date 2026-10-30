@@ -140,6 +140,15 @@ class TestFolders(unittest.TestCase):
         result = mcp.folder_scan(self.root / "file", [])
         self.assertIn("is a file, not a folder", result["error"])
 
+    def test_the_servers_folder_is_shortened_against_the_hubs_home(self):
+        # The folder lives under the hub's home, which need not be the
+        # process's: it was always written out in full.
+        self._server("mcp-hn")
+        result = mcp.folder_scan(self.root, [], home=self.root.parent)
+        self.assertEqual(result["root"], "~/" + self.root.name)
+        self.assertEqual(result["items"][0]["path"],
+                         "~/" + self.root.name + "/mcp-hn")
+
     def test_usage_matches_paths_under_a_folder_only(self):
         hn = self._server("mcp-hn")
         self._server("mcp-hnx")

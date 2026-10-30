@@ -41,7 +41,7 @@ from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
-from quiver.webapp.pages import PageError
+from quiver.webapp.pages import PageError, tilde
 from quiver.webapp.pages.harness import REGISTRY_LOCK
 
 TEXT_MAX = 4000
@@ -178,10 +178,7 @@ def _blocked_now(home: Path) -> list[str]:
 
 
 def _short(path: Path, home: Path) -> str:
-    try:
-        return "~/" + str(Path(path).relative_to(home))
-    except ValueError:
-        return str(path)
+    return tilde(path, home)
 
 
 def _run_discover(home: Path) -> str | None:
