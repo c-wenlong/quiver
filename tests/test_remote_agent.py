@@ -2169,6 +2169,72 @@ class TestReviewFixes(unittest.TestCase):
         }).encode())
         ag._dispatch.assert_called_once()
 
+    def _frame(self, **ev):
+        return json.dumps(ev).encode()
+
+    def test_cursor_follows_a_wiped_command_journal(self):
+        # The hub's _sat_ journal started over below our cursor: it says
+        # so with journal.truncated at its head. Without acting on it,
+        # every new command (seq 1, 2, ...) was dropped as already seen.
+        ag = self._agent()
+        ag._done_cmd_seq = ag._last_cmd_seq = 50
+        ag._done_set = {52}
+        ag._dispatch = MagicMock()
+        self.assertEqual(ag._handle_frame(
+            self._frame(type="journal.truncated", seq=2)), "reset")
+        # Back to 0, so the reconnect replays the commands the new
+        # journal queued while we were away (seq 1 and 2) too.
+        self.assertEqual((ag._done_cmd_seq, ag._last_cmd_seq), (0, 0))
+        self.assertEqual(ag._done_set, set())
+        self.assertEqual(self._agent()._done_cmd_seq, 0)  # persisted
+        for seq in (1, 2, 3):
+            ag._handle_frame(self._frame(
+                type="command", seq=seq, data={"op": "control"}))
+        self.assertEqual(ag._dispatch.call_count, 3)
+        self.assertEqual(ag._done_cmd_seq, 3)
+
+    def test_truncated_at_our_own_cursor_changes_nothing(self):
+        # Behind the ring the hub echoes the cursor we sent.
+        ag = self._agent()
+        ag._done_cmd_seq, ag._last_cmd_seq = 5, 7
+        self.assertIsNone(ag._handle_frame(
+            self._frame(type="journal.truncated", seq=5)))
+        self.assertEqual((ag._done_cmd_seq, ag._last_cmd_seq), (5, 7))
+
+    def test_command_from_before_a_reset_cannot_mark_a_new_one_done(self):
+        # A message queued under the old journal finishes after the
+        # reset: its seq must not count as done in the new journal.
+        ag = self._agent()
+        ag._done_cmd_seq = ag._last_cmd_seq = 9
+        ag._dispatch = MagicMock()
+        ag._sendq = MagicMock()
+        ag._handle_frame(self._frame(
+            type="command", seq=10, session="claude:a",
+            data={"op": "message"}))
+        _key, run, _cancel = ag._sendq.submit.call_args[0]
+        ag._handle_frame(self._frame(type="journal.truncated", seq=0))
+        run()  # the old seq 10 finishes now
+        self.assertEqual(ag._done_cmd_seq, 0)
+        self.assertNotIn(10, ag._done_set)
+
+    def test_command_stream_reconnects_after_a_reset(self):
+        # The stream drops after a reset so the next connection's
+        # ?last= (the hub's backlog floor) is the new cursor.
+        ag = self._agent()
+        ag._done_cmd_seq = ag._last_cmd_seq = 50
+        ag._dispatch = MagicMock()
+        frames = [self._frame(type="journal.truncated", seq=0),
+                  self._frame(type="command", seq=1, data={"op": "x"})]
+        resp = MagicMock()
+        resp.__iter__.return_value = iter(
+            [line for f in frames for line in (b"data: " + f + b"\n", b"\n")])
+        resp.__enter__.return_value = resp
+        with patch("urllib.request.urlopen", return_value=resp), \
+             patch.object(agent_mod.time, "sleep"):
+            ag._command_stream()
+        ag._dispatch.assert_not_called()
+        self.assertEqual(ag._done_cmd_seq, 0)
+
     def test_slow_ops_leave_the_stream_thread(self):
         # A launch boots a pane (up to 30 s) and an attachment pull
         # downloads; inline, every command behind them waited.

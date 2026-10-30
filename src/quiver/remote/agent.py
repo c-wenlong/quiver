@@ -231,6 +231,9 @@ class RemoteAgent:
         # The stream thread, the work loop and fork threads all finish
         # commands; the cursor advance must not interleave.
         self._done_lock = threading.Lock()
+        # Bumped when the hub's command journal starts over under our
+        # cursor (``_reset_cmd_cursor``); see ``_mark_done``.
+        self._cmd_epoch = 0
         from quiver.sessions.status import session_statuses
         # Same status re-probe as the hub: the satellite's tailer emits
         # session.status itself, and its catalog push carries the
@@ -320,11 +323,18 @@ class RemoteAgent:
         except OSError:
             pass
 
-    def _mark_done(self, seq: int | None) -> None:
-        """Advance the completed cursor to the highest contiguous seq."""
+    def _mark_done(self, seq: int | None, epoch: int | None = None) -> None:
+        """Advance the completed cursor to the highest contiguous seq.
+
+        ``epoch`` is ``_cmd_epoch`` when the command arrived: a command
+        from before a journal reset finishing late must not mark the
+        new journal's seq of the same number done.
+        """
         if not isinstance(seq, int):
             return
         with self._done_lock:
+            if epoch is not None and epoch != self._cmd_epoch:
+                return
             self._done_set.add(seq)
             while self._done_cmd_seq + 1 in self._done_set:
                 self._done_cmd_seq += 1
@@ -547,8 +557,12 @@ class RemoteAgent:
                     line = raw.rstrip(b"\n")
                     if line == b"":
                         if data_lines:
-                            self._handle_frame(b"\n".join(data_lines))
+                            frame = b"\n".join(data_lines)
                             data_lines = []
+                            if self._handle_frame(frame) == "reset":
+                                # Reconnect from the new cursor, so the
+                                # hub's backlog floor follows it down.
+                                break
                         continue
                     if line.startswith(b"data:"):
                         data_lines.append(line[5:].lstrip())
@@ -557,13 +571,20 @@ class RemoteAgent:
         if not self._stop.is_set():
             time.sleep(1)
 
-    def _handle_frame(self, blob: bytes) -> None:
+    def _handle_frame(self, blob: bytes) -> str | None:
+        """Act on one SSE frame; "reset" when it moved the command
+        cursor back (the stream should reconnect from there)."""
         try:
             ev = json.loads(blob.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            return
-        if not isinstance(ev, dict) or ev.get("type") != "command":
-            return
+            return None
+        if not isinstance(ev, dict):
+            return None
+        if ev.get("type") == "journal.truncated":
+            return self._reset_cmd_cursor(ev.get("seq"))
+        if ev.get("type") != "command":
+            return None
+        epoch = self._cmd_epoch
         seq = ev.get("seq")
         if isinstance(seq, int):
             if seq in self._done_set:
@@ -571,9 +592,9 @@ class RemoteAgent:
                 # floor the replay started from: seen it, don't run
                 # it again. The wire cursor still moves.
                 self._last_cmd_seq = max(self._last_cmd_seq, seq)
-                return
+                return None
             if seq <= self._last_cmd_seq:
-                return
+                return None
             self._last_cmd_seq = seq
         op = (ev.get("data") or {}).get("op")
         if op in _SESSION_QUEUED_OPS:
@@ -586,27 +607,54 @@ class RemoteAgent:
             # shutdown is left undone, so the replay runs it.
             self._sendq.submit(
                 str(ev.get("session") or ""),
-                lambda: self._dispatch_then_done(seq, ev),
+                lambda: self._dispatch_then_done(seq, ev, epoch),
                 lambda: None,
             )
-            return
+            return None
         if op in ("fork", "launch"):
             # Booting a new session's pane can take 30 s: run it beside
             # the stream so an interrupt or detach behind it goes at
             # once. The cursor still waits for it, so a crash replays it.
             threading.Thread(
-                target=self._dispatch_then_done, args=(seq, ev),
+                target=self._dispatch_then_done, args=(seq, ev, epoch),
                 name=f"agent-{op}-{seq}", daemon=True,
             ).start()
-            return
+            return None
         self._dispatch(ev)
-        self._mark_done(seq)
+        self._mark_done(seq, epoch)
+        return None
 
-    def _dispatch_then_done(self, seq, ev: dict) -> None:
+    def _dispatch_then_done(self, seq, ev: dict,
+                            epoch: int | None = None) -> None:
         try:
             self._dispatch(ev)
         finally:
-            self._mark_done(seq)
+            self._mark_done(seq, epoch)
+
+    def _reset_cmd_cursor(self, seq) -> str | None:
+        """The hub answered ``journal.truncated``: start over if it says
+        our cursor is past its command journal (wiped, or a hub that
+        lost its data). Its seqs restart below us, and every new
+        command would be dropped as already seen.
+
+        The cursor goes to 0, not to the head the hub names: every
+        command in the new journal was queued after ours ended, so the
+        reconnect replays them all rather than skipping those queued
+        while we were away. Behind the ring the hub echoes our own
+        cursor, and nothing changes."""
+        if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+            return None
+        with self._done_lock:
+            if seq >= self._done_cmd_seq:
+                return None
+            self._cmd_epoch += 1
+            self._done_cmd_seq = 0
+            self._last_cmd_seq = 0
+            # Done seqs above the old floor name the old journal's
+            # commands, not the new one's.
+            self._done_set.clear()
+            self._save_cmd_cursor()
+        return "reset"
 
     def _dispatch(self, cmd: dict) -> None:
         """Execute one command envelope; report back as command.result."""
