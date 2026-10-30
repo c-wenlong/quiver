@@ -885,6 +885,26 @@ class TestCommands(unittest.TestCase):
         notes = json.loads(out)["data"]["notifications"]
         self.assertEqual(len(notes), 101)  # 100 + 1; no page=3 stubbed
 
+    def test_a_failed_later_page_marks_the_inbox_partial(self):
+        # The first page's rows stay, but the listing must not read as
+        # complete when page 2 failed.
+        page1 = [{"id": str(i), "subject": {"title": f"n{i}"},
+                  "repository": {}, "unread": False} for i in range(100)]
+
+        def run(cmd, **kw):
+            joined = " ".join(cmd)
+            if "&page=1" in joined:
+                return _Proc(stdout=json.dumps(page1))
+            return _Proc(returncode=1, stderr="rate limited")
+        rc, out, _ = self._run_cli(["inbox", "--limit=150", "--json"], run=run)
+        data = json.loads(out)["data"]
+        self.assertEqual(len(data["notifications"]), 100)
+        self.assertTrue(data["partial"])
+        self.assertIn("page 2", data["error"])
+        tags = ghcli._repo_result("o/r", "tags", gh.GhResult(
+            "ok", data=[{"name": "v1"}], error="page 2 failed: x"), dict)
+        self.assertEqual((tags["status"], tags["partial"]), ("ok", True))
+
     def test_pages_build_fetch_failure_is_kept(self):
         def run(cmd, **kw):
             joined = " ".join(cmd)
