@@ -997,6 +997,19 @@ class TestMarkdown(unittest.TestCase):
         self.assertIn(f'<a href="{url}" target="_blank" rel="noopener">{url}</a>', html)
         self.assertIn("<strong>bold</strong>", html)
 
+    def test_bare_urls_stop_at_escaped_quotes_and_brackets(self):
+        html = self.render('say "https://example.com/a" and https://x.io/p>q, https://x.io/?a=1&b=2')
+        self.assertIn('href="https://example.com/a"', html)
+        self.assertIn('>https://x.io/p</a>&gt;q', html)
+        self.assertIn('href="https://x.io/?a=1&amp;b=2"', html)
+        self.assertNotIn("&quot;\"", html)
+
+    def test_autolinks_become_links(self):
+        html = self.render("go <https://y.io/z> or <me_x@ex.io>, not `<https://c.io>`")
+        self.assertIn('<a href="https://y.io/z" target="_blank" rel="noopener">https://y.io/z</a>', html)
+        self.assertIn('<a href="mailto:me_x@ex.io" target="_blank" rel="noopener">me_x@ex.io</a>', html)
+        self.assertIn("<code>&lt;https://c.io&gt;</code>", html)
+
     def test_fenced_code_keeps_its_blank_lines(self):
         html = self.render("<p>x</p>\n\n```\na\n\n\n\nb\n```")
         self.assertIn("a\n\n\n\nb", html)
