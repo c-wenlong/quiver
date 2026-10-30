@@ -330,22 +330,6 @@ function onHarnessesPage() {
 }
 
 /* app.js's api() only reads; writes send JSON with the same headers. */
-async function apiPost(path, body) {
-  let resp;
-  try {
-    resp = await fetch(path, {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return { status: 0, data: null };
-  }
-  let data = null;
-  try { data = await resp.json(); } catch { /* empty body */ }
-  return { status: resp.status, data };
-}
-
 /* ------------------------------------------------- Harnesses: the sheets */
 
 /* The Mac app's three sheets as one <dialog>: the row editor (HarnessEditor),

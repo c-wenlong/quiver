@@ -42,6 +42,26 @@ function failText(status, data, next = "then try again") {
       : next ? `Couldn't reach the hub. Check the connection, ${next}.` : "Couldn't reach the hub.");
 }
 
+/* A write: ``body`` as JSON with api()'s headers. Never throws; status 0
+ * means the hub didn't answer at all. Every page's POST and DELETE goes
+ * through it (apiPost, GhUI.post). Not plain send(): chat.js has its own. */
+async function apiSend(method, path, body) {
+  let resp;
+  try {
+    resp = await fetch(path, {
+      method,
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { status: 0, data: null };
+  }
+  let data = null;
+  try { data = await resp.json(); } catch { /* empty body */ }
+  return { status: resp.status, data };
+}
+const apiPost = (path, body) => apiSend("POST", path, body);
+
 /* status 0 means the hub didn't answer at all (offline, connection lost). */
 async function api(path) {
   let resp;
