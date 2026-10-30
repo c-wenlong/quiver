@@ -124,7 +124,8 @@ public final class OtherLimitsModel {
     /// Whether each registered harness's command is on PATH, by name,
     /// Claude and Codex included, for the account cards' Terminal button.
     public private(set) var cliInstalled: [String: Bool] = [:]
-    /// Why there is nothing to show, when that is not simply "nothing starred".
+    /// Why there is nothing to show, when that is not simply "nothing
+    /// starred", or why the cards shown are from an earlier load.
     public private(set) var note: String?
     private let swe: SweClient
     /// The latest load's ticket: a refresh overtaken while it ran (a star
@@ -421,9 +422,11 @@ public final class OtherLimitsModel {
             return
         } catch {
             guard mine == request else { return }
-            rows = []
-            cards = []
-            note = error.localizedDescription
+            // One failed poll (a swe timeout, a busy disk) keeps the last
+            // cards up, as the starred set already is; the note says the
+            // refresh failed. With nothing shown yet it is the only text.
+            note = cards.isEmpty ? error.localizedDescription
+                : "Couldn't refresh: \(error.localizedDescription)"
         }
     }
 
