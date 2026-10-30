@@ -96,9 +96,25 @@ loopback bind the hub reads the client from the headers serve sets:
 Serve replaces any `X-Forwarded-For` / `Tailscale-User-*` the client sent
 (checked on a live node, 2026-10-23), and the hub reads the headers only
 from loopback peers while `--public-url` is set; on a tailnet-IP bind
-they are ignored. A local process can still forge them, which is no
-worse than today: it can already read `devices.json`. Owner identity
-comes from `whois` of the node's own tailnet IP. The public URL also
+they are ignored. A loopback peer alone isn't serve: any local process,
+another user's included, can dial the same port and write its own
+`X-Forwarded-For`. So the hub believes that header only when the OS says
+the far end of the connection is the Tailscale daemon (`peer.py`): on
+Linux the socket's owner in `/proc/net/tcp` is root; on macOS the pid
+`netstat -anv` names for it runs as root (the Standalone variant's
+system extension, open-source `tailscaled`) or is a binary inside a
+root-owned `/Applications/Tailscale.app` (the App Store variant). The
+answer is kept for the connection, and a request whose peer fails the
+check, or that the check can't place, is read as the loopback client it
+is: no tailnet identity, bearer credentials unaffected.
+`X-Forwarded-Proto` keeps the loopback rule, since it only feeds the
+`Origin` check a local process can pass anyway. Owner identity
+comes from `whois` of the node's own tailnet IP, which also records
+that node: a request `whois` names as this machine's own node never
+counts as the owner's device, because serve's local listener forwards
+any local process (and a direct dial of the tailnet IP arrives) as that
+node, whichever user runs it. A browser on the hub machine pairs like
+any other device. The public URL also
 becomes the ntfy action-button base, and `serve` saves
 `{host, port, public_url}` to `data/remote/hub.json` so `swe remote
 pair` prints `https://` links (the `quiver://` deep link gains
@@ -161,6 +177,7 @@ remote/
   fork.py        # fork a session: per-harness fork command lines, the route
   journal.py     # per-session seq-numbered event log (replay on reconnect)
   hub.py         # http.server ThreadingHTTPServer: REST + SSE, device auth
+  peer.py        # is a loopback peer the Tailscale daemon? gates X-Forwarded-For
   files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
   preview.py     # one .html/.svg file from a session's folder (/v1/sessions/{id}/preview)
   agent.py       # satellite daemon: dial hub, run local tail/inject
@@ -1216,9 +1233,12 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   login is how a device joins the tailnet; this feature does not
   re-implement it.
 - Owner devices: a request without a bearer is still let in when its
-  tailnet node belongs to the hub owner's login (not tagged), it sends
+  tailnet node belongs to the hub owner's login (not tagged), isn't the
+  hub machine's own node, it sends
   `X-Quiver-Pair: 1` from an allowed Host, and its `Origin` is the hub's
-  own; the web app at `/` relies on this. The `whois` answer is
+  own; the web app at `/` relies on this. Behind `tailscale serve` the
+  node comes from `X-Forwarded-For` only on a connection the OS places
+  in the Tailscale daemon. The `whois` answer is
   cached per IP (60 s, a miss 10 s). Satellite routes stay bearer-only.
 - Pairing: the phone posts `POST /v1/pair/request`; the hub resolves
   its Tailscale node with `tailscale whois <peer ip>` and hands back a

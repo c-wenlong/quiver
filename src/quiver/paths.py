@@ -17,10 +17,16 @@ beats matching the XDG spec here.
 that still has one can be migrated by ``swe init --migrate``.
 """
 
+import contextlib
 import os
 from pathlib import Path
 
 from quiver import DATA_DIR_NAME
+
+try:  # POSIX only; see ``locked_beside``
+    import fcntl
+except ImportError:  # pragma: no cover - Windows has no flock
+    fcntl = None  # type: ignore[assignment]
 
 # The layout, named once. The ``*_for`` helpers take an explicit home so tests
 # can build a throwaway tree; the module-level constants are the same thing
@@ -283,9 +289,7 @@ def mcp_secrets_path_for(home: Path | None = None) -> Path:
 
 QUIVER_DIR = quiver_dir_for()
 AGENTS_FILE = agents_file_for()
-LINKIGNORE_FILE = linkignore_file_for()
 SKILLS_DIR = skills_dir_for()
-HOOKS_DIR = hooks_dir_for()
 BACKUPS_DIR = backups_dir_for()
 
 CONFIG_DIR = config_dir_for()
@@ -444,6 +448,23 @@ def atomic_write_bytes(path: "Path", data: bytes, *, private: bool = False) -> N
         except OSError:
             pass
         raise
+
+
+@contextlib.contextmanager
+def locked_beside(path: "Path"):
+    """Hold an exclusive ``flock`` on ``<path>.lock`` for the block.
+
+    For a read-change-write of ``path`` that another process (a second
+    hub, another ``swe``) may run at the same time. The lock file is never
+    replaced, so an atomic swap of ``path`` can't slip past it, and the
+    lock goes when the block ends and the file is closed. The caller
+    creates ``path``'s folder first. Where there is no ``fcntl``
+    (Windows) the block runs unlocked.
+    """
+    with open(str(path) + ".lock", "a+") as lock:
+        if fcntl is not None:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
 
 
 def backup_tree(path: "Path", home: "Path | None" = None) -> "Path":

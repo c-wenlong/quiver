@@ -830,6 +830,7 @@ class TestOwnerTailnetCaller(_Settings):
         super().setUp()
         state = self.srv.state
         state.trust_proxy = True
+        state.proxy_peer = lambda server, peer: True
         state.owner_login = "dev@github"
         state.whois = lambda ip: ({"node_id": "n-laptop", "login": "dev@github", "tagged": False}
                                   if ip == self.OWNER_IP else None)
