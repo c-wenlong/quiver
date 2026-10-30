@@ -1681,6 +1681,30 @@ class TestCommands(unittest.TestCase):
         self.assertFalse(any("repo clone" in c for c in seen))
         self.assertFalse(any("worktree add" in c for c in seen))
 
+    def test_pr_worktree_lands_where_the_hub_names_it(self):
+        # The hub names a PR's folder before the checkout exists (a
+        # pending launch's cwd, the detail page's ``worktree``): the
+        # checkout must land exactly there.
+        from quiver.github import pulls as gh_pulls
+
+        _mirrors, trees = self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "worktree list" in joined:
+                return _Proc(stdout="worktree /x/mirror\n")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc123def456\n")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=O/r.x", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["data"]["path"],
+                         gh_pulls.worktree_path("O/r.x", "7"))
+        self.assertEqual(gh_pulls.worktree_path("O/r.x", 7),
+                         str(trees / "O__r.x-pr7"))
+
     def test_pr_worktree_accepts_url_ref(self):
         self._patch_paths()
         seen = []

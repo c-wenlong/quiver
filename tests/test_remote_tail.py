@@ -868,8 +868,10 @@ class TestTailer(unittest.TestCase):
         t.commit_cursor()
         self.assertTrue(t._cursor_path.exists())
         # Second poll with nothing new keeps the cursor settled.
+        settled = t._cursor_path.read_bytes()
         self.assertEqual(t.poll(time.time(), active=False), [])
         t.commit_cursor()
+        self.assertEqual(t._cursor_path.read_bytes(), settled)
 
 
 def _session_for():
@@ -1362,14 +1364,13 @@ class TestTailManager(unittest.TestCase):
             self.assertIsInstance(
                 tail.make_source(sess), tail.SnapshotSource
             )
-        with patch("quiver.remote.tail.expand_user",
-                   return_value=self.tmp):
-            db = self.tmp / "oc.db"
-            import sqlite3 as _sq
-            _sq.connect(db).close()
-            self.assertIsInstance(
-                tail.make_source(sess), tail.OpencodeSource
-            )
+        db = self.tmp / "oc.db"
+        import sqlite3 as _sq
+        _sq.connect(db).close()
+        with patch("quiver.remote.tail.expand_user", return_value=db):
+            src = tail.make_source(sess)
+        self.assertIsInstance(src, tail.OpencodeSource)
+        self.assertEqual((src.db_path, src.session_id), (db, "s"))
         sess.tool_name = "freebuff"
         with patch.object(tail, "resolve_jsonl_path",
                           return_value=None):
@@ -1643,6 +1644,11 @@ class TestApprovalWatcher(unittest.TestCase):
         # Only the key matters to the watcher; no transcript needed.
         self.mgr.tailers["k1"] = object()
         self._t = time.time()
+        # The watcher records pending prompts in supervise's module-level
+        # dict: start empty and leave nothing for later tests.
+        p = patch.dict(tail.supervise._PENDING_APPROVALS, clear=True)
+        p.start()
+        self.addCleanup(p.stop)
 
     def _poll(self, pane="", meta=None):
         # Each call lands past the PANE_APPROVAL_S throttle window.
@@ -1715,6 +1721,9 @@ class TestApprovalWatcher(unittest.TestCase):
         evs = self._approval_events()
         self.assertEqual(evs[-1]["type"], "approval.resolved")
         self.assertEqual(evs[-1]["data"]["source"], "detached")
+        # The id alone, as the request carried it: the hub and the
+        # phone match the resolve to the open card by this string.
+        self.assertEqual(evs[-1]["data"]["request_id"], rid)
         self.assertIsNone(supervise.pending_approval("k1"))
 
     def test_headless_meta_skips_pane_check(self):
@@ -2236,10 +2245,6 @@ class TestStatusProbe(unittest.TestCase):
         self.assertEqual(set(self.mgr.statuses.values()), {"active"})
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestFreshSession(unittest.TestCase):
     """``fresh_session`` brings a catalog copy's activity time up to date."""
 
@@ -2262,3 +2267,7 @@ class TestFreshSession(unittest.TestCase):
         self.assertAlmostEqual(
             mgr.fresh_session("claude:s", stale).timestamp,
             mgr.last_append["claude:s"] * 1000)
+
+
+if __name__ == "__main__":
+    unittest.main()
