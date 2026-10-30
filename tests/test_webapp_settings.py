@@ -1123,35 +1123,56 @@ class TestSync(_Settings):
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestRevokeThisBrowserScript(unittest.TestCase):
-    """pages/settings.js under node: revoking this browser's own row drops
-    its credential from localStorage, and a revoke of another device
-    leaves it alone."""
+    """pages/settings.js under node, with app.js's real pairForget():
+    revoking this browser's own row drops its credential from
+    localStorage and stops the remote poll; revoking another device
+    leaves both alone. The poll itself stops at its first 401."""
 
-    def revoke(self, this_device):
-        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/settings.js"
+    STATIC = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static"
+
+    def run_js(self, api_status, post_data, body, hash_="#/settings?section=integrations"):
+        app = (self.STATIC / "app.js").read_text(encoding="utf-8")
+        forget = re.search(r"^function pairForget\(\) \{.*?^\}", app, re.S | re.M).group(0)
         prelude = (
             "const store = new Map([['quiver.remote', '{\"credential\":\"c\"}']]);\n"
             "globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v),"
             " removeItem: (k) => store.delete(k) };\n"
-            "globalThis.location = { hash: '#/overview' };\n"
+            "globalThis.location = { hash: " + json.dumps(hash_) + " };\n"
             "globalThis.document = { documentElement: { dataset: {} }, head: { appendChild() {} },"
             " getElementById: () => null, createElement: () => ({}), querySelectorAll: () => [] };\n"
+            "let tick = null, cleared = 0, gates = [];\n"
+            "globalThis.setInterval = (fn) => { tick = fn; return 7; };\n"
+            "globalThis.clearInterval = (id) => { if (id === 7) { cleared++; tick = null; } };\n"
+            "const routeGen = 0;\n"
             "function registerPage() {}\n"
-            "function pairForget() { localStorage.removeItem('quiver.remote'); }\n"
-            "const apiPost = async () => ({ status: 200, data: " + ("{ this_device: true }" if this_device
-                                                                    else "{ devices: [] }") + " });\n")
-        body = ("settingsPage.data = { remote: { devices: [{ id: 'd1', this_device: " + json.dumps(this_device)
-                + " }] } };\nsettingsPage.setupBusy = true;\n"
-                "settingsRevoke('d1').then(() => process.stdout.write(JSON.stringify("
-                "{ stored: store.has('quiver.remote'), signedOut: !!settingsPage.signedOut })));\n")
-        done = subprocess.run(["node", "-e", prelude + page.read_text(encoding="utf-8") + "\n" + body],
-                              capture_output=True, text=True, timeout=30)
+            "function renderGate(msg) { gates.push(msg); }\n"
+            "function renderSettings() {}\n"
+            "const api = async () => ({ status: " + str(api_status) + ", data: null });\n"
+            "const apiPost = async () => ({ status: 200, data: " + post_data + " });\n"
+            + forget + "\n")
+        src = prelude + (self.STATIC / "pages/settings.js").read_text(encoding="utf-8") + "\n" + body
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
 
+    REVOKE = ("settingsPage.data = { remote: { devices: [{ id: 'd1', this_device: %s }] } };\n"
+              "settingsPage.setupBusy = true;\nsettingsPollRequests();\n"
+              "settingsRevoke('d1').then(() => process.stdout.write(JSON.stringify("
+              "{ stored: store.has('quiver.remote'), signedOut: !!settingsPage.signedOut,"
+              " polling: settingsPage.reqPoll !== null })));\n")
+
     def test_revoking_this_browser_forgets_its_credential(self):
-        self.assertEqual(self.revoke(True), {"stored": False, "signedOut": True})
+        # Off the page, so the revoke doesn't repaint a DOM this stub lacks.
+        out = self.run_js(200, "{ this_device: true }", self.REVOKE % "true", "#/overview")
+        self.assertEqual(out, {"stored": False, "signedOut": True, "polling": False})
 
     def test_revoking_another_device_keeps_it(self):
-        self.assertEqual(self.revoke(False), {"stored": True, "signedOut": False})
+        out = self.run_js(200, "{ devices: [] }", self.REVOKE % "false", "#/overview")
+        self.assertEqual(out, {"stored": True, "signedOut": False, "polling": True})
 
+    def test_the_poll_stops_at_a_401(self):
+        out = self.run_js(401, "{}", "settingsPollRequests();\n"
+                          "(async () => { await tick(); const after = tick; "
+                          "process.stdout.write(JSON.stringify({ gates: gates.length, cleared, after: after === null,"
+                          " polling: settingsPage.reqPoll !== null })); })();\n")
+        self.assertEqual(out, {"gates": 1, "cleared": 1, "after": True, "polling": False})
