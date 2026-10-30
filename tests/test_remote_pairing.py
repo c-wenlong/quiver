@@ -203,10 +203,16 @@ class TestPairRequests(unittest.TestCase):
 
     def test_prune_requests_drops_expired_rows_only(self):
         old = self._request()
-        pairing.approve_request(self.tmp, old["code"])
-        self._expire_all()
         live = self._request(
             peer={**_PEER, "node_id": "nOTHER"}, name="other")
+        pairing.approve_request(self.tmp, old["code"])
+        rows = pairing._load_requests(self.tmp)
+        for row in rows:
+            if row["request_id"] == old["request_id"]:
+                row["expires_at"] = time.time() - 1
+        pairing._save_requests(self.tmp, rows)
+        # Both rows are on disk until prune_requests runs.
+        self.assertEqual(len(pairing._load_requests(self.tmp)), 2)
         pairing.prune_requests(self.tmp)
         rows = pairing._load_requests(self.tmp)
         self.assertEqual(
