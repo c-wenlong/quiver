@@ -3029,8 +3029,9 @@ const SessionChat = (() => {
       // Client ids that left the tray: a queue list fetched before that
       // can't bring them back.
       settled: new Set(),
-      // Live echoes that matched no row, while a queue list is on its way.
-      unmatched: [],
+      // Live echoes that matched no row while a queue list was on its way
+      // (`listing`).
+      unmatched: [], listing: false,
       editingId: null, draftBeforeEdit: "", savingEdit: false,
       editNote: "", note: "", confirmAll: null,
     };
@@ -3108,8 +3109,10 @@ const SessionChat = (() => {
     // Only echoes that arrive while this list is on its way can be
     // missing from it.
     t.unmatched = [];
+    t.listing = true;
     const { status, data } = await api(sessionPath(chat.key, "queue"));
     if (gen !== chat.gen) return;
+    t.listing = false;
     // An older hub has no queue route: the tray shows this page's sends.
     if (status === 200 && data) {
       const known = new Set(t.settled);
@@ -3159,7 +3162,7 @@ const SessionChat = (() => {
       const entry = t[list].find((q) => echoes(text, q.text));
       if (entry) { takeQueued(entry.cid); return; }
     }
-    t.unmatched.push(text);
+    if (t.listing) t.unmatched.push(text);
   }
 
   /* The hub took the send; `waiting` says whether it holds it for idle.

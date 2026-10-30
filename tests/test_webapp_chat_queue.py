@@ -294,6 +294,22 @@ class TestQueuedTray(unittest.TestCase):
         self.assertEqual(out["loaded"], [["x9", "from the phone", "waiting", ""]])
         self.assertEqual(out["stale"], ["x9"])
 
+    def test_a_send_that_goes_out_while_the_list_loads_stays_gone(self):
+        out = self.run_js("""
+            let release;
+            globalThis.api = () => new Promise((r) => { release = r; });
+            T.echoLeavesTray("before any list");
+            const before = T.chat.tray.unmatched.length;
+            const loading = T.loadQueue(1);
+            // The phone's send went out after the hub listed it.
+            T.echoLeavesTray("from the phone");
+            release({ status: 200, data: { sends: [{ client_id: "x9", text: "from the phone" },
+              { client_id: "x10", text: "still waiting" }] } });
+            await loading;
+            return { before, tray: tray().map((q) => q[0]), settled: T.chat.tray.settled.has("x9"),
+                     unmatched: T.chat.tray.unmatched.length };""")
+        self.assertEqual(out, {"before": 0, "tray": ["x10"], "settled": True, "unmatched": 0})
+
 
 if __name__ == "__main__":
     unittest.main()
