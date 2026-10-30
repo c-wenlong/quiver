@@ -847,6 +847,7 @@ class TestPrWorktree(_Base):
         self.head = subprocess.run(git + ["rev-parse", "--short=12", "HEAD"], check=True,
                                    capture_output=True, text=True).stdout.strip()
         self.gh = FakeGh(self, clone_from=str(src))
+        self.src = src
 
     def test_checks_the_head_out_in_the_hubs_home_then_reuses_it(self):
         body = R.post(self.ctx, "worktree", {"repo": "O/A", "number": "7"})
@@ -861,6 +862,21 @@ class TestPrWorktree(_Base):
         again = R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})
         self.assertEqual((again["path"], again["created"]), (body["path"], False))
         self.assertEqual(sum(c[:2] == ["repo", "clone"] for c in self.gh.calls()), 1)
+
+    def test_a_reused_checkout_reports_its_own_head(self):
+        # The PR moved on after the first open: the checkout stays put,
+        # and the answer says so instead of naming the new head.
+        first = R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})
+        src = self.src
+        git = ["git", "-C", str(src), "-c", "user.email=t@example.com", "-c", "user.name=t"]
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "more"], check=True)
+        subprocess.run(git + ["update-ref", "refs/pull/7/head", "HEAD"], check=True)
+        new = subprocess.run(git + ["rev-parse", "--short=12", "HEAD"], check=True,
+                             capture_output=True, text=True).stdout.strip()
+        again = R.post(self.ctx, "worktree", {"repo": "o/a", "number": 7})
+        self.assertFalse(again["created"])
+        self.assertEqual(again["head"], first["head"])
+        self.assertEqual(again["pr_head"], new)
 
     def test_failures_name_the_step(self):
         with self.assertRaises(PageError) as caught:
