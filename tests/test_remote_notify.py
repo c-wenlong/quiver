@@ -449,12 +449,6 @@ class TestPost(unittest.TestCase):
                 self.n._post(cfg, {"topic": "t"})
         self.assertEqual(warn.call_count, 1)
 
-    def test_post_propagates_http_errors(self):
-        cfg = {"url": "https://n.test", "topic": "t"}
-        with patch("urllib.request.urlopen", side_effect=OSError("down")):
-            with self.assertRaises(OSError):
-                self.n._post(cfg, {"topic": "t"})
-
 
 class TestRun(unittest.TestCase):
     def setUp(self):

@@ -1215,7 +1215,7 @@ struct FakeShell: ShellEnvironmentReading {
     let scratch: TempDir
     init() throws { scratch = try TempDir() }
 
-    private func model(text: String, transport: FakeTransport) throws -> (APIKeysModel, URL) {
+    private func model(text: String, transport: any HTTPTransport) throws -> (APIKeysModel, URL) {
         let dir = scratch.url.appending(path: "keyscustom-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appending(path: ".api_keys")
@@ -1263,6 +1263,38 @@ struct FakeShell: ShellEnvironmentReading {
         #expect(request.url?.absoluteString == "https://soclaas.test/v1/models")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer clsk-x")
         #expect(model.checks["SOCLAAS_API_KEY"]?.result == .works)
+    }
+
+    /// Holds each request until the test lets it answer.
+    private final class GatedTransport: HTTPTransport {
+        let entered = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            entered.continuation.yield()
+            for await _ in release.stream { break }
+            return (Data(#"{"data":[]}"#.utf8),
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: [:])!)
+        }
+    }
+
+    @Test func aBaseURLSavedDuringACheckLeavesTheVerdictStale() async throws {
+        let transport = GatedTransport()
+        let (model, _) = try model(text: """
+            # SoCLaaS
+            export SOCLAAS_BASE_URL="https://soclaas.test/v1"
+            export SOCLAAS_API_KEY="clsk-x"
+            """, transport: transport)
+        await model.load()
+        let check = Task { await model.check(name: "SOCLAAS_API_KEY") }
+        var entered = transport.entered.stream.makeAsyncIterator()
+        await entered.next()
+        // The verdict below was earned against the old endpoint.
+        try await model.set(name: "SOCLAAS_BASE_URL", value: "https://other.test/v1", provider: "SoCLaaS")
+        transport.release.continuation.yield()
+        await check.value
+        let key = try #require(model.rows.first { $0.name == "SOCLAAS_API_KEY" })
+        #expect(model.checks["SOCLAAS_API_KEY"]?.result == .works)
+        #expect(model.check(for: key) == nil)
     }
 
     @Test func aBaseURLOnItsOwnHasNoCheck() async throws {
