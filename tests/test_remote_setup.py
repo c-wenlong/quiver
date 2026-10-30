@@ -406,6 +406,22 @@ class GatherTest(unittest.TestCase):
         self.assertTrue(f.loopback_ok and f.https_ok)
         self.assertTrue(setup.evaluate(f)["ready"])
 
+    def test_satellites_exclude_the_hubs_own_row(self):
+        from quiver.remote import catalog
+        own = catalog.load_machine_id(self.home)
+        catalog.upsert_machine(self.home, {"id": own, "name": "hub"})
+        with patch.object(setup, "tailscale_exe", return_value=None), \
+             patch.object(setup, "_agent", return_value=(None, False)):
+            f = setup.gather(home=self.home, run=self.fake_run,
+                             get=lambda url, _t: (False, ""))
+        self.assertEqual(f.satellites, 0)
+        catalog.upsert_machine(self.home, {"id": "sat-1", "name": "box"})
+        with patch.object(setup, "tailscale_exe", return_value=None), \
+             patch.object(setup, "_agent", return_value=(None, False)):
+            f = setup.gather(home=self.home, run=self.fake_run,
+                             get=lambda url, _t: (False, ""))
+        self.assertEqual(f.satellites, 1)
+
     def test_a_recorded_move_applies_to_its_own_address(self):
         setup.record_move(self.home, URL, now=123.0)
         with patch.object(setup, "tailscale_exe", return_value="/ts"), \

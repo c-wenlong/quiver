@@ -741,6 +741,21 @@ class TestAgentRoutes(unittest.TestCase):
         launch_id = json.loads(data)["launch_id"]
         self.assertEqual(replay[0]["data"]["launch_id"], launch_id)
 
+    def test_launch_to_unknown_machine_is_404(self):
+        # Nothing would ever drain a queue for a machine that never
+        # registered: refuse instead of opening a journal for it.
+        status, data = self.srv.request(
+            "POST", "/v1/sessions",
+            {"machine": "nope-m9", "harness": "claude",
+             "cwd": "/tmp/x", "prompt": "go"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 404, data)
+        self.assertEqual(
+            json.loads(data)["error"]["code"], "unknown_machine")
+        replay, _ = self.srv.state.journal.read_since("_sat_nope-m9", 0)
+        self.assertEqual(replay, [])
+        self.assertEqual(self.srv.state.launches, {})
+
     def test_launch_to_named_machine_carries_the_pick(self):
         # The satellite advertises launch-option support on its machine
         # row, the same fields its own agent reports.
@@ -1601,15 +1616,17 @@ class TestAgentRouteValidation(unittest.TestCase):
             {"op": "interrupt"}, headers=self.srv.auth)
         self.assertEqual(status, 409)
 
-    def test_launch_unknown_machine_queues_anyway(self):
-        # An unregistered machine still gets the command: it may simply
-        # not have connected yet — the offline queue is the point.
+    def test_launch_to_offline_registered_machine_queues(self):
+        # A registered machine that is offline still gets the command —
+        # the offline queue is the point. Only a never-registered id
+        # is refused (test_launch_to_unknown_machine_is_404).
+        catalog_mod.upsert_machine(self.srv.home, {"id": "ghost"})
         status, data = self.srv.request(
             "POST", "/v1/sessions",
             {"machine": "ghost", "harness": "claude", "cwd": "/x",
              "prompt": "go"},
             headers=self.srv.auth)
-        self.assertEqual(status, 202)
+        self.assertEqual(status, 202, data)
         replay, _ = self.srv.state.journal.read_since("_sat_ghost", 0)
         self.assertEqual(replay[0]["data"]["op"], "launch")
 
