@@ -76,7 +76,7 @@ struct RenameSheet: View {
                 try await app.rename(row.key, title: title)
                 dismiss()
             } catch {
-                self.error = (error as? HubError)?.message ?? error.localizedDescription
+                self.error = error.localizedDescription
             }
             saving = false
         }

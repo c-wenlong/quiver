@@ -762,6 +762,44 @@ class OpencodeSource:
         finally:
             conn.close()
 
+    def start_near_end(self, max_messages: int | None = None) -> None:
+        """Place both cursors so the first poll reads only the newest
+        ``max_messages`` (default BACKFILL_MESSAGES) rows of each store,
+        not the session's whole history."""
+        cap = BACKFILL_MESSAGES if max_messages is None else max_messages
+        conn = self._open()
+        if conn is None:
+            return
+        try:
+            row = conn.execute(
+                "SELECT time_created, id FROM part WHERE session_id = ? "
+                "ORDER BY time_created DESC, id DESC LIMIT 1 OFFSET ?",
+                (self.session_id, cap),
+            ).fetchone()
+            if row:
+                # The newest row left out: the poll reads strictly after.
+                self.cursor = (int(row[0]), str(row[1]))
+        except sqlite3.Error:
+            pass
+        try:
+            # The boundary comes from the raw rows: v2_rows drops a row
+            # whose JSON won't decode, which would shorten the window
+            # and read as a short session (the whole history again).
+            row = None
+            if opencode_store.has_v2_messages(conn):
+                row = conn.execute(
+                    "SELECT sm.seq FROM session_message sm "
+                    "WHERE sm.session_id = ? "
+                    f"{opencode_store._not_legacy(conn)} "
+                    "ORDER BY sm.seq DESC LIMIT 1 OFFSET ?",
+                    (self.session_id, cap),
+                ).fetchone()
+            self.seq = int(row[0] or 0) if row else -1
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
+
     @staticmethod
     def _settled_seq(rows: list, seq: int) -> int:
         """The last seq before the first assistant row still streaming:

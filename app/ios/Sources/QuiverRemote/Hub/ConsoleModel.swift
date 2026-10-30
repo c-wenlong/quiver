@@ -92,7 +92,7 @@ final class ConsoleModel {
             offlineTarget = true
         } catch {
             guard gen == generation else { return }
-            phase = .failed((error as? HubError)?.message ?? error.localizedDescription)
+            phase = .failed(error.localizedDescription)
             return
         }
         await connect(identity: identity, generation: gen)
