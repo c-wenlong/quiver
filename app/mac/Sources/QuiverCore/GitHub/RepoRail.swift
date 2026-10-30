@@ -116,12 +116,19 @@ extension GitHubModel {
     }
 
     /// How many rows the list shows for `repo` on `tab` after the
-    /// search. nil while the surface has not loaded or failed, so the
+    /// search and, for pull requests, the Mine / Review requested
+    /// filter. nil while the surface has not loaded or failed, so the
     /// rail never calls an unknown repo quiet.
     public func rowCount(_ repo: String, tab: RepoTab) -> Int? {
         let board = board(for: repo)
         switch tab {
-        case .pulls: return count(board.pulls, repo: repo, \.searchText)
+        case .pulls:
+            guard case .loaded(let prs) = board.pulls else { return nil }
+            // The rail lists every visible repo, not only the listed
+            // one the filter was offered for: a repo whose review set
+            // is unknown has no count rather than a false zero.
+            if activePullFilter == .reviewRequested, reviewRequested(repo) == nil { return nil }
+            return count(.loaded(prs.filter { keepsPull($0, repo: repo) }), repo: repo, \.searchText)
         case .issues: return count(board.issues, repo: repo, \.searchText)
         case .actions: return count(board.runs, repo: repo, \.searchText)
         case .releases: return count(board.releases, repo: repo, \.searchText)
