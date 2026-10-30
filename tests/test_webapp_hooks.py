@@ -410,9 +410,9 @@ class TestRoute(HubBase):
         self.assertEqual(json.loads(data)["error"]["code"], "bad_hook")
 
     def test_page_assets_are_bundled(self):
-        status, js = self.srv.request("GET", "/app/pages.js")
+        status, js = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".hk-row", css)
 
 

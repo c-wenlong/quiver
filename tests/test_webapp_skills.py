@@ -228,9 +228,9 @@ class TestRoute(HubBase):
         self.assertEqual(status, 404, data)
 
     def test_page_assets_are_bundled(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
+        status, data = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b".sk-row", self.srv.request("GET", "/app/pages.css")[1])
+        self.assertIn(b".sk-row", self.srv.request("GET", "/pages.css")[1])
 
 
 
@@ -592,7 +592,7 @@ class TestWriteRoute(_WriteHome, HubBase):
         self.assertEqual(self.srv.request("POST", "/v1/app/skills/link", body=["codex"], headers=auth)[0], 400)
 
     def test_page_script_carries_the_writes(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
+        status, data = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
         for needle in (b"/v1/app/skills/", b"Link to shared skills", b"Link all (", b"sk-confirm-go"):
             self.assertIn(needle, data)

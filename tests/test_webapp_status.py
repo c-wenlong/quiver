@@ -641,12 +641,12 @@ class TestRoute(HubBase):
         self.assertEqual(len(self.transport.requests), len(catalog.SERVICES))
 
     def test_page_assets_are_served(self):
-        status, data = self.srv.request("GET", "/app/pages.js")
+        status, data = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b".status-grid", self.srv.request("GET", "/app/pages.css")[1])
+        self.assertIn(b".status-grid", self.srv.request("GET", "/pages.css")[1])
         for logo in ("harness-openai.svg", "harness-copilot.svg", "harness-npm.svg",
                      "harness-vercel.svg", "harness-cloudflare-color.svg"):
-            self.assertEqual(self.srv.request("GET", f"/app/{logo}")[0], 200, logo)
+            self.assertEqual(self.srv.request("GET", f"/{logo}")[0], 200, logo)
 
 
 # -------------------------------------------------- catalogue and tracking

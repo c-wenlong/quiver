@@ -71,7 +71,7 @@ const Fmt = (() => {
     return PALETTE[h % PALETTE.length];
   }
 
-  /* HarnessIcons: every harness-<id>.svg shipped in /app/. Colour ones
+  /* HarnessIcons: every harness-<id>.svg shipped beside the page. Colour ones
    * are drawn as they are (harness-<id>-color.svg), mono ones inverted in
    * dark mode. Keep in step with the files beside this script. */
   const COLOR_LOGOS = new Set(("antgroup arcade browserbase cartesia claude cloudflare codex cohere deepseek "
@@ -124,7 +124,7 @@ const Fmt = (() => {
     const file = m.icon && logoFile(m.icon);
     if (!file) return `<span class="${cls}" aria-hidden="true"></span>`;
     const mono = file.endsWith("-color.svg") ? "" : " mono";
-    return `<img class="${cls}${mono}" src="/app/${file}" alt="${m.name.replace(/"/g, "&quot;")}">`;
+    return `<img class="${cls}${mono}" src="/${file}" alt="${m.name.replace(/"/g, "&quot;")}">`;
   }
 
   /* MarbleScale: one marble per round amount of spend (1, 2, 5 times a

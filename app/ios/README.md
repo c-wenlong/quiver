@@ -5,7 +5,7 @@ The native SwiftUI client for remote control. It talks to the hub that
 one SSE stream per open chat for live events. The protocol is in
 [docs/remote-control.md](../../docs/remote-control.md); the plan for
 every page is in [ROADMAP.md](ROADMAP.md). The web app the hub serves
-at `/app/` is the client for browsers and other devices.
+at `/` is the client for browsers and other devices.
 
 ## Layout
 

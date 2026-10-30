@@ -443,7 +443,7 @@ function settingsCatalogSheet() {
   const cell = (c) => {
     const file = PROVIDER_LOGOS[c.id];
     const logo = file
-      ? `<img class="set-cat-logo${file.endsWith("-color.svg") ? "" : " mono"}" src="/app/${file}" alt="">`
+      ? `<img class="set-cat-logo${file.endsWith("-color.svg") ? "" : " mono"}" src="/${file}" alt="">`
       : `<span class="set-cat-logo set-cat-mono" aria-hidden="true">${esc(c.name.slice(0, 1))}</span>`;
     return `<button class="set-cat-cell" data-cat-pick="${esc(c.id)}" title="Add ${esc(c.name)}'s key">
       ${logo}<span class="set-cat-name">${esc(c.name)}${c.has_key ? ' <span class="badge">Set</span>' : ""}</span>
