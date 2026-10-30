@@ -503,6 +503,22 @@ private func openGeminiIncident() throws -> Data {
             group: .infrastructure, isCustom: true)
         #expect(acme.logoID == nil)
     }
+
+    /// A catalogue row's one-click add lands under a fresh custom id;
+    /// the card still draws the catalogue's mark through the feed's host.
+    @Test func catalogueAddsKeepTheirMarkThroughTheHost() {
+        func added(_ name: String, _ host: String, _ group: StatusService.Group) -> StatusService {
+            StatusService(
+                id: StatusService.customID(for: name, taken: []), name: name,
+                pageURL: URL(string: "https://\(host)")!,
+                feed: .statuspage(URL(string: "https://\(host)/api/v2/summary.json")!),
+                group: group, isCustom: true)
+        }
+        #expect(added("PyPI", "status.python.org", .infrastructure).logoID == "pypi")
+        #expect(added("Sourcegraph", "sourcegraphstatus.com", .providers).logoID == "sourcegraph")
+        // The name match still wins where a brand covers it.
+        #expect(added("Moonshot AI", "status.moonshot.cn", .providers).logoID == "kimi")
+    }
 }
 
 /// The status pages the user adds: slugs, storage, the model's add/remove

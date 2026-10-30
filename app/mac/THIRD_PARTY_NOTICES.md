@@ -269,8 +269,9 @@ Where each came from is in `Resources/harness-icons.tsv`:
   Browserbase, Arcade, Statsig, WorkOS and Honeycomb — several cropped to
   the symbol where the site ships only a wordmark — and Sourcegraph's
   swirl from its WorldVectorLogo copy. crates.io publishes no vector
-  mark, so its row carries the Rust logo from rust-lang/rust-artwork
-  (CC-BY-4.0). All are trademarks of their owners, used only to name
+  mark, so its row carries the Rust logo from rust-lang/rust-artwork,
+  CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/). All are
+  trademarks of their owners, used only to name
   them; where each came from is in `harness-icons.tsv`.
 - Continue comes from its repository (continuedev/continue,
   `docs/logo/light.svg`); aider from its repository (Aider-AI/aider,

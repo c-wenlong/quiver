@@ -174,9 +174,14 @@ public struct StatusService: Sendable, Hashable, Identifiable {
 
     /// The bundled mark for this service, or nil when there is none. A
     /// custom page is matched on its name first ("OpenRouter" finds
-    /// openrouter), then on its id like a built-in page.
+    /// openrouter), then the catalogue entry its page came from, by the
+    /// feed's host — a one-click add lands under a fresh custom id, which
+    /// matches nothing below. Other services match on their id.
     public var logoID: String? {
         if isCustom, let id = APIKeyProviderLogo.logoID(for: name) { return id }
+        if isCustom, let logo = StatusCatalogue.all.first(where: { $0.host == host })?.logoID {
+            return logo
+        }
         if let id = Self.logoIDs[id], HarnessIcons.icon(for: id) != nil { return id }
         // A company's page shows its brand logo (OpenAI's for "openai"),
         // the one every other page draws for that company.

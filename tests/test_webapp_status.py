@@ -11,6 +11,7 @@ import copy
 import datetime
 import http.client
 import json
+import re
 import shutil
 import ssl
 import subprocess
@@ -652,28 +653,15 @@ class TestRoute(HubBase):
 
 class TestCatalogue(unittest.TestCase):
     def test_mirrors_the_mac_catalogue(self):
-        self.assertEqual(len(catalogue.CATALOGUE), 88)
-        self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "providers"],
-                         ["groq", "perplexity", "fireworks", "cerebras", "cohere", "baseten",
-                          "minimax", "elevenlabs", "lambda", "assemblyai",
-                          "mistral", "moonshot", "nebius", "stability", "ai21", "sambanova",
-                          "poe", "writer", "cartesia", "deepgram",
-                          "droid", "windsurf", "replit", "sourcegraph", "augment", "warp",
-                          "manus", "lovable", "blackbox", "kilo", "ona",
-                          "e2b", "browserbase", "tavily", "runloop", "arcade", "morph",
-                          "supermemory"])
-        self.assertEqual([e.id for e in catalogue.CATALOGUE if e.group == "infrastructure"],
-                         ["docker", "tailscale", "sentry", "datadog", "supabase", "digitalocean",
-                          "render", "upstash", "convex", "linear", "notion", "twilio", "clerk",
-                          "pypi", "crates", "rubygems", "maven",
-                          "bitbucket", "circleci", "buildkite", "travisci",
-                          "netlify", "flyio", "linode", "expo",
-                          "mongodb", "pinecone", "prisma", "sanity", "contentful",
-                          "temporal", "inngest", "astronomer",
-                          "grafana", "newrelic", "honeycomb", "incidentio",
-                          "launchdarkly", "statsig", "snyk", "codecov",
-                          "postman", "ngrok", "hashicorp", "figma", "atlassian", "workos",
-                          "mailgun", "discord", "revenuecat"])
+        # The mirror is literal: the rows the Mac's StatusCatalogue.swift
+        # declares, in order, are this catalogue.
+        swift = (Path(__file__).resolve().parents[1]
+                 / "app/mac/Sources/QuiverCore/Status/StatusCatalogue.swift")
+        if not swift.exists():
+            self.skipTest("no app/mac/ in this checkout")
+        rows = re.findall(r'statuspage\("([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*\.(\w+)\)',
+                          swift.read_text(encoding="utf-8"))
+        self.assertEqual([(e.id, e.name, e.page_url, e.group) for e in catalogue.CATALOGUE], rows)
         for e in catalogue.CATALOGUE:
             self.assertTrue(e.page_url.startswith("https://"), e.id)
             self.assertEqual(e.feed_url, f"{e.page_url}/api/v2/summary.json", e.id)
