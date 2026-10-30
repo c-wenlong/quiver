@@ -661,10 +661,11 @@ private struct SessionRow: View {
                 .opacity(hovering || resumeFocused ? 1 : 0)
                 .focused($resumeFocused)
                 .focusRing(resumeFocused, cornerRadius: Theme.iconButtonRadius)
-                .help(s.resume != nil ? "Resume in your terminal"
-                      : s.opensInBrowser ? "Open in Devin"
-                      : row.location == .cloud ? "A cloud session can't be resumed here"
-                      : "This harness has no resume command")
+                .hoverTip(s.resume != nil ? "Resume in your terminal"
+                          : s.opensInBrowser ? "Open in Devin"
+                          : row.location == .cloud ? "A cloud session can't be resumed here"
+                          : "This harness has no resume command",
+                          replacesLabel: false)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 8)
@@ -834,10 +835,14 @@ private struct SessionRail: View {
                                     .font(Theme.nav)
                                     .lineLimit(1).truncationMode(.middle)
                                 Spacer(minLength: 6)
-                                if let color = Self.dotColor(row.session.status) {
+                                // Named for VoiceOver only: a .help inside the
+                                // RailRow's button label never shows, and a
+                                // hover tip's tap would take the row's click.
+                                if let color = Self.dotColor(row.session.status),
+                                   let title = StatusBadge.title(row.session.status) {
                                     Circle().fill(color)
                                         .frame(width: Theme.statusDot, height: Theme.statusDot)
-                                        .help(StatusBadge.title(row.session.status) ?? "")
+                                        .accessibilityLabel(title)
                                 }
                             }
                         }
@@ -968,10 +973,11 @@ struct SessionDetail: View {
                     .keyboardShortcut(.defaultAction)
                     .primaryButton()
                     .disabled(s.resume == nil && !s.opensInBrowser)
-                    .help(s.resume != nil ? "Resume in terminal"
-                          : s.opensInBrowser ? "Open the session in Devin's web app"
-                          : row.location == .cloud ? "A cloud session can't be resumed here"
-                          : "This session is no longer in \(HarnessMark(s.harness).name)'s history")
+                    .hoverTip(s.resume != nil ? "Resume in terminal"
+                              : s.opensInBrowser ? "Open the session in Devin's web app"
+                              : row.location == .cloud ? "A cloud session can't be resumed here"
+                              : "This session is no longer in \(HarnessMark(s.harness).name)'s history",
+                              replacesLabel: false)
             }
         }
         .padding(24)

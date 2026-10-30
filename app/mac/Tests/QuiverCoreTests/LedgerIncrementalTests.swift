@@ -140,6 +140,7 @@ func claudeLine(
     /// Overview does not count it or clear the error state.
     @Test func aCancelledScanThrowsRatherThanReportingCompletion() async throws {
         let s = try Setup()
+        defer { withExtendedLifetime(s) {} }
         try s.write(claudeLine(message: "m1"))
         let ledger = s.ledger
         let roots = s.roots
@@ -250,6 +251,7 @@ func claudeLine(
 
     @Test func anOversizedLineIsSkippedAndTheRestStillCounts() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let home = temp.path("claude")
         let file = home.appendingPathComponent("projects/-p/s1.jsonl")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -275,6 +277,7 @@ func claudeLine(
 
     @Test func theReaderStreamsLinesAcrossChunkBoundaries() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let file = temp.path("lines.jsonl")
         let lines = (0..<50).map { "line-\($0)-" + String(repeating: "y", count: $0 * 7) }
         try Data((lines.joined(separator: "\n") + "\npartial").utf8).write(to: file)

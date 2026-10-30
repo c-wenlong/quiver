@@ -2,23 +2,6 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
-/// A one-shot gate: `wait` parks until `open`, or returns at once after.
-private actor Latch {
-    private var opened = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func wait() async {
-        if opened { return }
-        await withCheckedContinuation { waiters.append($0) }
-    }
-
-    func open() {
-        opened = true
-        waiters.forEach { $0.resume() }
-        waiters = []
-    }
-}
-
 private func item(_ key: String, _ status: String?, at: Double = 100, kind: String? = nil) -> HubInboxItem {
     HubInboxItem(key: key, harness: "claude", title: key, status: status, lastActiveAt: at, kind: kind)
 }
@@ -132,18 +115,16 @@ private func item(_ key: String, _ status: String?, at: Double = 100, kind: Stri
         let model = NeedsYouModel()
         let rows = [item("a", "error"), item("b", "error")]
         await model.load { rows }
-        let started = Latch()
-        let release = Latch()
+        let gate = HoldGate()
         let slow = Task { @MainActor in
             await model.load {
-                await started.open()
-                await release.wait()
+                try await gate.pass()
                 return [item("a", "error"), item("b", "error"), item("z", "followup")]
             }
         }
-        await started.wait()
+        #expect(await gate.arrived())
         await model.dismiss([rows[0]], post: { _, _ in }, refetch: { [] })
-        await release.open()
+        gate.open()
         await slow.value
         #expect(model.items.map(\.key) == ["b"])
     }
@@ -171,18 +152,8 @@ extension HubStubbed {
         let post = try #require(HubStub.requests.last)
         #expect(post.httpMethod == "POST")
         #expect(post.url?.path == "/v1/inbox/dismiss")
-        var data = post.httpBody ?? Data()
-        if data.isEmpty, let stream = post.httpBodyStream {
-            stream.open()
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            while stream.hasBytesAvailable {
-                let n = stream.read(&buffer, maxLength: buffer.count)
-                guard n > 0 else { break }
-                data.append(buffer, count: n)
-            }
-            stream.close()
-        }
-        let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let body = try #require(
+            try JSONSerialization.jsonObject(with: HubStub.bodyData(post)) as? [String: Any])
         #expect(body["key"] as? String == "claude:a")
         #expect(body["last_active_at"] as? Double == 3.5)
     }

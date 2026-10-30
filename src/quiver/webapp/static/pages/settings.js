@@ -1035,13 +1035,12 @@ function bindSettings(section) {
   if (status) status.onchange = () => { settingsPage.status = status.value; paintSettings(); };
   const search = document.getElementById("set-key-search");
   if (search) {
-    search.oninput = () => {
-      settingsPage.query = search.value;
+    bindSearch(search, (text) => { settingsPage.query = text; }, () => {
       const caret = search.selectionStart;
       paintSettings();
       const again = document.getElementById("set-key-search");
       if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch { /* not text */ } }
-    };
+    });
   }
   if (section === "integrations") bindRemote();
   bindKeys();
@@ -1065,13 +1064,12 @@ function bindKeys() {
     if (!catSheet.open) catSheet.showModal();
     catSheet.oncancel = (ev) => { ev.preventDefault(); p.catalog = false; settingsKeyRepaint("#set-key-catalog"); };
     const catSearch = document.getElementById("set-cat-search");
-    catSearch.oninput = () => {
-      p.catalogQuery = catSearch.value;
+    bindSearch(catSearch, (text) => { p.catalogQuery = text; }, () => {
       const caret = catSearch.selectionStart;
       settingsKeyRepaint("#set-cat-search");
       const again = document.getElementById("set-cat-search");
       if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch { /* not text */ } }
-    };
+    });
     for (const btn of catSheet.querySelectorAll("[data-cat-pick]")) {
       btn.onclick = () => {
         p.catalog = false;
@@ -1145,10 +1143,6 @@ function settingsCloseKey() {
   settingsKeyRepaint(name ? `[data-key-open="${CSS.escape(name)}"]` : "#set-key-add");
 }
 
-function settingsFailure(status, data) {
-  return failText(status, data);
-}
-
 function settingsSignedOut(status) {
   if (status !== 401) return false;
   if (onSettingsPage()) renderGate();
@@ -1167,7 +1161,7 @@ async function settingsReloadKeys(focus) {
   p.keysBusy = false;
   if (gen !== routeGen || mine !== p.gen) return;
   if (settingsSignedOut(status)) return;
-  if (status === 200 && data) { p.data = data; p.keyError = null; } else p.keyError = settingsFailure(status, data);
+  if (status === 200 && data) { p.data = data; p.keyError = null; } else p.keyError = failText(status, data);
   settingsKeyRepaint(focus);
 }
 
@@ -1175,7 +1169,7 @@ async function settingsReloadKeys(focus) {
 async function settingsKeyValue(name) {
   const { status, data } = await apiPost("/v1/app/settings/key_value", { name });
   if (status === 200 && data && typeof data.value === "string") return data.value;
-  if (!settingsSignedOut(status)) settingsPage.keyError = settingsFailure(status, data);
+  if (!settingsSignedOut(status)) settingsPage.keyError = failText(status, data);
   return null;
 }
 
@@ -1232,7 +1226,7 @@ function settingsKeyDone(e, name, status, data, focus) {
     else settingsKeyRepaint();
     return;
   }
-  e.error = settingsFailure(status, data);
+  e.error = failText(status, data);
   e.confirmingDelete = false;
   if (p.keyEditor !== e) return;
   // The file moved under the page: read it again so a retry carries the

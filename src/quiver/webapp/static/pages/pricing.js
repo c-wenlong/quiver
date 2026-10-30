@@ -2,9 +2,8 @@
  * each one resolves to and where it came from. Ports the Mac app's
  * PricingPage: a row opens its price form (PricingEditSheet), which saves
  * your own price or removes it, POST /v1/app/pricing/save|remove. Also
- * exports the helpers the Models page shares (QuiverPricing).
- * Everything sits in one closure: pages.js is a single script, so a
- * top-level name here could clash with another page's. */
+ * exports the helpers the Models page shares (QuiverPricing), on window:
+ * the bundle runs each page script in its own scope (pages/__init__.py). */
 (() => {
   "use strict";
 

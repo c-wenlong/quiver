@@ -366,8 +366,9 @@ public struct ModelsView: View {
 }
 
 /// A model's lab logo from `ModelBrands`, as every app page shows it
-/// before a model name, and the old dot when no lab is known. The tools
-/// that ran it go in the help text: a widget row has room for one logo.
+/// before a model name, and the old dot when no lab is known. A widget
+/// row has room for one logo and a widget takes no hover, so the lab and
+/// the tools that ran it go to VoiceOver only.
 private struct ModelBrandLogo: View {
     var model: String
     var harnesses: [String]
@@ -381,7 +382,9 @@ private struct ModelBrandLogo: View {
                     .frame(width: 12, height: 12)
             }
         }
-        .help(([ModelBrands.forModel(model).name] + harnesses.map { UsageFormat.harness($0) })
+        // Its own element: HarnessLogo hides itself from VoiceOver.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(([ModelBrands.forModel(model).name] + harnesses.map { UsageFormat.harness($0) })
             .joined(separator: " · "))
     }
 }

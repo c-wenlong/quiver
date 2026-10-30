@@ -526,7 +526,9 @@ private struct SpendDonut: View {
                  selection: $period, style: .period)
             HStack(spacing: 16) {
                 ZStack {
-                    if (totalCost) > 0 {
+                    // Every priced provider hidden still has money in the
+                    // total, but no slice to draw: show the empty ring.
+                    if parts.contains(where: { $0.totals.costUSD > 0 }) {
                         Chart(parts, id: \.harness) { part in
                             SectorMark(angle: .value("Spend", part.totals.costUSD),
                                        innerRadius: .ratio(0.68), angularInset: 1.5)
@@ -558,7 +560,7 @@ private struct SpendDonut: View {
                             Spacer()
                             if part.totals.unpricedTokens > 0 {
                                 Image(systemName: "questionmark.circle").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                                    .help("\(UsageFormat.tokens(part.totals.unpricedTokens)) tokens with no list price")
+                                    .hoverTip("\(UsageFormat.tokens(part.totals.unpricedTokens)) tokens with no list price")
                             }
                             Text(UsageFormat.dollars(part.totals.costUSD)).font(Theme.caption).monospacedDigit()
                                 .foregroundStyle(Theme.textPrimary)
@@ -681,7 +683,7 @@ private struct PanelLimitRow: View {
     var resetsAt: Date?
 
     /// The reading is a kept older one after a failed or unread fetch:
-    /// red label, greyed bar and value, the real age for the reset time.
+    /// red label, greyed bar and value, its age for the reset time.
     var unavailable: Bool = false
     var asOf: Date? = nil
 
@@ -698,8 +700,10 @@ private struct PanelLimitRow: View {
                 .font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.textPrimary)
                 .opacity(unavailable ? 0.45 : 1)
                 .frame(width: 34, alignment: .trailing)
+            // Just the age: "as of 13h ago" doesn't fit the column, and the
+            // red label and greyed bar already say the reading is old.
             Text(unavailable
-                    ? (asOf.map { "as of \(UsageFormat.ago($0, now: .now))" } ?? "")
+                    ? (asOf.map { UsageFormat.ago($0, now: .now) } ?? "")
                     : (resetsAt.map { $0 > .now ? UsageFormat.resetIn($0, now: .now) : "" } ?? ""))
             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             .lineLimit(1)

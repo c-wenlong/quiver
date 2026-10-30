@@ -120,7 +120,7 @@ struct TemperatureChart: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .fixedSize()
-                .help("Shaded where a fan ran more than 15% above its minimum speed.")
+                .hoverTip("Shaded where a fan ran more than 15% above its minimum speed.", replacesLabel: false)
             }
         }
     }

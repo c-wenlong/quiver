@@ -195,7 +195,13 @@ def _matches_agent(session: Session, agent: str) -> bool:
 
 
 def _path_is_within(session_path: str, cwd: str) -> bool:
-    candidate = os.path.realpath(os.path.expanduser(session_path))
+    # An empty path realpaths to the process cwd, and a relative one
+    # resolves against it, so either would match every `--here`. Neither
+    # says where the session ran (the aggregator's cwd filter skips both).
+    expanded = os.path.expanduser(session_path or "")
+    if not os.path.isabs(expanded):
+        return False
+    candidate = os.path.realpath(expanded)
     parent = os.path.realpath(os.path.expanduser(cwd))
     try:
         return os.path.commonpath((candidate, parent)) == parent

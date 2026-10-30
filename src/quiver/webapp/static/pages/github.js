@@ -167,14 +167,16 @@ const GhUI = (() => {
    * the hub is unreachable. */
   const post = (path, body) => apiPost(path, body);
 
-  function failMessage(status, data) {
-    return (data && data.error && (data.error.message || data.error))
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
-  }
+  /* app.js's failText, its offline line ending "then refresh". */
+  const failMessage = (status, data) => failText(status, data, "then refresh");
 
-  /* Keep a search box's focus and caret across a repaint. */
+  /* Keep a search box's focus and caret across a repaint. While the box
+   * is mid-composition (bindSearch) the repaint would end the IME's
+   * unfinished word, so it is skipped: the box's compositionend repaints
+   * with whatever landed meanwhile (a poll's spinner or its reply). */
   function keepFocus(id, paint) {
     const el = document.getElementById(id);
+    if (el && el.composing) return;
     const had = el && document.activeElement === el;
     const at = had ? el.selectionStart : 0;
     paint();
@@ -208,6 +210,13 @@ const GhUI = (() => {
   const CODE_SPAN = /(`+)(?!`)([^\n]*?[^`\n])\1(?!`)/g;
   /* A link target: no spaces, parentheses only in balanced pairs. */
   const URL_PART = "((?:[^()\\s]|\\([^()\\s]*\\))+)";
+  /* An autolink's URL that fits a link target whole (brackets included,
+   * as in an IPv6 host). */
+  const AUTOLINK_TARGET = new RegExp(`^${URL_PART}$`);
+  /* A bare URL in escaped text (chat.js's inline() uses the same one).
+   * esc() wrote `<`, `>`, `"` and `'` as entities: an `&` starting one of
+   * them ends the URL, while `&amp;` (a real `&`) stays inside it. */
+  const BARE_URL = /\bhttps?:\/\/(?:[^\s<>"&\u0001]|&(?!lt;|gt;|quot;|#39;))+[^\s<>"&\u0001.,;:!?)\]']/g;
 
   /* The body with fenced and inline code blanked out, same length, so a
    * tag search on it never matches an example inside code. */
@@ -273,7 +282,12 @@ const GhUI = (() => {
       .replace(/<img\b([^>]*)>/gi, (_m, attrs) => {
         const src = attr(attrs, "src");
         return src ? `![${attr(attrs, "alt") || "image"}](${src})` : "";
-      });
+      })
+      // Autolinks, which the tag pass below would drop as unknown tags:
+      // <https://…> becomes a link to itself (an empty label shows the
+      // URL, so a ] in it can't end the label), <a@b.co> a mail link.
+      .replace(/<(https?:\/\/[^\s<>]+)>/gi, (_m, url) => (AUTOLINK_TARGET.test(url) ? `[](${url})` : url))
+      .replace(/<(?:mailto:)?([^\s<>@:/()[\]]+@[^\s<>@/()[\]]+\.[^\s<>@/()[\]]+)>/gi, "[$1](mailto:$1)");
     const lists = [];
     s = s.replace(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*?>/g, (_m, close, name) => {
       const tag = name.toLowerCase();
@@ -391,7 +405,7 @@ const GhUI = (() => {
       // Bare URLs are set aside first, so emphasis never reaches inside one.
       const urls = [];
       return part
-        .replace(/\bhttps?:\/\/[^\s<\u0001]+[^\s<\u0001.,;:!?)\]'"]/g, (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; })
+        .replace(BARE_URL, (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; })
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/(^|[^\w])__([^_]+)__(?!\w)/g, "$1<strong>$2</strong>")
         .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<em>$2</em>")
