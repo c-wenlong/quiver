@@ -3147,6 +3147,39 @@ class TestServeEntry(unittest.TestCase):
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
         self.assertFalse(state.tail_manager.is_hot("claude:b"))
 
+    def test_catalog_loop_prunes_pair_requests_at_most_once_a_minute(self):
+        home = Path(tempfile.mkdtemp())
+        state = HubState(home)
+        r = pairing.request_pair(home, {"node_id": "n1"}, "phone")
+        pairing.approve_request(home, r["code"])
+        rows = pairing._load_requests(home)
+        rows[0]["expires_at"] = time.time() - 1
+        pairing._save_requests(home, rows)
+        # Three loop passes: prune on the first, skip the second (same
+        # minute), prune the third once the last prune is backdated
+        # past the interval.
+        passes = iter(range(3))
+        state.catalog.rows = lambda: []
+        state.catalog.refresh = lambda: []
+        state.catalog.poll_github = lambda: None
+        state._adopt_launches = lambda: None
+        state._refresh_launchable = lambda: None
+        state._catalog_wake.wait = lambda _t: None
+
+        def sync(rows, **kw):
+            if next(passes) == 2:
+                state._pair_pruned_at -= hub_mod._PAIR_PRUNE_S + 1
+                state._stop.set()
+
+        state.tail_manager.sync = sync
+        with patch("quiver.remote.supervise.reap_kept"), \
+             patch("quiver.remote.pairing.prune_requests",
+                   wraps=pairing.prune_requests) as prune:
+            state._catalog_loop()
+        self.assertEqual(prune.call_count, 2)
+        # The uncollected credential left with its expired row.
+        self.assertEqual(pairing._load_requests(home), [])
+
     def test_tail_manager_probes_through_state_status_of(self):
         state = HubState(Path(tempfile.mkdtemp()))
         state.status_of = lambda sessions: ["active"] * len(sessions)

@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import QuiverRemote
 
@@ -14,6 +15,21 @@ final class SSEParserTests: XCTestCase {
         var p = SSEParser()
         XCTAssertNil(p.feed(": ka"))
         XCTAssertNil(p.feed(""))
+    }
+}
+
+final class EventStreamTests: XCTestCase {
+    func testOnlyARefusalNoRetryCanChangeEndsTheStream() {
+        XCTAssertTrue(EventStream.ends(status: 403, notFoundInARow: 0))
+        // A restarted hub answers 404 until its catalog scan lands.
+        for n in 1..<EventStream.notFoundLimit {
+            XCTAssertFalse(EventStream.ends(status: 404, notFoundInARow: n), "404 number \(n) may be a restart")
+        }
+        XCTAssertTrue(EventStream.ends(status: 404, notFoundInARow: EventStream.notFoundLimit),
+                      "unknown_session that long: the hub dropped it")
+        for status in [0, 500, 502, 503, 504] {
+            XCTAssertFalse(EventStream.ends(status: status, notFoundInARow: 99), "\(status) is worth reconnecting for")
+        }
     }
 }
 
@@ -53,6 +69,16 @@ final class PairLinkTests: XCTestCase {
         XCTAssertEqual(hubURL(from: "mac:9000")?.absoluteString, "http://mac:9000")
         XCTAssertEqual(hubURL(from: "http://mac:8477/#approve")?.absoluteString, "http://mac:8477")
         XCTAssertNil(hubURL(from: "   "))
+        // https with no port is `tailscale serve` on 443, not the hub's 8477.
+        XCTAssertEqual(hubURL(from: "https://mac.tailnet.ts.net")?.absoluteString, "https://mac.tailnet.ts.net")
+        XCTAssertEqual(hubURL(from: "https://mac.tailnet.ts.net:8443/")?.absoluteString, "https://mac.tailnet.ts.net:8443")
+    }
+
+    func testHttpsFragmentLinkWithoutAPortIs443() {
+        XCTAssertEqual(PairLink(URL(string: "https://mac.tailnet.ts.net/app/#pair=tok")!)?.baseURL.absoluteString,
+                       "https://mac.tailnet.ts.net")
+        XCTAssertEqual(PairLink(URL(string: "http://mac.ts.net/app/#pair=tok")!)?.baseURL.absoluteString,
+                       "http://mac.ts.net:8477")
     }
 }
 
@@ -1354,5 +1380,18 @@ final class LaunchFlowTests: XCTestCase {
         """
         XCTAssertEqual(LinkCards.urls(in: text).map(\.absoluteString),
                        ["https://one.example.com", "https://two.example.com/x"])
+    }
+}
+
+final class ChatStreamGateTests: XCTestCase {
+    func testOnlyTheBackgroundStopsAndRestartsTheStream() {
+        var gate = ChatStreamGate()
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none, "Control Center leaves it running")
+        XCTAssertEqual(gate.phase(.active), ChatStreamGate.Action.none, "and coming back restarts nothing")
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none)
+        XCTAssertEqual(gate.phase(.background), .stop)
+        XCTAssertEqual(gate.phase(.inactive), ChatStreamGate.Action.none)
+        XCTAssertEqual(gate.phase(.active), .start, "back from the background: started once")
+        XCTAssertEqual(gate.phase(.active), ChatStreamGate.Action.none)
     }
 }

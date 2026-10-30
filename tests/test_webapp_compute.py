@@ -3,6 +3,8 @@ attribution, the meters, the history rings and the route."""
 
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -476,6 +478,35 @@ class TestRoute(_Model, HubBase):
         status, data = self.srv.request("GET", "/app/pages.js")
         self.assertEqual(status, 200)
         self.assertIn(b'registerPage("compute"', data)
+
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestStoredChoices(unittest.TestCase):
+    """pages/compute.js under node: the tab, interval and Temperature lines
+    kept in localStorage fall back when the page doesn't know them (an
+    unknown tab threw in the chart and stopped the poll)."""
+
+    def choices(self, stored):
+        script = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/compute.js"
+        prelude = ("const stored = " + json.dumps({f"quiver.compute.{k}": v for k, v in stored.items()}) + ";\n"
+                   "globalThis.localStorage = { getItem: (k) => (k in stored ? stored[k] : null) };\n"
+                   "function registerPage() {}\n")
+        body = ("process.stdout.write(JSON.stringify({ tab: computePage.tab, interval: computePage.interval,"
+                " lines: computePage.lines }));\n")
+        done = subprocess.run(["node", "-e", prelude + script.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_known_choices_are_kept(self):
+        self.assertEqual(self.choices({"tab": "gpu", "interval": "30", "temperatureLines": '["ssd","cpu"]'}),
+                         {"tab": "gpu", "interval": 30, "lines": ["ssd", "cpu"]})
+
+    def test_unknown_choices_fall_back(self):
+        self.assertEqual(self.choices({"tab": "disk", "interval": "7", "temperatureLines": '{"cpu":1}'}),
+                         {"tab": "ram", "interval": 10, "lines": ["cpu", "gpu", "ssd", "battery"]})
+        self.assertEqual(self.choices({"temperatureLines": '["cpu","fan",3]'})["lines"], ["cpu"])
 
 
 if __name__ == "__main__":

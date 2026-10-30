@@ -449,7 +449,8 @@ class TestChatScript(unittest.TestCase):
             ".replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');\n"
             "const safeHref = (u) => /^(https?:\\/\\/|mailto:)/i.test(String(u || '').trim()) ? esc(String(u).trim()) : '';\n"
             "globalThis.window = { addEventListener() {} };\n"
-            "globalThis.document = { addEventListener() {} };\n"
+            "const registered = {};\n"
+            "globalThis.document = { addEventListener(t, f) { registered[t] = f; } };\n"
             "globalThis.location = { hash: '' };\n")
         source = (STATIC / "pages" / "chat.js").read_text(encoding="utf-8")
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
@@ -460,6 +461,37 @@ class TestChatScript(unittest.TestCase):
         done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
+
+    def test_reconnects_back_off_to_half_a_minute(self):
+        out = self.run_js("return [0, 1, 2, 3, 4, 5, 9, 60].map(T.retryDelay);")
+        self.assertEqual(out, [2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000])
+
+    def test_a_hidden_tab_waits_and_showing_it_reconnects(self):
+        """A dropped stream retries on a timer that does nothing while the
+        tab is hidden; showing the tab reconnects at once, and failures in
+        a row wait longer."""
+        out = self.run_js(r"""
+const timers = [], listeners = {};
+let fetches = 0;
+globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+globalThis.clearTimeout = () => {};
+globalThis.fetch = () => { fetches++; return Promise.reject(new Error("down")); };
+globalThis.authHeaders = () => ({});
+document.getElementById = () => null;
+const settle = () => new Promise((r) => setImmediate(r));
+// The visibility handler chat.js registered at load.
+const vis = registered.visibilitychange;
+Object.assign(T.chat, { key: "k", opened: true, gen: 1 });
+T.openStream(1, 0); await settle();
+document.hidden = true; document.visibilityState = "hidden";
+timers[0].fn(); await settle();                       // hidden: no request
+const hiddenFetches = fetches;
+document.hidden = false; document.visibilityState = "visible";
+vis(); await settle();                                // shown: reconnects now
+timers[1].fn(); await settle();                       // visible: the retry runs
+return { fetches, hiddenFetches, delays: timers.map((t) => t.ms) };
+""")
+        self.assertEqual(out, {"fetches": 3, "hiddenFetches": 1, "delays": [2000, 2000, 4000]})
 
     def test_bare_urls_keep_their_underscores(self):
         """A bare URL goes back after emphasis runs, so `__init__` in a
