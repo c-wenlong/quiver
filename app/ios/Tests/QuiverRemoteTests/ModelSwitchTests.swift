@@ -91,6 +91,18 @@ final class ModelSwitchTests: XCTestCase {
         XCTAssertEqual(s.replyAt, reply)
     }
 
+    func testOnlyThisSwitchsOwnFailureCancelsIt() throws {
+        let s = ModelSwitch(requested: "sonnet", from: "opus", sentAt: Date(), clientId: "c-1")
+        func result(_ json: String) throws -> CommandResult {
+            try Hub.decoder.decode(CommandResult.self, from: Data(json.utf8))
+        }
+        XCTAssertTrue(s.failed(by: try result(#"{"op":"control","ok":false,"client_id":"c-1","note":"pane unreachable"}"#)))
+        XCTAssertFalse(s.failed(by: try result(#"{"op":"control","ok":false,"note":"an interrupt failed"}"#)),
+                       "another control's failure, or one from an older hub that drops the id")
+        XCTAssertFalse(s.failed(by: try result(#"{"op":"control","ok":false,"client_id":"c-2"}"#)))
+        XCTAssertFalse(s.failed(by: try result(#"{"op":"control","ok":true,"client_id":"c-1"}"#)))
+    }
+
     func testRepliesFromBeforeTheSwitchDontCount() {
         let sent = Date(timeIntervalSince1970: 10_000)
         var s = ModelSwitch(requested: "sonnet", from: "opus", sentAt: sent)

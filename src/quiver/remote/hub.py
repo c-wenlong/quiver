@@ -2497,6 +2497,12 @@ class _Handler(BaseHTTPRequestHandler):
                 fields = {"ctl": op, "value": cmd.get("value") or ""}
                 if "mode" in cmd:
                     fields["mode"] = cmd["mode"]
+                # The agent echoes it on the command.result, so the phone
+                # can tell its own model switch's failure from another
+                # control's.
+                cid = body.get("client_id")
+                if isinstance(cid, str) and cid:
+                    fields["client_id"] = cid[:64]
                 queued = self._state.queue_command(
                     mid, "control", key, fields)
             if queued is None:

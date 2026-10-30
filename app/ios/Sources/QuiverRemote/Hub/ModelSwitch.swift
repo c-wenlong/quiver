@@ -63,13 +63,22 @@ struct ModelSwitch: Equatable {
     /// The row's model when the switch was sent.
     let from: String?
     let sentAt: Date
+    /// Sent with the control op; a satellite echoes it on its
+    /// `command.result`, so only this switch's own failure clears it.
+    let clientId: String
     /// When the first reply after the send arrived on this phone.
     private(set) var replyAt: Date?
 
-    init(requested: String, from: String?, sentAt: Date) {
+    init(requested: String, from: String?, sentAt: Date, clientId: String = UUID().uuidString) {
         self.requested = requested
         self.from = from
         self.sentAt = sentAt
+        self.clientId = clientId
+    }
+
+    /// Whether a `command.result` reports this switch failing.
+    func failed(by result: CommandResult) -> Bool {
+        result.op == "control" && result.ok == false && result.clientId == clientId
     }
 
     /// A model's output arrived at `at`; `messageTs` is the transcript's

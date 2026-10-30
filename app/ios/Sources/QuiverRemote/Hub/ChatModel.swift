@@ -533,7 +533,8 @@ final class ChatModel {
         } else if msg.kind != "tool_result" {
             awaitingReply = false
         }
-        if ["assistant", "thinking", "tool_use"].contains(msg.kind ?? "assistant") {
+        // History a backfill replays is never a reply to the switch.
+        if !replayingHistory, ["assistant", "thinking", "tool_use"].contains(msg.kind ?? "assistant") {
             modelSwitch?.noteReply(at: Date(), messageTs: msg.ts)
         }
         Self.add(msg, id: "m\(seq)", to: &items, cards: &toolCards, orphans: &orphanResults)
@@ -666,8 +667,9 @@ final class ChatModel {
             return
         }
         if r.ok == false {
-            // A satellite answers a model switch here, after the 202.
-            if r.op == "control" { modelSwitch = nil }
+            // A satellite answers a model switch here, matched by the
+            // client id it echoes; other controls' failures leave it.
+            if modelSwitch?.failed(by: r) == true { modelSwitch = nil }
             items.append(ChatItem(id: UUID().uuidString, kind: .system("\(r.op ?? "Command") failed: \(r.note ?? "unknown error")")))
         }
     }
@@ -1085,11 +1087,15 @@ final class ChatModel {
     func switchModel(to text: String) async {
         guard let client = hubClient, let value = ModelSwitchOptions.validValue(text) else { return }
         if pendingModel == nil, value == row?.model { return }
-        let from = row?.model
+        // Pending before the POST: a satellite's failed result can reach
+        // the event stream before the hub's 202 does, and must find the
+        // switch it cancels rather than be overwritten by it.
+        let pending = ModelSwitch(requested: value, from: row?.model, sentAt: Date())
+        modelSwitch = pending
         do {
-            try await client.control(key, op: "model", value: value)
-            modelSwitch = ModelSwitch(requested: value, from: from, sentAt: Date())
+            try await client.control(key, op: "model", value: value, clientId: pending.clientId)
         } catch {
+            if modelSwitch?.clientId == pending.clientId { modelSwitch = nil }
             items.append(ChatItem(id: UUID().uuidString, kind: .system((error as? HubError)?.message ?? "Couldn't switch the model")))
         }
     }
