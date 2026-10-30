@@ -288,13 +288,21 @@ final class PrimitiveHome {
         #expect(edited.contains(#""repository": {"type": "git", "url": "https://github.com/o/r"}"#))
         #expect(edited.contains(#""author": "Kai""#))
         #expect(edited.contains(#""keywords": ["a", 3]"#))
-        for key in ["description", "homepage", "license", "email", "url\": \"\""] {
+        for key in ["description", "homepage", "license", "email", "url"] {
             #expect(!edited.contains("\"\(key)\": \"\""), "\(key)")
         }
         // A string author stays a string when only its name changes.
         fields = PluginManifestFields(parsing: text)
         fields.authorName = "Kai Chen"
         #expect(try fields.apply(to: text).contains(#""author": "Kai Chen""#))
+        // A string author turning into an object keeps its unchanged name.
+        fields = PluginManifestFields(parsing: text)
+        fields.authorEmail = "k@x.dev"
+        let object = try JSONSerialization.jsonObject(with: Data(try fields.apply(to: text).utf8)) as? [String: Any]
+        let author = object?["author"] as? [String: Any]
+        #expect(author?["name"] as? String == "Kai")
+        #expect(author?["email"] as? String == "k@x.dev")
+        #expect(author?["url"] == nil)
     }
 
     @Test func versionAndURLValidation() {
