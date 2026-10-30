@@ -39,7 +39,7 @@ The CLI is organized by domain under `src/quiver/`:
 | `reports/` | Daily and weekly session reports: transcripts, triage, batching, model runners, follow-up ledger |
 | `providers/` | LLM provider metadata and API-key file lookup |
 | `setup/` | The interactive onboarding wizard |
-| `github/` | `swe gh` and the hub's GitHub routes; `gh.py` is the only module that spawns `gh` |
+| `github/` | `swe gh` and the hub's GitHub routes; within the package only `gh.py` spawns `gh` |
 | `remote/` | `swe remote`: the hub, the satellite agent, pairing and devices ([docs/remote-control.md](docs/remote-control.md)) |
 | `webapp/` | The web app the hub serves, and its page data ([docs/web-app.md](docs/web-app.md)) |
 | `ledger/`, `status/` | Python ports of the Mac app's usage ledger and service-status reader, for the web app |
