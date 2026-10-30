@@ -322,7 +322,9 @@ final class AppModel {
     @discardableResult
     func adopt(_ hub: PairedHub) -> Bool {
         guard store.saveCredential(hub) else {
-            pairing.error = "Paired, but the Keychain wouldn't store the credential, so this phone would forget the hub. Try again."
+            // The hub took the code; it won't take it twice.
+            pairing.error = "Paired, but the Keychain wouldn't store the credential, so this phone would forget the hub. Make a new pair code on the hub and pair again."
+            pairing.codeSpent = true
             return false
         }
         hubs.adopt(hub)
@@ -434,6 +436,7 @@ final class AppModel {
     func handle(_ url: URL) async {
         if let link = PairLink(url) {
             pairing.error = nil
+            pairing.codeSpent = false
             pairOffer = link
             return
         }
@@ -445,7 +448,7 @@ final class AppModel {
     /// Pairs with the hub `pairOffer` names, which the person confirmed.
     /// The offer stays up on failure so its error shows where they are.
     func acceptPairOffer() async {
-        guard let link = pairOffer else { return }
+        guard let link = pairOffer, !pairing.codeSpent else { return }
         let gen = pairingGen
         offerPairingGen = gen
         // Only this pair's own mark: a cancelled one finishing late must
@@ -479,6 +482,7 @@ final class AppModel {
         let gen = pairingGen
         pairing.busy = true
         pairing.error = nil
+        pairing.codeSpent = false
         let client = HubClient(baseURL: link.baseURL, credential: nil)
         do {
             let cred = try await client.pair(token: link.token, name: link.name ?? pairing.deviceName)
@@ -585,6 +589,9 @@ final class AppModel {
 
 struct PairingFlow {
     var host: String = KeychainHubStore.lastHost ?? ""
+    /// The hub accepted the pair code but this phone couldn't keep the
+    /// credential: that code is used up, so pairing needs a new one.
+    var codeSpent = false
     var deviceName: String = PairingFlow.defaultDeviceName
     var busy = false
     var error: String?

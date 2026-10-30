@@ -201,5 +201,19 @@ final class HubListTests: XCTestCase {
         XCTAssertNil(app.hub, "listed without its credential, it would be gone at the next launch")
         XCTAssertTrue(store.list.hubs.isEmpty)
         XCTAssertNotNil(app.pairing.error)
+        XCTAssertTrue(app.pairing.codeSpent, "the hub took the code; Pair can't send it again")
+    }
+
+    @MainActor
+    func testASpentPairLinkIsntSentAgain() async {
+        let app = AppModel(hub: nil)
+        await app.handle(URL(string: "quiver://pair?host=box.example&token=t")!)
+        app.pairing.codeSpent = true
+        await app.acceptPairOffer()
+        XCTAssertFalse(app.pairing.busy, "nothing went to the hub")
+        XCTAssertNotNil(app.pairOffer)
+        // A new link is a new code.
+        await app.handle(URL(string: "quiver://pair?host=box.example&token=t2")!)
+        XCTAssertFalse(app.pairing.codeSpent)
     }
 }
