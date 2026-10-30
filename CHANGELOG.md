@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Instruction chapters:** `swe instructions build`, `check` and `watch`
+  compile the ordered Markdown paths in `~/.quiver/AGENTS_MD/index.txt`
+  into the complete shared `~/.quiver/AGENTS.md`. Builds replace the file
+  atomically and skip unchanged content; check reports drift without
+  writing; watch rebuilds after edits and keeps running after source errors.
+
 - **Compute: auto clean orphaned processes, on the Mac and the web app.**
   The Compute settings gain an "Auto clean" switch (Mac: the cleanup
   sheet, web: the settings gear): while it is on, an orphan tree older

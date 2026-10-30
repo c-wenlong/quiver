@@ -99,6 +99,12 @@ jobs:
           swe mcp list
           swe providers list
           swe __complete list
+          mkdir -p "$HOME/.quiver/AGENTS_MD"
+          printf 'rules.md\n' > "$HOME/.quiver/AGENTS_MD/index.txt"
+          printf '# Test instructions\n\nKeep changes small.\n' > "$HOME/.quiver/AGENTS_MD/rules.md"
+          swe instructions build
+          swe instructions check
+          swe instructions build
 
       - name: Run unit tests
         if: ${{ matrix.python-version != '3.13' }}

@@ -33,6 +33,20 @@ class CompletionEngineTest(unittest.TestCase):
         # star moved under `swe harness` / `swe hs`.
         self.assertNotIn("star", names)
 
+    def test_instructions_completions(self):
+        from quiver.completion import get_completions
+        from quiver.instructions.commands import SUBCOMMANDS
+
+        self.assertIn("instructions", [name for name, _ in get_completions([])])
+        self.assertEqual(
+            {name for name, _ in get_completions(["instructions", ""])},
+            set(SUBCOMMANDS),
+        )
+        self.assertEqual(
+            [name for name, _ in get_completions(["instructions", "ch"])],
+            ["check"],
+        )
+
     def test_use_returns_tool_completions(self):
         fake_registry = {
             "claude": {"description": "Claude Code", "aliases": ["cc"]},

@@ -27,6 +27,7 @@ GITHUB_TREE = "https://github.com/c-wenlong/quiver/tree/main/"
 PAGES: list[tuple[str, str]] = [
     ("README.md", "overview.md"),
     ("docs/harness-support.md", "harness-support.md"),
+    ("docs/instructions.md", "instructions.md"),
     ("app/mac/README.md", "app/index.md"),
     ("app/mac/ROADMAP.md", "app/roadmap.md"),
     ("docs/app-architecture.md", "app/architecture.md"),

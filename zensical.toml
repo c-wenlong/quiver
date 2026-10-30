@@ -9,6 +9,7 @@ site_dir = "site"
 nav = [
   { "Overview" = "overview.md" },
   { "CLI reference" = "cli.md" },
+  { "Instruction chapters" = "instructions.md" },
   { "Harness support" = "harness-support.md" },
   { "macOS app" = [
       { "Overview" = "app/index.md" },
