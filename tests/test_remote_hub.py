@@ -3147,6 +3147,28 @@ class TestServeEntry(unittest.TestCase):
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
         self.assertFalse(state.tail_manager.is_hot("claude:b"))
 
+    def test_failing_loop_step_logs_once_per_window(self):
+        # A loop step that raises used to vanish without a trace; it
+        # must reach stderr, but not on every 250 ms tick.
+        import io
+        import contextlib
+        state = HubState(Path(tempfile.mkdtemp()))
+        ticks = iter(range(3))
+
+        def tick():
+            if next(ticks) == 2:
+                state._stop.set()
+            raise RuntimeError("tick broke")
+
+        state.tail_manager.tick = tick
+        state.tail_manager.wait = lambda _t: None
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            state._tail_loop()
+        out = err.getvalue()
+        self.assertEqual(out.count("tail tick failed"), 1, out)
+        self.assertIn("RuntimeError: tick broke", out)
+
     def test_tail_manager_probes_through_state_status_of(self):
         state = HubState(Path(tempfile.mkdtemp()))
         state.status_of = lambda sessions: ["active"] * len(sessions)
