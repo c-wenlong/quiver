@@ -283,9 +283,7 @@ def mcp_secrets_path_for(home: Path | None = None) -> Path:
 
 QUIVER_DIR = quiver_dir_for()
 AGENTS_FILE = agents_file_for()
-LINKIGNORE_FILE = linkignore_file_for()
 SKILLS_DIR = skills_dir_for()
-HOOKS_DIR = hooks_dir_for()
 BACKUPS_DIR = backups_dir_for()
 
 CONFIG_DIR = config_dir_for()
