@@ -132,6 +132,14 @@ def session_key(tool_name: str, session_id: str, path: str = "") -> str:
     return f"{tool_name}:{sid}"
 
 
+def url_host(host: str) -> str:
+    """``host`` as a URL's authority spells it: an IPv6 literal goes in
+    brackets (once), or ``::1:8477`` can't be told from its port."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
 def key_slug(key: str) -> str:
     """Filesystem/URL-safe name for a session key (journal files, urls)."""
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:24]

@@ -181,6 +181,43 @@ final class TempFolder {
         #expect(!doc.isDirty)
     }
 
+    /// Reverting after an outside change drops the edits and loads the
+    /// change, rather than leaving the conflict flag up over stale text.
+    @Test func revertAfterAnOutsideChangeLoadsIt() throws {
+        let folder = try TempFolder()
+        let file = try folder.write("AGENTS.md", "old\n")
+        let doc = InstructionDocument(url: file)
+        doc.load()
+        doc.text = "mine"
+        try "theirs\n".write(to: file, atomically: true, encoding: .utf8)
+        doc.checkDisk()
+        #expect(doc.changedOnDisk)
+        doc.revert()
+        #expect(!doc.changedOnDisk)
+        #expect(doc.text == "theirs\n")
+        #expect(!doc.isDirty)
+    }
+
+    /// A document that was never read (still loading, or a failed read)
+    /// refuses to save, even with overwrite: its text isn't the file.
+    @Test func aDocumentThatWasNotReadRefusesToSave() throws {
+        let folder = try TempFolder()
+        let file = folder.url.appending(path: "AGENTS.md")
+        let bytes = Data([0xff, 0xfe, 0x00, 0xd8])
+        try bytes.write(to: file)
+        let doc = InstructionDocument(url: file)
+        doc.load()
+        guard case .failed = doc.save(overwrite: true) else {
+            Issue.record("a failed read must not save"); return
+        }
+        #expect(try Data(contentsOf: file) == bytes)
+        let fresh = InstructionDocument(url: folder.url.appending(path: "NEW.md"))
+        guard case .failed = fresh.save() else {
+            Issue.record("a document still loading must not save"); return
+        }
+        #expect(!FileManager.default.fileExists(atPath: folder.url.appending(path: "NEW.md").path))
+    }
+
     @Test func aFileThatIsNotUTF8IsNotOpenedForEditing() throws {
         let folder = try TempFolder()
         let file = folder.url.appending(path: "AGENTS.md")

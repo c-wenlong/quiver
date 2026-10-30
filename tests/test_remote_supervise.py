@@ -981,6 +981,106 @@ class TestLaunchTuning(unittest.TestCase):
                 last_append_at=None, status="done", mode=mode, **kw)
         return out, st, key
 
+    def _tmux_patches(self, boot):
+        import contextlib
+        stack = contextlib.ExitStack()
+        for target, kw in (
+            ("resume_flags", {"return_value": ["--resume", "abc"]}),
+            ("resolve_mode", {"return_value": "tmux"}),
+            ("launch_tmux", {"return_value": "qv-a"}),
+            ("boot_pane", {"side_effect": boot}),
+            ("tmux_alive", {"return_value": True}),
+            ("_local_writer_pids", {"return_value": []}),
+            ("_stop_local_writers", {}),
+        ):
+            stack.enter_context(patch.object(supervise, target, **kw))
+        stack.enter_context(patch.object(supervise.shutil, "which",
+                                         return_value="/x/bin"))
+        return stack, stack.enter_context(patch.object(supervise, "kill"))
+
+    def test_a_booting_attach_holds_only_its_own_key(self):
+        # The pane's boot (up to ATTACH_BOOT_S) ran under the registry
+        # lock: every other attach, detach, keep and the catalog's
+        # registry read waited for it. Now another key's write goes
+        # through, while a detach of this key waits for the attach.
+        import threading
+        booting, release = threading.Event(), threading.Event()
+
+        def boot(name, timeout):
+            booting.set()
+            release.wait(5)
+            return "❯"
+
+        src = _session(sid="abc", path=self.proj)
+        key = "claude:abc"
+        stack, _kill = self._tmux_patches(boot)
+        with stack:
+            out = []
+            t = threading.Thread(target=lambda: out.append(supervise.attach(
+                self.home, key, src, last_append_at=None, status="done",
+                mode="tmux")))
+            t.start()
+            self.assertTrue(booting.wait(5))
+            other = threading.Thread(target=supervise.mark, args=(
+                self.home, "claude:other", {"mode": "headless"}))
+            other.start()
+            other.join(2)
+            self.assertFalse(other.is_alive())
+            detached = threading.Event()
+            d = threading.Thread(target=lambda: (
+                supervise.detach(self.home, key), detached.set()))
+            d.start()
+            self.assertFalse(detached.wait(0.3))
+            release.set()
+            t.join(5)
+            d.join(5)
+        self.assertTrue(out[0][0], out)
+        self.assertTrue(detached.is_set())
+        # The detach acted on the finished attach, not before it.
+        self.assertIsNone(supervise.meta_for(self.home, key))
+        self.assertIsNotNone(supervise.meta_for(self.home, "claude:other"))
+
+    def test_attach_elsewhere_during_boot_wins(self):
+        # Another process attached the key while this pane booted: its
+        # entry stands and this pane is closed.
+        key = "claude:abc"
+
+        def boot(name, timeout):
+            supervise.mark(self.home, key, {"mode": "tmux", "tmux": "qv-b"})
+            return "❯"
+
+        stack, kill = self._tmux_patches(boot)
+        with stack:
+            ok, note = supervise.attach(
+                self.home, key, _session(sid="abc", path=self.proj),
+                last_append_at=None, status="done", mode="tmux")
+        self.assertTrue(ok)
+        self.assertEqual(note, "already attached")
+        kill.assert_called_once_with("qv-a")
+        self.assertEqual(supervise.meta_for(self.home, key)["tmux"], "qv-b")
+
+    def test_attach_elsewhere_during_boot_with_another_model_is_refused(self):
+        # The winning entry runs a different model than this attach
+        # asked for: report that, not success.
+        key = "claude:abc"
+
+        def boot(name, timeout):
+            supervise.mark(self.home, key,
+                           {"mode": "headless", "model": "sonnet"})
+            return "❯"
+
+        stack, kill = self._tmux_patches(boot)
+        with stack, patch.object(supervise, "_send_launch_controls",
+                                 return_value=True):
+            ok, note = supervise.attach(
+                self.home, key, _session(sid="abc", path=self.proj),
+                last_append_at=None, status="done", mode="tmux",
+                model="opus")
+        self.assertFalse(ok)
+        self.assertIn("/model", note)
+        kill.assert_called_once_with("qv-a")
+        self.assertEqual(supervise.meta_for(self.home, key)["model"], "sonnet")
+
     def test_attach_tmux_types_the_pick_and_records_it(self):
         (ok, note), st, key = self._attach(
             _session(sid="abc", path=self.proj), "tmux", model="opus")
