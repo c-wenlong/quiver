@@ -131,6 +131,15 @@ final class ConsoleModelTests: XCTestCase {
         XCTAssertEqual(String(decoding: screen.fed, as: UTF8.self), "banner\n$ ls")
     }
 
+    func testAProxyAnsweringForADownHubCountsAsDown() {
+        for status in [0, 502, 503, 504] {
+            XCTAssertTrue(ConsoleModel.hubIsDown(HubError(status: status, code: "x", message: "")), "\(status)")
+        }
+        for status in [400, 401, 403, 404, 500] {
+            XCTAssertFalse(ConsoleModel.hubIsDown(HubError(status: status, code: "x", message: "")), "\(status)")
+        }
+    }
+
     func testHubDownDialsTheSavedTarget() async {
         store.save(SSHTarget(host: "127.0.0.1", port: 9, user: "u", hostKeys: ["ssh-ed25519 AAAA"]), for: hub.id)
         let console = model()
