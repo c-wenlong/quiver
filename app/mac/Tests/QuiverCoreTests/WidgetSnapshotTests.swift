@@ -333,6 +333,7 @@ import Testing
 
     @Test func theStoreWritesAndReadsBack() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let store = WidgetSnapshotStore(file: temp.url.appending(path: "widgets/snapshot.json"))
         #expect(store.read() == nil)
         let snapshot = make(activity: [row(0, tokens: 3, cost: 0.5)],
@@ -344,6 +345,7 @@ import Testing
     @Test func aSnapshotFromAnOlderSchemaIsIgnored() throws {
         // The widgets show "Open Quiver once" until the app rewrites the file.
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let file = temp.url.appending(path: "snapshot.json")
         try Data(#"{"schema": 1}"#.utf8).write(to: file)
         #expect(WidgetSnapshotStore(file: file).read() == nil)
@@ -351,6 +353,7 @@ import Testing
 
     @Test func aSnapshotFromANewerAppIsIgnored() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let file = temp.url.appending(path: "snapshot.json")
         try Data(#"{"schema": 99}"#.utf8).write(to: file)
         #expect(WidgetSnapshotStore(file: file).read() == nil)
