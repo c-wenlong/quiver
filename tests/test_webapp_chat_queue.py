@@ -439,9 +439,15 @@ class TestQueuedTray(unittest.TestCase):
             answer = () => ({ status: 202, data: { waiting: false } });
             await T.sendText("echoed", "steer");
             await T.sendText("again", "steer");
+            // Sent twice within seconds: the first already landed, so the
+            // transcript's one echo is its, not the second's.
+            await T.sendText("twice", "steer");
+            T.appendMessage({ kind: "user", text: "twice", ts: now }, true);
+            await T.sendText("twice", "steer");
             const user = (seq, text, ts) => ({ type: "message.appended", seq, data: { kind: "user", text, ts } });
             globalThis.api = async (path) => path.includes("/messages")
-              ? { status: 200, data: { messages: [user(1, "again", now - 1000), user(2, "echoed", now)] } }
+              ? { status: 200, data: { messages: [user(1, "again", now - 1000), user(2, "echoed", now),
+                  user(3, "twice", now)] } }
               : { status: 404, data: null };
             T.chat.seq = 500;
             T.handleFrame(T.chat.key, "data: " + JSON.stringify({ type: "journal.truncated", seq: 3 }));
@@ -450,10 +456,11 @@ class TestQueuedTray(unittest.TestCase):
             T.commandResult({ op: "message", client_id: "c1", ok: false, note: "nope" });
             const c1 = ids["chat-log"].children.find((b) => b.dataset.clientId === "c1");
             return { after, settled: c1 ? [c1.className, c1._sub["send-note"].textContent] : null };""")
-        self.assertEqual([b[0] for b in out["after"]], [None, None, "c1", "c2", "c4"])
-        self.assertIn("pending", out["after"][2][1])
-        self.assertIn("failed", out["after"][3][1])
-        self.assertIn("pending", out["after"][4][1])
+        self.assertEqual([b[0] for b in out["after"]], [None, None, None, "c1", "c2", "c4", "c6"])
+        self.assertIn("pending", out["after"][3][1])
+        self.assertIn("failed", out["after"][4][1])
+        self.assertIn("pending", out["after"][5][1])
+        self.assertIn("pending", out["after"][6][1])
         self.assertEqual(out["settled"][1], "nope")
         self.assertIn("failed", out["settled"][0])
 

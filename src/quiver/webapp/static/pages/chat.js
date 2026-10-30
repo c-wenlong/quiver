@@ -2181,6 +2181,8 @@ const SessionChat = (() => {
     } else if (kind === "user" || kind === "assistant") {
       const html = md(msg.text);
       div.innerHTML = `<div class="text">${html}</div>`;
+      // The text as stored, so a resync can tell this message is shown.
+      if (kind === "user") div.dataset.text = msg.text || "";
       if (kind === "assistant") div.insertAdjacentHTML("beforeend", linkCardsHtml(html));
       if (carried) {
         div.classList.add("degraded");
@@ -2512,6 +2514,12 @@ const SessionChat = (() => {
       // and waiting for their echo, or failed): their result, or a
       // failed POST, still lands on the bubble.
       const sends = [...log.querySelectorAll(".msg.user[data-client-id]")];
+      // User messages the log already showed as delivered (drawn from
+      // the transcript, or a settled bubble) each claim their own echo
+      // first, so a send repeated within seconds isn't taken for the one
+      // before it.
+      const shown = [...log.querySelectorAll(".msg.user[data-text]")]
+        .filter((b) => !b.dataset.clientId).map((b) => b.dataset.text);
       log.innerHTML = "";
       chat.toolCards.clear();
       const messages = data.messages || [];
@@ -2521,6 +2529,10 @@ const SessionChat = (() => {
       // would; each echo answers one bubble. A failed one never landed.
       const echoed = messages.filter((ev) => ev.type === "message.appended" && ev.data && ev.data.kind === "user")
         .map((ev) => ev.data);
+      for (const t of shown) {
+        const i = echoed.findIndex((m) => echoes(m.text, t));
+        if (i >= 0) echoed.splice(i, 1);
+      }
       for (const b of sends) {
         const i = b.classList.contains("failed") ? -1 : echoed.findIndex((m) => echoesBubble(m, b));
         if (i >= 0) echoed.splice(i, 1);
