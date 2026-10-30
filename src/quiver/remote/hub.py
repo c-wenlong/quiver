@@ -3776,7 +3776,14 @@ def serve(state: HubState, host: str, port: int,
     # its switch is hub state, so the background sampler starts at boot
     # while it is on rather than wait for a page request.
     from quiver.webapp import compute as webapp_compute
-    if webapp_compute.supported() and webapp_compute.clean_settings(state.home)["enabled"]:
+    try:
+        # A settings read that fails means off: it can never keep the
+        # hub from serving.
+        auto_clean = webapp_compute.supported() \
+            and webapp_compute.clean_settings(state.home)["enabled"]
+    except (OSError, ValueError, TypeError, AttributeError):
+        auto_clean = False
+    if auto_clean:
         webapp_compute.model().home = state.home or Path.home()
         webapp_compute.start_ticker()
     # Only a hub that owns the port may say where it is: a second copy
