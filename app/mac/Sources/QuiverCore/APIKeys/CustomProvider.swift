@@ -54,21 +54,46 @@ public enum CustomProvider {
         return prefix
     }
 
-    /// `{base}/models`, or nil when `base` isn't an http(s) URL. The
-    /// append happens on the path so a base that carries a query or
-    /// fragment keeps it in place; a trailing slash folds so "…/v1/"
-    /// and "…/v1" agree.
+    /// `{base}/models`, or nil when `base` isn't an https URL, or an http
+    /// one on this machine or a private network. The key rides every
+    /// request as a bearer token, so plain http to a public host would
+    /// hand it to anyone on the path. The append happens on the path so
+    /// a base that carries a query or fragment keeps it in place; a
+    /// trailing slash folds so "…/v1/" and "…/v1" agree.
     public static func modelsURL(_ base: String) -> URL? {
         let trimmed = base.trimmingCharacters(in: .whitespaces)
         guard var components = URLComponents(string: trimmed),
               let scheme = components.scheme?.lowercased(),
-              scheme == "https" || scheme == "http",
-              components.host != nil
+              let host = components.host, !host.isEmpty,
+              scheme == "https" || (scheme == "http" && isPrivateHost(host))
         else { return nil }
         var path = components.percentEncodedPath
         while path.hasSuffix("/") { path.removeLast() }
         components.percentEncodedPath = path + "/models"
         return components.url
+    }
+
+    /// Loopback, link-local, RFC 1918, CGNAT (Tailscale) and unique-local
+    /// addresses, `localhost` and mDNS `.local` names: where a cleartext
+    /// local server (Ollama, LM Studio, a tailnet box) is expected.
+    static func isPrivateHost(_ host: String) -> Bool {
+        let host = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") {
+            return true
+        }
+        if host.contains(":") {
+            return host == "::1" || host.hasPrefix("fc") || host.hasPrefix("fd")
+                || host.hasPrefix("fe80:")
+        }
+        // Every label must be an octet: "10.0.0.1.example.com" is a name.
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        let parts = labels.compactMap { UInt8($0) }
+        guard labels.count == 4, parts.count == 4 else { return false }
+        switch (parts[0], parts[1]) {
+        case (127, _), (10, _), (192, 168), (169, 254): return true
+        case (172, 16...31), (100, 64...127): return true
+        default: return false
+        }
     }
 
     /// The key check for a custom provider: `GET {base}/models` with the
