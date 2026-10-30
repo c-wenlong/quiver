@@ -712,6 +712,24 @@ struct FailureSummaryTests {
             == "build-app: Sparkle.framework missing")
     }
 
+    /// Script status chatter ("downloading …") wears the same prefix
+    /// as diagnostics: a real failure line beats it.
+    @Test func aStatusLineDoesNotHideAnUnmarkedFailure() {
+        let msg = summary(
+            stderr: "bundle-swe: downloading Python 3.13.16 (aarch64-apple-darwin)\n"
+                + "tar: python.tar.zst: No space left on device\n")
+        #expect(msg.contains("No space left on device"))
+        #expect(!msg.contains("downloading Python"))
+    }
+
+    /// A killed step (OOM, timeout) names the failure too.
+    @Test func killedStepsCountAsFailures() {
+        let msg = summary(
+            stderr: "bundle-swe: downloading Python 3.13.16\n"
+                + "bash: line 40: 8123 Killed: 9               tar -xzf python.tar.zst\n")
+        #expect(msg.contains("Killed: 9"))
+    }
+
     /// Styling and hyperlinks a log may carry must not paint literal
     /// escapes in the row.
     @Test func ansiStylingIsStripped() {

@@ -272,7 +272,11 @@ public final class UpdatesModel {
         let lines = stripped.split(separator: "\n").map(String.init)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        let errors = lines.filter(isFailureLine)
+        // Script status lines ("bundle-swe: downloading Python") share
+        // the prefix with the scripts' diagnostics, so they only stand
+        // in when nothing stronger names the failure.
+        let strong = lines.filter(isFailureLine)
+        let errors = strong.isEmpty ? lines.filter(isScriptLine) : strong
         let picked: [String]
         if errors.isEmpty {
             picked = Array(lines.suffix(limit))
@@ -292,18 +296,33 @@ public final class UpdatesModel {
     }
 
     /// Whether a log line names a failure rather than progress: compiler
-    /// and tool `error:`/`fatal:` diagnostics, the build scripts' own
-    /// `name:` messages, and the usual shell complaints.
+    /// and tool `error:`/`fatal:` diagnostics and the usual shell
+    /// complaints — a killed or crashed step, a full disk, a dead
+    /// network.
     nonisolated static func isFailureLine(_ line: String) -> Bool {
         let lowered = line.lowercased()
         return failureMarkers.contains { lowered.contains($0) }
     }
 
+    /// A build script's own `name:` line. Diagnostics and progress
+    /// chatter wear the same prefix, so these lines are a fallback
+    /// signal, not a strong one.
+    nonisolated static func isScriptLine(_ line: String) -> Bool {
+        let lowered = line.lowercased()
+        return scriptMarkers.contains { lowered.contains($0) }
+    }
+
     nonisolated private static let failureMarkers = [
-        "error:", "fatal:", "fatal error",
-        "build-app:", "bundle-swe:", "install-app:",
+        "error:", "fatal:", "fatal error", "failed",
         "no such file", "command not found", "permission denied",
-        "not permitted", "couldn't ", "could not ",
+        "not permitted", "couldn't ", "could not ", "no space",
+        "quota exceeded", "read-only file", "killed:",
+        "segmentation fault", "bus error", "timed out",
+        "connection refused", "could not resolve", "network is unreachable",
+    ]
+
+    nonisolated private static let scriptMarkers = [
+        "build-app:", "bundle-swe:", "install-app:",
     ]
 
     /// One shown line, cut at `maxFailureLine`.
