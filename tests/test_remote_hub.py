@@ -3071,6 +3071,22 @@ class TestServeEntry(unittest.TestCase):
         self.assertTrue(state.tail_manager.is_hot("claude:a"))
         self.assertFalse(state.tail_manager.is_hot("claude:b"))
 
+    def test_catalog_loop_prunes_pair_requests_at_most_once_a_minute(self):
+        home = Path(tempfile.mkdtemp())
+        state = HubState(home)
+        r = pairing.request_pair(home, {"node_id": "n1"}, "phone")
+        pairing.approve_request(home, r["code"])
+        rows = pairing._load_requests(home)
+        rows[0]["expires_at"] = time.time() - 1
+        pairing._save_requests(home, rows)
+        with patch("quiver.remote.pairing.prune_requests",
+                   wraps=pairing.prune_requests) as prune:
+            state._prune_pair_requests()
+            state._prune_pair_requests()
+        self.assertEqual(prune.call_count, 1)
+        # The uncollected credential left with its expired row.
+        self.assertEqual(pairing._load_requests(home), [])
+
     def test_tail_manager_probes_through_state_status_of(self):
         state = HubState(Path(tempfile.mkdtemp()))
         state.status_of = lambda sessions: ["active"] * len(sessions)

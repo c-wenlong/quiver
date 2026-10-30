@@ -612,15 +612,34 @@ def request_pair(
     }
 
 
+def _load_live_requests(home_path: Path | None, now: float) -> list[dict]:
+    """The request rows, with expired ones dropped from disk too — an
+    approved row's plaintext credential leaves with its row. Caller
+    holds ``_state_lock``."""
+    rows = _load_requests(home_path)
+    kept = _prune_requests(rows, now)
+    if len(kept) != len(rows):
+        _save_requests(home_path, kept)
+    return kept
+
+
+def prune_requests(home: Path | str | None = None) -> None:
+    """Drop expired request rows. The hub runs this on a timer so an
+    approved credential the phone never collected doesn't sit in
+    pair_requests.json until some other pairing call happens by."""
+    home_path = Path(home) if home is not None else None
+    if not requests_file(home_path).exists():
+        return
+    with _state_lock(home_path):
+        _load_live_requests(home_path, time.time())
+
+
 def list_requests(home: Path | str | None = None) -> list[dict]:
     """Pending, unexpired requests — never codes or secrets."""
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         now = time.time()
-        rows = _load_requests(home_path)
-        kept = _prune_requests(rows, now)
-        if len(kept) != len(rows):
-            _save_requests(home_path, kept)
+        kept = _load_live_requests(home_path, now)
     return [
         {
             "request_id": r["request_id"],
@@ -720,7 +739,7 @@ def poll_request(
     home_path = Path(home) if home is not None else None
     with _state_lock(home_path):
         now = time.time()
-        rows = _load_requests(home_path)
+        rows = _load_live_requests(home_path, now)
         for i, row in enumerate(rows):
             if row.get("request_id") != request_id:
                 continue

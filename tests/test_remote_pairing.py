@@ -181,6 +181,43 @@ class TestPairRequests(unittest.TestCase):
         self.assertEqual(row["tailscale_node"], "nABC")
         self.assertEqual(row["tailscale_login"], "dev@github")
 
+    def _expire_all(self):
+        rows = pairing._load_requests(self.tmp)
+        for row in rows:
+            row["expires_at"] = time.time() - 1
+        pairing._save_requests(self.tmp, rows)
+
+    def test_poll_drops_an_uncollected_credential_once_expired(self):
+        r = self._request()
+        other = self._request(
+            peer={**_PEER, "node_id": "nOTHER"}, name="other")
+        pairing.approve_request(self.tmp, r["code"])
+        self._expire_all()
+        # Any poll — even for a different, unknown request — clears
+        # the expired rows and the plaintext credential with them.
+        self.assertIsNone(
+            pairing.poll_request(self.tmp, "nope", other["poll_secret"]))
+        self.assertEqual(pairing._load_requests(self.tmp), [])
+        self.assertNotIn(
+            "credential", pairing.requests_file(self.tmp).read_text())
+
+    def test_prune_requests_drops_expired_rows_only(self):
+        old = self._request()
+        pairing.approve_request(self.tmp, old["code"])
+        self._expire_all()
+        live = self._request(
+            peer={**_PEER, "node_id": "nOTHER"}, name="other")
+        pairing.prune_requests(self.tmp)
+        rows = pairing._load_requests(self.tmp)
+        self.assertEqual(
+            [x["request_id"] for x in rows], [live["request_id"]])
+        self.assertNotIn(
+            "credential", pairing.requests_file(self.tmp).read_text())
+
+    def test_prune_requests_without_a_file_writes_nothing(self):
+        pairing.prune_requests(self.tmp)
+        self.assertFalse(pairing.requests_file(self.tmp).exists())
+
     def test_approve_wrong_code_and_lockout(self):
         r = self._request()
         for _ in range(pairing.MAX_CODE_ATTEMPTS):
