@@ -279,9 +279,7 @@ private struct StatusCatalogueSheet: View {
         return CatalogueRow(logo: entry.logoID, name: entry.name, detail: entry.host,
                      done: edited ? "Edited" : (tracked.contains(entry.host.lowercased()) ? "Added" : nil),
                      reusable: edited, actionTitle: edited ? "Reset" : "Add") {
-            Task {
-                await model.track(entry)
-            }
+            _ = await model.track(entry)
         }
     }
 }
@@ -435,7 +433,7 @@ private struct ServiceCard: View {
                 .labelStyle(.iconOnly)
                 .plainButton(cornerRadius: Theme.smallRadius)
                 .foregroundStyle(Theme.textSecondary)
-                .help(status.service.pageURL.absoluteString)
+                .hoverTip(status.service.pageURL.absoluteString, replacesLabel: false)
             EllipsisMenu {
                 Button("Edit…", action: edit)
                 if let reset {

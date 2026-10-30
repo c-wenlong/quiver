@@ -1170,6 +1170,8 @@ private struct RepoManager: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
     var onAdd: () -> Void
+    /// The pin whose Unpin waits on the confirmation.
+    @State private var unpinning: String?
 
     private var model: GitHubModel { app.github }
 
@@ -1216,7 +1218,7 @@ private struct RepoManager: View {
                         .plainButton()
                         .help("Open on GitHub")
                         Button {
-                            Task { await model.removeRepo(pin.name, swe: app.swe) }
+                            unpinning = pin.name
                         } label: {
                             Image(systemName: "minus.circle")
                                 .font(Theme.font(size: 13)).foregroundStyle(Theme.dangerText)
@@ -1236,6 +1238,17 @@ private struct RepoManager: View {
         }
         .padding(14)
         .frame(width: 300)
+        // One click on the small minus took the repo off every board.
+        .confirmationDialog("Unpin \(unpinning ?? "")?", isPresented: .init(
+            get: { unpinning != nil }, set: { if !$0 { unpinning = nil } })) {
+            Button("Unpin", role: .destructive) {
+                if let name = unpinning { Task { await model.removeRepo(name, swe: app.swe) } }
+                unpinning = nil
+            }
+            Button("Cancel", role: .cancel) { unpinning = nil }
+        } message: {
+            Text("Its boards leave Repositories. Pin it again any time.")
+        }
     }
 }
 
