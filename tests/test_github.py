@@ -599,6 +599,17 @@ class TestCommands(unittest.TestCase):
         issue = json.loads(out)["data"]["results"][0]["issues"][0]
         self.assertEqual(issue["comments"], 3)
 
+    def test_fan_handles_no_names_and_one(self):
+        # The hub's surfaces fan out through the same helper
+        # (shared.fan): an empty pin list must not build an empty pool.
+        from quiver.github import shared
+
+        self.assertIs(shared.fan, ghcli._fan)
+        self.assertEqual(ghcli._fan([], lambda n: n), [])
+        self.assertEqual(ghcli._fan(["a"], str.upper), ["A"])
+        self.assertEqual(ghcli._fan(["a", "b", "c"], str.upper),
+                         ["A", "B", "C"])
+
     def test_comma_repo_fans_out(self):
         run = _gh_run({"issue list": _Proc(stdout="[]")})
         rc, out, _ = self._run_cli(
@@ -1680,6 +1691,30 @@ class TestCommands(unittest.TestCase):
         self.assertFalse(data["created"])
         self.assertFalse(any("repo clone" in c for c in seen))
         self.assertFalse(any("worktree add" in c for c in seen))
+
+    def test_pr_worktree_lands_where_the_hub_names_it(self):
+        # The hub names a PR's folder before the checkout exists (a
+        # pending launch's cwd, the detail page's ``worktree``): the
+        # checkout must land exactly there.
+        from quiver.github import pulls as gh_pulls
+
+        _mirrors, trees = self._patch_paths()
+
+        def run(cmd, **kw):
+            joined = " ".join(str(a) for a in cmd)
+            if "worktree list" in joined:
+                return _Proc(stdout="worktree /x/mirror\n")
+            if "rev-parse" in joined:
+                return _Proc(stdout="abc123def456\n")
+            return _Proc(stdout="ok")
+
+        rc, out, _ = self._run_cli(
+            ["pr", "worktree", "7", "--repo=O/r.x", "--json"], run=run)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["data"]["path"],
+                         gh_pulls.worktree_path("O/r.x", "7"))
+        self.assertEqual(gh_pulls.worktree_path("O/r.x", 7),
+                         str(trees / "O__r.x-pr7"))
 
     def test_pr_worktree_accepts_url_ref(self):
         self._patch_paths()

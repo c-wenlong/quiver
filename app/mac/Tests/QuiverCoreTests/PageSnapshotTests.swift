@@ -155,9 +155,9 @@ import Testing
     }
 
     @Test func theSavedFileHoldsNoCommandLineURLOrHealthDetail() async throws {
-        let url = FileManager.default.temporaryDirectory
-            .appending(path: "quiver-snapshot-\(UUID().uuidString)/cache/mcp-servers.json")
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent().deletingLastPathComponent()) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let url = temp.path("cache/mcp-servers.json")
         let file = SnapshotFile<Snapshot<McpInventory>>(url: url)
         let runner = RoutingRunner([(["mcp", "list", "--json"], listing), (["mcp", "status", "--json"], status)])
         let model = model(file, clock: TestClock(start))
@@ -339,9 +339,9 @@ import Testing
     }
 
     @Test func skillsRoundTripThroughTheirFile() async throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "quiver-skills-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let skills = SnapshotFile<Snapshot<SkillInventory>>(url: folder.appending(path: "cache/skills.json"))
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let skills = SnapshotFile<Snapshot<SkillInventory>>(url: temp.path("cache/skills.json"))
         let runner = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
         let first = SkillsModel(swe: SweClient(runner: runner), snapshots: skills)
         await first.load(for: "/bin/swe")

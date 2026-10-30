@@ -2,7 +2,6 @@
 
 import json
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +11,8 @@ from quiver.ledger.models import LedgerRecord, UsageEvent
 from quiver.ledger.store import LedgerStore, ledger_path_for
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import launch_model, recent_models
+
+from tests._tempdir import temp_dir
 
 
 def _rec(key, harness, model, ts):
@@ -51,7 +52,7 @@ class TestLaunchModel(unittest.TestCase):
                              {"flag": "--model"})
 
     def test_settings_file_nests_the_key_and_prunes_old_ones(self):
-        folder = Path(tempfile.mkdtemp())
+        folder = temp_dir(self)
         stale = folder / "old.json"
         stale.write_text("{}")
         import os
@@ -82,7 +83,7 @@ class TestLaunchModel(unittest.TestCase):
 
 class TestRecentModels(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.store = LedgerStore(ledger_path_for(self.home))
 
     def tearDown(self):
@@ -179,7 +180,7 @@ class TestRecentModels(unittest.TestCase):
 
     def test_no_ledger_is_no_history(self):
         self.assertEqual(
-            recent_models.recent_models(Path(tempfile.mkdtemp())), {})
+            recent_models.recent_models(temp_dir(self)), {})
 
 
 if __name__ == "__main__":

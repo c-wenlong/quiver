@@ -655,6 +655,33 @@ class TestLoadOrder(unittest.TestCase):
                           " process.stdout.write(JSON.stringify({ r, n: page.data.n, loading: page.loading }));")
         self.assertEqual(out, {"r": [False, True], "n": 2, "loading": False})
 
+    def test_clone_sends_one_request_however_often_it_is_asked(self):
+        """Enter twice sent two clones; the second's 409 said "already
+        running" under the clone the first had started."""
+        out = self.run_js(
+            "globalThis.location = { hash: '#/overview' }; const posts = [];"
+            " globalThis.apiPost = (path, body) => new Promise((r) => posts.push(r));"
+            " page.data = { hub: { can_clone: true, job: { state: 'idle' } } }; page.hubUrl = 'https://x/h.git';"
+            " const first = cloneHub(); cloneHub();"
+            " const during = { posts: posts.length, posting: page.hubPosting };"
+            " posts[0]({ status: 200, data: { hub: { can_clone: true, job: { state: 'failed', error: 'no' } } } });"
+            " await first;"
+            " process.stdout.write(JSON.stringify({ during, posting: page.hubPosting }));")
+        self.assertEqual(out, {"during": {"posts": 1, "posting": True}, "posting": False})
+
+    def test_a_revoked_credential_stops_the_clone_poll_at_the_gate(self):
+        """pollHub only skipped a non-200, so a 401 polled every 1.5 s for
+        as long as the page stayed open and never showed the gate."""
+        out = self.run_js(
+            "globalThis.location = { hash: '#/setup' }; globalThis.setTimeout = (f) => f();"
+            " const gates = []; globalThis.renderGate = (m) => gates.push(m === undefined);"
+            " page.data = { hub: { can_clone: true, job: { state: 'cloning', url: 'u' } } };"
+            " const polling = pollHub();"
+            " while (!answers.length) await null;"
+            " answers[0]({ status: 401, data: null }); await polling;"
+            " process.stdout.write(JSON.stringify({ reads: answers.length, gates, polling: page.hubPolling }));")
+        self.assertEqual(out, {"reads": 1, "gates": [True], "polling": False})
+
     def test_leaving_still_ends_the_read(self):
         out = self.run_js("const a = load(1); routeGen = 2; answers[0]({ status: 200, data: { n: 1 } });"
                           " const r = await a; process.stdout.write(JSON.stringify({ r, data: page.data, loading: page.loading }));")

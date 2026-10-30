@@ -125,24 +125,35 @@ enum UsageFormat {
 
     // MARK: Spend
 
-    /// 842, 12.3K, 1.2M, 13B: one decimal under 100 of a unit, none above.
+    /// 842, 12K, 12.3K, 1.2M, 13B: one decimal, dropped when it is .0.
+    /// The Mac's `UsageFormat.tokens` and the web's `Fmt.tokens`, so the
+    /// three clients print the same figure for the same count.
     static func tokens(_ value: Int?) -> String {
-        let v = Double(max(0, value ?? 0))
-        let units: [(size: Double, suffix: String)] = [(1e3, "K"), (1e6, "M"), (1e9, "B"), (1e12, "T")]
-        guard var i = units.lastIndex(where: { v >= $0.size }) else { return "\(Int(v))" }
-        var scaled = v / units[i].size
-        // 999.96K would print as "1000K"; it reads as 1.0M.
-        if scaled >= 999.5, i + 1 < units.count {
-            i += 1
-            scaled = v / units[i].size
+        let count = max(0, value ?? 0)
+        let v = Double(count)
+        let units: [(limit: Double, suffix: String)] = [(1e3, "K"), (1e6, "M"), (1e9, "B")]
+        guard var unit = units.lastIndex(where: { v >= $0.limit }) else { return "\(count)" }
+        // The unit after rounding: 999,950 rounds to 1000K, which reads as 1M.
+        while unit + 1 < units.count, ((v / units[unit].limit) * 10).rounded() / 10 >= 1000 {
+            unit += 1
         }
-        return String(format: scaled < 99.95 ? "%.1f%@" : "%.0f%@", scaled, units[i].suffix)
+        return compact(v / units[unit].limit) + units[unit].suffix
     }
 
-    /// "$0.42", "$12.30", "$5,432": cents below $1,000, whole dollars above.
+    /// One decimal, without a trailing ".0".
+    private static func compact(_ value: Double) -> String {
+        let rounded = (value * 10).rounded() / 10
+        return rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
+    }
+
+    /// "$0", "<$0.01", "$0.42", "$12.30", "$123", "$5,432": cents below
+    /// $100, whole dollars from there, as the Mac's `UsageFormat.dollars`
+    /// and the web's `Fmt.dollars` print a spend.
     static func usd(_ value: Double?) -> String {
         let v = value ?? 0
-        let f = abs(v) >= 1000 ? usdWhole : usdCents
+        if v == 0 { return "$0" }
+        if v < 0.01 { return "<$0.01" }
+        let f = v < 100 ? usdCents : usdWhole
         return f.string(from: NSNumber(value: v)) ?? "$\(v)"
     }
 

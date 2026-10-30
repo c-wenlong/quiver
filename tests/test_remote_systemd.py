@@ -2,12 +2,13 @@
 
 import shlex
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from quiver.remote import systemd
+
+from tests._tempdir import temp_dir
 
 
 class FakeCtl:
@@ -41,7 +42,7 @@ class FakeCtl:
 
 class UnitTest(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.log = self.home / ".quiver/data/remote/serve.log"
         self.program = ["/home/dev/.local/bin/swe", "remote", "serve", "--host=127.0.0.1",
                         "--public-url=https://box.tail.ts.net:8477"]
@@ -72,7 +73,7 @@ class UnitTest(unittest.TestCase):
         systemd.install(self.program, self.log, "/bin", home=self.home, run=FakeCtl())
         self.assertEqual(systemd.status(self.home, FakeCtl()), (self.program, True))
         self.assertEqual(systemd.status(self.home, FakeCtl(active="failed"))[1], False)
-        self.assertEqual(systemd.status(Path(tempfile.mkdtemp()), FakeCtl()), (None, False))
+        self.assertEqual(systemd.status(temp_dir(self), FakeCtl()), (None, False))
 
     def test_a_failing_step_raises_with_systemctls_message(self):
         with self.assertRaises(RuntimeError) as ctx:
