@@ -261,6 +261,12 @@ import Testing
         #expect(row("a", kind: "issue").sourceLine == "GitHub issue · o/r")
         #expect(row("a", kind: "pull").sourceLine == "GitHub pull request · o/r")
         #expect(row("a", source: "linear", repo: nil, project: "QUI").sourceLine == "Linear · QUI")
+        #expect(row("a", source: "notion", kind: "page", repo: nil, project: "Roadmap").sourceLine
+            == "Notion · Roadmap")
+        #expect(row("a", source: "notion", kind: "page", repo: nil).sourceLine == "Notion")
+        #expect(row("a").openLabel == "Open on GitHub")
+        #expect(row("a", source: "linear", repo: nil, project: "QUI").openLabel == "Open in Linear")
+        #expect(row("a", source: "notion", kind: "page", repo: nil).openLabel == "Open in Notion")
         // The ladder is never the text (#875): an issue whose agent has
         // finished reads Open, a running one Agent running.
         #expect(row("a", state: "in_progress").stateLabel == "Open")
@@ -770,7 +776,8 @@ extension HubStubbed {
      "repos": [{"name": "o/s", "status": "upstream-error", "error": "down"}],
      "machine": "kai", "machine_id": "m-1",
      "github": {"status": "ok", "login": "u"},
-     "linear": {"status": "auth-required", "error": "no key"}}
+     "linear": {"status": "auth-required", "error": "no key"},
+     "notion": {"status": "bad-config", "error": "no status property"}}
     """
 
     private func hub() throws -> LocalHub {
@@ -794,6 +801,7 @@ extension HubStubbed {
         #expect(model.github?.login == "u")
         #expect(model.envBlocked == nil)
         #expect(model.linearBlocked == "no key")
+        #expect(model.notionBlocked == "no status property")
         #expect(model.error == nil)
         // The failed repo's rows are last-known; a healthy one's aren't.
         #expect(model.stale(model.tasks[0]) == false)

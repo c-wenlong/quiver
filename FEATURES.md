@@ -35,7 +35,7 @@ Status words:
 | Repositories | yes | yes | - | |
 | Pull requests | yes | yes | yes | Mac and Web: inside Repositories, with merge, rerun and "Open in session". iOS: own tab and detail page |
 | Issues, resolve with agent | yes | yes | yes | iOS: own tab plus a Resolve sheet; Mac: detail sheet and ResolveIssueSheet. All sheets carry the model picker prefilled with the last-used model (#914); on the Mac and the web it is a menu of the harness's `recent_models` plus Other… (web: Harness default first, `static/model-menu.js`) |
-| Tasks | yes | yes | yes | Mac: sidebar page with the same filters, groups, state stepper, sessions and link/unlink |
+| Tasks | yes | yes | yes | Mac: sidebar page with the same filters, groups, state stepper, sessions and link/unlink. Sources: GitHub, plus Linear and Notion when configured on the hub; all three clients show a failing Linear or Notion as its own banner or card and link out with "Open in Linear" / "Open in Notion" (#847) |
 | Inbox | yes | yes | yes | Pending decisions. iOS badges count only "Waiting on you"; dismissals live on the hub per device |
 
 ## Manage

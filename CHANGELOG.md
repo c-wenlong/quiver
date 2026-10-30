@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tasks on the Mac, the web and the iPhone show Notion like Linear.**
+  The three clients read the hub's new `notion` env block beside
+  `linear`: a configured Notion source that fails (`auth-required`,
+  `bad-config`, `upstream-error`) gets its own banner or card with the
+  hub's reason, and its stored rows read as last known; `disabled`
+  shows nothing. Notion pages list under their database in the rail,
+  their detail reads "Notion · <database>", and the link-out says
+  "Open in Notion". Link and unlink work as for Linear; starting an
+  agent stays GitHub-only. Part of
+  [#847](https://github.com/c-wenlong/quiver/issues/847).
+
 - **Remote hub: session rows say which model each session runs.**
   `/v1/sessions` rows, the hub's own and a satellite's, carry `model`,
   the model of the newest reply in the session's transcript (left out

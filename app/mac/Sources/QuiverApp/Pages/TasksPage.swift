@@ -121,9 +121,12 @@ struct TasksPage: View {
         if let blocked = model.linearBlocked {
             blockedBanner(source: "Linear", message: blocked)
         }
+        if let blocked = model.notionBlocked {
+            blockedBanner(source: "Notion", message: blocked)
+        }
         if let error = model.error, model.tasks.isEmpty, model.failedRepos.isEmpty {
             if model.githubSetup == nil, model.linearBlocked == nil,
-               model.githubFailed == nil
+               model.notionBlocked == nil, model.githubFailed == nil
             {
                 ErrorCard(message: error, actionTitle: "Refresh", action: refresh)
             }
@@ -175,7 +178,7 @@ struct TasksPage: View {
             }
         } else {
             if model.envBlocked != nil || model.githubFailed != nil
-                || model.linearBlocked != nil
+                || model.linearBlocked != nil || model.notionBlocked != nil
             {
                 Label("Last known state — a source isn't answering, so this is what the store remembers.",
                       systemImage: "clock.arrow.circlepath")
