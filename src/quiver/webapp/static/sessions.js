@@ -58,10 +58,9 @@ async function renderSessions(_id, rescan = false) {
   sessionsPage.scrollY = null;
   const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
   if (gen !== sessionsPage.gen) return;
-  if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+  if (status === 401) return renderGate();
   if (status !== 200 || !data) {
-    const msg = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub. Check the connection, then refresh.");
+    const msg = failText(status, data, "then refresh");
     panel.innerHTML = `<div class="page">${sessionsHeader(false)}<div class="card"><p class="error">${esc(msg)}</p></div></div>`;
     bindSessionsHeader();
     return;
@@ -441,8 +440,7 @@ function openSheet(r) {
         setTimeout(() => { if (document.contains(run)) run.textContent = "Run in terminal"; }, 2000);
       } else {
         run.textContent = "Couldn't open";
-        run.title = (data && data.error && data.error.message) ||
-          (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+        run.title = failText(status, data, null);
       }
     };
   }
@@ -487,7 +485,7 @@ async function runControl(r, op, mode, doneNote) {
   s.acting.delete(r.key);
   if (status === 401) {
     if (sessionsListVisible()) {
-      return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      return renderGate();
     }
     return;
   }
@@ -939,12 +937,11 @@ async function nsBrowse(path) {
     if (data.truncated) ns.browse.error = "This folder has too many entries to list fully.";
     else ns.browse.error = "";
   } else {
-    ns.browse.error = (data && data.error && data.error.message)
-      || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+    ns.browse.error = failText(status, data, null);
     if (status === 401) {
       ns.seq++;
       nsSheetEl().close();
-      return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      return renderGate();
     }
   }
   nsPaint();
@@ -970,7 +967,7 @@ async function openNewSession() {
   const { status, data } = await api("/v1/machines");
   if (status === 401) {
     sheet.close();
-    return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return renderGate();
   }
   if (status !== 200 || !data) {
     ns.message = "Couldn't list the machines — the harness and folder pickers need it.";
@@ -999,7 +996,7 @@ async function nsStart() {
   if (mine !== ns.seq) return;
   if (status === 401) {
     nsSheetEl().close();
-    return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return renderGate();
   }
   if (!((status === 200 || status === 202) && data && data.launch_id)) {
     ns.phase = "failed";

@@ -229,6 +229,9 @@ private final class Changes: Sendable {
         #expect(stored.orgId == "org-1")
         let raw = try String(contentsOf: dir.url.appending(path: "sessions.json"), encoding: .utf8)
         #expect(!raw.contains("hidden"))
+        // Session titles and folders are this user's only.
+        #expect(try PrivateFileTests.mode(dir.url.appending(path: "sessions.json")) == 0o600)
+        #expect(try PrivateFileTests.mode(dir.url) == 0o700)
     }
 
     @Test func settingsOrgIdWinsOverTheTokensDefault() async throws {

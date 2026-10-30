@@ -366,6 +366,43 @@ extension HubStubbed {
                     data: try! HubWire.decoder.decode(HubJSON.self, from: Data(data.utf8)))
     }
 
+    /// A hub page whose cursor doesn't move back (nothing new on it, and
+    /// next_before where it was) ends the history instead of being asked
+    /// for again forever.
+    @Test(.timeLimit(.minutes(1))) func aCursorThatDoesNotMoveEndsLoadEarlier() async throws {
+        let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let earlierAsks = Mutex(0)
+        HubStub.handler = { req in
+            switch req.url?.path {
+            case "/v1/sessions": return (200, Data(#"{"sessions": [{"key": "claude:s1"}]}"#.utf8))
+            case "/v1/inbox": return (200, Data(#"{"items": []}"#.utf8))
+            case "/v1/sessions/claude:s1/messages":
+                if req.url?.query?.contains("before=") == true {
+                    let asks = earlierAsks.withLock { $0 += 1; return $0 }
+                    // Stop a looping caller well before the time limit.
+                    if asks > 20 { return (500, Data()) }
+                }
+                return (200, Data(#"""
+                {"messages": [
+                  {"type": "message.appended", "seq": 5, "data": {"kind": "user", "text": "go"}}
+                ], "has_more": true, "next_before": 5}
+                """#.utf8))
+            default: return (404, Data())
+            }
+        }
+        let hub = LocalHub(locator: FakeLocator(address: "127.0.0.1:8477"), store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session(), streamSession: HubStub.session())
+        }
+        let chat = SessionChatModel(key: "claude:s1", hub: hub)
+        await chat.start()
+        chat.stop()
+        #expect(chat.hasEarlier)
+        await chat.loadEarlier()
+        #expect(earlierAsks.withLock { $0 } == 1)
+        #expect(!chat.hasEarlier)
+    }
+
     @Test func aSessionTheHubDoesntListIsMissing() async throws {
         let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:other"}]}"#)
         #expect(chat.missing)
@@ -387,6 +424,93 @@ extension HubStubbed {
         // Live again past the history.
         chat.apply(event("message.appended", seq: 4, #"{"kind": "assistant", "text": "more"}"#))
         #expect(chat.items.map(\.id) == ["m1", "approval-r1", "m3", "m4"])
+    }
+
+    /// The hub's journal was wiped while we followed seq 500: it answers
+    /// `last=500` with journal.truncated at its head (2). The chat takes
+    /// the newer history and follows on from 2; staying at 500 would get
+    /// truncated back on every follow and never see a new event. When the
+    /// history fetch fails, it retries before following on: with the
+    /// cursor lowered no reconnect would say truncated again.
+    @Test(arguments: [false, true])
+    func aJournalWipedUnderTheCursorRestartsAtItsHead(failFirstReload: Bool) async throws {
+        let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let pages = Mutex(0)
+        HubStub.requests = []
+        HubStub.handler = { req in
+            let last = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "last" }?.value
+            switch req.url?.path {
+            case "/v1/sessions": return (200, Data(#"{"sessions": [{"key": "claude:s1"}]}"#.utf8))
+            case "/v1/sessions/claude:s1/messages":
+                let n = pages.withLock { n in n += 1; return n }
+                if failFirstReload, n == 2 { return (503, Data()) }
+                let first = n == 1
+                return (200, Data((first
+                    ? #"{"messages": [{"type": "message.appended", "seq": 500, "data": {"kind": "assistant", "text": "before"}}], "has_more": false}"#
+                    : #"{"messages": [{"type": "message.appended", "seq": 2, "data": {"kind": "assistant", "text": "after wipe"}}], "has_more": false}"#).utf8))
+            case "/v1/sessions/claude:s1/events":
+                if let last, let n = Int(last), n > 2 {
+                    return (200, Data("""
+                        data: {"type": "journal.truncated", "seq": 2}
+
+                        data: {"type": "journal.caught-up", "seq": 2}
+
+
+                        """.utf8))
+                }
+                return (200, Data("data: {\"type\": \"journal.caught-up\", \"seq\": 2}\n\n".utf8))
+            default: return (404, Data())
+            }
+        }
+        let hub = LocalHub(locator: FakeLocator(address: "127.0.0.1:8477"), store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session(), streamSession: HubStub.session())
+        }
+        let chat = SessionChatModel(key: "claude:s1", hub: hub)
+        defer { chat.stop() }
+        await chat.start()
+        func follows() -> [String] {
+            HubStub.requests.filter { $0.url?.path == "/v1/sessions/claude:s1/events" }
+                .compactMap { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first { $0.name == "last" }?.value }
+        }
+        for _ in 0..<200 where !follows().contains("2") {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(follows().prefix(2) == ["500", "2"])
+        #expect(chat.items.map(\.id) == ["m2"])
+        #expect(pages.withLock { $0 } == (failFirstReload ? 3 : 2))
+    }
+
+    /// The stream's own reconnect: after journal.truncated at 2 it asks
+    /// from 2 next time, not from the 500 it started at.
+    @Test func theStreamReconnectsFromATruncatedFramesSeq() async throws {
+        HubStub.requests = []
+        HubStub.handler = { req in
+            guard req.url?.path == "/v1/sessions/claude:s1/events" else { return (404, Data()) }
+            return (200, Data("data: {\"type\": \"journal.truncated\", \"seq\": 2}\n\n".utf8))
+        }
+        let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!,
+                               credential: "secret",
+                               session: HubStub.session(), streamSession: HubStub.session())
+        var truncated: [Int?] = []
+        var disconnects = 0
+        for await event in client.events("claude:s1", last: 500) {
+            switch event {
+            case .truncated(let seq): truncated.append(seq)
+            case .disconnected: disconnects += 1
+            default: break
+            }
+            if truncated.count == 2 { break }
+        }
+        let lasts = HubStub.requests.compactMap {
+            URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "last" }?.value
+        }
+        #expect(truncated == [2, 2])
+        #expect(disconnects == 1)
+        #expect(lasts == ["500", "2"])
     }
 
     /// The placeholder a waiting approval opens with learns the pane's
@@ -757,4 +881,36 @@ extension HubStubbed {
                                                  options: [], picked: "allow", state: .resolved("allow")))
     }
 }
+}
+
+/// Never answers: a request sits in flight until its task is cancelled.
+final class SilentHubStub: URLProtocol, @unchecked Sendable {
+    static let started = Mutex(0)
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { Self.started.withLock { $0 += 1 } }
+    override func stopLoading() {}
+}
+
+@Suite struct HubClientCancelTests {
+    /// A request cancelled with its task throws CancellationError, not
+    /// "hub unreachable": URLSession wraps the cancel as URLError.cancelled.
+    @Test(.timeLimit(.minutes(1))) func aCancelledRequestIsACancellation() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SilentHubStub.self]
+        let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!, credential: "c",
+                               session: URLSession(configuration: config))
+        let before = SilentHubStub.started.withLock { $0 }
+        let task = Task { try await client.sessions() }
+        while SilentHubStub.started.withLock({ $0 }) == before {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        task.cancel()
+        do {
+            _ = try await task.value
+            Issue.record("a cancelled request must throw")
+        } catch {
+            #expect(error is CancellationError, "\(error)")
+        }
+    }
 }

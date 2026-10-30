@@ -25,6 +25,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only: the web app doesn't switch models. Part of
   [#643](https://github.com/c-wenlong/quiver/issues/643).
 
+- **Mac app: approve pair requests in Settings › Remote.** A "Pending
+  requests" group under Paired devices lists the phones asking to pair
+  over Tailscale, with each one's name, tailnet node, login and how long
+  it has waited, a code field for the 6 digits the phone shows, and
+  Approve / Deny. It reads `swe remote devices --requests --json` every
+  3 seconds, only while the section is on screen, and an approval
+  refreshes the device list. This covers a hub on the same Mac; a hub on
+  another machine is [#681](https://github.com/c-wenlong/quiver/issues/681).
+  `swe remote devices --approve=<code>` and `--deny=<code>` gain
+  `--request-id=<id>`, which holds the code to that one request, as the
+  hub's HTTP route already did: a code typed against one row never
+  decides another, and five wrong approve codes deny it. The app always
+  sends it.
+  Part of [#522](https://github.com/c-wenlong/quiver/issues/522).
+
+- **Web app: `@` file completion in the chat composer.** Typing `@` at
+  the start of the box or after a space opens the composer's menu with
+  files and folders under the session's folder, from the hub's
+  `GET /v1/sessions/{key}/files` route, the same list the iPhone's `@`
+  menu shows. It uses the `/` menu's box and keys (arrows, Enter or Tab
+  to pick, Escape to close) and the iPhone's token rules: an `@` inside
+  a word (an email) opens nothing, a path with spaces is quoted
+  (`@"My Documents/notes.txt"`), a file goes in as `@path ` and a
+  folder as `@path/` so the menu stays open inside it. Searches wait
+  120 ms after the last keystroke, and a newer query drops an older
+  answer. A satellite session's refusal and an older hub's 404 are
+  worded in the menu
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
+- **Compute: auto clean orphaned processes, on the Mac and the web app.**
+  The Compute settings gain an "Auto clean" switch (Mac: the cleanup
+  sheet, web: the settings gear): while it is on, an orphan tree older
+  than the "Orphans count as old after" age gets one SIGTERM, deepest
+  member first, through the same kill plan and guards a manual Quit
+  runs — never pid 1, the app or its ancestors, and a pid only while it
+  is still the recorded process. A nested "Force quit" switch shows only
+  while auto clean is on and sends SIGKILL to a marked tree still alive
+  ten seconds later. On the web, the switches live in the hub's
+  `config.json` (the `compute` section, so `swe config` reads them too),
+  a `POST /v1/app/compute/settings` route writes them, and the background
+  sampler starts at hub boot while the switch is on, so cleanup runs
+  with no browser open. A signalled orphan shows a "Quitting" badge.
+
 - **Remote iPhone app: switch a session's model from the chat.** On a
   session attached through tmux whose harness takes `/model <id>`
   (Claude Code and Codex; the row's `model_modes` says so), the chat's

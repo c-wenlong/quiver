@@ -48,7 +48,8 @@ _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
 _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
     "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
-    "--approve", "--deny", "--public-url", "--model", "--effort",
+    "--approve", "--deny", "--request-id", "--public-url", "--model",
+    "--effort",
 }
 _BOOL_FLAGS = {"--on", "--off", "--app", "--requests", "--install",
                "--uninstall", "--tailnet", "--apply", "--recheck",
@@ -65,7 +66,7 @@ _USAGE = f"""\
   {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app] [--json]')}
                                   Print a pairing URL + token for a phone
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
-  {c('cyan', 'swe remote devices [--revoke=<id>] [--requests] [--approve=<code>] [--deny=<code>]')}
+  {c('cyan', 'swe remote devices [--revoke=<id>] [--requests] [--approve=<code>] [--deny=<code>] [--request-id=<id>]')}
                                   List/revoke devices and approve pair requests
   {c('cyan', 'swe remote attach <session> [--mode=auto|tmux|headless|serve|appserver] [--model=<m>] [--effort=<e>]')}
                                   Move an observed session under supervision
@@ -172,7 +173,7 @@ def _bindable(host: str, port: int) -> str | None:
 
 
 def _probe(host: str, port: int, timeout: float = 3.0) -> dict | None:
-    url = f"http://{host}:{port}/v1/status"
+    url = f"http://{protocol.url_host(host)}:{port}/v1/status"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -258,7 +259,7 @@ def _cmd_serve(flags: dict) -> int:
     # Timestamped and flushed: the log is often a file, and a hub killed
     # by a restart otherwise leaves no trace of when it ran.
     print(
-        f"{_stamp()}  remote hub on {c('cyan', f'http://{host}:{port}')} "
+        f"{_stamp()}  remote hub on {c('cyan', f'http://{protocol.url_host(host)}:{port}')} "
         f"as {c('bold', state.machine['name'])} ({state.machine_id})",
         flush=True,
     )
@@ -548,10 +549,26 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
                 f"{r.get('peer_ip', '?')}  expires in {r['expires_in_s']}s"
             )
         return 0
+    # --request-id holds the code to one row, as the hub's HTTP route
+    # does: a code typed against one request never approves another,
+    # and wrong approve codes count toward that row's lockout.
+    request_id = flags.get("--request-id")
+    if request_id == "":
+        # Empty would quietly widen the code to every pending row.
+        print(c("red", "--request-id needs an id from --requests"),
+              file=error_stream(json_view))
+        return 1
+    if request_id is not None and (
+        flags.get("--approve") is None and flags.get("--deny") is None
+    ):
+        print(c("red", "--request-id goes with --approve=<code> or "
+                       "--deny=<code>"),
+              file=error_stream(json_view))
+        return 1
     approve = flags.get("--approve")
     if approve is not None:
         code = "".join(ch for ch in approve if ch.isdigit())
-        res = pairing.approve_request(None, code)
+        res = pairing.approve_request(None, code, request_id)
         if json_view:
             if res is None:
                 emit({"ok": False})
@@ -569,7 +586,7 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
     deny = flags.get("--deny")
     if deny is not None:
         code = "".join(ch for ch in deny if ch.isdigit())
-        ok = pairing.deny_request(None, code)
+        ok = pairing.deny_request(None, code, request_id)
         if json_view:
             return emit({"ok": ok})
         if not ok:

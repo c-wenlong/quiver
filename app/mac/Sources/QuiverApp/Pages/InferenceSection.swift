@@ -633,7 +633,7 @@ private struct StatusLabel: View {
             .font(Theme.caption)
         }
         .buttonStyle(.plain)
-        .help(tooltip)
+        .hoverTip(tooltip, replacesLabel: false)
     }
 
     private var style: APIKeyCheckStyle { APIKeyCheckStyle(check?.result) }
@@ -709,17 +709,6 @@ struct KeyDraft: Identifiable {
     var providerID: String? = nil
 }
 
-/// The model dropdown's row-hover fill, as the picker lists get.
-private struct DropdownRowHover: ViewModifier {
-    @State private var hovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(hovering ? Theme.rowHover : .clear)
-            .onHover { hovering = $0 }
-    }
-}
-
 /// Add, change or remove one key. A new key first picks its provider from
 /// the catalog: a known provider fixes the variable name (a pick when it
 /// has several) and offers the page that hands out keys; "Custom provider"
@@ -780,6 +769,11 @@ private struct KeyEditor: View {
     @State private var customName = ""
     /// Its OpenAI-compatible root, e.g. https://soclaas-api.comp.nus.edu.sg/v1.
     @State private var baseURL = ""
+    /// The base URL the model list may be fetched from: set when the
+    /// field is left or submitted, never mid-typing, so the key never
+    /// goes to a half-typed host ("https://api.example.co").
+    @State private var committedBase = ""
+    @FocusState private var baseFocused: Bool
     /// The picked or typed model id; "" writes no `X_MODEL`.
     @State private var model = ""
     /// The id a dropdown row last put in `model` — typing away from it is
@@ -895,8 +889,10 @@ private struct KeyEditor: View {
     private var baseProblem: String? {
         let base = baseURL.trimmingCharacters(in: .whitespaces)
         guard !base.isEmpty else { return nil }
-        return CustomProvider.modelsURL(base) == nil
-            ? "An http(s) URL; the models list comes from {base}/models" : nil
+        guard CustomProvider.modelsURL(base) == nil else { return nil }
+        return base.lowercased().hasPrefix("http://")
+            ? "Use https: plain http is only for this Mac or a private network, since the key travels with every request"
+            : "An https URL; the models list comes from {base}/models"
     }
 
     /// The variables a custom save would overwrite.
@@ -1035,7 +1031,12 @@ private struct KeyEditor: View {
                       problem: baseProblem != nil) {
                 TextField("https://soclaas-api.comp.nus.edu.sg/v1", text: $baseURL)
                     .quiverField(monospaced: true)
+                    .focused($baseFocused)
                     .onChange(of: baseURL) { saveAnyway = false }
+                    .onSubmit { committedBase = baseURL }
+                    .onChange(of: baseFocused) { _, focused in
+                        if !focused { committedBase = baseURL }
+                    }
             }
             if let collision = customCollision {
                 Text(collision).font(Theme.caption).foregroundStyle(Theme.warningText)
@@ -1065,7 +1066,11 @@ private struct KeyEditor: View {
                         ProgressView().controlSize(.small)
                     } else {
                         Button("Reload models", systemImage: "arrow.clockwise") {
-                            Task { await loadModels(now: true) }
+                            if committedBase != baseURL {
+                                committedBase = baseURL   // the .task fetches
+                            } else {
+                                Task { await loadModels(now: true) }
+                            }
                         }
                         .iconButton()
                         .disabled(!canLoadModels)
@@ -1113,7 +1118,7 @@ private struct KeyEditor: View {
                         .contentShape(.rect)
                     }
                     .plainButton(cornerRadius: 0)
-                    .modifier(DropdownRowHover())
+                    .modifier(RowHover())
                 }
             }
             .padding(.vertical, 4)
@@ -1155,14 +1160,15 @@ private struct KeyEditor: View {
     /// The inputs a fetch describes, as the `.task` id: changing either
     /// cancels the pending fetch and starts the debounce over.
     private var fetchSeed: String {
-        isCustom ? baseURL + "\u{1F}" + draft.value : ""
+        isCustom ? committedBase + "\u{1F}" + draft.value : ""
     }
 
     /// Fetches the model list — debounced from `.task` edits, at once
     /// from the reload button. A fetch that lands after its inputs moved
     /// on writes nothing, so a stale answer can't erase a newer list.
     private func loadModels(now: Bool = false) async {
-        guard isCustom, canLoadModels else {
+        guard isCustom, CustomProvider.modelsURL(committedBase) != nil,
+              !draft.value.isEmpty else {
             fetchedModels = []
             modelsStatus = .idle
             return
@@ -1173,7 +1179,7 @@ private struct KeyEditor: View {
             guard !Task.isCancelled else { return }
         }
         modelsStatus = .loading
-        let base = baseURL.trimmingCharacters(in: .whitespaces)
+        let base = committedBase.trimmingCharacters(in: .whitespaces)
         do {
             let found = try await fetchModels(base, draft.value)
             guard seed == fetchSeed else { return }

@@ -390,8 +390,9 @@ public enum TaskFilter: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .all: true
         case .running: task.agentRunning == true
-        case .prOpen: task.state == "pr_open"
-            || (task.kind == "pull" && task.pr?.state == "open")
+        // A pull task counts until it lands, as the web and the phone
+        // count it: its `pr` block can be missing from a row.
+        case .prOpen: task.state == "pr_open" || (task.kind == "pull" && !task.isDone)
         case .done: task.isDone
         }
     }
@@ -459,9 +460,20 @@ public enum TaskGrouping {
         tasks.filter { filter.includes($0) && (scope == nil || sectionName($0) == scope) }.count
     }
 
-    /// The section a task lists under: its repo or project, else "Other".
+    /// The section a task lists under: its repo or project, else its
+    /// source's name ("Linear", "Notion"), as the web groups them; "Other"
+    /// only when the row names no source either.
     public static func sectionName(_ task: HubTaskRow) -> String {
-        task.scope.isEmpty ? "Other" : task.scope
+        if !task.scope.isEmpty { return task.scope }
+        guard let source = task.source, !source.isEmpty else { return "Other" }
+        return sourceName(source)
+    }
+
+    /// A source as the pages spell it: GitHub, Linear, Notion; anything
+    /// else capitalized.
+    static func sourceName(_ source: String) -> String {
+        ["github": "GitHub", "linear": "Linear", "notion": "Notion"][source]
+            ?? source.prefix(1).uppercased() + source.dropFirst()
     }
 
     /// The page's rail: every scope, `filter` or not, so one with nothing
@@ -513,7 +525,7 @@ public enum TaskGrouping {
             return String(repo.split(separator: "/", maxSplits: 1)[0])
         }
         guard let source = task.source, !source.isEmpty else { return "Other" }
-        return source.prefix(1).uppercased() + source.dropFirst()
+        return sourceName(source)
     }
 }
 

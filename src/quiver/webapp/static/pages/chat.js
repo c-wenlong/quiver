@@ -15,7 +15,9 @@
 const SessionChat = (() => {
   const chat = {
     key: null, gen: 0, row: null, rowKnown: false, details: null,
-    stream: null, retryTimer: null,
+    stream: null, retryTimer: null, retries: 0,
+    // Events held while a resync reads the transcript again, or null.
+    held: null,
     // Live events not yet shown. The hub polls a busy transcript about
     // once a second, so several messages arrive together; they are shown
     // one at a time instead of as a block.
@@ -47,25 +49,11 @@ const SessionChat = (() => {
 
   /* ------------------------------------------------------------ requests */
 
-  /* Every request carries app.js's authHeaders: the paired bearer when
+  /* app.js's apiPost, with its authHeaders: the paired bearer when
    * there is one, and X-Quiver-Pair, which lets the hub owner's own
    * tailnet devices in without pairing. status 0 means the hub never
    * answered (offline, connection lost). */
-  async function post(path, body) {
-    let resp;
-    try {
-      resp = await fetch(path, {
-        method: "POST", credentials: "same-origin",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-    } catch {
-      return { status: 0, data: null };
-    }
-    let data = null;
-    try { data = await resp.json(); } catch { /* empty body */ }
-    return { status: resp.status, data };
-  }
+  const post = (path, body) => apiPost(path, body);
 
   const sessionPath = (key, action) => `/v1/sessions/${encodeURIComponent(key)}/${action}`;
   const errorText = (data) => (data && data.error && data.error.message) || "";
@@ -406,11 +394,13 @@ const SessionChat = (() => {
       // Bare URLs are set aside first, so emphasis never reaches inside one.
       // esc() wrote `<`, `>`, `"` and `'` as entities: an `&` starting one
       // of them ends a URL, while `&amp;` — a real `&` — stays inside it.
+      // They go back only after emphasis has run: a `__init__.py` in a
+      // path is part of the link, never bold.
       const urls = [];
       return emphasis(part
         .replace(/\bhttps?:\/\/(?:[^\s<>"&\u0001]|&(?!lt;|gt;|quot;|#39;))+[^\s<>"&\u0001.,;:!?)\]']/g,
-          (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; })
-        .replace(/\u0002(\d+)\u0002/g, (_m, n) => `<a href="${urls[+n]}" target="_blank" rel="noopener">${urls[+n]}</a>`));
+          (url) => { urls.push(url); return `\u0002${urls.length - 1}\u0002`; }))
+        .replace(/\u0002(\d+)\u0002/g, (_m, n) => `<a href="${urls[+n]}" target="_blank" rel="noopener">${urls[+n]}</a>`);
     }).join("");
     t = t.replace(/\u0004(\d+)\u0004/g, (_m, i) => esc(escaped[+i]));
     return t.replace(/\u0001(\d+)\u0001/g, (_m, i) => `<code>${esc(codes[+i])}</code>`);
@@ -503,9 +493,9 @@ const SessionChat = (() => {
      The code a transcript shows — shell commands, tool arguments, file
      bodies and fenced blocks — tokenised by a small hand-rolled scanner
      (the web app has no build step, so no highlighter library). The same
-     rules live in src/quiver/remote/web/app.js and, in Swift, in
+     rules live, in Swift, in
      app/mac/Sources/QuiverCore/Syntax/SyntaxHighlight.swift; keep the
-     three in step. Token classes live in chat.css, their colours in
+     two in step. Token classes live in chat.css, their colours in
      styles.css's --tk-* variables (Theme.swift's syntax* colours). */
 
   const tkPattern = (k, src, boundary, flags) => ({ k, r: new RegExp(src, flags || "y"), b: !!boundary });
@@ -1370,7 +1360,7 @@ const SessionChat = (() => {
   function linkCardsHtml(text) {
     const urls = linkUrls(text);
     if (!urls.length) return "";
-    return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${esc(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
+    return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${safeHref(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
       <span class="link-card-ic">${iconSvg("link")}</span>
       <span class="link-card-main"><span class="link-card-host">${esc(linkHost(u))}</span>${linkPath(u) ? `<span class="link-card-path">${esc(linkPath(u))}</span>` : ""}</span>
       <span class="link-card-open">Open ${iconSvg("out")}</span></a>`).join("")}</div>`;
@@ -2178,10 +2168,13 @@ const SessionChat = (() => {
          <button type="button" class="tab" data-dec="always">Always</button>
          <button type="button" class="tab deny" data-dec="deny">Deny</button>`) : "";
     // The generic "Approval requested" fallback repeats the role line —
-    // only a real question or context goes under it.
+    // only a real question or context goes under it. The prompt is text
+    // scraped from the agent's pane, so it shows as plain monospace text
+    // with its spacing kept, never as markdown: a link, image or heading
+    // in the pane must not render (as the iOS app shows it).
     const prompt = (msg.text || "").trim();
     const textRow = prompt && prompt !== "Approval requested"
-      ? `<div class="text">${md(msg.text)}</div>` : "";
+      ? `<div class="text approval-prompt">${esc(prompt)}</div>` : "";
     div.innerHTML = `
       <button type="button" class="approval-toggle" hidden aria-expanded="false">
         <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
@@ -2315,6 +2308,11 @@ const SessionChat = (() => {
 
   /* --------------------------------------------------------------- stream */
 
+  /* How long the nth reconnect in a row waits: 2s, doubling, at most 30s.
+   * A hub that stays down is asked twice a minute, not every 2 seconds. */
+  const RETRY_MS = 2000, RETRY_MAX_MS = 30000;
+  const retryDelay = (n) => Math.min(RETRY_MS * 2 ** Math.min(n, 10), RETRY_MAX_MS);
+
   function openStream(gen, after) {
     closeStream();
     const key = chat.key;
@@ -2329,7 +2327,7 @@ const SessionChat = (() => {
       if (resp.status === 401) {
         chat.stream = null;
         close();
-        renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+        renderGate();
         return;
       }
       if (resp.status === 404) {
@@ -2340,6 +2338,7 @@ const SessionChat = (() => {
       }
       if (!resp.ok || !resp.body) throw new Error(`sse ${resp.status}`);
       setConn(true);
+      chat.retries = 0;
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -2361,17 +2360,25 @@ const SessionChat = (() => {
       if (chat.stream !== mine) return;
       chat.stream = null;
       setConn("err");
-      // Reconnect with replay from the last seq shown.
+      // Reconnect with replay from the last seq shown, backing off while
+      // it keeps failing. A hidden tab waits: coming back reconnects at
+      // once (the visibilitychange handler below).
       clearTimeout(chat.retryTimer);
       chat.retryTimer = setTimeout(() => {
-        if (gen === chat.gen && !chat.stream) openStream(gen, resumeSeq());
-      }, 2000);
+        if (gen === chat.gen && !chat.stream && !document.hidden) openStream(gen, resumeSeq());
+      }, retryDelay(chat.retries++));
     });
   }
 
   function handleFrame(key, frame) {
     const ev = parseFrame(frame);
     if (!ev || key !== chat.key) return;
+    // A resync is reading the transcript again: what streams meanwhile
+    // waits for it, so nothing lands above the history it redraws.
+    if (chat.held) {
+      if (ev.type !== "journal.truncated" && ev.type !== "journal.caught-up") chat.held.push(ev);
+      return;
+    }
     const h = chat.history;
     if (h) {
       // Replaying what came before the backfill's last message, only to
@@ -2385,20 +2392,64 @@ const SessionChat = (() => {
         return;
       }
     }
-    if (ev.type === "journal.truncated" && chat.seq) {
-      // The hub's ring dropped events past where this view stopped (a long
-      // disconnect on a busy session): say so rather than look complete.
-      const stick = nearBottom();
-      appendMessage({ kind: "system", text: "Some events were missed while the connection was down, and the hub's journal no longer has them." }, true);
-      if (stick) scrollBottom();
+    if (ev.type === "journal.truncated") {
+      resync(ev.seq);
+      return;
     }
-    if (ev.type === "journal.truncated" || ev.type === "journal.caught-up") {
+    if (ev.type === "journal.caught-up") {
       if (ev.seq && !chat.pending.length) remember(ev.seq);
       return;
     }
     // The cursor advances as each event is shown (showLive), so events
     // still waiting when the stream drops are replayed on reconnect.
     enqueue(ev);
+  }
+
+  /* journal.truncated: the journal no longer holds what this view needs
+   * to carry on from its cursor. Its ring dropped events past where the
+   * view stopped, or it was wiped (hub state reset) and its numbering now
+   * starts below the cursor, which would skip every new event as already
+   * seen. The view adopts the seq the hub sent, lower or not, and reads
+   * the transcript again, as the phone does. The stream stays open; what
+   * arrives meanwhile is held, then applied, except messages the redrawn
+   * history already shows. */
+  async function resync(head) {
+    const gen = chat.gen, key = chat.key;
+    dropPending();
+    chat.held = [];
+    chat.history = null;
+    chat.seq = typeof head === "number" && head >= 0 ? head : 0;
+    const { status, data } = await api(`${sessionPath(key, "messages")}?limit=500`);
+    if (gen !== chat.gen) return;
+    const held = chat.held || [];
+    chat.held = null;
+    if (status === 401) {
+      close();
+      renderGate();
+      return;
+    }
+    const log = $("chat-log");
+    // A failed read leaves the history on screen rather than an error.
+    if (status === 200 && data && log) {
+      // Unanswered approval cards stay, buttons and all: the transcript
+      // has no approvals, and their asks are behind the cursor.
+      const open = [...log.querySelectorAll(".msg.approval:not(.resolved)")];
+      log.innerHTML = "";
+      chat.toolCards.clear();
+      const messages = data.messages || [];
+      for (const ev of messages) appendEvent(ev, false);
+      if (messages.length) remember(messages[messages.length - 1].seq);
+      for (const card of open) log.appendChild(card);
+      scrollBottom();
+    }
+    // Status, ownership, command results and approvals aren't in the
+    // transcript, so they apply whatever their seq.
+    for (const ev of held) {
+      if (ev.type === "message.appended" && typeof ev.seq === "number" && ev.seq <= chat.seq) continue;
+      enqueue(ev);
+    }
+    // An attach or detach may have happened behind the cursor as well.
+    loadRow(gen);
   }
 
   function closeStream() {
@@ -2580,7 +2631,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     chat.rail.loading = false;
     if (status === 401) {
-      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      renderGate();
       return;
     }
     if (status !== 200 || !data) {
@@ -2667,6 +2718,7 @@ const SessionChat = (() => {
     close();
     const gen = ++chat.gen;
     chat.key = key;
+    chat.retries = 0;
     chat.details = opts.details || null;
     chat.row = opts.row ? Object.assign({}, opts.row) : null;
     chat.rowKnown = false;
@@ -2703,7 +2755,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     if (rowStatus === 401 || logStatus === 401) {
       close();
-      renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+      renderGate();
       return;
     }
     if (rowStatus === 404) { setConn("err"); return; }
@@ -2724,6 +2776,7 @@ const SessionChat = (() => {
 
   function close() {
     chat.gen++;
+    chat.held = null;
     closeStream();
     document.body.classList.remove("chat-open");
     chat.key = null;
@@ -2750,7 +2803,9 @@ const SessionChat = (() => {
         const rows = menu.rows.length;
         // Enter waits only while the first fetch is still out; an
         // answered list with nothing pickable sends the text as typed.
-        const waiting = cmds.loading && !(cmds.response && cmds.key === chat.key);
+        const waiting = menu.token.kind === "mention"
+          ? files.loading && files.answered === null
+          : cmds.loading && !(cmds.response && cmds.key === chat.key);
         const key = menuKey(e, rows, waiting);
         if (key === "dismiss") {
           e.preventDefault();
@@ -2923,8 +2978,11 @@ const SessionChat = (() => {
      as the name grows. The hub only lists them: a pick inserts
      "/name " (or the command's own `insert`), and the harness expands
      it when the message lands. Ported from the remote PWA's "/" menu.
-     Positions are offsets into the
-     box's value; the caret is the input's selectionEnd. */
+     The same menu lists files for an `@path` typed anywhere in the box
+     (the hub's GET .../files), with the same keys and rows; its token
+     and insertion rules are the iPhone's (PromptCompletion.swift,
+     `Mention`). Positions are offsets into the box's value; the caret
+     is the input's selectionEnd. */
 
   /* A `/command` being typed: the box starts with / and the caret is
    * still in that first word. */
@@ -2984,6 +3042,97 @@ const SessionChat = (() => {
     return null;
   }
 
+  /* An `@path` being typed: the @ sits at the start of the text or after
+   * whitespace and runs to the caret with no whitespace in between, so
+   * an email (a@b.com) never starts one. A path with spaces is quoted,
+   * `@"My Documents/notes.txt"`, as Claude Code writes it; while a
+   * folder is browsed the quote stays open (`@"My Documents/`). `end`
+   * is the end of the word the caret is in, which a pick replaces. */
+  function mentionToken(text, caret) {
+    caret = Math.min(Math.max(caret, 0), text.length);
+    const quoted = quotedMention(text, caret);
+    if (quoted) return quoted;
+    let start = caret;
+    while (start > 0 && !/\s/.test(text[start - 1])) start--;
+    if (start >= caret || text[start] !== "@") return null;
+    let end = caret;
+    while (end < text.length && !/\s/.test(text[end])) end++;
+    return { start, end, query: text.slice(start + 1, caret) };
+  }
+
+  /* `@"` at the start or after whitespace, with no quote or newline
+   * between it and the caret. It runs to its closing quote or, left
+   * open, to the end of the word the caret is in. */
+  function quotedMention(text, caret) {
+    let q = caret - 1;
+    while (q >= 0 && text[q] !== '"' && !/[\n\r]/.test(text[q])) q--;
+    if (q < 1 || text[q] !== '"' || text[q - 1] !== "@") return null;
+    const start = q - 1;
+    if (start > 0 && !/\s/.test(text[start - 1])) return null;
+    let end = caret;
+    while (end < text.length && text[end] !== '"' && !/[\n\r]/.test(text[end])) end++;
+    if (end < text.length && text[end] === '"') {
+      end++;
+    } else {
+      end = caret;
+      while (end < text.length && !/\s/.test(text[end])) end++;
+    }
+    return { start, end, query: text.slice(q + 1, caret) };
+  }
+
+  /* A path without its trailing slashes ("/" itself stays). */
+  function trimmedSlash(path) {
+    let p = String(path || "");
+    while (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
+    return p;
+  }
+
+  /* "src/app/main.py" as its name and the folder it's in. */
+  function splitPath(path) {
+    const clean = trimmedSlash(path);
+    const slash = clean.lastIndexOf("/");
+    return slash < 0 ? { name: clean, parent: "" } : { name: clean.slice(slash + 1), parent: clean.slice(0, slash) };
+  }
+
+  /* The box after picking `path`, and where the caret goes. A file
+   * becomes `@path ` with the caret after the space (an existing space
+   * is reused); a folder becomes `@path/` with the caret after the
+   * slash, so the menu stays open to pick inside it. A path with
+   * whitespace is quoted, `@"a b.txt" `, and a folder's quote is left
+   * open, `@"a b/`, until a file closes it. */
+  function insertMention(text, token, path, isDir) {
+    const start = Math.min(token.start, text.length);
+    const end = Math.min(Math.max(token.end, start), text.length);
+    const clean = trimmedSlash(path);
+    const quoted = /\s/.test(clean);
+    let inserted = (quoted ? '@"' : "@") + clean;
+    if (isDir) {
+      inserted += "/";
+    } else {
+      if (quoted) inserted += '"';
+      if (end >= text.length || !/\s/.test(text[end])) inserted += " ";
+    }
+    const next = text.slice(0, start) + inserted + text.slice(end);
+    let caret = start + inserted.length;
+    // A file before existing whitespace: step over it, as if the space
+    // had been typed.
+    if (!isDir && !inserted.endsWith(" ") && caret < next.length) caret++;
+    return { text: next, caret };
+  }
+
+  /* The one muted line the @ menu shows instead of rows. */
+  function filesError(status, data, machine) {
+    const code = data && data.error && data.error.code;
+    if (code === "files_unavailable") return `File search isn't available for sessions on ${machine || "that machine"}`;
+    if (code === "cwd_missing") return "This session's folder is gone";
+    if (code === "bad_cwd") return "This session has no working folder";
+    if (code === "not_readable") return "The hub can't read this session's folder";
+    if (code === "unknown_session") return "The hub doesn't know this session any more";
+    if (!status) return "Can't reach the hub";
+    // A hub from before the route answers any unknown path 404.
+    return status === 404 ? "Update the hub to search files from here" : "Couldn't search files";
+  }
+
   /* The / menu's list: warmed when the chat opens so the first / opens
    * it already filled, filtered as you type. A failed load retries the
    * next time the menu opens. */
@@ -2996,9 +3145,76 @@ const SessionChat = (() => {
    * a newer request's answer. */
   const cmdSeqs = {};
 
-  /* The menu's state: the token it opened on, the filtered rows and the
-   * highlighted one. `dismissed` is the token Escape closed it on: it
-   * stays closed until the token changes. */
+  /* The @ menu's search, the iPhone's MentionSearch: debounced, one
+   * request at a time (a newer query aborts an older request, and its
+   * answer is dropped if it lands anyway), and the last results stay up
+   * while the next query loads. `query` is what the newest search asked;
+   * `answered` is what `entries` answer, null before any came back.
+   * `ctrl` aborts the request in flight; `settle` resolves the pending
+   * search's promise when it is replaced. */
+  const files = { gen: 0, timer: null, ctrl: null, settle: null, query: null, entries: [], answered: null,
+    loading: false, error: "" };
+
+  /* Drops the pending search: its timer, its request and its promise. */
+  function dropSearch() {
+    files.gen++;
+    clearTimeout(files.timer);
+    files.timer = null;
+    if (files.ctrl) files.ctrl.abort();
+    files.ctrl = null;
+    if (files.settle) files.settle();
+    files.settle = null;
+  }
+  const FILES = { debounce: 120, limit: 50 };
+
+  function resetFiles() {
+    dropSearch();
+    files.query = null;
+    files.entries = [];
+    files.answered = null;
+    files.loading = false;
+    files.error = "";
+  }
+
+  /* Searches for `query` after the debounce. Resolves once the answer
+   * is in (or the search was replaced), so tests can wait on it. */
+  function searchFiles(query) {
+    dropSearch();
+    const gen = files.gen;
+    const key = chat.key;
+    files.query = query;
+    files.loading = true;
+    return new Promise((resolve) => {
+      files.settle = resolve;
+      files.timer = setTimeout(async () => {
+        files.timer = null;
+        if (gen !== files.gen || key !== chat.key) return resolve();
+        const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+        files.ctrl = ctrl;
+        const { status, data } = await api(
+          `${sessionPath(key, "files")}?q=${encodeURIComponent(query)}&limit=${FILES.limit}`,
+          { signal: ctrl ? ctrl.signal : undefined });
+        if (gen !== files.gen || key !== chat.key) return resolve();
+        files.ctrl = null;
+        files.settle = null;
+        const ok = status === 200 && data && Array.isArray(data.entries);
+        files.entries = ok ? data.entries.filter((e) => e && typeof e.path === "string") : [];
+        files.error = ok ? "" : filesError(status, data, (chat.row && chat.row.machine) || "");
+        files.answered = query;
+        files.loading = false;
+        if (menu.open && menu.token.kind === "mention") {
+          menu.active = 0;
+          renderMenu();
+        }
+        resolve();
+      }, FILES.debounce);
+    });
+  }
+
+  /* The menu's state: the token it opened on (`kind` "slash" or
+   * "mention"), the rows it shows and the highlighted one. `dismissed`
+   * is the token Escape closed it on: it stays closed until the token
+   * changes. */
   const menu = { open: false, token: null, rows: [], active: 0, dismissed: null };
 
   function resetMenus() {
@@ -3007,6 +3223,7 @@ const SessionChat = (() => {
     cmds.response = null;
     cmds.loading = false;
     cmds.error = "";
+    resetFiles();
     menu.open = false;
     menu.token = null;
     menu.rows = [];
@@ -3015,10 +3232,11 @@ const SessionChat = (() => {
   }
 
   function sameToken(a, b) {
-    return !!a && !!b && a.start === b.start && a.end === b.end && a.query === b.query;
+    return !!a && !!b && a.kind === b.kind && a.start === b.start && a.end === b.end && a.query === b.query;
   }
 
   function closeMenu() {
+    resetFiles();
     menu.open = false;
     menu.token = null;
     menu.rows = [];
@@ -3031,16 +3249,28 @@ const SessionChat = (() => {
     const input = $("chat-text");
     const caret = input.selectionEnd;
     const live = document.activeElement === input && !input.disabled && input.selectionStart === caret;
-    const token = live ? slashToken(input.value, caret) : null;
+    const slash = live ? slashToken(input.value, caret) : null;
+    const mention = live && !slash ? mentionToken(input.value, caret) : null;
+    const token = slash ? { ...slash, kind: "slash" } : mention ? { ...mention, kind: "mention" } : null;
     if (!token || !sameToken(token, menu.dismissed)) menu.dismissed = null;
     if (!token || menu.dismissed) {
       if (menu.open) closeMenu();
       return;
     }
-    const opening = !menu.open;
+    const opening = !menu.open || menu.token.kind !== token.kind;
+    if (opening && menu.open) resetFiles();
     if (!opening && token.query !== menu.token.query) menu.active = 0;
     menu.open = true;
     menu.token = token;
+    if (token.kind === "mention") {
+      // Search when the query changed, or when nothing answered it and
+      // nothing is out for it; a caret move inside the word re-renders.
+      if (files.query !== token.query || (files.answered === null && !files.loading && !files.error)) {
+        searchFiles(token.query);
+      }
+      renderMenu();
+      return;
+    }
     const loaded = !!cmds.response && cmds.key === chat.key;
     // Fetch when there's no list and no failure to show; retry a failure
     // only on opening, so typing doesn't hammer a hub that refused.
@@ -3085,7 +3315,7 @@ const SessionChat = (() => {
     cmds.response = (cmdLists[key] || {}).response || null;
     cmds.error = (cmdLists[key] || {}).error || "";
     // The list is kept either way; only an open menu redraws.
-    if (menu.open) {
+    if (menu.open && menu.token.kind === "slash") {
       menu.active = 0;
       renderMenu();
     }
@@ -3132,6 +3362,13 @@ const SessionChat = (() => {
       input.removeAttribute("aria-activedescendant");
       return;
     }
+    const mention = menu.token.kind === "mention";
+    box.setAttribute("aria-label", mention ? "Files" : "Commands");
+    if (mention) {
+      box.innerHTML = fileMenuHtml();
+      showActive(box, input);
+      return;
+    }
     const r = cmds.key === chat.key ? cmds.response : null;
     menu.rows = r ? filterCommands(r.commands || [], menu.token.query) : [];
     if (menu.active >= menu.rows.length) menu.active = 0;
@@ -3167,6 +3404,10 @@ const SessionChat = (() => {
       html += `<div class="menu-foot">${footnotes.map((f) => `<div>${esc(f)}</div>`).join("")}</div>`;
     }
     box.innerHTML = html;
+    showActive(box, input);
+  }
+
+  function showActive(box, input) {
     if (menu.rows.length) {
       input.setAttribute("aria-activedescendant", `chat-menu-opt-${menu.active}`);
       const row = box.querySelector(".menu-row.active");
@@ -3176,11 +3417,36 @@ const SessionChat = (() => {
     }
   }
 
+  const FILE_ICON = '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/>';
+  const FOLDER_ICON = '<path d="M3 6h6l2 2h10v11H3z"/>';
+
+  /* The @ menu's body: the error, "Searching files" before the first
+   * answer, "No files match", or a row per file (name, then its folder). */
+  function fileMenuHtml() {
+    menu.rows = files.error ? [] : files.entries;
+    if (menu.active >= menu.rows.length) menu.active = 0;
+    if (files.error) return `<div class="menu-note error-note">${esc(files.error)}</div>`;
+    if (!menu.rows.length) {
+      return `<div class="menu-note">${files.answered === null ? "Searching files" : "No files match"}</div>`;
+    }
+    return menu.rows.map((f, i) => {
+      const { name, parent } = splitPath(f.path);
+      const dir = f.kind === "dir";
+      return `<div class="menu-row file${i === menu.active ? " active" : ""}" role="option" id="chat-menu-opt-${i}"` +
+        ` aria-selected="${i === menu.active}" data-i="${i}" aria-label="${esc(parent ? `${name}, in ${parent}` : name)}">` +
+        `<svg class="file-icon" viewBox="0 0 24 24" aria-hidden="true">${dir ? FOLDER_ICON : FILE_ICON}</svg>` +
+        `<span class="menu-name">${esc(name)}</span>` +
+        (parent ? `<span class="menu-sub">${esc(parent)}</span>` : "") + `</div>`;
+    }).join("");
+  }
+
   function pickMenu(i) {
     const entry = menu.rows[i];
     if (!entry || !menu.open) return;
     const input = $("chat-text");
-    const next = insertCommand(input.value, menu.token, entry);
+    const next = menu.token.kind === "mention"
+      ? insertMention(input.value, menu.token, entry.path, entry.kind === "dir")
+      : insertCommand(input.value, menu.token, entry);
     input.value = next.text;
     input.focus();
     input.setSelectionRange(next.caret, next.caret);
@@ -3197,7 +3463,10 @@ const SessionChat = (() => {
     if (document.visibilityState === "visible" && chat.key && chat.opened) {
       // Back on the tab: a model switched elsewhere meanwhile shows now.
       refreshModel();
-      if (!chat.stream) openStream(chat.gen, resumeSeq());
+      if (!chat.stream) {
+        chat.retries = 0;
+        openStream(chat.gen, resumeSeq());
+      }
     }
   });
 
@@ -3208,11 +3477,12 @@ const SessionChat = (() => {
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
       inlineImagesAsText, inline, taskBox, tableHtml,
       hl, langName, langFromPath, isNumbered, readableArgs, toolOutLang, looksJson,
-      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay,
+      diffLines, renderDiff, renderPatch, toolDiff, parseFrame, revealDelay, retryDelay, openStream, chat, post, handleFrame, approvalCard,
       isPage, patchPageFiles, pageFiles, relativePath, pageTargets, previewUrl, previewKind,
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       barSub, refreshModel, railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
-      cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat },
+      cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat,
+      mentionToken, insertMention, splitPath, filesError, files, FILES, searchFiles, trackMenus, menu },
   };
 })();
 

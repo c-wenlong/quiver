@@ -17,7 +17,7 @@ from quiver.github import gh
 from quiver.mcp import secrets as mcp_secrets
 from quiver.remote import linear
 from quiver.remote import tasks as tasks_mod
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
 
 from tests.test_remote_hub import _Server, _session
 
@@ -235,6 +235,53 @@ class TestListAndGet(unittest.TestCase):
         team = seen["filter"]["or"][1]["team"]["key"]["in"]
         self.assertEqual(team, ["QUI", "ENG"])
 
+    def test_list_follows_pages_and_flags_truncation(self):
+        # One page of 50 used to pass for every open issue.
+        calls = []
+
+        def fake(key, query, variables=None):
+            calls.append(variables.get("after"))
+            n = len(calls)
+            return linear.GraphQLResult("ok", data={"issues": {
+                "nodes": [_node(f"QUI-{n}")],
+                "pageInfo": {"hasNextPage": True, "endCursor": f"c{n}"}}})
+
+        with patch("quiver.remote.linear._graphql", side_effect=fake):
+            out = linear.LinearTasks(self.home).list()
+        self.assertEqual(calls, [None, "c1", "c2", "c3", "c4"])
+        self.assertEqual(len(out["tasks"]), linear.LIST_PAGES)
+        self.assertTrue(out["truncated"])
+
+    def test_slow_pages_stop_at_the_time_budget(self):
+        clock = [0.0]
+
+        def fake(key, query, variables=None):
+            clock[0] += 5.0  # each page takes 5 s
+            return linear.GraphQLResult("ok", data={"issues": {
+                "nodes": [_node(f"QUI-{clock[0]}")],
+                "pageInfo": {"hasNextPage": True, "endCursor": "c"}}})
+
+        with patch("quiver.remote.linear._graphql", side_effect=fake), \
+                patch("quiver.remote.linear.time.monotonic",
+                      side_effect=lambda: clock[0]):
+            out = linear.LinearTasks(self.home).list()
+        # 0 s start: pages at 5 s and 10 s; the third would start past 8 s.
+        self.assertEqual(len(out["tasks"]), 2)
+        self.assertTrue(out["truncated"])
+
+    def test_list_stops_on_the_last_page(self):
+        pages = [{"nodes": [_node("QUI-1")],
+                  "pageInfo": {"hasNextPage": True, "endCursor": "c1"}},
+                 {"nodes": [_node("QUI-2")],
+                  "pageInfo": {"hasNextPage": False, "endCursor": "c2"}}]
+        with patch("quiver.remote.linear._graphql",
+                   side_effect=[linear.GraphQLResult("ok", data={"issues": p})
+                                for p in pages]):
+            out = linear.LinearTasks(self.home).list()
+        self.assertEqual([t["task"]["ref"] for t in out["tasks"]],
+                         ["QUI-1", "QUI-2"])
+        self.assertNotIn("truncated", out)
+
     def test_bad_teams_is_bad_config_not_a_crash(self):
         """``swe config set linear.teams 5`` writes a scalar; a bare
         ``"QUI"`` would otherwise iterate into ["Q","U","I"]. Neither
@@ -305,6 +352,36 @@ class TestGraphQL(unittest.TestCase):
                    side_effect=err):
             out = linear._graphql("k", "query { viewer { id } }")
         self.assertEqual(out.status, "auth-required")
+
+    def test_certificate_failure_retries_against_the_os_bundle(self):
+        # python.org builds ship no CA store: the request is retried,
+        # still verified, with the OS bundle the agent's urlopen loads.
+        import io
+        import ssl
+        import urllib.error
+        from quiver.remote import agent as agent_mod
+        agent_mod._fallback_ctx = None
+        self.addCleanup(setattr, agent_mod, "_fallback_ctx", None)
+        sentinel = ssl.create_default_context()
+        calls = []
+
+        def urlopen(req, timeout=None, context=None):
+            calls.append(context)
+            if context is None:
+                raise urllib.error.URLError(
+                    ssl.SSLCertVerificationError("no CA store"))
+            return io.BytesIO(b'{"data": {"viewer": {"id": "u"}}}')
+
+        with patch("quiver.remote.linear.urllib.request.urlopen",
+                   side_effect=urlopen), \
+             patch("quiver.harness.rate_limits._verified_context",
+                   return_value=sentinel):
+            out = linear._graphql("k", "query { viewer { id } }")
+            again = linear._graphql("k", "query { viewer { id } }")
+        self.assertEqual((out.status, again.status), ("ok", "ok"))
+        # The second request goes straight to the bundle, no failed
+        # handshake first (the removed copy retried every time).
+        self.assertEqual(calls, [None, sentinel, sentinel])
 
     def test_500_is_upstream_error(self):
         import urllib.error
@@ -415,6 +492,22 @@ class TestTasksRoute(_Base):
             "linear:issue:qui:qui-12"]
         self.assertTrue(row["agent_running"])
         self.assertEqual(row["state"], "in_progress")
+
+    def test_a_truncated_list_says_so_on_the_linear_block(self):
+        _config(self.srv.home, {})
+        _secret(self.srv.home)
+
+        def fake(key, query, variables=None):
+            if query is linear._VIEWER_QUERY:
+                return linear.GraphQLResult(
+                    "ok", data={"viewer": {"displayName": "Kai"}})
+            return linear.GraphQLResult("ok", data={"issues": {
+                "nodes": [_node("QUI-12")],
+                "pageInfo": {"hasNextPage": True, "endCursor": "c"}}})
+
+        with self._stubs(fake):
+            _s, body = self._get("/v1/tasks")
+        self.assertTrue(body["linear"]["truncated"])
 
     def test_linear_rows_merge_with_githubs(self):
         _config(self.srv.home, {})

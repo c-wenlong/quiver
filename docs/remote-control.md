@@ -747,7 +747,7 @@ apart from the open slot (`tasks.py` shares that one); any other word is
 a `422 bad_state`. One repo's failure stays in its `status`/`error`
 while the others answer; a missing or signed-out `gh` answers
 `env_blocked` before any fetch. The reads share the web app's 60-second
-`gh` cache (`webapp/pages/_github.py`), and a `refresh=1` bypasses it.
+`gh` cache (`github/shared.py`), and a `refresh=1` bypasses it.
 
 `GET /v1/issues/<owner>/<repo>/<n>` answers one issue in full: the row
 plus `body`, `comments`, `branch` (`quiver/issue-<n>`), `worktree`
@@ -809,7 +809,7 @@ status` fails the rows still list, with `review_requested` null rather
 than a guess. One repo's failure stays in its `status`/`error` while
 the others answer; a missing or signed-out `gh` answers `env_blocked`
 before any fetch, the same words `swe gh` stops on. The reads share the
-web app's 60-second `gh` cache (`webapp/pages/_github.py`), so the
+web app's 60-second `gh` cache (`github/shared.py`), so the
 phone, the Repositories page and a `refresh=1` agree.
 
 `GET /v1/pulls/<owner>/<repo>/<n>` answers one PR in full: the list row
@@ -1199,9 +1199,12 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
 - Pairing: the phone posts `POST /v1/pair/request`; the hub resolves
   its Tailscale node with `tailscale whois <peer ip>` and hands back a
   6-digit code + a poll secret. A second device — or the hub's own
-  shell — approves it (`swe remote devices --approve=<code>`, the
-  web app's Settings › Integrations › Remote on another browser, or
-  any already-paired device). Approving mints a stored credential in
+  shell — approves it (`swe remote devices --approve=<code>`, the Mac
+  app's Settings › Integrations › Remote › Pending requests when the
+  hub runs on that Mac, the web app's Settings › Integrations › Remote
+  on another browser, or any already-paired device). `--request-id=<id>`
+  holds a CLI code to one request, as the HTTP route's `request_id`
+  does; the Mac app always sends it. Approving mints a stored credential in
   `devices.json`
   (0600), revocable per device — Trusted Devices minus biometrics. A
   device can't approve its own request; five wrong codes deny it. The

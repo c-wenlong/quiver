@@ -20,6 +20,7 @@ month cells are the page's (``static/pages/calendar.js``).
 
 from __future__ import annotations
 
+import base64
 import calendar as stdcal
 import json
 import os
@@ -27,11 +28,11 @@ from datetime import date, datetime, timedelta, tzinfo
 from pathlib import Path
 
 from quiver.ledger.overview import Priced, zone
-from quiver.ledger.sessions import by_session
-from quiver.paths import data_dir_for, quiver_dir_for
+from quiver.paths import quiver_dir_for
 from quiver.remote import catalog as catalog_mod
 from quiver.sessions.parsers import codex_thread_id
 from quiver.webapp import sessions as sessions_mod
+from quiver.webapp.pages import tilde
 
 # A project's responses read as one block until this much silence.
 GAP_S = 30 * 60
@@ -414,21 +415,47 @@ class Accounts:
             return _account_name(self.owner[path])
         if path == os.path.join(self.user, ".local/share/opencode"):
             return _name("opencode")
-        if path.startswith(self.user + "/"):
-            return "~" + path[len(self.user):]
-        return path
+        return tilde(path, self.user) if path else path
 
 
 # ---------------------------------------------------------------- titles
 
-def _grok_names(home: Path | None) -> dict[str, str]:
-    """Bot names the Mac app remembered (``GrokBotRoster``'s memory file),
-    read only: the hub has no Grok Bot roster of its own."""
+# Grok Bot's own persistence folder (Application Support, under the
+# hub's home): ``*.blob`` files named by the lowercase unpadded base32 of
+# a key. The Bot list is the one whose key ends with this suffix.
+_GROK_STORE = "Library/Application Support/Grok Bot/sand-client-persistence"
+_GROK_ROSTER = ".roster.last-roster"
+
+
+def _grok_key(stem: str) -> str | None:
     try:
-        data = json.loads((data_dir_for(home) / "grok-bot-names.json").read_text(encoding="utf-8"))
+        raw = base64.b32decode(stem.upper() + "=" * (-len(stem) % 8))
+        return raw.decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _grok_names(home: Path | None) -> dict[str, str]:
+    """Bot id -> name from Grok Bot's own roster, as ``GrokBotRoster``
+    reads it: only the roster blob is opened (no transcript or secret
+    blob), and only each row's ``id`` and ``name``. The Mac app's memory
+    of deleted Bots is its own store and stays unread, so a deleted Bot
+    titles by its id here. Anything unreadable is an empty map."""
+    folder = (Path(home) if home is not None else Path.home()) / _GROK_STORE
+    try:
+        blobs = [p for p in folder.iterdir() if p.suffix == ".blob"
+                 and (_grok_key(p.stem) or "").endswith(_GROK_ROSTER)]
+        roster = max(blobs, key=lambda p: p.stat().st_mtime) if blobs else None
+        data = json.loads(roster.read_text(encoding="utf-8")) if roster else None
     except (OSError, ValueError):
         return {}
-    return {k: v for k, v in data.items() if isinstance(v, str)} if isinstance(data, dict) else {}
+    value = data.get("value") if isinstance(data, dict) else None
+    rows = value.get("rows") if isinstance(value, dict) else None
+    if not isinstance(rows, list):
+        return {}
+    return {r["id"]: r["name"] for r in rows
+            if isinstance(r, dict) and isinstance(r.get("id"), str)
+            and isinstance(r.get("name"), str)}
 
 
 def session_title(title: str | None, session_id: str, harness: str,
@@ -493,7 +520,7 @@ def get(ctx, args: dict) -> dict:
         priced = Priced(store, catalog, tz)
         rows = store.activity_events(render_start - LOOKOUT_S, render_end + LOOKOUT_S,
                                      list(CALENDAR_HARNESSES))
-        usage = by_session(store, catalog)
+        usage = ctx.state.webapp.session_usage()
         scanned_at = store.meta("scanned_at")
     pieces = [p for p in session_pieces(rows, priced)
               if is_real(p["harness"], usage.get((p["harness"], p["session"])))]

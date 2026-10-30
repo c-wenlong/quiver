@@ -205,7 +205,10 @@
     </button>`;
   }
 
-  const link = (url, body, cls = "") => `<a class="gh-row ${cls}" href="${esc(url)}" target="_blank" rel="noopener">${body}</a>`;
+  const link = (url, body, cls = "") => {
+    const href = safeHref(url);
+    return `<a class="gh-row ${cls}"${href ? ` href="${href}" target="_blank" rel="noopener"` : ""}>${body}</a>`;
+  };
 
   function issueRow(issue) {
     const open = issue.state === "open";
@@ -292,7 +295,7 @@
     const when = build && GhUI.ago(build.updated_at) ? `<span class="caption gh-muted">${GhUI.ago(build.updated_at)}</span>` : "";
     return `<div class="gh-pages">
       <div class="gh-pages-name">${esc(site.cname || site.url || "GitHub Pages")}</div>
-      ${site.url ? `<a class="gh-pages-link" href="${esc(site.url)}" target="_blank" rel="noopener">${ico("external")}<span>${esc(site.url)}</span></a>` : ""}
+      ${safeHref(site.url) ? `<a class="gh-pages-link" href="${safeHref(site.url)}" target="_blank" rel="noopener">${ico("external")}<span>${esc(site.url)}</span></a>` : ""}
       ${site.source_branch ? `<div class="caption gh-inline">${ico("branch")}<span>Built from ${esc(site.source_branch)}</span></div>` : ""}
       ${build ? `<div class="gh-inline">${buildMark(build.status)}<span class="caption">Last build ${esc(build.status)}</span>${commit}${when}</div>
         ${build.error ? `<div class="caption gh-danger-text gh-clamp3">${esc(build.error)}</div>` : ""}` : ""}
@@ -360,7 +363,7 @@
     // A read that began before an unpin or reorder, or lands while one
     // runs, may list the pins as they were: the page's own list wins.
     if (data && data.repos && page.data && (page.mutating || pinGen !== page.pinGen)) data.repos = page.data.repos;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("repositories");
     if (status !== 200 || !data) {
       // Keep the last good rows under the error, as the app does.
       if (!page.data) return pageError(HEADER(true), status, data, () => renderDashboard(true));
@@ -524,7 +527,7 @@
       if (onDashboard()) renderDashboard(true);
       return;
     } else {
-      page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      page.pinError = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
     }
     if (onDashboard()) paintDashboard();
   }
@@ -558,7 +561,7 @@
       next = page.queuedOrder;
       page.queuedOrder = null;
       if (status !== 200 || !data) {
-        page.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+        page.pinError = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
         next = null;
         page.mutating = null;
         page.pinGen++;
@@ -573,7 +576,7 @@
     if (onDashboard()) paintDashboard();
   }
 
-  const onDashboard = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0] === "repositories"
+  const onDashboard = () => currentRoute() === "repositories"
     && !GhUI.hashParams().get("repo");
 
   function bindDrag(panel) {
@@ -714,13 +717,14 @@
     const busy = page.rerunning.has(key);
     menu.innerHTML = `${page.runMenu.failed ? `<button type="button" role="menuitem" data-rerun="failed"${busy ? " disabled" : ""}>${ico("rerun")}<span>Re-run failed jobs</span></button>` : ""}
       <button type="button" role="menuitem" data-rerun="all"${busy ? " disabled" : ""}>${ico("rerun")}<span>Re-run all jobs</span></button>
-      <div class="gh-menu-divider" role="separator"></div>
-      <a role="menuitem" href="${esc(page.runMenu.url)}" target="_blank" rel="noopener">${ico("external")}<span>Open on GitHub</span></a>`;
+      ${safeHref(page.runMenu.url) ? `<div class="gh-menu-divider" role="separator"></div>
+      <a role="menuitem" href="${safeHref(page.runMenu.url)}" target="_blank" rel="noopener">${ico("external")}<span>Open on GitHub</span></a>` : ""}`;
     menu.hidden = false;
     placeRunMenu();
     const m = page.runMenu;
     for (const item of menu.querySelectorAll("[data-rerun]")) item.onclick = () => rerun(m, item.dataset.rerun === "failed");
-    menu.querySelector("a").onclick = () => closeRunMenu();
+    const open = menu.querySelector("a");
+    if (open) open.onclick = () => closeRunMenu();
     const first = menu.querySelector("[role=menuitem]:not([disabled])");
     if (first) first.focus();
     // A menu's keys: arrows move between items, Home and End jump.
@@ -770,7 +774,7 @@
       if (onDashboard()) return renderDashboard();
       return;
     }
-    page.actionError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked."
+    page.actionError = status === 401 ? CREDENTIAL_REFUSED
       : GhUI.failMessage(status, data);
     repaintView();
   }
@@ -825,7 +829,7 @@
     const { status, data } = await api(`/v1/app/repositories?${q}${refresh ? "&refresh=1" : ""}`);
     if (gen !== routeGen || page.focus !== f || seq !== f.seq) return;
     f.loading = false;
-    if (status === 401) return renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    if (status === 401) return GhUI.gate("repositories");
     if (status === 404 && data && data.error && data.error.code === "not_pinned") {
       // A link to a repo the hub hasn't pinned: offer the pin itself.
       f.data = null;
@@ -903,7 +907,7 @@
         if (data.repo !== f.repo) { location.hash = `#/repositories?repo=${encodeURIComponent(data.repo)}`; return; }
         return renderFocus(f.repo, true);
       }
-      u.error = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      u.error = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
       paintUnpinned();
     };
   }
@@ -1066,7 +1070,7 @@
         ${open ? `<div class="gh-settings-card">${runs.map((c) => `<div class="gh-check-row">${checkGlyph(c.state)}
             <span class="gh-check-name">${esc(c.name)}</span>${c.workflow ? `<span class="caption gh-muted gh-ellipsis">${esc(c.workflow)}</span>` : ""}
             <span class="gh-spacer"></span><span class="caption">${esc(c.conclusion || c.status)}</span>
-            ${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener" title="Open the check" class="gh-muted">${ico("external", "gh-small")}</a>` : ""}
+            ${safeHref(c.url) ? `<a href="${safeHref(c.url)}" target="_blank" rel="noopener" title="Open the check" class="gh-muted">${ico("external", "gh-small")}</a>` : ""}
           </div>`).join("")}</div>` : ""}
       </div>`;
     }
@@ -1150,7 +1154,7 @@
       // The page behind the sheet reads the repo again, even if the sheet
       // was closed meanwhile: the hub dropped its cached board, so a
       // merged row leaves the list.
-      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+      const here = currentRoute();
       const focusRepo = GhUI.hashParams().get("repo");
       if (here === "repositories" && !focusRepo) renderDashboard();
       else if (here === "repositories" && page.focus && page.focus.repo === focusRepo) renderFocus(focusRepo);
@@ -1158,7 +1162,7 @@
     if (page.sheet !== s) return;
     s.merging = false;
     if (status === 401) {
-      s.mergeError = "The hub doesn't know this browser's credential. It may have been revoked.";
+      s.mergeError = CREDENTIAL_REFUSED;
     } else if (status !== 200 || !data) {
       s.mergeError = GhUI.failMessage(status, data);
       // A state refusal means the sheet is out of date: read the PR
@@ -1193,7 +1197,7 @@
     if (!d && !s.status) {
       content = loadingCard("Fetching the pull request…", false);
     } else if (s.status === 401) {
-      content = errorCard("The hub doesn't know this browser's credential. It may have been revoked.", false);
+      content = errorCard(CREDENTIAL_REFUSED, false);
     } else if (s.status !== 200 || !d) {
       content = errorCard(GhUI.failMessage(s.status, d), false, '<button type="button" class="gh-button" data-sheet-refresh>Refresh</button>');
     } else if (GhUI.envSetup(d.github)) {
@@ -1218,7 +1222,7 @@
       <div class="gh-sheet-actions">${mergeControls(s, pr)}<span class="gh-spacer"></span>
         ${pr && !s.session ? `<button type="button" class="icon-button" id="gh-session-open" title="Open in session: check the PR out on the hub and start an agent there"
           aria-label="Open in session">${ico("terminal")}</button>` : ""}
-        <a class="icon-button" href="${esc(url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>
+        ${safeHref(url) ? `<a class="icon-button" href="${safeHref(url)}" target="_blank" rel="noopener" title="Open on GitHub" aria-label="Open on GitHub">${ico("external")}</a>` : ""}
         <button type="button" class="icon-button${s.busy && d ? " spinning" : ""}" data-sheet-refresh title="Fetch again" aria-label="Fetch again">${icon("rescan")}</button>
         <button type="button" class="gh-button" id="gh-sheet-done">Done</button>
       </div></div>`;
@@ -1460,7 +1464,7 @@
       if (data.status === "ok") { a.results = data.results || []; a.source = data.source; a.error = null; }
       else a.error = data.error || data.status;
     } else {
-      a.error = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+      a.error = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
     }
     paintAdd();
   }
@@ -1477,11 +1481,11 @@
     if (status === 200 && data) {
       if (page.data) page.data.repos = data.repos;
       addEl().close();
-      const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+      const here = currentRoute();
       if (here === "repositories" && !GhUI.hashParams().get("repo")) renderDashboard();
       return;
     }
-    a.pinError = status === 401 ? "The hub doesn't know this browser's credential. It may have been revoked." : GhUI.failMessage(status, data);
+    a.pinError = status === 401 ? CREDENTIAL_REFUSED : GhUI.failMessage(status, data);
     paintAdd();
   }
 
@@ -1624,7 +1628,7 @@
   /* The PR sheet lives on <body>, outside the panel a route repaints, so
    * leaving the page (Back, a sidebar link) has to close it here. */
   window.addEventListener("hashchange", () => {
-    const here = (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+    const here = currentRoute();
     if (here !== "repositories") closeSheets();
     closeRunMenu();
     page.actionError = null;

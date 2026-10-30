@@ -15,7 +15,8 @@ from __future__ import annotations
 from quiver.github import cli as ghcli
 
 from quiver.webapp.pages import PageError
-from quiver.webapp.pages import _github as G
+from quiver.github import shared as G
+from quiver.webapp.pages import _github as W
 
 LIMIT = 50  # GitHubModel.loadInbox -> swe gh inbox --limit=50 --all
 # The hub's feed can't cap at the page's LIMIT: an old unread thread
@@ -82,7 +83,7 @@ def unread_rows(home) -> list[dict] | None:
 
 
 def get(ctx, args: dict) -> dict:
-    refresh = G.flag(args, "refresh")
+    refresh = W.flag(args, "refresh")
     payload, at = _listing(ctx.home, refresh)
     env = G.env_after(ctx.home, [payload], refresh=refresh)
     machine = (ctx.machine or {}).get("name")
@@ -109,31 +110,34 @@ def post(ctx, action: str, body: dict) -> dict:
         raise PageError(404, "unknown_action", f"unknown inbox action: {action}")
     every, ids = _read_args(body)
     home = ctx.home
+    # The probe and the listings are reads (cached, or a gh call each):
+    # they run before WRITE_LOCK, which every other GitHub write on the
+    # hub waits on, and only the mark itself holds it.
+    # swe gh inbox read probes first; so does this, so a lapsed login
+    # reads as the setup message rather than a failed mark.
+    env = G.probe(home, refresh=True)
+    if env.status != "ok":
+        raise PageError(409, "gh_" + env.status.replace("-", "_"),
+                        ghcli._env_error(env))
+    payload, _at = _listing(home)
+    if payload.get("status") != "ok":
+        raise PageError(502, "inbox_unreadable",
+                        payload.get("error") or "GitHub returned "
+                        + str(payload.get("status")))
+    notes = payload.get("notifications") or []
+    # A thread the hub's unread-only feed shows must be markable even
+    # when newer read rows crowded it off this page's listing.
+    unread, _at2 = _unread_listing(home)
+    listed = {str(n.get("id")) for n in notes}
+    listed |= {
+        str(n.get("id"))
+        for n in (unread.get("notifications") or [])
+    }
+    unknown = [i for i in ids if i not in listed]
+    if unknown:
+        raise PageError(404, "unknown_notification",
+                        "Not in the inbox: " + ", ".join(unknown))
     with G.WRITE_LOCK:
-        # swe gh inbox read probes first; so does this, so a lapsed
-        # login reads as the setup message rather than a failed mark.
-        env = G.probe(home, refresh=True)
-        if env.status != "ok":
-            raise PageError(409, "gh_" + env.status.replace("-", "_"),
-                            ghcli._env_error(env))
-        payload, _at = _listing(home)
-        if payload.get("status") != "ok":
-            raise PageError(502, "inbox_unreadable",
-                            payload.get("error") or "GitHub returned "
-                            + str(payload.get("status")))
-        notes = payload.get("notifications") or []
-        # A thread the hub's unread-only feed shows must be markable
-        # even when newer read rows crowded it off this page's listing.
-        unread, _at2 = _unread_listing(home)
-        listed = {str(n.get("id")) for n in notes}
-        listed |= {
-            str(n.get("id"))
-            for n in (unread.get("notifications") or [])
-        }
-        unknown = [i for i in ids if i not in listed]
-        if unknown:
-            raise PageError(404, "unknown_notification",
-                            "Not in the inbox: " + ", ".join(unknown))
         if every:
             result = ghcli.mark_all_read()
             _drop(home)

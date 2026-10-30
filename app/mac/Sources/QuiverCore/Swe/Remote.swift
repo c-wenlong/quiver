@@ -148,6 +148,9 @@ public final class RemoteModel {
     public internal(set) var revokeErrors: [String: String] = [:]
     private let swe: SweClient
     private var generation = 0
+    /// Bumped by each mint and by dismissing the sheet: only the newest
+    /// mint's reply lands.
+    private var mintGeneration = 0
 
     public init(swe: SweClient) {
         self.swe = swe
@@ -156,11 +159,14 @@ public final class RemoteModel {
     public func load() async {
         generation += 1
         let mine = generation
+        // A cancelled load puts this back rather than spinning for good.
+        let before = status == .loading ? .idle : status
         status = .loading
         let next: Loadable<RemoteStatus>
         do {
             next = .loaded(try await swe.remoteStatus())
         } catch is CancellationError {
+            if mine == generation { status = before }
             return
         } catch {
             next = .failed(error.localizedDescription)
@@ -171,19 +177,26 @@ public final class RemoteModel {
     /// Mint a fresh token for the pair sheet. A stale mint can't land on
     /// top of a newer sheet.
     public func mintTicket() async {
+        mintGeneration += 1
+        let mine = mintGeneration
         pairing = true
         pairError = nil
-        defer { pairing = false }
+        defer { if mine == mintGeneration { pairing = false } }
         do {
-            ticket = try await swe.remotePair()
+            let minted = try await swe.remotePair()
+            // A newer mint, or the sheet closing, overtook this one.
+            guard mine == mintGeneration else { return }
+            ticket = minted
             ticketMintedAt = Date()
         } catch is CancellationError {
         } catch {
-            pairError = error.localizedDescription
+            if mine == mintGeneration { pairError = error.localizedDescription }
         }
     }
 
     public func dismissTicket() {
+        mintGeneration += 1
+        pairing = false
         ticket = nil
         ticketMintedAt = nil
         pairError = nil
