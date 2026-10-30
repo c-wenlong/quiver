@@ -1549,7 +1549,7 @@ class TailManager:
         same_file = stamp[:2] == tailer.resolved_stamp[:2]
         if session.tool_name == "claude" and same_file and path is not None:
             try:
-                if path.stat().st_mtime * 1000 >= session.timestamp - 1:
+                if path.stat().st_mtime * 1000 >= session.timestamp:
                     tailer.resolved_stamp = stamp
                     return False
             except OSError:
