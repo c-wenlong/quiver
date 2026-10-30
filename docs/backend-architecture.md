@@ -57,6 +57,8 @@ An example per layer, from the harness domain:
 
 The remaining packages sit outside that convention:
 
+- `history/`: a compatibility shim that re-exports `Session` and
+  `get_all_sessions`; new code imports `quiver.sessions`.
 - `ledger/`: the usage ledger (scan, SQLite store, pricing, Overview
   figures), a port of `QuiverCore/Ledger`. `models.py` holds
   `UsageEvent` and `LedgerRecord`.
