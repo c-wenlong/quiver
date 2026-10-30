@@ -116,23 +116,13 @@ class TestPageRoute(_Base):
         self.assertEqual(status, 401)
 
     def test_harnesses_answer(self):
-        launchable = [{"name": "claude", "command": "claude",
-                       "display_name": "Claude Code", "tracked": True,
-                       "launch_model": True, "launch_effort": True}]
-        with patch("quiver.remote.catalog.launchable_harnesses",
-                   return_value=launchable), \
-             patch("quiver.remote.catalog.recent_models",
-                   return_value={"claude": ["opus", "sonnet"]}):
+        # The rows are the Repositories page's harnesses(), tested there.
+        with patch("quiver.webapp.pages.tasks.harnesses",
+                   return_value=[{"name": "claude"}]) as rows:
             status, body = self._get("/v1/app/tasks?harnesses=1")
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["harnesses"],
-                         [{"name": "claude",
-                           "display_name": "Claude Code",
-                           "tracked": True,
-                           "launch_model": True,
-                           "launch_effort": True,
-                           "last_model": "opus",
-                           "recent_models": ["opus", "sonnet"]}])
+        self.assertEqual(body["harnesses"], [{"name": "claude"}])
+        rows.assert_called_once_with(self.srv.home)
         self.assertEqual(body["machine"], self.srv.state.machine["name"])
         # The flag doesn't pull the task list at all.
         with patch("quiver.remote.catalog.launchable_harnesses",
