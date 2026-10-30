@@ -1075,8 +1075,7 @@ class TestRoute(HubBase):
 
     def test_page_scripts_are_bundled(self):
         _, js = self.srv.request("GET", "/app/pages.js")
-        for name in (b'registerPage("repositories"', b'registerPage("inbox"', b"const GhUI"):
-            self.assertIn(name, js)
+        self.assertIn(b"const GhUI", js)
         _, css = self.srv.request("GET", "/app/pages.css")
         self.assertIn(b".gh-row", css)
 

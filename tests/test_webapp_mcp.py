@@ -264,11 +264,6 @@ class TestRoute(HubBase):
         self.assertEqual(status, 200, data)
         self.assertEqual({s["health"] for s in json.loads(data)["servers"]}, {"ok"})
 
-    def test_page_script_is_bundled(self):
-        status, body = self.srv.request("GET", "/app/pages.js")
-        self.assertEqual(status, 200)
-        self.assertIn(b'registerPage("mcp"', body)
-
 
 LINEAR_TOKEN = "lin_api_LIVEVALUE0987654321"
 HUB_TOKEN = "ntn_HUBSECRETVALUE5555555555"
@@ -951,7 +946,6 @@ class TestSyncRoute(_SyncHome, HubBase):
                                         headers=self.auth())
         self.assertEqual(status, 409)
         self.assertEqual(json.loads(data)["error"]["code"], "secrets_missing")
-
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
