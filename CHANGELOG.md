@@ -754,6 +754,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Remote: revoking a lost phone works when it shares the owner's
+  tailnet login.** The owner's own tailnet devices get in without
+  pairing, and Revoke refused their `tailnet:<node>` ids, so a lost
+  phone signed in to the owner's Tailscale account walked straight back
+  in through Safari. The hub now records those sign-ins
+  (`tailnet_signins.json`), lists them in `GET /v1/devices`, web
+  Settings ("Signed in through Tailscale") and `swe remote devices`, and
+  `POST /v1/devices/revoke` / `swe remote devices --revoke=tailnet:<node>`
+  revoke one: that node gets no owner identity, and devices paired from
+  it are signed out, until a pair request from it is approved again.
+  Revoking a device paired through a tailnet request revokes its node
+  too. The owner's other devices keep working
+  ([#966](https://github.com/c-wenlong/quiver/issues/966)).
+
 - **Mac app: the fan helper is checked against Quiver's own signature
   before it runs as root.** The one-time install copied
   `Quiver.app/Contents/MacOS/QuiverFanHelper` to
