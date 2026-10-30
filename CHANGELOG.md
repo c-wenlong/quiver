@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: `@` file completion in the chat composer.** Typing `@` at
+  the start of the box or after a space opens the composer's menu with
+  files and folders under the session's folder, from the hub's
+  `GET /v1/sessions/{key}/files` route, the same list the iPhone's `@`
+  menu shows. It uses the `/` menu's box and keys (arrows, Enter or Tab
+  to pick, Escape to close) and the iPhone's token rules: an `@` inside
+  a word (an email) opens nothing, a path with spaces is quoted
+  (`@"My Documents/notes.txt"`), a file goes in as `@path ` and a
+  folder as `@path/` so the menu stays open inside it. Searches wait
+  120 ms after the last keystroke, and a newer query drops an older
+  answer. A satellite session's refusal and an older hub's 404 are
+  worded in the menu
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
 - **Web app: Preview on tool cards that write a page, and link cards
   under replies.** In a session's chat, a tool call that writes or
   edits an `.html`, `.htm` or `.svg` file inside the session's folder
