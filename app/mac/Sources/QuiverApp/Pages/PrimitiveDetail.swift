@@ -108,7 +108,7 @@ struct ManifestCard: View {
         Card(title: "Manifest", subtitle: displayPath(url)) {
             if let document {
                 if document.changedOnDisk {
-                    PrimitiveDiskBanner(reload: { document.load(); read() },
+                    PrimitiveDiskBanner(reload: { Task { await document.load(); await read() } },
                                         overwrite: { save(overwrite: true) })
                 }
                 if case .failed(let message) = document.state {
@@ -156,24 +156,26 @@ struct ManifestCard: View {
         .task(id: url) {
             guard document?.url != url else { return }
             let doc = InstructionDocument(url: url)
-            doc.load()
+            await doc.load()
+            // A newer file took the card while this one read.
+            guard !Task.isCancelled else { return }
             document = doc
-            read()
+            await read()
         }
     }
 
     /// Pull the form's fields back out of the document's current text.
     /// Revert first: the form reads the file's text, not edits a refused
     /// save left behind, and a revert after an outside change reloads it.
-    private func read() {
+    private func read() async {
         guard let document else { return }
-        document.revert()
+        await document.revert()
         fields = PluginManifestFields(parsing: document.text)
         loaded = fields
         error = nil
     }
 
-    private func revert() { read() }
+    private func revert() { Task { await read() } }
 
     private func save(overwrite: Bool) {
         guard let document else { return }
@@ -183,10 +185,12 @@ struct ManifestCard: View {
             self.error = "Couldn't write the manifest: \(error.localizedDescription)"
             return
         }
-        switch document.save(overwrite: overwrite) {
-        case .saved: loaded = fields; error = nil; onSaved()
-        case .changedOnDisk: error = nil
-        case .failed(let message): error = message
+        Task {
+            switch await document.save(overwrite: overwrite) {
+            case .saved: loaded = fields; error = nil; onSaved()
+            case .changedOnDisk: error = nil
+            case .failed(let message): error = message
+            }
         }
     }
 }
@@ -219,7 +223,7 @@ struct FrontmatterCard: View {
         Card(title: "Frontmatter", subtitle: displayPath(url)) {
             if let document {
                 if document.changedOnDisk {
-                    PrimitiveDiskBanner(reload: { document.load(); read() },
+                    PrimitiveDiskBanner(reload: { Task { await document.load(); await read() } },
                                         overwrite: { save(overwrite: true) })
                 }
                 if case .failed(let message) = document.state {
@@ -268,9 +272,11 @@ struct FrontmatterCard: View {
         .task(id: url) {
             guard document?.url != url else { return }
             let doc = InstructionDocument(url: url)
-            doc.load()
+            await doc.load()
+            // A newer file took the card while this one read.
+            guard !Task.isCancelled else { return }
             document = doc
-            read()
+            await read()
         }
     }
 
@@ -285,24 +291,26 @@ struct FrontmatterCard: View {
 
     /// Revert first: the form reads the file's text, not edits a refused
     /// save left behind, and a revert after an outside change reloads it.
-    private func read() {
+    private func read() async {
         guard let document else { return }
-        document.revert()
+        await document.revert()
         fields = MarkdownFrontmatter(text: document.text)?.fields
             .map { ($0.key, $0.value) } ?? []
         loaded = fields
         error = nil
     }
 
-    private func revert() { read() }
+    private func revert() { Task { await read() } }
 
     private func save(overwrite: Bool) {
         guard let document else { return }
         document.text = MarkdownFrontmatter.update(document.text, set: fields)
-        switch document.save(overwrite: overwrite) {
-        case .saved: loaded = fields; error = nil; onSaved()
-        case .changedOnDisk: error = nil
-        case .failed(let message): error = message
+        Task {
+            switch await document.save(overwrite: overwrite) {
+            case .saved: loaded = fields; error = nil; onSaved()
+            case .changedOnDisk: error = nil
+            case .failed(let message): error = message
+            }
         }
     }
 }
@@ -719,16 +727,18 @@ struct PrimitiveFileSheet: View {
     /// editor's own error or banner says why.
     private func saveAndClose() {
         guard let document else { dismiss(); return }
-        switch document.save() {
-        case .saved:
-            saveError = nil
-            onSaved()
-            dismiss()
-        case .changedOnDisk:
-            // The editor's own banner explains it.
-            saveError = nil
-        case .failed(let message):
-            saveError = "Couldn't save \(url.lastPathComponent): \(message)"
+        Task {
+            switch await document.save() {
+            case .saved:
+                saveError = nil
+                onSaved()
+                dismiss()
+            case .changedOnDisk:
+                // The editor's own banner explains it.
+                saveError = nil
+            case .failed(let message):
+                saveError = "Couldn't save \(url.lastPathComponent): \(message)"
+            }
         }
     }
 }
@@ -840,17 +850,19 @@ struct PluginDetailView: View {
     /// Save every draft, then leave; a file that will not save keeps the
     /// page open and says why.
     private func saveAllAndLeave() {
-        var failed: [String] = []
-        for (path, document) in drafts.dirty {
-            if document.save() != .saved {
-                failed.append(URL(fileURLWithPath: path).lastPathComponent)
+        Task {
+            var failed: [String] = []
+            for (path, document) in drafts.dirty {
+                if await document.save() != .saved {
+                    failed.append(URL(fileURLWithPath: path).lastPathComponent)
+                }
             }
-        }
-        if failed.isEmpty {
-            leaveError = nil
-            onBack()
-        } else {
-            leaveError = "Couldn't save \(failed.joined(separator: ", "))."
+            if failed.isEmpty {
+                leaveError = nil
+                onBack()
+            } else {
+                leaveError = "Couldn't save \(failed.joined(separator: ", "))."
+            }
         }
     }
 
@@ -1071,17 +1083,19 @@ struct SkillDetailView: View {
     }
 
     private func saveAllAndLeave() {
-        var failed: [String] = []
-        for (path, document) in drafts.dirty {
-            if document.save() != .saved {
-                failed.append(URL(fileURLWithPath: path).lastPathComponent)
+        Task {
+            var failed: [String] = []
+            for (path, document) in drafts.dirty {
+                if await document.save() != .saved {
+                    failed.append(URL(fileURLWithPath: path).lastPathComponent)
+                }
             }
-        }
-        if failed.isEmpty {
-            leaveError = nil
-            onBack()
-        } else {
-            leaveError = "Couldn't save \(failed.joined(separator: ", "))."
+            if failed.isEmpty {
+                leaveError = nil
+                onBack()
+            } else {
+                leaveError = "Couldn't save \(failed.joined(separator: ", "))."
+            }
         }
     }
 

@@ -17,7 +17,7 @@ struct AgentsMdPage: View {
              scrolls: false) {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.load(swe: app.swe) }
-                model.checkDisk()
+                Task { await model.checkDisk() }
             }
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)
@@ -32,7 +32,7 @@ struct AgentsMdPage: View {
         .task(id: app.swePath) { await model.load(swe: app.swe) }
         // Agents rewrite these files while they work; pick that up on return.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            model.checkDisk()
+            Task { await model.checkDisk() }
         }
     }
 }
@@ -334,7 +334,7 @@ struct InstructionEditor: View {
                     .accessibilityElement(children: .combine)
                 }
                 if !readOnly {
-                    Button("Revert") { document.revert(); error = nil }
+                    Button("Revert") { Task { await document.revert(); error = nil } }
                         .secondaryButton()
                         .disabled(!document.isDirty)
                     Button("Save") { save(overwrite: false) }
@@ -365,7 +365,7 @@ struct InstructionEditor: View {
     @ViewBuilder private var editorContent: some View {
         if document.changedOnDisk {
             ChangedOnDiskBanner(
-                reload: { document.load(); error = nil },
+                reload: { Task { await document.load(); error = nil } },
                 overwrite: { save(overwrite: true) })
         }
         if let error {
@@ -407,14 +407,16 @@ struct InstructionEditor: View {
     }
 
     private func save(overwrite: Bool) {
-        switch document.save(overwrite: overwrite) {
-        case .saved:
-            error = nil
-            onSaved()
-        case .changedOnDisk:
-            error = nil
-        case .failed(let message):
-            error = message
+        Task {
+            switch await document.save(overwrite: overwrite) {
+            case .saved:
+                error = nil
+                onSaved()
+            case .changedOnDisk:
+                error = nil
+            case .failed(let message):
+                error = message
+            }
         }
     }
 }
