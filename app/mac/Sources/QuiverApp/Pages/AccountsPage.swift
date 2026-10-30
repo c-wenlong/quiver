@@ -32,7 +32,7 @@ struct AccountsPage: View {
                 showHistory.toggle()
             }
             .secondaryButton()
-            .help("Weekly or monthly tokens on every account")
+            .hoverTip("Weekly or monthly tokens on every account", replacesLabel: false)
             Button("Add account", systemImage: "plus") { adding = true }
                 .primaryButton()
         } content: {
@@ -463,8 +463,9 @@ func planTitle(_ plan: String) -> String {
 /// swe has answered, Terminal is offered rather than hidden.
 private struct LaunchButtons: View {
     var target: LaunchTarget
-    /// Overrides the Terminal button's help when the CLI cannot run as
-    /// this account (cursor-agent keeps the default sign-in).
+    /// Replaces the Terminal button's name tooltip with a hover tip when
+    /// the CLI cannot run as this account (cursor-agent keeps the default
+    /// sign-in): the note matters before the click.
     var terminalHelp: String? = nil
     var perform: (@escaping () async throws -> Void) -> Void
 
@@ -482,13 +483,17 @@ private struct LaunchButtons: View {
                 .accessibilityLabel("Open \(appName)")
             }
             if target.cliInstalled != false {
-                Button("Terminal", systemImage: "terminal") {
+                let terminal = Button("Terminal", systemImage: "terminal") {
                     perform { try await target.openTerminal() }
                 }
                 .iconButton()
                 .labelStyle(.iconOnly)
-                .help(terminalHelp ?? "Open \(target.title) in Terminal")
                 .accessibilityLabel("Open \(target.title) in Terminal")
+                if let terminalHelp {
+                    terminal.hoverTip(terminalHelp, replacesLabel: false)
+                } else {
+                    terminal.help("Open \(target.title) in Terminal")
+                }
             }
             if !target.canLaunch {
                 Text("Not installed").font(Theme.caption).foregroundStyle(Theme.textMuted)

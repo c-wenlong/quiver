@@ -558,7 +558,7 @@ private struct SpendDonut: View {
                             Spacer()
                             if part.totals.unpricedTokens > 0 {
                                 Image(systemName: "questionmark.circle").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                                    .help("\(UsageFormat.tokens(part.totals.unpricedTokens)) tokens with no list price")
+                                    .hoverTip("\(UsageFormat.tokens(part.totals.unpricedTokens)) tokens with no list price")
                             }
                             Text(UsageFormat.dollars(part.totals.costUSD)).font(Theme.caption).monospacedDigit()
                                 .foregroundStyle(Theme.textPrimary)

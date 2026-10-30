@@ -595,9 +595,10 @@ private struct ServicesCard: View {
                     }
                     .secondaryButton()
                     .disabled(!model.canProbe(service) || model.probing.contains(service.id))
-                    .help(model.canProbe(service)
-                          ? "Calls the service with the saved key."
-                          : "Save \(probe.field) first.")
+                    .hoverTip(model.canProbe(service)
+                              ? "Calls the service with the saved key."
+                              : "Save \(probe.field) first.",
+                              replacesLabel: false)
                     if let result = model.probeResults[service.id] {
                         Text(resultText(result))
                             .font(Theme.caption)

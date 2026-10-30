@@ -4032,6 +4032,25 @@ class CursorFetcherTest(unittest.TestCase):
         self.assertEqual(_cursor_ms_to_epoch(None), 0.0)
         self.assertEqual(_cursor_ms_to_epoch(float("inf")), 0.0)
 
+    def test_an_absurd_millisecond_epoch_reads_as_unknown(self):
+        # The Mac app turns these into Int64 milliseconds, which traps.
+        from quiver.harness.rate_limits import _cursor_ms_to_epoch
+
+        self.assertEqual(_cursor_ms_to_epoch(str(10 ** 30)), 0.0)
+        self.assertEqual(_cursor_ms_to_epoch(1e300), 0.0)
+        self.assertEqual(_cursor_ms_to_epoch("253402300799000"), 253402300799.0)
+
+    def test_a_usage_event_from_the_far_future_is_dropped(self):
+        # Its time would become where the Mac feed's next poll starts.
+        from quiver.harness.rate_limits import _usage_event_fields
+
+        now = 1_789_190_193.0
+        ahead = {"timestamp": str(int((now + 2 * 86400) * 1000))}
+        skewed = {"timestamp": str(int((now + 60) * 1000))}
+        self.assertIsNone(_usage_event_fields(ahead, now))
+        self.assertEqual(_usage_event_fields(skewed, now)["timestamp"], now + 60)
+        self.assertIsNotNone(_usage_event_fields(ahead))
+
     def test_session_cookie_is_sub_and_token_url_encoded(self):
         from quiver.harness.rate_limits import (
             _cursor_session_cookie, _cursor_token_claims,
