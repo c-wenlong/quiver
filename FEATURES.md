@@ -34,7 +34,7 @@ Status words:
 | Feature | Mac | Web | iOS | Notes |
 | --- | --- | --- | --- | --- |
 | Repositories | yes | yes | - | |
-| Pull requests | yes | yes | part | Mac and Web: inside Repositories, with merge, rerun and "Open in session". iOS: own tab and detail page with Open in session and Open on GitHub, no merge, auto-merge or rerun; only iOS has the Mine and Review requested filters |
+| Pull requests | yes | yes | part | Mac and Web: inside Repositories, with merge, rerun and "Open in session". iOS: own tab and detail page with Open in session and Open on GitHub, no merge, auto-merge or rerun. iOS and the web dashboard have the Mine and Review requested filters (web: offered only while `GET /v1/pulls` knows the flag for every listed PR; not on the focus page); the Mac has neither |
 | Issues, resolve with agent | yes | part | yes | Web: an issue row links to github.com; there is no issue detail or comment view, and Resolve exists only from a Tasks detail. iOS: own tab plus a Resolve sheet, no comment composer; Mac: detail sheet with comments and ResolveIssueSheet. All sheets carry the model picker prefilled with the last-used model (#914); on the Mac and the web it is a menu of Harness default, the harness's `recent_models`, then Other… (web: `static/model-menu.js`) |
 | Tasks | yes | yes | part | Mac: sidebar page with the same filters, groups, state stepper, sessions and link/unlink. Mac and Web have the Repositories rail and five-row groups (#941, #942); iOS doesn't |
 | GitHub notifications | yes | yes | part | Mac and Web: the Inbox page, Unread/All and mark read; Mac also posts banners. iOS: a GitHub group inside its Inbox tab, which can't mark threads read |

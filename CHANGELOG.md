@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web app: Mine and Review requested pull request filters.** The
+  Repositories dashboard's Pull requests tab now offers All, Mine and
+  Review requested with counts, as the iOS app does, from the flags the
+  hub's `GET /v1/pulls` puts on each open PR. A filter hides while the
+  hub can't say (a failed `gh pr status`) instead of guessing. Part of
+  [#970](https://github.com/c-wenlong/quiver/issues/970).
+
 - **Web app: Needs you in the Inbox.** The Inbox page now opens with
   the iOS Inbox's Waiting on you, Errors and Finished today sections
   from the hub's `GET /v1/inbox`, above the GitHub notifications. A row
