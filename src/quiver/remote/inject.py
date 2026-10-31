@@ -100,7 +100,9 @@ def switch_model(home: Path | None, session_key: str, mode: str,
     if blocked:
         return InjectResult(False, blocked)
     if not supervise.set_meta(home, session_key, "model", value):
-        return InjectResult(False, "session detached; refusing the switch")
+        return InjectResult(
+            False, "session detached or its row could not be saved; "
+                   "model unchanged")
     return InjectResult(True, f"model set to {value} from the next turn")
 
 

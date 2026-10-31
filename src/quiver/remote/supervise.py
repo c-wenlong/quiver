@@ -266,16 +266,19 @@ def meta_for(home: Path | None, session_key: str) -> dict | None:
 def set_meta(home: Path | None, session_key: str, field: str,
              value: str) -> bool:
     """Set one field on an attached session's row; False when the
-    session is no longer attached (a detach won the race). The API
-    channels read ``model`` off the row on every turn, so this is how a
-    mid-session switch reaches the next one."""
+    session is no longer attached (a detach won the race) or the write
+    failed. The API channels read ``model`` off the row on every turn,
+    so this is how a mid-session switch reaches the next one."""
     with _registry_lock(home):
         entries = _load_registry(home)
         meta = entries.get(session_key)
         if meta is None:
             return False
         meta[field] = value
-        _save_registry(home, entries)
+        try:
+            _save_registry(home, entries, strict=True)
+        except OSError:
+            return False
     return True
 
 

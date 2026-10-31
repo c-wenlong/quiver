@@ -529,6 +529,12 @@ class TestCodexAppServer(unittest.TestCase):
         res = inj.control(self.session, "model", "gpt-5\n/clear")
         self.assertFalse(res.ok)
         self.assertNotIn("model", supervise.meta_for(self.home, "codex:k"))
+        # a failed save is a failed switch, not a silent one
+        with patch.object(supervise, "atomic_write_text",
+                          side_effect=OSError("disk full")):
+            res = inj.control(self.session, "model", "gpt-5")
+        self.assertFalse(res.ok)
+        self.assertIn("model unchanged", res.note)
 
     def test_send_queue_refuses_when_active(self):
         supervise.mark(self.home, "codex:k", _meta("appserver", "codex"))
