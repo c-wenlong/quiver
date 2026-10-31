@@ -25,11 +25,11 @@ SUPPORTED_REPORT_HARNESSES = frozenset({"claude", "codex"})
 # accounts.sync.<name>: what `swe init` links into each extra account home.
 # init/accounts.py owns the behaviour; the names live here so the bottom
 # layer can validate them without importing a domain package.
-ACCOUNT_SYNC_PRIMITIVES = ("instructions", "skills", "hooks")
+ACCOUNT_SYNC_PRIMITIVES = ("instructions", "skills", "hooks", "mcp")
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "accounts": {
-        "sync": {"instructions": False, "skills": False, "hooks": False},
+        "sync": {"instructions": False, "skills": False, "hooks": False, "mcp": False},
     },
     "report": {
         "session": {"harness": None, "model": None, "args": []},

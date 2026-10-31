@@ -110,6 +110,22 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong><code>swe init</code>: the hub's MCP servers in extra accounts.</strong> A fourth
+switch, <code>accounts.sync.mcp</code>, off by default (<code>swe config set accounts.sync.mcp true</code>, or the new &quot;MCP servers&quot; switch on the Mac
+Accounts page's Shared content card). With it on, <code>swe init</code> merges
+every server in <code>~/.quiver/mcp.json</code>, rendered as <code>swe mcp sync quiver</code>
+renders it, into each extra Claude account's <code>.claude.json</code> (the
+<code>mcpServers</code> member only) and each extra Codex account's <code>config.toml</code>
+(<code>[mcp_servers.&lt;name&gt;]</code> tables only). The login and every other key
+keep their bytes. A server the account already has under the same name
+is reported as a conflict and left alone, and a file that is not valid
+JSON or TOML is reported and never written. Writes go through a temp
+file and rename after a backup in <code>~/.quiver/backups</code>. Each server swe
+writes is recorded in <code>data/account-mcp.json</code>, and switching off then
+running <code>swe init</code> removes only those, and only while the account has
+not edited them. Closes
+<a href="https://github.com/c-wenlong/quiver/issues/888">#888</a>.</p>
+</li>
 <li><p><strong>Mac: Sessions lists other machines' sessions.</strong> Below this Mac's
 Pinned and day groups, an &quot;Other machines&quot; group shows the hub's rows
 for each satellite: a subheader per machine with a green or grey dot

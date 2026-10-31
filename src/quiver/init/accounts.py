@@ -103,15 +103,20 @@ class AccountRow:
     primitive: str
     status: LinkStatus
     result: str
+    # The MCP server a row is about (accounts.sync.mcp); None for a link.
+    name: str | None = None
 
     def to_json(self) -> dict:
-        return {
+        out = {
             "account": self.status.label,
             "primitive": self.primitive,
             "path": str(self.status.path),
             "state": self.result,
             "detail": self.status.detail,
         }
+        if self.primitive == "mcp":
+            out["name"] = self.name
+        return out
 
 
 def accounts_root(home: Path) -> Path:
@@ -436,14 +441,35 @@ def sync_accounts(home: Path, patterns: list[str], registry: dict, *,
 
 def _sync_accounts(home: Path, patterns: list[str], registry: dict, *,
                    check_only: bool) -> tuple[list[AccountRow], list[str]]:
+    from quiver.init.account_mcp import load_record, sync_mcp
+
     try:
         flags = sync_flags(home)
         manifest = load_manifest(home)
-        if not any(flags.values()) and not manifest:
+        # An unreadable MCP record is the MCP pass's to report, not a reason
+        # to skip the links; treat it as "maybe something to do" here.
+        try:
+            mcp_record = bool(load_record(home))
+        except AccountSyncUnavailable:
+            mcp_record = True
+        if not any(flags.values()) and not manifest and not mcp_record:
             return [], []
         accounts = load_account_homes(home)
     except AccountSyncUnavailable as exc:
         return [], [f"account sync skipped: {exc}"]
+
+    rows, notes = _sync_links(home, patterns, registry, flags, manifest, accounts,
+                              check_only=check_only)
+    mcp_rows, mcp_notes = sync_mcp(home, registry, flags.get("mcp", False), accounts,
+                                   check_only=check_only)
+    return rows + mcp_rows, notes + mcp_notes
+
+
+def _sync_links(home: Path, patterns: list[str], registry: dict, flags: dict[str, bool],
+                manifest: list[dict], accounts: list[AccountHome], *,
+                check_only: bool) -> tuple[list[AccountRow], list[str]]:
+    if not any(v for k, v in flags.items() if k != "mcp") and not manifest:
+        return [], []
 
     planned = plan_accounts(home, patterns, registry, flags, accounts)
     wanted = {str(status.path) for _, status in planned}
