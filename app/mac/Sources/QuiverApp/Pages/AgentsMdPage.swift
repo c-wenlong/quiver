@@ -18,6 +18,8 @@ struct AgentsMdPage: View {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.load(swe: app.swe) }
                 Task { await model.checkDisk() }
+                Task { await app.chapters.load(swe: app.swe) }
+                Task { await app.chapters.checkDisk() }
             }
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)
@@ -34,10 +36,13 @@ struct AgentsMdPage: View {
             async let chaptered: () = app.chapters.load(swe: app.swe)
             _ = await (links, chaptered)
         }
-        // Agents rewrite these files while they work; pick that up on return.
+        // Agents rewrite these files while they work; pick that up on
+        // return. The chapter report refreshes too: an `instructions init`
+        // run elsewhere swaps which editor this page should be showing.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await model.checkDisk() }
             Task { await app.chapters.checkDisk() }
+            Task { await app.chapters.load(swe: app.swe) }
         }
     }
 }
@@ -93,12 +98,17 @@ private struct FlatInstructions: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if chapters.converting { ProgressView().controlSize(.small) }
+                    let unsaved = document?.isDirty == true
                     Button(chapters.converting ? "Converting…" : "Convert to chapters", systemImage: "square.split.2x1") {
                         Task { await chapters.convert(swe: app.swe) }
                     }
                     .secondaryButton()
-                    .disabled(chapters.converting)
-                    .hoverTip("Runs swe instructions init: your AGENTS.md becomes main.md under ~/.quiver/AGENTS_MD.", replacesLabel: false)
+                    // init folds the file on disk; an unsaved draft in the
+                    // editor would never reach the chapter it becomes.
+                    .disabled(chapters.converting || unsaved)
+                    .hoverTip(unsaved ? AgentsModel.saveFirst
+                              : "Runs swe instructions init: your AGENTS.md becomes main.md under ~/.quiver/AGENTS_MD.",
+                              replacesLabel: false)
                 }
                 if let error = chapters.convertError {
                     Label(error, systemImage: "exclamationmark.triangle")
@@ -132,15 +142,24 @@ private struct ChaptersEditor: View {
             rail
             VStack(alignment: .leading, spacing: 12) {
                 if let name = chapters.selected,
-                   let chapter = check.chapters.first(where: { $0.name == name }) {
-                    let position = check.chapters.firstIndex(where: { $0.name == name })! + 1
-                    InstructionEditor(
-                        document: chapters.document(for: chapter),
-                        title: chapter.name,
-                        subtitle: "Chapter \(position) of \(check.chapters.count)") {
-                        Task { await chapters.build(swe: app.swe) }
+                   let chapter = check.uniqueChapters.first(where: { $0.name == name }) {
+                    let position = check.uniqueChapters.firstIndex(where: { $0.name == name })! + 1
+                    if let document = chapters.document(for: chapter) {
+                        InstructionEditor(
+                            document: document,
+                            title: chapter.name,
+                            subtitle: "Chapter \(position) of \(check.uniqueChapters.count)") {
+                            Task { await chapters.build(swe: app.swe) }
+                        }
+                        .id(chapter.name)
+                    } else {
+                        Card(title: chapter.name, subtitle: "The path leaves AGENTS_MD") {
+                            EmptyView()
+                        } content: {
+                            Text("index.txt lists a chapter outside its folder. Fix or remove the entry there.")
+                                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                        }
                     }
-                    .id(chapter.name)
                 } else {
                     Card(title: "No chapters", subtitle: "index.txt lists none yet") {
                         EmptyView()
@@ -178,7 +197,7 @@ private struct ChaptersEditor: View {
         return Strip {
             HStack(spacing: 8) {
                 Text("Chapters").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                Text("\(check.chapters.count)").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                Text("\(check.uniqueChapters.count)").font(Theme.caption).foregroundStyle(Theme.textMuted)
                 Spacer(minLength: 4)
                 Button("Add", systemImage: "plus") { adding = true }
                     .iconButton()
@@ -189,7 +208,7 @@ private struct ChaptersEditor: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             ScrollView {
-                ReorderableRows(check.chapters) { name, before in
+                ReorderableRows(check.uniqueChapters) { name, before in
                     Task { await chapters.move(chapter: name, before: before, swe: app.swe) }
                 } row: { chapter in
                     ChapterRow(chapter: chapter, chapters: chapters)

@@ -72,10 +72,15 @@ public enum ChapterIndex {
             return "A chapter name is one line."
         }
         if name.hasPrefix("/") { return "The path must be relative, inside AGENTS_MD." }
+        if name.hasPrefix("#") { return "A # name reads as a comment in index.txt." }
         if name.contains("-->") { return "The name cannot contain -->." }
         if !name.lowercased().hasSuffix(".md") { return "Chapters end in .md." }
         if name.split(separator: "/").contains("..") {
             return "The path cannot leave AGENTS_MD."
+        }
+        // ".md" alone has no stem; the compiler's .md suffix check rejects it.
+        if (name as NSString).lastPathComponent.dropLast(3).isEmpty {
+            return "The name needs letters before .md."
         }
         return nil
     }
@@ -109,6 +114,8 @@ public final class ChaptersModel {
     @ObservationIgnored private var indexDocument: InstructionDocument?
     /// Open chapter editors by index name, kept for the page's lifetime.
     @ObservationIgnored private var documents: [String: InstructionDocument] = [:]
+    /// A build request that arrived while one ran, collapsed into one rerun.
+    @ObservationIgnored private var buildAgain = false
     @ObservationIgnored private var generation = 0
 
     public init() {}
@@ -117,6 +124,11 @@ public final class ChaptersModel {
     public var chapterMode: Bool {
         if case .loaded(let check) = status { return check.indexExists }
         return false
+    }
+
+    /// Drafts the quit check asks about: any chapter holding unsaved text.
+    public var hasUnsavedChanges: Bool {
+        documents.values.contains { $0.isDirty } || (indexDocument?.isDirty ?? false)
     }
 
     public func load(swe: SweClient) async {
@@ -136,7 +148,9 @@ public final class ChaptersModel {
         guard case .loaded(let check) = next, check.indexExists else { return }
 
         let names = Set(check.chapters.map(\.name))
-        documents = documents.filter { names.contains($0.key) }
+        // Drop editors for unlisted chapters — but never a dirty one: an
+        // index edit elsewhere must not throw unsaved text away.
+        documents = documents.filter { names.contains($0.key) || $0.value.isDirty }
         if selected.map({ !names.contains($0) }) ?? true {
             selected = check.chapters.first?.name
         }
@@ -152,13 +166,28 @@ public final class ChaptersModel {
         }
     }
 
-    /// The chapter's editor document, read on first use.
-    public func document(for chapter: InstructionsCheck.Chapter) -> InstructionDocument {
+    /// The chapter's editor document, read on first use. nil when the
+    /// index entry escapes AGENTS_MD (`../x.md`, a symlinked parent):
+    /// `survey` still lists the broken row so it can be removed, but an
+    /// editor on it would write outside the chapter folder.
+    public func document(for chapter: InstructionsCheck.Chapter) -> InstructionDocument? {
         if let open = documents[chapter.name] { return open }
-        let document = InstructionDocument(url: URL(fileURLWithPath: chapter.path))
+        guard case .loaded(let check) = status,
+              let inside = Self.inside(chapter.name, under: check.directory) else { return nil }
+        let document = InstructionDocument(url: inside)
         documents[chapter.name] = document
         Task { await document.load() }
         return document
+    }
+
+    /// `name` resolved inside `directory` — links in every component, not
+    /// just the file's own — or nil when it leaves the folder.
+    static func inside(_ name: String, under directory: String) -> URL? {
+        let root = URL(fileURLWithPath: directory).resolvingSymlinksInPath().standardizedFileURL
+        let resolved = URL(fileURLWithPath: directory).appending(path: name)
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.path == root.path || resolved.path.hasPrefix(root.path + "/") else { return nil }
+        return resolved
     }
 
     public func isDirty(_ name: String) -> Bool { documents[name]?.isDirty ?? false }
@@ -203,17 +232,20 @@ public final class ChaptersModel {
         guard let document = await readyIndex() else {
             return "index.txt hasn't been read, so it can't be updated."
         }
-        let file = URL(fileURLWithPath: check.directory).appending(path: name)
+        guard let file = Self.inside(name, under: check.directory) else {
+            return "The path cannot leave AGENTS_MD."
+        }
         let starter = Self.starter(for: name)
         let created = await offMain { () -> Bool in
-            guard !FileManager.default.fileExists(atPath: file.path) else { return true }
-            do {
-                // A folder chapter (communication/rules.md) may need parents.
-                try FileManager.default.createDirectory(
-                    at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try Data(starter.utf8).write(to: file, options: .atomic)
-                return true
-            } catch { return false }
+            // A folder chapter (communication/rules.md) may need parents.
+            try? FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // Exclusive create: a file that already exists is never
+            // overwritten with the starter heading.
+            let descriptor = open(file.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)
+            if descriptor < 0 { return errno == EEXIST }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            return (try? handle.write(contentsOf: Data(starter.utf8))) != nil
         }
         guard created else { return "Couldn't create \(name)." }
         document.text = ChapterIndex.appending(document.text, name: name)
@@ -221,15 +253,21 @@ public final class ChaptersModel {
             await document.load()
             return "index.txt changed on disk; try again."
         }
-        documents[name] = nil
+        // A dirty doc kept from an unlisted chapter keeps its draft too.
+        if documents[name]?.isDirty != true { documents[name] = nil }
         selected = name
         await build(swe: swe)
         return nil
     }
 
     /// Drops `name` from the index, then rebuilds. The chapter file stays
-    /// on disk, unlisted — removing it is the user's call in Finder.
+    /// on disk, unlisted — removing it is the user's call in Finder. A
+    /// chapter holding unsaved text refuses: unlisting must not discard it.
     public func remove(chapter name: String, swe: SweClient) async {
+        if documents[name]?.isDirty == true {
+            buildError = "Save or revert \(name) before removing it."
+            return
+        }
         guard let document = await readyIndex() else { return }
         let text = ChapterIndex.removing(document.text, name: name)
         guard text != document.text else { return }
@@ -248,12 +286,13 @@ public final class ChaptersModel {
 
     /// Compiles the chapters into the shared AGENTS.md and refreshes the
     /// preview and the staleness state. Called after every index save and
-    /// offered as Rebuild for edits made elsewhere.
+    /// offered as Rebuild for edits made elsewhere. A request that lands
+    /// while one runs queues a single rerun: a save that goes unbuilt
+    /// would leave the output stale.
     public func build(swe: SweClient) async {
-        guard !building else { return }
+        guard !building else { buildAgain = true; return }
         building = true
         buildError = nil
-        defer { building = false }
         do {
             buildNote = try await swe.instructionsBuild()
                 ? "Rebuilt ~/.quiver/AGENTS.md" : "Already current"
@@ -265,6 +304,11 @@ public final class ChaptersModel {
         // The build may have failed on a source problem the last check
         // did not know; a fresh status shows either answer.
         if case .loaded = status { await reload(swe: swe) }
+        building = false
+        if buildAgain {
+            buildAgain = false
+            await build(swe: swe)
+        }
     }
 
     /// Turns the flat shared file into chapters (`swe instructions init`),

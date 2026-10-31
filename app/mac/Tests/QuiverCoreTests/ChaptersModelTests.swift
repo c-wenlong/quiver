@@ -40,6 +40,11 @@ import Testing
         #expect(ChapterIndex.nameProblem("/abs/rules.md") != nil)
         #expect(ChapterIndex.nameProblem("../rules.md") != nil)
         #expect(ChapterIndex.nameProblem("a-->b.md") != nil)
+        // A # line is an index comment and ".md" alone has no stem: both
+        // would be listed but never compile.
+        #expect(ChapterIndex.nameProblem("#notes.md") != nil)
+        #expect(ChapterIndex.nameProblem(".md") != nil)
+        #expect(ChapterIndex.nameProblem("dir/.md") != nil)
     }
 
     @Test func starterTitlesFromTheFileName() {
@@ -161,5 +166,46 @@ import Testing
         await model.build(swe: SweClient(runner: runner))
         #expect(model.buildError == "source problem")
         #expect(model.buildNote == nil)
+    }
+
+    @Test func removeRefusesAChapterHoldingUnsavedText() async throws {
+        let dir = try TempDir()
+        let runner = Runner([check(dir.url)])
+        let model = try await model(dir, runner: runner)
+        let chapter = InstructionsCheck.Chapter(
+            name: "a.md", path: dir.path("a.md").path, exists: true)
+        let document = try #require(model.document(for: chapter))
+        await document.load()
+        document.text = "# Draft\n"
+        #expect(model.hasUnsavedChanges)
+        await model.remove(chapter: "a.md", swe: SweClient(runner: runner))
+        #expect(try dir.read("index.txt").contains("a.md"))
+        #expect(model.buildError != nil)
+        // The draft stays editable rather than being dropped with the row.
+        #expect(model.document(for: chapter)?.isDirty == true)
+    }
+
+    @Test func addChapterNeverOverwritesAnExistingFile() async throws {
+        let dir = try TempDir()
+        try dir.write("real.md", "# Handwritten\n")
+        let runner = Runner([check(dir.url)])
+        let model = try await model(dir, runner: runner)
+        let problem = await model.addChapter(named: "real", swe: SweClient(runner: runner))
+        #expect(problem == nil)
+        #expect(try dir.read("real.md") == "# Handwritten\n")
+        #expect(try dir.read("index.txt").contains("real.md"))
+    }
+
+    @Test func uniqueChaptersDedupsADoubleListing() {
+        let chapters = [
+            InstructionsCheck.Chapter(name: "a.md", path: "/x/a.md", exists: true),
+            InstructionsCheck.Chapter(name: "a.md", path: "/x/a.md", exists: true),
+            InstructionsCheck.Chapter(name: "b.md", path: "/x/b.md", exists: true),
+        ]
+        let state = InstructionsCheck(
+            directory: "/x", index: "/x/index.txt", output: "/AGENTS.md",
+            indexExists: true, outputExists: true, outputGenerated: true,
+            chapters: chapters, error: "duplicated", stale: false)
+        #expect(state.uniqueChapters.map(\.name) == ["a.md", "b.md"])
     }
 }

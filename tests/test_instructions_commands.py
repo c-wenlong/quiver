@@ -126,6 +126,51 @@ class InstructionsCommandsTest(unittest.TestCase):
         self.assertEqual((code, output), (1, ""))
         self.assertIn("index.txt", errors)
 
+    def test_init_keeps_the_users_own_comments(self):
+        output = self.home / ".quiver" / "AGENTS.md"
+        output.write_text(
+            "# My Rules\n\n<!-- Keep this section in sync -->\n\nBe brief.\n",
+            encoding="utf-8")
+        (self.source / "index.txt").unlink()
+        (self.source / "rules.md").unlink()
+        code, _, _ = self.run_command(["init"])
+        self.assertEqual(code, 0)
+        chapter = (self.source / "main.md").read_text(encoding="utf-8")
+        self.assertIn("<!-- Keep this section in sync -->", chapter)
+
+    def test_init_refuses_a_symlinked_output_before_creating(self):
+        output = self.home / ".quiver" / "AGENTS.md"
+        target = self.home / "elsewhere.md"
+        target.write_text("# Elsewhere\n", encoding="utf-8")
+        output.symlink_to(target)
+        (self.source / "index.txt").unlink()
+        (self.source / "rules.md").unlink()
+        code, _, errors = self.run_command(["init"])
+        self.assertEqual(code, 1)
+        self.assertIn("symlink", errors.lower())
+        self.assertFalse((self.source / "index.txt").exists())
+        self.assertTrue(output.is_symlink())
+
+    def test_init_refuses_to_overwrite_a_newer_save(self):
+        output = self.home / ".quiver" / "AGENTS.md"
+        output.write_text("# Old\n", encoding="utf-8")
+        (self.source / "index.txt").unlink()
+        (self.source / "rules.md").unlink()
+
+        def racing(build):
+            def wrapped(home=None, *, check=False, expected=compiler._UNSET):
+                if expected is not compiler._UNSET:
+                    output.write_text("# Saved meanwhile\n", encoding="utf-8")
+                return build(home, check=check, expected=expected)
+            return wrapped
+
+        from quiver.instructions import commands, compiler
+        with patch.object(commands.compiler, "build", racing(compiler.build)):
+            code, _, errors = self.run_command(["init"])
+        self.assertEqual(code, 1)
+        self.assertIn("changed", errors)
+        self.assertEqual(output.read_text(encoding="utf-8"), "# Saved meanwhile\n")
+
     def test_help_forms(self):
         for args in ([], ["help"], ["--help"], ["-h"], ["build", "--help"]):
             with self.subTest(args=args):

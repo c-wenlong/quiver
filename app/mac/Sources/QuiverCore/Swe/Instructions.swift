@@ -22,6 +22,14 @@ public struct InstructionsCheck: Decodable, Sendable, Equatable {
     /// nil when `indexExists` is false: flat-file mode has nothing to go stale.
     public let stale: Bool?
 
+    /// One row per chapter name, as the rail shows them. A duplicated
+    /// index entry is a source problem `error` already reports; a
+    /// second row would share the first's identity while dragged.
+    public var uniqueChapters: [Chapter] {
+        var seen = Set<String>()
+        return chapters.filter { seen.insert($0.name).inserted }
+    }
+
     public init(directory: String, index: String, output: String, indexExists: Bool,
                 outputExists: Bool, outputGenerated: Bool, chapters: [Chapter],
                 error: String?, stale: Bool?) {

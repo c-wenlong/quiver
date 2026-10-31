@@ -143,6 +143,11 @@ def source_fingerprint(home: Path | None = None) -> bytes:
     return digest.digest()
 
 
+_SOURCE_MARKER = "<!-- Source: AGENTS_MD/"
+
+_UNSET = object()
+
+
 def _output(path: Path) -> tuple[bytes | None, int]:
     try:
         info = path.lstat()
@@ -170,13 +175,17 @@ def _locked(home: Path | None):
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
-def _build(home: Path | None, check: bool) -> bool:
+def _build(home: Path | None, check: bool, expected=_UNSET) -> bool:
     output = agents_file_for(home)
     for _ in range(3):
         temporary: str | None = None
         try:
             sources, data = _snapshot(home)
             previous, mode = _output(output)
+            if expected is not _UNSET and previous != expected:
+                raise InstructionError(
+                    f"{output} changed while its chapters were being created; "
+                    "not overwriting it")
             differs = previous is None or hashlib.sha256(previous).digest() != hashlib.sha256(data).digest()
             if check or not differs:
                 if _unchanged(sources, instructions_dir_for(home).resolve()):
@@ -191,7 +200,11 @@ def _build(home: Path | None, check: bool) -> bool:
                 os.fsync(handle.fileno())
             if not _unchanged(sources, instructions_dir_for(home).resolve()):
                 continue
-            _output(output)  # Refuse aliases introduced while the sources were read.
+            latest, _ = _output(output)  # Refuse aliases introduced while the sources were read.
+            if expected is not _UNSET and latest != expected:
+                raise InstructionError(
+                    f"{output} changed while its chapters were being created; "
+                    "not overwriting it")
             os.replace(temporary, output)
             return True
         except _SourcesChanged:
@@ -205,19 +218,23 @@ def _build(home: Path | None, check: bool) -> bool:
     raise InstructionError("Instruction sources kept changing; try the build again")
 
 
-def build(home: Path | None = None, *, check: bool = False) -> bool:
+def build(home: Path | None = None, *, check: bool = False, expected=_UNSET) -> bool:
     """Return whether AGENTS.md differs, replacing it unless ``check`` is set.
 
     Writing builds serialize through a hub-local lock. Every source is reread before
     replacement; a source edited during compilation causes a fresh attempt.
     Identical output keeps its inode, timestamps and permissions unchanged.
+
+    ``expected`` pins the output's bytes (None pins its absence), for callers
+    that fold the file's current content into sources and must not overwrite a
+    save that landed meanwhile; the default is no expectation.
     """
     require_supported_platform()
     try:
         if check:
             return _build(home, check=True)
         with _locked(home):
-            return _build(home, check)
+            return _build(home, check, expected)
     except (OSError, RuntimeError) as exc:
         raise InstructionError(f"Cannot compile instructions: {exc}") from exc
 
@@ -298,23 +315,30 @@ def init_sources(home: Path | None = None) -> dict:
             f"{index} already exists; chapters are already set up")
     if directory.is_symlink():
         raise InstructionError(f"Refusing to use a symlinked directory: {directory}")
-    directory.mkdir(parents=True, exist_ok=True)
 
     output = agents_file_for(home)
+    # Refuses a symlinked or non-file destination before any source is
+    # created, so a failed conversion cannot leave chapter mode half-set.
+    previous, _ = _output(output)
     text = "# Instructions\n\nShared rules every harness reads.\n"
     source = "a starter chapter"
-    if output.is_file():
+    if previous is not None:
         try:
-            raw = output.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            raise InstructionError(f"Cannot read {output}: {exc}") from exc
+            raw = previous.decode("utf-8")
+        except UnicodeError as exc:
+            raise InstructionError(f"{output} is not UTF-8 text") from exc
         if GENERATED_MARKER in raw.split("\n", 1)[0]:
-            raw = "\n".join(line for line in raw.splitlines()
-                            if not (line.startswith("<!--") and line.endswith("-->")))
+            # Only the compiler's own comment lines come back out; one-line
+            # HTML comments in chapter content are the user's, and stay.
+            raw = "\n".join(
+                line for line in raw.splitlines()
+                if line != GENERATED_MARKER
+                and not (line.startswith(_SOURCE_MARKER) and line.endswith("-->")))
         raw = raw.strip("\n")
         if raw:
             text = raw + "\n"
             source = str(output)
+    directory.mkdir(parents=True, exist_ok=True)
 
     name = "main.md"
     counter = 2
@@ -330,5 +354,7 @@ def init_sources(home: Path | None = None) -> dict:
                 f"{name}\n")
     except OSError as exc:
         raise InstructionError(f"Cannot create chapters in {directory}: {exc}") from exc
+    # The build overwrites the output; it must be the bytes just folded, not
+    # a save that landed meanwhile.
     return {"created": True, "chapter": name, "source": source,
-            "built": build(home)}
+            "built": build(home, expected=previous)}
