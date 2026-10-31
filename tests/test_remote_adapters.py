@@ -496,6 +496,46 @@ class TestCodexAppServer(unittest.TestCase):
         self.assertEqual(start["params"]["model"], "gpt-5")
         self.assertEqual(start["params"]["effort"], "high")
 
+    def test_model_switch_rides_the_next_turn_start(self):
+        supervise.mark(self.home, "codex:k",
+                       {**_meta("appserver", "codex"), "model": "gpt-5"})
+        inj = self._injector()
+        res = inj.control(self.session, "model", "gpt-5.1-codex")
+        self.assertTrue(res.ok, res.note)
+        self.assertIn("next turn", res.note)
+        # nothing is sent now: no app-server was even spawned
+        self.assertEqual(self.procs, [])
+        self.assertEqual(
+            supervise.meta_for(self.home, "codex:k")["model"],
+            "gpt-5.1-codex")
+        res = inj.send(self.session, {"text": "go", "mode": "queue"}, "idle")
+        self.assertTrue(res.ok, res.note)
+        start = self.procs[0].writes[-1]
+        self.assertEqual(start["method"], "turn/start")
+        self.assertEqual(start["params"]["model"], "gpt-5.1-codex")
+
+    def test_model_switch_refusals(self):
+        inj = self._injector()
+        # detached: nothing to record it on
+        res = inj.control(self.session, "model", "gpt-5")
+        self.assertFalse(res.ok)
+        self.assertIn("detached", res.note)
+        self.assertIsNone(supervise.meta_for(self.home, "codex:k"))
+        supervise.mark(self.home, "codex:k", _meta("appserver", "codex"))
+        res = inj.control(self.session, "model", "")
+        self.assertFalse(res.ok)
+        self.assertIn("needs a value", res.note)
+        # the launch rule holds here too, not only at the route
+        res = inj.control(self.session, "model", "gpt-5\n/clear")
+        self.assertFalse(res.ok)
+        self.assertNotIn("model", supervise.meta_for(self.home, "codex:k"))
+        # a failed save is a failed switch, not a silent one
+        with patch.object(supervise, "atomic_write_text",
+                          side_effect=OSError("disk full")):
+            res = inj.control(self.session, "model", "gpt-5")
+        self.assertFalse(res.ok)
+        self.assertIn("model unchanged", res.note)
+
     def test_send_queue_refuses_when_active(self):
         supervise.mark(self.home, "codex:k", _meta("appserver", "codex"))
         res = self._injector().send(

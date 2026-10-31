@@ -80,6 +80,32 @@ def control_text(op: str, value: str) -> str:
     return template.format(value=value).rstrip()
 
 
+def switch_model(home: Path | None, session_key: str, mode: str,
+                 tool: str, value: str) -> InjectResult:
+    """The ``model`` control op on an API channel: record the pick on
+    the session's supervised row, which the channel's next turn reads
+    (the same field an attach-time pick lands in). Nothing is sent now,
+    so the switch applies from the next turn, mid-turn or not. The
+    value is held to the launch rule and to the channel's own shape
+    rule (``supervise.channel_tuning_error``)."""
+    from quiver.remote import protocol
+
+    try:
+        value = protocol._launch_value({"value": value}, "value") or ""
+    except ValueError as exc:
+        return InjectResult(False, str(exc))
+    if not value:
+        return InjectResult(False, "model needs a value")
+    blocked = supervise.channel_tuning_error(mode, tool, value, None)
+    if blocked:
+        return InjectResult(False, blocked)
+    if not supervise.set_meta(home, session_key, "model", value):
+        return InjectResult(
+            False, "session detached or its row could not be saved; "
+                   "model unchanged")
+    return InjectResult(True, f"model set to {value} from the next turn")
+
+
 def _prompt(session: Session, cmd: dict, harness: str = "") -> str:
     """The message text with its attachments referenced the way the
     harness takes them (``@path`` or a bracketed path). A channel tied
@@ -1036,6 +1062,12 @@ class CodexAppServerInjector:
                     pass
             supervise.unmark(self.home, self.key)
             return InjectResult(True, "detached; session is observed again")
+        if op == "model":
+            # The next turn/start carries it as its model override,
+            # which codex keeps for the turns after too; a turn already
+            # running keeps the model it started on.
+            return switch_model(self.home, self.key, "appserver", "codex",
+                                value)
         return InjectResult(
             False, f"unsupported_control: {op} needs a live TUI"
         )
