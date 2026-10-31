@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -640,11 +641,16 @@ import Testing
         // refresh sees the originals; quit samples them again and
         // signals; the refresh quit ends with shows pid 10 recycled.
         let fake = Flip([[signalled, kept], [signalled, kept], [recycled, kept]])
-        // The clock runs a minute ahead so the five-second mark has
-        // passed: a matching process reports still running, the
-        // recycled pid does not.
+        // Every read of the clock moves it ten seconds, so by the
+        // sample after the signal the five-second mark has passed: a
+        // matching process reports still running, the recycled pid does
+        // not. The mark is stamped by the same clock it is read against.
+        let ticks = Mutex(0)
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude] }, signaller: fake,
-                                 clock: { .now.addingTimeInterval(60) },
+                                 clock: {
+                                     Self.now.addingTimeInterval(
+                                         Double(ticks.withLock { $0 += 1; return $0 }) * 10)
+                                 },
                                  defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.refresh()

@@ -23,6 +23,53 @@ import Testing
     }
 }
 
+/// Stands in for the pointer poller's tick: each call parks until the
+/// test releases it, and `reached` lets the test wait until the loop has
+/// asked for its nth tick, so a poll can be stepped one at a time.
+@MainActor private final class PollGate {
+    private(set) var count = 0
+    private var permits = 0
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var observers: [CheckedContinuation<Void, Never>] = []
+
+    func wait(_ duration: Duration) async {
+        count += 1
+        while !observers.isEmpty { observers.removeFirst().resume() }
+        if permits > 0 { permits -= 1; return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func release() {
+        if waiting.isEmpty { permits += 1 } else { waiting.removeFirst().resume() }
+    }
+
+    /// Resolves once the poller has asked for its nth tick.
+    func reached(_ n: Int) async {
+        while count < n {
+            await withCheckedContinuation { observers.append($0) }
+        }
+    }
+}
+
+/// Counts `animate` calls and lets a test wait for the next open or
+/// close to run.
+@MainActor private final class AnimLog {
+    private(set) var count = 0
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func call() {
+        count += 1
+        while !waiting.isEmpty { waiting.removeFirst().resume() }
+    }
+
+    /// Resolves once the nth animated change has run.
+    func reached(_ n: Int) async {
+        while count < n {
+            await withCheckedContinuation { waiting.append($0) }
+        }
+    }
+}
+
 @MainActor
 @Suite struct HoverCardStateTests {
     private let gate = DelayGate()
@@ -92,6 +139,39 @@ import Testing
         state.open("a")
         state.closed("a")
         #expect(state.key == "a")
+    }
+
+    @Test func thePollerClosesTheCardOnlyAfterTheGrace() async {
+        var point = CGPoint(x: 50, y: 50)
+        let poll = PollGate()
+        let anim = AnimLog()
+        let state = HoverCardState(
+            pointer: { point },
+            rects: { _ in (CGRect(x: 0, y: 0, width: 20, height: 20),
+                           CGRect(x: 40, y: 40, width: 20, height: 20)) },
+            wait: { [gate] in await gate.wait($0) },
+            pollWait: { [poll] in await poll.wait($0) },
+            clock: { [clock] in clock.now })
+        state.animate = { body in body(); anim.call() }
+
+        state.open("a")
+        await poll.reached(1) // first tick ran with the pointer inside
+        #expect(state.key == "a")
+
+        point = CGPoint(x: 500, y: 500) // off the anchor and the card
+        poll.release()
+        await poll.reached(2)
+        #expect(state.key == "a") // the grace has only just started
+
+        clock.now += .milliseconds(100) // inside the 150 ms grace
+        poll.release()
+        await poll.reached(3)
+        #expect(state.key == "a")
+
+        clock.now += .milliseconds(100) // 200 ms outside: past the grace
+        poll.release()
+        await anim.reached(2) // open was the first animated change
+        #expect(state.key == nil)
     }
 
     @Test func aScrollClosesTheOpenCardAndHoldsNewOnes() async {
