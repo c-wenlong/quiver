@@ -1,9 +1,10 @@
-"""`swe find plugins` reads five different registry formats.
+"""`swe find plugins` reads six different registry formats.
 
 claude and factory keep an installed_plugins.json, codex declares
 [plugins."ref"] blocks with an explicit enabled flag, cursor and grok expose
-no install record at all. The scope words carry over from the rest of
-swe find, but a plugin has no file sitting in a harness root, so:
+no install record at all, and devin locks the resolved set in lock.json.
+The scope words carry over from the rest of swe find, but a plugin has no
+file sitting in a harness root, so:
 
   global   installed AND enabled
   local    installed but disabled
@@ -137,6 +138,83 @@ class RegistryReadTest(_NoRegistry, unittest.TestCase):
             self.assertEqual(got[0].harness, "cursor")
 
 
+class DevinReadTest(_NoRegistry, unittest.TestCase):
+    """devin's store: ``lock.json`` names the resolved install set under
+    ``~/.local/share/devin/cli/plugins``, and ``cache/<key>/<version>``
+    holds the fetched content (``.devin-plugin/plugin.json`` inside).
+    """
+
+    def _entry(self, name="default", source="account-upload", version="0.1.0"):
+        return {"name": name,
+                "spec": {"source": source, "bundleId": name},
+                "identity": f"{source}:{name}",
+                "version_dir": version}
+
+    def _home(self, tmp: str, resolved=(), cached=()) -> Path:
+        home = Path(tmp)
+        pl = home / ".local" / "share" / "devin" / "cli" / "plugins"
+        (pl / "cache").mkdir(parents=True)
+        (pl / "lock.json").write_text(json.dumps({"resolved": list(resolved)}))
+        for key, version, name, skills in cached:
+            d = pl / "cache" / key / version / ".devin-plugin"
+            d.mkdir(parents=True)
+            (d / "plugin.json").write_text(json.dumps({"name": name}))
+            for s in skills:
+                sk = d.parent / "skills" / s
+                sk.mkdir(parents=True)
+                (sk / "SKILL.md").write_text("x")
+        return home
+
+    def test_resolved_entries_are_enabled_with_their_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(
+                tmp, resolved=[self._entry()],
+                cached=[("account-upload_default-f95236b7", "0.1.0", "default", ("a",))])
+            got = discover_plugins(home)
+            self.assertEqual(len(got), 1)
+            p = got[0]
+            self.assertEqual((p.harness, p.name, p.marketplace, p.version),
+                             ("devin", "default", "account-upload", "0.1.0"))
+            self.assertTrue(p.enabled)
+            self.assertEqual(p.components, {"skills": 1})
+            self.assertEqual(p.path, home / ".local/share/devin/cli/plugins"
+                             / "cache/account-upload_default-f95236b7/0.1.0")
+
+    def test_hooks_json_file_counts_as_a_hooks_component(self):
+        # devin ships hooks as one hooks.json at the plugin root, not a dir.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(
+                tmp, resolved=[self._entry()],
+                cached=[("account-upload_default-f95236b7", "0.1.0", "default", ())])
+            (home / ".local/share/devin/cli/plugins/cache"
+             / "account-upload_default-f95236b7/0.1.0/hooks.json").write_text("{}")
+            self.assertEqual(discover_plugins(home)[0].components, {"hooks": 1})
+
+    def test_cached_but_unresolved_reports_unknown_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(
+                tmp, resolved=[],
+                cached=[("account-upload_default-f95236b7", "0.1.0", "default", ("a",))])
+            got = discover_plugins(home)
+            self.assertEqual(len(got), 1)
+            self.assertIsNone(got[0].enabled)
+            self.assertEqual(got[0].marketplace, "account-upload")
+
+    def test_a_cache_key_the_identity_does_not_prefix_still_resolves(self):
+        # Key derivation is devin's own; falling back to any version match
+        # beats reporting an installed plugin as content-less.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(
+                tmp, resolved=[self._entry()],
+                cached=[("renamed_dir", "0.1.0", "default", ())])
+            self.assertIsNotNone(discover_plugins(home)[0].path)
+
+    def test_a_lock_with_no_resolved_key_is_empty_not_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            self.assertEqual(discover_plugins(home), [])
+
+
 class MalformedRecordTest(_NoRegistry, unittest.TestCase):
     """Valid JSON of the wrong shape costs its rows, never the command.
 
@@ -164,6 +242,9 @@ class MalformedRecordTest(_NoRegistry, unittest.TestCase):
             (".cursor/plugins/cache/mk/.claude-plugin/marketplace.json", ["mk"]),
             (".cursor/plugins/cache/mk/p/.claude-plugin/plugin.json", ["p"]),
             (".cursor/plugins/cache/mk/p/.claude-plugin/plugin.json", {"name": 3}),
+            (".local/share/devin/cli/plugins/lock.json", []),
+            (".local/share/devin/cli/plugins/lock.json", {"resolved": "x"}),
+            (".local/share/devin/cli/plugins/lock.json", {"resolved": ["x"]}),
         ]
         for rel, data in cases:
             with self.subTest(rel=rel, data=data), tempfile.TemporaryDirectory() as tmp:

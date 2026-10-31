@@ -4,8 +4,9 @@ Harnesses that run plugin systems each record installs differently: claude
 and droid keep an ``installed_plugins.json`` (droid's lives under its home
 directory, ``~/.factory``, even though the registry calls it "droid" — see
 ``PLUGIN_FALLBACK``), codex declares ``[plugins."name@marketplace"]`` blocks
-in ``config.toml``, grok and cursor keep an unreadable marketplace cache, and
-opencode writes no install record this module recognises at all. So this
+in ``config.toml``, grok and cursor keep an unreadable marketplace cache,
+opencode writes no install record this module recognises at all, and devin
+keeps a ``lock.json`` under ``~/.local/share/devin/cli/plugins``. So this
 reads per-harness rather than globbing, the same way ``swe mcp`` does.
 
 Which harnesses get walked, and where each one's store lives, comes from
@@ -15,7 +16,7 @@ to be scanned unconditionally, and one it marks supported with a root this
 module has never hardcoded (opencode) is picked up automatically.
 ``PLUGIN_FALLBACK`` only fires for a harness the registry has never heard of
 — a fresh install before ``swe harness discover`` has run — so plugin
-discovery still finds the same five it always found with no harness.json
+discovery still finds the same six it always found with no harness.json
 on disk at all.
 
 The scope words carry over from the rest of ``swe find``, but a plugin has no
@@ -37,7 +38,7 @@ from quiver.find.tree import count_skills
 
 # What a plugin can ship. Counting these is the point: an installed plugin is
 # not one thing, it is however many skills, hooks and agents it carries.
-COMPONENT_DIRS = ("skills", "agents", "commands", "hooks")
+COMPONENT_DIRS = ("skills", "agents", "commands", "hooks", "rules")
 
 
 @dataclass
@@ -254,6 +255,87 @@ def _from_cache_scan(harness: str, cache: Path) -> list[Plugin]:
     return found
 
 
+def _devin_cache_dir(root: Path, entry: dict) -> Path | None:
+    """The fetched content dir for one lock-resolved plugin.
+
+    Cache keys look like ``account-upload_default-f95236b7``: the identity's
+    ``:`` turned into ``_``, plus a hash suffix. Prefix-matching the identity
+    finds the key without decoding that suffix; the manifest inside any dir
+    is a ``.devin-plugin/plugin.json`` (``.claude-plugin`` is accepted too,
+    but devin wrote both this store and its own name first).
+    """
+    cache = root / "cache"
+    version = str(entry.get("version_dir") or "")
+    if not cache.is_dir() or not version:
+        return None
+    identity = str(entry.get("identity") or "")
+    keys = [d for d in cache.iterdir()
+            if d.is_dir() and d.name.startswith(identity.replace(":", "_") + "-")]
+    if not keys:
+        keys = [d for d in cache.iterdir() if d.is_dir()]
+    for key in sorted(keys):
+        found = key / version
+        if found.is_dir():
+            return found
+    return None
+
+
+def _devin_components(path: Path | None) -> dict:
+    counts = count_components(path)
+    # devin keeps hooks in a single hooks.json file at the plugin root,
+    # where every other harness uses a hooks/ directory.
+    if path is not None and (path / "hooks.json").is_file():
+        counts.setdefault("hooks", 1)
+    return counts
+
+
+def _from_devin(root: Path) -> list[Plugin]:
+    """devin's plugin store: a resolved lock, plus the fetched cache.
+
+    ``lock.json``'s ``resolved`` list is the install set — a forbidden or
+    unrequired plugin never resolves — so entries count as enabled, unlike
+    cursor and grok's ambiguous caches. Cache dirs no lock entry covers are
+    fetched-but-uninstalled, the same ``enabled=None`` those caches report.
+    """
+    lock = _load_object(root / "lock.json")
+    resolved = lock.get("resolved")
+    rows = [r for r in resolved if isinstance(r, dict)] if isinstance(resolved, list) else []
+    found = []
+    covered: set[Path] = set()
+    for entry in rows:
+        spec = entry.get("spec") if isinstance(entry.get("spec"), dict) else {}
+        name = entry.get("name") or spec.get("bundleId")
+        if not isinstance(name, str) or not name:
+            continue
+        source = spec.get("source")
+        identity = str(entry.get("identity") or "")
+        marketplace = source if isinstance(source, str) and source else \
+            identity.partition(":")[0]
+        path = _devin_cache_dir(root, entry)
+        if path is not None:
+            covered.add(path)
+        found.append(Plugin(
+            harness="devin", name=name, marketplace=marketplace,
+            version=str(entry.get("version_dir") or ""),
+            enabled=True, path=path, components=_devin_components(path)))
+    cache = root / "cache"
+    if cache.is_dir():
+        for manifest in sorted(cache.glob("*/*/.*-plugin/plugin.json")):
+            path = manifest.parent.parent
+            if path in covered:
+                continue
+            data = _load_object(manifest)
+            name = data.get("name")
+            key = path.parent.name    # <source>_<bundle>-<hash>
+            found.append(Plugin(
+                harness="devin",
+                name=name if isinstance(name, str) and name else key,
+                marketplace=key.split("_", 1)[0],
+                version=path.name, enabled=None, path=path,
+                components=_devin_components(path)))
+    return found
+
+
 def _from_dir_presence(harness: str, root: Path) -> list[Plugin]:
     """A plugin root whose install format this module does not parse.
 
@@ -286,6 +368,7 @@ PLUGIN_FALLBACK: dict[str, Path] = {
     "codex": Path(".codex/plugins"),
     "cursor": Path(".cursor/plugins"),
     "grok": Path(".grok/marketplace-cache"),   # no ~/.grok/plugins on disk
+    "devin": Path(".local/share/devin/cli/plugins"),
 }
 
 
@@ -375,6 +458,10 @@ def discover_plugins(home: Path | None = None) -> list[Plugin]:
     if _plugin_capable(reg, "opencode"):
         root = _plugin_root(reg, "opencode", home) or (home / ".opencode" / "plugins")
         found += _from_dir_presence("opencode", root)
+
+    if _plugin_capable(reg, "devin"):
+        root = _plugin_root(reg, "devin", home) or (home / PLUGIN_FALLBACK["devin"])
+        found += _from_devin(root)
 
     return found
 
