@@ -1,0 +1,896 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI reference — quiver</title>
+<meta name="description" content="Every swe command and flag.">
+<link rel="icon" href="../icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #08090a;
+  --surface: #0f1011;
+  --surface-2: #151617;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --text: #f7f8f8;
+  --text-2: #a1a4a8;
+  --text-3: #6b6f75;
+  --radius: 12px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth;
+       scroll-padding-top: 76px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+code { font-family: var(--mono); font-size: 0.92em; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+
+header.top { position: sticky; top: 0; z-index: 20; background: rgba(8, 9, 10, 0.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+nav { display: flex; align-items: center; gap: 28px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; text-decoration: none; font-size: 16px; }
+.brand img { width: 26px; height: 26px; border-radius: 6px; }
+nav .links { display: flex; gap: 24px; font-size: 14px; }
+nav .links a, nav .right a.plain { color: var(--text-2); text-decoration: none; }
+nav .links a:hover, nav .right a.plain:hover { color: var(--text); }
+nav .right { margin-left: auto; display: flex; align-items: center; gap: 18px; font-size: 14px; }
+nav .right a.plain { display: inline-flex; align-items: center; gap: 6px; }
+svg.i { width: 16px; height: 16px; flex: none; }
+
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; border-radius: 8px; font: 500 14px var(--sans); text-decoration: none; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: rgba(255, 255, 255, 0.28); }
+.btn.light { background: var(--text); color: #08090a; border-color: var(--text); }
+.btn.sm { height: 32px; padding: 0 12px; font-size: 13px; }
+
+.doc { max-width: 800px; padding-top: 48px; padding-bottom: 88px; }
+.doc h1 { font-size: 34px; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+.doc h2 { font-size: 24px; letter-spacing: -0.01em; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+.doc h3 { font-size: 18px; margin: 32px 0 8px; }
+.doc h4 { font-size: 16px; margin: 24px 0 8px; }
+.doc p, .doc li { color: var(--text-2); }
+.doc a { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.doc a:hover { text-decoration-color: var(--text); }
+.doc :is(h1, h2, h3, h4) a { color: inherit; text-decoration: none; }
+.doc :is(h1, h2, h3, h4):hover a.anchor::after { content: " #"; color: var(--text-3); }
+.doc code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+.doc pre { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; overflow-x: auto; }
+.doc pre code { background: none; border: none; padding: 0; font-size: 13.5px; line-height: 1.55; }
+.doc blockquote { margin: 16px 0; padding: 2px 16px; border-left: 3px solid var(--line-strong); color: var(--text-3); }
+.doc table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14.5px; }
+.doc th, .doc td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; }
+.doc th { background: var(--surface-2); }
+.doc hr { border: none; border-top: 1px solid var(--line); margin: 32px 0; }
+.doc img { max-width: 100%; }
+
+footer { border-top: 1px solid var(--line); padding: 32px; margin-top: 64px; display: flex; justify-content: space-between; align-items: center; gap: 24px; color: var(--text-3); font-size: 13.5px; }
+footer .right { display: flex; gap: 20px; }
+footer a { color: var(--text-3); text-decoration: none; }
+footer a:hover { color: var(--text); }
+
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px; }
+  nav { gap: 16px; }
+  nav .links, nav .right a.plain { display: none; }
+  .doc { padding-top: 32px; }
+  .doc h1 { font-size: 27px; }
+  .doc h2 { font-size: 21px; }
+  footer { flex-direction: column; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="gh" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></symbol></svg>
+<header class="top">
+  <div class="wrap">
+    <nav>
+      <a class="brand" href="../"><img src="../icon.png" alt="">quiver</a>
+      <div class="links">
+        <a href="../overview/">Docs</a>
+        <a href="../cli/">CLI reference</a>
+        <a href="../changelog/">Changelog</a>
+      </div>
+      <div class="right">
+        <a class="plain" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>GitHub</a>
+        <a class="btn light sm" href="../#install"><span>Install</span></a>
+      </div>
+    </nav>
+  </div>
+</header>
+<main class="wrap doc">
+<h1 id="cli-reference"><a class="anchor" href="#cli-reference"></a>CLI reference</h1>
+<blockquote>
+<p>Generated from <code>swe help</code> by <code>scripts/docs_site.py</code> — do not edit.</p>
+</blockquote>
+<h2 id="setup"><a class="anchor" href="#setup"></a>Setup</h2>
+<h3 id="swe-init"><a class="anchor" href="#swe-init"></a><code>swe init</code></h3>
+<p><em>Create ~/.quiver and symlink every harness to it</em></p>
+<pre><code class="language-text">  swe init                    Create the layout and link all harnesses
+  swe init --full             List every path, not just the counts
+  swe init --check            Show what would change, write nothing (alias: -n)
+  swe init --force            Replace real files too (backed up first)
+  swe init --migrate          Move a pre-0.2.7 ~/.config/swe into ~/.quiver
+  swe init --yes              Register every new harness without asking
+                               (also the non-terminal default)
+  swe init --hub=&lt;git url&gt;     Clone your hub repo as ~/.quiver first, then link
+                               (only while ~/.quiver has no hub: no AGENTS.md, no .git)
+  swe init --accounts         Only sync the extra account homes the
+                               accounts.sync.* switches name (takes --check, --json)
+
+  Collision: -n means dry-run here and on swe install, but fetch-fresh-data on swe list.
+
+  A symlink is a shortcut file: each harness's folder points at the one
+  real copy in ~/.quiver, so editing once updates it everywhere.
+
+New harnesses
+  Found via their skills folder. Ticked ones are registered and linked,
+  instructions included; unticked ones are archived in harness.json and
+  left alone. swe hs archives or stars them later.
+
+What it owns
+  ~/.quiver/AGENTS.md   one instruction file, linked in under each harness's
+                        own name (CLAUDE.md, QWEN.md, CRUSH.md, GEMINI.md)
+  ~/.quiver/skills/     one skill tree, linked in as every harness's skills/
+  ~/.quiver/hooks/      hook scripts, one folder per harness (hooks/claude/),
+                        each script linked into that harness's hooks dir;
+                        declaring the hook in its settings stays with you
+  ~/.quiver/.linkignore paths to leave alone, one gitignore-style pattern per
+                        line, e.g. .agents/skills or .config/*/AGENTS.md
+  ~/.quiver/backups/    anything replaced, timestamped
+
+States
+  linked    already points at the canonical file
+  create    nothing there yet, will symlink
+  relink    symlink pointing elsewhere, will repoint
+  conflict  a real file or directory, needs --force
+  skipped   harness not installed on this machine
+  ignored   listed in .linkignore or archived in harness.json,
+               never touched or counted
+</code></pre>
+<h3 id="swe-setup"><a class="anchor" href="#swe-setup"></a><code>swe setup</code></h3>
+<p><em>Sectioned setup wizard for Quiver</em></p>
+<pre><code class="language-text">  swe setup                    Run all six interactive setup stages
+  swe setup --quick            Only visit missing or actionable stages
+  swe setup harnesses          Discover and register coding CLIs
+  swe setup providers          Review provider credential coverage
+  swe setup mcp                Import MCP servers into mcp.json
+  swe setup skills             Unify safe roots under ~/.quiver/skills
+  swe setup report             Configure summarizer and writer models
+  swe setup check              Verify the resulting setup
+
+  Returning-user prompts show current values; Enter keeps them. Quiver creates a
+  timestamped backup before changing harness.json, mcp.json, or config.json.
+
+  swe setup --apply            Apply safe discovery changes without prompts
+  swe setup --json             Print the discovery preview as JSON
+  swe setup --non-interactive  Preview without prompts or writes
+  swe setup --hub=&lt;git url&gt;    Clone your hub repo as ~/.quiver first, then
+                               run any of the above (only while ~/.quiver has no hub yet)
+
+  While ~/.quiver has no hub yet (no AGENTS.md, no .git), the wizard first asks
+  for your hub repo's URL; a blank answer starts an empty hub.
+
+  Provider credentials remain external. Use swe providers info &lt;name&gt; for the
+  expected key file and environment variable; harness OAuth remains harness-owned.
+</code></pre>
+<h3 id="swe-config"><a class="anchor" href="#swe-config"></a><code>swe config</code></h3>
+<p><em>View or update Quiver configuration</em></p>
+<pre><code class="language-text">  swe config                     Print resolved configuration
+  swe config get &lt;key&gt;           Print one resolved dotted key
+  swe config set &lt;key&gt; &lt;value&gt;   Save a string, number, boolean, or JSON array
+  swe config unset &lt;key&gt;         Remove a user-set value
+  swe config edit                Open ~/.quiver/config/config.json in VISUAL or EDITOR
+  swe config check               Validate types, report setup, and secret safety
+  swe config setup report        Configure cheap summary and strong writer models
+
+Examples
+  swe config set report.session.harness claude
+  swe config get report.writer.model
+  swe config unset report.session.model
+
+Quiver never stores model credentials in this file. Claude and Codex continue
+to use their own login state and environment.
+</code></pre>
+<h3 id="swe-doctor"><a class="anchor" href="#swe-doctor"></a><code>swe doctor</code></h3>
+<p><em>Diagnose Node/PATH issues that hide global installs</em></p>
+<pre><code class="language-text">  swe doctor                   Report node/npm, global bin PATH, nvm, off-PATH tools
+  swe doctor --json            Findings as JSON: ok, plus check, severity, message, fix
+
+  Catches the common failure mode: npm install -g under nvm while
+  interactive/non-interactive shells use Homebrew Node (tool missing from PATH).
+
+  Also runs read-only drift checks: places two parts of quiver were supposed
+  to agree and quietly did not — help text vs dispatch, registry shape,
+  hardcoded fallback tables vs harness.json, dangling symlinks. A finding
+  looks like:
+    ! [registry] cursor: state 'disabled' is not one of ['active', 'archived', 'starred']
+
+Exit codes
+  0  healthy
+  1  off-PATH tools, global bin not on PATH, or an error-severity drift
+     finding. Warn-level drift (stale help, code-table mismatches, symlink
+     notices) is printed but does not fail the exit code.
+</code></pre>
+<h3 id="swe-install"><a class="anchor" href="#swe-install"></a><code>swe install</code></h3>
+<p><em>Show or run a harness's install command per package manager</em></p>
+<pre><code class="language-text">  swe install &lt;name&gt;                    List its install commands (runs nothing)
+  swe install &lt;name&gt; --via=&lt;method&gt;     Run one: brew, cask, npm, uv, nix or script
+  swe install &lt;name&gt; --package=&lt;pkg&gt;    Explicit npm package (works for unknown names)
+  swe install &lt;name&gt; --command=&lt;cmd&gt;    Override CLI binary name to register
+  swe install &lt;name&gt; --dry-run          Print the command, run nothing (alias: -n)
+  swe install [--json]                  Known installers as JSON (never runs)
+
+  Methods are the package managers a harness is published through; npm uses a
+  PATH-visible npm (prefers Homebrew over nvm) so the binary lands where
+  swe list / swe check can see it. A name with no known
+  installer is refused — swe never guesses package names.
+
+Examples
+  swe install gemini
+  swe install gemini --via=npm
+  swe install claude --via=cask --dry-run
+  swe install mastracode --package=mastracode
+  swe install --json
+</code></pre>
+<h2 id="registry"><a class="anchor" href="#registry"></a>Registry</h2>
+<h3 id="swe-list-ls"><a class="anchor" href="#swe-list-ls"></a><code>swe list (ls)</code></h3>
+<p><em>List all registered AI coding tools (short for swe harness list)</em></p>
+<pre><code class="language-text">  swe list                     List all tools (starred first, then 100d usage)
+  Short for swe harness list; every harness verb lives under swe harness.
+  swe list &lt;tag&gt;               Filter by tag (e.g. swe list agentic)
+  swe list --usage             Add 100d sessions and remaining quota
+  swe list -u --exclude=a,b     Same, without polling usage for a and b
+  swe list --links             Add AGENTS.MD and SKILLS link status
+  swe list -n                  Fetch new session and rate-limit data
+  swe list edit                Choose which columns to show
+  swe list edit --reset        Restore the default columns
+  swe list legend             Explain the swe list column glyphs
+
+  Starring pins a tool to the top of swe list (★) and opts it into
+  rate-limit / quota fetching — the --usage column only polls starred
+  tools. It does not change what swe use, swe report, or swe session do.
+  Use swe hs star &lt;name&gt; to favourite, swe hs archive &lt;name&gt; to shelve.
+
+  Archiving hides a tool from swe list and records why; nothing gets
+  uninstalled. swe list --scope=all brings it back.
+
+Flags
+  --usage / -u            Show usage. This is the only part of swe list
+                          that touches the network, so it is opt-in: the plain
+                          listing runs in ~70ms, --usage costs ~700ms on a cold
+                          cache. Implied by --refresh.
+  --links / -L            Show quiver link status instead of usage.
+  --refresh / -r / -n   Bypass caches and fetch new data.
+  --refresh-failed            Refetch only providers whose cached reading
+                          failed (timeout, sign-in needed, a window unread);
+                          healthy cached readings still serve.
+  --cache-ttl=&lt;seconds&gt;       How fresh a cached reading must be to serve,
+                          overriding the 5-minute default for this run.
+  --scope=active|archived|all  Which harnesses show. Default active (archived
+                          hidden); archived shows only shelved tools; all shows both.
+  Collision: swe find also has a --scope, but it means something else there
+  (where a file lives, not archived-visibility). In swe find, archived-
+  visibility is --harness=all instead.
+
+Link states
+  ✓  linked to ~/.quiver      ○  nothing there yet, or safe to absorb
+  ↻  symlink points elsewhere  ✗  real file in the way, needs --force
+  ○  holds files that exist nowhere else, left alone on purpose
+  ·  no known convention, or harness not installed
+
+  swe list legend prints this with each state named.
+  Run swe init to link everything.
+</code></pre>
+<h3 id="swe-info"><a class="anchor" href="#swe-info"></a><code>swe info</code></h3>
+<p><em>Show full details for a tool</em></p>
+<pre><code class="language-text">  swe info &lt;name|alias&gt;        Show command, version, path, tags, aliases
+
+Examples
+  swe info claude
+  swe info cc
+</code></pre>
+<h3 id="swe-add"><a class="anchor" href="#swe-add"></a><code>swe add</code></h3>
+<p><em>Register a new tool in the registry</em></p>
+<pre><code class="language-text">  swe add &lt;name&gt; &lt;command&gt;             Add with defaults
+  swe add &lt;name&gt; &lt;command&gt; [desc]      Add with description
+  swe add &lt;name&gt; &lt;cmd&gt; --aliases=a,b   Set short aliases
+  swe add &lt;name&gt; &lt;cmd&gt; --tags=t1,t2    Set tags
+  swe add -i                           Interactive form (walk each field)
+  swe add &lt;name&gt; -i                    Interactive, pre-filled name
+  swe add &lt;name&gt; &lt;cmd&gt; --no-replace --json  For the app: refuse existing names
+
+  The registry is one file, ~/.quiver/config/harness.json, listing every
+  tool quiver knows. Adding a tool here does not install it — it tells
+  quiver the tool exists, so swe list/swe use/swe edit can find it.
+  If the tool already exists, it updates the entry.
+
+Examples
+  swe add aider aider &quot;AI pair programmer&quot; --aliases=ai --tags=agentic,coding
+  swe add mytool /usr/local/bin/mytool
+</code></pre>
+<h3 id="swe-edit"><a class="anchor" href="#swe-edit"></a><code>swe edit</code></h3>
+<p><em>Edit fields of a registered harness</em></p>
+<pre><code class="language-text">  swe edit &lt;name|alias&gt;                Interactive field editor
+  swe edit &lt;name&gt; --description=&quot;...&quot;  Set description
+  swe edit &lt;name&gt; --aliases=a,b        Replace aliases (comma-separated)
+  swe edit &lt;name&gt; --tags=t1,t2         Replace tags
+  swe edit &lt;name&gt; --command=&lt;cmd&gt;      Change launch command
+  swe edit &lt;name&gt; --display-name=&quot;...&quot; Set the human name (e.g. &quot;Qwen Code&quot;)
+  swe edit &lt;name&gt; --version=&lt;ver&gt;      Set version string
+  swe edit &lt;name&gt; --notes=&quot;...&quot;        Set notes
+  swe edit &lt;name&gt; --primary-color=#RRGGBB  Set the brand colour
+  swe edit &lt;name&gt; --set=field=value    Compact multi-set form
+  swe edit &lt;name&gt; --notes= --json      Apply the flags, print the result as JSON
+
+  Editable fields: command, display name, description, aliases, tags,
+  version, notes, primary color. The display name is how the app (and swe info)
+  names the harness; the registry name and command stay what they are.
+  --primary-color accepts #RRGGBB or RRGGBB and stores it uppercase; an
+  empty value drops the entry's own colour so the catalog default shows
+  again. --display_name and --set=display_name=... work too.
+  With no field flags, opens an interactive prompt loop (save / quit).
+  An empty value clears a field: --display-name=, --version=, --notes= and
+  --primary-color= become unset,
+  --description= becomes &quot;&quot;, --aliases= and --tags= become [].
+  Alias collisions with other tools are rejected.
+  With --json it never prompts: no field flag is an error, and every
+  refusal (unknown harness, alias collision, empty command, unknown flag)
+  prints a message on stderr, nothing on stdout, and exits 1. Success prints
+  {&quot;name&quot;, &quot;changes&quot;, &quot;harness&quot;}, where harness is the swe list --json row.
+
+Examples
+  swe edit mastracode
+  swe edit mastracode --description=&quot;Mastra Code — AI coding agent&quot; --aliases=mc
+  swe edit droid --set=tags=agentic,coding,autonomous
+</code></pre>
+<h3 id="swe-remove-rm"><a class="anchor" href="#swe-remove-rm"></a><code>swe remove (rm)</code></h3>
+<p><em>Remove a tool from the registry</em></p>
+<pre><code class="language-text">  swe remove &lt;name|alias&gt;      Remove by name or alias
+  swe rm &lt;name|alias&gt;          Same as remove
+
+  Does not uninstall the tool, only removes it from the registry.
+  See swe help add for what the registry is.
+</code></pre>
+<h3 id="swe-check"><a class="anchor" href="#swe-check"></a><code>swe check</code></h3>
+<p><em>Verify install status and refresh versions</em></p>
+<pre><code class="language-text">  swe check                    Probe each tool for live version
+
+  Tries version / --version / -v / -V flags.
+  Stores bare version numbers only (no tool-name prefix).
+  Also warns about off-PATH installs (e.g. nvm globals invisible to swe).
+  Updates registry if version changed.
+</code></pre>
+<h3 id="swe-harness-hs"><a class="anchor" href="#swe-harness-hs"></a><code>swe harness (hs)</code></h3>
+<p><em>Everything about the harnesses you have</em></p>
+<pre><code class="language-text">  swe harness list                  List them  (swe list is the shortcut)
+  swe harness edit                  Review every harness at once
+  swe harness star &lt;name&gt;           Toggle a favourite
+  swe harness archive &lt;name&gt; [why]  Shelve one you have ruled out
+  swe harness discover              Scan PATH and home dirs for AI tools (dry-run)
+  swe harness discover --apply      Add high-confidence matches to harness.json
+  swe harness discover --apply-all  Add every match, including low-confidence finds
+  swe harness discover --json       Machine-readable output
+  swe harness discover --all        Include already-registered and missing tools too
+  swe harness usage &lt;devin|cursor&gt; --account-dir=&lt;dir&gt;  An extra account's rate
+                                                   limit, from its own credentials (add --json)
+  swe harness usage-events cursor [--account-dir=&lt;d&gt;] [--since=&lt;s&gt;]
+                                                   Cursor's per-event feed (add --json); status
+                                                   &quot;incomplete&quot; means part of the window hit the
+                                                   page cap
+  swe harness usage-daily codex [--account-dir=&lt;d&gt;]  A Codex account's per-day
+                                                   usage via `codex app-server` (add --json);
+                                                   status is ok / auth-required / unsupported /
+                                                   unavailable
+
+Alias  swe discover is the same as swe harness discover
+</code></pre>
+<h3 id="swe-discover"><a class="anchor" href="#swe-discover"></a><code>swe discover</code></h3>
+<p><em>Scan PATH and home dirs for unregistered AI tools</em></p>
+<pre><code class="language-text">  swe discover [--apply]   Alias for swe harness discover
+
+  See swe help harness for flags (--apply, --apply-all, --json, --all).
+</code></pre>
+<h2 id="launch"><a class="anchor" href="#launch"></a>Launch</h2>
+<h3 id="swe-use-run"><a class="anchor" href="#swe-use-run"></a><code>swe use (run)</code></h3>
+<p><em>Launch a tool (replaces current process)</em></p>
+<pre><code class="language-text">  swe use &lt;name|alias&gt; [args]  Launch a registered tool
+  swe run &lt;name|alias&gt; [args]  Same as use
+
+  Extra args are passed through to the underlying command.
+  Uses os.execvp to replace the process cleanly.
+
+Examples
+  swe use cc
+  swe use codex --help
+  swe use gemini -p 'explain this codebase'
+</code></pre>
+<h2 id="analytics"><a class="anchor" href="#analytics"></a>Analytics</h2>
+<h3 id="swe-session"><a class="anchor" href="#swe-session"></a><code>swe session</code></h3>
+<p><em>Show recent AI sessions across all agents</em></p>
+<pre><code class="language-text">  swe session                  Show last 10 sessions
+  swe session &lt;N&gt;              Show last N sessions
+  swe session use &lt;N&gt;          Resume session #N
+  swe session -i               Pick with arrow keys; space reads a transcript, Enter resumes
+  swe session index            Index agent transcripts for --search
+  swe session index --on|--off Whether the remote hub keeps the index current
+  swe session index --status   What the index holds, without a pass
+
+Flags
+  --agent=&lt;name&gt;               Filter by agent (claude, codex, opencode, droid, ...)
+  --here                       Filter to current directory only
+  --search=&lt;text&gt;              Filter title/path/agent/session id, and transcript
+                                            content when a search index exists (the Quiver
+                                            app's, or swe session index) (alias: -q, --grep)
+  -d N, --days=&lt;N&gt;             Include today and the preceding N-1 calendar dates
+  -w N, --weeks=&lt;N&gt;            Include the latest N times 7 calendar dates
+  -s, --start=&lt;YYYY-MM-DD&gt;     Inclusive range start; use together with --end
+  -e, --end=&lt;YYYY-MM-DD&gt;       Inclusive range end; use together with --start
+  -i, --interactive            Pick with arrow keys; Enter resumes, space opens the transcript
+  --json                       Print the listing as one JSON document; not with use or -i
+
+Examples
+  swe session
+  swe session 20
+  swe session use 3
+  swe session -i
+  swe session --agent=claude
+  swe session --here
+  swe session -d 5
+  swe session -w 3
+  swe session -s 2026-07-01 -e 2026-07-30
+  swe session --search=login
+  swe session 30 -q quiver
+  swe session index --on
+</code></pre>
+<h3 id="swe-report"><a class="anchor" href="#swe-report"></a><code>swe report</code></h3>
+<p><em>Summarize coding sessions and manage follow-ups</em></p>
+<pre><code class="language-text">  swe report daily              Preview and generate a daily coding-session report
+  swe report weekly             Preview and generate a weekly coding-session report
+  swe report warnings &lt;manifest&gt; Print warnings recorded for one specific report
+  swe report followups                     List open follow-ups
+  swe report followups --status=open|done|dismissed  Filter by status (default open)
+  swe report followup done &lt;id&gt;  Mark a follow-up done manually
+  swe report followup work &lt;id&gt;  Resume its source or start a contextual session
+
+Before any model runs, Quiver displays session counts, exclusions, cache hits,
+planned calls, and estimated input tokens. Normal plans ask for y/N. Plans over
+configured limits require the exact phrase process all.
+When a report completes with warnings, Quiver prints the exact
+swe report warnings &lt;manifest.json&gt; command for that report.
+
+Source flags
+  -d N, --days=&lt;N&gt;              Override the report with N calendar dates
+  -w N, --weeks=&lt;N&gt;             Override the report with N times 7 calendar dates
+  -s, --start=&lt;YYYY-MM-DD&gt;      Inclusive custom start; requires --end
+  -e, --end=&lt;YYYY-MM-DD&gt;        Inclusive custom end; requires --start
+  --here                        Include only the current project
+  --agent=&lt;name&gt;                Include only one coding harness
+  --search=&lt;text&gt;               Match session title/path/agent/id (alias: -q)
+
+Reports run in two passes: a cheap model summarizes each session, then a
+stronger model writes the final report from those summaries. The flags below
+pick the harness/model for each pass; leave any of them out and Quiver falls
+back to report.session.* / report.writer.* in swe config.
+
+Runner override flags
+  --session-harness=&lt;name&gt;       Cheap summarizer harness: claude or codex
+  --session-model=&lt;model&gt;        Model used for project/session summaries
+  --session-arg=&lt;arg&gt;            Pass one extra summarizer argument; repeat as needed
+  --writer-harness=&lt;name&gt;        Harness used for the final report
+  --writer-model=&lt;model&gt;         Strong model used for the final report
+  --writer-arg=&lt;arg&gt;             Pass one extra writer argument; repeat as needed
+
+Follow-up actions
+  add &lt;text&gt; [--project=PATH]  Add an item; project defaults to the current directory
+  edit &lt;id&gt; &lt;text&gt;             Correct an item's text
+  done|dismiss|reopen &lt;id&gt;     Change status explicitly
+  work &lt;id&gt; --resume           Resume the newest referenced supported session
+  work &lt;id&gt; --new --harness=X  Start a new contextual session with harness X
+</code></pre>
+<h3 id="swe-models"><a class="anchor" href="#swe-models"></a><code>swe models</code></h3>
+<p><em>Show model usage across all tools</em></p>
+<pre><code class="language-text">  swe models                   Flat list, model name only, sorted by count
+  swe models -t                Group by tool
+  swe models -p                Show provider prefix (e.g. openai/gpt-5.4)
+  swe models -t -p             Both: grouped by tool with providers
+
+Flags
+  -t, --by-tool                Group results by tool instead of flat list
+  -p, --providers              Show provider/model instead of just model
+
+  Default aggregates across providers (gpt-5.4 = openai + codex combined).
+  Flags can be combined: swe models -t -p
+</code></pre>
+<h2 id="remote"><a class="anchor" href="#remote"></a>Remote</h2>
+<h3 id="swe-remote"><a class="anchor" href="#swe-remote"></a><code>swe remote</code></h3>
+<p><em>Watch and steer sessions from a phone</em></p>
+<pre><code class="language-text">  swe remote serve [--host=H] [--port=N]   Run the hub: session catalog,
+                                            transcript tailers, REST + SSE for
+                                            the phone app. Binds this machine's
+                                            Tailscale IP by default.
+  swe remote serve --public-url=URL      Run behind tailscale serve: binds
+                                            127.0.0.1, trusts serve's client
+                                            headers, and hands phones URL.
+  swe remote serve --install             Keep the hub running: a LaunchAgent
+                                            on macOS, a systemd user unit on
+                                            Linux. Starts at login or boot,
+                                            restarts if it exits. --uninstall
+                                            stops and removes it.
+  swe remote setup [--apply]             Check every step to a paired phone:
+                                            Tailscale, MagicDNS, HTTPS, the
+                                            certificate, the hub, tailscale
+                                            serve. --apply does Quiver's part.
+  swe remote pair [--name=N]             Mint a one-time pairing token;
+                                            prints the URL to open on the phone
+                                            (and a QR when qrencode is installed).
+  swe remote status [--host=H]           Probe the hub, list machines
+                                            and paired devices.
+  swe remote devices [--revoke=&lt;id&gt;]     List or revoke paired devices.
+                                            --requests lists pending
+                                            pair requests; --approve=&lt;code&gt;
+                                            and --deny=&lt;code&gt; decide one;
+                                            --request-id=&lt;id&gt; holds the
+                                            code to that one request.
+                                            --auto-approve=on|off lets
+                                            your own untagged tailnet
+                                            devices pair without a code
+                                            (off by default).
+  swe remote attach &lt;session&gt;            Take an observed session
+                                            under supervision. Default
+                                            --mode=auto picks the
+                                            harness's API channel (opencode
+                                            serve, codex app-server) when the
+                                            binary exists, else relaunches in
+                                            tmux with resume flags.
+                                            --mode=headless sends
+                                            each prompt via claude -p instead.
+                                            --model=&lt;m&gt; and
+                                            --effort=&lt;e&gt; pick the
+                                            launch tuning the channel can
+                                            honour (tmux/headless/serve/
+                                            appserver take model).
+  swe remote agent --hub=URL [--token=T]   Satellite: pushes this
+                                            machine's catalog + transcript
+                                            events to the hub and runs the
+                                            commands it queues. Pair once with
+                                            a token, then keep it running —
+                                            outbound only, nothing listens.
+
+  The phone only ever talks to the hub, over Tailscale. Sessions list as
+  observed (a human terminal owns them: read-only) until they run
+  under quiver's supervisor, which marks them attached and writable.
+
+  swe remote notify --ntfy=&lt;url&gt; --topic=&lt;t&gt;  Push notifications via a
+                                            self-hosted ntfy: needs-you, finished,
+                                            error. Approval prompts get lock-screen
+                                            Allow/Deny buttons posting back over
+                                            the tailnet. --off disables.
+
+  swe remote ssh [--on|--off]            The phone's SSH console, for when
+                                            the hub itself is down. It dials
+                                            this machine's sshd over the
+                                            tailnet, not the hub. --on
+                                            writes each paired phone's key into
+                                            ~/.ssh/authorized_keys (one tagged
+                                            line per device; revoking a device
+                                            removes it), --off removes them.
+
+  State lives under ~/.quiver/data/remote/: device credentials in
+  devices.json (0600), per-session event journals and transcript cursors.
+</code></pre>
+<h2 id="reference"><a class="anchor" href="#reference"></a>Reference</h2>
+<h3 id="swe-find"><a class="anchor" href="#swe-find"></a><code>swe find</code></h3>
+<p><em>Show where shared assets live and what links to them</em></p>
+<pre><code class="language-text">  Run this when a skill, plugin, or MCP server is not showing up somewhere
+  and you want to know why.
+
+  swe find                   Counts for every view below
+  swe find amd               AGENTS.md and every harness pointing at it
+  swe find skills            Skills, plugins, and every harness skill root
+  swe find plugins           Plugins across every plugin-capable harness, and
+                             where ~/.quiver/plugins drifted from claude and codex
+  swe find mcps              MCP servers in the hub, and which harnesses have them
+  swe find skills --full     List every path, not just the counts
+  swe find plugins -i        Browse them: arrows to move and descend, q to quit
+  swe find amd --scope=all   Include project and vendored files
+  swe find --harness=all     Include archived harnesses too
+
+Scope  --scope=global|local|all, default global
+  global   loaded into every harness session (for plugins: installed
+           and enabled; a cached copy with no install record is not)
+  local    project files only
+  all      both, plus vendored plugin and extension copies
+
+  Collision: swe list also has a --scope, but it means something else there
+  (active/archived/all harness visibility, not where a file lives).
+
+Harness activity  --harness=active|all, default active, every view
+  active   hides rows whose harness is archived in harness.json
+           (starred still counts as active — it is only pinned, not shelved)
+  all      shows archived harnesses' rows too
+
+  A row hidden this way is never silent about it: the listing ends with
+  N archived harnesses hidden; --harness=all to show. A row that cannot
+  be mapped to a harness in harness.json — the shared quiver copy, an
+  unregistered config — is never filtered, active or not: unknown is the
+  one thing swe find exists to keep visible.
+
+  Which harnesses get walked, and where each one's files live, comes from
+  harness.json's own capabilities first — the per-harness field in
+  harness.json recording what a tool supports (skills? plugins?) and where —
+  and only falls back to a hardcoded guess for a harness the registry has
+  never heard of.
+
+States
+  synced         symlinked to the shared copy
+  unsynced       a real directory that could be absorbed
+  own copy       a real (non-symlink) file, not pointing at the shared one
+  separate       holds content that exists nowhere else, left alone
+  wrong target   symlink pointing somewhere unexpected
+  in the way     a real file where a link should be
+  not installed  harness absent from this machine
+
+  Same ideas swe list and swe init print under different names:
+  linked=synced, create=missing, relink=wrong target, conflict=in the way.
+
+  Read-only. swe init is what changes anything.
+</code></pre>
+<h3 id="swe-plugins"><a class="anchor" href="#swe-plugins"></a><code>swe plugins</code></h3>
+<p><em>Every plugin in every marketplace, and install it per harness</em></p>
+<pre><code class="language-text">  swe plugins                       Every marketplace claude, codex or cursor has registered
+  swe plugins catalog &lt;marketplace&gt;   One marketplace's plugins and their state per harness
+  swe plugins catalog --json          The whole catalog as JSON (the app's Plugins page)
+  swe plugins install &lt;ref&gt; --harness=claude|codex
+  swe plugins uninstall &lt;ref&gt; --harness=claude|codex
+  swe plugins enable &lt;ref&gt; --harness=claude|codex
+  swe plugins disable &lt;ref&gt; --harness=claude|codex
+  swe plugins marketplace add &lt;source&gt; --harness=claude,codex
+
+  A ref is &lt;plugin&gt;@&lt;marketplace&gt;, the name both CLIs use. The catalog
+  lists installed and uninstalled plugins alike, plus anything installed
+  whose marketplace has no readable manifest. It reads files only, never
+  the network: a marketplace shows what its last fetch left on disk.
+
+Actions  Each one checks first and does nothing if the plugin is
+  already in that state, then runs the harness's own CLI:
+  claude   claude plugin install|uninstall|enable|disable &lt;ref&gt;
+  codex    codex plugin add|remove &lt;ref&gt;
+  Codex has no enable verb, so enable and disable set
+  [plugins.&quot;&lt;ref&gt;&quot;] enabled in ~/.codex/config.toml, an edit swe checks
+  parses back to the same file with only that flag changed. When it cannot
+  prove that, it writes nothing and says what to edit by hand.
+  Cursor is read-only: it keeps no install record swe can read.
+
+  Collision: swe find also has a --harness, but it means active|all there.
+  swe find plugins shows drift between ~/.quiver/plugins and each harness.
+</code></pre>
+<h3 id="swe-hooks"><a class="anchor" href="#swe-hooks"></a><code>swe hooks</code></h3>
+<p><em>Manage the hook scripts under ~/.quiver/hooks</em></p>
+<pre><code class="language-text">  swe hooks                       Every hook, its tier, link state, declaration
+  swe hooks list [--harness=&lt;h&gt;]  One harness only
+  swe hooks info &lt;name&gt;           One script: path, docstring, state, events
+  swe hooks edit &lt;name&gt;           Open the hub file in VISUAL or EDITOR (default vi)
+  swe hooks new &lt;harness&gt; &lt;name&gt;  Write a Python skeleton + the stanza to paste
+  swe hooks new shared &lt;name&gt;     Same, but the shared normalized contract
+  swe hooks check                 Declared-but-missing, linked-but-undeclared,
+                                    or a hub script never linked in
+  swe hooks sync                  Regenerate shared wrappers, re-apply links
+  swe hooks disable &lt;name&gt;        Unlink a hook without deleting it
+  swe hooks enable &lt;name&gt;         Re-link a disabled hook
+  swe hooks delete &lt;name&gt;         Remove the hub file (--foreign: the real file;
+                                    --yes skips the confirmation)
+
+Tiers
+  shared    ~/.quiver/hooks/shared/&lt;name&gt;.py — one script deployed
+           into every installed shim-able harness through a generated
+           wrapper (hooks/&lt;h&gt;/_generated/). Its # events: [PreToolUse, ...]
+           header says which normalized events it wants.
+  harness   the per-harness scripts swe links into each hooks root
+  foreign  a script or declared command no ~/.quiver source claims —
+           another installer owns it; swe lists it, never writes it
+
+  Scripts live one folder per harness under ~/.quiver/hooks/, and
+  swe init links each into that harness's hooks dir (~/.claude/hooks,
+  ~/.factory/hooks, or capabilities.hooks.root in harness.json).
+  The contract registry (events, schema, settings file, quirks like
+  cursor's must-print-JSON and codex's trusted command hashes) lives in
+  hooks/contracts.py; harness.json capabilities.hooks entries override it.
+
+  Declaring a hook — the event, matcher and timeout in settings.json or
+  hooks.json — stays with you: swe reads those files for the DECLARED
+  column and swe hooks check, but never writes them, and
+  delete never removes a stanza.
+
+States
+  linked    already points at the hub copy
+  create    nothing at the destination yet (swe init links it)
+  relink    symlink points elsewhere
+  conflict  a real file is in the way, needs swe init --force
+  skipped   no hooks root, or harness not installed
+  ignored   .linkignore, archived in harness.json, or disabled
+  foreign   not managed by swe — list-only
+</code></pre>
+<h3 id="swe-skills-sk"><a class="anchor" href="#swe-skills-sk"></a><code>swe skills (sk)</code></h3>
+<p><em>List agent skills and their file paths</em></p>
+<pre><code class="language-text">  swe skills                   List every SKILL.md across all skill roots
+  swe skills list              Same as above
+  swe skills &lt;filter&gt;          Filter by name or scope substring
+  swe skills -d                Also show each skill's description
+  swe skills tree              Symlink layout — now the same view as swe find skills
+  swe skills scope list forwards to the same place; --sync is accepted but ignored.
+  swe skills link &lt;harness&gt; [target]   Symlink a harness root to shared/other
+  swe skills unlink &lt;harness&gt; [--mkdir] Break a harness symlink
+  swe skills move &lt;name&gt; --from=A --to=B Move a skill folder between roots
+  swe skills hub               Plugins in ~/.quiver/plugins and where they are installed
+  swe skills discover [--apply] Scan Desktop/Documents for skill catalogs
+  swe skills catalog add [path] [label] Register a skills directory (default: .)
+  swe skills catalog .                Add the current directory as a catalog
+
+Flags
+  -d, --desc                   Show skill descriptions
+
+Scopes scanned
+  shared          ~/.quiver/skills (the tree every harness skills/ symlinks to)
+  cursor-builtin  ~/.cursor/skills-cursor
+  cursor-plugin   ~/.cursor/plugins/cache
+  claude-plugin   ~/.claude/plugins/cache
+  project         ./.cursor/skills (current directory)
+  &lt;catalog&gt;       Paths from ~/.quiver/config/skill_catalogs.json
+
+  Discover finds folders named skills under ~/Desktop and ~/Documents,
+  then swe skills discover --apply or swe skills catalog add registers them.
+
+Help  swe skills help &lt;topic&gt; — catalog, discover, tree, link, unlink, move, scope
+</code></pre>
+<h3 id="swe-tags"><a class="anchor" href="#swe-tags"></a><code>swe tags</code></h3>
+<p><em>Show all tags and which tools use them</em></p>
+<pre><code class="language-text">  swe tags                     List tags with associated tools
+</code></pre>
+<h3 id="swe-aliases"><a class="anchor" href="#swe-aliases"></a><code>swe aliases</code></h3>
+<p><em>Show all short aliases for tools</em></p>
+<pre><code class="language-text">  aliases                      List alias → tool mappings
+</code></pre>
+<h3 id="swe-providers-pv"><a class="anchor" href="#swe-providers-pv"></a><code>swe providers (pv)</code></h3>
+<p><em>Manage AI provider API keys and metadata</em></p>
+<pre><code class="language-text">  swe providers list [-d] [--api-keys-dir=DIR] [&lt;filter&gt;]
+      List registered providers + masked key status (`-` = no key)
+  swe providers info &lt;name|alias&gt;
+      Show details for one provider, including key status + path
+  swe providers add &lt;name&gt; [--url=URL] [--env=ENV] [--file=NAME]
+      Register a provider in ~/.quiver/config/providers.json
+  swe providers remove &lt;name&gt;
+      Unregister a provider (does not delete your key file)
+
+  Keys live in ~/.quiver/secrets/providers/.api_keys (override
+  with --api-keys-dir=DIR). quiver stores metadata only — never the
+  raw key. Run swe providers --help for full key-storage and masking details.
+</code></pre>
+<h2 id="mcp"><a class="anchor" href="#mcp"></a>MCP</h2>
+<h3 id="swe-mcp"><a class="anchor" href="#swe-mcp"></a><code>swe mcp</code></h3>
+<p><em>Manage MCP servers across AI tools</em></p>
+<pre><code class="language-text">  swe mcp discover [--apply]          Find MCP servers across tool configs
+  swe mcp list [tool]                 Matrix view of MCP servers across tools
+  swe mcp status [tool]               List with health checks
+  swe mcp sync &lt;source&gt; &lt;target...&gt;   Copy servers source → target(s) (--force, --skip-conflicts)
+  swe mcp diff &lt;t1&gt; &lt;t2&gt;              Compare two tools' configs
+  swe mcp edit &lt;tool&gt; &lt;name&gt;          Edit one server's config in one tool
+  swe mcp validate [tool...]          Validate MCP config shape for one/all tools
+  swe mcp doctor                      Deep diagnostics
+  swe mcp gateway [share|install]     Run shared servers once for every session
+
+Help  swe mcp &lt;command&gt; help for details on each — flags, examples, the exact
+        model each command uses.
+Source of truth  ~/.quiver/mcp.json
+</code></pre>
+<h2 id="github"><a class="anchor" href="#github"></a>GitHub</h2>
+<h3 id="swe-gh"><a class="anchor" href="#swe-gh"></a><code>swe gh</code></h3>
+<p><em>GitHub surfaces: PRs, issues, actions, inbox, pinned repos</em></p>
+<pre><code class="language-text">  swe gh                          gh status + pinned repos
+  swe gh sync                     Snapshot your repos + orgs into the
+                                            local catalog (resync-only updates)
+  swe gh repo list|add|remove|reorder|search   The repos the dashboard watches
+                                            (search reads the catalog, then live;
+                                            --all is public)
+  swe gh board [--repo=R]            Every surface of a repo in one call
+  swe gh pr [--repo=R] [--state=S]     Pull requests (default: open)
+  swe gh pr status                Current branch, authored, needs-review
+  swe gh pr view &lt;N&gt;              One PR: checks, reviews, merge state
+  swe gh pr merge &lt;N&gt; [--method=M] [--auto]
+                                            Merge a PR (default: squash)
+  swe gh pr worktree &lt;N&gt;           Checkout the PR head under
+                                            ~/.quiver/worktrees (a session's
+                                            launch point)
+  swe gh issue [--repo=R]          Issues
+  swe gh issue view &lt;N&gt;           One issue: body, comments, and the
+                                            prompt an agent resolving it gets
+  swe gh issue comment &lt;N&gt; --body=TEXT
+                                            Comment on an issue as you
+  swe gh issue worktree &lt;N&gt;       Branch quiver/issue-N off the default
+                                            branch, checked out under
+                                            ~/.quiver/worktrees
+  swe gh run [--repo=R]            Workflow runs (alias: actions)
+  swe gh run rerun &lt;id&gt; [--failed]  Re-run a workflow run
+  swe gh pages [--repo=R]          GitHub Pages site + latest build
+  swe gh releases|tags|branches    Auxiliary repo surfaces
+  swe gh inbox                    Your GitHub notifications
+  swe gh inbox read &lt;id&gt;...|--all   Mark notifications read
+
+  Repo resolution: --repo=owner/name wins, else the working
+  directory's git remote, else every pinned repo. So a bare
+  swe gh pr inside a checkout shows that repo; outside one it
+  shows all pinned repos in turn.
+
+  Flags
+  --repo=owner/name   Repo (a github.com URL works too;
+                          comma-separate several: --repo=a/b,c/d)
+  --state=open|closed|…  pr: open/closed/merged/all; issue: open/closed/all
+  --limit=N            Rows to fetch (default 30, cap 200)
+  --all                inbox: include read notifications
+  --web                Open the matching github.com page instead
+  --body=TEXT          issue comment: the comment, as one argument
+                          (it reaches gh on stdin, so any text is safe)
+  --body-file=PATH|-   issue comment: read the comment from a file,
+                          or stdin with -, so it never shows in ps
+  --json               {schema, data} envelope; data is
+                          {github: {status, login}, results: [...]} with one
+                          entry per repo: ok → rows, else a typed status
+                          (not-found, upstream-error) plus the error text
+
+  Auth is ambient: swe gh uses your gh auth login and never
+  stores tokens. The few writes (merge, rerun, inbox read, issue comment)
+  are explicit commands, never side effects of a read.
+</code></pre>
+<h2 id="shell"><a class="anchor" href="#shell"></a>Shell</h2>
+<h3 id="swe-autocomplete"><a class="anchor" href="#swe-autocomplete"></a><code>swe autocomplete</code></h3>
+<p><em>Generate and inject shell completion script</em></p>
+<pre><code class="language-text">  swe autocomplete zsh    Generate + inject zsh completion
+  swe autocomplete bash   Generate + inject bash completion
+  swe autocomplete fish   Generate + inject fish completion
+
+  Writes a completion script to ~/.quiver/completions/ and adds a
+  source line to your shell profile (~/.zshrc, ~/.bashrc, or fish config).
+
+  After running, restart your terminal or run:
+    source ~/.zshrc  (or the equivalent for your shell)
+
+  The completion script calls swe __complete under the hood to
+  provide dynamic completions for tool names, aliases, tags, and flags.
+</code></pre>
+<h3 id="swe-version"><a class="anchor" href="#swe-version"></a><code>swe version</code></h3>
+<p><em>Print the swe version</em></p>
+<pre><code class="language-text">  swe version    swe -v    swe --version
+
+  Prints the installed version and exits. Reads no config, so it works even
+  when ~/.quiver is broken. --json emits the standard envelope:
+  name, version and the Python version under `data`.
+</code></pre>
+<h3 id="swe-bug"><a class="anchor" href="#swe-bug"></a><code>swe bug</code></h3>
+<p><em>Report a bug on GitHub, versions filled in</em></p>
+<pre><code class="language-text">  swe bug              Open the bug form in your browser with the
+                       swe, Python and OS versions filled in
+  swe bug --feature    Open the feature-request form instead
+  swe bug --print      Print the link instead of opening it
+
+  Nothing is sent until you submit the form on GitHub. Paste
+  swe doctor output into it when doctor reports a problem.
+  --json prints kind, url, version and os under `data` and opens
+  nothing. The Mac app's Help › Report a Bug opens the same form.
+</code></pre>
+
+</main>
+<footer>
+  <span>quiver is MIT licensed.</span>
+  <div class="right">
+    <a href="../overview/">Docs</a>
+    <a href="../changelog/">Changelog</a>
+    <a href="../contributing/">Contributing</a>
+    <a href="https://github.com/c-wenlong/quiver">GitHub</a>
+  </div>
+</footer>
+</body>
+</html>
