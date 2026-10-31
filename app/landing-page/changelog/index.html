@@ -976,6 +976,12 @@ raw editor. <code>swe hooks list --json</code> rows now carry <code>summary</cod
 </ul>
 <h3 id="fixed"><a class="anchor" href="#fixed"></a>Fixed</h3>
 <ul>
+<li><p><strong>Hub: old <code>/app/</code> links keep their query string.</strong> The redirects from
+<code>/app/…</code> and <code>/index.html</code> to the web app at <code>/</code> now carry the query
+onto <code>Location</code> (the browser already kept <code>#pair=</code> and <code>#approve</code>
+fragments), and a test pins that no <code>/v1/</code> route falls through to the
+app's page (<a href="https://github.com/c-wenlong/quiver/issues/943">#943</a>).</p>
+</li>
 <li><p><strong>Remote: attached files reach harnesses that don't read <code>@</code> refs.</strong>
 Every channel used to put a phone attachment into the prompt as
 <code>@/abs/path</code>, which only some harnesses expand. Claude Code, Gemini
