@@ -1567,7 +1567,9 @@ class _Handler(BaseHTTPRequestHandler):
             owner = self._state.owner()
         except Exception:
             return False
-        if pairing.owner_auto_approve_refusal(peer, owner, enabled):
+        if pairing.owner_auto_approve_refusal(
+            peer, owner, enabled, self._state.own_node_id
+        ):
             return False
         ct = self.headers.get("Content-Type") or ""
         if not ct.startswith("application/json") or self._bad_origin():

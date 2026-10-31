@@ -19,6 +19,8 @@ from quiver.remote import commands, pairing
 from tests.test_remote_hub import _Server
 
 _OWNER = "dev@github"
+# The hub machine's own tailnet node.
+_HUB_NODE = "nHUB"
 _PHONE = {
     "node_name": "iphone.tail0000.ts.net",
     "node_short": "iphone",
@@ -32,9 +34,9 @@ _PHONE = {
 class TestRefusal(unittest.TestCase):
     """``owner_auto_approve_refusal``: one test per reason to refuse."""
 
-    def refusal(self, peer=None, owner=_OWNER, enabled=True):
+    def refusal(self, peer=None, owner=_OWNER, enabled=True, own=_HUB_NODE):
         return pairing.owner_auto_approve_refusal(
-            dict(_PHONE) if peer is None else peer, owner, enabled)
+            dict(_PHONE) if peer is None else peer, owner, enabled, own)
 
     def test_allows_the_owners_untagged_node(self):
         self.assertIsNone(self.refusal())
@@ -74,6 +76,15 @@ class TestRefusal(unittest.TestCase):
 
     def test_no_node_id(self):
         self.assertEqual(self.refusal({**_PHONE, "node_id": ""}), "no_node")
+
+    def test_unknown_hub_node(self):
+        self.assertEqual(self.refusal(own=""), "no_own_node")
+        self.assertEqual(self.refusal(own=None), "no_own_node")
+
+    def test_the_hub_machines_own_node(self):
+        """Any local user's process reaches the hub as the hub's node."""
+        self.assertEqual(
+            self.refusal({**_PHONE, "node_id": _HUB_NODE}), "own_node")
 
 
 class TestSetting(unittest.TestCase):
@@ -189,6 +200,7 @@ class TestHubRoute(unittest.TestCase):
         self.peer = dict(_PHONE)
         self.srv.state.whois = lambda ip: dict(self.peer)
         self.srv.state.owner_login = _OWNER
+        self.srv.state.own_node_id = _HUB_NODE
         pairing.set_auto_approve_owner(self.srv.home, True)
         self.err = io.StringIO()
         quiet = redirect_stderr(self.err)
@@ -239,6 +251,14 @@ class TestHubRoute(unittest.TestCase):
 
     def test_tagged_node(self):
         self.peer = {**_PHONE, "tagged": True}
+        self.assert_pending(self.request())
+
+    def test_a_request_from_the_hub_machine_itself(self):
+        self.peer = {**_PHONE, "node_id": _HUB_NODE}
+        self.assert_pending(self.request())
+
+    def test_unknown_hub_node(self):
+        self.srv.state.own_node_id = ""
         self.assert_pending(self.request())
 
     def test_other_login(self):

@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data/remote/pairing.json`, and `--requests` shows it. When on, a pair
   request is approved without a code only if the hub knows its owner's
   Tailscale login, the requesting node is untagged with exactly that
-  login and a node id, the owner hasn't revoked that node (its sign-in
+  login and a node id other than the hub machine's own, the owner hasn't revoked that node (its sign-in
   or its newest paired device), and the request has a JSON body and no
   foreign `Origin`. Anything that can't be determined leaves it pending. The
   `201` answer then carries `auto_approved: true` and the phone's first
@@ -23,6 +23,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   automatic, writes one `pair:` line to the hub's log, and device rows
   record `approved_via` (`code` or `owner_auto`). Part of
   [#522](https://github.com/c-wenlong/quiver/issues/522).
+
+- **Remote hub: Notion databases as a task source.** A `notion` section
+  in `config.json` names an integration token by `${NAME}` reference,
+  the user whose rows to list (a user id or sign-in email) and each
+  database with its property mapping (`status` and `owner` required,
+  `title` and `url` optional). `GET /v1/tasks` then lists those rows as
+  `{source: "notion", kind: "page"}` tasks beside GitHub and Linear,
+  with `status` in the database's own words and a best-effort `state`
+  from a status group, select option or checkbox. A mapping that
+  doesn't fit the database answers `bad-config` naming the property,
+  while other databases and sources keep listing. The adapter pins
+  `Notion-Version: 2022-06-28`, paginates with a cap, waits out a 429's
+  `Retry-After`, and renders a page body to markdown for a resolve
+  prompt. Read-only. Part of
+
+- **Tasks on the Mac, the web and the iPhone show Notion like Linear.**
+  The three clients read the hub's new `notion` env block beside
+  `linear`: a configured Notion source that fails (`auth-required`,
+  `bad-config`, `upstream-error`) gets its own banner or card with the
+  hub's reason, and its stored rows read as last known; `disabled`
+  shows nothing. Notion pages list under their database in the rail,
+  their detail reads "Notion · <database>", and the link-out says
+  "Open in Notion". Link and unlink work as for Linear; starting an
+  agent stays GitHub-only. Part of
+  [#847](https://github.com/c-wenlong/quiver/issues/847).
 
 - **Remote iPhone app: photo and file attachments in the chat
   composer.** A paperclip left of the prompt box offers Photos and
@@ -752,6 +777,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `detail` for it.
 
 ### Fixed
+
+- **Remote: attached files reach harnesses that don't read `@` refs.**
+  Every channel used to put a phone attachment into the prompt as
+  `@/abs/path`, which only some harnesses expand. Claude Code, Gemini
+  CLI and Qwen Code still get `@path`; every other harness (Codex,
+  OpenCode, Cursor, Droid, Pi, ...) now gets the path in plain text,
+  `[Attached file: /abs/path] <message>`, and reads the file with its
+  own tools. Which harness gets which is harness.json
+  `capabilities.attachments.at_refs`, over a fallback table in
+  `remote/attachments.py`
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
 
 - **MCP gateway: no longer throttled by macOS.** The LaunchAgent was
   written with `ProcessType: Background`, as the remote hub's is, and

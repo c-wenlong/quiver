@@ -22,6 +22,8 @@ final class TasksModel {
     /// Linear's blocking state with its reason (`auth-required`,
     /// `bad-config`, `upstream-error`), nil when ok, disabled or absent.
     private(set) var linearBlocked: String?
+    /// Notion's, the same way.
+    private(set) var notionBlocked: String?
     private(set) var fetchedAt: Double?
     private(set) var error: String?
     private(set) var loaded = false
@@ -36,20 +38,7 @@ final class TasksModel {
         do {
             let body = try await client.tasks(refresh: refresh)
             guard gen == generation else { return }
-            tasks = body.tasks
-            failedRepos = body.repos ?? []
-            machine = body.machine
-            machineId = body.machineId
-            envBlocked = body.envBlocked
-            githubFailed = body.github?.status == "upstream-error"
-                ? (body.github?.error ?? "gh failed on the hub") : nil
-            fetchedAt = body.fetchedAt
-            error = nil
-            let status = body.linear?.status
-            linearBlocked = switch status {
-            case nil, "ok", "disabled": nil
-            default: body.linear?.error ?? status ?? "Linear is unreachable"
-            }
+            apply(body)
         } catch is CancellationError {
             // The page went away mid-fetch: nothing failed.
             return
@@ -70,6 +59,22 @@ final class TasksModel {
                                   hasRows: !tasks.isEmpty || !failedRepos.isEmpty)
     }
 
+    /// Takes one reply: its rows and each source's env block, so a
+    /// source that recovered stops marking its rows last-known.
+    func apply(_ body: TasksResponse) {
+        tasks = body.tasks
+        failedRepos = body.repos ?? []
+        machine = body.machine
+        machineId = body.machineId
+        envBlocked = body.envBlocked
+        githubFailed = body.github?.status == "upstream-error"
+            ? (body.github?.error ?? "gh failed on the hub") : nil
+        fetchedAt = body.fetchedAt
+        error = nil
+        linearBlocked = Self.blocked(body.linear, source: "Linear")
+        notionBlocked = Self.blocked(body.notion, source: "Notion")
+    }
+
     /// The detail page's row, live as the list refreshes under it.
     func task(_ id: String) -> TaskRow? { tasks.first { $0.id == id } }
 
@@ -81,7 +86,19 @@ final class TasksModel {
             envBlocked != nil || githubFailed != nil
                 || (task.repo.map { repo in failedRepos.contains { $0.name == repo } } ?? false)
         case "linear": linearBlocked != nil
+        case "notion": notionBlocked != nil
         default: false
+        }
+    }
+
+    /// A keyed source's blocking reason from its env block: nil when the
+    /// block is absent (an older hub), `ok` or `disabled` (off, not
+    /// broken); otherwise the hub's `error`, else the status word.
+    nonisolated static func blocked(_ env: GhEnv?, source: String) -> String? {
+        let status = env?.status
+        return switch status {
+        case nil, "ok", "disabled": nil
+        default: env?.error ?? status ?? "\(source) is unreachable"
         }
     }
 }
@@ -197,8 +214,20 @@ extension TaskRow {
             return "GitHub \(what)\(repo.map { " · \($0)" } ?? "")"
         case "linear":
             return "Linear\(project.map { " · \($0)" } ?? "")"
+        case "notion":
+            return "Notion\(project.map { " · \($0)" } ?? "")"
         default:
             return [source, kind].compactMap { $0 }.joined(separator: " ").capitalized
+        }
+    }
+
+    /// The link-out button's words: "Open on GitHub", "Open in Linear",
+    /// "Open in Notion".
+    var openLabel: String {
+        switch source {
+        case "linear": "Open in Linear"
+        case "notion": "Open in Notion"
+        default: "Open on GitHub"
         }
     }
 

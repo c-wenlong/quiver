@@ -47,7 +47,7 @@ import urllib.request
 from pathlib import Path
 from typing import NamedTuple
 
-from quiver.remote import supervise
+from quiver.remote import attachments, supervise
 from quiver.reports import transcripts as _tr
 from quiver.sessions.models import Session
 from quiver.sessions.resume import account_env
@@ -80,6 +80,18 @@ def control_text(op: str, value: str) -> str:
     return template.format(value=value).rstrip()
 
 
+def _prompt(session: Session, cmd: dict, harness: str = "") -> str:
+    """The message text with its attachments referenced the way the
+    harness takes them (``@path`` or a bracketed path). A channel tied
+    to one harness names it; a tmux pane runs whatever the session's
+    harness is."""
+    return attachments.prompt_text(
+        str(cmd.get("text") or ""),
+        [str(p) for p in cmd.get("attachments") or []],
+        harness or getattr(session, "tool_name", "") or "",
+    )
+
+
 class InjectResult(NamedTuple):
     ok: bool
     note: str = ""
@@ -109,9 +121,7 @@ class TmuxInjector:
             return InjectResult(
                 False, "session is mid-turn; steer to write anyway"
             )
-        text = str(cmd.get("text") or "")
-        for path in cmd.get("attachments") or []:
-            text = f"@{path} {text}"
+        text = _prompt(session, cmd)
         if not text.strip():
             return InjectResult(False, "empty message")
         # A detach could land between the route's ownership check and
@@ -297,9 +307,7 @@ class ClaudeHeadlessInjector:
             self._procs.pop(self.key, None)
 
     def send(self, session: Session, cmd: dict, status: str) -> InjectResult:
-        text = str(cmd.get("text") or "")
-        for path in cmd.get("attachments") or []:
-            text = f"@{path} {text}"
+        text = _prompt(session, cmd, "claude")
         if not text.strip():
             return InjectResult(False, "empty message")
         # steer degrades to queue: a print-mode run is atomic.
@@ -622,9 +630,7 @@ class OpencodeServeInjector:
     # -- injector interface ----------------------------------------------
 
     def send(self, session: Session, cmd: dict, status: str) -> InjectResult:
-        text = str(cmd.get("text") or "")
-        for path in cmd.get("attachments") or []:
-            text = f"@{path} {text}"
+        text = _prompt(session, cmd, "opencode")
         if not text.strip():
             return InjectResult(False, "empty message")
         meta = supervise.meta_for(self.home, self.key)
@@ -945,9 +951,7 @@ class CodexAppServerInjector:
     # -- injector interface ----------------------------------------------
 
     def send(self, session: Session, cmd: dict, status: str) -> InjectResult:
-        text = str(cmd.get("text") or "")
-        for path in cmd.get("attachments") or []:
-            text = f"@{path} {text}"
+        text = _prompt(session, cmd, "codex")
         if not text.strip():
             return InjectResult(False, "empty message")
         # queue waits for idle; steer writes mid-turn (the server queues

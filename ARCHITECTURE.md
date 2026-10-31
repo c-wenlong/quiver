@@ -20,6 +20,8 @@ This file is the overview; each topic below has a deeper document in `docs/`:
 | [docs/json-contracts.md](docs/json-contracts.md) | Every `swe --json` command the app calls, its shape, and the Swift type that decodes it |
 | [docs/testing.md](docs/testing.md) | Running both suites, the throwaway-HOME rule, fixture capture, coverage and floors |
 | [docs/COVERAGE.md](docs/COVERAGE.md) | The dated coverage audit and current risk areas |
+| [docs/remote-control.md](docs/remote-control.md) | The hub (`swe remote serve`), satellites, pairing, devices, every `/v1/*` route and the threat model |
+| [docs/web-app.md](docs/web-app.md) | The web app the hub serves at `/`: its pages, their `/v1/app/*` data and how to add one |
 
 ## The shape
 
@@ -220,12 +222,15 @@ Hardcoded tables predate the registry knowing about capabilities:
 `skills/layout.py`'s `HARNESS_ROOTS` (which harness's skills root lives
 where), `find/plugins.py`'s `PLUGIN_FALLBACK` (which harnesses support
 plugins, and where their install record lives), `init/hooks.py`'s
-`HOOK_FALLBACK` (where hook scripts go) and `remote/launch_model.py`'s
+`HOOK_FALLBACK` (where hook scripts go), `remote/launch_model.py`'s
 `MODEL_FALLBACK` (how a remote launch puts a picked model on the
-harness's command line). All are fallbacks, not sources of
+harness's command line) and `remote/attachments.py`'s `ATTACH_FALLBACK`
+(whether a harness's prompt expands `@/abs/path` for an attached file).
+All are fallbacks, not sources of
 truth. A harness entry's own `capabilities.skills.{supported,root}`,
-`capabilities.plugins.{...}`, `capabilities.hooks.{...}` or
+`capabilities.plugins.{...}`, `capabilities.hooks.{...}`,
 `capabilities.model.{supported,flag,subcommand,settings_flag,settings_key,provider}`
+or `capabilities.attachments.{supported,at_refs}`
 wins whenever the registry has one; the table only fires for a harness the
 registry has never heard of, or for a machine with no registry data at
 all.
@@ -450,24 +455,30 @@ credential-shaped parts of URLs and arguments are masked
 ## Command tree
 
 Two layers, on purpose. The top level is shortcuts for the harness verbs
-run most often; everything else lives under the domain command that owns
-it.
+run most often, plus a few one-shot commands that belong to no domain;
+everything else lives under the domain command that owns it.
 
 ```
-swe <verb>                          top level: shortcuts only
-  list · info · add · edit · remove · use · check · doctor · install
+swe <verb>                          top level: shortcuts and one-shot commands
+  init · list · info · add · edit · remove · use · check · doctor · install
   discover                          alias for `swe harness discover`
+  tags · aliases · models · autocomplete · bug · version · help
 
 swe <domain> <verb>                 domains: everything else
-  harness    star · archive · discover · list · edit
+  harness    star · archive · discover · list · edit · usage · usage-events · usage-daily
   mcp        discover · list · status · sync · diff · edit · validate · doctor
+             add · remove · secret · gateway
   find       amd · skills · plugins · mcps
-  plugins    catalog · install · uninstall · enable · disable
+  plugins    catalog · marketplace · install · uninstall · enable · disable
   providers  list · info · add · remove
-  report     daily · weekly · followups · warnings
-  skills     list · tree · link · unlink · move · discover · catalog · scope
-  session    use
+  report     daily · weekly · followups · followup · warnings
+  skills     list · tree · link · unlink · move · new · discover · hub · catalog · scope
+  session    use · index
+  setup      harnesses · providers · mcp · skills · report · check
   config     get · set · unset · edit · check · setup
+  hooks      list · info · new · edit · enable · disable · delete · check · sync
+  gh         pr · issue · run · inbox · repo · board · sync · pages · releases · tags · branches
+  remote     serve · agent · setup · pair · status · devices · attach · notify · ssh
 ```
 
 `swe harness star` and `swe harness archive` live under the harness domain

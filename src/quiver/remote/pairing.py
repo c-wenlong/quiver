@@ -933,11 +933,15 @@ def set_auto_approve_owner(home: Path | str | None, on: bool) -> bool:
 
 
 def owner_auto_approve_refusal(
-    peer: dict | None, owner_login: str, enabled: bool
+    peer: dict | None, owner_login: str, enabled: bool,
+    own_node_id: str = "",
 ) -> str | None:
     """Why a request from ``peer`` is NOT auto-approved, or None when it
-    is: the setting is on, the hub knows its owner, and the peer is an
-    untagged node of that same login with a node id."""
+    is: the setting is on, the hub knows its owner and its own node, and
+    the peer is an untagged node of that same login with a node id that
+    isn't the hub's own. A request from the hub's own node came from some
+    process on that machine, whichever local user runs it, so it proves
+    nothing about the owner."""
     if not enabled:
         return "off"
     if not isinstance(owner_login, str) or not owner_login:
@@ -953,8 +957,13 @@ def owner_auto_approve_refusal(
         return "no_login"
     if login != owner_login:
         return "other_login"
-    if not str(peer.get("node_id") or ""):
+    node = str(peer.get("node_id") or "")
+    if not node:
         return "no_node"
+    if not isinstance(own_node_id, str) or not own_node_id:
+        return "no_own_node"
+    if node == own_node_id:
+        return "own_node"
     return None
 
 
