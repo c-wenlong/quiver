@@ -154,6 +154,25 @@ class TestPruning(unittest.TestCase):
         self.assertEqual(readstate.cursors(self.home, self.d1),
                          {"k1": 5.0, "k2": 6.0})
 
+    def test_a_catalog_of_only_the_read_session_still_prunes(self):
+        readstate.mark_read(self.home, self.d1, "k1", 5.0, ["k1", "k2"])
+        readstate.mark_read(self.home, self.d1, "k2", 6.0, ["k2"])
+        self.assertEqual(readstate.cursors(self.home, self.d1),
+                         {"k2": 6.0})
+
+    def test_an_unreadable_store_is_not_erased(self):
+        readstate.mark_read(self.home, self.d1, "k1", 5.0, ["k1"])
+        path = readstate.reads_file(self.home)
+        before = path.read_text()
+        path.write_text("not json")
+        readstate.mark_read(self.home, self.d1, "k2", 6.0, ["k2"])
+        readstate._since(self.home, 1.0)
+        self.assertEqual(path.read_text(), "not json")
+        self.assertEqual(readstate.cursors(self.home, self.d1), {})
+        path.write_text(before)
+        self.assertEqual(readstate.cursors(self.home, self.d1),
+                         {"k1": 5.0})
+
     def test_revoked_and_unknown_devices_drop(self):
         readstate.mark_read(self.home, self.d1, "k", 5.0, ["k"])
         readstate.mark_read(self.home, "ghost", "k", 5.0, ["k"])

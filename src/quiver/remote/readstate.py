@@ -54,13 +54,20 @@ def num(value: object) -> float:
 
 
 def _load(home: Path | str | None) -> dict:
-    """``{"since": float | None, "devices": {did: {key: at}}}``."""
+    """``{"since": float | None, "devices": {did: {key: at}}}``.
+
+    ``ok`` is False when a file that is there could not be read or
+    parsed: the store is then treated as empty but never written over,
+    so a temporary failure cannot erase saved cursors.
+    """
     try:
         data = json.loads(reads_file(home).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"since": None, "devices": {}, "ok": True}
     except Exception:
-        data = None
+        return {"since": None, "devices": {}, "ok": False}
     if not isinstance(data, dict):
-        return {"since": None, "devices": {}}
+        return {"since": None, "devices": {}, "ok": False}
     devices = data.get("devices")
     out: dict[str, dict[str, float]] = {}
     if isinstance(devices, dict):
@@ -71,10 +78,12 @@ def _load(home: Path | str | None) -> dict:
                 }
     since = data.get("since")
     return {"since": num(since) if since is not None else None,
-            "devices": out}
+            "devices": out, "ok": True}
 
 
 def _save(home: Path | str | None, state: dict) -> None:
+    if state.get("ok") is False:
+        return  # a file that failed to read is left for a retry
     atomic_write_text(
         reads_file(home),
         json.dumps({"since": state["since"], "devices": state["devices"]},
@@ -183,6 +192,7 @@ def mark_read(
     yet must not forget everything). Returns the stored cursor.
     """
     live = set(live_keys)
+    cataloged = bool(live)
     live.add(key)
     with _lock:
         state = _load(home)
@@ -201,7 +211,7 @@ def mark_read(
                     continue
             elif paired is not None and did not in paired:
                 continue
-            if len(live) > 1:
+            if cataloged:
                 cur = {k: v for k, v in cur.items() if k in live}
             if len(cur) > MAX_PER_DEVICE:
                 cur = dict(sorted(cur.items(), key=lambda kv: kv[1],
