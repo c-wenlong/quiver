@@ -745,7 +745,9 @@ private struct SessionRail: View {
                 .keyboardShortcut("r", modifiers: .command)
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                // Lazy, like the list beside it: the rail can hold every
+                // session the listing returned.
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                         Text(group.day, format: .dateTime.month(.abbreviated).day().year())
                             .font(Theme.caption).foregroundStyle(Theme.textMuted)

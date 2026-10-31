@@ -1,5 +1,6 @@
 import AppKit
 import QuiverCore
+import SystemConfiguration
 import SwiftUI
 
 /// The caption column a server sheet aligns its labelled rows on.
@@ -930,6 +931,9 @@ private struct RepoFolderRow: View {
 
 /// The Local group's title: the machine whose harnesses launch a command
 /// server. The Mac app manages this Mac's harnesses.
-var mcpLocalTitle: String {
-    "Local: runs on \(Host.current().localizedName ?? "this Mac")"
-}
+/// Read once: `Host.current()` can stall for seconds on a misconfigured
+/// network, and this is read in view bodies on the main thread.
+let mcpLocalTitle: String = {
+    let name = SCDynamicStoreCopyComputerName(nil, nil) as String?
+    return "Local: runs on \(name ?? "this Mac")"
+}()
