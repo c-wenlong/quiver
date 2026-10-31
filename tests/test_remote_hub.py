@@ -1115,6 +1115,34 @@ class TestHubWriteRoutes(unittest.TestCase):
         self.assertEqual(view["model"], "opus")
         self.assertEqual(view["effort"], "high")
 
+    def test_launch_carries_yolo(self):
+        with patch("quiver.remote.supervise.launch_new",
+                   return_value=(True, "launched", "qv-t")) as launch:
+            status, body = self._launch(
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
+                 "yolo": True})
+        self.assertEqual(status, 202, body)
+        self.assertIs(launch.call_args[1]["yolo"], True)
+        _, view = self._launch_view(body["launch_id"])
+        self.assertIs(view["yolo"], True)
+
+    def test_launch_refuses_yolo_the_harness_cannot_take(self):
+        with patch("quiver.remote.supervise.launch_new") as launch:
+            status, body = self._launch(
+                {"harness": "gemini", "cwd": "/tmp", "prompt": "hi",
+                 "yolo": True})
+        self.assertEqual((status, body["error"]["code"]),
+                         (409, "unsupported_launch_option"))
+        launch.assert_not_called()
+        self.assertEqual(self.srv.state.launches, {})
+        with patch("quiver.remote.supervise.launch_new") as launch:
+            status, body = self._launch(
+                {"harness": "claude", "cwd": "/tmp", "prompt": "hi",
+                 "yolo": "yes"})
+        self.assertEqual((status, body["error"]["code"]),
+                         (422, "bad_command"))
+        launch.assert_not_called()
+
     def test_launch_refuses_a_pick_the_harness_cannot_take(self):
         with patch("quiver.remote.supervise.launch_new") as launch:
             status, body = self._launch(

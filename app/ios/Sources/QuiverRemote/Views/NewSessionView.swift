@@ -16,6 +16,9 @@ struct NewSessionView: View {
     @State private var prompt = ""
     /// The Model menu; `follow` re-defaults it on a harness change.
     @State private var model = ModelSelection()
+    /// The Autonomy switch: on until the user turns it off. What the
+    /// launch actually takes is gated per harness by `acceptsYolo`.
+    @State private var yolo = true
     @State private var browsePath: [FolderBrowse] = []
     @State private var flow = LaunchFlow()
     /// The running launch, so Cancel or a swipe-down stops it before it
@@ -57,6 +60,9 @@ struct NewSessionView: View {
                     ModelField(machine: machine, harness: harness,
                                selection: $model,
                                sessions: rows, disabled: flow.busy)
+                    YoloField(machine: machine, harness: harness,
+                              isOn: $yolo,
+                              sessions: rows, disabled: flow.busy)
                     FirstPromptField(prompt: $prompt)
                     startSection(machine)
                     RecentFolderPicker(machine: machine, sessions: rows, selected: folder, disabled: flow.busy,
@@ -169,8 +175,9 @@ struct NewSessionView: View {
         guard let client = app.client, let folder, let harness else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let pick = model.model(for: harness, on: machine)
+        let autonomous = yolo && NewSessionOptions.acceptsYolo(harness, on: machine)
         let key = await flow.run(
-            post: { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text, model: pick) },
+            post: { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text, model: pick, yolo: autonomous) },
             fetch: { try await client.launch($0) })
         guard let key, !Task.isCancelled else { return }
         await app.refresh()

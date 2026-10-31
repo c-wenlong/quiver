@@ -329,6 +329,10 @@ public struct HubTaskHarness: Decodable, Sendable, Equatable, Identifiable {
     /// `launchModel`'s effort twin; decoded for completeness, unused
     /// until the effort picker ships.
     public var launchEffort: Bool?
+    /// Whether this harness's launches honour `yolo`. Absent on a hub
+    /// older than the field; decoded for completeness, unused until a
+    /// task sheet offers the checkbox.
+    public var launchYolo: Bool?
     /// The hub ledger's most recent model for this harness — the Model
     /// menu's default ("" when none ran). The head of `recentModels`.
     public var lastModel: String?
@@ -340,12 +344,14 @@ public struct HubTaskHarness: Decodable, Sendable, Equatable, Identifiable {
 
     public init(name: String, displayName: String? = nil, tracked: Bool? = nil,
                 launchModel: Bool? = nil, launchEffort: Bool? = nil,
+                launchYolo: Bool? = nil,
                 lastModel: String? = nil, recentModels: [String]? = nil) {
         self.name = name
         self.displayName = displayName
         self.tracked = tracked
         self.launchModel = launchModel
         self.launchEffort = launchEffort
+        self.launchYolo = launchYolo
         self.lastModel = lastModel
         self.recentModels = recentModels
     }
@@ -900,6 +906,20 @@ public enum LaunchOptions {
     public static func takesModel(_ harness: String?, on machine: HubMachine?) -> Bool {
         guard let harness else { return false }
         return machine?.modelAtLaunch?.contains(harness) == true
+    }
+
+    /// Whether the sheet shows the Autonomy row at all: only a machine
+    /// row that reports `yolo_at_launch` knows the launch switch.
+    public static func showsYolo(on machine: HubMachine?) -> Bool {
+        machine?.yoloAtLaunch != nil
+    }
+
+    /// Whether a launch on `machine` honours `yolo` for `harness` —
+    /// the checkbox's enabled state. A harness outside the list keeps
+    /// its usual approval checks whatever the checkbox says.
+    public static func takesYolo(_ harness: String?, on machine: HubMachine?) -> Bool {
+        guard let harness else { return false }
+        return machine?.yoloAtLaunch?.contains(harness) == true
     }
 
     /// `machine`'s recently used models for `harness`, newest first: the

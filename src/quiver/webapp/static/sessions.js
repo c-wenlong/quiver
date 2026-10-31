@@ -1100,6 +1100,7 @@ const ns = {
   machineId: null, harness: null, folder: "", prompt: "", query: "",
   harnessTouched: false,     // a picked harness keeps its choice across folder changes
   model: null,               // ModelMenu state, fresh per sheet open; a user's pick survives harness re-defaults
+  yolo: true,                // the Autonomy checkbox; on until the user turns it off
   browse: null, browseSeq: 0,  // {path, parent, folders, error, loading}
   phase: "idle", message: "", seq: 0,  // idle|starting|waiting|started|failed|unconfirmed
 };
@@ -1165,6 +1166,37 @@ function nsModelOk(machine) {
   return !!(machine && ns.harness
     && Array.isArray(machine.model_at_launch)
     && machine.model_at_launch.includes(ns.harness));
+}
+
+/* `yolo_at_launch` is the Autonomy row's `model_at_launch`: the key
+ * absent means a build that would drop the flag, so the row hides;
+ * present, it names the harnesses whose launches take the bypass. */
+function nsShowsYolo(machine) {
+  return !!(machine && Array.isArray(machine.yolo_at_launch));
+}
+
+function nsYoloOk(machine) {
+  return nsShowsYolo(machine) && !!ns.harness
+    && machine.yolo_at_launch.includes(ns.harness);
+}
+
+function nsYoloHtml(machine, busy) {
+  if (!nsShowsYolo(machine)) return "";
+  const ok = nsYoloOk(machine);
+  return `<div class="caption">Autonomy</div>
+    <label class="ns-yolo"><input type="checkbox" id="ns-yolo"${ns.yolo && ok ? " checked" : ""}${busy || !ok ? " disabled" : ""}> YOLO mode: run without approval prompts</label>
+    ${ns.harness && !ok ? `<p class="caption" style="padding:0 2px">${esc(nsHarnessName(machine, ns.harness))} can't start with approvals bypassed: it runs its usual checks.</p>` : ""}`;
+}
+
+/* The Autonomy row repaints alone, like the model row, so a typed
+ * folder that flips the harness's yolo support never rebuilds the
+ * folder input — and the box can never show off while sending yolo. */
+function nsPaintYolo() {
+  const slot = document.getElementById("ns-yolo-slot");
+  if (!slot) return;
+  slot.innerHTML = nsYoloHtml(nsMachine(), nsBusy());
+  const box = slot.querySelector("#ns-yolo");
+  if (box) box.onchange = () => { ns.yolo = box.checked; };
 }
 
 /* The ledger's recent models for the picked harness on this machine,
@@ -1251,6 +1283,7 @@ function nsPaint() {
     ${harnessChips}
     ${untracked ? `<p class="note">Quiver can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
     ${modelUi}
+    <div id="ns-yolo-slot"></div>
     <div class="caption">Folder</div>
     <input class="field ns-path-input" id="ns-folder" type="text" autocomplete="off" spellcheck="false"
       placeholder="/absolute/path" value="${esc(ns.folder)}"${busy ? " disabled" : ""}>
@@ -1298,7 +1331,7 @@ function nsPaint() {
     // appears or drops, only its slot is redrawn.
     if (!ns.harnessTouched) {
       nsPickHarness(); nsPaintHarness();
-      nsRefillModel(); nsPaintModel();
+      nsRefillModel(); nsPaintModel(); nsPaintYolo();
     }
     nsPaintStart();
   };
@@ -1306,6 +1339,7 @@ function nsPaint() {
   if (queryIn) queryIn.oninput = () => { ns.query = queryIn.value; nsPaintLists(); };
   const promptIn = sheet.querySelector("#ns-prompt");
   if (promptIn) promptIn.oninput = () => { ns.prompt = promptIn.value; nsPaintStart(); };
+  nsPaintYolo();
   nsPaintModel();
   const browseBtn = sheet.querySelector("#ns-browse");
   if (browseBtn) browseBtn.onclick = () => nsBrowse(ns.folder.trim());
@@ -1405,6 +1439,7 @@ async function openNewSession() {
   ns.harness = null;
   ns.harnessTouched = false;
   ns.model = ModelMenu.fresh();
+  ns.yolo = true;
   ns.folder = ns.folder || "";   // the last folder is a good next guess
   ns.prompt = "";
   ns.query = "";
@@ -1447,6 +1482,7 @@ async function nsStart() {
   if (ns.machineId) body.machine = ns.machineId;
   const model = ModelMenu.value(ns.model);
   if (nsModelOk(nsMachine()) && model) body.model = model;
+  if (nsYoloOk(nsMachine()) && ns.yolo) body.yolo = true;
   const { status, data } = await apiPost("/v1/sessions", body);
   if (!live()) return;
   if (status === 401) {

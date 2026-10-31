@@ -500,10 +500,13 @@ struct HubClient: Sendable {
     /// message. The hub answers before the harness has a session id, so
     /// poll `launch(_:)` for the key. `model` is the sheet's pick: the
     /// field sends it only when the machine's `model_at_launch` says the
-    /// harness honours one, and a nil sends no pick.
-    func startSession(machine: String, harness: String, cwd: String, prompt: String, model: String? = nil) async throws -> LaunchStatus {
+    /// harness honours one, and a nil sends no pick. `yolo` starts the
+    /// session with its approval checks off, and is sent only when the
+    /// machine's `yolo_at_launch` says the harness honours it.
+    func startSession(machine: String, harness: String, cwd: String, prompt: String, model: String? = nil, yolo: Bool = false) async throws -> LaunchStatus {
         var body: [String: Any] = ["machine": machine, "harness": harness, "cwd": cwd, "prompt": prompt]
         if let model, !model.isEmpty { body["model"] = model }
+        if yolo { body["yolo"] = true }
         return try await send(request("POST", "/v1/sessions", body: body))
     }
 

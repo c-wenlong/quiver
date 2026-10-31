@@ -226,10 +226,12 @@ class TestRemoteCatalog(unittest.TestCase):
              patch.object(catalog_mod, "launchable_harnesses", return_value=[
                  {"name": "opencode", "command": "opencode",
                   "display_name": "OpenCode", "tracked": True,
-                  "launch_model": False, "launch_effort": False},
+                  "launch_model": False, "launch_effort": False,
+                  "launch_yolo": False},
                  {"name": "qwen-code", "command": "qwen",
                   "display_name": "Qwen Code", "tracked": False,
-                  "launch_model": True, "launch_effort": False}]):
+                  "launch_model": True, "launch_effort": False,
+                  "launch_yolo": True}]):
             row = catalog_mod.local_machine(self.home)
         self.assertEqual(row["harnesses"], ["claude", "gemini", "opencode"])
         self.assertEqual(row["launchable"], ["opencode", "qwen-code"])
@@ -239,6 +241,7 @@ class TestRemoteCatalog(unittest.TestCase):
         # harness, and the ledger's last-used model per harness.
         self.assertEqual(row["model_at_launch"], ["qwen-code"])
         self.assertEqual(row["effort_at_launch"], [])
+        self.assertEqual(row["yolo_at_launch"], ["qwen-code"])
         self.assertEqual(row["last_models"], {})
         self.assertEqual(row["recent_models"], {})
 

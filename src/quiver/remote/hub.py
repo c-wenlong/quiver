@@ -355,7 +355,7 @@ class HubState:
 
     def new_launch(
         self, machine: str, harness: str, cwd: str,
-        model: str = "", effort: str = "",
+        model: str = "", effort: str = "", yolo: bool = False,
     ) -> str:
         now = time.time()
         launch_id = "l" + secrets.token_hex(6)
@@ -366,7 +366,7 @@ class HubState:
             self.launches[launch_id] = {
                 "launch_id": launch_id, "machine": machine,
                 "harness": harness, "cwd": cwd, "state": "pending",
-                "model": model, "effort": effort,
+                "model": model, "effort": effort, "yolo": bool(yolo),
                 "key": "", "note": "", "created_at": now,
             }
         return launch_id
@@ -2563,20 +2563,30 @@ class _Handler(BaseHTTPRequestHandler):
                     f"{machine} runs an agent too old to take launch "
                     "options; upgrade it, or launch without them")
                 return
+            # Same gate for yolo: a silently dropped bypass is a
+            # session the user thinks runs unattended but doesn't.
+            if cmd["yolo"] and not catalog_mod.reads_launch_yolo(row):
+                self._send_error(
+                    409, "unsupported_launch_option",
+                    f"{machine} runs an agent too old to take yolo; "
+                    "upgrade it, or launch without it")
+                return
             # The satellite's own advertised lists answer: its registry
             # (capabilities.model) decides what its launch can take, so a
             # launch command never carries a field it can't apply.
             blocked = catalog_mod.launch_option_error(
-                row, harness, cmd["model"], cmd["effort"])
+                row, harness, cmd["model"], cmd["effort"], cmd["yolo"])
             if blocked:
                 self._send_error(409, "unsupported_launch_option", blocked)
                 return
             launch_id = state.new_launch(
                 machine, harness, cwd,
-                model=cmd["model"] or "", effort=cmd["effort"] or "")
+                model=cmd["model"] or "", effort=cmd["effort"] or "",
+                yolo=cmd["yolo"])
             queued = state.queue_command(machine, "launch", "", {
                 "harness": harness, "cwd": cwd, "prompt": cmd["prompt"],
                 "model": cmd["model"] or "", "effort": cmd["effort"] or "",
+                "yolo": cmd["yolo"],
                 "launch_id": launch_id,
             })
             if queued is None:
@@ -2607,7 +2617,7 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
         blocked = supervise.fresh_launch_error(
-            harness, cmd["model"], cmd["effort"])
+            harness, cmd["model"], cmd["effort"], yolo=cmd["yolo"])
         if blocked:
             self._send_error(409, "unsupported_launch_option", blocked)
             return
@@ -2618,7 +2628,8 @@ class _Handler(BaseHTTPRequestHandler):
             catalog_mod.launchable_harnesses())
         launch_id = state.new_launch(
             machine, harness, cwd,
-            model=cmd["model"] or "", effort=cmd["effort"] or "")
+            model=cmd["model"] or "", effort=cmd["effort"] or "",
+            yolo=cmd["yolo"])
 
         def run() -> None:
             # Every same-cwd session that exists before launch: adoption
@@ -2628,7 +2639,7 @@ class _Handler(BaseHTTPRequestHandler):
             ok, note, _name = supervise.launch_new(
                 state.home, harness, cwd, cmd["prompt"],
                 known_ids=known, launch_id=launch_id, binary=binary,
-                model=cmd["model"], effort=cmd["effort"],
+                model=cmd["model"], effort=cmd["effort"], yolo=cmd["yolo"],
             )
             if not ok:
                 state.settle_launch(launch_id, state="failed", note=note)

@@ -1299,22 +1299,27 @@ def launch_tuning_error(
 
 def fresh_launch_error(
     tool_name: str, model: str | None, effort: str | None,
-    reg: dict | None = None,
+    reg: dict | None = None, yolo: bool = False,
 ) -> str:
     """The refusal note when a fresh launch of ``tool_name``
-    (``launch_new``) can't honour ``model``/``effort``, else "".
+    (``launch_new``) can't honour ``model``/``effort``/``yolo``, else "".
 
     A fresh process takes the model on its command line, as
     ``capabilities.model`` in harness.json declares
     (``launch_model``); ``effort`` has no launch flag anywhere yet, so
-    it keeps the typed ``/effort <v>`` rule of ``launch_tuning_error``.
+    it keeps the typed ``/effort <v>`` rule of ``launch_tuning_error``;
+    ``yolo`` appends the harness's bypass argv, as
+    ``capabilities.yolo`` declares (``launch_yolo``).
     """
-    from quiver.remote import launch_model
+    from quiver.remote import launch_model, launch_yolo
 
     note = launch_model.model_error(tool_name, model, reg)
     if note:
         return note
-    return launch_tuning_error(tool_name, None, effort)
+    note = launch_tuning_error(tool_name, None, effort)
+    if note:
+        return note
+    return launch_yolo.yolo_error(tool_name, yolo, reg)
 
 
 def _launch_settings_dir(home: Path | None) -> Path:
@@ -1435,6 +1440,7 @@ def launch_new(
     binary: str,
     model: str | None = None,
     effort: str | None = None,
+    yolo: bool = False,
 ) -> tuple[bool, str, str | None]:
     """``POST /v1/sessions``: start a fresh harness run under tmux.
 
@@ -1450,14 +1456,16 @@ def launch_new(
     back to guessing it from the tool name (#510). ``model`` goes on
     the harness's command line (``launch_model.model_argv``, per
     harness.json ``capabilities.model``); ``effort`` is typed into the
-    pane once it is up. ``fresh_launch_error`` names what a harness
-    can't take. Both ride the marker into the supervised entry as
-    launch bookkeeping.
+    pane once it is up. ``yolo`` appends the harness's approval-bypass
+    argv (``launch_yolo.yolo_argv``, per ``capabilities.yolo``), so the
+    session never waits on a permission prompt.
+    ``fresh_launch_error`` names what a harness can't take. All three
+    ride the marker into the supervised entry as launch bookkeeping.
     Returns ``(ok, note, tmux_name)``.
     """
-    from quiver.remote import launch_model
+    from quiver.remote import launch_model, launch_yolo
 
-    blocked = fresh_launch_error(tool_name, model, effort)
+    blocked = fresh_launch_error(tool_name, model, effort, yolo=yolo)
     if blocked:
         return False, blocked, None
     if not binary or not shutil.which(binary):
@@ -1475,6 +1483,11 @@ def launch_new(
                 stem=tmux_name(key))
         except (OSError, ValueError) as exc:
             return False, f"can't start {tool_name} on {model}: {exc}", None
+    if yolo:
+        try:
+            argv += launch_yolo.yolo_argv(tool_name)
+        except ValueError as exc:
+            return False, f"can't start {tool_name} autonomously: {exc}", None
     name = launch_tmux(key, argv, cwd or None)
     if name is None:
         return False, (
@@ -1492,6 +1505,7 @@ def launch_new(
             "launch_id": launch_id,
             "model": model or "",
             "effort": effort or "",
+            "yolo": bool(yolo),
         }))
     except OSError:
         pass
@@ -1796,11 +1810,13 @@ def adopt_pending(
             "attached_at": now,
             "launch_id": str(pending.get("launch_id") or ""),
         }
-        # The launch-time pick stays on the record as bookkeeping; a
+        # The launch-time picks stay on the record as bookkeeping; a
         # session's *current* model is a transcript/ledger question.
         for field in ("model", "effort"):
             if pending.get(field):
                 meta[field] = str(pending[field])
+        if pending.get("yolo"):
+            meta["yolo"] = True
         mark(home, key, meta)
         marker.unlink(missing_ok=True)
         adopted.append(key)

@@ -245,6 +245,44 @@ struct RecentFolderPicker: View {
     }
 }
 
+/// The Autonomy row every launch sheet can show under its Model row:
+/// a "run without approval prompts" switch, on by default. The row
+/// hides on a machine row too old to name the harnesses that honour it
+/// (an old satellite would accept the flag and silently run the usual
+/// checks), and shows off and disabled for a harness that can't — the
+/// hub would answer the flag with a 409 anyway.
+struct YoloField: View {
+    let machine: Machine
+    let harness: String?
+    @Binding var isOn: Bool
+    /// The sheet's session rows, for the harness's display name.
+    var sessions: [SessionRow] = []
+    /// A launch in flight locks the switch with the sheet's other inputs.
+    var disabled = false
+
+    private var accepts: Bool { NewSessionOptions.acceptsYolo(harness, on: machine) }
+
+    var body: some View {
+        if NewSessionOptions.showsYoloField(on: machine) {
+            GroupLabel(text: "Autonomy")
+            // Off and disabled when the harness can't take it: the
+            // launch will run the usual checks whatever the user set.
+            Toggle("YOLO mode: run without approval prompts",
+                   isOn: Binding(get: { isOn && accepts }, set: { isOn = $0 }))
+                .font(Theme.body).foregroundStyle(Theme.textPrimary)
+                .tint(Theme.accentFill)
+                .disabled(disabled || !accepts)
+                .accessibilityIdentifier("yolo-toggle")
+            if !accepts, let harness {
+                Text("\(NewSessionOptions.name(harness, on: machine, sessions: sessions)) can't start with approvals bypassed: it runs its usual checks.")
+                    .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+            }
+        }
+    }
+}
+
 /// A folder path as an Identifiable, for card lists of folders.
 struct FolderPath: Identifiable {
     let path: String

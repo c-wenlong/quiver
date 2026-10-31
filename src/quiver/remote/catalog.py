@@ -112,16 +112,19 @@ def launchable_harnesses() -> list[dict]:
     order: every harness ``swe list`` shows (not archived) whose command
     is on PATH, minus the ones switched off in the Mac app's Settings.
     Each item is ``{name, command, display_name, tracked, launch_model,
-    launch_effort}``; ``tracked`` is false for a harness swe has no
-    session parser for (qwen-code): it starts, but no session ever shows
-    up to open as a chat. ``launch_model`` is true when the harness
-    declares how its command line takes a model (``capabilities.model``
-    in harness.json, ``launch_model.MODEL_FALLBACK`` underneath);
-    ``launch_effort`` when its TUI has a verified ``/effort <v>``
-    command, typed in once the pane is up (``supervise.fresh_launch_error``
-    checks both)."""
+    launch_effort, launch_yolo}``; ``tracked`` is false for a harness
+    swe has no session parser for (qwen-code): it starts, but no session
+    ever shows up to open as a chat. ``launch_model`` is true when the
+    harness declares how its command line takes a model
+    (``capabilities.model`` in harness.json,
+    ``launch_model.MODEL_FALLBACK`` underneath); ``launch_effort`` when
+    its TUI has a verified ``/effort <v>`` command, typed in once the
+    pane is up; ``launch_yolo`` when it declares the argv tokens that
+    switch its approval checks off (``capabilities.yolo``,
+    ``launch_yolo.YOLO_FALLBACK`` underneath).
+    ``supervise.fresh_launch_error`` checks all three."""
     from quiver.harness import registry
-    from quiver.remote import launch_model, slash_builtins
+    from quiver.remote import launch_model, launch_yolo, slash_builtins
 
     try:
         reg = registry.load_registry_readonly()
@@ -146,6 +149,7 @@ def launchable_harnesses() -> list[dict]:
             "tracked": name in parsers,
             "launch_model": launch_model.capability(name, reg) is not None,
             "launch_effort": slash_builtins.launch_op_ok(name, "effort"),
+            "launch_yolo": launch_yolo.capability(name, reg) is not None,
         }))
     out.sort(key=lambda pair: pair[0])
     return [item for _rank, item in out]
@@ -199,26 +203,38 @@ def reads_launch_options(row: dict | None) -> bool:
     return isinstance((row or {}).get("model_at_launch"), list)
 
 
-def launch_option_error(row: dict | None, harness: str,
-                        model: str | None, effort: str | None) -> str:
-    """The refusal note when a satellite's machine row says its launch of
-    ``harness`` can't take ``model``/``effort``, else "".
+def reads_launch_yolo(row: dict | None) -> bool:
+    """Whether a satellite's build applies ``yolo`` on a launch command
+    it is sent — ``reads_launch_options``' twin, with ``yolo_at_launch``
+    as the version check: an older agent would accept the command and
+    silently run the session with its approval checks on."""
+    return isinstance((row or {}).get("yolo_at_launch"), list)
 
-    The satellite's own ``model_at_launch``/``effort_at_launch`` lists
-    answer, not the hub's registry: what a launch takes is declared per
-    machine in its harness.json (``capabilities.model``). The satellite
+
+def launch_option_error(row: dict | None, harness: str,
+                        model: str | None, effort: str | None,
+                        yolo: bool = False) -> str:
+    """The refusal note when a satellite's machine row says its launch of
+    ``harness`` can't take ``model``/``effort``/``yolo``, else "".
+
+    The satellite's own ``model_at_launch``/``effort_at_launch``/
+    ``yolo_at_launch`` lists answer, not the hub's registry: what a
+    launch takes is declared per machine in its harness.json
+    (``capabilities.model``, ``capabilities.yolo``). The satellite
     re-checks its own registry when the command lands, so a value-shape
     rule the lists can't carry (opencode's ``provider/model``) still
     fails the launch rather than being dropped.
     """
     row = row or {}
     missing = [
-        op for op, value in (("model", model), ("effort", effort))
+        op for op, value in (("model", model), ("effort", effort),
+                             ("yolo", yolo))
         if value and harness not in (row.get(f"{op}_at_launch") or [])
     ]
     if not missing:
         return ""
-    what = {"model": "a model", "effort": "an effort level"}
+    what = {"model": "a model", "effort": "an effort level",
+            "yolo": "a permissions bypass"}
     ops = " or ".join(what[op] for op in missing)
     return f"{harness} launches on this machine can't take {ops}"
 
@@ -274,8 +290,9 @@ def local_machine(home: Path | str | None = None) -> dict:
 
     ``launchable`` is what the phone's new-session sheet offers, in order
     (``launchable_harnesses``); ``harness_names`` names each one.
-    ``model_at_launch``/``effort_at_launch`` name the harnesses whose
-    launches accept ``model``/``effort``; ``recent_models`` lists each
+    ``model_at_launch``/``effort_at_launch``/``yolo_at_launch`` name the
+    harnesses whose launches accept ``model``/``effort``/``yolo``;
+    ``recent_models`` lists each
     launchable harness's recently used models, newest first (at most
     5), and ``last_models`` is the head of each list, the picker's
     default.
@@ -298,8 +315,8 @@ def launch_fields(launchable: list[dict],
     """The machine-row fields the launch sheets read, from
     ``launchable_harnesses()``: ``launchable``, ``harness_names``,
     ``untracked_harnesses``, ``model_at_launch``, ``effort_at_launch``,
-    ``recent_models`` and ``last_models``. One builder for the hub's own
-    row, a satellite's and ``local_machine``."""
+    ``yolo_at_launch``, ``recent_models`` and ``last_models``. One
+    builder for the hub's own row, a satellite's and ``local_machine``."""
     recent = recent_models(home, [item["name"] for item in launchable])
     return {
         "launchable": [item["name"] for item in launchable],
@@ -307,6 +324,7 @@ def launch_fields(launchable: list[dict],
         "untracked_harnesses": untracked(launchable),
         "model_at_launch": launch_op_names(launchable, "model"),
         "effort_at_launch": launch_op_names(launchable, "effort"),
+        "yolo_at_launch": launch_op_names(launchable, "yolo"),
         "recent_models": recent,
         "last_models": {h: models[0] for h, models in recent.items()},
     }

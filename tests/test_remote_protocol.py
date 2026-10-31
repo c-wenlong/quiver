@@ -153,7 +153,8 @@ class TestCommandValidation(unittest.TestCase):
             {"harness": "codex", "cwd": "/srv/app", "prompt": "go"})
         self.assertEqual(out, {"machine": "", "harness": "codex",
                                "cwd": "/srv/app", "prompt": "go",
-                               "model": None, "effort": None})
+                               "model": None, "effort": None,
+                               "yolo": False})
         bad = [
             {"harness": "Bad Name", "cwd": "/a", "prompt": "go"},
             {"harness": ["claude"], "cwd": "/a", "prompt": "go"},
@@ -180,6 +181,20 @@ class TestCommandValidation(unittest.TestCase):
         for body in bad:
             with self.assertRaises(ValueError, msg=body):
                 protocol.parse_launch_command(body)
+
+    def test_launch_yolo(self):
+        for value, want in ((None, False), (False, False), (True, True)):
+            with self.subTest(yolo=value):
+                out = protocol.parse_launch_command(
+                    {"harness": "claude", "cwd": "/a", "prompt": "go",
+                     "yolo": value})
+                self.assertIs(out["yolo"], want)
+        for bad in ("true", "yes", 1, 0, [], {}):
+            with self.subTest(yolo=bad):
+                with self.assertRaises(ValueError):
+                    protocol.parse_launch_command(
+                        {"harness": "claude", "cwd": "/a", "prompt": "go",
+                         "yolo": bad})
 
     def test_launch_model_and_effort(self):
         out = protocol.parse_launch_command(

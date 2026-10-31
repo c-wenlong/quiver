@@ -887,6 +887,65 @@ class TestLaunchTuning(unittest.TestCase):
         self.assertTrue(Path(self.argv[2]).is_relative_to(
             supervise._launch_settings_dir(self.home)))
 
+    def test_launch_yolo_appends_the_bypass_argv(self):
+        cases = {
+            "claude": ["claude", "--dangerously-skip-permissions"],
+            "codex": ["codex", "--dangerously-bypass-approvals-and-sandbox"],
+            "cursor": ["cursor", "--yolo"],
+            "devin": ["devin", "--permission-mode", "dangerous"],
+            "opencode": ["opencode", "--auto"],
+            "droid": ["droid", "--auto", "high"],
+            "cline": ["cline", "--yolo"],
+            "kilo": ["kilo", "--auto"],
+            "qwen-code": ["qwen-code", "--yolo"],
+        }
+        for tool, argv in cases.items():
+            (ok, _n, _name), _pp, st = self._launch(tool, yolo=True)
+            self.assertTrue(ok, tool)
+            self.assertEqual(self.argv, argv, tool)
+            st.assert_not_called()
+        # Model and yolo ride the same argv, model's tokens first.
+        (ok, _n, _), _pp, _st = self._launch("claude", model="opus", yolo=True)
+        self.assertTrue(ok)
+        self.assertEqual(self.argv, ["claude", "--model", "opus",
+                                     "--dangerously-skip-permissions"])
+        marker = json.loads(
+            (supervise._pending_dir(self.home) / "qv-n.json").read_text())
+        self.assertTrue(marker["yolo"])
+        self.assertEqual(marker["model"], "opus")
+
+    def test_launch_refuses_yolo_the_harness_cannot_take(self):
+        with patch.object(supervise, "launch_tmux") as lt:
+            ok, note, _ = supervise.launch_new(
+                self.home, "gemini", self.proj, "hi", yolo=True,
+                binary="gemini")
+            self.assertFalse(ok)
+            self.assertIn("capabilities.yolo", note)
+        lt.assert_not_called()
+        # harness.json wins over the fallback either way.
+        reg = {"gemini": {"capabilities": {"yolo": {"argv": ["--yes-all"]}}},
+               "claude": {"capabilities": {"yolo": {"supported": False}}}}
+        with patch("quiver.harness.registry.load_registry_readonly",
+                   return_value=reg):
+            (ok, _n, _), _pp, _st = self._launch("gemini", yolo=True)
+            self.assertTrue(ok)
+            self.assertEqual(self.argv, ["gemini", "--yes-all"])
+            ok, note, _ = supervise.launch_new(
+                self.home, "claude", self.proj, "hi", yolo=True,
+                binary="claude")
+            self.assertFalse(ok)
+            self.assertIn("capabilities.yolo", note)
+
+    def test_fresh_launch_error_yolo(self):
+        self.assertEqual(
+            supervise.fresh_launch_error("claude", None, None, yolo=True), "")
+        self.assertIn(
+            "capabilities.yolo",
+            supervise.fresh_launch_error("gemini", None, None, yolo=True))
+        # No pick: never a refusal.
+        self.assertEqual(
+            supervise.fresh_launch_error("gemini", None, None, yolo=False), "")
+
     def test_launch_refuses_a_model_the_harness_cannot_take(self):
         with patch.object(supervise, "launch_tmux") as lt:
             ok, note, _ = supervise.launch_new(

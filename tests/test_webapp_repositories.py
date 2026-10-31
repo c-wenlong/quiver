@@ -944,7 +944,8 @@ class TestPrWorktree(_Base):
     def test_harnesses_are_what_the_hub_can_launch(self):
         rows = [{"name": "claude", "command": "claude",
                  "display_name": "Claude Code", "tracked": True,
-                 "launch_model": True, "launch_effort": True}]
+                 "launch_model": True, "launch_effort": True,
+                 "launch_yolo": True}]
         with patch("quiver.remote.catalog.launchable_harnesses",
                    return_value=rows), \
              patch("quiver.remote.catalog.recent_models",
@@ -955,7 +956,8 @@ class TestPrWorktree(_Base):
         self.assertEqual(body["harnesses"], [{
             "name": "claude", "display_name": "Claude Code",
             "tracked": True, "launch_model": True,
-            "launch_effort": True, "last_model": "opus",
+            "launch_effort": True, "launch_yolo": True,
+            "last_model": "opus",
             "recent_models": ["opus", "sonnet"]}])
 
 
