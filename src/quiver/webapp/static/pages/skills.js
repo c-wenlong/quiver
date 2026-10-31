@@ -151,7 +151,7 @@ async function renderSkillsList() {
   const p = skillsPage, gen = routeGen, mine = ++p.seq;
   if (!p.data) {
     document.getElementById("panel").innerHTML = `<div class="page">${skillsHeader(true)}
-      ${Sk.cardRows(6)}</div>`;
+      ${skillsSkeleton()}</div>`;
     bindSkillsHeader();
   } else {
     paintSkills();
@@ -617,6 +617,17 @@ function paintSkillRows() {
   if (btn) btn.onclick = () => { p.showsAll = !p.showsAll; paintSkillRows(); };
 }
 
+/* The skills list's own rows: name, description and path on the left,
+ * source badge, seen count and chevron on the right. */
+function skillsSkeleton() {
+  const row = (i) => `<div class="sk-row"><span class="sk-main">
+    ${Sk.bar(100 - (i % 3) * 16, 14)}
+    ${i % 3 === 2 ? "" : Sk.bar(`${56 - (i % 2) * 12}%`, 11)}
+    ${Sk.bar(`${48 - (i % 3) * 8}%`, 10)}
+  </span><span class="sk-side">${Sk.pill(56)}${Sk.num(20)}${Sk.bar(8, 16)}</span></div>`;
+  return `<div class="sk-rows" role="status" aria-label="Loading">${Array.from({ length: 6 }, (_, i) => row(i)).join("")}</div>`;
+}
+
 function skillRow(s) {
   return `<a class="sk-row" href="#/skills?skill=${esc(encodeURIComponent(s.path))}" title="Open ${esc(s.name)}">
     <span class="sk-main">
@@ -641,7 +652,12 @@ async function renderSkillDetail(path) {
   if (cached) paintSkillDetail(cached);
   else {
     document.getElementById("panel").innerHTML = `<div class="page">${skillsHeader(true)}${skillsBack()}
-      ${Sk.detail()}</div>`;
+      <div class="stack" role="status" aria-label="Loading"><div class="card sk-head">
+        <div class="sk-title">${Sk.bar(120, 18)}${Sk.pill(56)}</div>
+        ${Sk.bar("52%", 11)}
+        ${Sk.bar("72%", 12)}
+        <div class="sk-chips">${Sk.pill(72, 26)}${Sk.pill(72, 26)}</div></div>
+      <div class="card"><div class="skel-para">${Sk.linesInner(8)}</div></div></div></div>`;
     bindSkillsHeader();
   }
   const { status, data } = await api(`/v1/app/skills?skill=${encodeURIComponent(path)}`);

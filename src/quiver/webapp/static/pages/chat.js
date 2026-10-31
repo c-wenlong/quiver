@@ -2689,7 +2689,10 @@ const SessionChat = (() => {
     if (chat.rail.error) {
       html = `<div class="cr-note">${esc(chat.rail.error)}</div>`;
     } else if (!rows) {
-      html = chat.rail.loading ? Sk.rows(6, { pill: false }) : '<div class="cr-note">No sessions listed.</div>';
+      html = chat.rail.loading ? `<div role="status" aria-label="Loading"><div class="cr-day">${Sk.bar(70, 11)}</div>${
+        Array.from({ length: 6 }, (_, i) => `<div class="cr-row"><span class="cr-logo">${Sk.bar(14, 14)}</span>
+          <span class="cr-name">${Sk.bar(118 - (i % 4) * 16, 12)}</span><span class="cr-spacer"></span>${
+          i % 3 ? "" : Sk.bar(8, 8, "cr-dot")}</div>`).join("")}</div>` : '<div class="cr-note">No sessions listed.</div>';
     } else if (!rows.length) {
       html = '<div class="cr-note">No sessions listed.</div>';
     } else {
@@ -2701,7 +2704,7 @@ const SessionChat = (() => {
       }).join("");
     }
     list.innerHTML = html;
-    for (const btn of list.querySelectorAll(".cr-row")) {
+    for (const btn of list.querySelectorAll(".cr-row[data-key]")) {
       btn.onclick = () => {
         // A row opens its chat the way the list's do: the hash is the
         // chat, so Back returns to whichever session was open before.

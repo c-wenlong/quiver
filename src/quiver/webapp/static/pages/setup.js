@@ -197,7 +197,10 @@ function onPage() {
 async function render() {
   const gen = routeGen;
   if (!page.data) {
-    paintShell(Sk.cardRows(5));
+    paintShell(`<div class="card setup-entry" role="status" aria-label="Loading">
+      <div class="card-title">${Sk.bar(170, 16)}</div>
+      <div class="setup-text"><div class="skel-para">${Sk.linesInner(3)}</div></div>
+      <div>${Sk.bar(96, 32, "", "border-radius:8px")}</div></div>`);
     if (!(await load(gen))) return;
   } else if (page.hubStale && !(await reloadAfterClone())) {
     return;

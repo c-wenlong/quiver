@@ -46,7 +46,7 @@ private struct PricingContent: View {
         } content: {
             if model.groups.isEmpty {
                 if model.isLoading {
-                    SkeletonRows(rows: 5, label: "Reading your usage logs…")
+                    ProviderSkeleton(label: "Reading your usage logs…")
                 } else {
                     Card { Text("No usage in this period.")
                             .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary) }
@@ -656,5 +656,89 @@ private struct PriceSheet: View {
                 working = nil
             }
         }
+    }
+}
+
+// MARK: - Loading
+
+/// The loading stand-in for a provider card: the same head strip,
+/// column headers and rate/token columns the real card lays out.
+private struct ProviderSkeleton: View {
+    var rows = 5
+    var label: String
+    @State private var width: CGFloat = 0
+
+    var body: some View {
+        let columns = PricingColumns.visible(forWidth: width)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                SkeletonBlock(width: 16, height: 16, radius: 4)
+                SkeletonBlock(width: 110, height: 15)
+                Spacer()
+                SkeletonBlock(width: 120, height: 10)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
+            header(columns)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 8)
+            ForEach(0..<rows, id: \.self) { row in
+                Rectangle().fill(Theme.rowDivider).frame(height: Theme.hairline)
+                rowBody(row, columns)
+            }
+        }
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(label))
+    }
+
+    private func header(_ columns: PricingColumns) -> some View {
+        HStack(spacing: 10) {
+            SkeletonBlock(width: 36, height: 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(0..<(columns.cacheReadWrite ? 4 : 2), id: \.self) { _ in
+                SkeletonBlock(width: 44, height: 10)
+                    .frame(width: PricingRow.rateColumnWidth, alignment: .trailing)
+            }
+            if columns.source {
+                SkeletonBlock(width: 38, height: 10)
+                    .frame(width: PricingRow.sourceColumnWidth, alignment: .trailing)
+            }
+            SkeletonBlock(width: 40, height: 10)
+                .frame(width: 68, alignment: .trailing)
+        }
+    }
+
+    private func rowBody(_ row: Int, _ columns: PricingColumns) -> some View {
+        HStack(spacing: 10) {
+            SkeletonBlock(width: 16, height: 16, radius: 4)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    SkeletonBlock(width: 130 - CGFloat(row % 3) * 26, height: 12)
+                    HStack(spacing: 2) {
+                        SkeletonBlock(width: 12, height: 12, radius: 3)
+                        if row % 2 == 0 { SkeletonBlock(width: 12, height: 12, radius: 3) }
+                    }
+                }
+                if !columns.source { SkeletonBlock(width: 90, height: 9) }
+            }
+            .frame(minWidth: 120, alignment: .leading)
+            Spacer()
+            ForEach(0..<(columns.cacheReadWrite ? 4 : 2), id: \.self) { _ in
+                SkeletonBlock(width: 42, height: 11)
+                    .frame(width: PricingRow.rateColumnWidth, alignment: .trailing)
+            }
+            if columns.source {
+                SkeletonBlock(width: 16, height: 16, radius: 4)
+                    .frame(width: PricingRow.sourceColumnWidth, alignment: .trailing)
+            }
+            SkeletonBlock(width: 44, height: 11)
+                .frame(width: 68, alignment: .trailing)
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 9)
     }
 }

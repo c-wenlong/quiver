@@ -26,6 +26,13 @@ struct McpServersPage: View {
     /// The folder the folder scan reads, from the Paths setting.
     private var repoRoot: URL { AppModel.mcpServersFolder(path: app.mcpServersPath) }
 
+    /// The columns the loading shimmer draws: the harnesses the install
+    /// check knows, minus any the user hid. Before the check runs it is
+    /// empty, which leaves the grid with only its name column.
+    private var comparedHarnesses: [String] {
+        app.providers.rows.filter(\.isInstalled).map(\.provider.id).filter { !hidden.contains($0) }
+    }
+
     /// The Local folder rows on their own, for states with no server grid
     /// to put them in (the inventory is empty or failed to read). With the
     /// hub unknown a row cannot claim "Not in the hub", so the caption hides.
@@ -61,7 +68,7 @@ struct McpServersPage: View {
         } content: {
             switch model.state {
             case .idle, .loading:
-                SkeletonRows(rows: 6, label: "Reading the configs…")
+                McpGridSkeleton(harnesses: comparedHarnesses, label: "Reading the configs…")
             case .failed(let message):
                 ErrorCard(message: message)
                 folderOnlyRows(hubKnown: false)
@@ -100,7 +107,7 @@ struct McpServersPage: View {
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
-            McpRepoSection(model: app.mcpRepo, root: repoRoot)
+            McpRepoSection(model: app.mcpRepo, root: repoRoot, harnesses: comparedHarnesses)
         }
         .task(id: app.swePath) { await model.loadIfStale(swe: app.swe, for: app.swePath) }
         .task(id: repoRoot) {
@@ -738,6 +745,8 @@ private struct Facts: View {
 private struct McpRepoSection: View {
     var model: McpServerRepoModel
     var root: URL
+    /// The grid's harness columns, so the scan's shimmer matches them.
+    var harnesses: [String] = []
 
     var body: some View {
         if let error = model.error {
@@ -749,7 +758,7 @@ private struct McpRepoSection: View {
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             }
         } else if model.servers.isEmpty && model.isLoading {
-            SkeletonRows(rows: 4, label: "Scanning server folders…")
+            McpGridSkeleton(harnesses: harnesses, rows: 4, label: "Scanning server folders…")
         } else if model.servers.isEmpty {
             Card {
                 Text("No server folders in \(displayPath(root)).")
@@ -937,3 +946,69 @@ let mcpLocalTitle: String = {
     let name = SCDynamicStoreCopyComputerName(nil, nil) as String?
     return "Local: runs on \(name ?? "this Mac")"
 }()
+
+// MARK: - Loading
+
+/// The grid's loading shape: the "Server" header and harness mark
+/// columns at their real widths, a section strip, then rows of name
+/// lines and cell marks where the server's cells will land.
+private struct McpGridSkeleton: View {
+    var harnesses: [String]
+    var rows = 6
+    var label: String
+    /// The card's inner width: the grid fills it, and scrolls only past it.
+    @State private var available: CGFloat = 0
+
+    var body: some View {
+        Card {
+            ScrollView(.horizontal) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 0) {
+                        SkeletonBlock(width: 44, height: 10)
+                            .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
+                        ForEach(harnesses, id: \.self) { harness in
+                            SkeletonBlock(width: 18, height: 18, radius: 4)
+                                .frame(width: ServerGrid.columnWidth(harness))
+                        }
+                    }
+                    .padding(.bottom, 8)
+                    Divider().overlay(Theme.border)
+                    SkeletonBlock(width: 90, height: 13)
+                        .padding(.top, 14).padding(.bottom, 6)
+                    ForEach(0..<rows, id: \.self) { row in
+                        rowBody(row)
+                        if row < rows - 1 { Divider().overlay(Theme.border) }
+                    }
+                }
+                .frame(width: max(available, ServerGrid.nameMinWidth
+                                  + harnesses.map(ServerGrid.columnWidth).reduce(0, +)),
+                       alignment: .leading)
+            }
+            .scrollIndicators(.automatic)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { available = $0 }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(label))
+    }
+
+    private func rowBody(_ row: Int) -> some View {
+        HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
+                if row % 2 == 0 {
+                    SkeletonBlock(width: Theme.statusDot, height: Theme.statusDot, radius: Theme.statusDot / 2)
+                        .padding(.top, 4)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    SkeletonBlock(width: 130 - CGFloat(row % 3) * 22, height: 13)
+                    SkeletonBlock(width: 180 - CGFloat(row % 2) * 44, height: 10)
+                }
+            }
+            .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
+            ForEach(harnesses, id: \.self) { harness in
+                SkeletonBlock(width: 14, height: 14, radius: 7)
+                    .frame(width: ServerGrid.columnWidth(harness))
+            }
+        }
+        .padding(.vertical, 8)
+    }
+}

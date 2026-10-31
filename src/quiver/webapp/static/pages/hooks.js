@@ -76,7 +76,7 @@ async function renderHooksList() {
   const p = hooksPage, gen = routeGen, mine = ++p.seq;
   if (!p.data) {
     document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(true)}
-      ${Sk.cardRows(6)}</div>`;
+      ${hooksSkeleton()}</div>`;
     bindHooksHeader();
   } else {
     paintHooks();
@@ -220,6 +220,20 @@ function hkGroupCard(g) {
   return `<div class="card hk-group">${head}<div class="hk-rows">${g.hooks.map(hkRow).join("")}</div></div>`;
 }
 
+/* Grouped hook rows in the list's own shape: a card per harness, rows
+ * with name + badges, the script path and a chevron. */
+function hooksSkeleton() {
+  const row = (i) => `<div class="hk-row"><span class="hk-main">
+    <span class="hk-title">${Sk.bar(120 - (i % 3) * 20, 13)}${Sk.pill(52)}${i % 2 ? Sk.pill(62) : ""}</span>
+    ${Sk.bar(`${52 - (i % 4) * 9}%`, 11)}
+    ${i % 2 ? `<span class="hk-badges">${Sk.pill(56)}${Sk.pill(72)}</span>` : ""}
+  </span><span class="hk-chevron">${Sk.bar(8, 16)}</span></div>`;
+  const group = (n, off) => `<div class="card hk-group"><div class="hk-group-head">${Sk.bar(16, 16)}${Sk.bar(96 + off * 20, 14)}
+    <span class="caption">${Sk.bar(52, 11)}</span></div>
+    <div class="hk-rows">${Array.from({ length: n }, (_, i) => row(i + off)).join("")}</div></div>`;
+  return `<div role="status" aria-label="Loading" class="stack">${group(3, 0)}${group(2, 3)}</div>`;
+}
+
 function hkRow(h) {
   const declared = (h.declared || []).map((d) => `<span class="badge">${esc(hkDeclLabel(d))}</span>`).join("");
   const events = (h.events_supported || []).map((e) => `<span class="badge">${esc(e)}</span>`).join("");
@@ -243,7 +257,10 @@ function hkRow(h) {
 async function renderHookDetail(name, harness, tier) {
   const p = hooksPage, gen = routeGen, mine = ++p.seq;
   document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(false)}${hkBack()}
-    ${Sk.detail()}</div>`;
+    <div class="stack" role="status" aria-label="Loading"><div class="card hk-head">${Sk.bar("40%", 18)}
+      ${Sk.bar("55%", 11)}</div>
+    <div class="card hk-doc"><div class="card-subtitle">${Sk.bar(200, 11)}</div>
+      <pre class="hk-text"><div class="skel-para">${Sk.linesInner(10)}</div></pre></div></div></div>`;
   bindHooksHeader();
   const q = new URLSearchParams({ hook: name });
   if (harness) q.set("harness", harness);

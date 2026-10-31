@@ -16,7 +16,7 @@
   async function render(_id, rescan = false) {
     const gen = routeGen, seq = ++state.seq;
     if (!state.data || rescan) {
-      document.getElementById("panel").innerHTML = `<div class="page qp-page">${header(true)}${Sk.cardRows(8)}</div>`;
+      document.getElementById("panel").innerHTML = `<div class="page qp-page">${header(true)}${tableSkeleton()}</div>`;
       bindHeader();
     } else {
       paint();
@@ -161,6 +161,19 @@
   }
 
   const PRICE_TIP = "Cost: LiteLLM list price. Per 1M tokens: input · output · cache read. The price the ledger charges your usage; hover a row's price for its key and cache-write rate.";
+
+  /* The usage table's own shape: model cell, harness marks, and the
+   * two numeric columns, inside the same .qm-table card. */
+  function tableSkeleton() {
+    return `<div class="card qm-table-card" role="status" aria-label="Loading"><div class="table-wrap"><table class="qm-table">
+      <thead><tr><th>${Sk.bar(42, 10)}</th><th>${Sk.bar(40, 10)}</th><th class="qm-price">${Sk.bar(64, 10)}</th>
+        <th class="qm-tokens">${Sk.num(68, 10)}</th></tr></thead>
+      <tbody>${Array.from({ length: 8 }, (_, i) => `<tr>
+        <td><div class="qm-model">${Sk.bar(16, 16)}${Sk.bar(`${48 - (i % 4) * 8}%`, 12)}</div></td>
+        <td><div class="qm-ran">${Sk.bar(16, 16)}${Sk.bar(16, 16)}${i % 3 ? "" : Sk.bar(16, 16)}</div></td>
+        <td class="qm-price">${Sk.bar(120, 11)}</td>
+        <td class="qm-tokens">${Sk.num(44)}</td></tr>`).join("")}</tbody></table></div></div>`;
+  }
 
   function table(rows) {
     return `<div class="card qm-table-card"><div class="table-wrap"><table class="qm-table">

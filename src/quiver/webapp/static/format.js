@@ -325,33 +325,28 @@ const Fmt = (() => {
 
 /* Loading skeletons: blocks laid out like the rows or document a fetch
  * is still reading, styled by the .skel-* rules in styles.css. A page's
- * "Reading…" card becomes Sk.cardRows(n) so what arrives lands without
- * the layout jumping. Every composer marks itself role="status" so a
- * screen reader still hears "Loading" where the old text said it. */
+ * skeleton reuses its own row markup with Sk bars in place of content,
+ * so what arrives lands without the layout jumping. Sk.block marks
+ * itself role="status"; everything else stays silent inside a wrapper
+ * that carries role="status" aria-label="Loading". */
 const Sk = (() => {
   const width = (v) => (typeof v === "number" ? `${v}px` : v);
   const status = 'role="status" aria-label="Loading"';
-  /* One shimmering block; w as %/px, h in px. */
+  /* One shimmering block; w as %/px, h in px. Marks itself so it can
+   * stand alone as a field or button's placeholder. */
   const block = (w, h, cls = "") =>
     `<div class="skel${cls ? ` ${cls}` : ""}" ${status} style="width:${width(w)};height:${h}px"></div>`;
-  /* One fake list row: a mark, a title line over a detail line, a pill. */
-  const row = ({ icon = true, pill = true, i = 0 } = {}) =>
-    `<div class="skel-row">${icon ? '<div class="skel skel-dot"></div>' : ""}
-      <div class="skel-lines">
-        <div class="skel skel-line" style="width:${64 - (i % 3) * 16}%"></div>
-        <div class="skel skel-sub" style="width:${40 - (i % 2) * 12}%"></div>
-      </div>${pill ? '<div class="skel skel-pill"></div>' : ""}</div>`;
-  const rows = (n = 6, opts = {}) =>
-    `<div ${status}>${Array.from({ length: n }, (_, i) => row({ ...opts, i })).join("")}</div>`;
+  /* A bare block with no status: for cells inside a wrapper that
+   * carries the role. ``cls`` borrows a real component's class so its
+   * own margins and radius apply; ``style`` adds a one-off rule. */
+  const bar = (w, h, cls = "", style = "") =>
+    `<div class="skel${cls ? ` ${cls}` : ""}" style="width:${width(w)};height:${h}px${style ? `;${style}` : ""}"></div>`;
+  const dot = (size = 16) => bar(size, size, "", "border-radius:50%;flex:none");
+  const pill = (w = 48, h = 16) => bar(w, h, "", `border-radius:${h / 2}px;flex:none`);
+  /* Right-aligned, for the numeric cells of tables and stat rows. */
+  const num = (w = 40, h = 12) => bar(w, h, "", "margin-left:auto");
   /* Paragraph or file lines, the last one short. */
-  const lines = (n = 5) =>
-    `<div class="skel-para" ${status}>${Array.from({ length: n }, (_, i) =>
-      `<div class="skel skel-line" style="width:${i === n - 1 ? 45 : 90 - (i % 4) * 12}%"></div>`).join("")}</div>`;
-  const card = (inner) => `<div class="card" ${status}>${inner}</div>`;
-  const cardRows = (n = 6, opts = {}) => card(rows(n, opts));
-  const cardLines = (n = 5) => card(lines(n));
-  /* A fetched detail — heading, paragraph, chips — for sheets and panes. */
-  const detail = () => card(`${block("42%", 20, "skel-head")}${lines(4)}
-    <div class="skel-chips"><div class="skel skel-chip"></div><div class="skel skel-chip"></div></div>`);
-  return { block, row, rows, lines, card, cardRows, cardLines, detail };
+  const linesInner = (n) => Array.from({ length: n }, (_, i) =>
+    `<div class="skel skel-line" style="width:${i === n - 1 ? 45 : 90 - (i % 4) * 12}%"></div>`).join("");
+  return { block, bar, dot, pill, num, linesInner };
 })();

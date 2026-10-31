@@ -85,7 +85,7 @@
     const gen = routeGen, seq = ++state.seq;
     const panel = document.getElementById("panel");
     if (!state.data || rescan) {
-      panel.innerHTML = `<div class="page qp-page">${header(true)}${Sk.cardRows(6)}</div>`;
+      panel.innerHTML = `<div class="page qp-page">${header(true)}${cardSkeleton()}</div>`;
       bindHeader();
     } else {
       paint();
@@ -192,6 +192,24 @@
         <span class="qp-rate qp-cache">Cache read</span><span class="qp-rate qp-cache">Cache write</span>
         <span class="qp-src">Source</span><span class="qp-num">Tokens</span></div>
       ${shown.map(row).join("")}${fold}</div>`;
+  }
+
+  /* A provider card's own shape: .qp-grid rows with a model cell, the
+   * four rate columns, source mark and token count. */
+  function cardSkeleton() {
+    const row = (i) => `<div class="qp-grid qp-row">
+      <div class="qp-model">${Sk.bar(16, 16)}
+        <div class="qp-name"><div class="qp-line">${Sk.bar(`${44 - (i % 4) * 6}%`, 12)}<span class="qp-harnesses">${Sk.bar(12, 12)}${i % 3 ? Sk.bar(12, 12) : ""}</span></div>
+        <div class="caption qp-src-caption">${Sk.bar(90, 10)}</div></div></div>
+      <span class="qp-rate">${Sk.num(46)}</span><span class="qp-rate">${Sk.num(46)}</span>
+      <span class="qp-rate qp-cache">${Sk.num(46)}</span><span class="qp-rate qp-cache">${Sk.num(46)}</span>
+      <span class="qp-src">${Sk.bar(16, 16)}</span><span class="qp-num">${Sk.num(44)}</span></div>`;
+    return `<div class="card qp-card" role="status" aria-label="Loading">
+      <div class="qp-card-head">${Sk.bar(18, 18)}${Sk.bar(120, 13)}<span class="caption qp-count">${Sk.bar(110, 11)}</span></div>
+      <div class="qp-grid qp-head"><span>${Sk.bar(38, 10)}</span><span class="qp-rate">${Sk.num(30, 10)}</span><span class="qp-rate">${Sk.num(38, 10)}</span>
+        <span class="qp-rate qp-cache">${Sk.num(58, 10)}</span><span class="qp-rate qp-cache">${Sk.num(62, 10)}</span>
+        <span class="qp-src">${Sk.bar(42, 10, "", "margin-left:auto")}</span><span class="qp-num">${Sk.num(44, 10)}</span></div>
+      ${Array.from({ length: 6 }, (_, i) => row(i)).join("")}</div>`;
   }
 
   /* "fast ×2" when the catalog knows the tier's multiplier, else the name. */
