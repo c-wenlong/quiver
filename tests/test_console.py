@@ -289,6 +289,7 @@ class TildeTest(unittest.TestCase):
         # buried mid-string, both stay as written.
         self.assertEqual(tilde("/Users/kaiser/x", home), "/Users/kaiser/x")
         self.assertEqual(tilde("/backup/Users/kai/x", home), "/backup/Users/kai/x")
+        self.assertEqual(tilde("/Users/kai/backup/Users/kai/x", home), "~/backup/Users/kai/x")
         self.assertEqual(tilde("relative/path", home), "relative/path")
 
 if __name__ == "__main__":
