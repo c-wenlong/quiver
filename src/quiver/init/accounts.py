@@ -30,7 +30,10 @@ lives inside ``~/.quiver`` and holds that account's own login:
 from __future__ import annotations
 
 import contextlib
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: no flock, and no Quiver.app to race with
+    fcntl = None
 import json
 import os
 import re
@@ -225,10 +228,16 @@ def _targets(primitive: str, acct: AccountHome, registry: dict,
     return []
 
 
-def _within(path: Path, parent: Path) -> bool:
+def _plain(path: Path, home: Path) -> bool:
+    """``path`` sits under ~/.quiver/accounts with no folder on the way
+    that is a link: what it resolves to is what it says. The one rule both
+    linking and unlinking use, so swe never records a link it would later
+    refuse to remove."""
+    root = accounts_root(home)
     try:
-        return path.resolve().is_relative_to(parent.resolve())
-    except (OSError, RuntimeError):
+        rel = path.relative_to(root)
+        return path.resolve() == root.resolve() / rel
+    except (OSError, RuntimeError, ValueError):
         return False
 
 
@@ -273,8 +282,7 @@ def classify(label: str, acct: AccountHome, dest: Path, source: Path,
     if not ancestor.is_dir():
         return LinkStatus(label, dest, "conflict",
                           f"{ancestor.name} is the account's own file, left alone", source)
-    if not _within(acct.path, accounts_root(home)) \
-            or not _within(ancestor, acct.path):
+    if not _plain(ancestor, home):
         # A home or a hooks/ folder that is a link out (to ~/.claude/hooks,
         # say) would put this link somewhere that is not the account's.
         return LinkStatus(label, dest, "conflict", OUTSIDE_DETAIL, source)
@@ -366,6 +374,9 @@ def _locked(home: Path):
     lock = _paths.cache_dir_for(home) / "account-links.lock"  # cache/: never versioned
     lock.parent.mkdir(parents=True, exist_ok=True)
     with open(lock, "a") as fh:
+        if fcntl is None:
+            yield
+            return
         fcntl.flock(fh, fcntl.LOCK_EX)
         try:
             yield
@@ -382,9 +393,7 @@ def _still_ours(entry: dict, home: Path) -> bool:
     root = accounts_root(home)
     try:
         rel = path.parent.relative_to(root)
-        if len(rel.parts) < 3 or rel.parts[2] != "home":
-            return False
-        if path.parent.resolve() != root.resolve() / rel:
+        if len(rel.parts) < 3 or rel.parts[2] != "home" or not _plain(path.parent, home):
             return False
         return path.is_symlink() and os.readlink(path) == entry["source"]
     except (OSError, RuntimeError, ValueError):
@@ -398,7 +407,7 @@ def _link(status: LinkStatus, home: Path) -> str:
     path = status.path
     if status.source is None:
         return "conflict"
-    if not _within(_nearest_existing(path.parent), accounts_root(home)):
+    if not _plain(_nearest_existing(path.parent), home):
         return "conflict"
     try:
         if status.state == "relink":

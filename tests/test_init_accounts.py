@@ -254,6 +254,31 @@ class ReviewFixesTest(unittest.TestCase):
         self.assertTrue((default_hooks / "guard.py").is_symlink())
         self.assertEqual(accounts.load_manifest(home), [])
 
+    def test_a_hooks_folder_linked_within_the_account_is_not_linked_into(self):
+        # Cleanup refuses a parent that is a link, so linking must refuse it
+        # too, or switching off would leave the links behind.
+        home = _home(self)
+        _profiles(home, WORK)
+        _flags(home, hooks=True)
+        hub = hooks_dir(home) / "claude"
+        hub.mkdir(parents=True)
+        (hub / "guard.py").write_text("print(1)\n")
+        (_acct(home) / "my-hooks").mkdir()
+        (_acct(home) / "hooks").symlink_to(_acct(home) / "my-hooks")
+        rows, _ = _sync(home)
+        self.assertEqual(list(rows.values()), ["conflict"])
+        self.assertEqual(os.listdir(_acct(home) / "my-hooks"), [])
+
+    def test_without_flock_the_pass_still_runs(self):
+        from unittest import mock
+
+        home = _home(self)
+        _profiles(home, WORK)
+        _flags(home, skills=True)
+        with mock.patch.object(accounts, "fcntl", None):
+            rows, _ = _sync(home)
+        self.assertEqual(list(rows.values()), ["linked"])
+
     def test_a_damaged_record_stops_the_pass(self):
         home = _home(self)
         _profiles(home, WORK)
