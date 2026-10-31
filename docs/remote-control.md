@@ -205,7 +205,8 @@ remote/
 
 Layering: `remote` imports `sessions`, `reports`, `github`, `ledger`
 (session models), `mcp.secrets` (the Linear key), `webapp` (the hub
-serves it), `paths`, `console` and `flags`. The web app's pages import
+serves it), `harness`, `json_output`, `paths`, `console` and `flags`.
+The web app's pages import
 `remote` modules back (catalog, devices, pairing, setup, supervise), most
 of them function-local, and two other packages borrow from it:
 `mcp/gateway_commands.py` uses `remote.launchd` and `ledger/pricing.py`
