@@ -110,6 +110,43 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>iPhone: the paired hubs move to an App Group and a shared Keychain
+group.</strong> The hub list now lives in <code>group.com.quiver.remote</code> and each
+hub's credential in the <code>&lt;team&gt;.com.quiver.remote.shared</code> Keychain
+group, so an app extension can read them. Groundwork for the share
+sheet (<a href="https://github.com/c-wenlong/quiver/issues/1441">#1441</a>) and
+the widget (<a href="https://github.com/c-wenlong/quiver/issues/1442">#1442</a>).
+Existing pairings move on first launch: each credential is copied
+into the shared group and the old item dropped only after the copy
+is stored, and a copy that fails keeps reading the old item.</p>
+</li>
+<li><p><strong>Mac: the AGENTS.md page edits instruction chapters.</strong> When the shared
+file is chapter-managed (<code>~/.quiver/AGENTS_MD/index.txt</code> exists), the
+Global tab becomes a chapter editor instead of a flat-file editor: a
+drag-to-reorder rail mirrors index.txt order, <code>+</code> creates a chapter with
+a heading and lists it, <code>−</code> unlists a chapter while leaving the file on
+disk, and every save runs <code>swe instructions build</code> so the file every
+harness reads never goes stale. The generated output shows read-only
+with a Current/Stale/Not built state and a Rebuild button for edits
+made elsewhere. With no index the flat editor stays, joined by a
+&quot;Convert to chapters&quot; card that runs the new <code>swe instructions init</code> —
+which folds the current AGENTS.md into <code>AGENTS_MD/main.md</code> (stripping
+compiler comments when it was generated) and builds. <code>build</code>, <code>check</code>
+and <code>init</code> take <code>--json</code>: <code>check</code> reports the chapter list, staleness
+and any source refusal, so the page knows which mode to draw.</p>
+</li>
+<li><p><strong>Mac: a machine switcher opens another machine's hub in the window.</strong>
+The sidebar's first row picks &quot;This Mac&quot; (the native pages) or another
+machine's hub, whose web app then fills the window in a web view. The
+hub signs it in as it does a browser on this Mac: the owner's own
+tailnet device needs no pairing, any other device gets the web app's
+pairing card. The view stays on that hub's origin (other links open in
+the default browser, <code>file:</code> never loads), keeps its own web data per
+hub, and a strip in the title bar names the machine. The list holds the
+hub this Mac's satellite agent reports to and hubs added by address in
+Settings › Integrations › Remote › Other hubs; the last pick is
+remembered (<a href="https://github.com/c-wenlong/quiver/issues/681">#681</a>).</p>
+</li>
 <li><p><strong>iPhone and web: a machine strip on the Sessions page.</strong> One chip
 per machine the hub lists, with an online dot, its name, &quot;N working
 · M waiting&quot; and, when it is offline, &quot;last seen 2h&quot;. Tapping a chip
@@ -125,6 +162,25 @@ thought.</strong> A thinking card reads &quot;Thought for 12s&quot; or &quot;Tho
 sent none. One formatting rule per client (<code>ThoughtLabel.text</code> on
 iOS and the Mac, <code>Fmt.thought</code> on the web)
 (<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
+</li>
+<li><p><strong>Remote approvals show and answer unnumbered menus too.</strong> A
+tmux-mode prompt whose options are an arrow-select list (&quot;❭ Option
+A&quot;, the shape of Devin's ask-question panel) now reaches the approval
+card as its real labels, numbered top to bottom, instead of the
+generic Allow / Always / Deny guess. Answering a row walks the pane's
+cursor with arrow keys and confirms; numbered menus keep sending
+their own digit, and Devin's select widget now parses its selected
+row (&quot;❭&quot; is a different glyph than Claude's &quot;❯&quot;). Option labels join
+the request fingerprint, so a question that swaps its choices can't
+be answered by a stale tap.</p>
+</li>
+<li><p><strong>Approval pushes carry the menu's own option buttons.</strong> When the
+event lists the pane's choices, the ntfy actions are those labels —
+up to the three actions a push can hold, with a longer menu's last
+slot linking to the session chat where every option answers —
+instead of a fixed Allow / Deny / Always. Prompts with no option
+list keep the three semantic buttons, and tapping the notification
+itself now opens the session's chat.</p>
 </li>
 <li><p><strong>Hub: thinking messages carry how long the model thought.</strong>
 <code>kind: &quot;thinking&quot;</code> messages from Claude Code, Codex and opencode now

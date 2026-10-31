@@ -18,6 +18,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Existing pairings move on first launch: each credential is copied
   into the shared group and the old item dropped only after the copy
   is stored, and a copy that fails keeps reading the old item.
+- **Mac: the AGENTS.md page edits instruction chapters.** When the shared
+  file is chapter-managed (`~/.quiver/AGENTS_MD/index.txt` exists), the
+  Global tab becomes a chapter editor instead of a flat-file editor: a
+  drag-to-reorder rail mirrors index.txt order, `+` creates a chapter with
+  a heading and lists it, `−` unlists a chapter while leaving the file on
+  disk, and every save runs `swe instructions build` so the file every
+  harness reads never goes stale. The generated output shows read-only
+  with a Current/Stale/Not built state and a Rebuild button for edits
+  made elsewhere. With no index the flat editor stays, joined by a
+  "Convert to chapters" card that runs the new `swe instructions init` —
+  which folds the current AGENTS.md into `AGENTS_MD/main.md` (stripping
+  compiler comments when it was generated) and builds. `build`, `check`
+  and `init` take `--json`: `check` reports the chapter list, staleness
+  and any source refusal, so the page knows which mode to draw.
+
+- **Mac: a machine switcher opens another machine's hub in the window.**
+  The sidebar's first row picks "This Mac" (the native pages) or another
+  machine's hub, whose web app then fills the window in a web view. The
+  hub signs it in as it does a browser on this Mac: the owner's own
+  tailnet device needs no pairing, any other device gets the web app's
+  pairing card. The view stays on that hub's origin (other links open in
+  the default browser, `file:` never loads), keeps its own web data per
+  hub, and a strip in the title bar names the machine. The list holds the
+  hub this Mac's satellite agent reports to and hubs added by address in
+  Settings › Integrations › Remote › Other hubs; the last pick is
+  remembered ([#681](https://github.com/c-wenlong/quiver/issues/681)).
 
 - **iPhone and web: a machine strip on the Sessions page.** One chip
   per machine the hub lists, with an online dot, its name, "N working
@@ -34,6 +60,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sent none. One formatting rule per client (`ThoughtLabel.text` on
   iOS and the Mac, `Fmt.thought` on the web)
   ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
+
+- **Remote approvals show and answer unnumbered menus too.** A
+  tmux-mode prompt whose options are an arrow-select list ("❭ Option
+  A", the shape of Devin's ask-question panel) now reaches the approval
+  card as its real labels, numbered top to bottom, instead of the
+  generic Allow / Always / Deny guess. Answering a row walks the pane's
+  cursor with arrow keys and confirms; numbered menus keep sending
+  their own digit, and Devin's select widget now parses its selected
+  row ("❭" is a different glyph than Claude's "❯"). Option labels join
+  the request fingerprint, so a question that swaps its choices can't
+  be answered by a stale tap.
+
+- **Approval pushes carry the menu's own option buttons.** When the
+  event lists the pane's choices, the ntfy actions are those labels —
+  up to the three actions a push can hold, with a longer menu's last
+  slot linking to the session chat where every option answers —
+  instead of a fixed Allow / Deny / Always. Prompts with no option
+  list keep the three semantic buttons, and tapping the notification
+  itself now opens the session's chat.
 
 - **Hub: thinking messages carry how long the model thought.**
   `kind: "thinking"` messages from Claude Code, Codex and opencode now

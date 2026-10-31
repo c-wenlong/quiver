@@ -239,6 +239,180 @@ class TestTmuxHelpers(unittest.TestCase):
         self.assertEqual(a, a2)
         self.assertNotEqual(a, b)
 
+    # Devin's select widget (login menu, ask-question panel): the
+    # selected row carries a "❭" cursor (U+276D), options number with a
+    # bare space, and each option's description sits one indent deeper.
+    DEVIN_SELECT = (
+        " How would you like to log in?\n"
+        "\n"
+        " ❭ 1 Log in with browser\n"
+        "     Recommended for most users\n"
+        "   2 Paste a token manually\n"
+        "     For SSH or remote sessions without browser access\n"
+        "   3 Back\n"
+        "\n"
+        " ↑↓ select · ↵ confirm · esc cancel"
+    )
+
+    # The same widget unnumbered — how the ask-question panel draws its
+    # options when the rows have no digits to key on.
+    DEVIN_QUESTION = (
+        " Which storage engine should we use?\n"
+        "\n"
+        " ❭ SQLite\n"
+        "   Postgres\n"
+        "   Keep as files\n"
+        "   Other (type your own)\n"
+        "\n"
+        " ↑↓ select · ↵ confirm · esc cancel"
+    )
+
+    def test_menu_options_includes_devin_select_cursor_row(self):
+        # "❭" is a different glyph from claude's "❯" — the selected row
+        # used to drop out of the parsed menu, taking option 1 with it.
+        opts = supervise.menu_options(self.DEVIN_SELECT)
+        self.assertEqual([n for n, _ in opts], ["1", "2", "3"])
+        self.assertTrue(opts[0][1].startswith("Log in with browser"))
+
+    def test_pane_shows_approval_question_panel(self):
+        self.assertTrue(supervise.pane_shows_approval(self.DEVIN_QUESTION))
+        # The Other row alone names the panel even with no footer left.
+        no_footer = "\n".join(self.DEVIN_QUESTION.splitlines()[:-2])
+        self.assertTrue(supervise.pane_shows_approval(no_footer))
+
+    def test_choice_block_devin_question(self):
+        rows, start, cursor = supervise.choice_block(self.DEVIN_QUESTION)
+        self.assertEqual(
+            rows,
+            [("1", "SQLite"), ("2", "Postgres"),
+             ("3", "Keep as files"), ("4", "Other (type your own)")])
+        self.assertEqual(start, 2)
+        self.assertEqual(cursor, 0)
+
+    def test_choice_block_needs_a_marker(self):
+        # Stacked lines with no menu furniture are output text, never
+        # an answerable list — the glyph alone cannot prove a menu.
+        pane = " ❭ Alpha\n   Beta\n   Gamma\n"
+        self.assertEqual(supervise.choice_block(pane), ([], -1, None))
+
+    def test_choice_block_needs_a_cursor_and_two_rows(self):
+        marker = "\n ↑↓ select · ↵ confirm · esc cancel"
+        self.assertEqual(
+            supervise.choice_block("   Alpha\n   Beta" + marker),
+            ([], -1, None))
+        self.assertEqual(
+            supervise.choice_block(" ❭ Alpha" + marker),
+            ([], -1, None))
+
+    def test_choice_block_skips_deeper_indented_descriptions(self):
+        # A description line's indent is not the label column — it
+        # falls out of the block instead of gluing onto an option.
+        pane = (
+            " Pick?\n\n"
+            " ❭ Alpha\n"
+            "     the default\n"
+            "   Beta\n"
+            "     the fast one\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        rows, _start, cursor = supervise.choice_block(pane)
+        self.assertEqual(rows, [("1", "Alpha"), ("2", "Beta")])
+        self.assertEqual(cursor, 0)
+
+    def test_choice_block_question_lines_stay_out(self):
+        pane = (
+            " Pick one:\n"
+            " SQLite, Postgres or files?\n"
+            " ❭ SQLite\n"
+            "   Postgres\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        rows, _start, _c = supervise.choice_block(pane)
+        self.assertEqual([l for _n, l in rows], ["SQLite", "Postgres"])
+
+    def test_choice_block_furniture_cannot_split_the_list(self):
+        # A description ending in ":" and the key-hint footer stay in
+        # the zone but never become rows — options after them still
+        # parse, and punctuation labels at the label column are real.
+        pane = (
+            " Pick?\n\n"
+            " ❭ Alpha\n"
+            "     reads: the default\n"
+            "   Beta\n"
+            "   Continue anyway?\n"
+            "   Something else:\n"
+            "   note: esc cancels\n"
+            "   Gamma\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        rows, _s, _c = supervise.choice_block(pane)
+        self.assertEqual(
+            [l for _n, l in rows],
+            ["Alpha", "Beta", "Continue anyway?",
+             "Something else:", "Gamma"])
+
+    def test_choice_block_prefers_the_bottom_list(self):
+        pane = (
+            " ❭ Old alpha\n"
+            "   Old beta\n"
+            "\n"
+            "text in between\n"
+            "\n"
+            " ❭ New alpha\n"
+            "   New beta\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        rows, _s, _c = supervise.choice_block(pane)
+        self.assertEqual([l for _n, l in rows], ["New alpha", "New beta"])
+
+    def test_option_menu_prefers_numbered_rows(self):
+        rows, kind, cursor = supervise.option_menu(self.DEVIN_SELECT)
+        self.assertEqual((kind, cursor), ("numbered", None))
+        self.assertEqual([n for n, _ in rows], ["1", "2", "3"])
+        rows, kind, cursor = supervise.option_menu(self.DEVIN_QUESTION)
+        self.assertEqual((kind, cursor), ("choices", 0))
+        self.assertEqual([n for n, _ in rows], ["1", "2", "3", "4"])
+
+    def test_option_menu_prefers_the_lowest_block(self):
+        # A numbered menu scrolled above a live choice list is stale —
+        # the card offers the rows the pane is asking on now.
+        pane = (
+            " Pick a branch?\n"
+            " 1. main\n"
+            " 2. dev\n"
+            "\n"
+            " Which engine?\n"
+            " ❭ SQLite\n"
+            "   Postgres\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        rows, kind, _c = supervise.option_menu(pane)
+        self.assertEqual(kind, "choices")
+        self.assertEqual([l for _n, l in rows], ["SQLite", "Postgres"])
+
+    def test_approval_fingerprint_binds_choice_labels(self):
+        # Same question, different options — a new prompt, a new id.
+        other = self.DEVIN_QUESTION.replace("Keep as files", "Redis")
+        self.assertNotEqual(
+            supervise.approval_fingerprint(self.DEVIN_QUESTION),
+            supervise.approval_fingerprint(other))
+
+    def test_approval_fingerprint_ignores_choice_cursor_moves(self):
+        # Arrowing over the same rows leaves the outstanding id alone.
+        moved = self.DEVIN_QUESTION.replace(
+            " ❭ SQLite\n   Postgres\n", "   SQLite\n ❭ Postgres\n")
+        self.assertEqual(
+            supervise.approval_fingerprint(self.DEVIN_QUESTION),
+            supervise.approval_fingerprint(moved))
+        # The Other row carries an approval marker, so its cursor used
+        # to ride into the hash — selecting it must not rotate the id.
+        on_other = self.DEVIN_QUESTION.replace(
+            " ❭ SQLite\n", "   SQLite\n").replace(
+            "   Other (type your own)", " ❭ Other (type your own)")
+        self.assertEqual(
+            supervise.approval_fingerprint(self.DEVIN_QUESTION),
+            supervise.approval_fingerprint(on_other))
+
     def test_tmux_real_call(self):
         cp = self._cp(rc=0)
         with patch.object(supervise, "tmux_bin", return_value="/x/tmux"), \

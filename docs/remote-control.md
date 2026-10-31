@@ -1404,6 +1404,16 @@ writes-go-through-tested-Python rule.
 [app/ios/ROADMAP.md](../app/ios/ROADMAP.md) tracks the client redesign:
 every page, component and feature, and the hub work each needs.
 
+The Mac app reaches another machine's hub through the web app too: its
+sidebar's machine switcher (#681) loads a picked hub's `/` in a web view
+inside the window, pinned to that hub's origin. The hub treats it as a
+browser on the Mac: the owner's own tailnet node gets in with no pairing
+(the web app sends `X-Quiver-Pair: 1` from the hub's own origin), and any
+other node sees the web app's pairing card, whose credential stays in
+that hub's persistent web data store. The switcher lists the hub this
+Mac's `agent.json` names and hubs added by address in Settings ›
+Integrations › Remote › Other hubs.
+
 Two clients. The web app (`src/quiver/webapp/`, served by the hub under
 `/`; older `/app/` links redirect there, query and fragment intact) works in any browser over
 Tailscale: its `#pair=` fragment trades a pair token for the credential
@@ -1473,8 +1483,12 @@ Screens:
 Beyond remote control, nearly free on this architecture: push for
 needs-you/finished/error/limit via the self-hosted ntfy (iOS background
 delivery needs `upstream-base-url: https://ntfy.sh` set, and ntfy `http`
-action buttons give approve/deny straight from the lock screen: a POST
-to `/v1/sessions/{id}/approval` over the tailnet, no app code); a
+action buttons answer straight from the lock screen: a POST to
+`/v1/sessions/{id}/approval` over the tailnet, no app code. When the
+event lists the pane's menu rows the buttons carry those labels — up
+to ntfy's three-action cap, with a longer menu's last slot linking to
+the session chat where every option answers — and prompts with no
+option list fall back to Allow/Deny/Always); a
 usage/limits dashboard (`swe list` data); transcript FTS across machines
 (the search index normalizes already); diff viewer + commit/push via
 `swe gh`; `$ swe report` cards; voice dictation; offline prompt queue.

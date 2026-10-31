@@ -373,6 +373,16 @@ APPROVAL_MARKERS = (
     # Devin's menu footer is "↑↓ select · ↵ confirm · esc cancel".
     "esc cancel",
     "permission to proceed",
+    # Devin's ask-question panel always ends its option list with an
+    # "Other (type your own)" row — the surest tell of that prompt.
+    "type your own",
+)
+
+# Marker lines that are key-hint furniture, not option text: a bare row
+# containing one is a footer, never a choice. "type your own" stays out
+# of this list on purpose — the Other row it names is a real option.
+_FOOTER_MARKERS = tuple(
+    m for m in APPROVAL_MARKERS if m != "type your own"
 )
 
 # Short stacked option lines ("1. Yes", "❯ Allow once", "Deny") are the
@@ -390,9 +400,11 @@ _APPROVAL_ITEM = re.compile(
 # A numbered row in a permission menu: "1. Yes", "2) No", devin's
 # cursor row ") 3 Yes", "4 Yes, allow `git` commands". Labels decide
 # answers — positions alone cannot, since devin puts "No" at 8 while
-# claude puts it at 3.
+# claude puts it at 3. The cursor class covers every glyph a TUI draws
+# on the selected row — devin's select widget uses "❭" (U+276D), not
+# the "❯" (U+276F) claude draws — or the selected option never parses.
 _MENU_OPTION = re.compile(
-    r"^\s*(?:[❯>•*)\-]\s*)?(\d{1,2})[.)]?\s+(\S.*?)\s*$"
+    r"^\s*(?:[❭❯›>•*)\-]\s*)?(\d{1,2})[.)]?\s+(\S.*?)\s*$"
 )
 _YES_LABEL = re.compile(r"(?:yes|approve|allow|proceed)\b", re.IGNORECASE)
 _DENY_LABEL = re.compile(r"(?:no|deny|reject|cancel)\b", re.IGNORECASE)
@@ -454,6 +466,111 @@ def menu_options(pane: str) -> list[tuple[str, str]]:
     """The ``(digit, label)`` rows a numbered menu prints, in order."""
     rows, _ = menu_block(pane)
     return rows
+
+
+# An unnumbered option row in an arrow-select list — devin's ask panel
+# and other TUIs draw the selected row with a cursor glyph ("❭ Option
+# A") and siblings as bare lines at the same label column. No digit
+# reaches these: answering walks the cursor with arrow keys, so a
+# row's positional id is a key distance, not a keystroke.
+_CHOICE_CURSOR = re.compile(r"^\s*([❭❯›])\s+(\S.*?)\s*$")
+_CHOICE_LABEL_MAX = 80
+# A cursor glyph decorating a line — for fingerprint normalization,
+# where the same row must hash identically selected or not.
+_CURSOR_ROW = re.compile(r"^[❭❯›]\s+")
+
+
+def _choice_row(line: str) -> tuple[str, int, bool, bool] | None:
+    """(label, label column, has cursor, usable) for a row, else None.
+
+    A cursor-glyph row is always a usable option — the glyph is what
+    separates a live menu's selected row from stacked output. A bare
+    line must be indented and carry text. Furniture — a key-hint
+    footer, a marker row, a wrapped line — stays inside the zone but
+    is never an option, so it cannot split the list in two. A "?" or
+    ":" ending keeps a bare row usable: the cursor's label column, not
+    punctuation, separates options from the question line above. Only
+    an empty, flush-left, or numbered line is a zone boundary.
+    """
+    if _MENU_OPTION.match(line):
+        return None
+    m = _CHOICE_CURSOR.match(line)
+    if m:
+        return m.group(2), m.start(2), True, True
+    text = line.strip()
+    col = len(line) - len(line.lstrip())
+    if not col or not any(ch.isalnum() for ch in text):
+        return None
+    usable = not (
+        len(text) > _CHOICE_LABEL_MAX
+        or "·" in text
+        or any(mk in text.lower() for mk in _FOOTER_MARKERS)
+    )
+    return text, col, False, usable
+
+
+def choice_block(pane: str) -> tuple[list[tuple[str, str]], int, int | None]:
+    """The unnumbered arrow-select list, or ``([], -1, None)``.
+
+    Returns ``(rows, first line index, cursor index)`` where rows are
+    ``("1".."k", label)`` numbered top to bottom — positional ids the
+    injector turns into arrow keys. A block needs a marker somewhere on
+    the pane, a cursor row anchoring the list's label column, and a
+    second row at that column; deeper-indented descriptions and the
+    question line above fall outside the column and stay out. The
+    bottom-most candidate wins, like ``menu_block``.
+    """
+    if not any(mk in pane.lower() for mk in APPROVAL_MARKERS):
+        return [], -1, None
+    zones: list[list[tuple[int, str, int, bool, bool]]] = []
+    zone: list[tuple[int, str, int, bool, bool]] = []
+    for i, ln in enumerate(pane.splitlines()):
+        row = _choice_row(ln)
+        if row is None:
+            if zone:
+                zones.append(zone)
+                zone = []
+            continue
+        label, col, is_cursor, usable = row
+        zone.append((i, label, col, is_cursor, usable))
+    if zone:
+        zones.append(zone)
+    for zone in reversed(zones):
+        cols = [col for _i, _l, col, cur, _u in zone if cur]
+        if not cols:
+            continue
+        col = cols[0]
+        rows = [
+            (i, l, cur) for i, l, c, cur, u in zone if c == col and u
+        ]
+        if len(rows) < 2:
+            continue
+        start = rows[0][0]
+        cursor = next(i for i, r in enumerate(rows) if r[2])
+        return (
+            [(str(n), l) for n, (_i, l, _c) in enumerate(rows, 1)],
+            start,
+            cursor,
+        )
+    return [], -1, None
+
+
+def option_menu(pane: str) -> tuple[list[tuple[str, str]], str, int | None]:
+    """The answerable menu rows: ``(rows, kind, cursor index)``.
+
+    ``"numbered"`` rows are keyed by their own digit and answered with
+    a keystroke; ``"choices"`` rows are an unnumbered arrow-select list
+    whose positional ids the injector walks with Up/Down. Whichever
+    block sits lowest is the live one — a numbered run scrolled up from
+    an earlier prompt must not outrank the question waiting now.
+    """
+    numbered, mstart = menu_block(pane)
+    choices, cstart, cursor = choice_block(pane)
+    if choices and cstart > mstart:
+        return choices, "choices", cursor
+    if numbered:
+        return numbered, "numbered", None
+    return choices, "choices", cursor
 
 
 def menu_key_for(pane: str, decision: str) -> str | None:
@@ -581,7 +698,10 @@ def approval_fingerprint(pane: str) -> str:
     if ctx:
         lines.append(ctx)
     for ln in pane.splitlines():
-        text = ln.strip()
+        # Cursor decoration never counts: "❭ Other (type your own)" and
+        # "Other (type your own)" are the same row at different cursor
+        # positions, and a local arrow move must not rotate the id.
+        text = _CURSOR_ROW.sub("", ln.strip())
         if not text:
             continue
         low = text.lower()
@@ -591,6 +711,12 @@ def approval_fingerprint(pane: str) -> str:
             or text.endswith("?")
         ):
             lines.append(text)
+    # The option labels bind too: a question that swaps its choices is a
+    # new prompt, and a stale id must not answer it. Cursor position is
+    # deliberately not hashed — arrows moving over the same rows leave
+    # the outstanding request alone.
+    rows, _kind, _cursor = option_menu(pane)
+    lines.extend(label for _n, label in rows)
     return hashlib.sha1("\n".join(lines).encode()).hexdigest()[:16]
 
 

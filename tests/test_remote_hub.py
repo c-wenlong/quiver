@@ -1433,10 +1433,17 @@ class TestScopedApprovalToken(unittest.TestCase):
         second, _ = self._post_approval(body, tok)
         self.assertEqual(second, 401)
 
-    def test_scoped_token_cannot_pick_a_menu_row(self):
-        # The buttons send allow/deny/always only; a row number could
-        # choose any option of a digit menu. It burns the token too.
-        for decision in ("2", "0", 3, None, ["allow"]):
+    def test_scoped_token_can_pick_a_menu_row(self):
+        # Option buttons send the row's number — a digit answers the
+        # prompt the token was minted for, the same grant allow/deny
+        # already had through menu_key_for. Non-string decisions and
+        # out-of-range digit shapes still burn and refuse.
+        for decision in ("2", "0"):
+            tok = self.tokens.mint("claude:s1", "r1")
+            status, _ = self._post_approval(
+                {"request_id": "r1", "decision": decision}, tok)
+            self.assertNotEqual(status, 401, decision)
+        for decision in ("123", 3, None, ["allow"]):
             tok = self.tokens.mint("claude:s1", "r1")
             status, _ = self._post_approval(
                 {"request_id": "r1", "decision": decision}, tok)

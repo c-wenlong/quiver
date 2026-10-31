@@ -135,6 +135,10 @@ class TmuxInjector:
     # injector is built per request; bounded so a long-lived hub does
     # not grow it forever.
     _answered: dict[str, "collections.deque[str]"] = {}
+    # One lock per pane serializes a whole approval: the hub serves
+    # each client on its own thread, and two answers racing the same
+    # menu would otherwise interleave their arrow keys mid-walk.
+    _pane_locks: dict[str, threading.Lock] = {}
 
     def __init__(self, home: Path | None, session_key: str) -> None:
         self.home = home
@@ -168,6 +172,14 @@ class TmuxInjector:
             decision.isdigit() and len(decision) <= 2
         ):
             return InjectResult(False, f"unknown decision {decision}")
+        # Checks, pane capture, the key walk and the answered mark are
+        # one critical section per pane — a concurrent reply must see
+        # either the request still open or the menu already consumed.
+        lock = self._pane_locks.setdefault(self.key, threading.Lock())
+        with lock:
+            return self._approval(session, request_id, decision)
+
+    def _approval(self, session: Session, request_id: str, decision: str) -> InjectResult:
         # The TUI menu does not display request ids, so we cannot bind a
         # reply to *the* on-screen prompt. What we can bind: reject a
         # request_id we already answered, and require a visible
@@ -200,19 +212,65 @@ class TmuxInjector:
         if decision.isdigit():
             # Only a row the menu actually shows may be sent — a digit
             # that isn't listed can't reach into an unrelated prompt.
-            offered = {n for n, _ in supervise.menu_options(pane)}
+            rows, kind, cursor = supervise.option_menu(pane)
+            offered = {n for n, _ in rows}
             if decision not in offered:
                 return InjectResult(
                     False, "that menu option is not on screen"
                 )
+            if kind == "choices":
+                # An unnumbered arrow-select list takes no digit key —
+                # walk the cursor onto the row and confirm.
+                if self._send_choice_keys(
+                        rows, int(decision) - 1, cursor):
+                    answered.append(request_id)
+                    return InjectResult(
+                        True, f"selected menu option {decision}"
+                    )
+                return InjectResult(
+                    False, "tmux session is not reachable"
+                )
             key = decision
         else:
+            rows, kind, _cursor = supervise.option_menu(pane)
+            if kind == "choices" and rows:
+                # An arrow-select list has no allow/always mapping —
+                # only "deny" carries over, as the menu's own cancel.
+                if decision != "deny":
+                    return InjectResult(
+                        False,
+                        "this prompt takes a menu option, not a decision",
+                    )
+                if supervise.send_key(self.name, "Escape"):
+                    answered.append(request_id)
+                    return InjectResult(True, "escape sent")
+                return InjectResult(
+                    False, "tmux session is not reachable"
+                )
             key = supervise.menu_key_for(pane, decision) \
                 or _APPROVAL_KEYS[decision]
         if supervise.send_key(self.name, key):
             answered.append(request_id)
             return InjectResult(True, f"sent menu key {key}")
         return InjectResult(False, "tmux session is not reachable")
+
+    def _send_choice_keys(
+        self, rows: list, target: int, cursor: int | None
+    ) -> bool:
+        """Arrow to the 0-based ``target`` row and confirm.
+
+        The cursor-marked row anchors the walk; without one, saturating
+        Up lands on row 1 from wherever the list sits.
+        """
+        if cursor is not None:
+            delta = target - cursor
+            keys = ["Down" if delta > 0 else "Up"] * abs(delta)
+        else:
+            keys = ["Up"] * len(rows) + ["Down"] * target
+        for key in keys + ["Enter"]:
+            if not supervise.send_key(self.name, key):
+                return False
+        return True
 
     def control(self, session: Session, op: str, value: str) -> InjectResult:
         if op == "interrupt":
