@@ -343,17 +343,26 @@ class Notifier:
                 # never the only way in.
                 shown = options if len(options) <= _ACTION_MAX \
                     else options[:_ACTION_MAX - 1]
-                actions = [
-                    self._action(key, rid, n, l[:_ACTION_LABEL_CAP],
-                                 token)
-                    for n, l in shown
-                ]
-                if len(options) > _ACTION_MAX:
-                    actions.append({
+                short = [(n, l[:_ACTION_LABEL_CAP]) for n, l in shown]
+                if len({l for _n, l in short}) != len(short):
+                    # Two rows truncate to the same button text — a tap
+                    # could answer either, so neither may be a button.
+                    actions = [{
                         "action": "view",
                         "label": f"All {len(options)} options…",
                         "url": chat_url,
-                    })
+                    }]
+                else:
+                    actions = [
+                        self._action(key, rid, n, l, token)
+                        for n, l in short
+                    ]
+                    if len(options) > _ACTION_MAX:
+                        actions.append({
+                            "action": "view",
+                            "label": f"All {len(options)} options…",
+                            "url": chat_url,
+                        })
             else:
                 actions = [
                     self._action(key, rid, "allow", "Allow", token),

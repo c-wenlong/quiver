@@ -365,6 +365,8 @@ final class AppModel {
     @ObservationIgnored private(set) var codexHomes: @MainActor () -> [String] = { [] }
     /// App-wide so unsaved AGENTS.md edits outlive a trip to another page.
     let agentsMd = AgentsModel()
+    /// The same for chapter edits under ~/.quiver/AGENTS_MD.
+    let chapters = ChaptersModel()
     private(set) var apiKeys: APIKeysModel
 
     /// The shell file of API keys; empty means ~/.quiver/secrets/providers/.api_keys.

@@ -110,6 +110,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Mac: the AGENTS.md page edits instruction chapters.</strong> When the shared
+file is chapter-managed (<code>~/.quiver/AGENTS_MD/index.txt</code> exists), the
+Global tab becomes a chapter editor instead of a flat-file editor: a
+drag-to-reorder rail mirrors index.txt order, <code>+</code> creates a chapter with
+a heading and lists it, <code>−</code> unlists a chapter while leaving the file on
+disk, and every save runs <code>swe instructions build</code> so the file every
+harness reads never goes stale. The generated output shows read-only
+with a Current/Stale/Not built state and a Rebuild button for edits
+made elsewhere. With no index the flat editor stays, joined by a
+&quot;Convert to chapters&quot; card that runs the new <code>swe instructions init</code> —
+which folds the current AGENTS.md into <code>AGENTS_MD/main.md</code> (stripping
+compiler comments when it was generated) and builds. <code>build</code>, <code>check</code>
+and <code>init</code> take <code>--json</code>: <code>check</code> reports the chapter list, staleness
+and any source refusal, so the page knows which mode to draw.</p>
+</li>
 <li><p><strong>Mac: a machine switcher opens another machine's hub in the window.</strong>
 The sidebar's first row picks &quot;This Mac&quot; (the native pages) or another
 machine's hub, whose web app then fills the window in a web view. The

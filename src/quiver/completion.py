@@ -670,6 +670,7 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
 
 _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
     "instructions": [
+        ("init", "Fold the current AGENTS.md into a first chapter"),
         ("build", "Compile chapters into the shared AGENTS.md"),
         ("check", "Check generated instructions without writing"),
         ("watch", "Rebuild instructions when their sources change"),
