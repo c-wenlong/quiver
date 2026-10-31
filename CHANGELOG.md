@@ -37,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iOS and the Mac, `Fmt.thought` on the web)
   ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
 
+- **Remote approvals show and answer unnumbered menus too.** A
+  tmux-mode prompt whose options are an arrow-select list ("❭ Option
+  A", the shape of Devin's ask-question panel) now reaches the approval
+  card as its real labels, numbered top to bottom, instead of the
+  generic Allow / Always / Deny guess. Answering a row walks the pane's
+  cursor with arrow keys and confirms; numbered menus keep sending
+  their own digit, and Devin's select widget now parses its selected
+  row ("❭" is a different glyph than Claude's "❯"). Option labels join
+  the request fingerprint, so a question that swaps its choices can't
+  be answered by a stale tap.
+
 - **Hub: thinking messages carry how long the model thought.**
   `kind: "thinking"` messages from Claude Code, Codex and opencode now
   carry `duration_s`, so the clients can show "Thought for 12s". Claude

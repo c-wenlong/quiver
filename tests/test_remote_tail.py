@@ -1955,6 +1955,50 @@ class TestApprovalWatcher(unittest.TestCase):
         ev = self._approval_events()[0]
         self.assertEqual(ev["data"]["prompt"], "Approval requested")
 
+    def test_request_carries_choice_menu_options(self):
+        # An unnumbered ask-question list rides the event as positional
+        # rows — the card lists the real labels instead of the
+        # allow/always/deny guess, and the injector walks them with
+        # arrow keys.
+        pane = (
+            " Which engine?\n"
+            "\n"
+            " ❭ SQLite\n"
+            "   Postgres\n"
+            "   Other (type your own)\n"
+            "\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self._poll(pane, meta={"mode": "tmux", "tmux": "qv-k1"})
+        ev = self._approval_events()[0]
+        opts = ev["data"]["options"]
+        self.assertEqual(
+            [(o["n"], o["label"]) for o in opts],
+            [("1", "SQLite"), ("2", "Postgres"),
+             ("3", "Other (type your own)")])
+        self.assertEqual(ev["data"]["prompt"], "Which engine?")
+
+    def test_request_carries_devin_select_options(self):
+        # Devin's select widget marks the selected row "❭" — every row
+        # reaches the card, option 1 included.
+        pane = (
+            " How would you like to log in?\n"
+            "\n"
+            " ❭ 1 Log in with browser\n"
+            "   2 Paste a token manually\n"
+            "   3 Back\n"
+            "\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self._poll(pane, meta={"mode": "tmux", "tmux": "qv-k1"})
+        ev = self._approval_events()[0]
+        self.assertEqual(
+            [(o["n"], o["label"]) for o in ev["data"]["options"]],
+            [("1", "Log in with browser"),
+             ("2", "Paste a token manually"), ("3", "Back")])
+        self.assertEqual(ev["data"]["prompt"],
+                         "How would you like to log in?")
+
 
 class TestApprovalPromptLine(unittest.TestCase):
     def test_skips_blank_and_unmatched_lines(self):
@@ -1967,6 +2011,23 @@ class TestApprovalPromptLine(unittest.TestCase):
             tail._approval_prompt_line("plain\noutput\n"),
             "Approval requested")
         self.assertEqual(tail._approval_prompt_line(""), "Approval requested")
+
+    def test_stale_menu_above_live_choices_keeps_live_question(self):
+        # The numbered menu scrolled up is dead; the choice list below
+        # is what the card answers, so the question must come from the
+        # zone above that live block, not above the stale one.
+        pane = (
+            " Which branch?\n"
+            " 1. main\n"
+            " 2. dev\n"
+            "\n"
+            " Which engine?\n"
+            " ❭ SQLite\n"
+            "   Postgres\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self.assertEqual(
+            tail._approval_prompt_line(pane), "Which engine?")
 
     def test_menu_row_is_never_the_prompt(self):
         # The banner scrolled off: "2 Yes, allow `sudo` commands" is a
