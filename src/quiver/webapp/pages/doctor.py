@@ -72,16 +72,29 @@ def post(ctx, action: str, body: dict) -> dict:
         if finding is None:
             raise PageError(404, "unknown_finding",
                             "That finding isn't in the report any more. Refresh to see the current one.")
-        run = RUNNERS.get(finding.get("action") or "")
+        # A remedy names its own action; the finding's top-level action
+        # stays the one older requests mean. An ``action`` that matches
+        # no remedy is refused rather than run: the report changed under
+        # the click, and the finding's own action may be a different fix.
+        wanted = body.get("action")
+        remedy = next((r for r in finding.get("remedies") or []
+                       if r.get("kind") == "action"
+                       and r.get("action") == wanted), None)
+        if wanted is not None and remedy is None:
+            raise PageError(404, "unknown_remedy",
+                            "That fix isn't in the report any more. Refresh to see the current one.")
+        action_name = remedy["action"] if remedy else finding.get("action")
+        run = RUNNERS.get(action_name or "")
         if run is None:
             raise PageError(422, "no_action", "swe can't run this fix itself. Copy the command and run it on the hub.")
-        if finding["action"] == "install":
-            run = partial(run, name=finding["harness"], via=finding["via"])
+        if action_name == "install":
+            run = partial(run, name=finding["harness"],
+                          via=(remedy or finding).get("via"))
         home = home_path(ctx)
         error = _guarded(run, home)
         # Setup and init link files, and leave a real one in the way alone.
-        blocked = blocked_now(home) if finding["action"] in ("setup", "init") else []
-        return {"ran": finding["action"], "error": error, "blocked": blocked, "report": _report(ctx)}
+        blocked = blocked_now(home) if action_name in ("setup", "init") else []
+        return {"ran": action_name, "error": error, "blocked": blocked, "report": _report(ctx)}
 
 
 @contextmanager
@@ -120,12 +133,18 @@ def run_init_now(home: Path, *, force: bool = False) -> str | None:
 
 def _report(ctx) -> dict:
     from quiver.harness.commands import doctor_report
+    from quiver.webapp.pages.repositories import harnesses
 
+    home = home_path(ctx)
     # swe doctor names an off-PATH harness's install method itself
     # (action "install", "via"), for the Mac app's Run as well as this one.
-    report = doctor_report(home_path(ctx)).to_json()
+    report = doctor_report(home).to_json()
     # The machine the checks ran on, for the confirm line ("on <machine>").
     report["machine"] = ((ctx.machine or {}).get("name") if ctx is not None else None)
+    # What a "Fix with agent" remedy needs to launch: the findings are
+    # about this home, and the picker lists what the hub can start.
+    report["home"] = str(home)
+    report["launchable"] = harnesses(home)
     return report
 
 

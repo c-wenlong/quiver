@@ -585,8 +585,15 @@ class DoctorJsonTest(unittest.TestCase):
         self.assertIsInstance(doc["data"]["ok"], bool)
         self.assertEqual(doc["data"]["ok"], result.returncode == 0)
         for finding in doc["data"]["findings"]:
-            # "harness" appears only on a finding about one harness.
-            self.assertEqual(set(finding) - {"harness", "action"}, self.FINDING_KEYS)
+            # "harness" appears only on a finding about one harness;
+            # "action"/"via", "source" and "remedies" only on one with a
+            # fix or a named file behind it.
+            self.assertEqual(
+                set(finding) - {"harness", "action", "via", "source", "remedies"},
+                self.FINDING_KEYS)
+            for remedy in finding.get("remedies") or []:
+                self.assertIn(remedy["kind"], {"action", "agent", "command", "steps"})
+                self.assertIsInstance(remedy["title"], str)
             self.assertIn(finding["severity"], {"error", "warning", "info"})
             self.assertTrue(finding["fix"] is None or isinstance(finding["fix"], str))
 
@@ -744,6 +751,10 @@ class DoctorJsonChecksTest(unittest.TestCase):
                        "not on PATH",
             "fix": "swe install claude",
             "harness": "claude",
+            "source": "found at /tmp/npm/bin/claude [nvm]",
+            "remedies": [{"kind": "steps",
+                          "title": "Put it on PATH yourself",
+                          "detail": "swe install claude"}],
         }])
 
     def test_off_path_with_an_installer_on_path_offers_install(self):
@@ -779,13 +790,18 @@ class DoctorJsonChecksTest(unittest.TestCase):
             preferred="/opt/homebrew/bin/npm", which="/usr/bin/npm")
         self.assertEqual(code, 0)
         self.assertTrue(doc["data"]["ok"])
-        self.assertEqual(doc["data"]["findings"], [{
-            "check": "npm.preferred",
-            "severity": "info",
-            "message": "which npm is /usr/bin/npm; swe prefers "
-                       "/opt/homebrew/bin/npm",
-            "fix": None,
-        }])
+        finding = doc["data"]["findings"][0]
+        self.assertEqual(
+            {k: finding[k] for k in ("check", "severity", "message", "source")},
+            {"check": "npm.preferred",
+             "severity": "info",
+             "message": "which npm is /usr/bin/npm; swe prefers "
+                        "/opt/homebrew/bin/npm",
+             "source": "PATH order: /usr/bin precedes /opt/homebrew/bin"})
+        self.assertIn("/opt/homebrew/bin", finding["fix"])
+        self.assertEqual([r["kind"] for r in finding["remedies"]],
+                         ["steps", "agent"])
+        self.assertIn("swe doctor", finding["remedies"][1]["prompt"])
 
     def test_drift_findings_keep_their_area_and_severity(self):
         code, doc = self.run_doctor(drift=[

@@ -659,8 +659,9 @@ def _declared_missing(
         candidates = ([d for d in (root, dest_roots.get(name),
                                  root_dir / name)
                        if d is not None] + dir_homes)
-        # basename -> the event labels declaring it, for one merged finding
-        missing: dict[str, set[str]] = {}
+        # basename -> (the event labels, the settings files) declaring it,
+        # for one merged finding
+        missing: dict[str, tuple[set[str], set[Path]]] = {}
         for decl in decls:
             toks = split_command(decl.command)
             homes = candidates + [decl.settings.parent / "hooks"]
@@ -687,17 +688,22 @@ def _declared_missing(
                 if base in guarded_bases or (
                         expanded is not None and expanded in guarded_paths):
                     continue
-                missing.setdefault(base, set()).add(decl.label())
-        for base, labels in sorted(missing.items()):
+                labels, files = missing.setdefault(base, (set(), set()))
+                labels.add(decl.label())
+                files.add(decl.settings)
+        for base, (labels, files) in sorted(missing.items()):
             where = ", ".join(sorted(labels))
             out.append(HookDrift(
                 "declared-missing", name,
                 f"declared {base} ({where}) but no such script is on disk",
+                script=base, settings=tuple(sorted(files)),
             ))
     return out
 
 
-def _undeclared(rows: list[HookRow]) -> list[HookDrift]:
+def _undeclared(
+    rows: list[HookRow], home: Path, registry: dict
+) -> list[HookDrift]:
     """(b) A hub script linked into place that nothing ever invokes.
 
     Shared rows count too: a generated wrapper no declaration reaches
@@ -708,20 +714,27 @@ def _undeclared(rows: list[HookRow]) -> list[HookDrift]:
     on the directory would only double the noise.
     """
     from quiver.hooks import shared as _shared
+    from quiver.hooks.settings import configured_settings
 
-    return [
-        HookDrift(
+    out: list[HookDrift] = []
+    for row in rows:
+        if not (row.state == "linked" and not row.declared
+                and row.tier in ("harness", "shared") and row.enabled
+                and not (row.tier == "harness"
+                         and row.script == _shared.GENERATED_DIRNAME
+                         and row.source.is_dir())):
+            continue
+        # The file a declaration would go in: the capability's own list
+        # first, else the files swe already reads for this harness.
+        files = (configured_settings(registry, row.harness, home)
+                 or settings_files(registry, row.harness, home))
+        out.append(HookDrift(
             "undeclared", row.harness,
             f"{row.script} is linked into {row.dest.parent} but no settings "
             f"file declares it — the hook will not fire",
-        )
-        for row in rows
-        if row.state == "linked" and not row.declared
-        and row.tier in ("harness", "shared") and row.enabled
-        and not (row.tier == "harness"
-                 and row.script == _shared.GENERATED_DIRNAME
-                 and row.source.is_dir())
-    ]
+            script=row.script, settings=tuple(files),
+        ))
+    return out
 
 
 def _managed_settings(
@@ -759,23 +772,27 @@ def _unlinked(rows: list[HookRow]) -> list[HookDrift]:
                 "unlinked", row.harness,
                 f"{row.script} is not linked into {row.dest.parent} "
                 f"(swe init will link it)",
+                script=row.script,
             ))
         elif row.state == "relink":
             out.append(HookDrift(
                 "unlinked", row.harness,
                 f"{row.script}'s link points elsewhere ({row.detail})",
+                script=row.script,
             ))
         elif row.state == "absorb":
             out.append(HookDrift(
                 "unlinked", row.harness,
                 f"{row.script} sits at {row.dest.parent} as an identical "
                 f"copy, not a link (swe init will absorb it)",
+                script=row.script,
             ))
         elif row.state == "conflict":
             out.append(HookDrift(
                 "unlinked", row.harness,
                 f"{row.script} is blocked by a real file at {row.dest} "
                 f"(swe init --force replaces it)",
+                script=row.script,
             ))
     return out
 
@@ -792,7 +809,7 @@ def hook_findings(
     rows = all_rows(home, registry, statuses, declared)
     return (
         _declared_missing(home, registry, statuses, declared)
-        + _undeclared(rows)
+        + _undeclared(rows, home, registry)
         + _unlinked(rows)
         + _managed_settings(home, registry)
     )

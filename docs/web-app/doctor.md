@@ -22,9 +22,13 @@ and your harnesses.", then one card:
 
 A row is the app's `FindingRow`: a dot coloured by severity (error red,
 warning amber, info grey), the harness's logo when the finding is about one
-harness and a logo ships for it, the message, the check id in mono, and,
-when the finding has a fix, the fix command in a code block with a copy
-button. A finding with an `action` gets Run there. Run opens a confirm
+harness and a logo ships for it, the message, the check id in mono, the
+`source` file when the check names one, and, when the finding has a fix,
+the fix command in a code block with a copy button. A finding with
+`remedies` gets a remedies box instead: one row per way out, each with
+its affordance: Run for `action`, Fix with agent for `agent` (a picker:
+the agent's prompt, harness chips, Launch), a copy button for `command`,
+nothing but the steps for `steps`. A finding with an `action` gets Run there. Run opens a confirm
 panel under the block that says what will happen on which machine
 ("This runs swe init on home-server: it links the shared AGENTS.md
 …"); its "Run swe init" button sends the request. While a fix runs its row
@@ -40,19 +44,40 @@ the list with "Replace and back up…", which asks first and then runs
 
 `GET /v1/app/doctor` is `swe doctor --json` built in process
 (`harness.commands.doctor_report`, the code `cmd_doctor` runs), plus the
-machine name:
+machine name, `home` (the home the findings are about, the launch's
+`cwd`) and `launchable` (`repositories.harnesses`: the harnesses
+`POST /v1/sessions` can start on the hub, for the agent picker's chips):
 
 ```json
-{"ok": true, "machine": "home-server",
+{"ok": true, "machine": "home-server", "home": "/Users/kai",
+ "launchable": [{"name": "claude", "display_name": "Claude",
+                 "launch_model": true, "launch_effort": false,
+                 "launch_yolo": true, "last_model": "",
+                 "recent_models": []}],
  "findings": [{"check": "setup.unlinked", "severity": "warning",
                "message": "Claude doesn't read the shared AGENTS.md yet",
-               "fix": "swe init", "harness": "claude", "action": "init"}]}
+               "fix": "swe init", "harness": "claude", "action": "init",
+               "remedies": [{"kind": "action", "action": "init",
+                             "title": "Link it with swe init"}]}]}
 ```
 
+A finding may carry `source` (the file behind it, shown under the check
+id) and `remedies` instead of a bare `fix`: the ways out, best first,
+each `{kind, title, detail?}`. `kind` is `action` (Run runs it like the
+finding's own action), `agent` (Fix with agent opens the picker: the
+remedy's `prompt` previewed, a harness chip row from `launchable`, and
+Launch, which posts `{"harness", "cwd": home, "prompt"}` to
+`/v1/sessions` (`yolo` too when the picked harness takes it), then
+follows `/v1/launches/<id>` like the new-session sheet), `command` (a
+`command` to copy) or `steps` (manual work, `steps` listed). `fix`
+stays the one-line summary; findings without `remedies` (the `usage.*`
+rows) keep the old fix strip.
+
 `POST /v1/app/doctor/run` takes `{"check", "message"}`, the finding's
-identity (the app's `Finding.id` is the two joined). The hub reads the
-report again, finds that finding, and runs the fix the finding itself
-names in `action`, in process:
+identity (the app's `Finding.id` is the two joined), plus an optional
+`action` naming which of the finding's `kind: "action"` remedies to run;
+with none the finding's own `action` runs, as before. The hub reads the
+report again, finds that finding, and runs the fix in process:
 
 | `action` | Runs | Same as |
 |---|---|---|
@@ -91,6 +116,7 @@ any path it still left alone (one resolving outside the home or into
 |---|---|---|
 | 400 | `bad_finding` | `check` or `message` missing, not text, or over 4000 characters |
 | 404 | `unknown_finding` | that finding is not in the report now |
+| 404 | `unknown_remedy` | the body's `action` names no action remedy on the finding now |
 | 404 | `unknown_action` | any action but `run` and `replace` |
 | 409 | `busy` | another fix is running (one at a time, not queued; the AGENTS.md page's Link and Replace count) |
 | 422 | `no_action` | the finding has no fix swe can run itself |
@@ -120,4 +146,8 @@ since all of them can rewrite harness.json.
   a stopped linking pass; the app shows only the latter.
 - An error whose finding went away is shown above the list; the app keys
   it to the row, so it is not seen.
+- Fix with agent launches a coding agent through `/v1/sessions` with the
+  remedy's prepared prompt and `cwd` at the hub's home, `yolo` when the
+  harness takes it; the session shows up under Sessions like any other
+  launch. The Mac app has no counterpart yet.
 - No ⌘R; the refresh button and Try again / Check again do the same.

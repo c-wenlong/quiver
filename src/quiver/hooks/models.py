@@ -57,8 +57,15 @@ class HookRow:
 
 @dataclass(frozen=True)
 class HookDrift:
-    """One way hooks on this machine disagree with what they declare."""
+    """One way hooks on this machine disagree with what they declare.
+
+    ``script`` is the basename at issue when there is one, ``settings``
+    the files the finding is about: the ones declaring a missing script,
+    or the file that should declare a linked one. Doctor turns them into
+    the finding's ``source`` and a remedy's undo target."""
 
     kind: str               # declared-missing | undeclared | unlinked | managed
     harness: str
     message: str
+    script: str = ""
+    settings: tuple = ()

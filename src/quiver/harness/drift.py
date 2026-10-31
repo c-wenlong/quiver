@@ -37,6 +37,7 @@ by ``run_drift_checks()``, which is what ``cmd_doctor`` calls.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,15 @@ class Finding:
     severity: str  # "warn" | "error"
     area: str
     message: str
+    # The fields DoctorFinding understands, filled by checks that know a
+    # fix: ``source`` names the file the finding is about, ``remedies``
+    # its ways out (same dict shape as DoctorFinding's), ``action`` a fix
+    # swe can run itself.
+    fix: str | None = None
+    harness: str | None = None
+    source: str | None = None
+    action: str | None = None
+    remedies: tuple | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -524,9 +534,10 @@ def check_hook_drift(home: Path) -> list[Finding]:
     """``swe hooks check``'s findings, re-wrapped for doctor.
 
     The checks live in ``hooks/inventory.py`` (declared-but-missing,
-    linked-but-undeclared, unlinked); this only adapts them to Finding.
-    A hook inventory that cannot run at all — a corrupt registry or
-    linkignore — is itself one warning, never a crash for doctor.
+    linked-but-undeclared, unlinked); this adapts them to Finding and
+    names each finding's source file and remedies. A hook inventory that
+    cannot run at all — a corrupt registry or linkignore — is itself one
+    warning, never a crash for doctor.
     """
     from quiver.hooks.inventory import hook_findings
 
@@ -534,11 +545,99 @@ def check_hook_drift(home: Path) -> list[Finding]:
         # "managed" notes (a read-only or symlinked declaration file) are
         # reported by swe hooks check but are not drift a user can fix —
         # leaving them out keeps doctor's warning list actionable.
-        return [Finding("warn", "hooks", d.message)
+        return [_hook_finding(d, home)
                 for d in hook_findings(home) if d.kind != "managed"]
     except Exception as exc:
         return [Finding("warn", "hooks",
                         f"hook drift check could not run: {exc}")]
+
+
+def _agent(prompt: str, detail: str) -> dict:
+    return {"kind": "agent", "title": "Fix with agent",
+            "detail": detail, "prompt": prompt}
+
+
+def _hook_finding(d, home: Path) -> Finding:
+    """One HookDrift as a doctor Finding, with its source and remedies."""
+    from quiver.console import tilde
+
+    files = [tilde(p, home) for p in d.settings]
+    if d.kind == "declared-missing":
+        joined = ", ".join(files)
+        # A settings file resolved into /nix/store is generated: the edit
+        # belongs in the Nix config, never in the file itself.
+        nix = any(os.path.realpath(p).startswith("/nix/store/")
+                  for p in d.settings)
+        if nix:
+            prompt = (f"A hook declared in {joined} names {d.script}, but "
+                      "no such script exists on this machine. The settings "
+                      "file resolves into /nix/store, so do NOT edit it: "
+                      "find the Nix or home-manager config that generates "
+                      "it and remove the hook entry there (or restore the "
+                      "script). Verify with `swe doctor`: the drift.hooks "
+                      "finding should be gone.")
+            fix = (f"{joined} is managed by Nix: drop the declaration "
+                   f"in your Nix config, or restore {d.script}")
+            steps_title = f"Drop the declaration in your Nix config"
+        else:
+            prompt = (f"A hook in {joined} declares {d.script}, but no such "
+                      f"script exists on this machine. Remove that hook "
+                      f"entry, backing up the file first, or restore the "
+                      f"script if it should exist. Verify with `swe "
+                      f"doctor`: the drift.hooks finding should be gone. "
+                      f"Touch nothing else in the file.")
+            fix = f"remove the declaration from {joined}, or restore {d.script}"
+            steps_title = f"Remove the declaration from {joined}"
+        return Finding(
+            "warn", "hooks", d.message,
+            fix=fix,
+            harness=d.harness,
+            source=f"declared in {joined}" if files else None,
+            remedies=(
+                _agent(prompt,
+                       "Restores the script or removes the hook, then "
+                       "verifies with swe doctor."),
+                {"kind": "steps",
+                 "title": steps_title,
+                 "detail": "Delete its hook entry under each event that "
+                           "declares it."},
+            ))
+    if d.kind == "undeclared":
+        file = files[0] if files else ""
+        prompt = (f"{d.message}. Add a hook entry for it"
+                  + (f" to {file}" if file else " to the harness's "
+                                               "settings file")
+                  + ", or remove the link if the hook should not fire. "
+                    "Verify with `swe doctor`: the drift.hooks finding "
+                    "should be gone.")
+        return Finding(
+            "warn", "hooks", d.message,
+            fix=(f"declare it in {file}" if file
+                 else "declare it in the harness's settings file")
+            + ", or delete the link",
+            harness=d.harness,
+            source=f"would be declared in {file}" if file else None,
+            remedies=(
+                _agent(prompt,
+                       "Adds the declaration or removes the link, then "
+                       "verifies with swe doctor."),
+                {"kind": "steps",
+                 "title": (f"Declare it in {file}" if file
+                           else "Declare it in the harness's settings "
+                                "file"),
+                 "detail": "swe hooks new writes the stanza to paste."},
+            ))
+    if d.kind == "unlinked":
+        return Finding(
+            "warn", "hooks", d.message,
+            fix="swe init", harness=d.harness, action="init",
+            remedies=(
+                {"kind": "action", "action": "init",
+                 "title": "Link it with swe init",
+                 "detail": "A real file in the way is left alone and "
+                          "listed for Replace and back up."},
+            ))
+    return Finding("warn", "hooks", d.message, harness=d.harness)
 
 
 # ---------------------------------------------------------------------------
