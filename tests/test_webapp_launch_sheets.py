@@ -596,23 +596,24 @@ const out = {};
   const menu = () => slot().querySelector("#ns-model");
   const box = () => slot().querySelector("#ns-model-other");
   const chip = (h) => d.querySelectorAll("[data-harness]").find((b) => b.dataset.harness === h);
+  const yolo = () => { const s = q("#ns-yolo-slot"); return s && s.querySelector("#ns-yolo"); };
   out.sheetOpened = !!(d && d.open);
   out.shown = !!menu();
   out.options = labels(menu());
   out.prefill = picked(menu());
   out.noBox = !box();
-  out.yoloShown = !!q("#ns-yolo");
-  out.yoloOn = q("#ns-yolo") && "checked" in q("#ns-yolo").attrs;
+  out.yoloShown = !!yolo();
+  out.yoloOn = yolo() && "checked" in yolo().attrs;
   q("#ns-folder").value = "/tmp/wt"; q("#ns-folder").oninput(); await tick();
   q("#ns-prompt").value = "say ok"; q("#ns-prompt").oninput();
   chip("gemini").onclick(); await tick();
   out.hides = !menu();
-  out.yoloOff = q("#ns-yolo") && q("#ns-yolo").disabled
-    && !("checked" in q("#ns-yolo").attrs);
-  out.yoloNote = d._html.includes("can't start with approvals bypassed");
+  out.yoloOff = yolo() && yolo().disabled
+    && !("checked" in yolo().attrs);
+  out.yoloNote = q("#ns-yolo-slot")._html.includes("can't start with approvals bypassed");
   chip("claude").onclick(); await tick();
   out.reprefill = picked(menu());
-  out.yoloOnAgain = q("#ns-yolo") && "checked" in q("#ns-yolo").attrs;
+  out.yoloOnAgain = yolo() && "checked" in yolo().attrs;
   choose(menu(), "sonnet");
   chip("claude").onclick(); await tick();
   out.recentKept = picked(menu());
@@ -644,7 +645,7 @@ const out = {};
   out.selectFocused = !!activeEl && activeEl.id === "ns-model";
   chip("codex").onclick(); await tick();
   out.clearedKept = picked(menu());
-  q("#ns-yolo").checked = false; q("#ns-yolo").onchange();
+  yolo().checked = false; yolo().onchange();
   q("#ns-start").onclick(); await tick();
   const post2 = fetchCalls.filter((c) => c.path === "/v1/sessions").pop();
   out.emptyHasNoModel = !("model" in (post2 && post2.body || {}));
@@ -659,7 +660,7 @@ const out = {};
   await tick();
   out.machineRefill = picked(menu());
   out.oldHubOptions = labels(menu());
-  out.yoloHiddenSat = !q("#ns-yolo");
+  out.yoloHiddenSat = !yolo();
   // An old satellite's row carries no model_at_launch: the menu hides.
   apiAnswers.length = 0;
   apiAnswers.push(["/v1/machines", { status: 200, data: { machines: [
@@ -667,7 +668,7 @@ const out = {};
   await openNewSession();
   await tick();
   out.hiddenOldSat = !menu();
-  out.yoloHiddenOld = !q("#ns-yolo");
+  out.yoloHiddenOld = !yolo();
   // A typed folder that flips the model row must not rebuild the sheet:
   // the folder input keeps its node (and so its focus and caret).
   apiAnswers.length = 0;
@@ -677,9 +678,12 @@ const out = {};
   const folder2 = q("#ns-folder");
   folder2.value = "/tmp/gem"; folder2.oninput(); await tick();
   out.flipHidesRow = menu() == null;
+  out.yoloFlipOff = yolo() && yolo().disabled
+    && !("checked" in yolo().attrs);
   out.folderNodeKeptOff = q("#ns-folder") === folder2;
   folder2.value = "/tmp/wt"; folder2.oninput(); await tick();
   out.flipShowsRow = picked(menu());
+  out.yoloFlipOn = yolo() && "checked" in yolo().attrs;
   out.folderNodeKeptOn = q("#ns-folder") === folder2;
   process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -845,10 +849,14 @@ class TestLaunchModelMenu(unittest.TestCase):
                         "an old hub's row hides the Autonomy row too")
         self.assertTrue(out["flipHidesRow"],
                         "a folder re-defaulting to a non-model harness drops the row")
+        self.assertTrue(out["yoloFlipOff"],
+                        "a folder re-defaulting to a non-yolo harness turns the box off")
         self.assertTrue(out["folderNodeKeptOff"],
                         "the folder input is rebuilt on a model-row flip, so focus is lost")
         self.assertEqual(out["flipShowsRow"], "opus",
                          "a folder re-defaulting back re-fills the row")
+        self.assertTrue(out["yoloFlipOn"],
+                        "a folder re-defaulting to a yolo harness ticks the box again")
         self.assertTrue(out["folderNodeKeptOn"],
                         "the folder input is rebuilt when the row returns, so focus is lost")
 

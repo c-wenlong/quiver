@@ -1180,6 +1180,25 @@ function nsYoloOk(machine) {
     && machine.yolo_at_launch.includes(ns.harness);
 }
 
+function nsYoloHtml(machine, busy) {
+  if (!nsShowsYolo(machine)) return "";
+  const ok = nsYoloOk(machine);
+  return `<div class="caption">Autonomy</div>
+    <label class="ns-yolo"><input type="checkbox" id="ns-yolo"${ns.yolo && ok ? " checked" : ""}${busy || !ok ? " disabled" : ""}> YOLO mode: run without approval prompts</label>
+    ${ns.harness && !ok ? `<p class="caption" style="padding:0 2px">${esc(nsHarnessName(machine, ns.harness))} can't start with approvals bypassed: it runs its usual checks.</p>` : ""}`;
+}
+
+/* The Autonomy row repaints alone, like the model row, so a typed
+ * folder that flips the harness's yolo support never rebuilds the
+ * folder input — and the box can never show off while sending yolo. */
+function nsPaintYolo() {
+  const slot = document.getElementById("ns-yolo-slot");
+  if (!slot) return;
+  slot.innerHTML = nsYoloHtml(nsMachine(), nsBusy());
+  const box = slot.querySelector("#ns-yolo");
+  if (box) box.onchange = () => { ns.yolo = box.checked; };
+}
+
 /* The ledger's recent models for the picked harness on this machine,
  * newest first: the Model menu's entries, and its default while the
  * user hasn't picked. An old hub's row has only `last_models`. */
@@ -1264,9 +1283,7 @@ function nsPaint() {
     ${harnessChips}
     ${untracked ? `<p class="note">Quiver can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
     ${modelUi}
-    ${nsShowsYolo(machine) ? `<div class="caption">Autonomy</div>
-    <label class="ns-yolo"><input type="checkbox" id="ns-yolo"${ns.yolo && nsYoloOk(machine) ? " checked" : ""}${busy || !nsYoloOk(machine) ? " disabled" : ""}> YOLO mode: run without approval prompts</label>
-    ${ns.harness && !nsYoloOk(machine) ? `<p class="caption" style="padding:0 2px">${esc(nsHarnessName(machine, ns.harness))} can't start with approvals bypassed: it runs its usual checks.</p>` : ""}` : ""}
+    <div id="ns-yolo-slot"></div>
     <div class="caption">Folder</div>
     <input class="field ns-path-input" id="ns-folder" type="text" autocomplete="off" spellcheck="false"
       placeholder="/absolute/path" value="${esc(ns.folder)}"${busy ? " disabled" : ""}>
@@ -1314,7 +1331,7 @@ function nsPaint() {
     // appears or drops, only its slot is redrawn.
     if (!ns.harnessTouched) {
       nsPickHarness(); nsPaintHarness();
-      nsRefillModel(); nsPaintModel();
+      nsRefillModel(); nsPaintModel(); nsPaintYolo();
     }
     nsPaintStart();
   };
@@ -1322,8 +1339,7 @@ function nsPaint() {
   if (queryIn) queryIn.oninput = () => { ns.query = queryIn.value; nsPaintLists(); };
   const promptIn = sheet.querySelector("#ns-prompt");
   if (promptIn) promptIn.oninput = () => { ns.prompt = promptIn.value; nsPaintStart(); };
-  const yoloBox = sheet.querySelector("#ns-yolo");
-  if (yoloBox) yoloBox.onchange = () => { ns.yolo = yoloBox.checked; };
+  nsPaintYolo();
   nsPaintModel();
   const browseBtn = sheet.querySelector("#ns-browse");
   if (browseBtn) browseBtn.onclick = () => nsBrowse(ns.folder.trim());

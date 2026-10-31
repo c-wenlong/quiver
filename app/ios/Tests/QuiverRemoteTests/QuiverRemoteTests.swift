@@ -1160,6 +1160,22 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertNil(NewSessionOptions.lastModel("pi", on: m))
     }
 
+    func testYoloFieldFollowsTheMachinesList() {
+        var m = machine("m1", name: "mac", launchable: ["claude", "gemini"])
+        m.yoloAtLaunch = ["claude"]
+        XCTAssertTrue(NewSessionOptions.showsYoloField(on: m))
+        // An old satellite's row lacks the field entirely: the row hides.
+        XCTAssertFalse(NewSessionOptions.showsYoloField(on: machine("m2", name: "old", launchable: ["claude"])))
+        // A row that reports the key but lists nothing shows the box off.
+        var none = machine("m3", name: "n", launchable: ["claude"])
+        none.yoloAtLaunch = []
+        XCTAssertTrue(NewSessionOptions.showsYoloField(on: none))
+        XCTAssertTrue(NewSessionOptions.acceptsYolo("claude", on: m))
+        XCTAssertFalse(NewSessionOptions.acceptsYolo("gemini", on: m))
+        XCTAssertFalse(NewSessionOptions.acceptsYolo("claude", on: none))
+        XCTAssertFalse(NewSessionOptions.acceptsYolo(nil, on: m))
+    }
+
     func testModelPickOnlySendsASupportedNonemptyToken() {
         var m = machine("m1", name: "mac", launchable: ["claude", "gemini"])
         m.modelAtLaunch = ["claude"]

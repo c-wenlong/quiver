@@ -1810,11 +1810,13 @@ def adopt_pending(
             "attached_at": now,
             "launch_id": str(pending.get("launch_id") or ""),
         }
-        # The launch-time pick stays on the record as bookkeeping; a
+        # The launch-time picks stay on the record as bookkeeping; a
         # session's *current* model is a transcript/ledger question.
         for field in ("model", "effort"):
             if pending.get(field):
                 meta[field] = str(pending[field])
+        if pending.get("yolo"):
+            meta["yolo"] = True
         mark(home, key, meta)
         marker.unlink(missing_ok=True)
         adopted.append(key)

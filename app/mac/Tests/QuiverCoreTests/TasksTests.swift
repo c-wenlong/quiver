@@ -499,6 +499,32 @@ import Testing
         #expect(LaunchOptions.model("sonnet", supported: false) == nil)
     }
 
+    /// The Autonomy row reads the same gate: it shows only on a machine
+    /// row reporting `yolo_at_launch`, ticks only for a listed harness,
+    /// and the body carries `yolo` only when the switch is on.
+    @Test func launchOptionsReadTheMachinesYoloFields() {
+        let machine = HubMachine(id: "m", launchable: ["claude", "gemini"],
+                                 yoloAtLaunch: ["claude"])
+        #expect(LaunchOptions.showsYolo(on: machine))
+        #expect(LaunchOptions.takesYolo("claude", on: machine))
+        #expect(!LaunchOptions.takesYolo("gemini", on: machine))
+        #expect(!LaunchOptions.takesYolo(nil, on: machine))
+
+        // A row that reports the key but lists nothing shows the box
+        // off; a row too old to report it shows nothing.
+        let noneTake = HubMachine(id: "m2", yoloAtLaunch: [])
+        #expect(LaunchOptions.showsYolo(on: noneTake))
+        #expect(!LaunchOptions.takesYolo("claude", on: noneTake))
+        let old = HubMachine(id: "m3", launchable: ["claude"])
+        #expect(!LaunchOptions.showsYolo(on: old))
+        #expect(!LaunchOptions.showsYolo(on: nil))
+
+        // The body's `yolo`: true only when sent, absent otherwise.
+        #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go",
+                                   yolo: true)["yolo"] as? Bool == true)
+        #expect(HubClient.launchBody(harness: "claude", cwd: "/p", prompt: "go")["yolo"] == nil)
+    }
+
     /// `recent_models` wins over `last_models`; a task-harness row reads
     /// the same way, blanks and repeats dropped.
     @Test func recentModelsPreferTheListAndFallBackToTheLastModel() {
