@@ -73,6 +73,7 @@ class ConfigCommandsTest(unittest.TestCase):
         result, output = self.run_command(["unset", "a.b"])
         self.assertEqual(result, 0)
         self.assertIn("Unset a.b", output)
+        self.assertNotIn("b", save.call_args.args[0].get("a", {}))
 
     @patch("quiver.config_commands.report_setup_complete", return_value=True)
     @patch("quiver.config_commands.check_config", return_value=[])

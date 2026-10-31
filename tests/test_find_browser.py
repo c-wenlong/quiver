@@ -492,9 +492,13 @@ class BrowserMouseTest(unittest.TestCase):
         seen = []
         renders = [0]
         real_render = browser_mod._render
+        # The labels of the level on screen at each draw, so a test can
+        # tell which level a key left the browser on.
+        self.levels = []
 
         def count_render(*a, **k):
             renders[0] += 1
+            self.levels.append([e.label for e in a[2]])
             return real_render(*a, **k)
 
         sel_kwargs = ({"side_effect": select_side_effect}
@@ -564,12 +568,16 @@ class BrowserMouseTest(unittest.TestCase):
                 roots=roots,
             )
         self.assertEqual(code, 0)
+        visited = [lv for i, lv in enumerate(self.levels)
+                   if i == 0 or lv != self.levels[i - 1]]
+        self.assertEqual(visited, [["dir", "b"], ["child"], ["dir", "b"]])
 
     def test_an_open_on_a_dead_end_stays_put(self):
         """Entries that cannot descend leave the level stack alone."""
         code, _, _, _ = self._drive(["open", "cancel"],
                                  roots=[Entry("leaf", None, "no path")])
         self.assertEqual(code, 0)
+        self.assertEqual(self.levels, [["leaf"], ["leaf"]])
 
     def test_a_resize_tick_redraws_with_the_new_size(self):
         """select returning nothing on a tick is the resize path: the loop

@@ -86,7 +86,7 @@ def _write_store(path, rows):
 
 class ParseCodexTitleTest(unittest.TestCase):
     def _run(self, index_lines=None, store_rows=None, records=None,
-             rollout_name=ROLLOUT, expect=1):
+             rollout_name=ROLLOUT, expect=1, store_bytes=None):
         if records is None:
             records = [_session_meta(), _user_message("Fix the login bug")]
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,6 +104,8 @@ class ParseCodexTitleTest(unittest.TestCase):
                         f.write("\n")
             if store_rows is not None:
                 _write_store(str(codex_home / "state_5.sqlite"), store_rows)
+            if store_bytes is not None:
+                (codex_home / "state_5.sqlite").write_bytes(store_bytes)
 
             def fake_expanduser(path):
                 # Redirect the whole codex home, and never call back into the
@@ -207,7 +209,8 @@ class ParseCodexTitleTest(unittest.TestCase):
         self._run(store_rows=[(THREAD_ID, "leftover", "")], expect=0)
 
     def test_nothing_is_dropped_when_the_store_is_unreadable(self):
-        sess = self._run(index_lines=[_index("vendor-table")])
+        sess = self._run(index_lines=[_index("vendor-table")],
+                         store_bytes=b"not a sqlite database, just junk bytes")
         self.assertEqual(sess.title, "vendor-table")
 
 

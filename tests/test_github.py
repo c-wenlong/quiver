@@ -1236,7 +1236,10 @@ class TestCommands(unittest.TestCase):
         self.assertNotIn("--owner", seen["argv"])
 
     def test_overview_json_reports_catalog(self):
-        self._run_cli(["--json"])  # never synced: key present but null
+        rc, out, _ = self._run_cli(["--json"])
+        data = json.loads(out)["data"]
+        self.assertIn("catalog", data)          # never synced: present but null
+        self.assertIsNone(data["catalog"])
         catalog.write(self._catalog_rows("octocat", ["quiver"]),
                       ["octocat"])
         rc, out, _ = self._run_cli(["--json"])
