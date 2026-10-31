@@ -1369,7 +1369,12 @@ commands wait in the hub journal until reconnect.
 
 `swe remote agent --install` keeps it running across reboots and
 logouts (see "Keeping a satellite up" above). The macOS app side is a
-Settings toggle managing that LaunchAgent (#1438). All session data
+Settings › Remote switch, "Keep this Mac's agent running", that calls
+`swe remote agent --install|--uninstall --json` (`RemoteAgentModel`). It
+shows only on a satellite of another hub: `agent --status --json` says
+the Mac is paired (`configured`) and its own hub is not installed
+(`hub_installed` false), or the agent is already installed so it can be
+turned off. All session data
 still flows through bundled `swe` — the app
 never writes transcripts itself, same as the
 writes-go-through-tested-Python rule.
