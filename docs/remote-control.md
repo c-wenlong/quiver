@@ -1392,6 +1392,22 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   swaps in the `quiver://` deep link) stays as the fallback for devices
   `whois` can't identify. Either way, only a tailnet device can reach
   the pairing routes at all.
+- Owner auto-approve (off by default; `swe remote devices
+  --auto-approve=on|off`, or the switch in the Mac app's Pending
+  requests): when on, a `POST /v1/pair/request` is approved at once,
+  with no code, only if every one of these holds. The setting reads
+  literally `true` in `data/remote/pairing.json`; the hub knows its
+  owner's login (from `whois` of its own node at startup, so never on a
+  plain loopback bind or a tagged node); the requesting node's `whois`
+  says `tagged: false` and its login is exactly that owner login; it has
+  a node id other than the hub machine's own (any local user's process
+  reaches the hub as that node); the owner hasn't revoked that node (its tailnet sign-in,
+  or the newest device paired from it; a later code approval lifts the
+  second); the request has a JSON body and no foreign `Origin` (a
+  cross-site form can't send either). Anything unknown leaves the
+  request pending for a code. Both approval paths mint the same device
+  row, marked `approved_via: code` or `owner_auto`, and the hub writes
+  one `pair: ...` line per approval to its stderr (`serve.log`).
 - Device identity: both pair paths record `kind` (iphone/ipad/android/
   mac/windows/linux/browser), `model`, `client` and `os` — explicit
   `device` fields the client posts, else whatever the User-Agent lets

@@ -729,6 +729,10 @@ to use their own login state and environment."""
                                             and {c('cyan', '--deny=<code>')} decide one;
                                             {c('cyan', '--request-id=<id>')} holds the
                                             code to that one request.
+                                            {c('cyan', '--auto-approve=on|off')} lets
+                                            your own untagged tailnet
+                                            devices pair without a code
+                                            (off by default).
   {c('cyan', 'swe remote attach <session>')}            Take an observed session
                                             under supervision. Default
                                             {c('cyan', '--mode=auto')} picks the

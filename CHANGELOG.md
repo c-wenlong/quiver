@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote hub: optional owner auto-approve for pair requests.** Off by
+  default. `swe remote devices --auto-approve=on|off` (or the new switch
+  in the Mac app's Settings › Remote › Pending requests) saves it in
+  `data/remote/pairing.json`, and `--requests` shows it. When on, a pair
+  request is approved without a code only if the hub knows its owner's
+  Tailscale login, the requesting node is untagged with exactly that
+  login and a node id other than the hub machine's own, the owner hasn't revoked that node (its sign-in
+  or its newest paired device), and the request has a JSON body and no
+  foreign `Origin`. Anything that can't be determined leaves it pending. The
+  `201` answer then carries `auto_approved: true` and the phone's first
+  poll collects its credential. Every approval, by code over HTTP or
+  automatic, writes one `pair:` line to the hub's log, and device rows
+  record `approved_via` (`code` or `owner_auto`). Part of
+  [#522](https://github.com/c-wenlong/quiver/issues/522).
+
 - **Remote hub: Notion databases as a task source.** A `notion` section
   in `config.json` names an integration token by `${NAME}` reference,
   the user whose rows to list (a user id or sign-in email) and each
@@ -33,7 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Open in Notion". Link and unlink work as for Linear; starting an
   agent stays GitHub-only. Part of
   [#847](https://github.com/c-wenlong/quiver/issues/847).
-
 
 - **Remote iPhone app: photo and file attachments in the chat
   composer.** A paperclip left of the prompt box offers Photos and
