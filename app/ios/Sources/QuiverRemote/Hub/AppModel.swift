@@ -91,6 +91,7 @@ final class AppModel {
             // request was out isn't judged by an answer older than that.
             let attachedNow = Set(sessions.filter(\.isAttached).map(\.key))
             sessions = fetched
+            unread.reconcile(fetched)
             for key in attachedAtStart.intersection(attachedNow)
             where fetched.first(where: { $0.key == key })?.isAttached != true {
                 handedBack(key)
@@ -138,6 +139,56 @@ final class AppModel {
     }
 
     func session(_ key: String) -> SessionRow? { sessions.first { $0.key == key } }
+
+    // MARK: Unread
+
+    /// The dots on session rows: the hub's per-device flag, with the
+    /// chat on screen and the reads this phone made laid over it.
+    private(set) var unread = UnreadTracker()
+    /// Sends the open chat's read cursor: at once on open, debounced
+    /// while messages arrive, flushed on close.
+    @ObservationIgnored private(set) lazy var reads = ReadPoster { [weak self] key in self?.postRead(key) }
+    /// How a read reaches the hub; tests swap it.
+    @ObservationIgnored var markReadOnHub: (HubClient, String) async throws -> ReadAck = { client, key in
+        try await client.markRead(key)
+    }
+
+    func isUnread(_ row: SessionRow) -> Bool { unread.isUnread(row) }
+
+    /// A chat came on screen holding activity up to `newest`: its dot
+    /// goes now, and the hub hears at once.
+    func chatOpened(_ key: String, newest: Double?) {
+        unread.open(key, at: activityStamp(key, newest))
+        reads.opened(key)
+    }
+
+    /// A message arrived in the chat on screen.
+    func chatGotMessage(_ key: String) { reads.message(key) }
+
+    /// The chat left the screen after showing activity up to `newest`.
+    func chatClosed(_ key: String, newest: Double?) {
+        reads.closed(key)
+        unread.close(key, at: activityStamp(key, newest))
+    }
+
+    /// The newest activity the phone knows of: the row's stamp, or a
+    /// message the stream brought after the list last loaded.
+    private func activityStamp(_ key: String, _ newest: Double?) -> Double? {
+        let listed = session(key)?.lastActiveAt
+        guard let newest else { return listed }
+        return max(listed ?? newest, newest)
+    }
+
+    /// Best effort: an older hub, an unknown session or no network
+    /// leaves the dot to the next list. The hub's answer is its cursor,
+    /// which clears everything up to it.
+    private func postRead(_ key: String) {
+        let call = markReadOnHub
+        Task {
+            guard let ack = try? await onSameHub({ try await call($0, key) }), let at = ack.at else { return }
+            unread.mark(key, at: at)
+        }
+    }
 
     // MARK: Row actions
 
@@ -415,6 +466,8 @@ final class AppModel {
         pendingDetaches = [:]
         pins = PinLedger()
         dropChats()
+        reads.reset()
+        unread = UnreadTracker()
         loadedOnce = false
     }
 
