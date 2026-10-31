@@ -485,6 +485,11 @@ class CmdListSessColumnTest(unittest.TestCase):
 
     def setUp(self):
         _setup_patches(self)
+        # The header reads the developer's saved session window; pin it so
+        # the column really is "100d" whatever ~/.quiver/config.json says.
+        p = patch("quiver.harness.commands.load_window", return_value=100)
+        p.start()
+        self.addCleanup(p.stop)
 
     def test_sess_three_states_shift_colors(self):
         output = _run_cmd_list()
