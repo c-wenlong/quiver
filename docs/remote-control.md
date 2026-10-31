@@ -1483,8 +1483,12 @@ Screens:
 Beyond remote control, nearly free on this architecture: push for
 needs-you/finished/error/limit via the self-hosted ntfy (iOS background
 delivery needs `upstream-base-url: https://ntfy.sh` set, and ntfy `http`
-action buttons give approve/deny straight from the lock screen: a POST
-to `/v1/sessions/{id}/approval` over the tailnet, no app code); a
+action buttons answer straight from the lock screen: a POST to
+`/v1/sessions/{id}/approval` over the tailnet, no app code. When the
+event lists the pane's menu rows the buttons carry those labels — up
+to ntfy's three-action cap, with a longer menu's last slot linking to
+the session chat where every option answers — and prompts with no
+option list fall back to Allow/Deny/Always); a
 usage/limits dashboard (`swe list` data); transcript FTS across machines
 (the search index normalizes already); diff viewer + commit/push via
 `swe gh`; `$ swe report` cards; voice dictation; offline prompt queue.

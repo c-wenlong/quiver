@@ -1279,9 +1279,10 @@ class _Handler(BaseHTTPRequestHandler):
         not a free probe — so a topic reader holding it can answer
         exactly the one prompt it was minted for and nothing else.
 
-        The buttons only ever send allow, deny or always, so that is
-        all the token can answer with: a menu row number (which could
-        pick any option of a digit menu) burns it and is refused.
+        The buttons send allow, deny, always, or a listed menu row's
+        number — the same blast radius either way, since the semantic
+        names resolve to menu rows too. Anything else burns the token
+        and is refused.
         """
         prefix = "/v1/sessions/"
         suffix = "/approval"
@@ -1297,9 +1298,13 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._state.approval_tokens.consume(token, key, rid):
             return None
         decision = body.get("decision")
-        # A list is unhashable: check the type before ``in``.
-        if not isinstance(decision, str) or (
-                decision not in notify.ACTION_DECISIONS):
+        # A list is unhashable: check the type before ``in``. A short
+        # digit answers the menu row with that number — option buttons
+        # send those; the injector still bounds the digit to the menu.
+        if not isinstance(decision, str) or not (
+            decision in notify.ACTION_DECISIONS
+            or (decision.isdigit() and len(decision) <= 2)
+        ):
             return None
         # The approval route never reads the device id back; non-None
         # is the whole grant.
