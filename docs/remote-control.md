@@ -182,8 +182,8 @@ remote/
   preview.py     # one .html/.svg file from a session's folder (/v1/sessions/{id}/preview)
   agent.py       # satellite daemon: dial hub, run local tail/inject
   notify.py      # needs-you/finished/error/GitHub-unread fan-out via ntfy
-  launchd.py     # serve --install: the hub as a per-user LaunchAgent
-  systemd.py     # serve --install on Linux: the hub as a systemd user unit
+  launchd.py     # serve/agent --install: the hub or satellite as a per-user LaunchAgent
+  systemd.py     # serve/agent --install on Linux: the hub or satellite as a systemd user unit
   setup.py       # swe remote setup: every step to a paired phone, --apply
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
   attachments.py # phone uploads staged on the session's machine
@@ -1342,6 +1342,42 @@ enable-linger $USER`. A machine with no systemd user manager (some
 containers, WSL without systemd) is told to run `swe remote serve`
 under its own init system.
 
+### Keeping a satellite up
+
+`swe remote agent --install` does the same for a satellite, through the
+same code (`commands.Service`: one record per service with its launchd
+label, systemd unit and log). It writes its own
+`~/Library/LaunchAgents/com.cwenlong.quiver.remote-agent.plist` on a
+Mac and `~/.config/systemd/user/quiver-remote-agent.service` on Linux,
+so installing, restarting or removing it never touches the hub's
+service. It runs `swe remote agent` (the app's bundled `swe` on a Mac,
+under the same protected-folder rule), with the installing shell's
+`PATH`, logging to `~/.quiver/data/remote/agent.log`. The credential
+stays in `agent.json`: the service reads it at start, so no secret
+lands in the plist or unit. `--install --hub=URL --token=T` pairs first;
+`--install --hub=URL` alone puts `--hub` on the service's command line.
+Lingering is handled as for the hub. `--uninstall` stops and removes it,
+and `--status [--json]` shows whether this machine is paired, whether
+the service is installed and running, and whether the hub is installed.
+
+`--install` refuses on a machine whose own hub service is installed
+(the hub's plist or unit exists), and the hub's install (`serve
+--install`, `setup --apply`) refuses the other way round: the check sits
+in `install_service`, which every install path goes through. Both
+services run as the same user, so they share `~/.quiver/data/remote/`:
+each would read and move the other's tail cursors in `cursors/`, and a
+satellite would send its own hub's sessions back to it. The refusal
+names the other service's file and says which `--uninstall` to run.
+
+Only one `swe remote agent` runs per `~/.quiver`: it holds an `flock`
+on `data/remote/agent.lock` (its pid inside) for its lifetime, and a
+second one exits at start, so the hub's commands never run twice. Under
+launchd or systemd that exit is retried, so the service takes over once
+a shell-started agent stops. `--install` refuses while an agent started
+outside the service holds the lock; the service's own agent is the one
+a reinstall restarts.
+`install-app.sh` restarts either agent when it runs the app's bundle.
+
 ## Satellite — `agent.py`
 
 Same `tail.py`/`inject.py`, no listener: persistent outbound connection
@@ -1351,9 +1387,10 @@ hostname, specs, harnesses detected by the existing `discover`
 machinery. Hub stamps every session `machine_id` + reachability; queued
 commands wait in the hub journal until reconnect.
 
-The macOS app side is a Settings toggle + menu-bar status managing
-`swe remote agent` as a LaunchAgent ("Remote access: online as
-macbook"). All session data still flows through bundled `swe` — the app
+`swe remote agent --install` keeps it running across reboots and
+logouts (see "Keeping a satellite up" above). The macOS app side is a
+Settings toggle managing that LaunchAgent (#1438). All session data
+still flows through bundled `swe` — the app
 never writes transcripts itself, same as the
 writes-go-through-tested-Python rule.
 

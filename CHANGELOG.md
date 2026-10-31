@@ -17,6 +17,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Other harnesses, and records with no usable timestamps, leave it out
   ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
 
+- **`swe remote agent --install` keeps a satellite running.** Like
+  `swe remote serve --install`, it runs `swe remote agent` as a
+  LaunchAgent on macOS (`com.cwenlong.quiver.remote-agent`) or a systemd
+  user unit on Linux (`quiver-remote-agent.service`), separate from the
+  hub's, so it starts at login or boot and restarts if it exits. It logs
+  to `~/.quiver/data/remote/agent.log`, turns on lingering or says how,
+  and refuses on a machine whose own hub is installed (and the hub's
+  install refuses next to an installed agent), since the two would share
+  `data/remote/cursors/`. Only one agent runs per `~/.quiver`: a second
+  one exits at start, and `--install` refuses while a shell-started
+  agent runs. `--uninstall` removes it and
+  `--status [--json]` shows it. `install-app.sh` now restarts the agent
+  on a new bundle as it does the hub
+  ([#1438](https://github.com/c-wenlong/quiver/issues/1438)).
+
+- **`swe init`: the hub's MCP servers in extra accounts.** A fourth
+  switch, `accounts.sync.mcp`, off by default (`swe config set
+  accounts.sync.mcp true`, or the new "MCP servers" switch on the Mac
+  Accounts page's Shared content card). With it on, `swe init` merges
+  every server in `~/.quiver/mcp.json`, rendered as `swe mcp sync quiver`
+  renders it, into each extra Claude account's `.claude.json` (the
+  `mcpServers` member only) and each extra Codex account's `config.toml`
+  (`[mcp_servers.<name>]` tables only). The login and every other key
+  keep their bytes. A server the account already has under the same name
+  is reported as a conflict and left alone, and a file that is not valid
+  JSON or TOML is reported and never written. Writes go through a temp
+  file and rename after a backup in `~/.quiver/backups`. Each server swe
+  writes is recorded in `data/account-mcp.json`, and switching off then
+  running `swe init` removes only those, and only while the account has
+  not edited them. Closes
+  [#888](https://github.com/c-wenlong/quiver/issues/888).
+
 - **Hub: switch the model of an opencode session attached through
   `opencode serve`.** The `model` control op on a `serve` session
   records a `provider/model` pick on the session's supervised row, and

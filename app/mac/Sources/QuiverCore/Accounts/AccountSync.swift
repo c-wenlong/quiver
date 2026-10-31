@@ -5,7 +5,7 @@ import Observation
 /// account homes: one switch per piece of shared content, kept in swe's
 /// config.json as `accounts.sync.<piece>` so the CLI and the app agree.
 public enum AccountSyncPiece: String, CaseIterable, Sendable, Identifiable {
-    case instructions, skills, hooks
+    case instructions, skills, hooks, mcp
 
     public var id: String { rawValue }
 
@@ -14,6 +14,7 @@ public enum AccountSyncPiece: String, CaseIterable, Sendable, Identifiable {
         case .instructions: "Instructions"
         case .skills: "Skills"
         case .hooks: "Hooks"
+        case .mcp: "MCP servers"
         }
     }
 
@@ -23,6 +24,7 @@ public enum AccountSyncPiece: String, CaseIterable, Sendable, Identifiable {
         case .instructions: "The shared AGENTS.md, as CLAUDE.md or AGENTS.md"
         case .skills: "The shared skills folder"
         case .hooks: "Each hook script; the account's settings still declare it"
+        case .mcp: "The hub's MCP servers, merged into the account's .claude.json or config.toml"
         }
     }
 }
@@ -41,6 +43,11 @@ public struct AccountSyncReport: Decodable, Sendable, Equatable {
         public let path: String
         public let state: String
         public let detail: String
+        /// The MCP server a row is about; nil for a link.
+        public let name: String?
+
+        /// How the card names it: the server, else the file.
+        public var target: String { name ?? (path as NSString).lastPathComponent }
     }
 
     public func isOn(_ piece: AccountSyncPiece) -> Bool {
@@ -50,6 +57,10 @@ public struct AccountSyncReport: Decodable, Sendable, Equatable {
     /// Targets the account already fills with something of its own, which
     /// swe reports and leaves alone.
     public var conflicts: [Row] { accounts.filter { $0.state == "conflict" } }
+
+    /// Account files swe could not read or edit safely (invalid JSON or
+    /// TOML), so it changed nothing in them.
+    public var blocked: [Row] { accounts.filter { $0.state == "blocked" } }
 }
 
 extension SweClient {

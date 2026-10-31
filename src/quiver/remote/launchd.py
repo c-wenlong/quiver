@@ -30,6 +30,9 @@ from pathlib import Path
 from typing import Callable
 
 LABEL = "com.cwenlong.quiver.remote-hub"
+# The satellite (``swe remote agent --install``) runs as its own agent,
+# so installing one never reloads or stops the other.
+AGENT_LABEL = "com.cwenlong.quiver.remote-agent"
 # Seconds launchd waits before restarting a hub that exited, so a hub
 # waiting on Tailscale retries a few times a minute, not in a hot loop.
 THROTTLE_S = 15
@@ -165,3 +168,15 @@ def loaded_pid(run: Runner = subprocess.run, label: str = LABEL) -> tuple[bool, 
         return False, None
     m = re.search(r"^\s*pid = (\d+)", res.stdout or "", re.M)
     return True, int(m.group(1)) if m else None
+
+
+def status(home: Path | None = None, run: Runner = subprocess.run,
+           label: str = LABEL) -> tuple[list[str] | None, bool]:
+    """(ProgramArguments, running): the installed agent's command line,
+    or None without a plist, and whether launchd runs it now."""
+    try:
+        args = plistlib.loads(plist_path(home, label).read_bytes()).get("ProgramArguments")
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None, False
+    loaded, pid = loaded_pid(run, label)
+    return (list(args) if isinstance(args, list) else None), bool(loaded and pid)
