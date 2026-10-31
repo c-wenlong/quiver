@@ -2,29 +2,6 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
-/// Answers each swe call by its leading arguments, and records every call.
-final class RoutingRunner: CommandRunning, @unchecked Sendable {
-    private let lock = NSLock()
-    private var routes: [(prefix: [String], reply: CommandResult)]
-    private(set) var calls: [[String]] = []
-
-    init(_ routes: [([String], CommandResult)]) {
-        self.routes = routes.map { (prefix: $0.0, reply: $0.1) }
-    }
-
-    func set(_ prefix: [String], _ reply: CommandResult) {
-        lock.withLock { routes.insert((prefix: prefix, reply: reply), at: 0) }
-    }
-
-    func run(_ arguments: [String]) async throws -> CommandResult {
-        lock.withLock {
-            calls.append(arguments)
-            let route = routes.first { Array(arguments.prefix($0.prefix.count)) == $0.prefix }
-            return route?.reply ?? CommandResult(status: 1, stdout: Data(), stderr: "no route for \(arguments)")
-        }
-    }
-}
-
 func json(_ text: String, status: Int32 = 0) -> CommandResult {
     CommandResult(status: status, stdout: Data(#"{"schema": 1, "data": \#(text)}"#.utf8), stderr: "")
 }
@@ -45,9 +22,9 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func decodesLinkStatusAndOpensTheSharedFile() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "shared rules\n")
-        let runner = RoutingRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
+        let runner = ScriptedRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
         let model = AgentsModel()
         await model.load(swe: SweClient(runner: runner))
 
@@ -63,9 +40,9 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func linkRunsPlainInitThenChecksAgain() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "x")
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["init", "--check", "--json"], check(agentsFile: agents.path, claudeState: "create")),
             (["init"], CommandResult(status: 0, stdout: Data("Quiver layout\n".utf8), stderr: "")),
         ])
@@ -84,9 +61,9 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func replaceRunsInitWithForce() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "x")
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["init", "--check", "--json"], check(agentsFile: agents.path)),
             (["init", "--force"], CommandResult(status: 0, stdout: Data(), stderr: "")),
         ])
@@ -97,9 +74,9 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func replaceWaitsForUnsavedProjectEdits() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         _ = try folder.write("AGENTS.md", "project\n")
-        let runner = RoutingRunner([])
+        let runner = ScriptedRunner([])
         let model = AgentsModel()
         model.openProject(folder.url)
         let doc = model.document(for: model.projectFiles[0])
@@ -111,9 +88,9 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aFailedInitIsShownAndTheCheckStillRefreshes() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "x")
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["init", "--check", "--json"], check(agentsFile: agents.path)),
             (["init"], CommandResult(status: 1, stdout: Data(), stderr: "Fix or remove ~/.quiver/.linkignore\n")),
         ])
@@ -124,9 +101,9 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aFileThatInitCreatesShowsUpInTheEditor() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = folder.url.appending(path: "AGENTS.md")
-        let runner = RoutingRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
+        let runner = ScriptedRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
         let model = AgentsModel()
         let swe = SweClient(runner: runner)
         await model.load(swe: swe)
@@ -140,9 +117,9 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func reloadingKeepsTheOpenDocumentAndItsEdits() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let agents = try folder.write("AGENTS.md", "x")
-        let runner = RoutingRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
+        let runner = ScriptedRunner([(["init", "--check", "--json"], check(agentsFile: agents.path))])
         let model = AgentsModel()
         let swe = SweClient(runner: runner)
         await model.load(swe: swe)
@@ -153,7 +130,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func projectFilesShowWhatExistsAndWhichOneIsALink() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         _ = try folder.write("AGENTS.md", "project\n")
         try folder.link("CLAUDE.md", to: "AGENTS.md")
         let model = AgentsModel()
@@ -173,7 +150,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aDocumentAlwaysWritesTheFileItIsCachedUnder() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         _ = try folder.write("AGENTS.md", "agents\n")
         _ = try folder.write("OTHER.md", "other\n")
         try folder.link("CLAUDE.md", to: "AGENTS.md")
@@ -195,7 +172,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func checkDiskRereadsOpenProjectFilesAndRescans() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         _ = try folder.write("AGENTS.md", "v1\n")
         let model = AgentsModel()
         model.openProject(folder.url)
@@ -209,7 +186,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aMissingProjectFileCanBeCreated() async throws {
-        let folder = try TempFolder()
+        let folder = try TempDir()
         let model = AgentsModel()
         model.openProject(folder.url)
         #expect(model.projectFiles.map(\.exists) == [false, false])
@@ -222,8 +199,8 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func openingAnotherProjectDropsTheOldDocuments() async throws {
-        let one = try TempFolder()
-        let two = try TempFolder()
+        let one = try TempDir()
+        let two = try TempDir()
         _ = try one.write("AGENTS.md", "one")
         let model = AgentsModel()
         model.openProject(one.url)
@@ -260,7 +237,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func listsServersAndFiltersDrift() async throws {
-        let runner = RoutingRunner([(["mcp", "list", "--json"], listing)])
+        let runner = ScriptedRunner([(["mcp", "list", "--json"], listing)])
         let model = McpModel()
         await model.load(swe: SweClient(runner: runner))
         let inventory = try #require(loaded(model))
@@ -306,7 +283,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
            "header_keys": [], "harnesses": ["claude"], "conflict": false, "variants": [["claude"]],
            "health": "error", "detail": "'nope' not in PATH"}]}
         """#)
-        let runner = RoutingRunner([(["mcp", "status", "--json"], status)])
+        let runner = ScriptedRunner([(["mcp", "status", "--json"], status)])
         let model = McpModel()
         await model.load(swe: SweClient(runner: runner), health: true)
         let server = try #require(loaded(model)?.servers.first)
@@ -330,7 +307,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func syncTargetsSplitMissingFromDiffering() async throws {
-        let runner = RoutingRunner([(["mcp", "list", "--json"], listing)])
+        let runner = ScriptedRunner([(["mcp", "list", "--json"], listing)])
         let model = McpModel()
         await model.load(swe: SweClient(runner: runner))
         let inventory = try #require(loaded(model))
@@ -352,7 +329,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
           {"name": "cursor", "added": ["docs"], "updated": [], "skipped": [], "pruned": []},
           {"name": "codex", "added": [], "updated": ["docs"], "skipped": [], "pruned": []}]}
         """#)
-        let runner = RoutingRunner([(["mcp", "sync"], report)])
+        let runner = ScriptedRunner([(["mcp", "sync"], report)])
         let server = McpServer(name: "docs", harnesses: ["claude", "codex"], conflict: true)
         let result = try await SweClient(runner: runner).mcpSync(
             server: server, from: "claude", to: ["cursor", "codex"], overwrite: true, dryRun: true)
@@ -366,7 +343,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
             {"source": "claude", "dry_run": false, "selected": ["docs"], "targets": [
               {"name": "\#(target)", "added": \#(key == "added" ? #"["docs"]"# : "[]"), "updated": \#(key == "updated" ? #"["docs"]"# : "[]"), "skipped": [], "pruned": []}]}
             """#) }
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["mcp", "sync", "claude", "cursor"], report("cursor", "added")),
             (["mcp", "sync", "claude", "codex"], report("codex", "updated")),
         ])
@@ -384,7 +361,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aFailedReplaceStillReportsWhatWasAdded() async throws {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["mcp", "sync", "claude", "cursor"], json(#"""
             {"source": "claude", "dry_run": false, "selected": ["docs"], "targets": [
               {"name": "cursor", "added": ["docs"], "updated": [], "skipped": [], "pruned": []}]}
@@ -408,7 +385,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aSyncWithNothingToReplaceNeverForces() async throws {
-        let runner = RoutingRunner([(["mcp", "sync"], json(#"{"source": "claude", "dry_run": true, "selected": [], "targets": []}"#))])
+        let runner = ScriptedRunner([(["mcp", "sync"], json(#"{"source": "claude", "dry_run": true, "selected": [], "targets": []}"#))])
         _ = try await McpModel().sync(McpServer(name: "x", harnesses: ["claude"]), from: "claude",
                                       adding: ["cursor"], replacing: [], dryRun: true,
                                       swe: SweClient(runner: runner))
@@ -417,7 +394,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func serverCanBeLookedUpInTheCurrentInventory() async throws {
-        let runner = RoutingRunner([(["mcp", "list", "--json"], listing)])
+        let runner = ScriptedRunner([(["mcp", "list", "--json"], listing)])
         let model = McpModel()
         await model.load(swe: SweClient(runner: runner))
         #expect(model.server(named: "docs")?.harnesses == ["claude", "codex"])
@@ -440,7 +417,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func anOlderSweWithoutSyncJSONIsNamedAsSuch() async {
-        let runner = RoutingRunner([(["mcp", "sync"], CommandResult(
+        let runner = ScriptedRunner([(["mcp", "sync"], CommandResult(
             status: 1, stdout: Data("Unknown flag(s): --json\n".utf8), stderr: ""))])
         await #expect(throws: SweError.jsonUnsupported) {
             _ = try await SweClient(runner: runner).mcpSync(
@@ -587,7 +564,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     """#)
 
     @Test func decodesFindings() async throws {
-        let runner = RoutingRunner([(["find", "plugins", "--json"], drift)])
+        let runner = ScriptedRunner([(["find", "plugins", "--json"], drift)])
         let model = PluginsModel()
         await model.load(swe: SweClient(runner: runner))
         guard case .loaded(let report) = model.state else { Issue.record("\(model.state)"); return }
@@ -608,7 +585,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
         ]}
         """#)
         let model = PluginsModel()
-        await model.load(swe: SweClient(runner: RoutingRunner([(["find", "plugins", "--json"], linked)])))
+        await model.load(swe: SweClient(runner: ScriptedRunner([(["find", "plugins", "--json"], linked)])))
         guard case .loaded(let report) = model.state else { Issue.record("\(model.state)"); return }
         #expect(report.drift.map(\.kindTitle) == ["Linked manifest"])
         #expect(report.drift[0].runnable)
@@ -616,7 +593,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func fixAsksSweByIdThenReloads() async throws {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["find", "plugins", "--json"], drift),
             (["find", "plugins", "--fix=claude:stale:tool@mk", "--json"], json(#"""
             {"fixed": {"id": "claude:stale:tool@mk", "harness": "claude", "marketplace": "mk", "plugin": "tool",
@@ -638,7 +615,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func anEditFixIsNeverSentToSwe() async throws {
-        let runner = RoutingRunner([(["find", "plugins", "--json"], drift)])
+        let runner = ScriptedRunner([(["find", "plugins", "--json"], drift)])
         let model = PluginsModel()
         let swe = SweClient(runner: runner)
         await model.load(swe: swe)
@@ -648,7 +625,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func aFailedFixShowsSwesReason() async throws {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["find", "plugins", "--json"], drift),
             (["find", "plugins", "--fix=claude:stale:tool@mk"], CommandResult(
                 status: 1, stdout: Data(), stderr: "claude plugin update tool@mk failed: offline\n")),
@@ -742,7 +719,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
     }
 
     @Test func anOlderSweSaysToUpdate() async {
-        let runner = RoutingRunner([(["find", "plugins", "--json"], CommandResult(
+        let runner = ScriptedRunner([(["find", "plugins", "--json"], CommandResult(
             status: 1, stdout: Data(), stderr: "--json is only available for skills: swe find skills --json\n"))])
         let model = PluginsModel()
         await model.load(swe: SweClient(runner: runner))

@@ -736,39 +736,9 @@ def cmd_session(args):
     search_ids: set[str] | None = None
     evidence: dict[str, dict] = {}
     if search:
-        home = Path.home()
-        if search_index.available(home):
-            hits = search_index.search(
-                home,
-                search,
-                limit=max(limit, search_index.DEFAULT_LIMIT),
-                agents=search_index.tool_names_for(agent_filter),
-            )
-            if hits:
-                search_ids = {h.session_id for h in hits if h.session_id}
-                hit_by_key = {
-                    key: h
-                    for h in hits
-                    for key in search_index.match_keys(h.session_id)
-                }
-                for s in sessions:
-                    if not s.session_id:
-                        continue
-                    hit = next(
-                        (
-                            hit_by_key[k]
-                            for k in search_index.match_keys(s.session_id)
-                            if k in hit_by_key
-                        ),
-                        None,
-                    )
-                    if hit is not None:
-                        search_ids.add(s.session_id)
-                        evidence[s.session_id] = _hit_evidence(hit)
-                sessions.extend(search_index.resolve_hit_sessions(hits, sessions))
-                for h in hits:
-                    if h.session_id:
-                        evidence.setdefault(h.session_id, _hit_evidence(h))
+        search_ids, best = search_index.merge_hits(
+            Path.home(), search, sessions, limit=limit, agent_filter=agent_filter)
+        evidence = {sid: _hit_evidence(hit) for sid, hit in best.items()}
 
     if has_date_filter:
         start_ms, end_ms = calendar_range_ms(

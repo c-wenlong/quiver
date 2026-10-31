@@ -323,10 +323,13 @@ def send_text(name: str, text: str) -> bool:
 
     Serialized per pane: the literal-text and Enter send-keys are two
     tmux calls, and an interleaved second writer would merge prompts.
+    ``--`` ends tmux's flags, so text that starts with "-" (a pasted
+    list, "-v") is typed as text instead of refused as an unknown flag.
     """
     with _pane_lock(name):
         try:
-            if _tmux("send-keys", "-t", name, "-l", text).returncode != 0:
+            if _tmux("send-keys", "-t", name, "-l", "--",
+                     text).returncode != 0:
                 return False
             return _tmux("send-keys", "-t", name, "Enter").returncode == 0
         except (OSError, subprocess.SubprocessError):

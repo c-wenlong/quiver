@@ -960,6 +960,26 @@ class TestPrWorktree(_Base):
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFailMessage(unittest.TestCase):
+    def test_it_is_app_failtext_ending_then_refresh(self):
+        """GhUI.failMessage says what app.js's failText says. It used to
+        hand back ``data.error`` itself when that had no message, which
+        a page then showed as "[object Object]"."""
+        script = (
+            "global.esc = (s) => String(s); global.Fmt = { ago: () => '' };\n"
+            + app_js_function("failText") + (STATIC / "github.js").read_text()
+            + "\nprocess.stdout.write(JSON.stringify(["
+            "GhUI.failMessage(409, { error: { message: 'Already pinned.' } }),"
+            "GhUI.failMessage(500, { error: { code: 'internal' } }),"
+            "GhUI.failMessage(0, null)]));\nprocess.exit(0);")
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), [
+            "Already pinned.", "The hub answered 500.",
+            "Couldn't reach the hub. Check the connection, then refresh."])
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMarkdown(unittest.TestCase):
     """GhUI.markdown, run under node with the two globals it borrows."""
 
@@ -996,6 +1016,20 @@ class TestMarkdown(unittest.TestCase):
         html = self.render(f"see {url} and **bold**")
         self.assertIn(f'<a href="{url}" target="_blank" rel="noopener">{url}</a>', html)
         self.assertIn("<strong>bold</strong>", html)
+
+    def test_bare_urls_stop_at_escaped_quotes_and_brackets(self):
+        html = self.render('say "https://example.com/a" and https://x.io/p>q, https://x.io/?a=1&b=2')
+        self.assertIn('href="https://example.com/a"', html)
+        self.assertIn('>https://x.io/p</a>&gt;q', html)
+        self.assertIn('href="https://x.io/?a=1&amp;b=2"', html)
+        self.assertNotIn("&quot;\"", html)
+
+    def test_autolinks_become_links(self):
+        html = self.render("go <https://y.io/z> or <me_x@ex.io>, not `<https://c.io>`, <https://[2001:db8::1]/a>")
+        self.assertIn('<a href="https://y.io/z" target="_blank" rel="noopener">https://y.io/z</a>', html)
+        self.assertIn('<a href="https://[2001:db8::1]/a" target="_blank" rel="noopener">https://[2001:db8::1]/a</a>', html)
+        self.assertIn('<a href="mailto:me_x@ex.io" target="_blank" rel="noopener">me_x@ex.io</a>', html)
+        self.assertIn("<code>&lt;https://c.io&gt;</code>", html)
 
     def test_fenced_code_keeps_its_blank_lines(self):
         html = self.render("<p>x</p>\n\n```\na\n\n\n\nb\n```")
@@ -1262,6 +1296,62 @@ class TestPrFilter(unittest.TestCase):
         self.assertFalse(out["blockedBar"])
         self.assertFalse(out["failedBar"])
         self.assertEqual(out["failedRows"], 4)
+
+
+# The focus page's filter under the minute poll and an IME: the poll's
+# repaint puts the focus back in the (new) filter box, and keystrokes
+# inside a composition update the filter without replacing the box.
+FOCUS_FILTER_FLOW = r"""
+let pollTick = null;
+globalThis.setInterval = (fn) => { pollTick = fn; return 1; };
+const pr = (number, title) => ({ number, title, state: "open", draft: false, author: "me",
+  branch: "b" + number, base: "main", labels: [], mergeable: "mergeable", review_decision: "none",
+  checks: "none", updated_at: null, url: "" });
+apiAnswers.push(["/v1/app/repositories", { status: 200, data: { machine: "hub", github: { status: "ok" },
+  limits: {}, surfaces: { pull_requests: { status: "ok", pull_requests: [pr(1, "alpha"), pr(2, "beta")] },
+    issues: { status: "ok", issues: [] }, runs: { status: "ok", runs: [] } } } }]);
+const out = {};
+const box = () => document.getElementById("gh-search");
+const rows = () => [...panel.innerHTML.matchAll(/>(alpha|beta)</g)].map((m) => m[1]);
+(async () => {
+  location.hash = "#/repositories?repo=o/a";
+  PAGES.repositories();
+  await tick();
+  box().focus();
+  pollTick(); // the minute poll: renderFocus paints its spinner first
+  out.focusedWhileLoading = document.activeElement === box();
+  await tick();
+  out.focusedAfter = document.activeElement === box();
+  const typing = box();
+  typing.oncompositionstart();
+  typing.value = "be";
+  typing.oninput({ isComposing: true });
+  pollTick(); // the poll starts, and its reply lands, mid-composition
+  await tick();
+  out.keptDuringComposition = box() === typing;
+  out.rowsDuringComposition = rows();
+  typing.value = "beta";
+  typing.oncompositionend();
+  out.repaintedAfter = box() !== typing && document.activeElement === box();
+  out.rowsAfter = rows();
+  process.stdout.write(JSON.stringify(out));
+  process.exit(0);
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFocusFilter(unittest.TestCase):
+    def test_the_poll_keeps_focus_and_a_composition_is_not_cut(self):
+        from tests.test_webapp_launch_sheets import PAGES, STUB
+        script = (STUB + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "repositories.js").read_text(encoding="utf-8") + "\n" + FOCUS_FILTER_FLOW)
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {
+            "focusedWhileLoading": True, "focusedAfter": True,
+            "keptDuringComposition": True, "rowsDuringComposition": ["alpha", "beta"],
+            "repaintedAfter": True, "rowsAfter": ["beta"]})
 
 
 if __name__ == "__main__":

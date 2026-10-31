@@ -13,8 +13,6 @@ enum Theme {
     static let subtle = Color(light: "#fafafa", dark: "#262626")
     static let selected = Color(light: "#f5f5f5", dark: "#262626")
     static let pressed = Color(light: "#f5f5f5", dark: "#26262680")
-    static let segmentTrack = Color(light: "#fafafa", dark: "#171717")
-    static let segmentSelected = Color(light: "#ffffff", dark: "#262626")
     static let code = Color(light: "#f5f5f5", dark: "#0f0f0f")
 
     // MARK: Text

@@ -699,27 +699,10 @@ extension HubStubbed {
                   credential: "secret", session: HubStub.session())
     }
 
-    /// A request's query as a name → value dict.
-    private func query(_ request: URLRequest) -> [String: String] {
-        let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        return Dictionary(items.map { ($0.name, $0.value ?? "") }) { _, b in b }
-    }
-
     /// A request's JSON body with nested objects, where
     /// `HubStub.body(_:)` flattens to strings.
     private func body(_ request: URLRequest) throws -> [String: Any] {
-        var data = request.httpBody ?? Data()
-        if data.isEmpty, let stream = request.httpBodyStream {
-            stream.open()
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            while stream.hasBytesAvailable {
-                let n = stream.read(&buffer, maxLength: buffer.count)
-                guard n > 0 else { break }
-                data.append(buffer, count: n)
-            }
-            stream.close()
-        }
-        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        try #require(JSONSerialization.jsonObject(with: HubStub.bodyData(request)) as? [String: Any])
     }
 
     @Test func appTasksReadsThePagePayload() async throws {
@@ -733,7 +716,7 @@ extension HubStubbed {
         #expect(reply.machineId == "m1")
         let req = try #require(HubStub.requests.first)
         #expect(req.httpMethod == "GET")
-        #expect(query(req) == ["refresh": "1"])
+        #expect(HubStub.query(req) == ["refresh": "1"])
     }
 
     @Test func taskHarnessesAskTheSameRoute() async throws {
@@ -755,7 +738,7 @@ extension HubStubbed {
         #expect(harnesses[1].launchModel == false)
         #expect(harnesses[1].recentModels == nil)
         #expect(machine == "kai")
-        #expect(HubStub.requests.first.map(query) == ["harnesses": "1"])
+        #expect(HubStub.requests.first.map(HubStub.query) == ["harnesses": "1"])
     }
 
     @Test func linkAndUnlinkPostTheTaskRef() async throws {
@@ -788,11 +771,6 @@ extension HubStubbed {
     private func client() -> HubClient {
         HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!,
                   credential: "secret", session: HubStub.session())
-    }
-
-    private func query(_ request: URLRequest) -> [String: String] {
-        let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        return Dictionary(items.map { ($0.name, $0.value ?? "") }) { _, b in b }
     }
 
     @Test func launchBodyCarriesTheHarnessCwdAndPrompt() {
@@ -865,10 +843,10 @@ extension HubStubbed {
         #expect(listing.path == "/Users/k")
         #expect(listing.parent == "/Users")
         #expect(listing.folders.first?.name == "quiver")
-        #expect(HubStub.requests.first.map(query) == ["path": "/Users/k"])
+        #expect(HubStub.requests.first.map(HubStub.query) == ["path": "/Users/k"])
         // The default is the hub user's home: no query.
         _ = try await client().folders()
-        #expect(HubStub.requests.last.map(query) == [:])
+        #expect(HubStub.requests.last.map(HubStub.query) == [:])
     }
 }
 

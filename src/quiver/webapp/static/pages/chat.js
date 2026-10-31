@@ -1062,7 +1062,10 @@ const SessionChat = (() => {
     return m ? m[1].trim() : "";
   }
 
-  /* A diff's HTML for edit-ish tools, or null for anything else. */
+  /* A diff's HTML for edit-ish tools, or null for anything else. The
+   * args are whatever the agent sent, so a field that isn't a string
+   * (an array content, say) counts as missing rather than reaching
+   * .split. */
   function toolDiff(tool) {
     const name = String(tool.name || "").toLowerCase();
     if (!DIFF_TOOLS.has(name) || !tool.args_full) return null;
@@ -1073,24 +1076,26 @@ const SessionChat = (() => {
     // itself, so the hub's args_full is a JSON string, not an object.
     if (patching && typeof args === "string") return args ? renderPatch(patchFile(args), args) : null;
     if (!args || typeof args !== "object") return null;
-    const file = args.file_path || args.path || args.filename || "";
+    const text = (v) => (typeof v === "string" ? v : "");
+    const isText = (v) => typeof v === "string";
+    const file = text(args.file_path) || text(args.path) || text(args.filename);
     if (name === "write" || name === "notebookedit" || name === "file_edit") {
-      const content = args.content || args.new_source || "";
+      const content = text(args.content) || text(args.new_source);
       return content ? renderDiff(file, "", content) : null;
     }
     if (patching) {
-      const patch = args.patch || args.diff || args.input || tool.args_full;
+      const patch = text(args.patch) || text(args.diff) || text(args.input) || tool.args_full;
       return renderPatch(file || patchFile(patch), patch);
     }
     if (name === "multiedit" && Array.isArray(args.edits)) {
       const parts = args.edits.slice(0, 8)
-        .filter((e) => e && (e.old_string != null || e.new_string != null))
-        .map((e) => renderDiff(file, e.old_string, e.new_string));
+        .filter((e) => e && (isText(e.old_string) || isText(e.new_string)))
+        .map((e) => renderDiff(file, text(e.old_string), text(e.new_string)));
       return parts.length ? parts.join("") : null;
     }
     // edit and friends: {old_string, new_string}
-    if (args.old_string != null || args.new_string != null) {
-      return renderDiff(file, args.old_string || "", args.new_string || "");
+    if (isText(args.old_string) || isText(args.new_string)) {
+      return renderDiff(file, text(args.old_string), text(args.new_string));
     }
     return null;
   }
@@ -1333,13 +1338,14 @@ const SessionChat = (() => {
      host, path and Open (a new tab). Port of the phone's LinkCards.swift.
      The links come from md()'s own anchors, so code spans and fences,
      which md() never links, are skipped the same way, and only http and
-     https count (md() links mailto: and tel: too). */
+     https count (md() links mailto: and tel: too). Both take the reply's
+     md() HTML, the markup its bubble shows, so it is rendered once. */
 
   const LINK_CARDS_MAX = 3;
 
-  function linkUrls(text) {
+  function linkUrls(html) {
     const out = [], seen = new Set();
-    for (const m of md(text).matchAll(/<a href="([^"]*)"/g)) {
+    for (const m of html.matchAll(/<a href="([^"]*)"/g)) {
       const href = m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">").replace(/&amp;/g, "&");
       let url;
@@ -1358,8 +1364,8 @@ const SessionChat = (() => {
   /* "/code/artifact/abc?x=1", or "" for a bare host. */
   const linkPath = (url) => (url.pathname === "/" && !url.search ? "" : url.pathname + url.search);
 
-  function linkCardsHtml(text) {
-    const urls = linkUrls(text);
+  function linkCardsHtml(html) {
+    const urls = linkUrls(html);
     if (!urls.length) return "";
     return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${safeHref(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
       <span class="link-card-ic">${iconSvg("link")}</span>
@@ -1905,11 +1911,16 @@ const SessionChat = (() => {
    * way. */
   async function cancelDetach() {
     if (!chat.key) return;
-    const { status } = await post(sessionPath(chat.key, "control"), { op: "attach" });
+    const gen = chat.gen;
+    const { status, data } = await post(sessionPath(chat.key, "control"), { op: "attach" });
+    if (gen !== chat.gen) return;
     if (status === 200 || status === 202) {
       chat.detaching = false;
       updateOwnership();
+      return;
     }
+    appendMessage({ kind: "error", text: `Stay attached failed: ${errorText(data) || (status ? `the hub answered ${status}` : "connection lost")}` }, true);
+    scrollBottom();
   }
 
   /* --------------------------------------------------------------- events */
@@ -2173,8 +2184,9 @@ const SessionChat = (() => {
     } else if (kind === "error") {
       div.innerHTML = `<div class="role"><span class="tool-ic">${iconSvg("warn")}</span>Error</div><div class="text">${md(msg.text)}</div>`;
     } else if (kind === "user" || kind === "assistant") {
-      div.innerHTML = `<div class="text">${md(msg.text)}</div>`;
-      if (kind === "assistant") div.insertAdjacentHTML("beforeend", linkCardsHtml(msg.text));
+      const html = md(msg.text);
+      div.innerHTML = `<div class="text">${html}</div>`;
+      if (kind === "assistant") div.insertAdjacentHTML("beforeend", linkCardsHtml(html));
       if (carried) {
         div.classList.add("degraded");
         div.insertAdjacentHTML("beforeend", `<div class="send-note">${esc(carried)}</div>`);
@@ -2338,8 +2350,19 @@ const SessionChat = (() => {
   }
 
   function showLive(ev) {
-    appendEvent(ev);
+    appendSafely(ev, true);
     remember(ev.seq);
+  }
+
+  /* One event the view can't draw is logged and skipped: it mustn't
+   * stop the history after it, leave the composer on "Loading…", or
+   * break the stream, whose reconnect would replay it again. */
+  function appendSafely(ev, live) {
+    try {
+      appendEvent(ev, live);
+    } catch (err) {
+      console.error("chat: skipped an event it couldn't show", ev && ev.type, ev && ev.seq, err);
+    }
   }
 
   function dropPending() {
@@ -2384,8 +2407,7 @@ const SessionChat = (() => {
       if (chat.stream !== mine) return;
       if (resp.status === 401) {
         chat.stream = null;
-        close();
-        renderGate();
+        gate();
         return;
       }
       if (resp.status === 404) {
@@ -2482,8 +2504,7 @@ const SessionChat = (() => {
     const held = chat.held || [];
     chat.held = null;
     if (status === 401) {
-      close();
-      renderGate();
+      gate();
       return;
     }
     const log = $("chat-log");
@@ -2495,7 +2516,7 @@ const SessionChat = (() => {
       log.innerHTML = "";
       chat.toolCards.clear();
       const messages = data.messages || [];
-      for (const ev of messages) appendEvent(ev, false);
+      for (const ev of messages) appendSafely(ev, false);
       if (messages.length) remember(messages[messages.length - 1].seq);
       for (const card of open) log.appendChild(card);
       scrollBottom();
@@ -2692,7 +2713,7 @@ const SessionChat = (() => {
     if (gen !== chat.gen) return;
     chat.rail.loading = false;
     if (status === 401) {
-      renderGate();
+      gate();
       return;
     }
     if (status !== 200 || !data) {
@@ -2775,7 +2796,7 @@ const SessionChat = (() => {
       return status;
     }
     const messages = data.messages || [];
-    for (const ev of messages) appendEvent(ev, false);
+    for (const ev of messages) appendSafely(ev, false);
     if (messages.length) remember(messages[messages.length - 1].seq);
     else if (loading) loading.outerHTML = '<p class="empty" id="chat-loading">No messages yet.</p>';
     scrollBottom();
@@ -2822,8 +2843,7 @@ const SessionChat = (() => {
       : await Promise.all([loadRow(gen), pendingApproval(gen), loadQueue(gen)]);
     if (gen !== chat.gen) return;
     if (rowStatus === 401 || logStatus === 401) {
-      close();
-      renderGate();
+      gate();
       return;
     }
     if (rowStatus === 404) { setConn("err"); return; }
@@ -2853,6 +2873,14 @@ const SessionChat = (() => {
     resetMenus();
     resetUploads();
     resetTray();
+  }
+
+  /* The hub refused this browser's credential: the chat closes first
+   * (stream, reveal timers, chat-open) so nothing keeps running behind
+   * the pair card, then the card takes the panel. */
+  function gate() {
+    close();
+    renderGate();
   }
 
   /* ------------------------------------------------------------- composer */
@@ -3534,7 +3562,7 @@ const SessionChat = (() => {
     paintTray();
     const err = await queueAction(cid, "steer");
     if (!err || gen !== chat.gen) return;
-    if (err.status === 401) return renderGate();
+    if (err.status === 401) return gate();
     noteRefusal(err.data);
     const row = trayRow(cid);
     if (!row || row.phase !== "sendingNow") return;
@@ -3560,7 +3588,7 @@ const SessionChat = (() => {
     const err = await queueAction(cid, "cancel");
     if (gen !== chat.gen) return;
     if (!err) { dropQueued(cid); return; }
-    if (err.status === 401) return renderGate();
+    if (err.status === 401) return gate();
     const row = trayRow(cid);
     if (!row || row.phase !== "removing") return;
     // The hub never held it, or forgot it: there's nothing to remove.
@@ -3646,7 +3674,7 @@ const SessionChat = (() => {
       paintTray();
       return;
     }
-    if (err.status === 401) return renderGate();
+    if (err.status === 401) return gate();
     if (err.code === "not_waiting") { editWentOut(cid, text); return; }
     // An older hub can't edit in place: remove the message, then queue
     // the new text, which lands at the end. It stays saving meanwhile.
@@ -4318,7 +4346,8 @@ const SessionChat = (() => {
       messageBody, send, updateOwnership, restoreUploads,
       mentionToken, insertMention, splitPath, filesError, files, FILES, searchFiles, trackMenus, menu,
       echoes, sendsToTray, mergeQueue, queueNote, trayHtml, posted, takeQueued, echoLeavesTray, sendText,
-      sendNow, removeQueued, removeAllQueued, beginEdit, cancelEdit, saveEdit, loadQueue, commandResult, appendMessage },
+      sendNow, removeQueued, removeAllQueued, beginEdit, cancelEdit, saveEdit, loadQueue, commandResult, appendMessage,
+      backfill, showLive, cancelDetach, loadRail },
   };
 })();
 

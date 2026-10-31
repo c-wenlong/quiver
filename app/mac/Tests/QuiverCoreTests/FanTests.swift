@@ -446,19 +446,22 @@ import Testing
     }
 
     @Test func theLaunchdJobRunsTheRootOwnedCopyAndStaysUp() throws {
-        let data = FanHelper.plist(control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"))
+        let data = FanHelper.plist(control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"),
+                                   owner: .team("ABCDE12345", identifier: "com.cwenlong.quiver"))
         let job = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
         #expect(job["Label"] as? String == "com.cwenlong.quiver.fan")
         #expect(job["ProgramArguments"] as? [String] == [
             "/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan", "--fan-daemon",
-            "--control", "/Users/me/.quiver/fan/control.json", "--helper-version", String(FanHelper.version)])
+            "--control", "/Users/me/.quiver/fan/control.json", "--owner-team", "ABCDE12345",
+            "--owner-identifier", "com.cwenlong.quiver",
+            "--helper-version", String(FanHelper.version)])
         #expect(job["KeepAlive"] as? Bool == true)
         #expect(job["RunAtLoad"] as? Bool == true)
     }
 
     @Test func theInstallScriptChecksTheCopyAndWritesTheJobAsRoot() throws {
         let command = AdministratorInstaller.installCommand(
-            executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", sha256: "abc123", team: nil,
+            executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", sha256: "abc123", owner: Self.adHoc,
             control: URL(fileURLWithPath: "/Users/o'neil/.quiver/fan/control.json"))
         #expect(command.contains(#"/usr/bin/install -m 755 -o root -g wheel '/Users/o'\''neil/Apps/Quiver.app/Contents/MacOS/Quiver' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"#))
         // The hash is checked on the root-owned copy, before re-signing
@@ -483,7 +486,7 @@ import Testing
     /// helper patched in the user-writable bundle never runs as root.
     @Test func aSignedAppChecksTheHelpersTeamBeforeRunningItAsRoot() throws {
         let command = AdministratorInstaller.installCommand(
-            executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", team: "ABCDE12345",
+            executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", owner: .team("ABCDE12345", identifier: "com.cwenlong.quiver"),
             control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"))
         let hash = try #require(command.range(of: "/usr/bin/shasum -a 256 "))
         let verify = try #require(command.range(
@@ -506,10 +509,14 @@ import Testing
         #expect(!command.contains("\n"))
         // An ad-hoc build has no team to check against and keeps the hash.
         let adHoc = AdministratorInstaller.installCommand(
-            executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", team: nil,
+            executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", owner: Self.adHoc,
             control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"))
         #expect(!adHoc.contains("--verify"))
         #expect(adHoc.contains("/usr/bin/shasum -a 256 "))
+        // Either way the job root writes pins whose requests the helper takes.
+        #expect(command.contains("<string>--owner-team</string><string>ABCDE12345</string>"
+            + "<string>--owner-identifier</string><string>com.cwenlong.quiver</string>"))
+        #expect(adHoc.contains("<string>--owner-cdhash</string><string>\(Self.adHocHash)</string>"))
     }
 
     /// The check itself, run: a helper that isn't the team's (here an
@@ -546,33 +553,40 @@ import Testing
             #expect(!AdministratorInstaller.isTeamIdentifier(odd), "\(odd)")
         }
         // Refused before any prompt: neither the hash nor osascript runs.
-        let odd = AdministratorInstaller(team: { "AB'; rm -rf" })
+        let odd = AdministratorInstaller(owner: { .team("AB'; rm -rf", identifier: "com.cwenlong.quiver") })
         await #expect(throws: FanHelperInstallError.self) {
             try await odd.install(executable: "/nonexistent", control: URL(fileURLWithPath: "/tmp/c.json"))
         }
-        let unreadable = AdministratorInstaller(team: { throw FanHelperInstallError.failed("no signature") })
+        let unreadable = AdministratorInstaller(owner: { throw FanHelperInstallError.failed("no signature") })
         await #expect(throws: FanHelperInstallError.failed("no signature")) {
             try await unreadable.install(executable: "/nonexistent", control: URL(fileURLWithPath: "/tmp/c.json"))
         }
+        let oddHash = AdministratorInstaller(owner: { .cdhash("not-a-hash") })
+        await #expect(throws: FanHelperInstallError.self) {
+            try await oddHash.install(executable: "/nonexistent", control: URL(fileURLWithPath: "/tmp/c.json"))
+        }
     }
 
-    /// The test runner's own signature reads without error: a team for a
-    /// signed build, nil for an ad-hoc one.
-    @Test func theRunningCodesTeamReads() throws {
-        let team = try AdministratorInstaller.signingTeam()
-        if let team { #expect(AdministratorInstaller.isTeamIdentifier(team)) }
+    /// The test runner's own signature reads without error, as a team or
+    /// a cdhash, and makes a pin the helper accepts.
+    @Test func theRunningCodesPinReads() throws {
+        let pin = try FanOwnerPin.current()
+        #expect(pin.isValid)
+        #expect(FanOwnerPin.parse(["helper"] + pin.arguments) == pin)
     }
 
     /// The job names the helper's version, so an install from before it
     /// (a copy of Quiver's executable, which crashed in dyld) or an older
-    /// helper fails `helperReady`'s comparison and gets reinstalled.
+    /// helper reads as outdated and gets reinstalled.
     @Test func theJobCarriesTheHelperVersion() throws {
         let control = URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json")
-        let job = try PropertyListSerialization.propertyList(from: FanHelper.plist(control: control),
+        let job = try PropertyListSerialization.propertyList(from: FanHelper.plist(control: control, owner: Self.adHoc),
                                                              format: nil) as? [String: Any]
         let arguments = try #require(job?["ProgramArguments"] as? [String])
         #expect(arguments == [FanHelper.installedExecutable, FanHelper.flag, "--control", control.path,
-                              "--helper-version", String(FanHelper.version)])
+                              "--owner-cdhash", Self.adHocHash, "--helper-version", String(FanHelper.version)])
+        #expect(FanHelper.version(in: arguments) == FanHelper.version)
+        #expect(FanOwnerPin.parse(arguments) == Self.adHoc)
         #expect(arguments != [FanHelper.installedExecutable, FanHelper.flag, "--control", control.path])
         // The helper itself still finds its control file past the version.
         #expect(FanHelper.parse(arguments) == control)
@@ -591,10 +605,11 @@ import Testing
 
     @Test func theOneLineJobIsTheSameJob() throws {
         let control = URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json")
-        let line = FanHelper.plistLine(control: control)
+        let line = FanHelper.plistLine(control: control, owner: .team("ABCDE12345", identifier: "com.cwenlong.quiver"))
         #expect(!line.contains("\n"))
         let parsed = try PropertyListSerialization.propertyList(from: Data(line.utf8), format: nil) as? NSDictionary
-        let original = try PropertyListSerialization.propertyList(from: FanHelper.plist(control: control),
+        let original = try PropertyListSerialization.propertyList(from: FanHelper.plist(control: control,
+                                                                                        owner: .team("ABCDE12345", identifier: "com.cwenlong.quiver")),
                                                                   format: nil) as? NSDictionary
         #expect(parsed == original)
     }
@@ -608,11 +623,236 @@ import Testing
         #expect(AdministratorInstaller.sha256(of: "/nonexistent/\(UUID().uuidString)") == nil)
     }
 
-    @Test func onlyAQuiverProcessCountsAsTheOwner() {
-        // The test runner is not named Quiver; a pid nothing has is gone.
-        #expect(!FanHelper.isQuiver(getpid()))
-        #expect(!FanHelper.isQuiver(Int32.max))
+    // MARK: The owner's signature
+
+    static let adHocHash = "0123456789abcdef0123456789abcdef01234567"
+    static let adHoc = FanOwnerPin.cdhash(adHocHash)
+
+    @Test func theOwnerPinParsesOnlyOneRealValue() throws {
+        let signed = ["h", "--owner-team", "ABCDE12345", "--owner-identifier", "com.cwenlong.quiver"]
+        #expect(FanOwnerPin.parse(signed) == .team("ABCDE12345", identifier: "com.cwenlong.quiver"))
+        #expect(FanOwnerPin.parse(["h", "--fan-daemon", "--owner-cdhash", Self.adHocHash]) == Self.adHoc)
+        // None, two, a missing value, or anything that isn't a team id or
+        // a lowercase 40-digit cdhash: the helper won't start.
+        // A team without its identifier, or an identifier that could
+        // break out of the requirement's quotes, too.
+        for odd in [["h"], ["h", "--owner-team"], ["h", "--owner-team", "ABCDE12345"],
+                    ["h", "--owner-team", "abcde12345", "--owner-identifier", "com.cwenlong.quiver"],
+                    ["h", "--owner-team", #"ABCDE"1234"#, "--owner-identifier", "com.cwenlong.quiver"],
+                    ["h", "--owner-team", "ABCDE12345", "--owner-identifier", #"x" or anchor apple"#],
+                    ["h", "--owner-team", "ABCDE12345", "--owner-identifier", ""],
+                    ["h", "--owner-identifier", "com.cwenlong.quiver"],
+                    signed + ["--owner-identifier", "com.cwenlong.quiver"], ["h", "--owner-cdhash", String(Self.adHocHash.dropLast())],
+                    ["h", "--owner-cdhash", Self.adHocHash.uppercased()],
+                    ["h", "--owner-cdhash", String(Self.adHocHash.dropLast()) + "g"],
+                    signed + ["--owner-cdhash", Self.adHocHash]] {
+            #expect(FanOwnerPin.parse(odd) == nil, "\(odd)")
+        }
+        #expect(FanOwnerPin.team("ABCDE12345", identifier: "com.cwenlong.quiver").team == "ABCDE12345")
+        #expect(Self.adHoc.team == nil)
+        #expect(FanOwnerPin.team("ABCDE12345", identifier: "com.cwenlong.quiver").requirement
+            == #"identifier "com.cwenlong.quiver" and anchor apple generic and certificate leaf[subject.OU] = "ABCDE12345""#)
+        #expect(Self.adHoc.requirement == #"cdhash H"\#(Self.adHocHash)""#)
+        // Both requirements compile.
+        for pin in [FanOwnerPin.team("ABCDE12345", identifier: "com.cwenlong.quiver"), Self.adHoc] {
+            var requirement: SecRequirement?
+            #expect(SecRequirementCreateWithString(pin.requirement as CFString, [], &requirement) == errSecSuccess)
+            #expect(FanOwnerCheck(pin: pin) != nil)
+        }
+        #expect(FanOwnerCheck(pin: .team("nope", identifier: "com.cwenlong.quiver")) == nil)
     }
+
+    /// A job from before the pin (or a hand-written one) starts nothing:
+    /// the helper refuses before it even checks for root.
+    @Test func theHelperWontStartWithoutAnOwnerPin() {
+        #expect(FanHelper.runIfRequested(["helper", "--fan-daemon", "--control", "/tmp/c.json",
+                                          "--helper-version", "3"]) == 2)
+    }
+
+    /// The real check, run on real processes: the test runner meets its
+    /// own pin; a program named Quiver meets only a pin for its own code,
+    /// never the app's, whatever it is called; a gone pid meets nothing.
+    @Test func theOwnerIsCheckedBySignatureNotName() throws {
+        let check = try #require(FanOwnerCheck(pin: try FanOwnerPin.current()))
+        #expect(check.isOwner(getpid()))
+        #expect(!check.isOwner(Int32.max))
+        #expect(!check.isOwner(0))
+        #expect(!check.isOwner(1))
+
+        let impostor = scratch.url.appending(path: "Quiver")
+        try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: impostor.path)
+        let process = Process()
+        process.executableURL = impostor
+        process.arguments = ["30"]
+        try process.run()
+        defer { process.terminate(); process.waitUntilExit() }
+        let pid = process.processIdentifier
+        #expect(!check.isOwner(pid))
+        #expect(!(FanOwnerCheck(pin: .team("ABCDE12345", identifier: "com.cwenlong.quiver"))?.isOwner(pid) ?? true))
+        // Its own code's hash does pass: the check reads the running code.
+        let token = try #require(FanOwnerCheck.auditToken(of: pid))
+        var code: SecCode?, staticCode: SecStaticCode?, info: CFDictionary?
+        let audit = withUnsafeBytes(of: token) { Data($0) }
+        #expect(SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributeAudit: audit] as CFDictionary, [], &code) == errSecSuccess)
+        #expect(SecCodeCopyStaticCode(try #require(code), [], &staticCode) == errSecSuccess)
+        #expect(SecCodeCopySigningInformation(try #require(staticCode),
+                                              SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess)
+        let unique = try #require((info as? [String: Any])?[kSecCodeInfoUnique as String] as? Data)
+        let own = FanOwnerPin.cdhash(unique.map { String(format: "%02x", $0) }.joined())
+        #expect(FanOwnerCheck(pin: own)?.isOwner(pid) == true)
+    }
+
+    /// The signature is checked once per process, not on every call: the
+    /// answer is kept for the pid's version, and a reused pid (a new
+    /// version) is checked afresh.
+    @Test func theOwnersAnswerIsKeptForThatProcessOnly() throws {
+        let version = Box<UInt32>(1)
+        let verdict = Box(true)
+        let calls = Box(0)
+        let check = try #require(FanOwnerCheck(
+            pin: .team("ABCDE12345", identifier: "com.cwenlong.quiver"),
+            token: { pid in audit_token_t(val: (0, 0, 0, 0, 0, UInt32(bitPattern: pid), 0, version.value)) },
+            satisfies: { _, _ in calls.value += 1; return verdict.value }))
+        #expect(check.isOwner(500))
+        #expect(check.isOwner(500))
+        #expect(calls.value == 1)
+        // Same pid, another process: a fresh check, which now fails.
+        version.value = 2
+        verdict.value = false
+        #expect(!check.isOwner(500))
+        #expect(!check.isOwner(500))
+        #expect(calls.value == 2)
+        // A token for another pid than asked never passes.
+        let mismatched = try #require(FanOwnerCheck(
+            pin: .team("ABCDE12345", identifier: "com.cwenlong.quiver"),
+            token: { _ in audit_token_t(val: (0, 0, 0, 0, 0, 42, 0, 1)) },
+            satisfies: { _, _ in true }))
+        #expect(!mismatched.isOwner(500))
+    }
+
+    // MARK: Telling an old helper from a new one
+
+    @Test func theInstalledJobSaysCurrentOutdatedOrMissing() {
+        let control = URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json")
+        let pin = FanOwnerPin.team("ABCDE12345", identifier: "com.cwenlong.quiver")
+        let current = FanHelper.programArguments(control: control, owner: pin)
+        func state(_ arguments: [String], owner: FanOwnerPin? = pin, loaded: Bool = true) -> FanHelperState {
+            FanControl.helperState(arguments: arguments, control: control, owner: owner) { loaded }
+        }
+        #expect(state(current) == .current)
+        #expect(state(current, loaded: false) == .missing)
+        // Version 3 (no pin) and the first helpers (no version at all).
+        let v3 = [FanHelper.installedExecutable, FanHelper.flag, "--control", control.path, "--helper-version", "3"]
+        #expect(state(v3) == .outdated(version: 3))
+        #expect(state(v3, loaded: false) == .outdated(version: 3))
+        #expect(state(Array(v3.dropLast(2))) == .outdated(version: 0))
+        // Another account's job, another build's pin, or an unreadable
+        // pin of our own: not ours to offer an update for.
+        #expect(state(FanHelper.programArguments(control: URL(fileURLWithPath: "/Users/other/.quiver/fan/control.json"),
+                                                 owner: pin)) == .missing)
+        #expect(state(FanHelper.programArguments(control: control, owner: Self.adHoc)) == .missing)
+        #expect(state(current, owner: nil) == .missing)
+        #expect(state(Array(current.dropLast()) + ["x"]) == .missing)
+        #expect(state(["/bin/sh", "-c", "true"]) == .missing)
+    }
+
+    /// The helper says its version in the status file; one from before it
+    /// did reads as nil.
+    @Test func theStatusCarriesTheHelpersVersion() throws {
+        let status = FanHelperStatus(state: .ready)
+        let decoded = try JSONDecoder().decode(FanHelperStatus.self, from: JSONEncoder().encode(status))
+        #expect(decoded.version == FanHelper.version)
+        let old = try JSONDecoder().decode(FanHelperStatus.self, from: Data(#"{"state":"ready","at":1}"#.utf8))
+        #expect(old.version == nil)
+    }
+
+    // MARK: The launch offer
+
+    @MainActor @Test func anOutdatedHelperIsOfferedOnceAndNeverSteered() async {
+        let smc = FakeSMC.twoFans()
+        let installer = FakeInstaller()
+        installer.outdated.value = true
+        let (fans, _) = control(smc, installer: installer)
+        #expect(await fans.shouldOfferHelperUpdate())
+        #expect(fans.helperOutdated)
+        #expect(!fans.helperInstalled)
+        // Not now: no prompt, nothing installed, and no offer next launch.
+        fans.declineHelperUpdate()
+        #expect(installer.installs == 0)
+        #expect(!(await fans.shouldOfferHelperUpdate()))
+        let defaults = TestDefaults("fan")
+        defaults.set(FanHelper.version, forKey: FanControl.updateDeclinedKey)
+        let later = FanControl(control: scratch.url.appending(path: "later/control.json"), reader: { FanKeys.read(smc) },
+                               status: { nil }, installer: installer, inspect: { _ in installer.state },
+                               executable: "/Apps/Quiver", owner: 77, defaults: defaults)
+        #expect(!(await later.shouldOfferHelperUpdate()))
+        #expect(later.helperOutdated)
+        // The rule never steers the old helper: the fans stay with macOS.
+        later.thresholdEnabled = true
+        await later.checkTemperature(99)
+        #expect(!later.heldByThreshold)
+        #expect(later.phase == .automatic)
+        #expect(installer.installs == 0)
+        // An offer turned down for an older version is made again.
+        defaults.set(FanHelper.version - 1, forKey: FanControl.updateDeclinedKey)
+        #expect(await later.shouldOfferHelperUpdate())
+    }
+
+    /// The offer reads the job itself: a refresh that already took the
+    /// one-shot install check (another launch-time refresh) can't hide it.
+    @MainActor @Test func theOfferLooksEvenWhenARefreshAlreadyChecked() async {
+        let smc = FakeSMC.twoFans()
+        let installer = FakeInstaller()
+        let (fans, _) = control(smc, installer: installer)
+        await fans.refresh()
+        #expect(!fans.helperOutdated)
+        installer.outdated.value = true
+        #expect(await fans.shouldOfferHelperUpdate())
+        #expect(fans.helperOutdated)
+    }
+
+    @MainActor @Test func updatingReplacesTheHelperWithOnePrompt() async {
+        let smc = FakeSMC.twoFans()
+        let installer = FakeInstaller()
+        installer.outdated.value = true
+        let (fans, url) = control(smc, installer: installer)
+        #expect(await fans.shouldOfferHelperUpdate())
+        #expect(await fans.updateHelper() == nil)
+        #expect(installer.installs == 1)
+        #expect(installer.lastControl == url)
+        #expect(fans.helperInstalled)
+        #expect(!fans.helperOutdated)
+        // Nothing is held: the user sets a speed as usual, with no prompt.
+        #expect(fans.phase == .automatic)
+        #expect(FanControlFile.request(at: url) == nil)
+        await fans.refresh()
+        #expect(!fans.helperOutdated)
+        #expect(!(await fans.shouldOfferHelperUpdate()))
+        await fans.applyManual()
+        #expect(installer.installs == 1)
+    }
+
+    @MainActor @Test func aCancelledOrFailedUpdateLeavesTheOldHelperUnused() async {
+        let smc = FakeSMC.twoFans()
+        let installer = FakeInstaller()
+        installer.outdated.value = true
+        let (fans, _) = control(smc, installer: installer)
+        await fans.refresh()
+        installer.error = .cancelled
+        #expect(await fans.updateHelper() == nil)
+        #expect(fans.helperOutdated && !fans.helperInstalled)
+        #expect(fans.phase == .automatic)
+        installer.error = .failed("The fan helper is not signed by the team that signed Quiver.")
+        #expect(await fans.updateHelper() == "The fan helper is not signed by the team that signed Quiver.")
+        #expect(fans.helperOutdated && !fans.helperInstalled)
+        #expect(fans.phase == .failed("The fan helper is not signed by the team that signed Quiver."))
+        // Set speed is the same install, so it is an update too.
+        installer.error = nil
+        await fans.applyManual()
+        #expect(installer.installs == 3)
+        #expect(fans.helperInstalled && !fans.helperOutdated)
+    }
+
 
     @Test func theControlFileRoundTripsAndAnythingOddMeansAutomatic() throws {
         let folder = scratch.url.appending(path: "fan-\(UUID().uuidString)")
@@ -665,7 +905,7 @@ import Testing
             .appending(path: "fan-\(UUID().uuidString)/control.json")
         let control = FanControl(control: url, reader: { FanKeys.read(smc) }, status: { status.value },
                                  installer: installer,
-                                 isInstalled: { _ in installer.checks += 1; return installer.installed.value },
+                                 inspect: { _ in installer.checks += 1; return installer.state },
                                  executable: "/Apps/Quiver", owner: 77, clock: { clock.value },
                                  sleep: { await sleeper.sleep($0) },
                                  defaults: TestDefaults("fan"))
@@ -889,7 +1129,7 @@ import Testing
         let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url,
                               reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
-                              status: { nil }, installer: installer, isInstalled: { _ in true }, executable: "/Apps/Quiver", owner: 77,
+                              status: { nil }, installer: installer, inspect: { _ in .current }, executable: "/Apps/Quiver", owner: 77,
                               defaults: TestDefaults("fan"))
         await fans.refresh()
         fans.thresholdEnabled = true
@@ -992,7 +1232,7 @@ import Testing
         let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url,
                               reader: { if gate.armed { gate.parked.signal(); gate.release.wait() }; return FanKeys.read(smc) },
-                              status: { nil }, installer: installer, isInstalled: { _ in true },
+                              status: { nil }, installer: installer, inspect: { _ in .current },
                               executable: "/Apps/Quiver", owner: 77, sleep: { await sleeper.sleep($0) },
                               defaults: TestDefaults("fan"))
         await fans.refresh()
@@ -1095,7 +1335,7 @@ import Testing
         let defaults = TestDefaults("fan")
         let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
-                              isInstalled: { _ in false }, defaults: defaults)
+                              inspect: { _ in .missing }, defaults: defaults)
         #expect(fans.threshold == 80 && !fans.thresholdEnabled)
         fans.threshold = 140
         #expect(fans.threshold == 100)
@@ -1104,12 +1344,12 @@ import Testing
         // finds the same value it left rather than a shifted one.
         #expect(fans.releaseBelow == 67)
         let mid = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
-                             isInstalled: { _ in false }, defaults: defaults)
+                             inspect: { _ in .missing }, defaults: defaults)
         #expect(mid.releaseBelow == 67)
         fans.thresholdEnabled = true
         fans.releaseBelow = 60
         let again = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
-                               isInstalled: { _ in false }, defaults: defaults)
+                               inspect: { _ in .missing }, defaults: defaults)
         #expect(again.threshold == 72 && again.thresholdEnabled)
         #expect(again.releaseBelow == 60)
     }
@@ -1134,7 +1374,7 @@ import Testing
         let defaults = TestDefaults("fan")
         let url = scratch.url.appending(path: "fan-\(UUID().uuidString)/control.json")
         let fans = FanControl(control: url, reader: { [] }, status: { nil }, installer: FakeInstaller(),
-                              isInstalled: { _ in false }, defaults: defaults)
+                              inspect: { _ in .missing }, defaults: defaults)
         #expect(fans.releaseBelow == 75)
         // Unpicked, it follows the line at the default gap.
         fans.threshold = 90
@@ -1230,7 +1470,12 @@ import Testing
 
     final class FakeInstaller: FanHelperInstalling, @unchecked Sendable {
         let installed = Box(false)
+        /// An older helper is installed, until an install replaces it.
+        let outdated = Box(false)
         var checks = 0
+        var state: FanHelperState {
+            installed.value ? .current : outdated.value ? .outdated(version: 3) : .missing
+        }
         var installs = 0
         var uninstalls = 0
         var lastControl: URL?
@@ -1241,6 +1486,7 @@ import Testing
             lastControl = control
             if let error { throw error }
             installed.value = true
+            outdated.value = false
         }
 
         /// Runs while the removal "prompt" is up.

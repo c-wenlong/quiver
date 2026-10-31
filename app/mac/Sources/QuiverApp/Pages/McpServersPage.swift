@@ -46,7 +46,7 @@ struct McpServersPage: View {
             }
             .secondaryButton()
             .disabled(model.checkingHealth)
-            .help("Run each server's command check and reach each URL")
+            .hoverTip("Run each server's command check and reach each URL", replacesLabel: false)
             Button("Add server", systemImage: "plus") { adding = true }
                 .primaryButton()
                 .hoverTip("Add a server to the Quiver hub, and optionally to harnesses")
@@ -115,16 +115,7 @@ struct McpServersPage: View {
             }
         }
         .quiverSheet(isPresented: $adding) {
-            let (harnesses, active, servers): ([String], [String], [McpServer]) = {
-                if case .loaded(let inventory) = model.state {
-                    return (inventory.harnesses,
-                            inventory.activeHarnesses.filter { !hidden.contains($0) },
-                            inventory.servers)
-                }
-                return ([], [], [])
-            }()
-            McpAddServerSheet(harnesses: harnesses, active: active,
-                              existing: servers) {
+            McpAddServerSheet(hidden: hidden) {
                 await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth)
             }
         }

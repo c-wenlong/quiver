@@ -68,7 +68,7 @@ private struct ModelsContent: View {
     /// The controls row: view mode, metric, scope, harness and period on
     /// the left; the freshness stamp, warning and reload buttons on the
     /// right. When the row runs out of room the stamp hides and its text
-    /// moves into the reload button's hover help — nothing else gives.
+    /// moves into the reload button's hover tip — nothing else gives.
     private var toolbar: some View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
@@ -83,14 +83,18 @@ private struct ModelsContent: View {
                            width: nil,
                            symbols: Dictionary(uniqueKeysWithValues:
                                ModelsModel.Metric.allCases.map { ($0, $0.symbol) }))
-                SelectMenu(options: ModelsModel.Scope.allCases.map { ($0, $0.title) },
-                           selection: Binding(get: { model.scope },
-                                              set: { model.set(scope: $0) }),
-                           width: nil)
-                    .disabled(model.searching)
-                    .help(model.searching
-                          ? "Searching the whole catalog. Clear the search to pick a scope."
-                          : "")
+                let scopeMenu = SelectMenu(options: ModelsModel.Scope.allCases.map { ($0, $0.title) },
+                                           selection: Binding(get: { model.scope },
+                                                              set: { model.set(scope: $0) }),
+                                           width: nil)
+                // Off while a search runs, and only then does it need a tip.
+                if model.searching {
+                    scopeMenu.disabled(true)
+                        .hoverTip("Searching the whole catalog. Clear the search to pick a scope.",
+                                  replacesLabel: false)
+                } else {
+                    scopeMenu
+                }
                 MultiSelectMenu(allTitle: "All harnesses",
                                 options: model.harnessOptions.map {
                                     (value: $0, title: HarnessMark($0).name, icon: $0)
@@ -160,7 +164,9 @@ private struct ModelsContent: View {
         }
         .iconButton()
         .disabled(model.isRefreshing || !model.hasKey)
-        .help(reloadHelp)
+        // A stable name; the stamp or the last error is the hint.
+        .accessibilityLabel("Reload benchmarks")
+        .hoverTip(reloadHelp, replacesLabel: false)
     }
 
     // MARK: - Content
@@ -767,11 +773,15 @@ private struct TableRow: View {
             metric(row.aa?.speed).frame(width: columns.speed, alignment: .trailing)
             if model.showsExtraMetric {
                 // The unit lives in the header's tip, as for the others.
-                Text(row.value.map { String(format: "%.2f", $0) } ?? "—")
+                let figure = Text(row.value.map { String(format: "%.2f", $0) } ?? "—")
                     .font(Theme.bodySmall).monospacedDigit()
                     .foregroundStyle(row.value == nil ? Theme.textMuted : Theme.textPrimary)
                     .frame(width: columns.extra, alignment: .trailing)
-                    .help(row.value == nil ? model.metric.missingNote ?? "" : "")
+                if row.value == nil, let note = model.metric.missingNote {
+                    figure.hoverTip(note, replacesLabel: false)
+                } else {
+                    figure
+                }
             }
             ListPriceCell(price: row.listPrice)
                 .padding(.leading, TableColumns.priceInset)
@@ -799,8 +809,12 @@ private struct TableRow: View {
             Text("\(Int(value.rounded()))")
                 .font(Theme.bodySmall).monospacedDigit().foregroundStyle(Theme.textPrimary)
         } else {
-            Text("—").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
-                .help(missing ?? "")
+            let dash = Text("—").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
+            if let missing {
+                dash.hoverTip(missing, replacesLabel: false)
+            } else {
+                dash
+            }
         }
     }
 }
@@ -818,7 +832,7 @@ private struct ListPriceCell: View {
                 .hoverTip(Self.help(price), replacesLabel: false)
         } else {
             Text("—").font(Theme.bodySmall).foregroundStyle(Theme.textMuted)
-                .help("No LiteLLM price for this model")
+                .hoverTip("No LiteLLM price for this model", replacesLabel: false)
         }
     }
 

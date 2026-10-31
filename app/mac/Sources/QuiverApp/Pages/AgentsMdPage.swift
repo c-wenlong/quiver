@@ -88,7 +88,7 @@ private struct LinksStrip: View {
         Strip {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("Harnesses").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                    .help("From swe init --check")
+                    .hoverTip("From swe init --check", replacesLabel: false)
                 FlowLayout(spacing: 14, lineSpacing: 6) {
                     ForEach(report.instructionRows) { row in
                         if let link = row.instructions {
@@ -105,7 +105,7 @@ private struct LinksStrip: View {
                         }
                         .primaryButton()
                         .disabled(model.linking)
-                        .help("Runs swe init, which links what is missing and never replaces a real file.")
+                        .hoverTip("Runs swe init, which links what is missing and never replaces a real file.", replacesLabel: false)
                     }
                     .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                 }
@@ -119,8 +119,9 @@ private struct LinksStrip: View {
                     Button("Replace and back up…") { confirmingReplace = true }
                         .secondaryButton()
                         .disabled(model.linking || model.projectHasUnsavedChanges)
-                        .help(model.projectHasUnsavedChanges ? AgentsModel.saveFirst
-                              : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.")
+                        .hoverTip(model.projectHasUnsavedChanges ? AgentsModel.saveFirst
+                                  : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.",
+                                  replacesLabel: false)
                 }
             }
             if let error = model.linkError {

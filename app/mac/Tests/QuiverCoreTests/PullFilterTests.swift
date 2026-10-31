@@ -50,27 +50,11 @@ private func decodePr(_ json: String) throws -> GhPr {
 
 @MainActor
 @Suite struct PullFilterModelTests {
-    /// Answers by argv suffix and counts the calls.
-    final class Runner: CommandRunning, @unchecked Sendable {
-        var replies: [String: CommandResult]
-        private var log: [[String]] = []
-        private let lock = NSLock()
-        var calls: [[String]] { lock.withLock { log } }
-        init(_ replies: [String: String]) {
-            self.replies = replies.mapValues {
-                CommandResult(status: 0, stdout: Data("{\"schema\":1,\"data\":{\($0)}}".utf8), stderr: "")
-            }
-        }
-        func run(_ arguments: [String]) async throws -> CommandResult {
-            lock.withLock { log.append(arguments) }
-            for (suffix, reply) in replies where arguments.joined(separator: " ").hasSuffix(suffix) {
-                return reply
-            }
-            return .init(status: 1, stdout: Data(), stderr: "no route")
-        }
-        func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
-            try await run(arguments)
-        }
+    /// The GitHub tests' suffix router, each reply wrapped in swe's envelope.
+    func router(_ replies: [String: String]) -> GitHubModelTests.Router {
+        GitHubModelTests.Router(replies.mapValues {
+            CommandResult(status: 0, stdout: Data("{\"schema\":1,\"data\":{\($0)}}".utf8), stderr: "")
+        })
     }
 
     let env = "\"github\":{\"status\":\"ok\",\"login\":\"me\",\"error\":null}"
@@ -86,7 +70,7 @@ private func decodePr(_ json: String) throws -> GhPr {
     }
 
     @Test func theDashboardFiltersAndCountsOnceTheFlagsLand() async {
-        let runner = Runner([
+        let runner = router([
             "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
             "gh pr --state=open --limit=50 --repo=o/a --json":
                 pulls("o/a", [pr(1), pr(2, author: "you"), pr(3, author: "you", title: "Docs")]),
@@ -118,7 +102,7 @@ private func decodePr(_ json: String) throws -> GhPr {
     /// so a pull request reply's probe has no login. Mine stays offered.
     @Test func aSurfaceReplyWithoutALoginKeepsMine() async {
         let anonymous = "\"github\":{\"status\":\"ok\",\"login\":null,\"error\":null}"
-        let runner = Runner([
+        let runner = router([
             "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100}]",
             "gh pr --state=open --limit=50 --repo=o/a --json":
                 "\(anonymous),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[\(pr(1, author: "me"))]}]",
@@ -133,7 +117,7 @@ private func decodePr(_ json: String) throws -> GhPr {
     }
 
     @Test func aFreshReplyIsReusedAndAFailureKeepsTheLastGoodSet() async {
-        let runner = Runner(["gh pr status --repo=o/a --json": status("o/a", requested: [4])])
+        let runner = router(["gh pr status --repo=o/a --json": status("o/a", requested: [4])])
         let swe = SweClient(runner: runner)
         let model = GitHubModel()
         let start = Date(timeIntervalSince1970: 1_000)
@@ -163,7 +147,7 @@ private func decodePr(_ json: String) throws -> GhPr {
         await model.loadReviewRequests(repo: "o/a", swe: SweClient(runner: Cancelling()))
         #expect(model.reviewRequests["o/a"] == nil)
 
-        let runner = Runner(["gh pr status --repo=o/a --json": status("o/a", requested: [5])])
+        let runner = router(["gh pr status --repo=o/a --json": status("o/a", requested: [5])])
         await model.loadReviewRequests(repo: "o/a", swe: SweClient(runner: runner))
         #expect(model.reviewRequested("o/a") == [5])
         // With a known set, a cancelled read keeps it but marks it stale.
@@ -176,7 +160,7 @@ private func decodePr(_ json: String) throws -> GhPr {
     /// The rail counts every visible repo while the filter was offered
     /// for the one listed: an unknown repo has no count, not zero.
     @Test func anUnknownRepoHasNoReviewCountInTheRail() async {
-        let runner = Runner([
+        let runner = router([
             "gh --json": "\(env),\"repos\":[{\"name\":\"o/a\",\"added_at\":100},{\"name\":\"o/b\",\"added_at\":200}]",
             "gh pr --state=open --limit=50 --repo=o/a --json": pulls("o/a", [pr(1)]),
             "gh pr --state=open --limit=50 --repo=o/b --json": pulls("o/b", [pr(2)]),
@@ -199,7 +183,7 @@ private func decodePr(_ json: String) throws -> GhPr {
     }
 
     @Test func aRepoThatNeverAnsweredStaysUnknown() async {
-        let swe = SweClient(runner: Runner([
+        let swe = SweClient(runner: router([
             "gh pr status --repo=o/a --json": status("o/a", requested: [], ok: false),
         ]))
         let model = GitHubModel()

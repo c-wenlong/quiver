@@ -15,6 +15,7 @@ from quiver.webapp.pages import PageError
 from quiver.webapp.pages import harness as harness_page
 
 from tests.test_remote_hub import HubBase
+from tests.test_webapp import app_js_function
 
 REGISTRY = {
     "claude": {"command": "claude", "aliases": ["cc"], "tags": ["agentic"]},
@@ -362,6 +363,25 @@ class TestHeaderActions(unittest.TestCase):
         self.assertIn('data-sheet="add"', painted)
 
 
+    def test_search_waits_out_an_ime_composition(self):
+        """bindSearch, which every filter box that repaints as you type
+        uses: text kept on each keystroke, the repaint (which replaces
+        the box) held while a composition is open and run once it ends."""
+        manage_js = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/manage.js"
+        body = ("const box = { value: '' }, seen = [], paints = [];\n"
+                "bindSearch(box, (t) => seen.push(t), () => paints.push(box.value));\n"
+                "box.value = 'a'; box.oninput({ isComposing: false });\n"
+                "box.value = 'ak'; box.oninput({ isComposing: true });\n"
+                "box.value = 'a\u304b'; box.oninput({ isComposing: true });\n"
+                "box.oncompositionend();\n"
+                "process.stdout.write(JSON.stringify({ seen, paints }));\n")
+        done = subprocess.run(["node", "-e", manage_js.read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"seen": ["a", "ak", "a\u304b", "a\u304b"],
+                                                   "paints": ["a", "a\u304b"]})
+
+
 # ------------------------------------------------------------- the sheets
 
 FOUND = [
@@ -539,6 +559,36 @@ class TestAdd(_TempRegistry, unittest.TestCase):
                            ({"name": "mycli", "command": "x", "description": 3}, "bad_field")):
             error = self.refused(**body)
             self.assertEqual((error.status, error.code), (422, code), body)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestSheetScript(unittest.TestCase):
+    def test_the_sheet_is_a_route_sheet(self):
+        """The harness sheet is app.js's bodySheet, so route() closes it on
+        navigation; closing it however it happens forgets the open sheet,
+        and Esc goes through closeHarnessSheet (held while a save runs)."""
+        root = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static"
+        prelude = ("let listeners = 0;\n"
+                   "globalThis.window = { addEventListener() { listeners++; } };\n"
+                   "const made = new Map();\n"
+                   "globalThis.document = { getElementById: (id) => made.get(id) || null,\n"
+                   "  createElement: () => ({ dataset: {}, setAttribute() {}, close() { this.open = false; } }),\n"
+                   "  body: { appendChild(el) { made.set(el.id, el); } }, activeElement: null,\n"
+                   "  querySelector: () => null };\n"
+                   + app_js_function("bodySheet") + app_js_function("closeRouteSheets"))
+        body = ("const dlg = harnessDialog();\n"
+                "harnessesPage.sheet = { kind: 'add', working: true };\n"
+                "let prevented = false;\n"
+                "dlg.oncancel({ preventDefault() { prevented = true; } });\n"
+                "const heldWhileSaving = harnessesPage.sheet !== null;\n"
+                "dlg.onclose();\n"
+                "process.stdout.write(JSON.stringify({ route: 'routeSheet' in dlg.dataset, same: harnessDialog() === dlg,\n"
+                "  prevented, heldWhileSaving, forgotten: harnessesPage.sheet === null, listeners }));\n")
+        done = subprocess.run(["node", "-e", prelude + (root / "manage.js").read_text(encoding="utf-8") + "\n" + body],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"route": True, "same": True, "prevented": True,
+                                                   "heldWhileSaving": True, "forgotten": True, "listeners": 0})
 
 
 if __name__ == "__main__":

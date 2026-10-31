@@ -687,24 +687,29 @@ public final class SearchStore: @unchecked Sendable {
     public func drainOrphanedMessages(limit: Int = 256) throws -> Int {
         try storeLock.withLock {
             if try metaValue("orphans_pending") == "0" { return 0 }
-            // Scoped: an unfinalized statement that read a row keeps a cursor on
-            // messages open, which locks the deletes below with SQLITE_LOCKED.
-            let orphan: Int64? = try {
-                let probe = try cachedStatement("""
-                    SELECT session_row_id FROM messages
-                    WHERE session_row_id NOT IN (SELECT id FROM sessions) LIMIT 1
-                    """)
-                probe.bind([])
-                return try probe.step() ? probe.int(0) : nil
-            }()
             let db = try liveDB()
-            guard let orphan else {
-                try setMeta("orphans_pending", "0")
-                try db.execute("PRAGMA incremental_vacuum(2000)")
-                return 0
-            }
+            // The probe and the flag reset share one write transaction, as in
+            // swe's `drain_orphans`: swe also writes this index, and a session
+            // it deletes between them would raise the flag just before this
+            // lowered it, leaving its messages until some later delete.
             try db.execute("BEGIN IMMEDIATE")
             do {
+                // Scoped: an unfinalized statement that read a row keeps a cursor on
+                // messages open, which locks the deletes below with SQLITE_LOCKED.
+                let orphan: Int64? = try {
+                    let probe = try cachedStatement("""
+                        SELECT session_row_id FROM messages
+                        WHERE session_row_id NOT IN (SELECT id FROM sessions) LIMIT 1
+                        """)
+                    probe.bind([])
+                    return try probe.step() ? probe.int(0) : nil
+                }()
+                guard let orphan else {
+                    try setMeta("orphans_pending", "0")
+                    try db.execute("COMMIT")
+                    try db.execute("PRAGMA incremental_vacuum(2000)")
+                    return 0
+                }
                 let ids: [Int64] = try {
                     let pick = try cachedStatement(
                         "SELECT id FROM messages WHERE session_row_id = ? LIMIT ?")

@@ -673,8 +673,7 @@ function computeSwitch(id, on, opts = {}) {
 }
 
 function openComputeLimits() {
-  let dialog = document.getElementById("compute-limits");
-  if (dialog) dialog.remove();
+  document.getElementById("compute-limits")?.remove();
   const p = computePage;
   // Back can change the route while the sheet is open; a change saved
   // after that must not paint Compute over the page now showing.
@@ -684,8 +683,10 @@ function openComputeLimits() {
   // Auto clean is the hub's own state, not this browser's; a non-Linux
   // hub has no /proc to work, so its section is left out entirely.
   const hasHub = p.data && p.data.supported !== false;
-  document.body.insertAdjacentHTML("beforeend", `<dialog class="sheet compute-limits" id="compute-limits">
-    <form method="dialog" class="sheet-body">
+  // A route sheet (app.js bodySheet): leaving the page closes it, which
+  // runs its close handler below, so it never stays over the next page.
+  const dialog = bodySheet("compute-limits", "sheet compute-limits");
+  dialog.innerHTML = `<form method="dialog" class="sheet-body">
       <div class="sheet-title">Settings</div>
       <div class="compute-setting">
         <div><div>Orphans count as old after</div>
@@ -709,8 +710,7 @@ function openComputeLimits() {
         ? "Thresholds are kept in this browser; auto clean is kept on the hub. Quitting processes and Clean up are in the Mac app."
         : "Kept in this browser. Quitting processes and Clean up are in the Mac app."}</p>
       <div class="sheet-actions"><button class="compute-button" value="done">Done</button></div>
-    </form></dialog>`);
-  dialog = document.getElementById("compute-limits");
+    </form>`;
   const age = dialog.querySelector("#compute-age"), ageUnit = dialog.querySelector("#compute-age-unit");
   const memory = dialog.querySelector("#compute-memory");
 
@@ -779,8 +779,7 @@ function openComputeLimits() {
           return;
         }
       } else {
-        p.acError = (data && data.error && data.error.message)
-          || (status ? `The hub answered ${status}.` : "Couldn't reach the hub.");
+        p.acError = failText(status, data, "");
       }
       drawAutoclean(refocus);
     });

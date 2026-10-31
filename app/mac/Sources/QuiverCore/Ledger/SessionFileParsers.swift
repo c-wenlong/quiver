@@ -129,20 +129,37 @@ enum SessionTotalsFile {
         }
         // `<uuid>.settings.json` -> `<uuid>.jsonl` (two extensions to drop).
         let transcript = droidTranscript(for: url)
+        func consume(_ line: Data) {
+            guard let entry = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
+            else { return }
+            if entry["type"] as? String == "session_start" {
+                cwd = cwd ?? JSONValue.string(entry["cwd"])
+            }
+            if let stamp = JSONValue.string(entry["timestamp"]).flatMap(Timestamp.parse) {
+                last = stamp
+            }
+        }
+        // Streamed in 1 MiB chunks, with JSONLReader's cap on one line.
+        // A failed open or mid-read failure ends the scan of the
+        // transcript with what was read, as swe's reader does.
+        let reader = JSONLReader()
+        var read: UInt64 = 0
+        if let result = try? reader.read(transcript, from: 0, line: consume) {
+            read = result.endOffset
+        }
+        // The reader leaves an unterminated last line for a later scan;
+        // this read is whole every time, so that line counts now, as it
+        // does in swe (`droid_session_totals`).
+        // Droid may finish that line and start another meanwhile, so the
+        // rest is read only up to the end seen here and split into lines.
         if let handle = FileHandle(forReadingAtPath: transcript.path) {
             defer { try? handle.close() }
-            while autoreleasepool(invoking: {
-                guard let line = (try? handle.readLine()) else { return false }
-                guard let entry = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
-                else { return true }
-                if entry["type"] as? String == "session_start" {
-                    cwd = cwd ?? JSONValue.string(entry["cwd"])
-                }
-                if let stamp = JSONValue.string(entry["timestamp"]).flatMap(Timestamp.parse) {
-                    last = stamp
-                }
-                return true
-            }) {}
+            if let end = try? handle.seekToEnd(), end > read,
+               end - read <= UInt64(reader.maxLineBytes),
+               (try? handle.seek(toOffset: read)) != nil,
+               let tail = try? handle.read(upToCount: Int(end - read)) {
+                for line in tail.split(separator: UInt8(ascii: "\n")) { consume(Data(line)) }
+            }
         }
         guard let timestamp = last else { throw CocoaError(.coderReadCorrupt) }
 
@@ -197,24 +214,5 @@ enum SessionTotalsFile {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { throw CocoaError(.coderReadCorrupt) }
         return object
-    }
-}
-
-private extension FileHandle {
-    /// One line's bytes, newline included, or nil at EOF. Read in chunks so
-    /// a long line is still one return value.
-    func readLine() throws -> Data? {
-        var data = Data()
-        while true {
-            guard let chunk = try read(upToCount: 8192), !chunk.isEmpty else {
-                return data.isEmpty ? nil : data
-            }
-            if let newline = chunk.firstIndex(of: UInt8(ascii: "\n")) {
-                data.append(chunk[..<newline])
-                try seek(toOffset: offset() - UInt64(chunk.count - newline - 1))
-                return data
-            }
-            data.append(chunk)
-        }
     }
 }

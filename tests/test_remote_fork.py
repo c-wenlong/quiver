@@ -1,9 +1,7 @@
 """fork.py: fork a session from the phone, on the hub or a satellite."""
 
-import http.client
 import json
 import os
-import tempfile
 import threading
 import time
 import unittest
@@ -13,9 +11,11 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import agent as agent_mod
 from quiver.remote import catalog as catalog_mod
 from quiver.remote import fork as fork_mod
-from quiver.remote import pairing, protocol, supervise
-from quiver.remote.hub import HubState, make_server
+from quiver.remote import protocol, supervise
 from quiver.sessions.models import Session
+
+from tests._tempdir import temp_dir
+from tests.test_remote_hub import _Server
 
 CODEX_ID = "rollout-2026-10-20T10-55-33-01a1144a-41bf-7123-ae76-1cff676b946f"
 CODEX_THREAD = "01a1144a-41bf-7123-ae76-1cff676b946f"
@@ -27,56 +27,30 @@ def _session(sid="s1", tool="claude", path="/tmp", ts=0):
 
 
 class _Hub:
+    """test_remote_hub's _Server (no tailnet, no price download) with a
+    paired phone; ``request`` answers parsed JSON."""
+
     def __init__(self, sessions):
-        self.home = Path(tempfile.mkdtemp())
-        self.state = HubState(self.home)
-        self.state.catalog._fetch = lambda: list(sessions)
-        self.state.catalog._status_of = lambda ss: ["done"] * len(ss)
-        self.state.catalog.refresh()
-        self.server = make_server(self.state, "127.0.0.1", 0)
-        self.port = self.server.server_address[1]
-        self.thread = threading.Thread(
-            target=self.server.serve_forever, kwargs={"poll_interval": 0.02},
-            daemon=True)
-        self.thread.start()
-        token = pairing.mint_pair_token(self.home)
-        _status, data = self.request(
-            "POST", "/v1/pair", {"token": token, "name": "t"}, auth=False)
-        cred = data["credential"]
+        self.srv = _Server(sessions=sessions,
+                           statuses=lambda ss: ["done"] * len(ss))
+        self.home, self.state = self.srv.home, self.srv.state
+        cred = self.srv.pair()["credential"]
         self.auth = {"Authorization": f"Bearer {cred}"}
 
     def satellite(self, mid):
         """Pair a satellite credential and bind it to ``mid``."""
-        token = pairing.mint_pair_token(self.home)
-        _s, data = self.request(
-            "POST", "/v1/pair",
-            {"token": token, "name": "sat", "role": "satellite"},
-            auth=False)
-        sat = {"Authorization": f"Bearer {data['credential']}"}
-        status, data = self.request(
-            "POST", "/v1/agent/register", {"machine": {"id": mid}},
-            auth=sat)
-        assert status == 200, data
-        return sat
+        return self.srv.satellite(mid)
 
     def stop(self):
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join(timeout=3)
+        self.srv.stop()
 
     def request(self, method, path, body=None, auth=True):
         # auth=True sends the phone credential; a dict is sent verbatim;
         # False sends nothing (e.g. /v1/pair).
         headers = self.auth if auth is True else (auth or {})
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
-        try:
-            conn.request(method, path,
-                         body=json.dumps(body) if body is not None else None,
-                         headers=headers)
-            resp = conn.getresponse()
-            return resp.status, json.loads(resp.read() or b"{}")
-        finally:
-            conn.close()
+        status, data = self.srv.request(method, path, body=body,
+                                        headers=headers)
+        return status, json.loads(data or b"{}")
 
 
 class TestForkCommandLines(unittest.TestCase):
@@ -140,7 +114,7 @@ class TestForkCommandLines(unittest.TestCase):
 
 class TestForkRoute(unittest.TestCase):
     def setUp(self):
-        self.proj = tempfile.mkdtemp()
+        self.proj = str(temp_dir(self))
         self.srv = _Hub([
             _session("abc", path=self.proj),
             _session("o1", "opencode", path=self.proj),
@@ -248,8 +222,8 @@ class TestForkRoute(unittest.TestCase):
 
 class TestLaunchFork(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.proj = tempfile.mkdtemp()
+        self.home = temp_dir(self)
+        self.proj = str(temp_dir(self))
 
     def _launch(self, source, argv, prompt="", **kw):
         with patch.object(supervise.shutil, "which", return_value="/x/bin"), \
@@ -328,8 +302,8 @@ class TestOverlappingForks(unittest.TestCase):
     """Harnesses that pick their own id fork one at a time per folder."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.proj = tempfile.mkdtemp()
+        self.home = temp_dir(self)
+        self.proj = str(temp_dir(self))
 
     def _fork(self, source, argv, expect_id="", tmux_up=False):
         names = iter(["qv-a", "qv-b", "qv-c"])
@@ -356,18 +330,29 @@ class TestOverlappingForks(unittest.TestCase):
         ok, _n, _ = self._fork(src, ["codex", "fork", CODEX_THREAD])
         self.assertTrue(ok)
 
+    def _age_markers(self):
+        for marker in supervise._pending_dir(self.home).glob("*.json"):
+            data = json.loads(marker.read_text())
+            data["launched_at"] -= 600
+            marker.write_text(json.dumps(data))
+
     def test_a_stale_marker_with_a_dead_pane_does_not_block(self):
         src = _session("d1", "droid", self.proj)
         self._fork(src, ["droid", "--fork", "d1"])
-        marker = next(supervise._pending_dir(self.home).glob("*.json"))
-        data = json.loads(marker.read_text())
-        data["launched_at"] -= 600
-        marker.write_text(json.dumps(data))
+        self._age_markers()
         ok, _n, _ = self._fork(src, ["droid", "--fork", "d1"])
         self.assertTrue(ok)
-        # ... but a live pane still holds the folder.
-        ok, _n, _ = self._fork(src, ["droid", "--fork", "d1"])
+        # A fresh marker blocks on its own ...
+        ok, note, _ = self._fork(src, ["droid", "--fork", "d1"])
         self.assertFalse(ok)
+        self.assertIn("still waiting", note)
+        # ... and a live pane still holds the folder once every marker
+        # is past the reservation window.
+        self._age_markers()
+        ok, note, _ = self._fork(src, ["droid", "--fork", "d1"],
+                                 tmux_up=True)
+        self.assertFalse(ok)
+        self.assertIn("still waiting", note)
 
     def test_claude_forks_name_their_id_and_never_wait(self):
         src = _session("abc", path=self.proj)
@@ -422,8 +407,8 @@ class TestOverlappingForks(unittest.TestCase):
 
 class TestForkAdoption(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.proj = tempfile.mkdtemp()
+        self.home = temp_dir(self)
+        self.proj = str(temp_dir(self))
         self.folder = supervise._pending_dir(self.home)
         self.folder.mkdir(parents=True)
 
@@ -506,7 +491,7 @@ class TestForkWritersAndSatellites(unittest.TestCase):
 
     def test_a_slow_satellite_fork_does_not_hold_up_later_commands(self):
         ag = agent_mod.RemoteAgent("http://h:1", "cred",
-                                   Path(tempfile.mkdtemp()))
+                                   temp_dir(self))
         release = threading.Event()
         ran = []
 
@@ -533,9 +518,9 @@ class TestForkWritersAndSatellites(unittest.TestCase):
         self.assertEqual(ag._done_cmd_seq, 2)
 
     def test_satellite_executes_fork_op(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         ag = agent_mod.RemoteAgent("http://h:1", "cred", home)
-        src = _session("abc", path=tempfile.mkdtemp())
+        src = _session("abc", path=str(temp_dir(self)))
         ag.catalog._fetch = lambda: [src]
         ag.catalog._status_of = lambda ss: ["done"]
         ag.catalog.refresh()

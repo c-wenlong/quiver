@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 from quiver.find.highlight import STYLE, highlight, language_for
+from tests._tempdir import temp_dir
 
 ESC = "\x1b["
 NESTED = re.compile(r"\x1b\[[0-9;]*\x1b")
@@ -132,12 +133,10 @@ class PaneIntegrationTest(unittest.TestCase):
     def test_a_file_row_uses_a_different_bar_from_a_folder(self):
         """Blue reads as "there is more below this", and on a file there
         is not."""
-        import tempfile
-
         from quiver.find.browser import _left_cell
         from quiver.find.entries import Entry
 
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "SKILL.md"
         f.write_text("x")
         folder = _left_cell(Entry("skills", d), 20, active=True)

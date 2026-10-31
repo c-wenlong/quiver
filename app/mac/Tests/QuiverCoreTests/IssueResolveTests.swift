@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -148,33 +149,25 @@ import Testing
         #expect(router.calls.count == 1)
     }
 
-    /// Holds the first `gh issue view` until released; later ones answer
-    /// at once with a title that says which read it was.
-    final class GatedRunner: CommandRunning, @unchecked Sendable {
-        private let lock = NSLock()
-        private var gate: CheckedContinuation<Void, Never>?
-        private var gated = false
-        private(set) var views = 0
-        private var waiters: [CheckedContinuation<Void, Never>] = []
+    /// Holds the first `gh issue view` at `gate` until the test opens it;
+    /// later ones answer at once with a title that says which read it was.
+    final class GatedRunner: CommandRunning, Sendable {
+        let gate = HoldGate()
+        private let count = Mutex(0)
+
+        var views: Int { count.withLock { $0 } }
 
         private func body(_ title: String) -> Data {
             Data(#"{"schema": 1, "data": {"repo": "o/r", "status": "ok", "issue": {"number": 5, "title": "\#(title)", "state": "open"}}}"#.utf8)
         }
 
         func run(_ arguments: [String]) async throws -> CommandResult {
-            let first: Bool = lock.withLock {
-                views += 1
-                defer { gated = true }
-                return !gated
+            let first = count.withLock { n -> Bool in
+                n += 1
+                return n == 1
             }
             if first {
-                await withCheckedContinuation { continuation in
-                    lock.withLock {
-                        gate = continuation
-                        waiters.forEach { $0.resume() }
-                        waiters = []
-                    }
-                }
+                try await gate.pass()
                 return .init(status: 0, stdout: body("old"), stderr: "")
             }
             return .init(status: 0, stdout: body("new"), stderr: "")
@@ -182,15 +175,6 @@ import Testing
         func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
             try await run(arguments)
         }
-        /// Returns once the first read is held at the gate.
-        func held() async {
-            await withCheckedContinuation { continuation in
-                lock.withLock {
-                    if gate != nil { continuation.resume() } else { waiters.append(continuation) }
-                }
-            }
-        }
-        func release() { lock.withLock { gate?.resume(); gate = nil } }
     }
 
     @Test func aSecondOpenerJoinsTheReadInFlight() async {
@@ -198,9 +182,9 @@ import Testing
         let swe = SweClient(runner: runner)
         let model = GitHubModel()
         async let first: Void = model.loadIssueDetail(repo: "o/r", number: 5, swe: swe)
-        await runner.held()
+        #expect(await runner.gate.arrived())
         async let second: Void = model.loadIssueDetail(repo: "o/r", number: 5, swe: swe)
-        runner.release()
+        runner.gate.open()
         _ = await (first, second)
         #expect(runner.views == 1)
         guard case .loaded(let issue) = model.issueDetails["o/r#5"] else {
@@ -214,9 +198,9 @@ import Testing
         let swe = SweClient(runner: runner)
         let model = GitHubModel()
         async let slow: Void = model.loadIssueDetail(repo: "o/r", number: 5, swe: swe)
-        await runner.held()
+        #expect(await runner.gate.arrived())
         await model.loadIssueDetail(repo: "o/r", number: 5, swe: swe, fresh: true)
-        runner.release()
+        runner.gate.open()
         await slow
         #expect(runner.views == 2)
         guard case .loaded(let issue) = model.issueDetails["o/r#5"] else {
@@ -333,8 +317,9 @@ import Testing
     }
 
     @Test func localMachineIdReadsMachineJson() throws {
-        let home = FileManager.default.temporaryDirectory.appending(path: "machine-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: home) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let home = temp.url
         #expect(IssueResolve.localMachineId(home: home) == nil)
         let dir = home.appending(path: ".quiver/data/remote")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -499,18 +484,7 @@ extension HubStubbed {
         }
 
         private static func json(_ request: URLRequest) -> [String: Any] {
-            var data = request.httpBody ?? Data()
-            if data.isEmpty, let stream = request.httpBodyStream {
-                stream.open()
-                var buffer = [UInt8](repeating: 0, count: 4096)
-                while stream.hasBytesAvailable {
-                    let n = stream.read(&buffer, maxLength: buffer.count)
-                    guard n > 0 else { break }
-                    data.append(buffer, count: n)
-                }
-                stream.close()
-            }
-            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            (try? JSONSerialization.jsonObject(with: HubStub.bodyData(request))) as? [String: Any] ?? [:]
         }
 
         @Test func resolvePostsAndPollsTheLaunch() async throws {

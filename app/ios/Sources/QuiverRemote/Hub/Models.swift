@@ -395,9 +395,14 @@ struct SendAccepted: Decodable { let ok: Bool?; let waiting: Bool? }
 struct WaitingSend: Decodable, Equatable {
     let clientId: String
     let text: String?
-    /// Attachment refs as sent; kept raw, the tray only shows the text.
+    /// Attachment refs as sent; kept raw, so an odd entry can't fail the list.
     var attachments: [JSONValue]? = nil
     var queuedAt: Double? = nil
+
+    /// The refs that are strings, for the tray row's file count.
+    var attachmentRefs: [String] {
+        (attachments ?? []).compactMap { if case .string(let s) = $0 { s } else { nil } }
+    }
 }
 
 struct QueueResponse: Decodable { let sends: [WaitingSend] }

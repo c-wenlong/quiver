@@ -37,6 +37,18 @@ class StampTests(unittest.TestCase):
             self.assertIsNone(decode.stamp_iso(value))
 
 
+    def test_a_stamp_past_year_9999_is_none_not_an_exception(self):
+        # 1e300 raised OverflowError, which the indexer's per-file guard
+        # does not catch, so one junk line ended the whole pass.
+        for value in (1e17, 1e20, 1e300):
+            with self.subTest(value=value):
+                self.assertIsNone(decode.stamp_iso(value))
+        with self.assertRaises(ValueError):
+            decode.iso_seconds(1e300)
+        messages, _ = decode.Decoder("grok").decode_line(
+            b'{"type":"user","timestamp":1e300,"content":"hello there"}')
+        self.assertEqual([(m.text, m.ts) for m in messages], [("hello there", None)])
+
 class DevinDecodeTests(unittest.TestCase):
     def test_chat_message_rows(self):
         decoder = decode.Decoder("devin")

@@ -2,18 +2,6 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
-/// Keeps the last snapshot in memory.
-actor MemorySnapshots: SnapshotStoring {
-    var saved: SessionSnapshot?
-    private(set) var saves = 0
-    init(_ saved: SessionSnapshot? = nil) { self.saved = saved }
-    func load() async -> SessionSnapshot? { saved }
-    func save(_ snapshot: SessionSnapshot) async {
-        saved = snapshot
-        saves += 1
-    }
-}
-
 /// Holds the listing until released, then fails if its caller was
 /// cancelled meanwhile, as swe's client does when the child is stopped.
 actor CancellableGatedSource: SessionListing {
@@ -87,7 +75,7 @@ struct StubbornSource: SessionListing {
     }
 
     @Test func aLoadedListIsShownAtOnceByTheNextLaunch() async throws {
-        let snapshots = MemorySnapshots()
+        let snapshots = MemorySnapshotStore<SessionSnapshot>()
         let ledger = FakeSessionLedger()
         await ledger.set([usage("a", cost: 2.5)])
         let clock = TestClock(start)
@@ -110,7 +98,7 @@ struct StubbornSource: SessionListing {
     @Test func aFreshListIsNotFetchedAgain() async throws {
         let source = CountingSessionSource(SessionList(sessions: [session("a")], failures: []))
         let clock = TestClock(start)
-        let model = model(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshots(), clock: clock)
+        let model = model(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshotStore<SessionSnapshot>(), clock: clock)
 
         await model.loadIfStale(for: "/bin/swe")
         await model.loadIfStale(for: "/bin/swe")
@@ -131,7 +119,7 @@ struct StubbornSource: SessionListing {
 
     @Test func leavingThePageMidListDoesNotLoseTheList() async throws {
         let source = CancellableGatedSource(SessionList(sessions: [session("a")], failures: []))
-        let model = model(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshots(),
+        let model = model(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshotStore<SessionSnapshot>(),
                           clock: TestClock(start))
         // The page opens, then closes while swe is still listing.
         let first = Task { await model.loadIfStale(for: "/bin/swe") }
@@ -148,7 +136,7 @@ struct StubbornSource: SessionListing {
 
     @Test func aListingThatNeverAnswersGivesUpAndCanBeRetried() async throws {
         let source = HangingSource()
-        let model = SessionsModel(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshots(),
+        let model = SessionsModel(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshotStore<SessionSnapshot>(),
                                   listTimeout: .milliseconds(50), now: { [start] in start })
         await model.load(for: "/bin/swe")
         #expect(model.isLoading == false)
@@ -159,7 +147,7 @@ struct StubbornSource: SessionListing {
 
     @Test func aListingThatIgnoresCancellationStillTimesOutOnTime() async throws {
         let model = SessionsModel(source: StubbornSource(), ledger: FakeSessionLedger(),
-                                  snapshots: MemorySnapshots(), listTimeout: .milliseconds(50),
+                                  snapshots: MemorySnapshotStore<SessionSnapshot>(), listTimeout: .milliseconds(50),
                                   now: { [start] in start })
         let elapsed = await ContinuousClock().measure { await model.load(for: "/bin/swe") }
         // The bound catches a hang, not latency: it sits under the
@@ -174,7 +162,7 @@ struct StubbornSource: SessionListing {
         let old = SessionSnapshot(source: "/bin/swe", savedAt: start.addingTimeInterval(-3600),
                                   sessions: [session("old")], failures: [], isCapped: false, usage: [])
         let source = CountingSessionSource(SessionList(sessions: [session("new")], failures: []))
-        let model = model(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshots(old),
+        let model = model(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshotStore<SessionSnapshot>(old),
                           clock: TestClock(start))
         await model.restore()
         #expect(model.rows.map(\.id) == ["old"])
@@ -187,7 +175,7 @@ struct StubbornSource: SessionListing {
         let recent = SessionSnapshot(source: "/bin/swe", savedAt: start.addingTimeInterval(-20),
                                      sessions: [session("a")], failures: [], isCapped: false, usage: [])
         let source = CountingSessionSource(SessionList(sessions: [], failures: []))
-        let model = model(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshots(recent),
+        let model = model(source: source, ledger: FakeSessionLedger(), snapshots: MemorySnapshotStore<SessionSnapshot>(recent),
                           clock: TestClock(start))
         await model.restore()
         await model.loadIfStale(for: "/bin/swe")
@@ -199,7 +187,7 @@ struct StubbornSource: SessionListing {
         let saved = SessionSnapshot(source: "/bin/swe", savedAt: start, sessions: [session("saved")],
                                     failures: [], isCapped: false, usage: [])
         let model = model(source: FakeSessionSource(list: SessionList(sessions: [session("live")], failures: [])),
-                          ledger: FakeSessionLedger(), snapshots: MemorySnapshots(saved), clock: TestClock(start))
+                          ledger: FakeSessionLedger(), snapshots: MemorySnapshotStore<SessionSnapshot>(saved), clock: TestClock(start))
         await model.load(for: "/bin/swe")
         await model.restore()
         #expect(model.rows.map(\.id) == ["live"])
@@ -209,7 +197,7 @@ struct StubbornSource: SessionListing {
         struct Down: Error {}
         let saved = SessionSnapshot(source: "/bin/swe", savedAt: start.addingTimeInterval(-3600),
                                     sessions: [session("a")], failures: [], isCapped: false, usage: [])
-        let snapshots = MemorySnapshots(saved)
+        let snapshots = MemorySnapshotStore<SessionSnapshot>(saved)
         let model = model(source: FakeSessionSource(list: SessionList(sessions: [], failures: []), error: Down()),
                           ledger: FakeSessionLedger(), snapshots: snapshots, clock: TestClock(start))
         await model.restore()
@@ -220,7 +208,7 @@ struct StubbornSource: SessionListing {
     }
 
     @Test func newUsageFromAScanIsSavedToo() async throws {
-        let snapshots = MemorySnapshots()
+        let snapshots = MemorySnapshotStore<SessionSnapshot>()
         let ledger = FakeSessionLedger()
         let model = model(source: FakeSessionSource(list: SessionList(sessions: [session("a")], failures: [])),
                           ledger: ledger, snapshots: snapshots, clock: TestClock(start))
@@ -232,14 +220,13 @@ struct StubbornSource: SessionListing {
 }
 
 @Suite struct SessionSnapshotFileTests {
-    func temporaryURL() -> URL {
-        FileManager.default.temporaryDirectory
-            .appending(path: "quiver-snapshot-\(UUID().uuidString)/cache/sessions.json")
-    }
+    /// Swift Testing makes a new suite value per test, so each test gets
+    /// its own folder, kept for as long as the test runs.
+    private let temp: TempDir
+    init() throws { temp = try TempDir() }
+    private var url: URL { temp.path("cache/sessions.json") }
 
     @Test func aSnapshotRoundTripsThroughAPrivateFile() async throws {
-        let url = temporaryURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent().deletingLastPathComponent()) }
         let file = SessionSnapshotFile(url: url)
         var totals = UsageTotals()
         totals.cacheReadTokens = 42
@@ -261,8 +248,6 @@ struct StubbornSource: SessionListing {
     }
 
     @Test func aMissingOrDamagedFileIsNoSnapshot() async throws {
-        let url = temporaryURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent().deletingLastPathComponent()) }
         let file = SessionSnapshotFile(url: url)
         #expect(await file.load() == nil)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

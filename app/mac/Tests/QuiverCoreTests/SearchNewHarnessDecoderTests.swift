@@ -271,6 +271,18 @@ import Testing
         #expect(json.messages.first?.text == #"{"a":1}"#)
     }
 
+    @Test func kiroScalarJsonBlocksAreSkippedNotFatal() {
+        // A `json` block whose data is a scalar or null used to reach
+        // JSONSerialization, which raises an uncatchable exception.
+        var decoder = SearchDecoder(.kiro)
+        for data in [#""hello""#, "42", "true", "null"] {
+            let decoded = decoder.decode(line: line(
+                #"{"kind":"Prompt","data":{"content":[{"kind":"json","data":"# + data
+                    + #"},{"kind":"text","data":"kept"}]}}"#))
+            #expect(decoded.messages.map(\.text) == ["kept"])
+        }
+    }
+
     // MARK: - rovo
 
     @Test func rovoManifestThenContext() {

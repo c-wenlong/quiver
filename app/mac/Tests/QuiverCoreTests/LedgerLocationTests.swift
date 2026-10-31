@@ -27,6 +27,7 @@ import Testing
 
     @Test func movesALedgerWhoseRowsAreStillInTheWAL() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let legacy = temp.path("cache/ledger")
         let data = temp.path("data/ledger")
         let old = legacy.appending(path: "ledger.sqlite")
@@ -68,6 +69,7 @@ import Testing
 
     @Test func movesSchemaArchivesAlong() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let legacy = temp.path("cache/ledger")
         try fill(LedgerStore(url: legacy.appending(path: "ledger.sqlite")), count: 2)
         try Data("archive".utf8).write(to: legacy.appending(path: "ledger.schema-0.sqlite"))
@@ -80,6 +82,7 @@ import Testing
 
     @Test func anOldLedgerStillOpenElsewhereWaitsForTheNextLaunch() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let legacy = temp.path("cache/ledger")
         let data = temp.path("data/ledger")
         let old = legacy.appending(path: "ledger.sqlite")
@@ -103,6 +106,7 @@ import Testing
 
     @Test func anArchiveLeftBehindMovesAtALaterLaunch() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let legacy = temp.path("cache/ledger")
         let data = temp.path("data/ledger")
         try fill(LedgerStore(url: data.appending(path: "ledger.sqlite")), count: 1)
@@ -119,6 +123,7 @@ import Testing
 
     @Test func aFailedMoveKeepsReadingTheOldFileUntouched() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let legacy = temp.path("cache/ledger")
         let old = legacy.appending(path: "ledger.sqlite")
         try fill(LedgerStore(url: old), count: 12)
@@ -136,6 +141,7 @@ import Testing
 
     @Test func aFailedCopyLeavesNoPartialFile() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let legacy = temp.path("cache/ledger")
         let old = legacy.appending(path: "ledger.sqlite")
         try fill(LedgerStore(url: old), count: 5)
@@ -155,6 +161,7 @@ import Testing
 
     @Test func anExistingNewLedgerWinsAndTheOldOneIsLeftAlone() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let legacy = temp.path("cache/ledger")
         let data = temp.path("data/ledger")
         try fill(LedgerStore(url: legacy.appending(path: "ledger.sqlite")), count: 3)
@@ -167,6 +174,7 @@ import Testing
 
     @Test func noOldLedgerOpensTheNewDirectory() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let data = temp.path("data/ledger")
         #expect(LedgerLocation.prepare(directory: data, legacy: temp.path("cache/ledger")) == data)
         #expect(!exists(data))
@@ -174,6 +182,7 @@ import Testing
 
     @Test func backupsAreDailyAndKeepTheNewestSeven() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let ledger = try Ledger(directory: temp.path("data/ledger"), pricing: .empty)
         try await ledger.ingest((0..<25).map(event))
         var calendar = Calendar(identifier: .gregorian)
@@ -202,6 +211,7 @@ import Testing
 
     @Test func aBackupHasRowsAddedSinceTheLastOne() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let ledger = try Ledger(directory: temp.path("data/ledger"), pricing: .empty)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
