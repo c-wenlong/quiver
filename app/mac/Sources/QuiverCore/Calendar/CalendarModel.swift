@@ -140,6 +140,9 @@ public final class CalendarModel {
     /// "profile|window" pairs hidden inside a shown account, like
     /// hiddenAccounts under a harness.
     public private(set) var hiddenUsageWindows: Set<String>
+    /// Usage accounts whose window rows the legend user collapsed; the
+    /// rows expand by default once an account has more than one window.
+    public private(set) var collapsedUsage: Set<String>
     /// The mini-month-and-legend panel pinned away on the page's right.
     /// Collapsing still lets the pointer float it over the grid.
     public var panelCollapsed: Bool {
@@ -218,6 +221,7 @@ public final class CalendarModel {
     static let collapsedAccountsKey = "calendar.collapsedAccounts"
     static let hiddenUsageKey = "calendar.hiddenUsage"
     static let hiddenUsageWindowsKey = "calendar.hiddenUsageWindows"
+    static let collapsedUsageKey = "calendar.collapsedUsage"
     static let modeKey = "calendar.mode"
     static let panelCollapsedKey = "calendar.panelCollapsed"
 
@@ -243,6 +247,7 @@ public final class CalendarModel {
         collapsedAccounts = Set(defaults.stringArray(forKey: Self.collapsedAccountsKey) ?? [])
         hiddenUsage = Set(defaults.stringArray(forKey: Self.hiddenUsageKey) ?? [])
         hiddenUsageWindows = Set(defaults.stringArray(forKey: Self.hiddenUsageWindowsKey) ?? [])
+        collapsedUsage = Set(defaults.stringArray(forKey: Self.collapsedUsageKey) ?? [])
         mode = Self.decodedMode(defaults.string(forKey: Self.modeKey))
         panelCollapsed = defaults.bool(forKey: Self.panelCollapsedKey)
         self.snapshots = snapshots
@@ -935,6 +940,18 @@ public final class CalendarModel {
         persist()
     }
 
+    /// The window rows behave like the harness account rows: listed
+    /// once the account has more than one window, collapsed on demand.
+    /// The view passes the count; the model holds no usage data.
+    public func usageWindowsExpanded(_ account: String, windows: Int) -> Bool {
+        windows > 1 && !collapsedUsage.contains(account)
+    }
+
+    public func toggleUsageWindowsExpanded(_ account: String) {
+        if collapsedUsage.remove(account) == nil { collapsedUsage.insert(account) }
+        persist()
+    }
+
     /// The mode's UserDefaults spelling: "day", "week", "month" or
     /// "days:N". Unknown values restore as the week.
     static func encodedMode(_ mode: Mode) -> String {
@@ -963,6 +980,7 @@ public final class CalendarModel {
         defaults.set(Array(collapsedAccounts), forKey: Self.collapsedAccountsKey)
         defaults.set(Array(hiddenUsage), forKey: Self.hiddenUsageKey)
         defaults.set(Array(hiddenUsageWindows), forKey: Self.hiddenUsageWindowsKey)
+        defaults.set(Array(collapsedUsage), forKey: Self.collapsedUsageKey)
         defaults.set(Self.encodedMode(mode), forKey: Self.modeKey)
         defaults.set(panelCollapsed, forKey: Self.panelCollapsedKey)
     }

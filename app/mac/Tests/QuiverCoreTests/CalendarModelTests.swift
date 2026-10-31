@@ -462,6 +462,22 @@ private struct TogglingActivity: ActivityProviding {
         #expect(second.isUsageHidden("claude-default", window: "5h"))
     }
 
+    @Test func usageWindowRowsCollapseAndPersist() async {
+        let defaults = freshDefaults()
+        let first = model(defaults: defaults)
+        // One window folds into the account row; a second gets rows to
+        // collapse, like a harness gaining a second account.
+        #expect(!first.usageWindowsExpanded("claude-default", windows: 1))
+        #expect(first.usageWindowsExpanded("claude-default", windows: 2))
+        first.toggleUsageWindowsExpanded("claude-default")
+        #expect(!first.usageWindowsExpanded("claude-default", windows: 2))
+
+        let second = model(defaults: defaults)
+        #expect(!second.usageWindowsExpanded("claude-default", windows: 2))
+        second.toggleUsageWindowsExpanded("claude-default")
+        #expect(second.usageWindowsExpanded("claude-default", windows: 2))
+    }
+
     @Test func aBlockSpanningMidnightKeepsItsSessionsFromBothSides() async {
         // Sunday 23:50 and Monday 00:05 in one project: Monday's day
         // view must show the block from 23:50 with both sessions, even
