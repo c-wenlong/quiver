@@ -44,10 +44,15 @@ class ThrowawayHomeTest(unittest.TestCase):
             import pwd
         except ImportError:  # pragma: no cover - not a supported platform
             self.skipTest("no pwd module")
-        home = os.environ.get("HOME", "")
-        real = pwd.getpwuid(os.getuid()).pw_dir
-        self.assertFalse(
-            home and os.path.realpath(home) == os.path.realpath(real),
+        # expanduser falls back to the account record when HOME is unset,
+        # which is exactly where quiver would then write.
+        home = os.path.expanduser("~")
+        try:
+            real = pwd.getpwuid(os.getuid()).pw_dir
+        except KeyError:  # a container uid with no passwd entry has no real home
+            self.skipTest("no account record for this uid")
+        self.assertNotEqual(
+            os.path.realpath(home), os.path.realpath(real),
             "the suite is running against your real HOME, so integration "
             "tests write into ~/.quiver. Rerun with "
             "HOME=\"$(mktemp -d)\" python3 -m unittest discover -s tests "
@@ -55,6 +60,10 @@ class ThrowawayHomeTest(unittest.TestCase):
         )
 
 
+# The Nix derivation builds from a filtered source (src/, tests/, scripts/)
+# that leaves the docs out on purpose, so these checks run only in a full
+# checkout, which is what CI tests.
+@unittest.skipUnless(AGENTS.exists(), "AGENTS.md is not in this source tree")
 class AgentsMdTest(unittest.TestCase):
     def test_stays_under_the_size_cap(self):
         size = len(AGENTS.read_bytes())
