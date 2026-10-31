@@ -138,6 +138,17 @@ sent none. One formatting rule per client (<code>ThoughtLabel.text</code> on
 iOS and the Mac, <code>Fmt.thought</code> on the web)
 (<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
 </li>
+<li><p><strong>Remote approvals show and answer unnumbered menus too.</strong> A
+tmux-mode prompt whose options are an arrow-select list (&quot;❭ Option
+A&quot;, the shape of Devin's ask-question panel) now reaches the approval
+card as its real labels, numbered top to bottom, instead of the
+generic Allow / Always / Deny guess. Answering a row walks the pane's
+cursor with arrow keys and confirms; numbered menus keep sending
+their own digit, and Devin's select widget now parses its selected
+row (&quot;❭&quot; is a different glyph than Claude's &quot;❯&quot;). Option labels join
+the request fingerprint, so a question that swaps its choices can't
+be answered by a stale tap.</p>
+</li>
 <li><p><strong>Hub: thinking messages carry how long the model thought.</strong>
 <code>kind: &quot;thinking&quot;</code> messages from Claude Code, Codex and opencode now
 carry <code>duration_s</code>, so the clients can show &quot;Thought for 12s&quot;. Claude
