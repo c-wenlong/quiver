@@ -307,6 +307,7 @@ def session_models(sessions: list[Session]) -> list[str]:
 _API_MODEL_MODES = {
     "claude": "headless",
     "codex": "appserver",
+    "opencode": "serve",
 }
 
 

@@ -957,6 +957,12 @@ class TestLaunchTuning(unittest.TestCase):
                 self.home, "opencode", self.proj, "hi", model="x", binary="opencode")
             self.assertFalse(ok)
             self.assertIn("provider/model", note)
+            # an empty side is no provider/model either
+            ok, note, _ = supervise.launch_new(
+                self.home, "opencode", self.proj, "hi", model="acme/",
+                binary="opencode")
+            self.assertFalse(ok)
+            self.assertIn("provider/model", note)
         lt.assert_not_called()
 
     def test_fresh_launch_error(self):
