@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote hub: Notion databases as a task source.** A `notion` section
+  in `config.json` names an integration token by `${NAME}` reference,
+  the user whose rows to list (a user id or sign-in email) and each
+  database with its property mapping (`status` and `owner` required,
+  `title` and `url` optional). `GET /v1/tasks` then lists those rows as
+  `{source: "notion", kind: "page"}` tasks beside GitHub and Linear,
+  with `status` in the database's own words and a best-effort `state`
+  from a status group, select option or checkbox. A mapping that
+  doesn't fit the database answers `bad-config` naming the property,
+  while other databases and sources keep listing. The adapter pins
+  `Notion-Version: 2022-06-28`, paginates with a cap, waits out a 429's
+  `Retry-After`, and renders a page body to markdown for a resolve
+  prompt. Read-only. Part of
+
 - **Tasks on the Mac, the web and the iPhone show Notion like Linear.**
   The three clients read the hub's new `notion` env block beside
   `linear`: a configured Notion source that fails (`auth-required`,
