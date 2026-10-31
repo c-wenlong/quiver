@@ -118,6 +118,15 @@ can be attached or detached without opening its chat:
   badges and actions always match the hub; a refusal lands as a note
   above the filters.
 
+A row shows a blue dot before its title when the hub flags it `unread`
+for this browser (#1439). Opening the chat clears it at once through a
+local mark and posts `POST /v1/sessions/{key}/read {}`; while the chat
+stays open and the tab shows, live messages post again at most every
+3 s (`READ_EVERY_MS`), and closing it sends one still due. The next
+list read drops marks the hub has caught up with (`unreadReconcile`).
+Marks hold only hub times, never the browser's clock. `SessionUnread`
+in sessions.js holds the rules; chat.js calls it.
+
 The iPhone's swipe-left actions sit behind each row's More actions
 button (the `⋯`), and a right-click on a row opens the same menu, as a
 long press does on the phone. The chat's header has the same button.

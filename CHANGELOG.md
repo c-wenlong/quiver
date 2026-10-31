@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Unread dots on session rows: iPhone, web and Mac.** A session row
+  shows a small dot when the agent said something since you last opened
+  that chat on this device, from the hub's per-device `unread` flag.
+  Opening a chat clears the dot at once and posts `POST
+  /v1/sessions/<key>/read`; while it stays open, new messages post again
+  at most every 3 seconds, and closing it sends one still due. The next
+  list refresh reconciles the local clear with the hub. The web app
+  holds its reads while the tab is hidden. The Mac shows dots on local
+  rows the hub lists and on Other machines rows, reading as its own
+  paired device; the iPhone's app icon badge stays the Inbox count.
+  Closes [#1439](https://github.com/c-wenlong/quiver/issues/1439).
 - **iPhone: the paired hubs move to an App Group and a shared Keychain
   group.** The hub list now lives in `group.com.quiver.remote` and each
   hub's credential in the `<team>.com.quiver.remote.shared` Keychain
