@@ -10,6 +10,7 @@ devices.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import os
@@ -967,7 +968,13 @@ def _cmd_agent(flags: dict, json_view: bool = False) -> int:
     if flags.get("--status"):
         return _cmd_agent_status(json_view)
     if flags.get("--install") or flags.get("--uninstall"):
-        return _cmd_agent_service(flags)
+        if not json_view:
+            return _cmd_agent_service(flags)
+        # The app reads the status afterwards from stdout, so the prose
+        # (and any refusal) goes to stderr.
+        with contextlib.redirect_stdout(sys.stderr):
+            rc = _cmd_agent_service(flags)
+        return emit(agent_service_report()) if rc == 0 else rc
     conf = _agent_conf(flags)
     if conf is None:
         return 1

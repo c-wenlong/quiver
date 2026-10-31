@@ -198,6 +198,22 @@ class AgentServiceTest(unittest.TestCase):
         self.assertTrue(report["service"].endswith("com.cwenlong.quiver.remote-agent.plist"))
         self.assertNotIn("secret-cred", out)
 
+    def test_install_and_uninstall_json_print_only_the_status_on_stdout(self):
+        self._pair()
+        ctl = FakeLaunchctl()
+        rc, out, err = self._with(self._mac(ctl), ["agent", "--install", "--json"])
+        self.assertEqual(rc, 0, err)
+        report = json.loads(out)["data"]
+        self.assertEqual((report["installed"], report["running"]), (True, True))
+        self.assertIn("installed", err)
+        rc, out, err = self._with(self._mac(ctl), ["agent", "--uninstall", "--json"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)["data"]["installed"], False)
+        launchd.plist_path(self.home).write_bytes(plistlib.dumps({"Label": launchd.LABEL}))
+        rc, out, err = self._with(self._mac(ctl), ["agent", "--install", "--json"])
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("this machine's hub is installed", err)
+
     def test_status_prose(self):
         ctl = FakeLaunchctl()
         rc, out, _ = self._with(self._mac(ctl), ["agent", "--status"])
