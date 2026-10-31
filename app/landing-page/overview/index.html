@@ -1,0 +1,984 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation — quiver</title>
+<meta name="description" content="Install, configure and use quiver.">
+<link rel="icon" href="../icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #08090a;
+  --surface: #0f1011;
+  --surface-2: #151617;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --text: #f7f8f8;
+  --text-2: #a1a4a8;
+  --text-3: #6b6f75;
+  --radius: 12px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth;
+       scroll-padding-top: 76px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+code { font-family: var(--mono); font-size: 0.92em; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+
+header.top { position: sticky; top: 0; z-index: 20; background: rgba(8, 9, 10, 0.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+nav { display: flex; align-items: center; gap: 28px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; text-decoration: none; font-size: 16px; }
+.brand img { width: 26px; height: 26px; border-radius: 6px; }
+nav .links { display: flex; gap: 24px; font-size: 14px; }
+nav .links a, nav .right a.plain { color: var(--text-2); text-decoration: none; }
+nav .links a:hover, nav .right a.plain:hover { color: var(--text); }
+nav .right { margin-left: auto; display: flex; align-items: center; gap: 18px; font-size: 14px; }
+nav .right a.plain { display: inline-flex; align-items: center; gap: 6px; }
+svg.i { width: 16px; height: 16px; flex: none; }
+
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; border-radius: 8px; font: 500 14px var(--sans); text-decoration: none; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: rgba(255, 255, 255, 0.28); }
+.btn.light { background: var(--text); color: #08090a; border-color: var(--text); }
+.btn.sm { height: 32px; padding: 0 12px; font-size: 13px; }
+
+.doc { max-width: 800px; padding-top: 48px; padding-bottom: 88px; }
+.doc h1 { font-size: 34px; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+.doc h2 { font-size: 24px; letter-spacing: -0.01em; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+.doc h3 { font-size: 18px; margin: 32px 0 8px; }
+.doc h4 { font-size: 16px; margin: 24px 0 8px; }
+.doc p, .doc li { color: var(--text-2); }
+.doc a { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.doc a:hover { text-decoration-color: var(--text); }
+.doc :is(h1, h2, h3, h4) a { color: inherit; text-decoration: none; }
+.doc :is(h1, h2, h3, h4):hover a.anchor::after { content: " #"; color: var(--text-3); }
+.doc code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+.doc pre { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; overflow-x: auto; }
+.doc pre code { background: none; border: none; padding: 0; font-size: 13.5px; line-height: 1.55; }
+.doc blockquote { margin: 16px 0; padding: 2px 16px; border-left: 3px solid var(--line-strong); color: var(--text-3); }
+.doc table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14.5px; }
+.doc th, .doc td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; }
+.doc th { background: var(--surface-2); }
+.doc hr { border: none; border-top: 1px solid var(--line); margin: 32px 0; }
+.doc img { max-width: 100%; }
+
+footer { border-top: 1px solid var(--line); padding: 32px; margin-top: 64px; display: flex; justify-content: space-between; align-items: center; gap: 24px; color: var(--text-3); font-size: 13.5px; }
+footer .right { display: flex; gap: 20px; }
+footer a { color: var(--text-3); text-decoration: none; }
+footer a:hover { color: var(--text); }
+
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px; }
+  nav { gap: 16px; }
+  nav .links, nav .right a.plain { display: none; }
+  .doc { padding-top: 32px; }
+  .doc h1 { font-size: 27px; }
+  .doc h2 { font-size: 21px; }
+  footer { flex-direction: column; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="gh" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></symbol></svg>
+<header class="top">
+  <div class="wrap">
+    <nav>
+      <a class="brand" href="../"><img src="../icon.png" alt="">quiver</a>
+      <div class="links">
+        <a href="../overview/">Docs</a>
+        <a href="../cli/">CLI reference</a>
+        <a href="../changelog/">Changelog</a>
+      </div>
+      <div class="right">
+        <a class="plain" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>GitHub</a>
+        <a class="btn light sm" href="../#install"><span>Install</span></a>
+      </div>
+    </nav>
+  </div>
+</header>
+<main class="wrap doc">
+<p align="center">
+  <img src="https://raw.githubusercontent.com/c-wenlong/quiver/main/assets/banner.png" alt="quiver mascot — a pixel-art quiver holding arrows for terminal, code, AI, and cursor" width="800">
+</p>
+
+<h1 align="center">
+quiver
+</h1>
+
+<p align="center">
+  <strong>One command to launch, resume, and analyze every AI coding CLI on your machine.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml"><img src="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://app.codecov.io/gh/c-wenlong/quiver"><img src="https://codecov.io/gh/c-wenlong/quiver/graph/badge.svg?branch=main" alt="Coverage"></a>
+  <a href="https://github.com/c-wenlong/quiver/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
+  <img src="https://img.shields.io/badge/deps-stdlib--only-brightgreen.svg" alt="stdlib only">
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#commands">Commands</a> ·
+  <a href="#skills">Skills</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
+
+<hr />
+<p><strong>quiver</strong> is a central manager for the growing zoo of AI coding command-line tools — Claude Code, Codex, Gemini CLI, Cursor CLI, opencode, Copilot, and many more.</p>
+<p>It keeps a small registry of the harnesses you use, launches any of them (by name or short alias), lets you resume recent sessions across <em>any</em> agent, mines read-only usage analytics from each tool's own logs, discovers agent skills installed across your machine, and keeps MCP server configs in sync between tools.</p>
+<p>The command you type is <strong><code>swe</code></strong> (short, fits in muscle memory). The project and Python package are named <strong>quiver</strong> — think of it as the quiver that holds all your arrows (see the mascot above).</p>
+<pre><code>$ swe list --usage
+
+AI Coding Tools
+
+   │ NAME     │ COMMAND  │ VERSION    │ ALIASES │ 100d │ QUOTA      │ INST │ DESCRIPTION
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ★ │ claude   │ claude   │ 2.1.126    │ cc      │  412 │ ◕ 5h:3h12m │ ✓    │ Claude Code by Anthropic — agentic coding in the terminal
+ ★ │ codex    │ codex    │ 0.133.0    │ cx      │  288 │ ◑ 5d19h    │ ✓    │ OpenAI Codex CLI
+   │ cursor   │ agent    │ 2026.06.24 │ cs      │    4 │ —          │ ✓    │ Cursor CLI — AI-powered editor agent
+   │ droid    │ droid    │ 0.24.0     │ df      │   31 │ —          │ ✓    │ Factory Droid CLI
+   │ gemini   │ gemini   │ 0.35.1     │ gg      │   12 │ —          │ ✓    │ Gemini CLI by Google
+   │ opencode │ opencode │ 1.17.11    │ oc      │   96 │ —          │ ✓    │ opencode — open source terminal agent
+
+  6/6 installed  ·  2 starred  ·  swe use &lt;name&gt;  │  swe hs star &lt;name&gt;  │  swe hs archive &lt;name&gt;  │  swe info &lt;name&gt;
+  ★ = favourited (pinned top, neon border)
+  tags:  agentic  coding  local
+</code></pre>
+<h2 id="why-quiver"><a class="anchor" href="#why-quiver"></a>Why quiver?</h2>
+<p>If you juggle more than one AI coding agent you end up with a mess:</p>
+<ul>
+<li>Different launch commands and resume flags for every tool</li>
+<li>Usage scattered across a dozen log formats</li>
+<li>MCP server definitions copy-pasted between configs</li>
+<li>Skills installed in five different directory trees</li>
+</ul>
+<p><strong>quiver</strong> puts a single, consistent front door on all of it — without wrapping or replacing the tools themselves. It reads their logs read-only and shells out to the real binaries.</p>
+<h2 id="features"><a class="anchor" href="#features"></a>Features</h2>
+<table>
+<thead>
+<tr>
+  <th>Area</th>
+  <th>What you get</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>Registry</strong></td>
+  <td>List every AI coding CLI with tags, aliases, versions, and install status</td>
+</tr>
+<tr>
+  <td><strong>Launch</strong></td>
+  <td>Start any tool by name or alias; extra args pass straight through (<code>execvp</code>)</td>
+</tr>
+<tr>
+  <td><strong>Sessions</strong></td>
+  <td>Unified, time-sorted view of recent sessions across 21 agents + one-command resume</td>
+</tr>
+<tr>
+  <td><strong>Models</strong></td>
+  <td>Aggregate model usage parsed read-only from each tool's session logs</td>
+</tr>
+<tr>
+  <td><strong>Skills</strong></td>
+  <td>Discover, list, catalog, symlink, and move skills across harness roots</td>
+</tr>
+<tr>
+  <td><strong>MCP sync</strong></td>
+  <td>Inspect, compare, validate, and copy MCP servers between tools</td>
+</tr>
+<tr>
+  <td><strong>Rate limits</strong></td>
+  <td>Remaining quota + reset countdown for starred Codex, Copilot, Claude, Droid, Freebuff, Cursor, and Devin harnesses</td>
+</tr>
+<tr>
+  <td><strong>Favourites</strong></td>
+  <td>Pin harnesses to the top of <code>swe list</code> and opt them into usage polling</td>
+</tr>
+<tr>
+  <td><strong>Autocomplete</strong></td>
+  <td>Shell tab-completion for zsh, bash, and fish (tool names, aliases, tags, flags)</td>
+</tr>
+<tr>
+  <td><strong>Providers</strong></td>
+  <td>Manage API keys and metadata for 27 built-in LLM providers, plus your own</td>
+</tr>
+<tr>
+  <td><strong>Remote control</strong></td>
+  <td>Watch and steer sessions from a phone: hub + web app + iOS app over Tailscale</td>
+</tr>
+</tbody>
+</table>
+<h2 id="install"><a class="anchor" href="#install"></a>Install</h2>
+<p><strong>Requirements:</strong> Python 3.11+, and nothing else. The core CLI has <strong>no
+third-party runtime dependencies</strong> at all. The MCP history server is the only
+extra that adds a real dependency, and you opt into it.</p>
+<blockquote>
+<p><strong>On Python 3.10?</strong> <code>v0.2.9</code> is the last release that runs on it; the floor
+moved to 3.11 afterwards. Pin that tag:</p>
+<pre><code class="language-bash">pipx install git+https://github.com/c-wenlong/quiver.git@v0.2.9
+</code></pre>
+<p>Check with <code>python3 --version</code>. Ubuntu 22.04 LTS ships 3.10, so it needs the
+pin or a newer interpreter. Debian 12 (3.11), Ubuntu 24.04 (3.12) and current
+Fedora and Homebrew are all fine as they are.</p>
+</blockquote>
+<h3 id="pipx-recommended"><a class="anchor" href="#pipx-recommended"></a>pipx (recommended)</h3>
+<pre><code class="language-bash">pipx install git+https://github.com/c-wenlong/quiver.git
+swe --help
+</code></pre>
+<h3 id="nix"><a class="anchor" href="#nix"></a>Nix</h3>
+<p><code>nix run github:c-wenlong/quiver -- --help</code> works one-off. To install, add
+the flake as an input and put the package on your list:</p>
+<pre><code class="language-nix">inputs.quiver = {
+  url = &quot;github:c-wenlong/quiver&quot;;
+  inputs.nixpkgs.follows = &quot;nixpkgs&quot;;
+};
+# then, in home.packages or environment.systemPackages:
+inputs.quiver.packages.${system}.default
+</code></pre>
+<p>The build runs the test suite, so <code>nix build</code> is also the fastest full check
+of a clone. <code>nix develop</code> opens a shell with <code>src/</code> on <code>PYTHONPATH</code>.</p>
+<h3 id="from-source"><a class="anchor" href="#from-source"></a>From source</h3>
+<pre><code class="language-bash">git clone https://github.com/c-wenlong/quiver.git
+cd quiver
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e .
+swe --help
+</code></pre>
+<h3 id="optional-mcp-history-server"><a class="anchor" href="#optional-mcp-history-server"></a>Optional: MCP history server</h3>
+<p>Exposes recent sessions as an MCP tool (requires the <code>server</code> extra):</p>
+<pre><code class="language-bash">pip install -e &quot;.[server]&quot;
+python -m quiver.mcp_server
+</code></pre>
+<h2 id="quick-start"><a class="anchor" href="#quick-start"></a>Quick start</h2>
+<pre><code class="language-bash">swe setup                    # six-stage interactive onboarding wizard
+swe setup --quick            # only missing or actionable setup stages
+swe setup report             # configure coding-session report models only
+swe setup --apply            # apply safe defaults and link AGENTS.md and skills, no prompts
+swe setup --hub=&lt;git url&gt;    # clone your hub repo as ~/.quiver first (fork one to start)
+swe --version                # print the swe version (also: swe -v, swe version)
+swe bug                      # open a GitHub bug report with your versions filled in
+swe harness discover         # scan PATH for unregistered AI CLIs
+swe mcp discover             # find MCP servers not in ~/.quiver/mcp.json
+swe init                     # create ~/.quiver and link every harness to it
+
+swe list                     # all registered tools, starred first
+swe list agentic             # filter by tag
+swe list --usage             # add the 100d session count and remaining quota
+swe list --links             # add AGENTS.MD and SKILLS link status instead
+swe list -n                  # bypass caches and refresh starred harness usage
+swe info claude              # command, version, path, tags, aliases
+swe check                    # probe installed tools and refresh versions
+swe doctor                   # diagnose Node/npm/PATH issues, plus registry drift
+swe find                     # where shared assets live and what links to them, as counts
+swe find plugins --full      # every plugin row, not just the counts
+swe plugins                  # every marketplace's plugins, installed or not
+swe plugins install swift-lsp@claude-plugins-official --harness=codex
+swe find skills --harness=all # include archived harnesses' rows too
+
+swe use cc                   # launch Claude Code (alias for `claude`)
+swe use codex --help         # extra args are passed straight through
+
+swe harness star gemini      # pin a harness and enable its usage polling (toggle)
+swe harness archive aider &quot;not a fit&quot; # shelve a harness you ruled out
+swe edit claude --description=&quot;...&quot; # edit registry fields (or interactive mode)
+swe edit qwen --display-name=&quot;Qwen Code&quot; # human name for the app; `--display-name=` clears it
+
+swe session                  # last 10 sessions across ALL agents
+swe session use 3            # cd into session #3 and resume it
+swe session --agent claude   # filter by agent
+swe session --here           # only sessions in the current directory
+swe session -d 5             # sessions active during the latest 5 calendar dates
+swe session -w 3             # sessions active during the latest 3 times 7 dates
+swe session -s 2026-07-01 -e 2026-07-30 # inclusive explicit date range
+swe session --search refactor # filter by title/path/agent text
+swe session -i               # arrow-key picker; space previews, Enter resumes
+
+swe config setup report      # choose cheap summary and strong report models
+swe report daily             # preview cost, confirm, then generate a report
+swe report weekly --here     # weekly report for the current repository
+swe report followups         # list user-owned follow-up work
+swe report warnings &lt;manifest.json&gt; # warnings recorded for one report
+
+swe models                   # model usage across all tools
+swe models -t -p             # grouped by tool, with provider prefix
+
+swe autocomplete zsh         # generate + inject shell tab-completion
+
+swe skills list              # every SKILL.md across all skill roots
+swe skills refactor          # filter skills by name or scope
+swe skills discover          # find skill catalogs on Desktop/Documents
+swe skills discover --apply  # register discovered catalogs
+swe skills catalog add ~/path/to/skills [label]
+swe find skills -r           # every skill root, and what it links to
+swe skills help catalog      # detailed help for catalog subcommands
+
+swe mcp list                 # matrix of MCP servers across tools
+swe mcp sync opencode cursor # copy MCP servers between tools
+</code></pre>
+<h2 id="commands"><a class="anchor" href="#commands"></a>Commands</h2>
+<table>
+<thead>
+<tr>
+  <th>Command</th>
+  <th>Aliases</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>swe init [--check\|--force\|--full\|--migrate]</code></td>
+  <td></td>
+  <td>Create <code>~/.quiver</code> and symlink every harness to it</td>
+</tr>
+<tr>
+  <td><code>swe setup [section] [--quick]</code></td>
+  <td></td>
+  <td>Sectioned wizard for harnesses, providers, MCP, skills, reports, and verification</td>
+</tr>
+<tr>
+  <td><code>swe list [tag] [--usage\|--links] [--scope=…] [-r\|-n]</code></td>
+  <td><code>ls</code></td>
+  <td>List tools; <code>--usage</code> is the only part that touches the network</td>
+</tr>
+<tr>
+  <td><code>swe list edit [--reset]</code> / <code>swe list legend</code></td>
+  <td></td>
+  <td>Choose which columns show; explain the link glyphs</td>
+</tr>
+<tr>
+  <td><code>swe info &lt;name\|alias&gt;</code></td>
+  <td></td>
+  <td>Show display name, command, version, path, tags, aliases</td>
+</tr>
+<tr>
+  <td><code>swe add &lt;name&gt; &lt;cmd&gt; …</code></td>
+  <td></td>
+  <td>Register or update a tool</td>
+</tr>
+<tr>
+  <td><code>swe edit &lt;name&gt; [--field=val …] [--json]</code></td>
+  <td></td>
+  <td>Edit registry fields: command, display name, description, aliases, tags, version, notes (flags or interactive); <code>--json</code> applies the flags and prints the updated harness, never prompts</td>
+</tr>
+<tr>
+  <td><code>swe remove &lt;name\|alias&gt;</code></td>
+  <td><code>rm</code></td>
+  <td>Remove from registry (does not uninstall)</td>
+</tr>
+<tr>
+  <td><code>swe harness &lt;subcommand&gt; …</code></td>
+  <td><code>hs</code></td>
+  <td>Every harness verb: <code>list</code>, <code>edit</code>, <code>star</code>, <code>archive</code>, <code>discover</code>, <code>usage</code></td>
+</tr>
+<tr>
+  <td><code>swe harness usage &lt;devin\|cursor&gt; --account-dir=&lt;dir&gt; [--json]</code></td>
+  <td><code>hs usage</code></td>
+  <td>An extra account's rate limit from its own credential files</td>
+</tr>
+<tr>
+  <td><code>swe harness star &lt;name\|alias&gt;</code></td>
+  <td><code>hs star</code></td>
+  <td>Toggle a harness favourite (pins it to top of <code>swe list</code>)</td>
+</tr>
+<tr>
+  <td><code>swe harness archive &lt;name\|alias&gt; [why]</code></td>
+  <td><code>hs archive</code></td>
+  <td>Shelve a harness you've ruled out</td>
+</tr>
+<tr>
+  <td><code>swe check</code></td>
+  <td></td>
+  <td>Probe live versions and refresh registry</td>
+</tr>
+<tr>
+  <td><code>swe doctor</code></td>
+  <td></td>
+  <td>Diagnose Node/npm/PATH issues hiding global installs, plus registry/help drift</td>
+</tr>
+<tr>
+  <td><code>swe install &lt;name&gt;</code></td>
+  <td></td>
+  <td>List a harness's install commands per package manager; <code>--via=&lt;m&gt;</code> runs one</td>
+</tr>
+<tr>
+  <td><code>swe harness discover [--apply\|--apply-all] [--json] [--all]</code></td>
+  <td></td>
+  <td>Scan PATH and home dirs for unregistered AI coding CLIs</td>
+</tr>
+<tr>
+  <td><code>swe discover [--apply]</code></td>
+  <td></td>
+  <td>Alias for <code>swe harness discover</code></td>
+</tr>
+<tr>
+  <td><code>swe find [amd\|skills\|plugins\|mcps] [--full] [--scope=global\|local\|all] [--harness=active\|all]</code></td>
+  <td></td>
+  <td>Read-only view of shared assets and what links to them</td>
+</tr>
+<tr>
+  <td><code>swe autocomplete [zsh\|bash\|fish]</code></td>
+  <td></td>
+  <td>Generate + inject shell tab-completion</td>
+</tr>
+<tr>
+  <td><code>swe use &lt;name\|alias&gt; [args…]</code></td>
+  <td><code>run</code></td>
+  <td>Launch a tool (replaces current process)</td>
+</tr>
+<tr>
+  <td><code>swe session [N] [use N] [-i] [--agent X] [--here] [--search T] [date flags]</code></td>
+  <td></td>
+  <td>List, browse, or resume recent sessions</td>
+</tr>
+<tr>
+  <td><code>swe report daily\|weekly [date flags]</code></td>
+  <td></td>
+  <td>Preview and summarize coding sessions</td>
+</tr>
+<tr>
+  <td><code>swe report followups\|followup …</code></td>
+  <td></td>
+  <td>Manage and launch work from persistent follow-ups</td>
+</tr>
+<tr>
+  <td><code>swe report warnings &lt;manifest.json&gt;</code></td>
+  <td></td>
+  <td>Print the warnings recorded for one report</td>
+</tr>
+<tr>
+  <td><code>swe config [get\|set\|unset\|edit\|check\|setup]</code></td>
+  <td></td>
+  <td>Manage credential-free Quiver configuration</td>
+</tr>
+<tr>
+  <td><code>swe models [-t] [-p]</code></td>
+  <td></td>
+  <td>Model usage analytics</td>
+</tr>
+<tr>
+  <td><code>swe skills list</code> / <code>swe skills &lt;filter&gt; [-d]</code></td>
+  <td><code>sk</code></td>
+  <td>List agent skills and paths (bare <code>swe skills</code> prints the overview)</td>
+</tr>
+<tr>
+  <td><code>swe skills tree</code> / <code>swe skills scope list</code></td>
+  <td></td>
+  <td>Kept for muscle memory; both forward to <code>swe find skills</code></td>
+</tr>
+<tr>
+  <td><code>swe skills link &lt;harness&gt; [target]</code></td>
+  <td></td>
+  <td>Symlink harness skills root to shared/other</td>
+</tr>
+<tr>
+  <td><code>swe skills unlink &lt;harness&gt; [--mkdir]</code></td>
+  <td></td>
+  <td>Break harness symlink (optional empty dir)</td>
+</tr>
+<tr>
+  <td><code>swe skills move &lt;name&gt; --from A --to B</code></td>
+  <td></td>
+  <td>Move skill folder between roots</td>
+</tr>
+<tr>
+  <td><code>swe skills discover [--apply]</code></td>
+  <td></td>
+  <td>Scan Desktop/Documents for skill catalogs</td>
+</tr>
+<tr>
+  <td><code>swe skills catalog add [path] [label]</code></td>
+  <td></td>
+  <td>Register a skills directory (default: <code>.</code>)</td>
+</tr>
+<tr>
+  <td><code>swe skills catalog .</code></td>
+  <td></td>
+  <td>Add the current directory as a catalog</td>
+</tr>
+<tr>
+  <td><code>swe skills catalog list</code></td>
+  <td></td>
+  <td>List configured skill catalogs</td>
+</tr>
+<tr>
+  <td><code>swe skills help [topic]</code></td>
+  <td></td>
+  <td>Per-topic help (catalog, discover, tree, link, …)</td>
+</tr>
+<tr>
+  <td><code>swe plugins [catalog\|install\|uninstall\|enable\|disable\|marketplace] …</code></td>
+  <td></td>
+  <td>Every plugin in every marketplace, and install it per harness</td>
+</tr>
+<tr>
+  <td><code>swe hooks [list\|info\|new\|edit\|enable\|disable\|delete\|check\|sync] …</code></td>
+  <td></td>
+  <td>Manage the hook scripts under <code>~/.quiver/hooks</code></td>
+</tr>
+<tr>
+  <td><code>swe tags</code></td>
+  <td></td>
+  <td>List tags and associated tools</td>
+</tr>
+<tr>
+  <td><code>swe aliases</code></td>
+  <td></td>
+  <td>List alias → tool mappings</td>
+</tr>
+<tr>
+  <td><code>swe mcp &lt;subcommand&gt; …</code></td>
+  <td></td>
+  <td>MCP server management (see below)</td>
+</tr>
+<tr>
+  <td><code>swe providers [&lt;subcommand&gt;] …</code></td>
+  <td><code>pv</code></td>
+  <td>Provider API key + metadata management</td>
+</tr>
+<tr>
+  <td><code>swe remote &lt;subcommand&gt; …</code></td>
+  <td></td>
+  <td>Watch and steer sessions from a phone: <code>serve</code> (hub), <code>agent</code> (satellite), <code>setup</code>, <code>pair</code>, <code>status</code>, <code>devices</code>, <code>attach</code>, <code>notify</code>, <code>ssh</code></td>
+</tr>
+<tr>
+  <td><code>swe gh &lt;subcommand&gt; …</code></td>
+  <td></td>
+  <td>GitHub surfaces over <code>gh</code>: <code>pr</code>, <code>issue</code>, <code>run</code>, <code>inbox</code>, <code>repo</code>, <code>board</code>, <code>sync</code>, …</td>
+</tr>
+<tr>
+  <td><code>swe bug</code></td>
+  <td></td>
+  <td>Open a bug report on GitHub with your versions filled in</td>
+</tr>
+<tr>
+  <td><code>swe version</code></td>
+  <td><code>-v</code>, <code>--version</code></td>
+  <td>Print the swe version</td>
+</tr>
+<tr>
+  <td><code>swe help [command]</code></td>
+  <td><code>-h</code></td>
+  <td>Full or per-command help</td>
+</tr>
+</tbody>
+</table>
+<p>Run <code>swe &lt;command&gt; --help</code> for detailed help on any command.</p>
+<h3 id="coding-session-reports"><a class="anchor" href="#coding-session-reports"></a>Coding-session reports</h3>
+<p><code>swe report daily</code> and <code>swe report weekly</code> read the same local histories shown
+by <code>swe session</code>. Before calling a model, Quiver removes startup-only sessions,
+reuses digest-cached summaries, groups short meaningful sessions by Git
+repository, and displays the planned model-call count and estimated input
+tokens. Nothing runs until you confirm. Plans above the configured call or
+token limits require typing the exact phrase <code>process all</code>.</p>
+<p>The first run opens <code>swe config setup report</code>. Configure an inexpensive Claude
+or Codex model for project/session summaries and a stronger model for the final
+report. Credentials remain in the harness's existing login or environment.</p>
+<p>Reports omit empty sections and persist under <code>~/.quiver/reports/</code> with
+their manifests, session-summary cache, exclusions, cadence cursors, and
+follow-up ledger. Follow-up status is always manual:</p>
+<pre><code class="language-bash">swe report followup done fu_1234
+swe report followup work fu_1234 --resume
+swe report followup work fu_1234 --new --harness codex
+</code></pre>
+<p>Date flags use local calendar boundaries: <code>-d N</code> means the latest N dates,
+<code>-w N</code> means N times seven dates, and <code>-s YYYY-MM-DD -e YYYY-MM-DD</code> supplies an
+inclusive custom range. Custom ranges create reusable summaries without moving
+the normal daily or weekly cursor.</p>
+<h3 id="shell-autocomplete"><a class="anchor" href="#shell-autocomplete"></a>Shell autocomplete</h3>
+<pre><code class="language-bash">swe autocomplete zsh    # or bash, fish
+</code></pre>
+<p>Generates a completion script and injects it into your shell profile. After running, restart your terminal or <code>source ~/.zshrc</code> (or equivalent). The completion provides:</p>
+<ul>
+<li>Subcommand names with descriptions (<code>swe &lt;TAB&gt;</code>)</li>
+<li>Tool names and aliases from your registry (<code>swe use &lt;TAB&gt;</code>)</li>
+<li>Tags for filtering (<code>swe list &lt;TAB&gt;</code>)</li>
+<li>Flags (<code>swe list --&lt;TAB&gt;</code>, <code>swe session --&lt;TAB&gt;</code>)</li>
+</ul>
+<p>Idempotent — safe to re-run. Uses a hidden <code>swe __complete</code> command for dynamic completions.</p>
+<h3 id="swe-providers-subcommands"><a class="anchor" href="#swe-providers-subcommands"></a><code>swe providers</code> subcommands</h3>
+<table>
+<thead>
+<tr>
+  <th>Subcommand</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>swe providers list [-d] [--api-keys-dir=DIR] [&lt;filter&gt;]</code></td>
+  <td>Show every provider with its masked key (<code>-</code> if no key)</td>
+</tr>
+<tr>
+  <td><code>swe providers info &lt;name\|alias&gt;</code></td>
+  <td>Full details for one provider + key file path</td>
+</tr>
+<tr>
+  <td><code>swe providers add &lt;name&gt; [desc] [--url URL] [--env ENV, …] [--file NAME]</code></td>
+  <td>Register a provider in <code>~/.quiver/config/providers.json</code></td>
+</tr>
+<tr>
+  <td><code>swe providers remove &lt;name&gt;</code></td>
+  <td>Unregister a provider (does <strong>not</strong> delete your key file)</td>
+</tr>
+</tbody>
+</table>
+<p>Keys live in <code>~/.quiver/secrets/providers/.api_keys</code>, a shell-style file of <code>export NAME=value</code> lines (gitignored, mode 600). <code>swe init</code> moves an existing <code>~/.api_keys</code> there and leaves a symlink behind, so a shell profile that sources it keeps working. quiver stores <strong>metadata only</strong> — never the key string itself. Mask format: <code>first8 + *** + last4 + (len=N)</code>; short keys fall back to <code>first3 + *** + (len=N)</code>; missing keys render as <code>-</code>. Override the store per-invocation with <code>--api-keys-dir=DIR</code>, a shell-style file or a directory of per-provider files named by slug.</p>
+<p>Built-in providers (27): <code>openai</code>, <code>anthropic</code>, <code>gemini</code>, <code>deepseek</code>, <code>zai</code>, <code>minimax</code>, <code>kimi</code>, <code>qwen</code>, <code>mimo</code>, <code>xai</code>, <code>stepfun</code>, <code>groq</code>, <code>upstage</code>, <code>cerebras</code>, <code>mistral</code>, <code>routing_run</code>, <code>opencode_zen</code>, <code>openrouter</code>, <code>together_ai</code>, <code>fireworks_ai</code>, <code>vercel_gateway</code>, <code>nebius</code>, <code>featherless</code>, <code>cohere</code>, <code>perplexity</code>, <code>github</code>, <code>huggingface</code>. Add your own with <code>swe providers add</code>.</p>
+<h3 id="swe-mcp-subcommands"><a class="anchor" href="#swe-mcp-subcommands"></a><code>swe mcp</code> subcommands</h3>
+<table>
+<thead>
+<tr>
+  <th>Subcommand</th>
+  <th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>swe mcp discover [--apply]</code></td>
+  <td>Find MCP servers across tool configs</td>
+</tr>
+<tr>
+  <td><code>swe mcp list [tool]</code></td>
+  <td>Matrix view of MCP servers across tools</td>
+</tr>
+<tr>
+  <td><code>swe mcp status [tool]</code></td>
+  <td>List with health checks</td>
+</tr>
+<tr>
+  <td><code>swe mcp sync &lt;source&gt; &lt;target…&gt;</code></td>
+  <td>Copy servers between tools (format conversion)</td>
+</tr>
+<tr>
+  <td><code>swe mcp diff &lt;t1&gt; &lt;t2&gt;</code></td>
+  <td>Compare two tools' MCP configs</td>
+</tr>
+<tr>
+  <td><code>swe mcp edit &lt;tool&gt; &lt;name&gt;</code></td>
+  <td>Edit one server in <code>$EDITOR</code></td>
+</tr>
+<tr>
+  <td><code>swe mcp validate [tool…]</code></td>
+  <td>Validate MCP config shape</td>
+</tr>
+<tr>
+  <td><code>swe mcp doctor [--strict]</code></td>
+  <td>Deep diagnostics</td>
+</tr>
+</tbody>
+</table>
+<p>Flags for <code>sync</code>: <code>--only=a,b</code>, <code>--all</code>, <code>--force</code>, <code>--skip-conflicts</code>, <code>--dry-run</code>,
+<code>--prune</code>, <code>--strict</code>. Every subcommand has its own <code>swe mcp &lt;name&gt; help</code>.</p>
+<h3 id="remote-control"><a class="anchor" href="#remote-control"></a>Remote control</h3>
+<p><code>swe remote serve</code> runs a hub on this machine: it tails every session's
+transcript and serves the phone clients (a web app the hub hosts, plus the
+native iOS app) over REST + SSE. Sessions list as read-only <code>observed</code>
+until they run under quiver's supervisor (<code>swe remote attach</code>, or Attach in
+the app), which makes them writable from the phone: send a prompt, answer
+an approval, interrupt, compact, launch a new session. <code>swe remote agent</code>
+on a second machine dials out to the hub as a satellite, so one hub covers
+every machine's sessions. <code>swe remote setup</code> checks each step from nothing
+to a paired phone, and <code>swe remote serve --install</code> keeps the hub running
+across reboots (LaunchAgent on macOS, systemd user unit on Linux).</p>
+<p>Only your tailnet can reach the hub: it binds this machine's Tailscale IP,
+or loopback behind <code>tailscale serve</code>, so no LAN or WAN port ever opens. A
+phone pairs by opening the URL or QR <code>swe remote pair</code> prints (<code>--app</code> for
+the iOS deep link), or by posting a pair request an owner approves with
+<code>swe remote devices --approve=&lt;code&gt;</code>; both paths mint a per-device
+credential in <code>~/.quiver/data/remote/devices.json</code> (mode 600).
+<code>swe remote devices --revoke=&lt;id&gt;</code> cuts one device's access without
+touching the rest.</p>
+<p>Threat model, in one paragraph: the hub executes commands on your machines
+by design — that is the feature — so the tailnet is the transport boundary
+and the per-device credential is the app-layer gate on top of it. Revoking
+a lost phone means revoking its credential, nothing more; the tailnet is
+never disturbed. The full model (pairing flows, owner-device rules,
+forwarded headers, SSH console keys) is in
+<a href="https://github.com/c-wenlong/quiver/blob/main/docs/remote-control.md">docs/remote-control.md</a>.</p>
+<h2 id="skills"><a class="anchor" href="#skills"></a>Skills</h2>
+<p>Agent skills are folders containing a <code>SKILL.md</code> file. quiver scans built-in harness roots (shared, Cursor, Claude, Codex, plugins) plus any catalogs you register.</p>
+<h3 id="typical-layout"><a class="anchor" href="#typical-layout"></a>Typical layout</h3>
+<p>Most setups symlink every harness to one shared tree:</p>
+<pre><code>~/.quiver/skills          ← canonical shared skills
+~/.codex/skills    → shared
+~/.claude/skills   → shared
+~/.cursor/skills   → shared
+</code></pre>
+<p>Run <code>swe find skills -r</code> to inspect this layout — it walks the filesystem, so it
+sees roots a fixed candidate list would miss. <code>swe skills tree</code> and
+<code>swe skills scope list</code> forward to the same view. <code>swe skills link</code> and
+<code>swe skills unlink</code> record what they did in <code>~/.quiver/config/skill_links.json</code>.</p>
+<h3 id="discover-and-register-catalogs"><a class="anchor" href="#discover-and-register-catalogs"></a>Discover and register catalogs</h3>
+<p>Project skill folders outside the default roots can be registered manually or discovered automatically:</p>
+<pre><code class="language-bash">swe skills discover              # scan ~/Desktop and ~/Documents for */skills/
+swe skills discover --apply      # register new catalogs
+cd ~/Projects/my-app/skills &amp;&amp; swe skills catalog .
+swe skills catalog list
+</code></pre>
+<p>Catalogs live in <code>~/.quiver/config/skill_catalogs.json</code>. Nested catalogs (e.g. <code>gbrain/skills</code> inside <code>ai-engineering/skills</code>) are collapsed to the outermost match.</p>
+<h3 id="symlinks-and-moving-skills"><a class="anchor" href="#symlinks-and-moving-skills"></a>Symlinks and moving skills</h3>
+<p>Link all harnesses to shared (what <code>swe setup</code> step 4 does):</p>
+<pre><code class="language-bash">swe skills link codex
+swe skills link claude shared
+</code></pre>
+<p>Give one harness its own private skills tree:</p>
+<pre><code class="language-bash">swe skills unlink codex --mkdir
+swe skills move my-skill --from shared --to codex
+</code></pre>
+<p>Run <code>swe skills help link</code>, <code>swe skills help move</code>, etc. for detailed usage.</p>
+<h3 id="listing-skills"><a class="anchor" href="#listing-skills"></a>Listing skills</h3>
+<pre><code class="language-bash">swe skills list                  # every skill: NAME, SCOPE, PATH
+swe skills &lt;filter&gt;              # filter by name, scope, or harness
+swe skills &lt;filter&gt; -d           # include descriptions
+swe find skills -r               # every root with symlink kind + counts
+</code></pre>
+<h2 id="how-it-works"><a class="anchor" href="#how-it-works"></a>How it works</h2>
+<pre><code class="language-mermaid">flowchart LR
+  subgraph swe[&quot;swe CLI&quot;]
+    R[Registry]
+    L[Launch]
+    S[Sessions]
+    RP[Reports]
+    M[Models]
+    K[Skills]
+    P[MCP sync]
+  end
+
+  R --&gt; TJ[&quot;~/.quiver/config/harness.json&quot;]
+  S --&gt; Logs[&quot;Tool session logs\n(read-only)&quot;]
+  RP --&gt; Logs
+  RP --&gt; Reports[&quot;~/.quiver/reports\n(manifests + follow-ups)&quot;]
+  M --&gt; Logs
+  K --&gt; Roots[&quot;Skill roots\n~/.quiver/skills, plugins, …&quot;]
+  P --&gt; MCP[&quot;Per-tool MCP configs&quot;]
+  L --&gt; Bin[&quot;Real CLI binaries\nclaude, codex, …&quot;]
+</code></pre>
+<ul>
+<li><strong>Registry</strong> — your tool list lives in <code>~/.quiver/config/harness.json</code>. It starts empty: <code>swe discover</code> matches what is actually on your PATH against a built-in recognition table, and only what it finds gets registered, so the file describes this machine rather than a wish list. Every entry carries its own <code>state</code> (<code>active</code>, <code>starred</code>, or <code>archived</code>) instead of splitting favourites and shelved tools into separate files. Edited by <code>swe add</code> / <code>remove</code> / <code>check</code> / <code>swe harness star</code> / <code>swe harness archive</code>. Not shipped with the package (see <code>examples/tools.example.json</code>).</li>
+<li><strong>Launching</strong> — <code>swe use</code> resolves a name or alias and replaces the current process via <code>os.execvp</code>, so the tool behaves exactly as if you'd typed it directly.</li>
+<li><strong>Analytics</strong> — <code>swe session</code> and <code>swe models</code> parse each tool's on-disk logs (e.g. <code>~/.claude/projects</code>, <code>~/.codex/sessions</code>, <code>~/.local/share/opencode/opencode.db</code>). quiver <strong>never writes</strong> to those files.</li>
+<li><strong>Reports</strong> — normalizes those logs into semantic messages, filters startup noise, batches useful sessions by project, and invokes configured Claude/Codex models only after a local cost preview is approved.</li>
+<li><strong>Skills</strong> — walks known skill roots under <code>$HOME</code> (and <code>./.cursor/skills</code>), de-duplicates symlinked paths, reads each <code>SKILL.md</code> front matter. Catalogs from <code>skill_catalogs.json</code> extend the scan; <code>swe skills link</code> / <code>unlink</code> / <code>move</code> manage harness symlinks without touching skill content.</li>
+<li><strong>MCP sync</strong> — reads each tool's native MCP config, normalizes to a canonical shape, re-emits in the target format. Nothing is written unless you run a real (non-<code>--dry-run</code>) <code>sync</code> or <code>edit</code>.</li>
+<li><strong>Rate limits</strong> — <code>swe list</code> shows the percentage of quota remaining and fetches usage data only for starred harnesses that expose a rate limit API; Freebuff instead shows remaining/total referral-unlocked GLM 5.2 sessions. Starring is the explicit opt-in for provider traffic. Unstarred harnesses still show registry details and local 100-day session counts without running usage scripts. Codex, Copilot, Claude, Droid, Freebuff, Cursor, and Devin use their authenticated provider endpoints; Cursor shows the more exhausted of its included Auto-mode and named-model (API) usage for the current billing cycle. Antigravity is read through the running app or CLI's loopback-only quota RPC, so quiver never reads its Google OAuth credential directly; the last successful value remains available from the outage cache when Antigravity is closed. Results are cached in <code>rate_limits_cache.json</code> (5-minute TTL); <code>swe list --refresh</code>, <code>swe list -r</code>, and <code>swe list -n</code> bypass the fresh cache for starred harnesses only. The architecture is pluggable — additional fetchers can be registered in <code>harness/rate_limits.py</code>. On macOS python.org builds that lack CA certificates, remote fetchers retry with the operating system's own CA bundle (or <code>certifi</code> if installed), still fully verified; with no bundle at all they send nothing and print how to fix it.</li>
+</ul>
+<h2 id="configuration"><a class="anchor" href="#configuration"></a>Configuration</h2>
+<p>Everything quiver persists lives under one root, <code>~/.quiver/</code>. It is split by
+lifecycle so the directory can be a git repo: <code>config/</code> and the shared
+<code>AGENTS.md</code> / <code>skills/</code> are worth versioning, <code>cache/</code> and <code>backups/</code> are not
+(a generated <code>.gitignore</code> covers them).</p>
+<p>The root sits in <code>$HOME</code> rather than <code>$HOME/.config</code> deliberately. Quiver
+manages coding harnesses, and most harness config directories are <code>$HOME/.&lt;tool&gt;</code>.</p>
+<table>
+<thead>
+<tr>
+  <th>Path</th>
+  <th>Purpose</th>
+  <th>Shipped?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>AGENTS.md</code></td>
+  <td>Shared instructions, symlinked into each harness under its own filename</td>
+  <td>No — created by <code>swe init</code></td>
+</tr>
+<tr>
+  <td><code>skills/</code></td>
+  <td>Shared skill tree, symlinked in as every harness's <code>skills/</code></td>
+  <td>No — created by <code>swe init</code></td>
+</tr>
+<tr>
+  <td><code>.linkignore</code></td>
+  <td>Paths <code>swe init</code> leaves alone, one gitignore-style pattern per line</td>
+  <td>No — seeded by <code>swe init</code></td>
+</tr>
+<tr>
+  <td><code>config/harness.json</code></td>
+  <td>Your tool registry (versions, aliases, and per-harness state for this machine)</td>
+  <td>No — auto-created</td>
+</tr>
+<tr>
+  <td><code>mcp.json</code></td>
+  <td>MCP source of truth</td>
+  <td>No — created by <code>swe mcp discover --apply</code></td>
+</tr>
+<tr>
+  <td><code>config/providers.json</code></td>
+  <td>Provider metadata and key locations</td>
+  <td>No — auto-created</td>
+</tr>
+<tr>
+  <td><code>config/config.json</code></td>
+  <td>Credential-free Quiver and report runner settings</td>
+  <td>No — created by <code>swe config</code></td>
+</tr>
+<tr>
+  <td><code>config/skill_catalogs.json</code></td>
+  <td>Extra skill catalog directories</td>
+  <td>No — auto-created by discover/add</td>
+</tr>
+<tr>
+  <td><code>config/skill_links.json</code></td>
+  <td>Recorded harness skill-root symlinks</td>
+  <td>No — written by <code>swe skills link</code> / <code>unlink</code></td>
+</tr>
+<tr>
+  <td><code>cache/session_cache.json</code></td>
+  <td>Cached session parse results (60s TTL)</td>
+  <td>No — auto-created</td>
+</tr>
+<tr>
+  <td><code>cache/rate_limits_cache.json</code></td>
+  <td>Cached rate limit fetches (5-minute TTL)</td>
+  <td>No — auto-created</td>
+</tr>
+<tr>
+  <td><code>completions/</code></td>
+  <td>Shell completion scripts (zsh/bash/fish)</td>
+  <td>No — created by <code>swe autocomplete</code></td>
+</tr>
+<tr>
+  <td><code>reports/</code></td>
+  <td>Reports, manifests, summary cache, cursors, exclusions, and follow-ups</td>
+  <td>No — created by <code>swe report</code></td>
+</tr>
+<tr>
+  <td><code>backups/</code></td>
+  <td>Anything <code>swe init</code> replaced, timestamped</td>
+  <td>No — auto-created</td>
+</tr>
+</tbody>
+</table>
+<p>Upgrading from a pre-0.2.7 install: <code>swe init --migrate</code> moves <code>~/.config/swe</code>
+into this layout and removes the old root.</p>
+<p>The MCP subsystem also reads/writes each tool's native config (e.g. <code>~/.claude.json</code>, <code>~/.cursor/mcp.json</code>, <code>~/.config/opencode/opencode.json</code>).</p>
+<h2 id="supported-tools"><a class="anchor" href="#supported-tools"></a>Supported tools</h2>
+<p><code>swe discover</code> recognises <strong>21 AI coding CLIs</strong> on sight: Claude Code, Codex, Gemini
+CLI, GitHub Copilot CLI, Cursor CLI, opencode, Qwen Code, Mistral Vibe,
+Crush, Cline, Goose, Aider, Continue, pi, Forge, Factory Droid, Augment, Kiro,
+Blackbox, Freebuff, and Ollama. That is a recognition table, not a seed — nothing is
+written to your registry until discovery finds the binary on PATH. Register anything
+else by hand with <code>swe add</code>.</p>
+<p>Session parsers currently cover <strong>15 tools</strong>: opencode, Claude Code, Gemini, Codex, Cursor, pi, Freebuff, Droid, Copilot, Continue, Crush, Grok, Cline, Forge, and Devin. Parsers are built on three reusable family engines (SQLite, JSONL, JSON) with declarative per-tool configs. Model analytics cover opencode, Claude Code, Codex, and Freebuff.</p>
+<h2 id="development"><a class="anchor" href="#development"></a>Development</h2>
+<pre><code class="language-bash">python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -e &quot;.[test]&quot;
+test_home=&quot;$(mktemp -d)&quot;
+HOME=&quot;$test_home&quot; python3 -m unittest discover -s tests -p 'test_*.py'
+HOME=&quot;$test_home&quot; python3 -m coverage run -m unittest discover -s tests -p 'test_*.py'
+python3 -m coverage combine
+python3 -m coverage report
+</code></pre>
+<p>CI runs the suite against a throwaway <code>$HOME</code>, so it never touches real config or
+counts machine-local coding sessions as test coverage. Coverage includes child
+processes, tracks branches, and must remain above the configured regression
+floor. See the dated <a href="https://github.com/c-wenlong/quiver/blob/main/docs/COVERAGE.md">coverage audit</a> for current risk areas;
+the badge at the top of this README follows <code>main</code> live.</p>
+<h3 id="reinstalling-after-changes"><a class="anchor" href="#reinstalling-after-changes"></a>Reinstalling after changes</h3>
+<p>The <code>swe</code> command is a pip-installed console entry point (<code>[project.scripts]</code> in <code>pyproject.toml</code>). With an <strong>editable</strong> install (<code>pip install -e .</code>), new Python files are picked up automatically. But if you ever installed with a plain <code>pip install .</code> (non-editable), files are copied to site-packages and new modules won't appear until you reinstall:</p>
+<pre><code class="language-bash">pip install -e .          # switch to editable, or sync site-packages
+swe list                  # verify the feature works end-to-end
+</code></pre>
+<blockquote>
+<p><strong>Common pitfall:</strong> unit tests run with <code>PYTHONPATH=src</code>, so they can pass while the installed <code>swe</code> command silently fails because it's reading from a stale non-editable site-packages copy. Always verify with the real <code>swe</code> command after adding files — if the feature doesn't show up, reinstall.</p>
+</blockquote>
+<p>For <strong>pipx</strong> installs (always non-editable):</p>
+<pre><code class="language-bash">pipx install --force git+https://github.com/c-wenlong/quiver.git
+</code></pre>
+<h3 id="e2e-verification-checklist"><a class="anchor" href="#e2e-verification-checklist"></a>E2e verification checklist</h3>
+<p>Every feature that adds files or modifies <code>cmd_*</code> handlers must pass this checklist before opening a PR:</p>
+<ol>
+<li>✅ Unit tests pass: <code>HOME=&quot;$(mktemp -d)&quot; python3 -m unittest discover -s tests -p 'test_*.py'</code></li>
+<li>✅ Package reinstalled: <code>pip install -e .</code></li>
+<li>✅ Verified with real <code>swe</code> command (not just <code>PYTHONPATH=src python -m quiver.cli</code>)</li>
+<li>✅ PR opened with clear description</li>
+</ol>
+<h2 id="renaming"><a class="anchor" href="#renaming"></a>Renaming</h2>
+<p>quiver centralizes naming so you can change it:</p>
+<ol>
+<li><strong>CLI command</strong> — <code>CLI_NAME</code> in <code>src/quiver/__init__.py</code> and <code>[project.scripts]</code> in <code>pyproject.toml</code>, then reinstall</li>
+<li><strong>Data dir</strong> — <code>DATA_DIR_NAME</code> in <code>src/quiver/__init__.py</code>; the root becomes <code>~/.&lt;name&gt;</code></li>
+<li><strong>Package name</strong> — rename <code>src/quiver/</code>, update imports and <code>pyproject.toml</code></li>
+</ol>
+<h2 id="contributing"><a class="anchor" href="#contributing"></a>Contributing</h2>
+<p>Issues and pull requests are welcome. <a href="../contributing/">CONTRIBUTING.md</a> covers the
+PR process, one concern per PR, and what CI will check. By taking part you agree to the
+<a href="https://github.com/c-wenlong/quiver/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>. Need help? See <a href="https://github.com/c-wenlong/quiver/blob/main/SUPPORT.md">SUPPORT.md</a>.</p>
+<table>
+<thead>
+<tr>
+  <th>Document</th>
+  <th>What it covers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><a href="https://github.com/c-wenlong/quiver/blob/main/AGENTS.md">AGENTS.md</a></td>
+  <td>The brief for coding agents: commands, throwaway-<code>$HOME</code> rule, gotchas log</td>
+</tr>
+<tr>
+  <td><a href="https://github.com/c-wenlong/quiver/blob/main/ARCHITECTURE.md">ARCHITECTURE.md</a></td>
+  <td>Layering rules, <code>~/.quiver</code> layout, registry and link states, session engines</td>
+</tr>
+<tr>
+  <td><a href="../contributing/">CONTRIBUTING.md</a></td>
+  <td>How to propose and land a change</td>
+</tr>
+<tr>
+  <td><a href="https://github.com/c-wenlong/quiver/blob/main/SECURITY.md">SECURITY.md</a></td>
+  <td>Supported versions and how to report a vulnerability</td>
+</tr>
+<tr>
+  <td><a href="https://github.com/c-wenlong/quiver/blob/main/SUPPORT.md">SUPPORT.md</a></td>
+  <td>Where to get help, in order: docs, <code>swe doctor</code>, issues</td>
+</tr>
+<tr>
+  <td><a href="https://github.com/c-wenlong/quiver/blob/main/CODE_OF_CONDUCT.md">CODE_OF_CONDUCT.md</a></td>
+  <td>Contributor Covenant 2.1</td>
+</tr>
+<tr>
+  <td><a href="../changelog/">CHANGELOG.md</a></td>
+  <td>Release history</td>
+</tr>
+<tr>
+  <td><a href="https://github.com/c-wenlong/quiver/tree/main/docs">docs/</a></td>
+  <td>Design docs: <a href="https://github.com/c-wenlong/quiver/blob/main/docs/data-model.md">data model</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/app-architecture.md">app architecture</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/backend-architecture.md">backend architecture</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/json-contracts.md">JSON contracts</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/testing.md">testing</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/COVERAGE.md">coverage audit</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="license"><a class="anchor" href="#license"></a>License</h2>
+<p>MIT — see <a href="https://github.com/c-wenlong/quiver/blob/main/LICENSE">LICENSE</a>.</p>
+
+</main>
+<footer>
+  <span>quiver is MIT licensed.</span>
+  <div class="right">
+    <a href="../overview/">Docs</a>
+    <a href="../changelog/">Changelog</a>
+    <a href="../contributing/">Contributing</a>
+    <a href="https://github.com/c-wenlong/quiver">GitHub</a>
+  </div>
+</footer>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+  for (const el of document.querySelectorAll('pre > code.language-mermaid')) {
+    const div = document.createElement('div');
+    div.className = 'mermaid';
+    div.textContent = el.textContent;
+    el.parentElement.replaceWith(div);
+  }
+  await mermaid.run();
+</script>
+</body>
+</html>

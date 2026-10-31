@@ -663,6 +663,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also tries `/api/compat/summary.json`, the path Cursor's new host
   serves.
 
+- **Instruction chapters:** `swe instructions build`, `check` and `watch`
+  compile the ordered Markdown paths in `~/.quiver/AGENTS_MD/index.txt`
+  into the complete shared `~/.quiver/AGENTS.md`. Builds replace the file
+  atomically and skip unchanged content; check reports drift without
+  writing; watch rebuilds after edits and keeps running after source errors.
+
 - **Mac app: the `@` file menu in the session chat.** Typing `@` in the
   chat's prompt box lists files under the session's folder, as the web
   app and the iPhone app do: the arrows move the highlight, Return or

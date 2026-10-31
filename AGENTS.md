@@ -69,6 +69,9 @@ python3 -m coverage combine && python3 -m coverage report
 # CLI from source; MCP sync subsystem directly
 PYTHONPATH=src python3 -m quiver.cli list
 python3 -m quiver.mcp list
+
+# Docs pages under app/landing-page/: regenerate after doc or help changes
+python3 scripts/docs_site.py  # or: --check to verify freshness
 ```
 
 There is no linter or formatter, and no pytest: `tests/conftest.py` pins terminal width to 200 columns but only fires under pytest, so a unittest test that asserts on rendered width patches `quiver.console.terminal_width` itself.

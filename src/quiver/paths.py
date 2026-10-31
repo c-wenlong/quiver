@@ -35,6 +35,7 @@ except ImportError:  # pragma: no cover - Windows has no flock
 QUIVER_DIRNAME = f".{DATA_DIR_NAME}"
 
 AGENTS_BASENAME = "AGENTS.md"
+INSTRUCTIONS_SUBDIR = "AGENTS_MD"
 LINKIGNORE_BASENAME = ".linkignore"
 SKILLS_SUBDIR = "skills"
 HOOKS_SUBDIR = "hooks"
@@ -66,6 +67,16 @@ def quiver_dir_for(home: Path | None = None) -> Path:
 
 def agents_file_for(home: Path | None = None) -> Path:
     return quiver_dir_for(home) / AGENTS_BASENAME
+
+
+def instructions_dir_for(home: Path | None = None) -> Path:
+    """Authored instruction chapters, compiled into the shared AGENTS.md."""
+    return quiver_dir_for(home) / INSTRUCTIONS_SUBDIR
+
+
+def instructions_index_for(home: Path | None = None) -> Path:
+    """Ordered chapter manifest for ``swe instructions build``."""
+    return instructions_dir_for(home) / "index.txt"
 
 
 def linkignore_file_for(home: Path | None = None) -> Path:

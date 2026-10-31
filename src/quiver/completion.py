@@ -34,6 +34,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("discover", "Scan PATH for AI coding CLIs"),
     ("setup", "Onboarding wizard"),
     ("init", "Create ~/.quiver and link every harness"),
+    ("instructions", "Compile shared instruction chapters"),
     ("autocomplete", "Generate shell completion"),
     ("version", "Print the swe version"),
     ("bug", "Report a bug on GitHub, versions filled in"),
@@ -664,6 +665,11 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
 }
 
 _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
+    "instructions": [
+        ("build", "Compile chapters into the shared AGENTS.md"),
+        ("check", "Check generated instructions without writing"),
+        ("watch", "Rebuild instructions when their sources change"),
+    ],
     "harness": [
         ("list", "List every harness (swe list is the shortcut)"),
         ("ls", "Short for list"),

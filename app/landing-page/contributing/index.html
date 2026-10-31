@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contributing — quiver</title>
+<meta name="description" content="How to work on quiver.">
+<link rel="icon" href="../icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #08090a;
+  --surface: #0f1011;
+  --surface-2: #151617;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --text: #f7f8f8;
+  --text-2: #a1a4a8;
+  --text-3: #6b6f75;
+  --radius: 12px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth;
+       scroll-padding-top: 76px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+code { font-family: var(--mono); font-size: 0.92em; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+
+header.top { position: sticky; top: 0; z-index: 20; background: rgba(8, 9, 10, 0.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+nav { display: flex; align-items: center; gap: 28px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; text-decoration: none; font-size: 16px; }
+.brand img { width: 26px; height: 26px; border-radius: 6px; }
+nav .links { display: flex; gap: 24px; font-size: 14px; }
+nav .links a, nav .right a.plain { color: var(--text-2); text-decoration: none; }
+nav .links a:hover, nav .right a.plain:hover { color: var(--text); }
+nav .right { margin-left: auto; display: flex; align-items: center; gap: 18px; font-size: 14px; }
+nav .right a.plain { display: inline-flex; align-items: center; gap: 6px; }
+svg.i { width: 16px; height: 16px; flex: none; }
+
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; border-radius: 8px; font: 500 14px var(--sans); text-decoration: none; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: rgba(255, 255, 255, 0.28); }
+.btn.light { background: var(--text); color: #08090a; border-color: var(--text); }
+.btn.sm { height: 32px; padding: 0 12px; font-size: 13px; }
+
+.doc { max-width: 800px; padding-top: 48px; padding-bottom: 88px; }
+.doc h1 { font-size: 34px; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+.doc h2 { font-size: 24px; letter-spacing: -0.01em; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+.doc h3 { font-size: 18px; margin: 32px 0 8px; }
+.doc h4 { font-size: 16px; margin: 24px 0 8px; }
+.doc p, .doc li { color: var(--text-2); }
+.doc a { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.doc a:hover { text-decoration-color: var(--text); }
+.doc :is(h1, h2, h3, h4) a { color: inherit; text-decoration: none; }
+.doc :is(h1, h2, h3, h4):hover a.anchor::after { content: " #"; color: var(--text-3); }
+.doc code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+.doc pre { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; overflow-x: auto; }
+.doc pre code { background: none; border: none; padding: 0; font-size: 13.5px; line-height: 1.55; }
+.doc blockquote { margin: 16px 0; padding: 2px 16px; border-left: 3px solid var(--line-strong); color: var(--text-3); }
+.doc table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14.5px; }
+.doc th, .doc td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; }
+.doc th { background: var(--surface-2); }
+.doc hr { border: none; border-top: 1px solid var(--line); margin: 32px 0; }
+.doc img { max-width: 100%; }
+
+footer { border-top: 1px solid var(--line); padding: 32px; margin-top: 64px; display: flex; justify-content: space-between; align-items: center; gap: 24px; color: var(--text-3); font-size: 13.5px; }
+footer .right { display: flex; gap: 20px; }
+footer a { color: var(--text-3); text-decoration: none; }
+footer a:hover { color: var(--text); }
+
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px; }
+  nav { gap: 16px; }
+  nav .links, nav .right a.plain { display: none; }
+  .doc { padding-top: 32px; }
+  .doc h1 { font-size: 27px; }
+  .doc h2 { font-size: 21px; }
+  footer { flex-direction: column; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="gh" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></symbol></svg>
+<header class="top">
+  <div class="wrap">
+    <nav>
+      <a class="brand" href="../"><img src="../icon.png" alt="">quiver</a>
+      <div class="links">
+        <a href="../overview/">Docs</a>
+        <a href="../cli/">CLI reference</a>
+        <a href="../changelog/">Changelog</a>
+      </div>
+      <div class="right">
+        <a class="plain" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>GitHub</a>
+        <a class="btn light sm" href="../#install"><span>Install</span></a>
+      </div>
+    </nav>
+  </div>
+</header>
+<main class="wrap doc">
+<h1 id="contributing-to-quiver"><a class="anchor" href="#contributing-to-quiver"></a>Contributing to quiver</h1>
+<p>Thanks for your interest in contributing! quiver is a small, stdlib-only CLI — we want to keep it fast, portable, and easy to hack on.</p>
+<h2 id="getting-started"><a class="anchor" href="#getting-started"></a>Getting started</h2>
+<pre><code class="language-bash">git clone https://github.com/c-wenlong/quiver.git
+cd quiver
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -e &quot;.[test]&quot;
+HOME=&quot;$(mktemp -d)&quot; python3 -m unittest discover -s tests -p 'test_*.py'
+</code></pre>
+<p>Every command reads and writes <code>~/.quiver</code>, so run the suite — and any manual
+<code>swe</code> check — against a throwaway <code>$HOME</code>. Otherwise a test run edits your real
+registry and counts your real sessions. CI does this for every job.</p>
+<p>Nix users can skip the venv entirely: <code>nix develop</code> opens a shell with Python,
+<code>hatchling</code> and <code>coverage</code>, and <code>PYTHONPATH</code> already pointing at <code>src/</code>.
+<code>nix build</code> builds the package and runs the suite inside the sandbox.</p>
+<h2 id="project-layout"><a class="anchor" href="#project-layout"></a>Project layout</h2>
+<p>The CLI is organized by domain under <code>src/quiver/</code>:</p>
+<table>
+<thead>
+<tr>
+  <th>Path</th>
+  <th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>cli.py</code></td>
+  <td>Top-level dispatch — a <code>COMMANDS</code> dict and nothing else</td>
+</tr>
+<tr>
+  <td><code>help_text.py</code></td>
+  <td><code>swe help</code> topics and command categories</td>
+</tr>
+<tr>
+  <td><code>harness/</code></td>
+  <td>The registry (<code>harness.json</code>), list/info/add/edit/check/doctor, discover, rate limits, drift checks</td>
+</tr>
+<tr>
+  <td><code>sessions/</code></td>
+  <td>Cross-agent history: three parser engines, per-tool adapters, aggregation, model analytics, the picker</td>
+</tr>
+<tr>
+  <td><code>skills/</code></td>
+  <td>SKILL.md discovery, catalogs, harness symlink layout</td>
+</tr>
+<tr>
+  <td><code>mcp/</code></td>
+  <td>The <code>~/.quiver/mcp.json</code> hub, per-tool format handlers, sync/diff/validate/doctor, <code>${NAME}</code> secret refs</td>
+</tr>
+<tr>
+  <td><code>find/</code></td>
+  <td>Read-only views of shared assets — <code>amd</code>, <code>skills</code>, <code>plugins</code>, <code>mcps</code></td>
+</tr>
+<tr>
+  <td><code>init/</code></td>
+  <td>Writes the shared <code>AGENTS.md</code> and skills tree, symlinks them into each harness, migrates the old root</td>
+</tr>
+<tr>
+  <td><code>plugins/</code></td>
+  <td><code>swe plugins</code>: every marketplace's plugins with per-harness state, and install/enable/disable through the harness CLIs (Codex enable and disable edit <code>~/.codex/config.toml</code> directly)</td>
+</tr>
+<tr>
+  <td><code>hooks/</code></td>
+  <td><code>swe hooks</code>: the hook scripts under <code>~/.quiver/hooks/&lt;harness&gt;/</code> and their drift check</td>
+</tr>
+<tr>
+  <td><code>reports/</code></td>
+  <td>Daily and weekly session reports: transcripts, triage, batching, model runners, follow-up ledger</td>
+</tr>
+<tr>
+  <td><code>providers/</code></td>
+  <td>LLM provider metadata and API-key file lookup</td>
+</tr>
+<tr>
+  <td><code>setup/</code></td>
+  <td>The interactive onboarding wizard</td>
+</tr>
+<tr>
+  <td><code>github/</code></td>
+  <td><code>swe gh</code> and the hub's GitHub routes; within the package only <code>gh.py</code> spawns <code>gh</code></td>
+</tr>
+<tr>
+  <td><code>remote/</code></td>
+  <td><code>swe remote</code>: the hub, the satellite agent, pairing and devices (<a href="https://github.com/c-wenlong/quiver/blob/main/docs/remote-control.md">docs/remote-control.md</a>)</td>
+</tr>
+<tr>
+  <td><code>webapp/</code></td>
+  <td>The web app the hub serves, and its page data (<a href="https://github.com/c-wenlong/quiver/blob/main/docs/web-app.md">docs/web-app.md</a>)</td>
+</tr>
+<tr>
+  <td><code>ledger/</code>, <code>status/</code></td>
+  <td>Python ports of the Mac app's usage ledger and service-status reader, for the web app</td>
+</tr>
+<tr>
+  <td><code>history/</code></td>
+  <td>Backward-compatible re-exports — write new code against <code>sessions/</code></td>
+</tr>
+<tr>
+  <td><code>config_commands.py</code></td>
+  <td><code>swe config</code></td>
+</tr>
+<tr>
+  <td><code>bug.py</code></td>
+  <td><code>swe bug</code>: opens an issue form with this machine's versions filled in</td>
+</tr>
+<tr>
+  <td><code>completion.py</code>, <code>completion_scripts.py</code></td>
+  <td>Completion candidates and the per-shell scripts <code>swe autocomplete</code> installs</td>
+</tr>
+<tr>
+  <td><code>mcp_server.py</code></td>
+  <td>Optional FastMCP session server (the <code>server</code> extra)</td>
+</tr>
+<tr>
+  <td><code>mcp_formats.py</code></td>
+  <td>Compatibility shim re-exporting <code>mcp/formats.py</code>; do not add to it</td>
+</tr>
+</tbody>
+</table>
+<p>The bottom layer imports nothing above itself: <code>paths.py</code> (every path under
+<code>~/.quiver</code>), <code>console.py</code> (colour, width, truncation), <code>table.py</code> (the table
+renderer), <code>configuration.py</code> (<code>config/config.json</code>), <code>keys.py</code> (the one
+raw-mode key reader) and <code>flags.py</code> (the <code>--name=value</code> argv normaliser).
+<code>json_output.py</code> (the <code>--json</code> envelope), <code>prompt.py</code>, <code>multiselect.py</code> and
+<code>markdown.py</code> sit beside them for output, terminal input and rendering.</p>
+<h2 id="what-to-contribute"><a class="anchor" href="#what-to-contribute"></a>What to contribute</h2>
+<ul>
+<li><strong>New tool parsers</strong> — session history or model usage for another AI coding CLI</li>
+<li><strong>MCP format handlers</strong> — support for a tool's MCP config format in <code>mcp/formats.py</code></li>
+<li><strong>Skills roots</strong> — additional skill directory locations in <code>skill_roots()</code> or catalog discovery</li>
+<li><strong>Bug fixes and docs</strong> — always welcome</li>
+</ul>
+<h2 id="guidelines"><a class="anchor" href="#guidelines"></a>Guidelines</h2>
+<ol>
+<li><strong>Keep the core stdlib-only.</strong> Optional deps belong in <code>[project.optional-dependencies]</code> (see the <code>server</code> extra).</li>
+<li><strong>Never commit user state.</strong> Do not add <code>tools.json</code>, <code>mcp.json</code>, or machine-specific paths to the repo.</li>
+<li><strong>Add tests</strong> for new MCP format handlers, skills layout/catalog logic, or non-trivial parser logic. Tests run against a throwaway <code>$HOME</code> — they must not depend on your real config.</li>
+<li><strong>Match existing style</strong> — simple functions, minimal abstractions; follow patterns in the domain packages above.</li>
+<li><strong>Update help text</strong> when adding user-facing commands — top-level <code>help_text.py</code>, and <code>skills/help_text.py</code> or <code>mcp/</code> help for subcommands.</li>
+<li><strong>One concern per PR</strong> — easier to review and merge.</li>
+</ol>
+<h2 id="github-actions-are-pinned"><a class="anchor" href="#github-actions-are-pinned"></a>GitHub Actions are pinned</h2>
+<p>Every <code>uses:</code> in <code>.github/workflows/</code> points at a full 40-character commit SHA with the version as a trailing comment:</p>
+<pre><code>uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4</code></pre>
+<p>A tag is a movable pointer, so a tag reference is not reproducible. Resolve a new SHA with <code>gh api repos/OWNER/REPO/git/ref/tags/TAG</code> (if the ref object type is <code>tag</code>, dereference it with <code>gh api repos/OWNER/REPO/git/tags/SHA</code>). Dependabot rewrites both the SHA and the comment on its weekly grouped pull request, so you rarely have to do this by hand.</p>
+<h2 id="docs-site"><a class="anchor" href="#docs-site"></a>Docs site</h2>
+<p>The landing site is the static <code>app/landing-page/</code> directory, deployed by Vercel. Its <code>overview/</code>, <code>cli/</code>, <code>changelog/</code> and <code>contributing/</code> pages are generated from repo Markdown (README, CHANGELOG, CONTRIBUTING) and <code>swe help</code> by <code>scripts/docs_site.py</code>; the Markdown stays the source of truth. After changing a source or <code>swe help</code>, regenerate and commit:</p>
+<pre><code class="language-bash">python3 -m venv .venv-docs &amp;&amp; source .venv-docs/bin/activate
+pip install -r docs/requirements.txt
+python3 scripts/docs_site.py        # --check reports stale output
+</code></pre>
+<p><code>mistune</code> is a docs-only dependency pinned in <code>docs/requirements.txt</code> (and a <code>test</code> extra so CI's freshness test runs); the core package stays stdlib-only, so it never goes in the runtime deps.</p>
+<h2 id="code-of-conduct"><a class="anchor" href="#code-of-conduct"></a>Code of Conduct</h2>
+<p>Taking part in this project means agreeing to the <a href="https://github.com/c-wenlong/quiver/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>.</p>
+<h2 id="pull-request-process"><a class="anchor" href="#pull-request-process"></a>Pull request process</h2>
+<ol>
+<li>Fork the repo and create a feature branch from <code>main</code>.</li>
+<li>Make your changes and ensure tests pass locally.</li>
+<li>Update README, <code>swe help</code>, or <code>swe skills help</code> if you add user-facing commands or flags.</li>
+<li><strong>Reinstall and verify e2e</strong> — re-run <code>pip install -e .</code> so the installed <code>swe</code> binary picks up new files, then run the actual <code>swe &lt;command&gt;</code> to confirm the feature works end-to-end (not just <code>PYTHONPATH=src</code> unit tests).</li>
+<li>Open a PR with a clear description of what changed and why.</li>
+</ol>
+<blockquote>
+<p><strong>Why reinstall?</strong> The <code>swe</code> command is a pip entry point. With an editable install (<code>pip install -e .</code>), new files are picked up automatically. But a stale non-editable install (e.g. from <code>pip install .</code> or pipx) won't see new modules until you reinstall. Unit tests with <code>PYTHONPATH=src</code> can pass while <code>swe</code> silently fails because it doesn't see the new module.</p>
+</blockquote>
+<h2 id="reporting-bugs"><a class="anchor" href="#reporting-bugs"></a>Reporting bugs</h2>
+<p>Use the <a href="https://github.com/c-wenlong/quiver/issues/new?template=bug_report.yml">bug report template</a> and include:</p>
+<ul>
+<li>Your OS and Python version, plus the quiver version from <code>swe version</code></li>
+<li>The exact command that failed and its full output</li>
+<li>Steps to reproduce</li>
+</ul>
+<h2 id="questions"><a class="anchor" href="#questions"></a>Questions?</h2>
+<p><a href="https://github.com/c-wenlong/quiver/blob/main/SUPPORT.md">SUPPORT.md</a> has the full ladder: read the docs, run <code>swe doctor</code>,
+then open an <a href="https://github.com/c-wenlong/quiver/issues">issue</a>. Discussions
+are not enabled on this repo, so issues are the only channel — and we're happy
+to help you find a good first task there.</p>
+
+</main>
+<footer>
+  <span>quiver is MIT licensed.</span>
+  <div class="right">
+    <a href="../overview/">Docs</a>
+    <a href="../changelog/">Changelog</a>
+    <a href="../contributing/">Contributing</a>
+    <a href="https://github.com/c-wenlong/quiver">GitHub</a>
+  </div>
+</footer>
+</body>
+</html>

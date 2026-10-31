@@ -70,6 +70,21 @@ class HelpVsDispatchTest(unittest.TestCase):
 
 
 class SubcommandHelpTest(unittest.TestCase):
+    def test_real_instructions_help_and_completions_agree(self):
+        from quiver.completion import _SUBCOMMANDS
+        from quiver.help_text import HELP
+        from quiver.instructions.commands import SUBCOMMANDS
+
+        commands = set(SUBCOMMANDS)
+        self.assertEqual(
+            check_subcommand_help(
+                {name for name, _ in _SUBCOMMANDS["instructions"]},
+                commands, "instructions",
+            ),
+            [],
+        )
+        self.assertEqual(check_prose_mentions(HELP["instructions"][1], "instructions", commands), [])
+
     def test_phantom_help_entry_warns(self):
         findings = check_subcommand_help({"sync", "export"}, {"sync"}, "mcp")
         self.assertEqual(len(findings), 1)

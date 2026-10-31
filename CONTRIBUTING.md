@@ -81,6 +81,18 @@ Every `uses:` in `.github/workflows/` points at a full 40-character commit SHA w
 
 A tag is a movable pointer, so a tag reference is not reproducible. Resolve a new SHA with `gh api repos/OWNER/REPO/git/ref/tags/TAG` (if the ref object type is `tag`, dereference it with `gh api repos/OWNER/REPO/git/tags/SHA`). Dependabot rewrites both the SHA and the comment on its weekly grouped pull request, so you rarely have to do this by hand.
 
+## Docs site
+
+The landing site is the static `app/landing-page/` directory, deployed by Vercel. Its `overview/`, `cli/`, `changelog/` and `contributing/` pages are generated from repo Markdown (README, CHANGELOG, CONTRIBUTING) and `swe help` by `scripts/docs_site.py`; the Markdown stays the source of truth. After changing a source or `swe help`, regenerate and commit:
+
+```bash
+python3 -m venv .venv-docs && source .venv-docs/bin/activate
+pip install -r docs/requirements.txt
+python3 scripts/docs_site.py        # --check reports stale output
+```
+
+`mistune` is a docs-only dependency pinned in `docs/requirements.txt` (and a `test` extra so CI's freshness test runs); the core package stays stdlib-only, so it never goes in the runtime deps.
+
 ## Code of Conduct
 
 Taking part in this project means agreeing to the [Code of Conduct](CODE_OF_CONDUCT.md).
