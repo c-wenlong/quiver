@@ -360,6 +360,7 @@ private struct SessionsContent: View {
                                         localMachineId: localMachineId)
         if !group.isEmpty {
             OtherMachinesGroup(group: group, meta: { app.hub.meta(for: $0) },
+                               unread: { app.hub.isUnread($0) },
                                open: { open($0) }, act: { action, row in run(action, on: chatRow(row)) })
         }
     }
@@ -394,6 +395,7 @@ private struct SessionsContent: View {
                    hubModel: app.hub.model(for: HubSessionRow.key(
                        harness: row.session.harness, id: row.session.id)),
                    hub: model.hubOverlay.meta(for: row),
+                   unread: app.hub.isUnread(row),
                    match: model.searchHit(for: row.session.id),
                    open: { open(row) }, showDetails: { detail = row },
                    resume: { resume(row) }, act: { run($0, on: row) })
@@ -639,6 +641,18 @@ private struct SummaryStrip: View {
 
 // MARK: - Rows
 
+/// A Sessions row's unread dot, before its title: the hub has activity
+/// this Mac hasn't read (`UnreadDots.swift`). The blue the Inbox's dot
+/// uses.
+struct UnreadDot: View {
+    var body: some View {
+        Circle()
+            .fill(Theme.interactive)
+            .frame(width: Theme.statusDot, height: Theme.statusDot)
+            .hoverTip("Unread")
+    }
+}
+
 private extension SessionsModel.Row {
     /// A pinned row's id in the Pinned group, apart from its day-group id.
     var pinnedID: String { "pinned|\(id)" }
@@ -654,6 +668,9 @@ private struct SessionRow: View {
     /// The hub's pin, name and fork flag; nil when the hub doesn't list
     /// the session (or is down), and the menu then has no hub actions.
     var hub: HubSessionMeta?
+    /// The hub has activity on it this Mac hasn't read; never for a row
+    /// the hub doesn't list.
+    var unread = false
     /// The transcript hit this row surfaced on, for the snippet line; nil
     /// when it matched on metadata or content search is off.
     var match: SearchHit?
@@ -675,6 +692,7 @@ private struct SessionRow: View {
                     .hoverTip(HarnessMark(s.harness).name)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
+                        if unread { UnreadDot() }
                         Text(hub?.title(over: s.title) ?? s.title ?? s.id)
                             .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                         StatusBadge(status: s.status)
