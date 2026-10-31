@@ -16,7 +16,6 @@ quiver
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
   <img src="https://img.shields.io/badge/deps-stdlib--only-brightgreen.svg" alt="stdlib only">
-  <a href="https://c-wenlong.github.io/quiver/"><img src="https://img.shields.io/badge/docs-c--wenlong.github.io%2Fquiver-blue.svg" alt="Docs"></a>
 </p>
 
 <p align="center">

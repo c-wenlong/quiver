@@ -7,7 +7,7 @@ import Foundation
 /// same links (src/quiver/bug.py).
 public enum IssueReport {
     public static let repository = URL(string: "https://github.com/c-wenlong/quiver")!
-    public static let documentation = URL(string: "https://c-wenlong.github.io/quiver/")!
+    public static let documentation = repository
 
     /// The forms' Area option for this app.
     public static let macArea = "Mac app"
