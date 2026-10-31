@@ -191,6 +191,17 @@ class TestDeltaStream(unittest.TestCase):
         self.assertNotIn("SECRET", safe)
         self.assertTrue(safe.endswith("then "))
 
+    def test_certificates_and_public_keys_stream_on(self):
+        text = ("-----BEGIN CERTIFICATE-----\nMIIC \n"
+                "-----BEGIN PUBLIC KEY-----\nMFkw more ")
+        self.assertEqual(stream.safe_prefix(text, final=False), text)
+        # A label still arriving may turn private: held.
+        self.assertEqual(stream.safe_prefix("ok -----BEGIN RSA PRIV", False),
+                         "ok ")
+        self.assertEqual(
+            stream.safe_prefix("ok -----BEGIN RSA PRIVATE KEY-----\nX \n",
+                               False), "ok ")
+
     def test_rewrite_of_sent_text_stalls_the_stream(self):
         ds, out, clock, timers = _stream(interval=0)
         with patch.object(stream, "safe_prefix",

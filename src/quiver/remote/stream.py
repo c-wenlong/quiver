@@ -51,6 +51,8 @@ _SENSITIVE_LINE_RE = re.compile(
     r"client_secret|private_key|secret_key|password|passwd|token\s*[=:\"']"
 )
 _BEGIN_KEY = "-----BEGIN "
+# A whole BEGIN marker, label included (the redactor's label alphabet).
+_BEGIN_LABEL_RE = re.compile(r"-----BEGIN ([A-Z0-9 ]*)-----")
 
 
 def _clean(text: str) -> str:
@@ -59,13 +61,23 @@ def _clean(text: str) -> str:
 
 def _open_key_block(raw: str) -> int:
     """Where the first private-key block the redactor can't match yet
-    starts (its BEGIN marker has no complete matching END), else -1."""
+    starts (its BEGIN marker has no complete matching END), else -1.
+
+    A marker whose finished label is not a private key (a certificate,
+    a public key) streams on; one whose label is still arriving is held,
+    since it may yet turn out to be private.
+    """
     pos = raw.find(_BEGIN_KEY)
     while pos >= 0:
         match = _tr._PRIVATE_KEY_RE.match(raw, pos)
-        if match is None:
-            return pos
-        pos = raw.find(_BEGIN_KEY, match.end())
+        if match is not None:
+            pos = raw.find(_BEGIN_KEY, match.end())
+            continue
+        label = _BEGIN_LABEL_RE.match(raw, pos)
+        if label is not None and not label.group(1).endswith("PRIVATE KEY"):
+            pos = raw.find(_BEGIN_KEY, label.end())
+            continue
+        return pos
     return -1
 
 
