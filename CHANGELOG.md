@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac: `app/mac/script/setup-machine.sh` sets up a new dev Mac.** It
+  checks that full Xcode is selected (printing the `sudo xcode-select -s`
+  fix when Command Line Tools are), puts the checkout on `main` at
+  `origin/main` (renaming diverged branches aside with a dated name, never
+  deleting one, and stopping on a dirty tree), runs `install-app.sh`,
+  installs the remote hub with `swe remote serve --install`, and quits this
+  checkout's dev build for the installed app. Every step can run again, and
+  `--dry-run` prints the plan without changing anything. `install-app.sh`
+  now runs under `caffeinate -i`, so a build driven over SSH can't be put
+  to sleep ([#1214](https://github.com/c-wenlong/quiver/issues/1214)).
+
 - **Mac app: pin, rename and fork sessions.** The Sessions list still
   comes from `swe session --json` (tokens, cost, filters); when this
   Mac's hub is running, each row the hub also lists picks up the hub's

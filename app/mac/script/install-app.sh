@@ -27,6 +27,14 @@ case "$config" in
   debug|release) ;;
   *) echo "install-app: config must be debug or release" >&2; exit 1 ;;
 esac
+# Run under a power assertion, so a build driven over SSH isn't killed
+# when the Mac idles to sleep after the session ends. Once only: the
+# variable stops the re-exec from looping.
+if [ "$(uname)" = Darwin ] && [ -z "${QUIVER_INSTALL_CAFFEINATED:-}" ] &&
+   command -v caffeinate >/dev/null 2>&1; then
+  export QUIVER_INSTALL_CAFFEINATED=1
+  exec caffeinate -i "$BASH" "$0" "$@"
+fi
 repo="$(cd "$(dirname "$0")/../../.." && pwd)"
 ref="${QUIVER_INSTALL_REF:-origin/main}"
 dest="${QUIVER_INSTALL_DIR:-$HOME/Applications}/Quiver.app"
