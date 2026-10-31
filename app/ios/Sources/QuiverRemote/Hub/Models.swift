@@ -720,8 +720,9 @@ struct IssueCommentReply: Decodable {
 // MARK: Tasks (GET /v1/tasks…)
 
 /// `GET /v1/tasks`: the hub's work-item store over the sources' open
-/// items — GitHub pinned-repo issues and PRs, Linear cards when a key
-/// is configured — each row carrying the store's session/launch links.
+/// items — GitHub pinned-repo issues and PRs, Linear cards and Notion
+/// pages when a key is configured — each row carrying the store's
+/// session/launch links.
 struct TasksResponse: Decodable {
     let tasks: [TaskRow]
     /// Per-repo fetch failures, the same shape `/v1/pulls` reports;
@@ -735,6 +736,9 @@ struct TasksResponse: Decodable {
     /// `linear` section is configured, a blocking word with `error`
     /// when the source can't be reached.
     let linear: GhEnv?
+    /// Notion's env block, the same shape: `disabled` when no `notion`
+    /// section is configured.
+    let notion: GhEnv?
     /// Set when `gh` is missing or signed out on the hub. Stored GitHub
     /// tasks still list, marked stale.
     let envBlocked: String?

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// P13: every work item the hub knows — the pinned repos' open issues
-/// and PRs plus stored links (Linear too, when a key is configured) —
+/// and PRs plus stored links (Linear and Notion too, when configured) —
 /// grouped by repo or project, the same answer `GET /v1/tasks` gives.
 /// A row tap opens the task's detail; a swipe or the menu's "New agent
 /// session" opens the launch sheet, never a blind launch.
@@ -44,6 +44,9 @@ struct TasksView: View {
                 }
                 if let blocked = model.linearBlocked {
                     blockedBanner(source: "Linear", message: blocked)
+                }
+                if let blocked = model.notionBlocked {
+                    blockedBanner(source: "Notion", message: blocked)
                 }
                 if model.tasks.isEmpty && model.failedRepos.isEmpty {
                     if let reason = model.envBlocked ?? model.githubFailed {
@@ -190,8 +193,7 @@ struct TaskRowMenu: View {
         }
         if let url = task.url.flatMap(URL.init) {
             Button { openURL(url) } label: {
-                Label(task.source == "linear" ? "Open in Linear" : "Open on GitHub",
-                      systemImage: "safari")
+                Label(task.openLabel, systemImage: "safari")
             }
             ShareLink(item: url) {
                 Label("Share", systemImage: "square.and.arrow.up")

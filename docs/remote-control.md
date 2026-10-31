@@ -1189,6 +1189,19 @@ harness supports it, an inlined path otherwise. Caps: 20 MB per file,
 image/pdf/text only, swept after 7 days or at session end, whichever
 comes first.
 
+Which form a harness gets is its harness.json
+`capabilities.attachments.at_refs`, over `attachments.ATTACH_FALLBACK`
+for a harness that declares nothing (`supported: false` turns `@` refs
+off). The fallback says yes for Claude Code (its TUI and `claude -p`
+expand `@/abs/path` on submit), Gemini CLI and Qwen Code (their `@`
+command processor reads the file). Every other harness gets the path in
+plain text, `[Attached file: /abs/path] <message>`, and reads the file
+with its own tools: Codex's and OpenCode's `@` is a TUI picker that never
+runs on typed or API-sent text. Either form stays on one line, since a
+newline typed into a tmux pane would submit early. A channel tied to one
+harness (headless Claude, OpenCode serve, Codex app-server) uses that
+harness's answer; a tmux pane uses the session's harness.
+
 `GET /v1/devices` answers `{devices, requests, signins}` for the phone's
 pair-requests-and-devices screen: every `devices.json` row as
 `pairing.device_view` serves it (everything but the credential, plus
@@ -1304,7 +1317,8 @@ Screens:
   `GET /v1/sessions/{id}/queue` on open, and the send button turns into
   a red stop while the box is empty and the agent works. The composer
   also carries `/` shortcuts, `@` file-complete proxied through the
-  hub, and photo/file attach landing as `@`-refs on the machine.
+  hub, and photo/file attach landing on the machine as `@`-refs, or
+  as plain paths for harnesses whose prompt doesn't expand `@`.
 - **Inbox** — the control-plane screen: every pending decision across
   both machines (approvals, `needs_followup` hits, errors, finished).
   The phone's job is unblocking agents, not being a terminal. The hub

@@ -112,7 +112,8 @@ class TestOpencodeServe(unittest.TestCase):
              "attachments": ["/tmp/a.png"]},
             "idle")
         sent = self.calls[-1][2]["parts"][0]["text"]
-        self.assertTrue(sent.startswith("@/tmp/a.png"))
+        # opencode's API never expands an @ ref: the path goes in plain.
+        self.assertEqual(sent, "[Attached file: /tmp/a.png] see this")
 
     def test_send_rides_the_attach_pick_on_wire_fields(self):
         session = _session()
@@ -1139,8 +1140,8 @@ class TestCodexAppServerEdges(unittest.TestCase):
         self.assertTrue(res.ok)
         start_call = next(
             w for w in proc.writes if w.get("method") == "turn/start")
-        self.assertIn("@/tmp/a.png",
-                      start_call["params"]["input"][0]["text"])
+        self.assertEqual(start_call["params"]["input"][0]["text"],
+                         "[Attached file: /tmp/a.png] look")
 
     def test_approval_edges(self):
         inj = self._injector()

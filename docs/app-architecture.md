@@ -1,9 +1,11 @@
 # macOS app architecture
 
-The app under `app/mac/` is a SwiftPM package with three targets: `QuiverCore`
-(models, decoders, stores, samplers), `QuiverApp` (the window, menu bar and
-pages) and `QuiverWidgetsUI` (views shared by the app preview and the widget
-extension). Views live in `QuiverApp`; logic that deserves a test lives in
+The app under `app/mac/` is a SwiftPM package. Its main targets are
+`QuiverCore` (models, decoders, stores, samplers), `QuiverApp` (the window,
+menu bar and pages) and `QuiverWidgetsUI` (views shared by the app preview
+and the widget extension); `QuiverWidgets` is the widget extension itself
+and `QuiverFanHelper` the root fan-control helper, which links only
+`QuiverCore`. Views live in `QuiverApp`; logic that deserves a test lives in
 `QuiverCore`. This document is the frontend map; [ARCHITECTURE.md](../ARCHITECTURE.md)
 covers the whole repo and [json-contracts.md](json-contracts.md) the `swe`
 decoder shapes.
@@ -26,9 +28,11 @@ Sources/QuiverApp/
   Theme/       design tokens: colors, type, metrics, Card and Page
 Sources/QuiverCore/
   one folder per domain: Swe, Primitives, Mcp, Sessions, Hub, Ledger,
-  Accounts, Limits, Status, APIKeys, Agents, Compute, Usage,
-  Providers, MenuBar, Markdown, Lists, Snapshots, Support, App,
-  Updates
+  Accounts, Limits, Status, APIKeys, Agents, Calendar, Catalog,
+  Compute, GitHub, Models, Onboarding, Search, Services, Syntax,
+  Tasks, Usage, Vector, Providers, MenuBar, Markdown, Lists,
+  Snapshots, Support, App, Updates; Resources holds the bundled fonts
+  and logos
 ```
 
 ## AppModel

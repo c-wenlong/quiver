@@ -16,7 +16,7 @@ from pathlib import Path
 from quiver.webapp import sessions
 
 from tests.test_webapp import app_js_function
-from tests.test_webapp_launch_sheets import STUB
+from tests.test_webapp_launch_sheets import MENU_JS, STUB
 
 STATIC = Path(__file__).resolve().parent.parent / "src" / "quiver" / "webapp" / "static"
 SESSIONS_JS = STATIC / "sessions.js"
@@ -373,6 +373,54 @@ class TestSessionActionSheets(unittest.TestCase):
         self.assertEqual(out["hash"], "")
         self.assertTrue(out["routeSheet"])
 
+
+    def test_a_new_session_sheet_closed_by_leaving_never_opens_the_chat(self):
+        """Back while New session waits for its launch: the navigation
+        closes the sheet (app.js closeRouteSheets), and the poll's answer
+        must not open the new chat from wherever the user went."""
+        script = (SHEET_STUB + MENU_JS.read_text(encoding="utf-8") + "\n"
+                  + SESSIONS_JS.read_text(encoding="utf-8") + "\n" + r"""
+const out = {};
+(async () => {
+  globalThis.setTimeout = (f) => { f(); return 0; };
+  apiAnswers.push(["/v1/machines", { status: 200, data: { machines: [
+    { id: "m1", name: "hub", online: true, launchable: ["claude"] }] } }]);
+  fetchRoutes.push(["/v1/sessions", { status: 202, body: { launch_id: "L1", state: "pending" } }]);
+  sessionsPage.data = { sessions: [] };
+  await openNewSession();
+  await tick();
+  const d = created.get("new-session-sheet");
+  const q = (s) => d.querySelector(s);
+  q("#ns-folder").value = "/w/app"; q("#ns-folder").oninput(); await tick();
+  q("#ns-prompt").value = "go"; q("#ns-prompt").oninput();
+  let release;
+  globalThis.api = () => new Promise((r) => { release = () => r({ status: 200, data: { state: "started", key: "claude:new" } }); });
+  q("#ns-start").onclick();
+  await tick();
+  out.waiting = [ns.phase, !!release];
+  // A browser fires the close event a task after close(): the poll's
+  // answer can land in between.
+  const onclose = d.onclose;
+  d.close = function () { this.open = false; };
+  d.close();
+  release();
+  await tick();
+  onclose();
+  out.hash = location.hash;
+  out.phase = ns.phase;
+  out.routeSheet = "routeSheet" in d.dataset || "data-route-sheet" in d.attrs;
+  detachClick({ key: "claude:a", title: "A", harness: "claude", status: "active", ownership: "attached" });
+  const det = created.get("detach-sheet");
+  out.detachRouteSheet = !!det && ("routeSheet" in det.dataset || "data-route-sheet" in det.attrs);
+  process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+        out = _run_node(self, script)
+        self.assertEqual(out["waiting"], ["waiting", True])
+        self.assertEqual(out["hash"], "")
+        self.assertEqual(out["phase"], "idle")
+        self.assertTrue(out["routeSheet"])
+        self.assertTrue(out["detachRouteSheet"])
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestChatHeaderMeta(unittest.TestCase):
