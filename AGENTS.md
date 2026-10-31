@@ -69,9 +69,6 @@ python3 -m coverage combine && python3 -m coverage report
 # CLI from source; MCP sync subsystem directly
 PYTHONPATH=src python3 -m quiver.cli list
 python3 -m quiver.mcp list
-
-# Docs site: stage into build/docs-site/, then build or preview
-python3 scripts/docs_site.py && zensical build --clean  # or: zensical serve
 ```
 
 There is no linter or formatter, and no pytest: `tests/conftest.py` pins terminal width to 200 columns but only fires under pytest, so a unittest test that asserts on rendered width patches `quiver.console.terminal_width` itself.
