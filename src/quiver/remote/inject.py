@@ -309,8 +309,9 @@ class ClaudeHeadlessInjector:
         self.key = session_key
         self.deltas = deltas
         self.machine = machine
-        # Non-JSON output of the last run (argv errors land here).
-        self._noise: list[str] = []
+        # Set when the last run's claude refused --include-partial-messages
+        # at argv parsing, before any JSON record (so before any work).
+        self._flag_refused = False
         self._locks.setdefault(session_key, threading.Lock())
 
     @staticmethod
@@ -372,7 +373,8 @@ class ClaudeHeadlessInjector:
         watchdog = threading.Timer(HEADLESS_TIMEOUT_S, _expire)
         watchdog.daemon = True
         watchdog.start()
-        self._noise = []
+        self._flag_refused = False
+        saw_json = False
         live = _ClaudeLive(self.deltas, self.key, self.machine)
         try:
             result_text = ""
@@ -384,8 +386,10 @@ class ClaudeHeadlessInjector:
                 try:
                     rec = json.loads(line)
                 except ValueError:
-                    self._noise = (self._noise + [line])[-5:]
+                    if not saw_json and _refuses_partial_flag(line):
+                        self._flag_refused = True
                     continue
+                saw_json = True
                 if not isinstance(rec, dict):
                     continue
                 if rec.get("type") == "stream_event":
@@ -442,11 +446,10 @@ class ClaudeHeadlessInjector:
             partial = ClaudeHeadlessInjector._partial
             ok, note = self._run(session, self.argv(
                 session, text, model, partial=partial))
-            if not ok and partial and any(
-                    "include-partial-messages" in n for n in self._noise):
+            if not ok and partial and self._flag_refused:
                 # This claude predates the flag and stopped at argv
-                # parsing, before the prompt reached the model: run the
-                # turn again without live text.
+                # parsing, before it printed a record or reached the
+                # model: run the turn again without live text.
                 ClaudeHeadlessInjector._partial = False
                 ok, note = self._run(session, self.argv(
                     session, text, model, partial=False))
@@ -493,6 +496,13 @@ class ClaudeHeadlessInjector:
         return InjectResult(
             False, f"unsupported_control: {op} needs a live TUI"
         )
+
+
+def _refuses_partial_flag(line: str) -> bool:
+    """claude's argv error for a flag it doesn't know (``error: unknown
+    option '--include-partial-messages'``)."""
+    return "unknown option" in line.lower() and \
+        "--include-partial-messages" in line
 
 
 class _ClaudeLive:
@@ -645,6 +655,12 @@ def _serve_event_loop(serve: _ServeProc) -> None:
                     data_lines.append(line[5:].lstrip())
     except Exception:
         pass
+    # The serve died or its stream dropped: no session.idle will close
+    # what was mid-stream, so close it here.
+    for sid, deltas in list(serve.deltas.items()):
+        sub = serve.subs.get(sid)
+        if sub is not None:
+            deltas.finish_all(sub[0])
 
 
 # Bound on remembered part types; a long-lived serve forgets the oldest.
@@ -880,8 +896,13 @@ class OpencodeServeInjector:
             # sessions subscribed to the dead one hold nothing here, and
             # dropping a ref they never took would kill the new serve
             # under the sessions using it.
-            serve.deltas.pop(session.session_id, None)
-            if serve.subs.pop(session.session_id, None) is None:
+            deltas = serve.deltas.pop(session.session_id, None)
+            sub = serve.subs.pop(session.session_id, None)
+            if deltas is not None and sub is not None:
+                # A reply cut off by the detach: close its bubbles now,
+                # no session.idle will come for it.
+                deltas.finish_all(sub[0])
+            if sub is None:
                 return
             serve.refs = max(0, serve.refs - 1)
             if serve.refs:

@@ -164,6 +164,33 @@ class TestDeltaStream(unittest.TestCase):
         self.assertNotIn("MIIE", text)
         self.assertIn("[REDACTED PRIVATE KEY]", text)
 
+    def test_a_partial_end_marker_keeps_the_key_hidden(self):
+        ds, out, clock, timers = _stream(interval=0)
+        with patch.object(stream.threading, "Timer", timers):
+            ds.push("k", "m", "a", "assistant",
+                    "Here:\n-----BEGIN RSA PRIVATE KEY-----\nMIIE abc \n"
+                    "-----END ")
+            ds.push("k", "m", "a", "assistant", "RSA PRIV ")
+        self.assertNotIn("MIIE", _texts(out))
+
+    def test_a_key_cut_off_by_a_dead_reader_never_shows(self):
+        ds, out, clock, timers = _stream(interval=0)
+        with patch.object(stream.threading, "Timer", timers):
+            ds.push("k", "m", "a", "assistant",
+                    "Here:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl bW \n")
+            ds.finish_all("k")
+        self.assertEqual(_texts(out), "Here:\n")
+        self.assertTrue(out[-1]["data"]["done"])
+
+    def test_an_open_block_after_a_closed_one_is_still_held(self):
+        text = ("-----BEGIN EC PRIVATE KEY-----\nAAA\n"
+                "-----END EC PRIVATE KEY-----\nthen "
+                "-----BEGIN RSA PRIVATE KEY-----\nSECRET \n")
+        safe = stream.safe_prefix(text, final=True)
+        self.assertNotIn("AAA", safe)
+        self.assertNotIn("SECRET", safe)
+        self.assertTrue(safe.endswith("then "))
+
     def test_rewrite_of_sent_text_stalls_the_stream(self):
         ds, out, clock, timers = _stream(interval=0)
         with patch.object(stream, "safe_prefix",
@@ -303,6 +330,26 @@ class TestHeadlessClaudeStreams(unittest.TestCase):
         self.assertNotIn("--include-partial-messages",
                          popen.call_args_list[1][0][0])
         self.assertFalse(inject.ClaudeHeadlessInjector._partial)
+
+    def test_a_failure_after_work_started_does_not_rerun(self):
+        lines = [
+            json.dumps({"type": "system", "subtype": "init"}),
+            "warning: --include-partial-messages: unknown option in plugin",
+        ]
+        with patch.object(inject.subprocess, "Popen",
+                          return_value=_FakeProc(lines, rc=1)) as popen:
+            out = self.inj.send(_claude_session(),
+                                {"text": "go", "mode": "queue"}, "done")
+        self.assertFalse(out.ok)
+        self.assertEqual(popen.call_count, 1)
+        self.assertTrue(inject.ClaudeHeadlessInjector._partial)
+
+    def test_a_mention_of_the_flag_alone_does_not_rerun(self):
+        with patch.object(inject.subprocess, "Popen", return_value=_FakeProc(
+                ["note: --include-partial-messages is slow"], rc=1)) as popen:
+            self.inj.send(_claude_session(),
+                          {"text": "go", "mode": "queue"}, "done")
+        self.assertEqual(popen.call_count, 1)
 
     def test_other_failures_do_not_rerun(self):
         with patch.object(inject.subprocess, "Popen",
@@ -444,6 +491,15 @@ class TestOpencodeServeStreams(unittest.TestCase):
         with patch.object(inject.os.path, "realpath", return_value=cwd):
             inj._release(session)
         self.assertNotIn("ses_1", self.serve.deltas)
+        self.assertEqual(self.sink.calls[-1],
+                         ("finish_all", "opencode:ses_1"))
+
+    def test_a_dropped_event_stream_finishes_open_messages(self):
+        with patch.object(inject.urllib.request, "urlopen",
+                          return_value=io.BytesIO(b"data: {}\n\n")):
+            inject._serve_event_loop(self.serve)
+        self.assertEqual(self.sink.calls[-1],
+                         ("finish_all", "opencode:ses_1"))
 
 
 # -- hub and satellite --------------------------------------------------

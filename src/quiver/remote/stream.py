@@ -51,24 +51,37 @@ _SENSITIVE_LINE_RE = re.compile(
     r"client_secret|private_key|secret_key|password|passwd|token\s*[=:\"']"
 )
 _BEGIN_KEY = "-----BEGIN "
-_END_KEY = "-----END "
 
 
 def _clean(text: str) -> str:
     return _tr._redact_secrets(sanitize_document(text))
 
 
+def _open_key_block(raw: str) -> int:
+    """Where the first private-key block the redactor can't match yet
+    starts (its BEGIN marker has no complete matching END), else -1."""
+    pos = raw.find(_BEGIN_KEY)
+    while pos >= 0:
+        match = _tr._PRIVATE_KEY_RE.match(raw, pos)
+        if match is None:
+            return pos
+        pos = raw.find(_BEGIN_KEY, match.end())
+    return -1
+
+
 def safe_prefix(raw: str, final: bool) -> str:
     """The cleaned text of ``raw`` that is safe to show now.
 
-    ``final`` means the message is complete: everything shows. Otherwise
-    the held-back tail (the unfinished word, a credential-looking line,
-    an open private-key block) waits for more text.
+    An unterminated private-key block never shows, not even when the
+    message is ``final`` (a reader that died mid-block): only a complete
+    block matches the redactor. Otherwise ``final`` shows everything,
+    and before that the held-back tail (the unfinished word, a
+    credential-looking line) waits for more text.
     """
+    begin = _open_key_block(raw)
+    if begin >= 0:
+        raw = raw[:begin]
     if not final:
-        begin = raw.rfind(_BEGIN_KEY)
-        if begin >= 0 and raw.find(_END_KEY, begin) < 0:
-            raw = raw[:begin]
         line_start = raw.rfind("\n") + 1
         if _SENSITIVE_LINE_RE.search(raw[line_start:]):
             raw = raw[:line_start]
