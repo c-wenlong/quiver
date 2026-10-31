@@ -1371,7 +1371,9 @@ def channel_tuning_error(
                     "turns have no effort flag")
         return ""
     if mode == "serve":
-        if model and "/" not in model:
+        from quiver.remote.launch_model import provider_split
+
+        if model and provider_split(model) is None:
             return ("opencode serve can't take /model "
                     f"{model!r}: the channel needs a provider/model "
                     "value")

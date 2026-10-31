@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not edited them. Closes
   [#888](https://github.com/c-wenlong/quiver/issues/888).
 
+- **Hub: switch the model of an opencode session attached through
+  `opencode serve`.** The `model` control op on a `serve` session
+  records a `provider/model` pick on the session's supervised row, and
+  the next `prompt_async` carries it as `{providerID, modelID}`, so the
+  switch applies from the next turn; a bare name is refused. opencode
+  rows now list `serve` in `model_modes`, so the iPhone's Model menu
+  shows on them with no app change. This closes model switching on
+  every API channel
+  ([#643](https://github.com/c-wenlong/quiver/issues/643)).
+
 - **Hub: switch the model of a headless Claude Code session.** The
   `model` control op on a `headless` session records the pick on the
   session's supervised row, and the next `claude -p --resume` run takes

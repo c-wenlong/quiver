@@ -126,6 +126,16 @@ running <code>swe init</code> removes only those, and only while the account has
 not edited them. Closes
 <a href="https://github.com/c-wenlong/quiver/issues/888">#888</a>.</p>
 </li>
+<li><p><strong>Hub: switch the model of an opencode session attached through
+<code>opencode serve</code>.</strong> The <code>model</code> control op on a <code>serve</code> session
+records a <code>provider/model</code> pick on the session's supervised row, and
+the next <code>prompt_async</code> carries it as <code>{providerID, modelID}</code>, so the
+switch applies from the next turn; a bare name is refused. opencode
+rows now list <code>serve</code> in <code>model_modes</code>, so the iPhone's Model menu
+shows on them with no app change. This closes model switching on
+every API channel
+(<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>).</p>
+</li>
 <li><p><strong>Hub: switch the model of a headless Claude Code session.</strong> The
 <code>model</code> control op on a <code>headless</code> session records the pick on the
 session's supervised row, and the next <code>claude -p --resume</code> run takes
