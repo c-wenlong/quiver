@@ -38,7 +38,7 @@ class TestWebAppRoutes(HubBase):
         self.assertEqual(status, 200)
         self.assertIn(b'src="/app.js"', body)
         self.assertIn(b'src="/model-menu.js"', body)
-        for path in ("/app.js", "/format.js", "/model-menu.js", "/styles.css",
+        for path in ("/app.js", "/format.js", "/model-menu.js", "/machine-strip.js", "/styles.css",
                      "/harness-devin.svg"):
             self.assertEqual(self.srv.request("GET", path)[0], 200, path)
         # Only a flat asset name of a known type: nothing climbs out of
