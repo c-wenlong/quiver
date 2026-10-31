@@ -355,6 +355,9 @@ pre.command { margin: 0; background: var(--subtle); border-radius: var(--block-r
   color: var(--text-primary); padding: 2px 10px 6px; word-break: break-all; }
 .ns-browse .sheet-actions { padding-top: 6px; }
 textarea.ns-prompt { height: auto; min-height: 72px; padding: 8px 10px; resize: vertical; line-height: 1.4; }
+.ns-yolo { display: flex; align-items: center; gap: 8px; font-size: 13px;
+  color: var(--text-primary); padding: 2px; cursor: pointer; }
+.ns-yolo input:disabled { cursor: default; }
 input.field.ns-path-input, input.field.ns-query { width: 100%; }
 /* In the sheet's column flex, .search's flex-basis would read as height. */
 input.field.ns-query { flex: none; height: 36px; }

@@ -1100,6 +1100,7 @@ const ns = {
   machineId: null, harness: null, folder: "", prompt: "", query: "",
   harnessTouched: false,     // a picked harness keeps its choice across folder changes
   model: null,               // ModelMenu state, fresh per sheet open; a user's pick survives harness re-defaults
+  yolo: true,                // the Autonomy checkbox; on until the user turns it off
   browse: null, browseSeq: 0,  // {path, parent, folders, error, loading}
   phase: "idle", message: "", seq: 0,  // idle|starting|waiting|started|failed|unconfirmed
 };
@@ -1165,6 +1166,18 @@ function nsModelOk(machine) {
   return !!(machine && ns.harness
     && Array.isArray(machine.model_at_launch)
     && machine.model_at_launch.includes(ns.harness));
+}
+
+/* `yolo_at_launch` is the Autonomy row's `model_at_launch`: the key
+ * absent means a build that would drop the flag, so the row hides;
+ * present, it names the harnesses whose launches take the bypass. */
+function nsShowsYolo(machine) {
+  return !!(machine && Array.isArray(machine.yolo_at_launch));
+}
+
+function nsYoloOk(machine) {
+  return nsShowsYolo(machine) && !!ns.harness
+    && machine.yolo_at_launch.includes(ns.harness);
 }
 
 /* The ledger's recent models for the picked harness on this machine,
@@ -1251,6 +1264,9 @@ function nsPaint() {
     ${harnessChips}
     ${untracked ? `<p class="note">Quiver can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
     ${modelUi}
+    ${nsShowsYolo(machine) ? `<div class="caption">Autonomy</div>
+    <label class="ns-yolo"><input type="checkbox" id="ns-yolo"${ns.yolo && nsYoloOk(machine) ? " checked" : ""}${busy || !nsYoloOk(machine) ? " disabled" : ""}> YOLO mode: run without approval prompts</label>
+    ${ns.harness && !nsYoloOk(machine) ? `<p class="caption" style="padding:0 2px">${esc(nsHarnessName(machine, ns.harness))} can't start with approvals bypassed: it runs its usual checks.</p>` : ""}` : ""}
     <div class="caption">Folder</div>
     <input class="field ns-path-input" id="ns-folder" type="text" autocomplete="off" spellcheck="false"
       placeholder="/absolute/path" value="${esc(ns.folder)}"${busy ? " disabled" : ""}>
@@ -1306,6 +1322,8 @@ function nsPaint() {
   if (queryIn) queryIn.oninput = () => { ns.query = queryIn.value; nsPaintLists(); };
   const promptIn = sheet.querySelector("#ns-prompt");
   if (promptIn) promptIn.oninput = () => { ns.prompt = promptIn.value; nsPaintStart(); };
+  const yoloBox = sheet.querySelector("#ns-yolo");
+  if (yoloBox) yoloBox.onchange = () => { ns.yolo = yoloBox.checked; };
   nsPaintModel();
   const browseBtn = sheet.querySelector("#ns-browse");
   if (browseBtn) browseBtn.onclick = () => nsBrowse(ns.folder.trim());
@@ -1405,6 +1423,7 @@ async function openNewSession() {
   ns.harness = null;
   ns.harnessTouched = false;
   ns.model = ModelMenu.fresh();
+  ns.yolo = true;
   ns.folder = ns.folder || "";   // the last folder is a good next guess
   ns.prompt = "";
   ns.query = "";
@@ -1447,6 +1466,7 @@ async function nsStart() {
   if (ns.machineId) body.machine = ns.machineId;
   const model = ModelMenu.value(ns.model);
   if (nsModelOk(nsMachine()) && model) body.model = model;
+  if (nsYoloOk(nsMachine()) && ns.yolo) body.yolo = true;
   const { status, data } = await apiPost("/v1/sessions", body);
   if (!live()) return;
   if (status === 401) {

@@ -236,23 +236,28 @@ public struct HubClient: Sendable {
     /// nothing.
     public static func launchBody(harness: String, cwd: String, prompt: String,
                                   machine: String? = nil,
-                                  model: String? = nil) -> [String: any Sendable] {
+                                  model: String? = nil,
+                                  yolo: Bool = false) -> [String: any Sendable] {
         var body: [String: any Sendable] = ["harness": harness, "cwd": cwd, "prompt": prompt]
         if let machine, !machine.isEmpty { body["machine"] = machine }
         if let model = launchToken(model) { body["model"] = model }
+        if yolo { body["yolo"] = true }
         return body
     }
 
     /// `POST /v1/sessions`: start `harness` in `cwd` with `prompt`. The
     /// 202 answer is the launch to poll through `launch(_:)` — the same
-    /// shape `resolveIssue` returns.
+    /// shape `resolveIssue` returns. `yolo` starts the session with its
+    /// approval checks off; a harness the machine doesn't list in
+    /// `yolo_at_launch` gets the flag refused, never silently dropped.
     public func startSession(harness: String, cwd: String, prompt: String,
                              machine: String? = nil,
-                             model: String? = nil) async throws -> HubLaunchStatus {
+                             model: String? = nil,
+                             yolo: Bool = false) async throws -> HubLaunchStatus {
         try await send(request("POST", "/v1/sessions",
                                body: Self.launchBody(harness: harness, cwd: cwd,
                                                      prompt: prompt, machine: machine,
-                                                     model: model)))
+                                                     model: model, yolo: yolo)))
     }
 
     /// `POST /v1/pulls/<o>/<r>/<n>/open`: detached PR worktree + launch,

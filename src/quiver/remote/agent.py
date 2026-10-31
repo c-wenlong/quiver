@@ -844,6 +844,7 @@ class RemoteAgent:
                     binary=binary,
                     model=str(data.get("model") or "") or None,
                     effort=str(data.get("effort") or "") or None,
+                    yolo=bool(data.get("yolo")),
                 )
                 return ok, note, False
             if op == "attachment":

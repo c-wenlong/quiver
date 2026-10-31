@@ -29,6 +29,9 @@ struct NewSessionSheet: View {
     /// The launch `model` menu's state; a harness or machine change
     /// refits it (`ModelPick.refit`).
     @State private var modelPick = ModelPick()
+    /// The Autonomy checkbox: on until the user turns it off. What the
+    /// launch actually takes is gated per harness by `takesYolo`.
+    @State private var yolo = true
     /// The folder browser's place; non-nil swaps the form for it.
     @State private var browse: FolderBrowse?
     @State private var flow = IssueLaunchFlow()
@@ -81,6 +84,12 @@ struct NewSessionSheet: View {
         LaunchOptions.takesModel(harness, on: machine)
     }
 
+    /// Whether a launch on the picked machine honours `yolo` for the
+    /// picked harness — the Autonomy checkbox's enabled state.
+    private var takesYolo: Bool {
+        LaunchOptions.takesYolo(harness, on: machine)
+    }
+
     private var ready: Bool {
         (harness.map { offered.contains($0) } ?? false) && !machinesPending
             && folder.trimmingCharacters(in: .whitespaces).hasPrefix("/")
@@ -121,6 +130,7 @@ struct NewSessionSheet: View {
                 machineSection
                 harnessSection
                 modelSection
+                yoloSection
                 folderSection
                 promptSection
             }
@@ -198,6 +208,28 @@ struct NewSessionSheet: View {
             group("Model") {
                 ModelMenu(recent: LaunchOptions.recentModels(harness, on: machine),
                           pick: $modelPick, supported: takesModel)
+            }
+        }
+    }
+
+    /// The launch `yolo` switch, on by default. Only a machine row that
+    /// reports `yolo_at_launch` gets the row: an older build would take
+    /// the flag and silently drop it. A harness outside the list shows
+    /// the box off and disabled — its launch runs the usual checks.
+    @ViewBuilder private var yoloSection: some View {
+        if LaunchOptions.showsYolo(on: machine) {
+            group("Autonomy") {
+                Toggle("YOLO mode: run without approval prompts",
+                       isOn: Binding(get: { yolo && takesYolo },
+                                     set: { yolo = $0 }))
+                    .toggleStyle(.checkbox)
+                    .font(Theme.caption)
+                    .disabled(!takesYolo)
+                if let harness, !takesYolo {
+                    Text("\(NewSessionOptions.name(harness, on: machine, sessions: sessions)) can't start with approvals bypassed: it runs its usual checks.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -519,7 +551,8 @@ struct NewSessionSheet: View {
                 try await hub.withClient {
                     try await $0.startSession(harness: harness, cwd: cwd,
                                               prompt: text, machine: target,
-                                              model: model)
+                                              model: model,
+                                              yolo: yolo && takesYolo)
                 }
             },
             fetch: { id in try await hub.withClient { try await $0.launch(id) } })

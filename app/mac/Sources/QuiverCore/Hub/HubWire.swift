@@ -314,6 +314,11 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
     /// `modelAtLaunch`'s effort twin; decoded for completeness, unused
     /// until the effort picker ships.
     public var effortAtLaunch: [String]?
+    /// The launchable harnesses whose launches take `yolo`, the
+    /// approvals-off switch. Absent on a machine build older than the
+    /// field — it would accept the flag and silently drop it, so the
+    /// sheets give that row no Autonomy row at all.
+    public var yoloAtLaunch: [String]?
     /// The machine ledger's most recent model per harness — the Model
     /// menu's default. Always the head of `recentModels`.
     public var lastModels: [String: String]?
@@ -326,6 +331,7 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
                 harnesses: [String]? = nil, launchable: [String]? = nil,
                 harnessNames: [String: String]? = nil, untrackedHarnesses: [String]? = nil,
                 modelAtLaunch: [String]? = nil, effortAtLaunch: [String]? = nil,
+                yoloAtLaunch: [String]? = nil,
                 lastModels: [String: String]? = nil,
                 recentModels: [String: [String]]? = nil) {
         self.id = id
@@ -337,6 +343,7 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
         self.untrackedHarnesses = untrackedHarnesses
         self.modelAtLaunch = modelAtLaunch
         self.effortAtLaunch = effortAtLaunch
+        self.yoloAtLaunch = yoloAtLaunch
         self.lastModels = lastModels
         self.recentModels = recentModels
     }

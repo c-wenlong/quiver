@@ -26,6 +26,11 @@ struct Machine: Codable, Identifiable, Hashable {
     var modelAtLaunch: [String]? = nil
     /// The same gate for `effort`; decoded now so a later row can use it.
     var effortAtLaunch: [String]? = nil
+    /// Harnesses whose launch honours `yolo`, the approvals-off switch.
+    /// Absent on a satellite older than the field: it would accept the
+    /// flag and silently run the usual checks, so the launch sheets
+    /// hide the Autonomy row rather than offer one that can't apply.
+    var yoloAtLaunch: [String]? = nil
     /// The machine ledger's most recent model per harness, the head of
     /// each `recentModels` list.
     var lastModels: [String: String]? = nil

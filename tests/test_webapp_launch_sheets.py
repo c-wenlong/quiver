@@ -571,11 +571,12 @@ globalThis.apiPost = async (path, body) => {
 };
 const HUB = { id: "m1", name: "hub", online: true, launchable: ["claude", "gemini", "codex"],
   model_at_launch: ["claude", "codex"], effort_at_launch: ["claude"],
+  yolo_at_launch: ["claude", "codex"],
   last_models: { claude: "opus", codex: "gpt-5-codex" },
   recent_models: { claude: ["opus", "sonnet"], codex: ["gpt-5-codex", "gpt-5"] } };
 apiAnswers.push(
   ["/v1/machines", { status: 200, data: { machines: [HUB,
-    // An old satellite's hub: last_models only.
+    // An old satellite's hub: last_models only, no yolo_at_launch.
     { id: "m2", name: "sat", online: true, launchable: ["claude"],
       model_at_launch: ["claude"], effort_at_launch: [],
       last_models: { claude: "opus-m2" } }] } }],
@@ -600,12 +601,18 @@ const out = {};
   out.options = labels(menu());
   out.prefill = picked(menu());
   out.noBox = !box();
+  out.yoloShown = !!q("#ns-yolo");
+  out.yoloOn = q("#ns-yolo") && "checked" in q("#ns-yolo").attrs;
   q("#ns-folder").value = "/tmp/wt"; q("#ns-folder").oninput(); await tick();
   q("#ns-prompt").value = "say ok"; q("#ns-prompt").oninput();
   chip("gemini").onclick(); await tick();
   out.hides = !menu();
+  out.yoloOff = q("#ns-yolo") && q("#ns-yolo").disabled
+    && !("checked" in q("#ns-yolo").attrs);
+  out.yoloNote = d._html.includes("can't start with approvals bypassed");
   chip("claude").onclick(); await tick();
   out.reprefill = picked(menu());
+  out.yoloOnAgain = q("#ns-yolo") && "checked" in q("#ns-yolo").attrs;
   choose(menu(), "sonnet");
   chip("claude").onclick(); await tick();
   out.recentKept = picked(menu());
@@ -624,8 +631,9 @@ const out = {};
   const post = fetchCalls.find((c) => c.path === "/v1/sessions");
   out.postModel = post && post.body.model;
   out.postMachine = post && post.body.machine;
+  out.postYolo = post && post.body.yolo;
   // A fresh sheet: an explicit Harness default survives a switch and
-  // sends no key.
+  // sends no key; an unticked Autonomy sends no yolo key.
   await openNewSession();
   await tick();
   q("#ns-folder").value = "/tmp/wt"; q("#ns-folder").oninput(); await tick();
@@ -636,9 +644,11 @@ const out = {};
   out.selectFocused = !!activeEl && activeEl.id === "ns-model";
   chip("codex").onclick(); await tick();
   out.clearedKept = picked(menu());
+  q("#ns-yolo").checked = false; q("#ns-yolo").onchange();
   q("#ns-start").onclick(); await tick();
   const post2 = fetchCalls.filter((c) => c.path === "/v1/sessions").pop();
   out.emptyHasNoModel = !("model" in (post2 && post2.body || {}));
+  out.untickedNoYolo = !("yolo" in (post2 && post2.body || {}));
   // A fresh sheet is clean again: a machine switch re-defaults from that
   // machine's own ledger, here an old hub's one-item last_models.
   await openNewSession();
@@ -649,6 +659,7 @@ const out = {};
   await tick();
   out.machineRefill = picked(menu());
   out.oldHubOptions = labels(menu());
+  out.yoloHiddenSat = !q("#ns-yolo");
   // An old satellite's row carries no model_at_launch: the menu hides.
   apiAnswers.length = 0;
   apiAnswers.push(["/v1/machines", { status: 200, data: { machines: [
@@ -656,6 +667,7 @@ const out = {};
   await openNewSession();
   await tick();
   out.hiddenOldSat = !menu();
+  out.yoloHiddenOld = !q("#ns-yolo");
   // A typed folder that flips the model row must not rebuild the sheet:
   // the folder input keeps its node (and so its focus and caret).
   apiAnswers.length = 0;
@@ -812,14 +824,25 @@ class TestLaunchModelMenu(unittest.TestCase):
                             + SESSIONS_FLOW)
         self.assertTrue(out["sheetOpened"])
         self.assert_walk(out, old_hub_model="opus-m2")
+        self.assertTrue(out["yoloShown"], "the Autonomy box shows on a yolo_at_launch row")
+        self.assertTrue(out["yoloOn"], "the box is ticked by default")
+        self.assertTrue(out["yoloOff"], "a non-yolo harness shows the box off and disabled")
+        self.assertTrue(out["yoloNote"], "the box says why it is off")
+        self.assertTrue(out["yoloOnAgain"], "back on a yolo harness the box ticks again")
+        self.assertTrue(out["postYolo"], "the launch posts yolo: true")
+        self.assertTrue(out["untickedNoYolo"], "an unticked box sends no yolo key")
         self.assertEqual(out["postMachine"], "m1")
         self.assertTrue(out["folderNodeKeptOther"], "Other… redraws the model row only")
         self.assertTrue(out["boxGone"])
         self.assertTrue(out["selectFocused"], "leaving Other… puts focus back on the menu")
         self.assertEqual(out["machineRefill"], "opus-m2",
                          "an untouched menu re-defaults from the new machine's ledger")
+        self.assertTrue(out["yoloHiddenSat"],
+                        "a machine row without yolo_at_launch hides the box")
         self.assertTrue(out["hiddenOldSat"],
                         "a machine row without model_at_launch shows no menu")
+        self.assertTrue(out["yoloHiddenOld"],
+                        "an old hub's row hides the Autonomy row too")
         self.assertTrue(out["flipHidesRow"],
                         "a folder re-defaulting to a non-model harness drops the row")
         self.assertTrue(out["folderNodeKeptOff"],

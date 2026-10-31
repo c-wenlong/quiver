@@ -85,6 +85,21 @@ enum NewSessionOptions {
         return machine.modelAtLaunch?.contains(harness) == true
     }
 
+    /// Whether a sheet's Autonomy row shows at all: only a machine row
+    /// carrying `yolo_at_launch` can answer for its harnesses. An older
+    /// satellite's row lacks it and would silently run the usual checks,
+    /// so the row stays hidden rather than offer what can't apply.
+    static func showsYoloField(on machine: Machine) -> Bool {
+        machine.yoloAtLaunch != nil
+    }
+
+    /// Whether `harness` honours `yolo` at launch on `machine` — the
+    /// checkbox's enabled state.
+    static func acceptsYolo(_ harness: String?, on machine: Machine) -> Bool {
+        guard let harness else { return false }
+        return machine.yoloAtLaunch?.contains(harness) == true
+    }
+
     /// The model `machine` last ran `harness` with.
     static func lastModel(_ harness: String?, on machine: Machine) -> String? {
         guard let harness, let model = machine.lastModels?[harness], !model.isEmpty else { return nil }

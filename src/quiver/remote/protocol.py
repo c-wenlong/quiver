@@ -64,6 +64,17 @@ def _launch_value(body: dict, field: str) -> str | None:
         )
     return value
 
+
+def _launch_bool(body: dict, field: str) -> bool:
+    """An optional launch switch (``yolo``): False when absent, else a
+    strict bool — a stringly value is refused rather than coerced."""
+    value = body.get(field)
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be true or false")
+    return value
+
 # Cap on a first prompt; the phone's composer never gets near it.
 MAX_LAUNCH_PROMPT = 32_000
 
@@ -353,4 +364,5 @@ def parse_launch_command(body: dict) -> dict:
     return {"machine": machine, "harness": harness, "cwd": cwd,
             "prompt": prompt,
             "model": _launch_value(body, "model"),
-            "effort": _launch_value(body, "effort")}
+            "effort": _launch_value(body, "effort"),
+            "yolo": _launch_bool(body, "yolo")}

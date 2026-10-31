@@ -332,7 +332,8 @@ def rerun(ctx, repo: str, run: str, failed: bool) -> dict:
 
 def harnesses(home: Path | None = None) -> list[dict]:
     """``{name, display_name, tracked, launch_model, launch_effort,
-    last_model, recent_models}`` for each harness the hub can start, in Provider
+    launch_yolo, last_model, recent_models}`` for each harness the hub
+    can start, in Provider
     visibility order (``catalog.launchable_harnesses``, what the phone's
     new-session sheet offers). ``recent_models`` is the harness's
     recently used models in ``home``'s ledger, newest first (at most 5);
@@ -347,6 +348,7 @@ def harnesses(home: Path | None = None) -> list[dict]:
              "tracked": h["tracked"],
              "launch_model": h["launch_model"],
              "launch_effort": h["launch_effort"],
+             "launch_yolo": h["launch_yolo"],
              "last_model": (recent.get(h["name"]) or [""])[0],
              "recent_models": recent.get(h["name"], [])}
             for h in launchable]

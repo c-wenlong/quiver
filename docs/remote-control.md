@@ -362,7 +362,7 @@ POST /v1/sessions/{id}/approval      {request_id, decision}
 POST /v1/sessions/{id}/pin           {pinned: bool} → pin or unpin on the hub
 POST /v1/sessions/{id}/title         {title: string} → display name, "" clears it
 POST /v1/sessions/{id}/control       interrupt|compact|clear|model|effort|attach|kill|detach {mode: now|when_idle|keep}; attach also takes {mode: auto|tmux|headless|serve|appserver, model?, effort?}; {value?} for model|effort; {client_id?}, echoed on a satellite's command.result
-POST /v1/sessions                    new session {machine, harness, cwd, prompt, model?, effort?} → launch_id
+POST /v1/sessions                    new session {machine, harness, cwd, prompt, model?, effort?, yolo?} → launch_id
 POST /v1/sessions/{id}/fork          {prompt?, model?, effort?} new session from this one's history → launch_id
 GET  /v1/issues                      every pinned repo's issues, each row plus `mine` (`?state=open|closed|all`, open default)
 GET  /v1/issues/<o>/<r>/<n>          one issue in full: row + body, comments, branch, worktree, suggested_prompt
@@ -751,6 +751,32 @@ plus `settings_key` (the model goes into a per-launch JSON file under
 Any other harness gets `409 unsupported_launch_option` for a `model`.
 The value is already one token with no leading `-` (the shape check
 above), so it can't smuggle a flag of its own into the argv.
+
+`POST /v1/sessions` also takes `yolo: true` — the sheets' Autonomy
+checkbox, on by default — which appends the harness's approval-bypass
+argv so the session never waits on a permission prompt. The tokens are
+declared per machine as `capabilities.yolo` in harness.json (`argv`,
+with `supported: false` switching it off), over
+`launch_yolo.YOLO_FALLBACK` for a harness that declares none. The
+fallback, each flag read off the harness's own `--help` on 2026-10-31:
+
+| Harness | Command line with `yolo` |
+|---|---|
+| claude | `claude --dangerously-skip-permissions` |
+| codex | `codex --dangerously-bypass-approvals-and-sandbox` |
+| cursor | `cursor-agent --yolo` |
+| devin | `devin --permission-mode dangerous` |
+| opencode | `opencode --auto` |
+| droid | `droid --auto high` |
+| cline | `cline --yolo` |
+| kilo | `kilo --auto` |
+| qwen-code | `qwen --yolo` |
+
+Any other harness gets `409 unsupported_launch_option` for `yolo`, and
+a machine row names the harnesses that take it in `yolo_at_launch` —
+the same gate `model_at_launch`/`effort_at_launch` give a pick, so a
+satellite too old to apply it is refused before anything is queued,
+never launched with checks silently on.
 
 On the two API channels the pick rides the session's supervised meta
 into every send — the same plumbing headless uses for `--model` — so it
