@@ -1,34 +1,5 @@
 import Foundation
 
-/// One numbered row of the menu an agent's pane prints for an approval
-/// ("1. Yes", "2. Yes, and don't ask again", ...), as the hub's tailer
-/// sends it on `approval.requested` (`options: [{n, label}]`). The row's
-/// number is itself a decision the hub accepts
-/// (`protocol.parse_approval_command`).
-struct ApprovalOption: Decodable, Hashable, Identifiable {
-    let n: String
-    let label: String
-    var id: String { n }
-
-    init(n: String, label: String) {
-        self.n = n
-        self.label = label
-    }
-
-    private enum CodingKeys: String, CodingKey { case n, label }
-
-    /// `n` is a digit string from the pane; a number is read as one too.
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        if let text = try? c.decode(String.self, forKey: .n) {
-            n = text
-        } else {
-            n = String(try c.decode(Int.self, forKey: .n))
-        }
-        label = (try? c.decode(String.self, forKey: .label)) ?? ""
-    }
-}
-
 /// How the approval card answers: the pane's own menu rows when the
 /// event carried them (as the web and Mac show them), else Allow,
 /// Always and Deny. Pure, so tests feed it events.
