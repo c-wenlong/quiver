@@ -44,7 +44,7 @@ private struct GlobalInstructions: View {
         let model = app.agentsMd
         switch model.check {
         case .idle, .loading:
-            SkeletonRows(rows: 5, label: "Checking links…")
+            SkeletonRows(rows: 5, shape: .link, label: "Checking links…")
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let report):

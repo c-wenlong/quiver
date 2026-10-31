@@ -54,7 +54,7 @@ async function renderSessions(_id, rescan = false) {
   const panel = document.getElementById("panel");
   const gen = ++sessionsPage.gen;
   if (!sessionsPage.data || rescan) {
-    panel.innerHTML = `<div class="page">${sessionsHeader(true)}${Sk.cardRows(8)}</div>`;
+    panel.innerHTML = `<div class="page">${sessionsHeader(true)}${sessionsSkeleton()}</div>`;
   } else {
     paintSessions();
     if (sessionsPage.scrollY != null) window.scrollTo(0, sessionsPage.scrollY);
@@ -346,6 +346,24 @@ function rowModels(r) {
   const used = (r.usage ? r.usage.models.map((m) => m.model) : [])
     .filter((m) => !current || Fmt.modelName(m) !== current);
   return (current ? [current, ...used] : used).join(", ");
+}
+
+/* A table whose rows carry the real .session-row grid, so the loading
+ * card is the same shape as the painted one. */
+function sessionsSkeleton() {
+  const row = (i) => `<div class="session-row">
+    <span class="session-logo">${Sk.bar(16, 16)}</span>
+    <span class="session-main"><span class="session-title">${Sk.bar(`${58 - (i % 4) * 10}%`, 13)}</span>
+      <span class="session-sub">${Sk.bar(`${36 - (i % 3) * 8}%`, 10)}</span></span>
+    <span class="session-acts">${Sk.bar(20, 20)}</span>
+    <span class="num-col">${Sk.num(40)}</span>
+    <span class="num-col spend">${Sk.num(32)}</span>
+  </div>`;
+  const day = (n, off) => `<div class="day"><div class="day-label">${Sk.bar(90, 11)}</div>${
+    Array.from({ length: n }, (_, i) => row(i + off)).join("")}</div>`;
+  return `<div class="card sessions" role="status" aria-label="Loading">
+    <div class="session-head"><span>${Sk.bar(110, 11)}</span><span class="num-col">${Sk.num(40, 11)}</span><span class="num-col">${Sk.num(34, 11)}</span></div>
+    ${day(5, 0)}${day(4, 5)}</div>`;
 }
 
 function sessionRow(r) {
@@ -1264,7 +1282,8 @@ function nsPaint() {
   const folders = nsFolders(machine).slice(0, 6);
   const browseUi = browse ? `<div class="ns-browse">
       <div class="ns-path">${esc(browse.path || "…")}</div>
-      ${browse.loading ? Sk.rows(3, { pill: false }) : ""}
+      ${browse.loading ? `<div role="status" aria-label="Loading">${[60, 44, 52].map((w) =>
+        `<div class="ns-folder">${Sk.bar(`${w}%`, 12)}</div>`).join("")}</div>` : ""}
       ${browse.error ? `<p class="error">${esc(browse.error)}</p>` : ""}
       ${browse.parent ? `<button type="button" class="ns-folder" data-path="${esc(browse.parent)}">..</button>` : ""}
       ${(browse.folders || []).map((f) => `<button type="button" class="ns-folder" data-path="${esc(f.path)}">${esc(f.name)}/</button>`).join("")}

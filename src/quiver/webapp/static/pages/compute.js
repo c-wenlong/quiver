@@ -105,7 +105,7 @@ function renderCompute(_id, refresh = false) {
   clearTimeout(p.timer);
   if (!p.data) {
     document.getElementById("panel").innerHTML = `<div class="page compute-page">${computeHeader(true)}
-      ${Sk.cardRows(8)}</div>`;
+      ${computeSkeleton()}</div>`;
     bindComputeHeader();
   } else {
     paintCompute(refresh);
@@ -307,6 +307,21 @@ function harnessCard(usage) {
       <span class="caption num compute-figures" title="${esc(figures)}">${esc(figures)}</span>
       <span class="chevron muted" aria-hidden="true">${expanded ? "⌃" : "⌄"}</span>
     </button>${body}</div>`;
+}
+
+/* Harness cards of .compute-row rows: a name and its stats, the memory
+ * and CPU columns on the right. */
+function computeSkeleton() {
+  const row = (i) => `<div class="compute-row">
+    <div class="compute-main"><div class="compute-name">${Sk.bar(`${46 - (i % 4) * 7}%`, 13)}${i % 3 ? "" : Sk.pill(44)}</div>
+      <div class="caption">${Sk.bar(`${38 - (i % 3) * 8}%`, 10)}</div></div>
+    <span class="compute-mem">${Sk.num(46)}</span>
+    <span class="compute-cpu">${Sk.num(36)}</span>
+  </div>`;
+  const card = (n, off) => `<div class="card compute-harness">
+    <div class="compute-name">${Sk.bar(16, 16)}${Sk.bar(100 - off * 20, 14)}<span class="caption">${Sk.bar(70, 11)}</span></div>
+    <div class="compute-rows">${Array.from({ length: n }, (_, i) => row(i + off)).join("")}</div></div>`;
+  return `<div class="stack" role="status" aria-label="Loading">${card(4, 0)}${card(3, 4)}</div>`;
 }
 
 function processRow(r, limit) {

@@ -184,7 +184,13 @@ async function renderSettings() {
   if (p.data) paintSettings();
   else {
     document.getElementById("panel").innerHTML = `<div class="page">${settingsHeader()}
-      ${Sk.cardRows(5)}</div>`;
+      <div class="set-layout" role="status" aria-label="Loading">
+        <nav class="set-nav" aria-label="Settings sections"><div class="set-nav-group">${Sk.bar(70, 10)}
+          ${[0, 1, 2].map((i) => `<div class="set-nav-item">${Sk.bar(16, 16)}${Sk.bar(88 - i * 14, 12)}</div>`).join("")}</div>
+          <div class="set-nav-group">${Sk.bar(90, 10)}
+          ${[0, 1].map((i) => `<div class="set-nav-item">${Sk.bar(16, 16)}${Sk.bar(100 - i * 20, 12)}</div>`).join("")}</div></nav>
+        <div class="set-stack">${setCardSkeleton(4)}${setCardSkeleton(3, { role: false })}</div>
+      </div></div>`;
   }
   const { status, data } = await api("/v1/app/settings");
   if (gen !== routeGen || mine !== p.gen) return;
@@ -385,7 +391,7 @@ function providersSection() {
 
 function inferenceTab() {
   const prov = settingsPage.data && settingsPage.data.providers;
-  if (!prov) return Sk.cardRows(4);
+  if (!prov) return setCardSkeleton(4);
   const rows = prov.keys || [];
   const withValue = rows.filter((r) => r.has_value).length;
   const p = settingsPage;
@@ -602,9 +608,21 @@ function settingsUptime(seconds) {
 }
 
 
+/* A set-card of set-rows: title over detail on the left, a control —
+ * badge, button or switch — on the right. */
+function setCardSkeleton(n, { title = true, role = true } = {}) {
+  const rows = Array.from({ length: n }, (_, i) => `<div class="set-row">
+    <div class="set-text"><div class="set-title">${Sk.bar(110 - (i % 3) * 20, 13)}</div>
+    <div class="set-detail">${Sk.bar(`${50 - (i % 2) * 10}%`, 11)}</div></div>
+    <div class="set-control">${i % 3 === 1 ? Sk.bar(96, 26, "", "border-radius:8px") : i % 3 === 2 ? Sk.pill(44, 22) : Sk.pill(58)}</div>
+  </div>`).join('<div class="set-divider"></div>');
+  return `<div class="set-card"${role ? ' role="status" aria-label="Loading"' : ""}>${
+    title ? `<div class="set-card-title">${Sk.bar(120, 13)}</div>` : ""}${rows}</div>`;
+}
+
 function remoteCards() {
   const d = settingsPage.data;
-  if (!d) return `<div class="set-card">${Sk.rows(3)}</div>`;
+  if (!d) return setCardSkeleton(3);
   const r = d.remote;
   const bits = [r.hub.machine && r.hub.machine.name, r.public_url || r.hub_addr,
     r.hub.uptime_s != null ? `up ${settingsUptime(r.hub.uptime_s)}` : null].filter(Boolean);
@@ -655,7 +673,7 @@ const SETUP_BADGE = {
 function setupCard() {
   const p = settingsPage;
   const s = p.setup;
-  if (!s) return p.setupBusy ? `<div class="set-card">${Sk.rows(3)}</div>` : "";
+  if (!s) return p.setupBusy ? setCardSkeleton(3) : "";
   if (s.error) {
     return setCard([setRow("Couldn't check setup", s.error, '<button class="set-button" id="set-setup-recheck">Check again</button>', { warning: s.error, danger: true })], "Set up remote control");
   }
@@ -831,7 +849,7 @@ function settingsStopClock() {
 
 function filesSection() {
   const paths = settingsPage.data && settingsPage.data.paths;
-  if (!paths) return Sk.cardRows(4);
+  if (!paths) return setCardSkeleton(4);
   return `<div class="set-stack">${setCard([
     setRow("swe executable", paths.swe ? `In use: ${paths.swe}.` : "swe isn't on the hub's PATH."),
     setRow("API keys file", `In use: ${paths.api_keys}.`),

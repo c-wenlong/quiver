@@ -147,12 +147,12 @@ private struct InstalledSkills: View {
         } else {
             switch model.inventory {
             case .idle, .loading:
-                SkeletonRows(rows: 6, label: "Reading skills…")
+                SkeletonRows(rows: 6, framed: false, shape: .skill, label: "Reading skills…")
             case .failed(let message):
                 ErrorCard(message: message)
             case .loaded(let inventory):
                 if model.placement == nil {
-                    SkeletonRows(rows: 4, label: "Finding the skills that ship inside plugins…")
+                    SkeletonRows(rows: 4, framed: false, shape: .skill, label: "Finding the skills that ship inside plugins…")
                 } else {
                     list(empty: inventory.skills.isEmpty)
                 }

@@ -820,17 +820,57 @@ struct SkeletonBlock: View {
     }
 }
 
-/// A stand-in for a list a fetch is still reading: `rows` fake entries —
-/// a mark, a title line and a detail line, a trailing chip — laid out like
-/// the real rows so the page doesn't jump when they land.
+/// The component a `SkeletonRows` stands in for. Each case mirrors one
+/// real row layout, so the shimmer matches what lands rather than one
+/// generic list everywhere.
+enum SkeletonShape: Equatable {
+    /// Icon, title over detail, trailing chip: the generic list row.
+    case list
+    /// Detail lines only: a facts panel like the Pages settings.
+    case plain
+    /// Sessions: mark, title over details, Tokens/Spend, a button slot.
+    case session
+    /// Tasks: a glyph, title with badges, subtitle, badges, a chevron.
+    case task
+    /// Repositories' rows: a state mark, title with badges, metadata,
+    /// trailing marks.
+    case issue
+    /// Inbox notes: a dot, a mark, title over caption, a side button.
+    case note
+    /// Doctor and plugin drift: a severity dot, message, check line and
+    /// the fix command strip.
+    case check
+    /// Harnesses: a mark, title over command and captions, a side badge.
+    case harness
+    /// Skills: name, description and path; source badge, count, chevron.
+    case skill
+    /// Marketplace plugins: title and version, ref, description, skill
+    /// badges; harness chips on the right.
+    case plugin
+    /// Hooks: an event column and script rows with pills.
+    case hook
+    /// AGENTS.md links: a status dot, the mark, a state caption; laid
+    /// out in a flow strip like the real links.
+    case link
+    /// Folder trees and scans: indented mono path lines.
+    case file
+    /// First-run agent tiles: a three-wide grid of icon and name tiles.
+    case tiles
+    /// First-run links preview: an icon, a title, a two-line detail.
+    case feature
+    /// A bar chart: columns of varied heights over a logo and a slanted
+    /// label each, as the Models chart draws them.
+    case chart
+}
+
+/// A stand-in for a list a fetch is still reading: `rows` fake entries in
+/// the `shape` of the real rows, so the page doesn't jump when they land.
 struct SkeletonRows: View {
     var rows = 6
     /// False inside a larger callout — renders bare, no second frame.
     var framed = true
-    /// False when the real rows carry no leading mark.
-    var icons = true
-    /// False when the real rows carry no trailing chip.
-    var pills = true
+    /// Which real row these stand in for.
+    var shape: SkeletonShape = .list
     /// What VoiceOver says while the real rows load — the text the
     /// spinner card used to say.
     var label: String = "Loading"
@@ -843,24 +883,379 @@ struct SkeletonRows: View {
         .accessibilityLabel(Text(label))
     }
 
-    private var content: some View {
+    @ViewBuilder private var content: some View {
+        switch shape {
+        case .session: sessionBody
+        case .link: linkBody
+        case .tiles: tilesBody
+        case .chart: chartBody
+        default: listBody
+        }
+    }
+
+    /// Grouped boxes (tasks, repositories) split their rows under
+    /// section strips; the strip drops in before the first and the
+    /// middle row.
+    private var grouped: Bool { shape == .task || shape == .issue }
+
+    private var listBody: some View {
         VStack(spacing: 0) {
             ForEach(0..<rows, id: \.self) { row in
-                HStack(spacing: 10) {
-                    if icons { SkeletonBlock(width: 16, height: 16, radius: 8) }
-                    VStack(alignment: .leading, spacing: 6) {
-                        SkeletonBlock(height: 12)
-                            .padding(.trailing, CGFloat(row % 3) * 64 + 40)
-                        SkeletonBlock(height: 10)
-                            .padding(.trailing, CGFloat(row % 2) * 96 + 120)
+                if grouped && (row == 0 || row == rows / 2) { groupHead }
+                self.row(row)
+            }
+        }
+    }
+
+    /// The grouped box's section strip: source / name, then its rows.
+    private var groupHead: some View {
+        HStack(spacing: 6) {
+            SkeletonBlock(width: 110, height: 12)
+            Spacer()
+            SkeletonBlock(width: 40, height: 14)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+    }
+
+    @ViewBuilder private func row(_ row: Int) -> some View {
+        switch shape {
+        case .session: sessionRow(row)
+        case .task: ghRow(row, chevron: true)
+        case .issue: ghRow(row, chevron: false)
+        case .note: noteRow(row)
+        case .check: checkRow(row)
+        case .harness: harnessRow(row)
+        case .skill: skillRow(row)
+        case .plugin: pluginRow(row)
+        case .hook: hookRow(row)
+        case .link: linkChip(row)
+        case .file: fileRow(row)
+        case .feature: featureRow(row)
+        case .plain: plainRow(row)
+        case .list, .tiles, .chart: listRow(row)
+        }
+    }
+
+    private func listRow(_ row: Int) -> some View {
+        HStack(spacing: 10) {
+            SkeletonBlock(width: 16, height: 16, radius: 8)
+            VStack(alignment: .leading, spacing: 6) {
+                SkeletonBlock(height: 12)
+                    .padding(.trailing, CGFloat(row % 3) * 64 + 40)
+                SkeletonBlock(height: 10)
+                    .padding(.trailing, CGFloat(row % 2) * 96 + 120)
+            }
+            Spacer(minLength: 8)
+            SkeletonBlock(width: 48, height: 16, radius: 8)
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func plainRow(_ row: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SkeletonBlock(height: 12)
+                .padding(.trailing, CGFloat(row % 3) * 64 + 40)
+            SkeletonBlock(height: 10)
+                .padding(.trailing, CGFloat(row % 2) * 96 + 120)
+        }
+        .padding(.vertical, 10)
+    }
+
+    // MARK: sessions
+
+    /// The list's own header and day groups: the three column headings,
+    /// then rows of mark + title/sub + Tokens/Spend + a button slot.
+    private var sessionBody: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 16) {
+                SkeletonBlock(width: 110, height: 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                SkeletonBlock(width: 40, height: 10)
+                    .frame(width: tokensColumnWidth, alignment: .trailing)
+                SkeletonBlock(width: 34, height: 10)
+                    .frame(width: spendColumnWidth, alignment: .trailing)
+                Color.clear.frame(width: Theme.iconButton)
+            }
+            .padding(.horizontal, 8).padding(.bottom, 10)
+            Divider().overlay(Theme.border)
+            ForEach(0..<rows, id: \.self) { row in
+                if row == 0 || row == rows / 2 {
+                    SkeletonBlock(width: 92, height: 12)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 18).padding(.bottom, 10)
+                    Divider().overlay(Theme.border)
+                }
+                sessionRow(row)
+                Divider().overlay(Theme.rowDivider)
+            }
+        }
+    }
+
+    private func sessionRow(_ row: Int) -> some View {
+        HStack(spacing: 16) {
+            HStack(alignment: .center, spacing: 12) {
+                SkeletonBlock(width: 16, height: 16, radius: 8)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        SkeletonBlock(width: 150 - CGFloat(row % 3) * 30, height: 12)
+                        if row % 3 == 0 { SkeletonBlock(width: 46, height: 15, radius: 7) }
                     }
-                    if pills {
-                        Spacer(minLength: 8)
-                        SkeletonBlock(width: 48, height: 16, radius: 8)
+                    SkeletonBlock(width: 190 - CGFloat(row % 2) * 50, height: 10)
+                }
+            }
+            Spacer(minLength: 8)
+            SkeletonBlock(width: 40, height: 12)
+                .frame(width: tokensColumnWidth, alignment: .trailing)
+            SkeletonBlock(width: 32, height: 12)
+                .frame(width: spendColumnWidth, alignment: .trailing)
+            SkeletonBlock(width: 24, height: 24, radius: 7)
+                .frame(width: Theme.iconButton)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 10)
+    }
+
+    // MARK: GitHub-style rows (tasks, repositories)
+
+    private func ghRow(_ row: Int, chevron: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            SkeletonBlock(width: 15, height: 15, radius: 7).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    SkeletonBlock(width: 200 - CGFloat(row % 3) * 36, height: 12)
+                    if row % 2 == 0 { SkeletonBlock(width: 54, height: 15, radius: 7) }
+                }
+                SkeletonBlock(width: 230 - CGFloat(row % 2) * 40, height: 10)
+            }
+            Spacer(minLength: 12)
+            if row % 2 == 1 { SkeletonBlock(width: 42, height: 15, radius: 7) }
+            if chevron { SkeletonBlock(width: 8, height: 14).padding(.top, 2) }
+        }
+        .padding(.vertical, 10).padding(.horizontal, 14)
+    }
+
+    // MARK: inbox
+
+    private func noteRow(_ row: Int) -> some View {
+        HStack(spacing: 8) {
+            SkeletonBlock(width: 8, height: 8, radius: 4)
+            SkeletonBlock(width: 15, height: 15, radius: 4)
+            VStack(alignment: .leading, spacing: 4) {
+                SkeletonBlock(width: 210 - CGFloat(row % 3) * 34, height: 12)
+                SkeletonBlock(width: 150 - CGFloat(row % 2) * 30, height: 10)
+            }
+            Spacer(minLength: 8)
+            if row % 3 == 0 { SkeletonBlock(width: 30, height: 30, radius: 8) }
+        }
+        .padding(.vertical, 10).padding(.horizontal, 6)
+    }
+
+    // MARK: doctor and plugin drift
+
+    private func checkRow(_ row: Int) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            SkeletonBlock(width: 8, height: 8, radius: 4).padding(.top, 6)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    if row % 2 == 0 { SkeletonBlock(width: 16, height: 16, radius: 4) }
+                    SkeletonBlock(width: 240 - CGFloat(row % 3) * 40, height: 12)
+                }
+                SkeletonBlock(width: 170 - CGFloat(row % 2) * 40, height: 10)
+                if row % 3 != 2 {
+                    HStack(spacing: 8) {
+                        SkeletonBlock(height: 18, radius: 5)
+                        SkeletonBlock(width: 30, height: 30, radius: 8)
+                    }
+                    .padding(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 6))
+                    .background(Theme.subtle, in: .rect(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+                }
+            }
+            Spacer(minLength: 10)
+            if row % 3 == 1 { SkeletonBlock(width: 40, height: 24, radius: 6) }
+        }
+        .padding(.vertical, 12)
+    }
+
+    // MARK: harnesses
+
+    private func harnessRow(_ row: Int) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            SkeletonBlock(width: 16, height: 16, radius: 8)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    SkeletonBlock(width: 96, height: 13)
+                    SkeletonBlock(width: 70, height: 10, radius: 4)
+                    if row % 2 == 0 { SkeletonBlock(width: 50, height: 15, radius: 7) }
+                }
+                SkeletonBlock(width: 230 - CGFloat(row % 3) * 30, height: 10)
+                if row % 2 == 1 { SkeletonBlock(width: 140, height: 9) }
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 4) {
+                SkeletonBlock(width: 62, height: 15, radius: 7)
+                if row % 2 == 0 { SkeletonBlock(width: 90, height: 9) }
+            }
+        }
+        .padding(.vertical, 12)
+    }
+
+    // MARK: skills
+
+    private func skillRow(_ row: Int) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                SkeletonBlock(width: 120 - CGFloat(row % 3) * 20, height: 13)
+                if row % 3 != 2 { SkeletonBlock(width: 260 - CGFloat(row % 2) * 40, height: 10) }
+                SkeletonBlock(width: 180 - CGFloat(row % 2) * 30, height: 9)
+            }
+            Spacer(minLength: 12)
+            HStack(spacing: 10) {
+                SkeletonBlock(width: 56, height: 15, radius: 7)
+                SkeletonBlock(width: 20, height: 10)
+                SkeletonBlock(width: 8, height: 14)
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    // MARK: plugins
+
+    private func pluginRow(_ row: Int) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    SkeletonBlock(width: 130 - CGFloat(row % 3) * 24, height: 13)
+                    SkeletonBlock(width: 28, height: 10)
+                }
+                if row % 2 == 0 { SkeletonBlock(width: 150, height: 9) }
+                SkeletonBlock(width: 250 - CGFloat(row % 3) * 40, height: 10)
+                if row % 2 == 1 {
+                    HStack(spacing: 4) {
+                        SkeletonBlock(width: 60, height: 14, radius: 7)
+                        SkeletonBlock(width: 72, height: 14, radius: 7)
+                    }
+                    .padding(.top, 2)
+                }
+            }
+            Spacer(minLength: 12)
+            HStack(spacing: 6) {
+                SkeletonBlock(width: 84, height: 24, radius: 8)
+                if row % 2 == 1 { SkeletonBlock(width: 84, height: 24, radius: 8) }
+            }
+        }
+        .padding(.vertical, 12)
+    }
+
+    // MARK: hooks
+
+    private func hookRow(_ row: Int) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                SkeletonBlock(width: 110 - CGFloat(row % 2) * 20, height: 12)
+                SkeletonBlock(width: 70, height: 9)
+            }
+            .frame(width: 168, alignment: .leading)
+            .padding(.top, 5)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(0..<(row % 2 + 1), id: \.self) { _ in
+                    HStack(spacing: 8) {
+                        SkeletonBlock(width: 130 - CGFloat(row % 3) * 20, height: 12)
+                        SkeletonBlock(width: 56, height: 14, radius: 7)
+                        SkeletonBlock(width: 100, height: 10)
+                        Spacer(minLength: 0)
                     }
                 }
-                .padding(.vertical, 10)
             }
+        }
+        .padding(.vertical, 8)
+    }
+
+    // MARK: AGENTS.md links
+
+    /// The links strip's own layout: the heading and the link chips
+    /// flowing beside it, the Link button on the right.
+    private var linkBody: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            SkeletonBlock(width: 80, height: 15)
+            FlowLayout(spacing: 14, lineSpacing: 6) {
+                ForEach(0..<max(rows, 4), id: \.self) { row in linkChip(row) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            SkeletonBlock(width: 112, height: 28, radius: 8)
+        }
+    }
+
+    private func linkChip(_ row: Int) -> some View {
+        HStack(spacing: 6) {
+            SkeletonBlock(width: Theme.statusDot, height: Theme.statusDot, radius: Theme.statusDot / 2)
+            SkeletonBlock(width: 64 + CGFloat(row % 3) * 12, height: 13)
+            if row % 3 == 1 { SkeletonBlock(width: 44, height: 10) }
+        }
+    }
+
+    // MARK: files, tiles, features, chart
+
+    private func fileRow(_ row: Int) -> some View {
+        HStack(spacing: 6) {
+            if row % 2 == 0 { SkeletonBlock(width: 10, height: 10) }
+            SkeletonBlock(width: 150 - CGFloat(row % 3) * 24, height: 12)
+        }
+        .padding(.leading, CGFloat(row % 3) * 16)
+        .padding(.vertical, 6)
+    }
+
+    /// First-run's agent picker: the same three-column tile grid.
+    private var tilesBody: some View {
+        LazyVGrid(columns: [GridItem](repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+            ForEach(0..<max(rows, 3), id: \.self) { _ in
+                HStack(spacing: 10) {
+                    SkeletonBlock(width: 30, height: 30, radius: 8)
+                    SkeletonBlock(width: 60, height: 12)
+                    Spacer(minLength: 4)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 52)
+                .background(Theme.card, in: .rect(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
+            }
+        }
+    }
+
+    private func featureRow(_ row: Int) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            SkeletonBlock(width: 16, height: 16, radius: 4).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                SkeletonBlock(width: 90 + CGFloat(row) * 30, height: 13)
+                SkeletonBlock(height: 10).padding(.trailing, 60)
+                SkeletonBlock(width: 200 - CGFloat(row % 2) * 40, height: 10)
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    /// The Models chart: its card title, then a descending run of bars,
+    /// each over a logo and the deep zone a slanted label takes up.
+    private var chartBody: some View {
+        let heights: [CGFloat] = [1, 0.86, 0.8, 0.72, 0.68, 0.6, 0.55, 0.5,
+                                  0.44, 0.4, 0.36, 0.33, 0.3, 0.27, 0.24, 0.2, 0.18, 0.15]
+        return VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                SkeletonBlock(width: 150, height: 16)
+                SkeletonBlock(width: 240, height: 10)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                ForEach(0..<heights.count, id: \.self) { index in
+                    VStack(spacing: 4) {
+                        Spacer(minLength: 0)
+                        SkeletonBlock(height: heights[index] * 240, radius: 4)
+                        SkeletonBlock(width: 18, height: 18, radius: 4)
+                        SkeletonBlock(width: 8, height: 150, radius: 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: 456)
+            SkeletonBlock(width: 190, height: 10)
         }
     }
 }

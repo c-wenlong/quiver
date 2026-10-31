@@ -106,7 +106,7 @@ async function renderStatus(_id, force = false) {
     paintStatus();
   } else {
     document.getElementById("panel").innerHTML = `<div class="page">${statusHeader()}
-      ${Sk.cardRows(4)}</div>`;
+      ${statusSkeleton()}</div>`;
     const { status, data } = await api("/v1/app/status?cached=1");
     if (gen !== routeGen || mine !== p.gen) return;
     if (status === 401) return statusGate();
@@ -172,6 +172,28 @@ function statusHeader() {
     `${checked}<button class="status-add" id="status-add">${statusIcon("plus")}<span>Add service</span></button>
     <button class="icon-button${p.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh"
       title="Check every status page now"${p.loading ? " disabled" : ""}>${icon("rescan")}</button>`);
+}
+
+/* The dashboard's own grid: a group title, then .status-card cells —
+ * service head, health dot + line and a note — the cards land on. */
+function statusSkeleton() {
+  const card = (i) => `<article class="card status-card"><div class="status-body">
+    <div class="status-head">${Sk.bar(18, 18)}${Sk.bar(110 - (i % 3) * 18, 13)}</div>
+    <div class="status-health-block"><div class="status-health">${Sk.dot(8)}${Sk.bar(110 - (i % 2) * 20, 12)}</div>
+    <div class="caption">${Sk.bar(`${62 - (i % 3) * 10}%`, 10)}</div></div></div>
+    ${i % 2 ? "" : `<div class="status-expand">${Sk.bar(110, 11)}</div>`}</article>`;
+  return `<section class="status-group" role="status" aria-label="Loading">
+    <h2 class="status-group-title">${Sk.bar(120, 13)}</h2>
+    <div class="status-grid">${[0, 1, 2, 3].map(card).join("")}</div></section>`;
+}
+
+/* The catalogue sheet's own rows: logo, name over host, Add button. */
+function statusCatSkeleton(n) {
+  return `<div role="status" aria-label="Loading">${Array.from({ length: n }, (_, i) => `<div class="status-cat-row">
+    ${Sk.bar(18, 18)}
+    <div class="status-cat-main"><div class="status-cat-name">${Sk.bar(`${40 - (i % 3) * 7}%`, 13)}</div>
+      <div class="caption status-cat-host">${Sk.bar(`${56 - (i % 2) * 10}%`, 10)}</div></div>
+    ${Sk.bar(36, 24, "", "border-radius:6px;flex:none")}</div>`).join("")}</div>`;
 }
 
 function paintStatus(error = "") {
@@ -430,7 +452,7 @@ function statusPaintCatalogue(keepFocus = false) {
       data-status-cat-group="${id == null ? "" : id}">${label}</button>`).join("")}</div>`;
   let body;
   if (!c.data && !c.error) {
-    body = Sk.rows(5);
+    body = statusCatSkeleton(5);
   } else {
     const shown = statusCatShown(c);
     const total = c.data ? c.data.entries.length : 0;

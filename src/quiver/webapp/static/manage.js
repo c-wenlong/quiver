@@ -24,7 +24,7 @@ async function renderHarnesses() {
   // Paint before awaiting, cached or loading, so the previous page's
   // controls never stay on screen while the request runs.
   if (!harnessesPage.data) {
-    panel.innerHTML = `<div class="page">${harnessesHeader()}${Sk.cardRows(6)}</div>`;
+    panel.innerHTML = `<div class="page">${harnessesHeader()}${harnessesSkeleton()}</div>`;
     bindRefresh(renderHarnesses, () => { harnessesPage.data = null; });
   } else {
     paintHarnesses();
@@ -125,6 +125,40 @@ function archivedLine(a) {
   const usage = a.usage && a.usage !== "unknown" ? `, usage: ${a.usage}` : "";
   const reason = (a.reason || "").trim() || "no reason given";
   return `Archived${date}${usage}. ${reason[0].toUpperCase()}${reason.slice(1)}`;
+}
+
+/* The registry list's own shape: .list-row harness rows inside the
+ * list card, so the shimmer lands where real rows will. */
+function harnessesSkeleton() {
+  const row = (i) => `<div class="list-row harness-row">
+    <span class="session-logo">${Sk.bar(16, 16)}</span>
+    <div class="list-main">
+      <div class="list-title">${Sk.bar(110 - (i % 3) * 20, 14)}${Sk.bar(60, 11, "", "border-radius:4px")}${i % 2 ? Sk.pill(52) : ""}</div>
+      ${Sk.bar(`${44 - (i % 3) * 8}%`, 11)}
+      ${i % 2 ? Sk.bar("30%", 10) : ""}
+    </div>
+    <div class="list-side">${Sk.pill(62)}${i % 2 ? Sk.bar(96, 10) : ""}</div>
+  </div>`;
+  return `<div class="card list" role="status" aria-label="Loading">${Array.from({ length: 6 }, (_, i) => row(i)).join("")}</div>`;
+}
+
+/* The detect sheet's rows: checkbox, name, command, confidence, path. */
+function detectSkeleton() {
+  return `<div class="harness-detect-list" role="status" aria-label="Loading">${Array.from({ length: 4 }, (_, i) =>
+    `<div class="harness-detect-row">${Sk.bar(13, 13)}
+      ${Sk.bar(84 - (i % 3) * 16, 13)}${Sk.bar(52, 11, "", "border-radius:4px")}${Sk.pill(48)}
+      ${Sk.bar(`${30 - (i % 2) * 8}%`, 10)}</div>`).join("")}</div>`;
+}
+
+/* An account card: logo + title + plan badge head, limit bars, status. */
+function accountsSkeleton() {
+  const card = (i) => `<div class="card account">
+    <div class="account-head">${Sk.bar(16, 16)}${Sk.bar(96 - i * 16, 14)}${Sk.pill(56)}</div>
+    ${[0, 1].map((j) => `<div class="limit"><div class="limit-head">${Sk.bar(88 - j * 14, 12)}${Sk.num(54)}</div>
+      <div class="track">${Sk.bar(`${62 + j * 14}%`, 6)}</div></div>`).join("")}
+    <div class="caption">${Sk.bar(110, 11)}</div>
+  </div>`;
+  return `<div class="account-grid" role="status" aria-label="Loading">${[0, 1, 2].map(card).join("")}</div>`;
 }
 
 function harnessRow(h) {
@@ -506,7 +540,7 @@ function detectSheet(s) {
           ${f.short_path ? `<span class="caption muted harness-detect-path">${esc(f.short_path)}</span>` : ""}
         </label>`).join("")}</div>`;
   } else if (!s.error) {
-    body = Sk.rows(4);
+    body = detectSkeleton();
   } else {
     body = "";
   }
@@ -706,7 +740,7 @@ async function renderAccounts(_id, refresh = false) {
   const panel = document.getElementById("panel");
   const gen = ++accountsPage.gen;
   if (!accountsPage.data || refresh) {
-    panel.innerHTML = `<div class="page">${accountsHeader(true)}${Sk.cardRows(5)}</div>`;
+    panel.innerHTML = `<div class="page">${accountsHeader(true)}${accountsSkeleton()}</div>`;
   } else {
     paintAccounts();
   }

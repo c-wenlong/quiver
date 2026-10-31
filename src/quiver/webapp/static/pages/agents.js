@@ -81,7 +81,7 @@ function paintAgents(loading) {
   let body;
   if (p.scope === "project" && !loading) body = agentsProject();
   else if (p.scope === "global" && p.globalError && !loading) body = `<div class="card"><p class="error">${esc(p.globalError)}</p></div>`;
-  else if (loading || !p.data) body = Sk.cardRows(5);
+  else if (loading || !p.data) body = agentsSkeleton();
   else body = agentsGlobal(p.data);
   document.getElementById("panel").innerHTML = `<div class="page">${agentsHeader(loading)}
     <div class="stack">${agentsTabs()}${body}</div></div>`;
@@ -116,6 +116,20 @@ function paintAgents(loading) {
   }
   const form = document.getElementById("ag-folder-form");
   if (form) form.onsubmit = (e) => { e.preventDefault(); agentsOpenFolder(document.getElementById("ag-folder").value); };
+}
+
+/* The global view's own shape: a strip of harness links, then the
+ * instructions file card. */
+function agentsSkeleton() {
+  const chip = (i) => `<span class="ag-link">${Sk.dot(7)}${Sk.bar(58 + (i % 3) * 10, 13)}${
+    i % 3 ? `<span class="caption">${Sk.bar(46, 10)}</span>` : ""}</span>`;
+  return `<div class="stack" role="status" aria-label="Loading"><div class="ag-strip"><div class="ag-strip-row">
+      <span class="card-title">${Sk.bar(80, 13)}</span>
+      <div class="ag-links">${[0, 1, 2, 3].map(chip).join("")}</div>
+      ${Sk.bar(112, 26, "", "border-radius:8px;flex:none")}</div></div>
+    <div class="card ag-doc"><div><div class="card-title sk-mono-title">${Sk.bar(150, 14)}</div>
+      <div class="card-subtitle">${Sk.bar(220, 11)}</div></div>
+      <div class="skel-para">${Sk.linesInner(9)}</div></div></div>`;
 }
 
 /* InstructionEditor, read only: a card with the file's path and its text. */
@@ -226,7 +240,11 @@ function agentsProject() {
       suggestions ? " Recent session folders are suggested as you type." : ""}</p>`;
   }
   if (p.projectError) return `${strip}<div class="card"><p class="error">${esc(p.projectError)}</p></div>`;
-  if (!pr) return `${strip}${Sk.cardRows(3)}`;
+  if (!pr) return `${strip}<div role="status" aria-label="Loading">
+    <div class="tabs table">${Sk.bar(84, 26, "", "border-radius:8px")}${Sk.bar(84, 26, "", "border-radius:8px")}</div>
+    <div class="card ag-doc"><div><div class="card-title sk-mono-title">${Sk.bar(150, 14)}</div>
+      <div class="card-subtitle">${Sk.bar(220, 11)}</div></div>
+      <div class="skel-para">${Sk.linesInner(8)}</div></div></div>`;
   const files = pr.files;
   if (!files.some((f) => f.name === p.file)) p.file = files[0].name;
   const tabTitle = (f) => (f.links_to ? `${f.name} → ${f.links_to}` : f.exists ? f.name : `${f.name} (new)`);

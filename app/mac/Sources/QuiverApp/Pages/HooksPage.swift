@@ -57,7 +57,7 @@ struct HooksPage: View {
         if let error = model.actionError { ErrorCard(message: error) }
         switch model.state {
         case .idle, .loading:
-            SkeletonRows(rows: 6, label: "Reading hooks…")
+            SkeletonRows(rows: 6, shape: .hook, label: "Reading hooks…")
         case .failed(let message):
             // An swe from before `hooks` existed fails the whole page with
             // its own words; say what fixes it rather than echoing argv.
