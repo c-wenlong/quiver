@@ -1325,12 +1325,42 @@ class TestHubWriteRoutes(unittest.TestCase):
                 self.assertIsNone(resp.getheader("Location"), path)
             finally:
                 conn.close()
-        # The remote PWA's paths are gone, and nothing but a known asset
+        # The remote PWA's /pair is gone, and nothing but a known asset
         # is served at the root.
-        for path in ("/manifest.webmanifest", "/pair", "/nope.js",
-                     "/hub.py", "/pages/chat.js"):
+        for path in ("/pair", "/nope.js", "/hub.py", "/pages/chat.js"):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 404, path)
+
+    def test_every_icon_the_page_names_is_served(self):
+        """The page's favicons and touch icon, and each manifest icon,
+        resolve at the root with their own content type; the maskable
+        one is marked so."""
+        status, page = self.srv.request("GET", "/")
+        self.assertEqual(status, 200)
+        status, manifest = self.srv.request("GET", "/manifest.webmanifest")
+        self.assertEqual(status, 200)
+        icons = json.loads(manifest)["icons"]
+        self.assertEqual({i["src"]: i["purpose"] for i in icons}, {
+            "/icon-192.png": "any", "/icon-512.png": "any",
+            "/icon-maskable-512.png": "maskable"})
+        types = {".ico": "image/x-icon", ".png": "image/png",
+                 ".svg": "image/svg+xml",
+                 ".webmanifest": "application/manifest+json"}
+        for path in ("/favicon.ico", "/favicon-32.png", "/favicon.svg",
+                     "/apple-touch-icon.png", "/manifest.webmanifest",
+                     *(i["src"] for i in icons)):
+            self.assertIn(f'"{path}"'.encode(), page + manifest, path)
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", self.srv.port, timeout=5)
+            try:
+                conn.request("GET", path)
+                resp = conn.getresponse()
+                resp.read()
+                self.assertEqual(resp.status, 200, path)
+                self.assertEqual(resp.getheader("Content-Type"),
+                                 types[Path(path).suffix], path)
+            finally:
+                conn.close()
 
     def test_root_mount_leaves_the_api_alone(self):
         """The app at ``/`` is no catch-all: every root endpoint the hub
