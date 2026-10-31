@@ -830,7 +830,7 @@ struct PluginDetailView: View {
             if folders != nil, !editable { lockNote }
             header
             if folders == nil {
-                SkeletonRows(rows: 5)
+                SkeletonRows(rows: 5, label: "Reading the plugin's folder…")
             } else {
                 if let manifest { ManifestCard(url: manifest, onSaved: reload) }
                 if let dir {
@@ -1081,7 +1081,7 @@ struct SkillDetailView: View {
                 }
                 PartsCard(root: root, editable: editable, drafts: drafts, onChanged: reload)
             } else {
-                SkeletonRows(rows: 5)
+                SkeletonRows(rows: 5, label: "Reading the skill's folder…")
             }
         }
         // `realpath` and `fileExists` on a synced or stale folder can

@@ -186,7 +186,7 @@ private struct AgentsStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if !app.providers.hasChecked {
-                SkeletonRows(rows: 4)
+                SkeletonRows(rows: 4, label: "Looking for coding agents on this Mac…")
             } else {
                 if let error = app.providers.checkError { ErrorCard(message: error) }
                 ForEach(pickedMissing) { provider in missingBanner(provider) }
@@ -290,7 +290,7 @@ private struct LinksStep: View {
         VStack(alignment: .leading, spacing: 16) {
             switch model.preview {
             case .idle, .loading:
-                SkeletonRows(rows: 4)
+                SkeletonRows(rows: 4, label: "Checking what each agent already has…")
             case .failed(let message):
                 ErrorCard(message: message)
                 Button("Try again") { Task { await model.load() } }

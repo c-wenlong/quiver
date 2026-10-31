@@ -179,13 +179,13 @@ private struct ModelsContent: View {
         } else if !model.hasLoaded && model.allModels.isEmpty {
             // Before the first key check `hasKey` is false: wait for it
             // rather than flash the no-key card on every launch.
-            SkeletonRows(rows: 8)
+            SkeletonRows(rows: 8, label: "Loading benchmarks…")
         } else if !model.hasKey && !model.isLoading && model.allModels.isEmpty {
             // Cached benchmarks still show after the key is removed.
             noKey
         } else if model.allModels.isEmpty {
             if model.isLoading || model.isRefreshing {
-                SkeletonRows(rows: 8)
+                SkeletonRows(rows: 8, label: "Fetching benchmarks…")
             } else if let error = model.refreshError {
                 ErrorCard(message: "Couldn't fetch benchmarks: \(error)")
             } else if model.searching {
@@ -199,7 +199,7 @@ private struct ModelsContent: View {
                 EmptyCard(text: "No model or LiteLLM price key matches.",
                           icon: "magnifyingglass")
             } else if model.usagePending {
-                SkeletonRows(rows: 4)
+                SkeletonRows(rows: 4, label: "Reading your usage…")
             } else {
                 EmptyCard(text: emptyText, icon: "chart.bar")
             }

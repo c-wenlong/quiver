@@ -46,7 +46,7 @@ private struct PricingContent: View {
         } content: {
             if model.groups.isEmpty {
                 if model.isLoading {
-                    SkeletonRows(rows: 5)
+                    SkeletonRows(rows: 5, label: "Reading your usage logs…")
                 } else {
                     Card { Text("No usage in this period.")
                             .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary) }

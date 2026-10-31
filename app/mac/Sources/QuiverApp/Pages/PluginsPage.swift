@@ -122,7 +122,7 @@ struct PluginsPage: View {
         }
         switch model.state {
         case .idle, .loading:
-            SkeletonRows(rows: 5)
+            SkeletonRows(rows: 5, label: "Checking plugin drift…")
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let report) where report.sources == 0:

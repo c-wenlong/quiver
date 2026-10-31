@@ -50,7 +50,7 @@ struct DoctorSection: View {
         Group {
             switch model.state {
             case .idle, .loading:
-                SkeletonRows(rows: 6)
+                SkeletonRows(rows: 6, label: "Running checks…")
             case .failed(let message):
                 ErrorCard(message: message, actionTitle: "Try again",
                           actionShortcut: Self.refreshShortcut, action: reload)

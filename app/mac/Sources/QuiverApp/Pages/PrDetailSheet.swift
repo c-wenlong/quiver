@@ -41,7 +41,7 @@ struct PrDetailSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             switch state {
             case .idle, .loading:
-                SkeletonDetail()
+                SkeletonDetail(label: "Fetching the pull request…")
                 doneRow
             case .failed(let message):
                 ErrorCard(message: message, actionTitle: "Refresh") {

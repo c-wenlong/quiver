@@ -25,7 +25,7 @@ struct ProviderSetupSheet: View {
                 if let error = model.actionError { ErrorCard(message: error) }
                 content(model)
             } else {
-                SkeletonDetail()
+                SkeletonDetail(label: "Asking swe how it installs \(provider.name)…")
             }
             HStack {
                 Spacer()
@@ -58,7 +58,7 @@ struct ProviderSetupSheet: View {
     @ViewBuilder private func content(_ model: InstallCatalogModel) -> some View {
         switch model.state {
         case .idle, .loading:
-            SkeletonDetail()
+            SkeletonDetail(label: "Asking swe how it installs \(provider.name)…")
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded:

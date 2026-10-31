@@ -57,7 +57,7 @@ struct InboxPage: View {
             } else {
                 switch model.inbox {
                 case .idle, .loading:
-                    SkeletonRows(rows: 5)
+                    SkeletonRows(rows: 5, label: "Reading GitHub notifications…")
                 case .failed(let message):
                     ErrorCard(message: message, actionTitle: "Refresh") {
                         Task { await model.loadInbox(swe: app.swe, force: true) }

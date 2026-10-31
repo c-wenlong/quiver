@@ -145,13 +145,13 @@ globalThis.Sk = (() => {
   const block = (w, h, cls = "") =>
     `<div class="skel${cls ? ` ${cls}` : ""}" style="width:${typeof w === "number" ? `${w}px` : w};height:${h}px"></div>`;
   const row = ({ icon = true, pill = true } = {}) =>
-    `<div class="sk-row">${icon ? '<div class="skel sk-dot"></div>' : ""}<div class="sk-lines"><div class="skel sk-line"></div><div class="skel sk-sub"></div></div>${pill ? '<div class="skel sk-pill"></div>' : ""}</div>`;
-  const rows = (n = 6, opts = {}) => Array.from({ length: n }, () => row(opts)).join("");
-  const lines = (n = 5) => `<div class="sk-para">${`<div class="skel sk-line"></div>`.repeat(n)}</div>`;
+    `<div class="skel-row">${icon ? '<div class="skel skel-dot"></div>' : ""}<div class="skel-lines"><div class="skel skel-line"></div><div class="skel skel-sub"></div></div>${pill ? '<div class="skel skel-pill"></div>' : ""}</div>`;
+  const rows = (n = 6, opts = {}) => `<div role="status">${Array.from({ length: n }, () => row(opts)).join("")}</div>`;
+  const lines = (n = 5) => `<div class="skel-para">${`<div class="skel skel-line"></div>`.repeat(n)}</div>`;
   const card = (inner) => `<div class="card" role="status" aria-label="Loading">${inner}</div>`;
   return { block, row, rows, lines, card, cardRows: (n, o) => card(rows(n, o)),
     cardLines: (n) => card(lines(n)),
-    detail: () => card(`${block("42%", 20, "sk-head")}${lines(4)}<div class="sk-chips"><div class="skel sk-chip"></div></div>`) };
+    detail: () => card(`${block("42%", 20, "skel-head")}${lines(4)}<div class="skel-chips"><div class="skel skel-chip"></div></div>`) };
 })();
 globalThis.authHeaders = (extra = {}) => ({ ...extra });
 globalThis.setInterval = () => 0;

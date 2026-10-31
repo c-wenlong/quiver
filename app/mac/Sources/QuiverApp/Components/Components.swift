@@ -831,11 +831,16 @@ struct SkeletonRows: View {
     var icons = true
     /// False when the real rows carry no trailing chip.
     var pills = true
+    /// What VoiceOver says while the real rows load — the text the
+    /// spinner card used to say.
+    var label: String = "Loading"
 
     var body: some View {
         Group {
             if framed { Card { content } } else { content }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(label))
     }
 
     private var content: some View {
@@ -866,11 +871,15 @@ struct SkeletonLines: View {
     var rows = 8
     /// False inside a larger callout — renders bare, no second frame.
     var framed = true
+    /// What VoiceOver says while the body loads.
+    var label: String = "Loading"
 
     var body: some View {
         Group {
             if framed { Card { content } } else { content }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(label))
     }
 
     private var content: some View {
@@ -890,11 +899,15 @@ struct SkeletonLines: View {
 struct SkeletonDetail: View {
     /// False inside a larger callout — renders bare, no second frame.
     var framed = true
+    /// What VoiceOver says while the detail loads.
+    var label: String = "Loading"
 
     var body: some View {
         Group {
             if framed { Card { content } } else { content }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(label))
     }
 
     private var content: some View {

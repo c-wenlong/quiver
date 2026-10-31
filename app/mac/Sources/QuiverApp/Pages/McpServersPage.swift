@@ -61,7 +61,7 @@ struct McpServersPage: View {
         } content: {
             switch model.state {
             case .idle, .loading:
-                SkeletonRows(rows: 6)
+                SkeletonRows(rows: 6, label: "Reading the configs…")
             case .failed(let message):
                 ErrorCard(message: message)
                 folderOnlyRows(hubKnown: false)
@@ -749,7 +749,7 @@ private struct McpRepoSection: View {
                     .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
             }
         } else if model.servers.isEmpty && model.isLoading {
-            SkeletonRows(rows: 4)
+            SkeletonRows(rows: 4, label: "Scanning server folders…")
         } else if model.servers.isEmpty {
             Card {
                 Text("No server folders in \(displayPath(root)).")
