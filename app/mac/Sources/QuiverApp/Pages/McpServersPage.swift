@@ -956,6 +956,8 @@ private struct McpGridSkeleton: View {
     var harnesses: [String]
     var rows = 6
     var label: String
+    /// The card's inner width: the grid fills it, and scrolls only past it.
+    @State private var available: CGFloat = 0
 
     var body: some View {
         Card {
@@ -978,10 +980,12 @@ private struct McpGridSkeleton: View {
                         if row < rows - 1 { Divider().overlay(Theme.border) }
                     }
                 }
-                .frame(minWidth: ServerGrid.nameMinWidth
-                       + harnesses.map(ServerGrid.columnWidth).reduce(0, +), alignment: .leading)
+                .frame(width: max(available, ServerGrid.nameMinWidth
+                                  + harnesses.map(ServerGrid.columnWidth).reduce(0, +)),
+                       alignment: .leading)
             }
             .scrollIndicators(.automatic)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { available = $0 }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(label))

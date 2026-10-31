@@ -325,9 +325,10 @@ const Fmt = (() => {
 
 /* Loading skeletons: blocks laid out like the rows or document a fetch
  * is still reading, styled by the .skel-* rules in styles.css. A page's
- * "Reading…" card becomes Sk.cardRows(n) so what arrives lands without
- * the layout jumping. Every composer marks itself role="status" so a
- * screen reader still hears "Loading" where the old text said it. */
+ * skeleton reuses its own row markup with Sk bars in place of content,
+ * so what arrives lands without the layout jumping. Sk.block marks
+ * itself role="status"; everything else stays silent inside a wrapper
+ * that carries role="status" aria-label="Loading". */
 const Sk = (() => {
   const width = (v) => (typeof v === "number" ? `${v}px` : v);
   const status = 'role="status" aria-label="Loading"';

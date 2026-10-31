@@ -415,7 +415,7 @@ const PrFilter = (() => {
   const ghRowsSkeleton = (n) => Array.from({ length: n }, (_, i) => `<div class="gh-row gh-center">
     <span class="gh-row-lead">${Sk.dot(15)}</span>
     <span class="gh-row-main">
-      <span class="gh-row-title"><span class="gh-title">${Sk.bar(`${56 - (i % 3) * 10}%`, 13)}</span>${i % 3 ? "" : Sk.pill(56)}</span>
+      <span class="gh-row-title"><span class="gh-title">${Sk.bar(220 - (i % 3) * 34, 13)}</span>${i % 3 ? "" : Sk.pill(56)}</span>
       <span class="gh-row-sub">${Sk.bar(`${46 - (i % 2) * 10}%`, 11)}</span>
     </span>
     <span class="gh-row-side">${i % 2 ? Sk.pill(44) : Sk.bar(16, 16)}</span>
@@ -428,7 +428,7 @@ const PrFilter = (() => {
   /* A PR or issue sheet still fetching: its head, then body lines. */
   const sheetSkeleton = () => `<div role="status" aria-label="Loading">
     <div class="gh-pr-head"><span class="gh-pr-icon">${Sk.dot(16)}</span>
-      <div class="gh-pr-headtext">${Sk.bar("58%", 15)}${Sk.bar("38%", 11)}</div></div>
+      <div class="gh-pr-headtext">${Sk.bar(330, 15)}${Sk.bar(210, 11)}</div></div>
     <div class="skel-para">${Sk.linesInner(6)}</div></div>`;
   const errorCard = (text, framed = true, action = "") => {
     const body = `<div class="gh-error-row"><span class="error">${esc(text)}</span>${action}</div>`;

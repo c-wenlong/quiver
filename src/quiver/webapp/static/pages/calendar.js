@@ -570,19 +570,29 @@
 
   /* ------------------------------------------------------------ month grid */
 
-  /* The day's own shape: a month grid on the left (weekday head, day
-   * cells with a date and entry chips), the mini month and legend on
-   * the right. */
+  /* The day's own shape: whichever of the month or time grids S.mode
+   * shows, then the mini month and legend unless the panel is collapsed. */
   function calSkeleton() {
     const cell = (i) => `<div class="cal-mcell"><div class="cal-mday"><span>${Sk.bar(16, 10)}</span></div>
       <div class="cal-mentries">${i % 4 === 1 ? `<div class="cal-mentry">${Sk.bar(3, 10)}${Sk.bar("66%", 9)}</div>` : ""}
       ${i % 9 === 3 ? `<div class="cal-mentry">${Sk.bar(3, 10)}${Sk.bar("52%", 9)}</div>` : ""}</div></div>`;
-    const main = `<div class="cal-main"><div class="cal-month">
+    const month = `<div class="cal-month">
       <div class="cal-mhead"><span class="cal-mweek"></span>${Array.from({ length: 7 }, () =>
         `<span class="cal-mwd">${Sk.bar(26, 10)}</span>`).join("")}</div>
       ${Array.from({ length: 6 }, (_, r) => `<div class="cal-mrow"><span class="cal-mweek">${Sk.bar(10, 9)}</span>${
         Array.from({ length: 7 }, (_, c) => cell(r * 7 + c)).join("")}</div>`).join("")}
-    </div></div>`;
+    </div>`;
+    const cols = S.mode === "days" ? S.n : 7;
+    const time = `<div class="cal-time" style="--cols:${cols};--span:${cols}">
+      <div class="cal-scroll"><div class="cal-canvas">
+      <div class="cal-head"><div class="cal-axis-gap"></div><div class="cal-heads">${Array.from({ length: cols }, () =>
+        `<div class="cal-dayhead"><span class="wd">${Sk.bar(24, 11)}</span><span class="dn">${Sk.bar(16, 15)}</span></div>`).join("")}</div></div>
+      <div class="cal-grid"><div class="cal-axis">${Array.from({ length: 12 }, () =>
+        `<span class="cal-hour">${Sk.bar(26, 9)}</span>`).join("")}</div>
+        <div class="cal-cols">${Array.from({ length: cols }, (_, i) => `<div class="cal-col${i === 0 ? " snap" : ""}">
+          ${i % 3 === 1 ? `<div class="cal-block" style="left:6px;right:6px;top:${10 + i * 18}%;height:${22 + i * 6}%">${Sk.bar("80%", 11)}${Sk.bar("60%", 9)}</div>` : ""}
+        </div>`).join("")}</div></div>
+      </div></div></div>`;
     const mini = `<div class="cal-mini"><div class="cal-mini-head">${
       Array.from({ length: 7 }, () => `<span>${Sk.bar(14, 8, "", "margin:0 auto")}</span>`).join("")}</div>
       ${Array.from({ length: 5 }, () => `<div class="cal-mini-row"><span class="cal-mini-week">${Sk.bar(8, 8)}</span>${
@@ -591,8 +601,9 @@
       <div class="cal-legend">${[0, 1, 2].map((i) => `<div class="cal-lrow"><span class="cal-chev-gap"></span>
         <span class="cal-toggle">${Sk.bar(14, 14, "", "border-radius:3px")}${Sk.bar(12, 12)}
           <span class="name">${Sk.bar(`${52 - i * 8}%`, 11)}</span>${Sk.num(24, 10)}</span></div>`).join("")}</div>`;
-    return `<div class="cal-body" role="status" aria-label="Loading">${main}
-      <aside class="cal-panel">${mini}${legend}</aside></div>`;
+    return `<div class="cal-body${S.panelCollapsed ? " collapsed" : ""}" role="status" aria-label="Loading">
+      <div class="cal-main">${S.mode === "month" ? month : time}</div>
+      ${S.panelCollapsed ? "" : `<aside class="cal-panel">${mini}${legend}</aside>`}</div>`;
   }
 
   function monthGrid() {

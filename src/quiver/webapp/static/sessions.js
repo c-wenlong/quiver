@@ -1335,7 +1335,7 @@ function nsPaint() {
   for (const b of sheet.querySelectorAll("[data-harness]")) {
     b.onclick = () => { ns.harness = b.dataset.harness; ns.harnessTouched = true; nsRefillModel(); nsPaint(); };
   }
-  for (const b of sheet.querySelectorAll(".ns-folder")) {
+  for (const b of sheet.querySelectorAll(".ns-folder[data-path]")) {
     b.onclick = () => {
       if (ns.browse) nsBrowse(b.dataset.path);   // inside the browser: descend
       else { nsPickFolder(b.dataset.path); }
@@ -1382,7 +1382,7 @@ function nsPaintLists() {
   box.innerHTML = folders.map((p) => `<button type="button" class="ns-folder"
       data-path="${esc(p)}"${busy ? " disabled" : ""}>${esc(p)}</button>`).join("")
     || '<p class="caption" style="padding:8px 10px">No recent folders match.</p>';
-  for (const b of box.querySelectorAll(".ns-folder")) {
+  for (const b of box.querySelectorAll(".ns-folder[data-path]")) {
     b.onclick = () => nsPickFolder(b.dataset.path);
   }
 }

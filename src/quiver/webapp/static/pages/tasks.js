@@ -141,7 +141,7 @@
     <div class="gh-group-head">${Sk.bar(130, 12)}</div>
     <div class="gh-surface last">${Array.from({ length: 5 }, (_, i) => `<div class="gh-row gh-center">
       <span class="gh-row-lead">${Sk.dot(15)}</span>
-      <span class="gh-row-main"><span class="gh-row-title"><span class="gh-title">${Sk.bar(`${56 - (i % 3) * 10}%`, 13)}</span>${i % 3 ? "" : Sk.pill(50)}</span>
+      <span class="gh-row-main"><span class="gh-row-title"><span class="gh-title">${Sk.bar(220 - (i % 3) * 34, 13)}</span>${i % 3 ? "" : Sk.pill(50)}</span>
       <span class="gh-row-sub">${Sk.bar(`${40 - (i % 2) * 10}%`, 11)}</span></span>
       <span class="gh-row-side">${i % 2 ? Sk.pill(58) : ""}</span>
     </div>`).join("")}</div></div>`;
