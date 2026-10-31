@@ -213,6 +213,76 @@ class TestTmuxInjector(unittest.TestCase):
         self.assertTrue(out.ok)
         self.assertEqual(sk.call_args[0][1], "5")
 
+    DEVIN_QUESTION = (
+        " Which engine?\n"
+        "\n"
+        " ❭ SQLite\n"
+        "   Postgres\n"
+        "   Redis\n"
+        "   Other (type your own)\n"
+        "\n"
+        " ↑↓ select · ↵ confirm · esc cancel"
+    )
+
+    def test_approval_choice_menu_walks_the_cursor(self):
+        # An unnumbered arrow-select list takes no digit — "2" walks the
+        # cursor from row 1 down one, then confirms.
+        with patch.object(supervise, "capture_pane",
+                          return_value=self.DEVIN_QUESTION), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "2")
+        self.assertTrue(out.ok)
+        self.assertEqual([c[0][1] for c in sk.call_args_list],
+                         ["Down", "Enter"])
+
+    def test_approval_choice_menu_cursor_delta_up(self):
+        pane = self.DEVIN_QUESTION.replace(
+            " ❭ SQLite\n   Postgres\n   Redis\n",
+            "   SQLite\n   Postgres\n ❭ Redis\n")
+        with patch.object(supervise, "capture_pane", return_value=pane), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "1")
+        self.assertTrue(out.ok)
+        self.assertEqual([c[0][1] for c in sk.call_args_list],
+                         ["Up", "Up", "Enter"])
+
+    def test_approval_choice_deny_is_escape(self):
+        # The semantic names mean nothing on an arrow-select list —
+        # only "deny" carries over, as the menu's own cancel.
+        with patch.object(supervise, "capture_pane",
+                          return_value=self.DEVIN_QUESTION), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "deny")
+        self.assertTrue(out.ok)
+        self.assertEqual(sk.call_args[0][1], "Escape")
+
+    def test_approval_choice_semantic_allow_refused(self):
+        with patch.object(supervise, "capture_pane",
+                          return_value=self.DEVIN_QUESTION), \
+             patch.object(supervise, "send_key") as sk:
+            out = self.inj.approval(self.session, "r1", "allow")
+        self.assertFalse(out.ok)
+        sk.assert_not_called()
+
+    def test_approval_choice_option_not_on_screen(self):
+        with patch.object(supervise, "capture_pane",
+                          return_value=self.DEVIN_QUESTION), \
+             patch.object(supervise, "send_key", return_value=True) as sk:
+            out = self.inj.approval(self.session, "r1", "7")
+        self.assertFalse(out.ok)
+        self.assertIn("not on screen", out.note)
+        sk.assert_not_called()
+
+    def test_approval_choice_unreachable_mid_walk(self):
+        with patch.object(supervise, "capture_pane",
+                          return_value=self.DEVIN_QUESTION), \
+             patch.object(supervise, "send_key",
+                          side_effect=[True, False]) as sk:
+            out = self.inj.approval(self.session, "r1", "3")
+        self.assertFalse(out.ok)
+        self.assertIn("not reachable", out.note)
+        self.assertEqual(sk.call_count, 2)
+
     def test_approval_digit_not_on_the_menu(self):
         # A digit the visible menu doesn't offer must not reach the
         # pane — it could land in an unrelated prompt.
