@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from quiver.remote import attachments, supervise
+from quiver.remote.launch_model import provider_split
 from quiver.reports import transcripts as _tr
 from quiver.sessions.models import Session
 from quiver.sessions.resume import account_env
@@ -78,6 +79,32 @@ def control_text(op: str, value: str) -> str:
     if template is None:
         return ""
     return template.format(value=value).rstrip()
+
+
+def switch_model(home: Path | None, session_key: str, mode: str,
+                 tool: str, value: str) -> InjectResult:
+    """The ``model`` control op on an API channel: record the pick on
+    the session's supervised row, which the channel's next turn reads
+    (the same field an attach-time pick lands in). Nothing is sent now,
+    so the switch applies from the next turn, mid-turn or not. The
+    value is held to the launch rule and to the channel's own shape
+    rule (``supervise.channel_tuning_error``)."""
+    from quiver.remote import protocol
+
+    try:
+        value = protocol._launch_value({"value": value}, "value") or ""
+    except ValueError as exc:
+        return InjectResult(False, str(exc))
+    if not value:
+        return InjectResult(False, "model needs a value")
+    blocked = supervise.channel_tuning_error(mode, tool, value, None)
+    if blocked:
+        return InjectResult(False, blocked)
+    if not supervise.set_meta(home, session_key, "model", value):
+        return InjectResult(
+            False, "session detached or its row could not be saved; "
+                   "model unchanged")
+    return InjectResult(True, f"model set to {value} from the next turn")
 
 
 def _prompt(session: Session, cmd: dict, harness: str = "") -> str:
@@ -360,6 +387,12 @@ class ClaudeHeadlessInjector:
                     pass
             supervise.unmark(self.home, self.key)
             return InjectResult(True, "detached; session is observed again")
+        if op == "model":
+            # The next print-mode run reads it off the row as --model
+            # (send(), under the session lock); a run in flight keeps
+            # the model it started with.
+            return switch_model(self.home, self.key, "headless", "claude",
+                                value)
         return InjectResult(
             False, f"unsupported_control: {op} needs a live TUI"
         )
@@ -647,11 +680,10 @@ class OpencodeServeInjector:
         # server parses — channel_tuning_error enforces it; a stale or
         # hand-edited meta without the slash is left to the server's
         # default), effort as the model's variant.
-        model = str(meta.get("model") or "")
-        if "/" in model:
-            provider, _, model_id = model.partition("/")
-            payload["model"] = {"providerID": provider,
-                                "modelID": model_id}
+        split = provider_split(str(meta.get("model") or ""))
+        if split is not None:
+            payload["model"] = {"providerID": split[0],
+                                "modelID": split[1]}
         effort = str(meta.get("effort") or "")
         if effort:
             payload["variant"] = effort
@@ -717,6 +749,12 @@ class OpencodeServeInjector:
             self._release(session)
             supervise.unmark(self.home, self.key)
             return InjectResult(True, "detached; session is observed again")
+        if op == "model":
+            # The next prompt_async carries it as its {providerID,
+            # modelID}; a bare name is refused (channel_tuning_error),
+            # since the server would drop it for its own default.
+            return switch_model(self.home, self.key, "serve", "opencode",
+                                value)
         return InjectResult(
             False, f"unsupported_control: {op} needs a live TUI"
         )
@@ -1036,6 +1074,12 @@ class CodexAppServerInjector:
                     pass
             supervise.unmark(self.home, self.key)
             return InjectResult(True, "detached; session is observed again")
+        if op == "model":
+            # The next turn/start carries it as its model override,
+            # which codex keeps for the turns after too; a turn already
+            # running keeps the model it started on.
+            return switch_model(self.home, self.key, "appserver", "codex",
+                                value)
         return InjectResult(
             False, f"unsupported_control: {op} needs a live TUI"
         )

@@ -264,17 +264,18 @@ class TestRows(unittest.TestCase):
         _key, row = catalog_mod.session_to_row(s, "done", "m", {}, None,
                                                "claude-opus-4-5")
         self.assertEqual(row["model"], "claude-opus-4-5")
-        self.assertEqual(row["model_modes"], ["tmux"])
+        self.assertEqual(row["model_modes"], ["tmux", "headless"])
 
     def test_unknown_model_is_left_out(self):
         _key, row = catalog_mod.session_to_row(
             _session("s1", "opencode"), "done", "m", {})
         self.assertNotIn("model", row)
-        # opencode's TUI has no /model <name>: no channel switches it.
-        self.assertEqual(row["model_modes"], [])
+        # opencode's TUI has no /model <name>: only serve switches it.
+        self.assertEqual(row["model_modes"], ["serve"])
 
-    def test_codex_switches_in_tmux(self):
-        self.assertEqual(session_model.model_modes("codex"), ["tmux"])
+    def test_codex_switches_in_tmux_and_appserver(self):
+        self.assertEqual(session_model.model_modes("codex"),
+                         ["tmux", "appserver"])
 
     def test_catalog_refresh_joins_models(self):
         sessions = [_session("a", "claude"), _session("b", "codex")]

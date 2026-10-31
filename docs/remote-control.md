@@ -813,10 +813,19 @@ activity time moves. The names follow the ledger's rules (OpenCode's
 web ledger is not the source because it is scanned only when a web page
 asks, so it can trail the transcript by days on a hub nobody browses.
 `model_modes` lists the supervised modes in which the `model` control op
-switches that harness: `["tmux"]` where its TUI has a verified
-`/model <name>` builtin (claude and codex), `[]` elsewhere, since the
-API channels answer `unsupported_control` today. A client offers a model
-switch only on an attached row whose `mode` is in the list.
+switches that harness: `tmux` where its TUI has a verified
+`/model <name>` builtin (claude and codex), plus `headless` for claude,
+`appserver` for codex and `serve` for opencode.
+On an API channel the op sends nothing: it records the value on the
+session's supervised row (`inject.switch_model`), the same field an
+attach pick lands in, so it applies from the next turn (headless claude:
+`--model` on the next `claude -p --resume`; codex: the next
+`turn/start`'s `model` override; opencode: the next `prompt_async`'s
+`{providerID, modelID}`, split at the first slash, so a bare name is
+refused). The value is held to the launch shape
+and the channel's attach rule (`channel_tuning_error`), and a detached
+session refuses it. A client offers a model switch only on an attached row whose
+`mode` is in the list.
 
 A pick can only change what a fresh run starts with, so two attach
 shapes refuse a changed value rather than dropping it: attaching a

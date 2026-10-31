@@ -84,6 +84,15 @@ def capability(name: str, reg: dict | None = None) -> dict | None:
     return base if _usable(base) else None
 
 
+def provider_split(model: str) -> tuple[str, str] | None:
+    """A ``provider/model`` value as ``(provider, model id)``, split at
+    the first slash (the id may hold more: ``openrouter/acme/m``); None
+    when either side is empty. The one rule for opencode's launch flag,
+    its serve channel's ``{providerID, modelID}`` and the switch to it."""
+    provider, sep, model_id = model.partition("/")
+    return (provider, model_id) if sep and provider and model_id else None
+
+
 def model_error(name: str, model: str | None,
                 reg: dict | None = None) -> str:
     """The refusal note when ``name``'s launch can't take ``model``,
@@ -94,7 +103,7 @@ def model_error(name: str, model: str | None,
     if cap is None:
         return (f"{name} launches can't take a model: harness.json "
                 f"declares no capabilities.model for it")
-    if cap.get("provider") and "/" not in model:
+    if cap.get("provider") and provider_split(model) is None:
         return (f"{name} launches need the model as provider/model, "
                 f"not {model!r}")
     return ""

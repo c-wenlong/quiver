@@ -125,6 +125,32 @@ agent runs. <code>--uninstall</code> removes it and
 on a new bundle as it does the hub
 (<a href="https://github.com/c-wenlong/quiver/issues/1438">#1438</a>).</p>
 </li>
+<li><p><strong>Hub: switch the model of an opencode session attached through
+<code>opencode serve</code>.</strong> The <code>model</code> control op on a <code>serve</code> session
+records a <code>provider/model</code> pick on the session's supervised row, and
+the next <code>prompt_async</code> carries it as <code>{providerID, modelID}</code>, so the
+switch applies from the next turn; a bare name is refused. opencode
+rows now list <code>serve</code> in <code>model_modes</code>, so the iPhone's Model menu
+shows on them with no app change. This closes model switching on
+every API channel
+(<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>).</p>
+</li>
+<li><p><strong>Hub: switch the model of a headless Claude Code session.</strong> The
+<code>model</code> control op on a <code>headless</code> session records the pick on the
+session's supervised row, and the next <code>claude -p --resume</code> run takes
+it as <code>--model</code>, so the switch applies from the next turn. Claude Code
+rows now list <code>headless</code> in <code>model_modes</code>, so the iPhone's Model menu
+shows on them with no app change
+(<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>).</p>
+</li>
+<li><p><strong>Hub: switch the model of a Codex session attached through the
+app-server.</strong> The <code>model</code> control op on an <code>appserver</code> session
+records the pick on the session's supervised row, and the next
+<code>turn/start</code> carries it as its model override, so the switch applies
+from the next turn. Codex rows now list <code>appserver</code> in <code>model_modes</code>,
+so the iPhone's Model menu shows on them with no app change
+(<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>).</p>
+</li>
 <li><p><strong>Mac: Sessions lists other machines' sessions.</strong> Below this Mac's
 Pinned and day groups, an &quot;Other machines&quot; group shows the hub's rows
 for each satellite: a subheader per machine with a green or grey dot
