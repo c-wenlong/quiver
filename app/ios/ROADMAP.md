@@ -92,7 +92,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Agent Markdown: headings, lists, quotes, rules, code blocks, and tables that scroll sideways inside their own box when wider than the screen
 - [x] Task checkboxes, image and rendered-view chips, local file links shown as file names, MCP tool names as "server · tool"
 - [x] Thinking card, collapsed to "Thought"
-- [ ] Thinking duration ("Thought for 12s"); the hub sends no duration yet
+- [x] Thinking duration ("Thought for 12s") from the hub's `duration_s` (#1440)
 - [x] Tool card: `Edit · app.js` with an added and removed line count, tap to expand
 - [x] Diff view inside tool cards for edit and write tools
 - [x] Runs of tool calls fold into "Used 6 tools"

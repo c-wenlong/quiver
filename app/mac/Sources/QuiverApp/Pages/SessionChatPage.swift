@@ -315,8 +315,8 @@ private struct ChatEntry: View {
                 .font(Theme.bodySmall)
                 .foregroundStyle(Theme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        case .thinking(let text):
-            Fold(title: Label("Thought", systemImage: "brain").foregroundStyle(Theme.textSecondary)) {
+        case .thinking(let text, let seconds):
+            Fold(title: Label(ThoughtLabel.text(seconds), systemImage: "brain").foregroundStyle(Theme.textSecondary)) {
                 MarkdownBlocks(blocks: GitHubMarkdown.blocks(text))
                     .font(Theme.bodySmall)
                     .foregroundStyle(Theme.textSecondary)

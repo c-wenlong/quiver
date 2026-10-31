@@ -318,7 +318,20 @@ const Fmt = (() => {
     return dash > 0 && /^[0-9]{8}$/.test(name.slice(dash + 1)) ? name.slice(0, dash) : name;
   }
 
-  return { tokens, dollars, ago, relative, harnessName, modelName, harnessColor, logo, mark, markView, tilde, marbleScale,
+  /* A thinking card's title from the hub's duration_s, the Mac's and
+   * the iPhone's ThoughtLabel.text: "Thought for 12s", "Thought for
+   * 1m 5s", "Thought for 1h 2m", rounded to the second and never under
+   * 1s; plain "Thought" when no usable duration came. */
+  function thought(seconds) {
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return "Thought";
+    const total = Math.max(1, Math.round(seconds));
+    const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+    if (h > 0) return m > 0 ? `Thought for ${h}h ${m}m` : `Thought for ${h}h`;
+    if (m > 0) return s > 0 ? `Thought for ${m}m ${s}s` : `Thought for ${m}m`;
+    return `Thought for ${s}s`;
+  }
+
+  return { tokens, dollars, ago, relative, harnessName, modelName, thought, harnessColor, logo, mark, markView, tilde, marbleScale,
     resetIn, windowLabel, planTitle, money, balance, onDemand,
     copyIcon, copy, copyTick, shellWord };
 })();

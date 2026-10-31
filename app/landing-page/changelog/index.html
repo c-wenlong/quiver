@@ -122,6 +122,22 @@ hub this Mac's satellite agent reports to and hubs added by address in
 Settings › Integrations › Remote › Other hubs; the last pick is
 remembered (<a href="https://github.com/c-wenlong/quiver/issues/681">#681</a>).</p>
 </li>
+<li><p><strong>iPhone and web: a machine strip on the Sessions page.</strong> One chip
+per machine the hub lists, with an online dot, its name, &quot;N working
+· M waiting&quot; and, when it is offline, &quot;last seen 2h&quot;. Tapping a chip
+shows only that machine's sessions; tapping it again shows all. The
+strip hides when the hub has one machine, and orders machines like
+the Mac's &quot;Other machines&quot; group (online first, then name). No new
+hub route
+(<a href="https://github.com/c-wenlong/quiver/issues/1443">#1443</a>).</p>
+</li>
+<li><p><strong>iPhone, web and Mac: thinking cards say how long the model
+thought.</strong> A thinking card reads &quot;Thought for 12s&quot; or &quot;Thought for
+1m 5s&quot; from the hub's <code>duration_s</code>, and plain &quot;Thought&quot; when the hub
+sent none. One formatting rule per client (<code>ThoughtLabel.text</code> on
+iOS and the Mac, <code>Fmt.thought</code> on the web)
+(<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
+</li>
 <li><p><strong>Hub: thinking messages carry how long the model thought.</strong>
 <code>kind: &quot;thinking&quot;</code> messages from Claude Code, Codex and opencode now
 carry <code>duration_s</code>, so the clients can show &quot;Thought for 12s&quot;. Claude
