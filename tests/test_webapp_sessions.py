@@ -544,7 +544,8 @@ globalThis.api = (path) => {
   return new Promise((r) => { answer = r; });
 };
 const card = { kind: "open approval card" }, appended = [];
-const log = { innerHTML: "old history", querySelectorAll: () => [card], appendChild: (el) => appended.push(el) };
+const log = { innerHTML: "old history", querySelectorAll: (sel) => (sel.includes("approval") ? [card] : []),
+  appendChild: (el) => appended.push(el) };
 document.getElementById = (id) => (id === "chat-log" ? log : null);
 globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
 const frame = (ev) => "data: " + JSON.stringify(ev);
