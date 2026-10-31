@@ -77,6 +77,26 @@ pages: `MenuBarPage.swift` (status item and popup tabs) and
 `WidgetsPage.swift` (one underline tab per `WidgetCatalog` kind, its
 previews and settings, the chosen kind stored in `desktopWidgetTab`).
 
+The sidebar's first row is the machine switcher (`MachineSwitcherButton`,
+#681): "This Mac" shows the native pages, and another machine's hub
+replaces the panel with `HubWebPage`, a `WKWebView` on that hub's web app
+at `/`. `QuiverCore`'s `MachineSwitcher` keeps the list and the pick in
+the app's preferences (`remoteHubs`, `remoteHubAgent`,
+`remoteHubSelected`): the hub `swe remote agent --status --json` names
+(this Mac's `agent.json`, refreshed when the window opens) plus hubs added
+by address in Settings › Integrations › Remote › Other hubs. Opening a
+native page (sidebar click, ⌘-number, a notification) brings This Mac
+back. `HubNavigation.decide` pins the web view to the hub's origin (plus
+`about:blank`/`about:srcdoc` and the hub's own `blob:` URLs): a clicked
+link elsewhere, http(s) or mailto, goes to the default app, and anything
+else, `file:` included, never loads. Each hub gets its own persistent
+`WKWebsiteDataStore` (`HubOrigin.dataStoreID`), so the web app's pairing
+credential survives a restart. The hub signs the web view in exactly as
+it does a browser on this Mac: the owner's tailnet identity (#653), else
+the web app's own pairing card. The bundle sets
+`NSAllowsArbitraryLoadsInWebContent` so a plain-http `--tailnet` hub
+loads.
+
 ## Theme
 
 `Theme` (`Theme/Theme.swift`) is an enum of tokens, never a view: surfaces

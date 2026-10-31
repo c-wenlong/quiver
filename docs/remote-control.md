@@ -1404,6 +1404,16 @@ writes-go-through-tested-Python rule.
 [app/ios/ROADMAP.md](../app/ios/ROADMAP.md) tracks the client redesign:
 every page, component and feature, and the hub work each needs.
 
+The Mac app reaches another machine's hub through the web app too: its
+sidebar's machine switcher (#681) loads a picked hub's `/` in a web view
+inside the window, pinned to that hub's origin. The hub treats it as a
+browser on the Mac: the owner's own tailnet node gets in with no pairing
+(the web app sends `X-Quiver-Pair: 1` from the hub's own origin), and any
+other node sees the web app's pairing card, whose credential stays in
+that hub's persistent web data store. The switcher lists the hub this
+Mac's `agent.json` names and hubs added by address in Settings ›
+Integrations › Remote › Other hubs.
+
 Two clients. The web app (`src/quiver/webapp/`, served by the hub under
 `/`; older `/app/` links redirect there, query and fragment intact) works in any browser over
 Tailscale: its `#pair=` fragment trades a pair token for the credential

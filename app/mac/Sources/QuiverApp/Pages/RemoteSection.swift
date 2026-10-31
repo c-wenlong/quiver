@@ -37,6 +37,10 @@ struct RemoteSection: View {
             cardHeader("Pending requests",
                        detail: "Phones asking to pair over Tailscale. Type the code the phone shows, then approve or deny.")
             requestRows
+            SettingsDivider()
+            cardHeader("Other hubs",
+                       detail: "Hubs on other machines. Pick one in the sidebar's machine switcher to open its web app in this window.")
+            OtherHubRows()
         }
         .task(id: app.swePath) {
             let remote = RemoteModel(swe: app.swe)
@@ -334,6 +338,55 @@ enum PairTarget: String, CaseIterable, Identifiable {
     case web, app
     var id: Self { self }
     var title: String { self == .web ? "Browser" : "Quiver app" }
+}
+
+/// The machine switcher's hubs: the one this Mac's agent reports to (it
+/// leaves with the agent's pairing) and any added here by address.
+private struct OtherHubRows: View {
+    @Environment(AppModel.self) private var app
+    @State private var draft = ""
+    @State private var error: String?
+
+    var body: some View {
+        ForEach(app.machines.hubs) { hub in
+            SettingRow(title: hub.origin.name,
+                       detail: hub.source == .agent
+                           ? "\(hub.origin.string) · this Mac's agent reports here"
+                           : hub.origin.string,
+                       icon: "server.rack") {
+                HStack(spacing: 8) {
+                    Button("Open") { app.machines.select(hub.origin) }.secondaryButton()
+                    if hub.source == .added {
+                        Button("Remove") {
+                            app.machines.remove(hub.origin)
+                            app.hubWebViews.forget(hub.origin)
+                        }
+                        .secondaryButton()
+                    }
+                }
+            }
+            SettingsDivider()
+        }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TextField("https://box.tailnet.ts.net:8477", text: $draft)
+                    .quiverField(monospaced: true)
+                    .onSubmit(add)
+                    .accessibilityLabel("Hub address")
+                Button("Add hub", action: add).primaryButton()
+                    .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if let error {
+                Text(error).font(Theme.caption).foregroundStyle(Theme.warningText)
+            }
+        }
+        .padding(.vertical, 14)
+    }
+
+    private func add() {
+        error = app.machines.add(draft)
+        if error == nil { draft = "" }
+    }
 }
 
 private struct DeviceRow: View {

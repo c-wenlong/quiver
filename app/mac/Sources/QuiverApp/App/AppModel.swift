@@ -17,7 +17,10 @@ final class AppModel {
     var selection: AppSection? {
         get { openSection }
         set {
-            guard newValue != openSection, !SheetOverlayRegistry.shared.anyCovered else { return }
+            guard !SheetOverlayRegistry.shared.anyCovered else { return }
+            // Asking for a native page brings This Mac back from a hub.
+            machines.showThisMac()
+            guard newValue != openSection else { return }
             openSection = newValue
             UserDefaults.standard.set(newValue?.rawValue, forKey: "lastSection")
         }
@@ -33,7 +36,7 @@ final class AppModel {
     /// A sidebar click or its ⌘-number shortcut: opens the page, or asks
     /// the page already open to go back.
     func select(_ section: AppSection) {
-        if selection == section {
+        if selection == section, !machines.showsHub {
             navReselects += 1
         } else {
             selection = section
@@ -413,6 +416,12 @@ final class AppModel {
     let providers: ProviderVisibilityModel
     /// Which pages the sidebar lists, and their order inside each group.
     let sidebar = SidebarVisibilityModel(store: UserDefaultsStore())
+    /// The sidebar's machine switcher: This Mac, or another machine's hub
+    /// whose web app then fills the window.
+    let machines = MachineSwitcher(store: UserDefaultsStore())
+    /// One web view per hub, kept while the app runs so switching back and
+    /// forth keeps the page where it was.
+    let hubWebViews = HubWebViews()
     /// The order of Settings › Providers › Inference's rows.
     let inferenceOrder = InferenceOrder(store: UserDefaultsStore())
     /// What the starred harnesses are running right now (the Compute page).
