@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from quiver.console import c
+from quiver.console import c, tilde
 from quiver.flags import expand_value_flags
 from quiver.json_output import emit, error_stream
 from quiver.skills.help_text import (
@@ -17,12 +17,6 @@ from quiver.skills.link_ops import (
     move_skill,
     unlink_skill_root,
 )
-
-
-def _tilde(path: Path, home: Path) -> str:
-    text = str(path)
-    home_text = str(home)
-    return text.replace(home_text, "~") if text.startswith(home_text) else text
 
 
 def _parse_flags(args: list[str], allowed: frozenset[str]) -> tuple[dict, list[str]]:
@@ -78,7 +72,7 @@ def cmd_skills_link(args):
     if opts["json"]:
         return emit(LinkReply(label, str(src), str(tgt)).to_json())
     home = Path.home()
-    print(c("green", f"  ✓ Linked {label}: {_tilde(src, home)} → {_tilde(tgt, home)}"))
+    print(c("green", f"  ✓ Linked {label}: {tilde(src, home)} → {tilde(tgt, home)}"))
     print(c("dim", "  Run `swe skills tree` to verify.\n"))
     return 0
 
@@ -105,7 +99,7 @@ def cmd_skills_unlink(args):
     if opts["json"]:
         return emit(UnlinkReply(label, str(path), opts["mkdir"]).to_json())
     home = Path.home()
-    msg = f"  ✓ Unlinked {label}: {_tilde(path, home)}"
+    msg = f"  ✓ Unlinked {label}: {tilde(path, home)}"
     if opts["mkdir"]:
         msg += " (empty directory created)"
     print(c("green", msg))
@@ -142,6 +136,6 @@ def cmd_skills_move(args):
         return emit(MoveReply(name, str(src), str(dest)).to_json())
     home = Path.home()
     print(c("green", f"  ✓ Moved {name}"))
-    print(c("dim", f"    from {_tilde(src, home)}"))
-    print(c("dim", f"    to   {_tilde(dest, home)}\n"))
+    print(c("dim", f"    from {tilde(src, home)}"))
+    print(c("dim", f"    to   {tilde(dest, home)}\n"))
     return 0

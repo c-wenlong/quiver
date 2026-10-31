@@ -12,7 +12,7 @@ import unittest
 
 from quiver.console import (
     COLORS, c, cell_len, cellpad, fill_ansi, lpad, sanitize, strip_ansi,
-    visible_len, wrap_ansi,
+    tilde, visible_len, wrap_ansi,
 )
 
 RESET = "\x1b[0m"
@@ -277,6 +277,20 @@ class SanitizeTest(unittest.TestCase):
         self.assertEqual(strip_ansi(text), "ab\x07")
         self.assertEqual(visible_len("x\x1b]8;;u\x07y"), 2)
 
+
+
+class TildeTest(unittest.TestCase):
+    def test_only_the_home_prefix_becomes_a_tilde(self):
+        home = "/Users/kai"
+        self.assertEqual(tilde("/Users/kai", home), "~")
+        self.assertEqual(tilde("/Users/kai/work/app", home), "~/work/app")
+        self.assertEqual(tilde("/Users/kai/", "/Users/kai/"), "~/")
+        # A sibling that shares the home's letters, and the home path
+        # buried mid-string, both stay as written.
+        self.assertEqual(tilde("/Users/kaiser/x", home), "/Users/kaiser/x")
+        self.assertEqual(tilde("/backup/Users/kai/x", home), "/backup/Users/kai/x")
+        self.assertEqual(tilde("/Users/kai/backup/Users/kai/x", home), "~/backup/Users/kai/x")
+        self.assertEqual(tilde("relative/path", home), "relative/path")
 
 if __name__ == "__main__":
     unittest.main()

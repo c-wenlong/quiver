@@ -131,6 +131,26 @@ def strip_ansi(text: str) -> str:
     return _ESCAPES_RE.sub("", text)
 
 
+def tilde(path, home=None) -> str:
+    """``path`` as a terminal shows it: the home directory written ``~``.
+
+    ``~`` for the home itself, ``~/rest`` inside it, anything else as it
+    is. A plain ``str.replace(home, "~")`` also rewrote a sibling that
+    merely starts with the same letters (``/Users/kaiser`` under home
+    ``/Users/kai`` read ``~ser``) and a home path buried mid-string.
+    """
+    text = str(path)
+    root = str(home if home is not None else os.path.expanduser("~"))
+    root = root.rstrip("/" + os.sep)
+    if not root:
+        return text
+    if text == root:
+        return "~"
+    if text.startswith(root + "/") or text.startswith(root + os.sep):
+        return "~" + text[len(root):]
+    return text
+
+
 def sanitize(text: str) -> str:
     """Make untrusted text safe to print: no escapes, no control chars.
 

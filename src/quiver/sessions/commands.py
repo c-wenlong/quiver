@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 
-from quiver.console import c, cpad, fit_widths, sanitize, terminal_width, truncate, visible_len
+from quiver.console import c, cpad, fit_widths, sanitize, terminal_width, tilde, truncate, visible_len
 from quiver.flags import expand_value_flags
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.markdown import render_markdown
@@ -491,11 +491,10 @@ def _build_session_table(sessions, reserve: int = 0, statuses=None) -> Table:
         kind="preformatted", trust_cell_width=True,
     )
 
-    home_str = str(Path.home())
     for idx, (session, t_str, agent, status) in enumerate(
         zip(sessions, stamps, agents, statuses), start=1
     ):
-        path = session.path.replace(home_str, "~")
+        path = tilde(session.path)
         # IDX cell: ``[BOLD<N>]`` padded to the column. ``trust_cell_width``
         # skips renderer pad so we manually pad for column-grid alignment.
         bold_idx = c("bold", str(idx))
@@ -553,8 +552,7 @@ def _session_preview(session) -> list[str]:
     transcript = read_transcript(session)
     if not transcript.readable:
         return [f"(no preview: {transcript.error})"]
-    home_str = str(Path.home())
-    sources = ", ".join(p.replace(home_str, "~") for p in transcript.source_paths)
+    sources = ", ".join(tilde(p) for p in transcript.source_paths)
     n = len(transcript.messages)
     lines = [c("dim", f"{n} message{'' if n == 1 else 's'}")]
     if sources:
