@@ -5,22 +5,25 @@ The native SwiftUI client for remote control. It talks to the hub that
 one SSE stream per open chat for live events. The protocol is in
 [docs/remote-control.md](../../docs/remote-control.md); the plan for
 every page is in [ROADMAP.md](ROADMAP.md). The web app the hub serves
-at `/app/` is the client for browsers and other devices.
+at `/` is the client for browsers and other devices.
 
 ## Layout
 
 | Folder | What |
 |---|---|
-| `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` and `/` menus), and the diff and markdown helpers |
+| `Sources/QuiverRemote/Hub/` | Wire types, `HubClient` (one method per route), the SSE reader, `AppModel` (pairing, sessions, inbox), `ChatModel` (one open chat), `Attachments` (the composer's picked files), `TasksModel`, `IssuesModel` and `PullsModel` (the Tasks and GitHub tabs' data), `NewSession` (what the launch sheets offer, and the launch poll), `UsageModel` and `UsageFormat` (the Usage tab's data and number formatting), `PromptCompletion` (the prompt box's `@` and `/` menus), and the diff, markdown and page-preview helpers |
 | `Sources/QuiverRemote/Hub/SSH*.swift`, `ConsoleModel.swift` | The console: this phone's SSH key (`SSHIdentity`), the hub's `/v1/ssh` answer and the saved targets (`SSHTarget`), the SwiftNIO SSH shell with pinned host keys (`SSHShell`), and the console's state (`ConsoleModel`) |
 | `Sources/QuiverRemote/Theme/` | The Mac app's theme ported to iOS: the same hex values and roles, cards, list rows, badges, buttons |
-| `Sources/QuiverRemote/Views/` | Welcome and pairing, Sessions, Chat, Inbox, Usage (limits and spend), Pair requests, the QR scanner |
-| `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping and chat event handling |
+| `Sources/QuiverRemote/Views/` | Welcome and pairing, Sessions (with rename, fork and the new-session sheet), Chat, Inbox, Tasks, GitHub (issues and pull requests, their detail pages and launch sheets), Usage (limits and spend), Pair requests and devices, Console, the QR scanner |
+| `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping, chat event handling, the GitHub and Tasks rules, usage formatting and the console |
+| `Tests/QuiverRemoteUITests/` | UI tests for the launch sheets' Model menu; they need a paired hub on the simulator and skip without one |
 
 The look follows the Mac app (`app/mac/Sources/QuiverApp/Theme/Theme.swift`):
 dark and light from the same tokens, sentence case, green only for
 "active" and "on", amber for "needs you", red for errors. Type runs one
-point larger than the Mac's so captions stay readable on a phone. Every
+point larger than the Mac's so captions stay readable on a phone, and
+every font comes through `Theme.font(size:weight:design:)`, which follows
+the phone's text size (Dynamic Type) from that size at the default. Every
 list scrolls vertically only and is pinned to the screen width.
 Harnesses show as their logos, not their names: `script/import-harness-icons.py`
 copies the Mac app's `harness-*.svg` into `Assets.xcassets/Harnesses`.

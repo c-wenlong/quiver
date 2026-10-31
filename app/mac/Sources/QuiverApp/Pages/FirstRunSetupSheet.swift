@@ -128,13 +128,13 @@ private struct Content: View {
             Button("Skip setup") { app.closeFirstRunSetup(reload: model.outcome != nil) }
                 .buttonStyle(.plain)
                 .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
-                .help("Close this and set things up later from Settings › General")
-                .disabled(model.applying)
+                .hoverTip("Close this and set things up later from Settings › General", replacesLabel: false)
+                .disabled(model.applying || model.cloning)
             Spacer()
             if model.step != .agents {
                 Button("Back", systemImage: "chevron.left") { model.back() }
                     .secondaryButton()
-                    .disabled(model.applying)
+                    .disabled(model.applying || model.cloning)
             }
             if model.step == .phone {
                 Button("Later") { app.closeFirstRunSetup(reload: model.outcome != nil) }
@@ -150,7 +150,7 @@ private struct Content: View {
                 }
                 .primaryButton()
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(model.applying || (model.step == .links && !previewReady))
+                .disabled(model.applying || model.cloning || (model.step == .links && !previewReady))
             }
         }
     }
@@ -298,6 +298,11 @@ private struct LinksStep: View {
             case .loaded(let preview):
                 if let error = model.applyError { ErrorCard(message: error) }
                 if let outcome = model.outcome { done(outcome) }
+                if model.offersHub || model.cloning {
+                    hubCard(demo: preview.hub?.demoUrl)
+                } else if let cloned = model.cloned {
+                    clonedCard(cloned)
+                }
                 VStack(spacing: 0) {
                     instructionsRow(preview.instructions)
                     Divider().overlay(Theme.border)
@@ -313,6 +318,66 @@ private struct LinksStep: View {
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
             }
         }
+    }
+
+    /// `swe setup --hub`: shown while `~/.quiver` has no hub yet.
+    private func hubCard(demo: String?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Start from your hub repo").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+            Text("Optional. Clone your own hub repo into ~/.quiver, so its AGENTS.md, skills, plugins and MCP servers come with it. Leave it empty to start an empty hub.")
+                .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(FirstRunSetupModel.hubForkNote)
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let demo, let url = URL(string: demo), ["http", "https"].contains(url.scheme ?? "") {
+                Link("Demo hub: \(demo)", destination: url).font(Theme.caption)
+            }
+            HStack(spacing: 8) {
+                TextField("https://github.com/you/quiver-hub.git", text: $model.hubURL)
+                    .quiverField(monospaced: true)
+                    .onSubmit { Task { await model.cloneHub() } }
+                    .disabled(model.cloning || model.applying)
+                Button("Clone") { Task { await model.cloneHub() } }
+                    .secondaryButton()
+                    .disabled(model.cloning || model.applying
+                              || model.hubURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if model.cloning {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Cloning… This can take a few minutes.")
+                        .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            if let error = model.hubError {
+                ErrorCard(message: error, framed: false)
+            }
+        }
+        .padding(Theme.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+    }
+
+    private func clonedCard(_ cloned: SetupPreview.Hub.Cloned) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Cloned \(cloned.url) into ~/.quiver.", systemImage: "checkmark.circle")
+                .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
+                .textSelection(.enabled)
+            Text("Its AGENTS.md, skills, plugins and MCP servers are on this Mac now. Set up links them into each agent.")
+                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(cloned.marketplaces.filter { $0.error != nil }, id: \.self) { row in
+                Text("\(row.marketplace) isn't registered in \(HarnessMark.accountName(row.harness)): \(row.error ?? "")")
+                    .font(Theme.caption).foregroundStyle(Theme.warningText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(Theme.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
 
     private func mcpDetail(_ servers: [SetupPreview.Server]) -> String {

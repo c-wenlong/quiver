@@ -22,7 +22,7 @@ import Testing
     @Test func theLastReportShowsAtOnceOnTheNextLaunch() async throws {
         let store = MemorySnapshotStore<Snapshot<PluginDriftReport>>()
         let clock = TestClock(start)
-        let runner = RoutingRunner([(["find", "plugins", "--json"], drift)])
+        let runner = ScriptedRunner([(["find", "plugins", "--json"], drift)])
         let first = model(store, clock: clock)
         await first.loadIfStale(swe: SweClient(runner: runner), for: "/bin/swe")
         #expect(await store.saves == 1)
@@ -39,7 +39,7 @@ import Testing
 
     @Test func aReportIsCheckedAgainOnceItIsOld() async throws {
         let clock = TestClock(start)
-        let runner = RoutingRunner([(["find", "plugins", "--json"], drift)])
+        let runner = ScriptedRunner([(["find", "plugins", "--json"], drift)])
         let model = model(MemorySnapshotStore(), clock: clock)
         let swe = SweClient(runner: runner)
         await model.loadIfStale(swe: swe, for: "/bin/swe")
@@ -55,7 +55,7 @@ import Testing
 
     @Test func aFixAlwaysChecksAgainAndSavesWhatItFinds() async throws {
         let store = MemorySnapshotStore<Snapshot<PluginDriftReport>>()
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["find", "plugins", "--json"], drift),
             (["find", "plugins", "--fix=claude:stale:tool@mk", "--json"], json(#"""
             {"fixed": {"id": "claude:stale:tool@mk", "harness": "claude", "marketplace": "mk", "plugin": "tool",
@@ -75,7 +75,7 @@ import Testing
     }
 
     @Test func aFixFinishingAfterAnotherSweWasPickedDoesNotReplaceItsReport() async throws {
-        let a = RoutingRunner([
+        let a = ScriptedRunner([
             (["find", "plugins", "--json"], drift),
             (["find", "plugins", "--fix="], json(#"""
             {"fixed": {"id": "claude:stale:tool@mk", "harness": "claude", "marketplace": "mk", "plugin": "tool",
@@ -83,7 +83,7 @@ import Testing
              "runnable": true, "paths": []}}
             """#)),
         ])
-        let b = RoutingRunner([(["find", "plugins", "--json"], json(#"{"sources": 0, "drift": []}"#))])
+        let b = ScriptedRunner([(["find", "plugins", "--json"], json(#"{"sources": 0, "drift": []}"#))])
         let model = model(MemorySnapshotStore(), clock: TestClock(start))
         await model.load(swe: SweClient(runner: a), for: "/a/swe")
         guard case .loaded(let report) = model.state else { Issue.record("\(model.state)"); return }
@@ -130,7 +130,7 @@ import Testing
     @Test func theLastListShowsAtOnceOnTheNextLaunch() async throws {
         let store = MemorySnapshotStore<Snapshot<McpInventory>>()
         let clock = TestClock(start)
-        let runner = RoutingRunner([(["mcp", "list", "--json"], listing)])
+        let runner = ScriptedRunner([(["mcp", "list", "--json"], listing)])
         let first = model(store, clock: clock)
         await first.loadIfStale(swe: SweClient(runner: runner), for: "/bin/swe")
         let live = try #require(inventory(first))
@@ -155,11 +155,11 @@ import Testing
     }
 
     @Test func theSavedFileHoldsNoCommandLineURLOrHealthDetail() async throws {
-        let url = FileManager.default.temporaryDirectory
-            .appending(path: "quiver-snapshot-\(UUID().uuidString)/cache/mcp-servers.json")
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent().deletingLastPathComponent()) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let url = temp.path("cache/mcp-servers.json")
         let file = SnapshotFile<Snapshot<McpInventory>>(url: url)
-        let runner = RoutingRunner([(["mcp", "list", "--json"], listing), (["mcp", "status", "--json"], status)])
+        let runner = ScriptedRunner([(["mcp", "list", "--json"], listing), (["mcp", "status", "--json"], status)])
         let model = model(file, clock: TestClock(start))
         await model.load(swe: SweClient(runner: runner), for: "/bin/swe")
         var text = try String(contentsOf: url, encoding: .utf8)
@@ -181,7 +181,7 @@ import Testing
 
     @Test func aRestoredServerCanStillBeSynced() async throws {
         let store = MemorySnapshotStore<Snapshot<McpInventory>>()
-        let runner = RoutingRunner([(["mcp", "list", "--json"], listing)])
+        let runner = ScriptedRunner([(["mcp", "list", "--json"], listing)])
         await model(store, clock: TestClock(start)).load(swe: SweClient(runner: runner), for: "/bin/swe")
         let next = model(store, clock: TestClock(start))
         await next.restore()
@@ -272,7 +272,7 @@ import Testing
         await model.loadIfStale(for: "/old/swe")
         let hermes = try #require(model.roots.first { $0.name == "hermes" })
         let link = Task { await model.link(hermes) }
-        while !old.held { await Task.yield() }
+        try #require(await old.held())
         // Settings moves to another swe while the link is running.
         model.use(SweClient(runner: new), for: "/new/swe")
         await model.loadIfStale(for: "/new/swe")
@@ -293,7 +293,7 @@ import Testing
         await model.loadIfStale(for: "/old/swe")
         let hermes = try #require(model.roots.first { $0.name == "hermes" })
         let link = Task { await model.link(hermes) }
-        while !old.held { await Task.yield() }
+        try #require(await old.held())
         // Settings moves on while Skills is closed: nothing lists the new swe yet.
         model.use(SweClient(runner: ScriptedRunner([])), for: "/new/swe")
         old.release()
@@ -339,9 +339,9 @@ import Testing
     }
 
     @Test func skillsRoundTripThroughTheirFile() async throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "quiver-skills-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let skills = SnapshotFile<Snapshot<SkillInventory>>(url: folder.appending(path: "cache/skills.json"))
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let skills = SnapshotFile<Snapshot<SkillInventory>>(url: temp.path("cache/skills.json"))
         let runner = ScriptedRunner([(["skills", "--json"], ok(inventoryJSON))])
         let first = SkillsModel(swe: SweClient(runner: runner), snapshots: skills)
         await first.load(for: "/bin/swe")
@@ -356,19 +356,17 @@ import Testing
 }
 
 /// Holds a link until released; everything else answers at once.
-final class HeldLinkRunner: CommandRunning, @unchecked Sendable {
+final class HeldLinkRunner: CommandRunning, Sendable {
     let inner: ScriptedRunner
-    private let lock = NSLock()
-    private var waiter: CheckedContinuation<Void, Never>?
+    private let gate = HoldGate()
     init(_ inner: ScriptedRunner) { self.inner = inner }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        if arguments.contains("link") {
-            await withCheckedContinuation { continuation in lock.withLock { waiter = continuation } }
-        }
+        if arguments.contains("link") { try await gate.pass() }
         return try await inner.run(arguments)
     }
 
-    var held: Bool { lock.withLock { waiter != nil } }
-    func release() { lock.withLock { () -> CheckedContinuation<Void, Never>? in defer { waiter = nil }; return waiter }?.resume() }
+    /// True once a link is parked, false after `gateTimeout`.
+    func held() async -> Bool { await gate.arrived() }
+    func release() { gate.open() }
 }

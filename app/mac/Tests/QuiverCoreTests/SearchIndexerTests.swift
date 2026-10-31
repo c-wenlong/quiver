@@ -52,12 +52,7 @@ import Testing
         func append(_ text: String) throws { try FileManager.default.append(text, to: file) }
         func row() throws -> SearchFileRow? { try store.fileRow(for: path) }
         func fts(_ query: String) throws -> [Int64] {
-            let statement = try store.db.prepare(
-                "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid")
-            statement.bind([.text(query)])
-            var ids: [Int64] = []
-            while try statement.step() { ids.append(statement.int(0)) }
-            return ids
+            try store.ftsRowIDs(query)
         }
         func stat() -> SearchFileStat {
             let info = FileInfo(path: path)!

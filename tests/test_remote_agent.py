@@ -671,6 +671,21 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(events[0]["machine"], self.mid)
         self.assertEqual(events[0]["data"]["text"], "hi from satellite")
 
+    def test_events_uplink_still_takes_legacy_compaction(self):
+        # compaction left protocol.EVENT_TYPES (nothing emits it), but
+        # the hub keeps accepting it from an older satellite.
+        self.assertNotIn("compaction", protocol.EVENT_TYPES)
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/events",
+            {"machine_id": self.mid, "events": [
+                protocol.event("compaction", "claude:r1", self.mid, {}),
+            ]},
+            headers=self.srv.sat_auth)
+        self.assertEqual(status, 200)
+        events, _ = self.srv.state.journal.read_since(
+            "claude:r1@sat-m1", 0)
+        self.assertEqual([e["type"] for e in events], ["compaction"])
+
     def test_message_routes_to_command_journal(self):
         self._push_catalog([{
             "key": "claude:r1", "title": "r", "status": "idle",
@@ -684,8 +699,8 @@ class TestAgentRoutes(unittest.TestCase):
         self.assertEqual(status, 202)
         body = json.loads(data)
         self.assertTrue(body["queued"])
-        # Same shape as the local 202; the satellite re-reads status and
-        # decides for itself, so waiting is always false here.
+        # Same shape as the local 202; waiting stays false (the
+        # satellite waits itself; nothing parks in the hub's tray).
         self.assertEqual(body["client_id"], "cid-9")
         self.assertFalse(body["waiting"])
         replay, _ = self.srv.state.journal.read_since("_sat_sat-m1", 0)
@@ -1516,14 +1531,21 @@ class TestAgentEdges(unittest.TestCase):
         from contextlib import redirect_stderr
         ag = self._agent()
         buf = io.StringIO()
-        with patch.object(agent_mod, "_post",
-                          return_value=(403, {"error": "forbidden",
-                                              "message": "no satellite"})):
+        # The hub's error shape (protocol.error).
+        refusal = {"error": {"code": "forbidden",
+                             "message": "agent routes need a satellite "
+                                        "credential"}}
+        with patch.object(agent_mod, "_post", return_value=(403, refusal)):
             with redirect_stderr(buf):
                 self.assertFalse(ag._register())
                 self.assertFalse(ag._register())
-        self.assertEqual(buf.getvalue().count("re-pair"), 1)
-        self.assertIn("--hub", buf.getvalue())
+        out = buf.getvalue()
+        self.assertEqual(out.count("re-pair"), 1)
+        # The hub's own reason, and the command that actually re-pairs a
+        # satellite (`swe remote pair` takes no --hub or --token).
+        self.assertIn("agent routes need a satellite credential", out)
+        self.assertIn("swe remote agent --hub=<url> --token=<token>", out)
+        self.assertNotIn("swe remote pair --hub", out)
         # A later accepted register clears the latch.
         with patch.object(agent_mod, "_post", return_value=(200, {})):
             self.assertTrue(ag._register())
@@ -1736,9 +1758,26 @@ class TestAgentRouteValidation(unittest.TestCase):
             headers=self.srv.auth)
         self.assertEqual(status, 404)
 
+    def test_satellite_queue_send_never_says_waiting(self):
+        # The row says mid-turn, but the hub holds nothing to act on,
+        # so a client must not park the send in its tray.
+        self.srv.request(
+            "POST", "/v1/agent/catalog",
+            {"machine_id": self.mid, "rows": [
+                {"key": "claude:r1", "ownership": "attached",
+                 "status": "active"}]},
+            headers=self.srv.sat_auth)
+        self.srv.state.catalog.refresh()
+        status, data = self.srv.request(
+            "POST", "/v1/sessions/claude%3Ar1%40sat-m1/message",
+            {"text": "later", "mode": "queue", "client_id": "q-9"},
+            headers=self.srv.auth)
+        self.assertEqual(status, 202)
+        self.assertFalse(json.loads(data)["waiting"])
+
     def test_satellite_queue_tray_is_empty_and_actions_409(self):
-        # A satellite delivers or refuses on arrival, so nothing waits
-        # on the hub: the list is empty and an action says why.
+        # A satellite waits for idle on its own machine, so nothing
+        # waits on the hub: the list is empty and an action says why.
         self.srv.request(
             "POST", "/v1/agent/catalog",
             {"machine_id": self.mid, "rows": [
@@ -2227,7 +2266,8 @@ class TestReviewFixes(unittest.TestCase):
         }).encode())
         ag._dispatch.assert_not_called()
         key, run, _cancel = ag._sendq.submit.call_args[0]
-        self.assertEqual(key, "claude:a")
+        # No mode means queue: its own lane, beside the session's.
+        self.assertEqual(key, "claude:a\x00queue")
         run()
         ag._dispatch.assert_called_once()
         self.assertEqual(ag._done_cmd_seq, 1)
@@ -2327,7 +2367,10 @@ class TestReviewFixes(unittest.TestCase):
         self.assertEqual(len(threads), 1)  # launch: its own thread
         threads[0]["target"](*threads[0]["args"])
         queued = ag._sendq.submit.call_args_list
-        self.assertEqual([c[0][0] for c in queued], ["claude:a", "claude:a"])
+        # The pull keeps the session's lane; a queue-mode send waits on
+        # its own.
+        self.assertEqual([c[0][0] for c in queued],
+                         ["claude:a", "claude:a\x00queue"])
         for c in queued:
             c[0][1]()  # the session queue runs them in submit order
         self.assertEqual(ran, ["launch", "attachment", "message"])
@@ -2487,6 +2530,7 @@ class TestReviewFixes(unittest.TestCase):
         ag = self._agent()
         sess = _session()
         ag.catalog.session_for = lambda k: sess
+        ag.status_of = MagicMock(side_effect=OSError)  # probe fails
         ag.tail_manager.statuses["k"] = "done"   # queue said "active"
         fake = MagicMock()
         fake.send.return_value = inject.InjectResult(True, "ok")
@@ -2495,6 +2539,193 @@ class TestReviewFixes(unittest.TestCase):
             ag._execute("k", "message",
                         {"text": "hi", "status": "active"})
         self.assertEqual(fake.send.call_args[0][2], "done")
+
+
+class TestSatelliteQueueMode(unittest.TestCase):
+    """``queue``-mode sends wait for idle on the satellite, like the hub."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        poll = patch.object(agent_mod, "QUEUE_POLL_S", 0.01)
+        poll.start()
+        self.addCleanup(poll.stop)
+        self.ag = agent_mod.RemoteAgent("http://h:1", "cred", self.home)
+        self.addCleanup(self.ag._stop.set)
+        self.sess = _session()
+        self.ag.catalog.session_for = lambda k: self.sess
+        self.status = "active"
+        self.ag.status_of = lambda sessions: [self.status]
+        self.fake = MagicMock()
+        self.fake.send.return_value = inject.InjectResult(True, "sent")
+        self.patches = [
+            patch.object(supervise, "meta_for", return_value={}),
+            patch.object(inject, "injector_for", return_value=self.fake),
+        ]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _frame(self, seq, mode="queue", key="claude:s1"):
+        self.ag._handle_frame(json.dumps({
+            "type": "command", "seq": seq, "session": key,
+            "data": {"op": "message", "command_id": f"c{seq}",
+                     "client_id": f"cid-{seq}", "text": "hi",
+                     "mode": mode, "status": "active"},
+        }).encode())
+
+    def _wait(self, cond, timeout=5.0):
+        end = time.monotonic() + timeout
+        while not cond():
+            if time.monotonic() > end:
+                self.fail("timed out")
+            time.sleep(0.01)
+
+    def _results(self):
+        with self.ag._outbox_lock:
+            return [e["data"] for e in self.ag.outbox
+                    if e.get("type") == "command.result"]
+
+    def test_queue_send_waits_for_idle_then_delivers(self):
+        self._frame(1)
+        time.sleep(0.1)
+        self.fake.send.assert_not_called()  # mid-turn: still waiting
+        self.assertEqual(self.ag._done_cmd_seq, 0)
+        self.status = "done"
+        self._wait(lambda: self.fake.send.called)
+        self.assertEqual(self.fake.send.call_args[0][1]["mode"], "queue")
+        self.assertEqual(self.fake.send.call_args[0][2], "done")
+        self._wait(lambda: self.ag._done_cmd_seq == 1)
+        [res] = self._results()
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["client_id"], "cid-1")
+
+    def test_steer_skips_the_wait(self):
+        self._frame(1)                 # parked behind the turn
+        self._frame(2, mode="steer")   # its own key, goes at once
+        self._wait(lambda: self.fake.send.called)
+        self.assertEqual(self.fake.send.call_count, 1)
+        self.assertEqual(self.fake.send.call_args[0][1]["mode"], "steer")
+        self._wait(lambda: 2 in self.ag._done_set)
+        self.assertEqual(self.ag._done_cmd_seq, 0)  # 1 still waits
+
+    def test_other_session_is_not_held(self):
+        self.ag.status_of = lambda sessions: [
+            "active" if sessions[0] is self.sess else "done"]
+        other = _session("s2")
+        self.ag.catalog.session_for = (
+            lambda k: other if k == "claude:s2" else self.sess)
+        self._frame(1)
+        self._frame(2, key="claude:s2")
+        self._wait(lambda: self.fake.send.called)
+        self.assertIs(self.fake.send.call_args[0][0], other)
+
+    def test_busy_past_cap_fails_honestly(self):
+        with patch.object(agent_mod, "QUEUE_WAIT_MAX_S", 0.05):
+            self._frame(1)
+            self._wait(lambda: self.ag._done_cmd_seq == 1)
+        self.fake.send.assert_not_called()
+        [res] = self._results()
+        self.assertFalse(res["ok"])
+        self.assertIn("stayed busy", res["note"])
+        self.assertEqual(res["client_id"], "cid-1")
+        self.assertEqual(res["command_id"], "c1")
+
+    def test_stop_leaves_waiting_send_for_replay(self):
+        self._frame(1)
+        time.sleep(0.05)
+        self.ag._stop.set()
+        self.ag._sendq.close()
+        time.sleep(0.1)
+        self.status = "done"
+        time.sleep(0.05)
+        self.fake.send.assert_not_called()
+        self.assertEqual(self.ag._done_cmd_seq, 0)  # replays on restart
+        self.assertEqual(self._results(), [])
+
+    def test_steer_and_its_pull_pass_a_waiting_send(self):
+        # A queue-mode send waits out the turn on its own lane; the
+        # steer behind it, and the attachment pull it needs, go now.
+        fetch = patch.object(agent_mod, "_get_bytes", return_value=b"png")
+        fetch.start()
+        self.addCleanup(fetch.stop)
+        self._frame(1)
+        self.ag._handle_frame(json.dumps({
+            "type": "command", "seq": 2, "session": "claude:s1",
+            "data": {"op": "attachment", "command_id": "c2",
+                     "ref": "1-ab-shot.png"}}).encode())
+        self.ag._handle_frame(json.dumps({
+            "type": "command", "seq": 3, "session": "claude:s1",
+            "data": {"op": "message", "command_id": "c3", "text": "see",
+                     "mode": "steer", "attachments": ["1-ab-shot.png"]},
+        }).encode())
+        self._wait(lambda: self.fake.send.called)
+        cmd = self.fake.send.call_args[0][1]
+        self.assertEqual(cmd["mode"], "steer")
+        self.assertTrue(cmd["attachments"][0].endswith("1-ab-shot.png"))
+        self.assertEqual(self.fake.send.call_count, 1)  # 1 still waits
+
+    def test_idle_is_checked_after_the_pulls(self):
+        # A steer can start a turn while the queued send's file is
+        # still downloading: the send must wait that turn out too.
+        order = []
+        self.ag._await_pulls = lambda k, d: order.append("pulls") or True
+        real_wait = self.ag._wait_idle
+        self.ag._wait_idle = lambda k, d: order.append("idle") or real_wait(k, d)
+        self.status = "done"
+        self._frame(1)
+        self._wait(lambda: self.fake.send.called)
+        self.assertEqual(order, ["pulls", "idle"])
+
+    def test_queued_send_waits_for_its_pull(self):
+        pull = threading.Event()
+        self.ag._pulls[("claude:s1", "r1")] = pull
+        got = []
+        t = threading.Thread(target=lambda: got.append(
+            self.ag._await_pulls("claude:s1", {"attachments": ["r1"]})))
+        t.start()
+        time.sleep(0.05)
+        self.assertEqual(got, [])   # still downloading
+        pull.set()
+        t.join(5)
+        self.assertEqual(got, [True])
+        # A ref with no pull in flight doesn't wait; a stop says so.
+        self.assertTrue(self.ag._await_pulls("claude:s1",
+                                             {"attachments": ["gone"]}))
+        self.ag._pulls[("claude:s1", "r2")] = threading.Event()
+        self.ag._stop.set()
+        self.assertFalse(self.ag._await_pulls("claude:s1",
+                                              {"attachments": ["r2"]}))
+
+    def test_missing_session_stops_waiting(self):
+        self.ag.catalog.session_for = lambda k: None
+        self._frame(1)
+        self._wait(lambda: self.ag._done_cmd_seq == 1)
+        [res] = self._results()
+        self.assertFalse(res["ok"])
+        self.assertIn("unknown session", res["note"])
+
+    def test_probe_sees_the_tailers_activity_time(self):
+        # The catalog copy is stale (timestamp 0); the tailer saw the
+        # transcript move just now, and the probe gets that time.
+        seen = []
+        self.ag.status_of = lambda sessions: seen.append(
+            sessions[0].timestamp) or ["active"]
+        self.ag.tail_manager.last_append["claude:s1"] = 1000.0
+        self.ag.tail_manager.tailers["claude:s1"] = MagicMock(
+            session=self.sess, source=MagicMock(path=None))
+        self.ag._live_status("claude:s1", {})
+        self.assertEqual(seen, [1000.0 * 1000])
+
+    def test_live_status_prefers_fresh_probe(self):
+        self.ag.tail_manager.statuses["claude:s1"] = "active"
+        self.status = "done"
+        self.assertEqual(self.ag._live_status("claude:s1", {}), "done")
+        self.ag.status_of = MagicMock(side_effect=OSError)
+        self.assertEqual(
+            self.ag._live_status("claude:s1", {}), "active")
+        self.ag.catalog.session_for = lambda k: None
+        self.assertEqual(
+            self.ag._live_status("gone", {"status": "idle"}), "idle")
 
 
 class TestReviewHubFixes(unittest.TestCase):

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -143,7 +144,7 @@ import Testing
         #expect(!HarnessAccess.hasLimits("opencode"))
     }
 
-    @Test func anOlderLoadCannotBringBackAnUnstarredHarness() async {
+    @Test func anOlderLoadCannotBringBackAnUnstarredHarness() async throws {
         // A star change on Harnesses reloads limits, overlapping the
         // five-minute background load: the slower answer must not win.
         let json = #"""
@@ -155,13 +156,11 @@ import Testing
             first: .init(status: 0, stdout: Data(json.utf8), stderr: ""),
             later: .init(status: 0, stdout: Data(json.replacingOccurrences(of: "starred", with: "active").utf8), stderr: ""))
         let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
-        var outdated: Task<Void, Never>!
-        await withCheckedContinuation { continuation in
-            runner.onFirstCall = { continuation.resume() }
-            outdated = Task { await model.load() }
-        }
+        let outdated = Task { await model.load() }
+        defer { outdated.cancel() }
+        try #require(await runner.gate.arrived())
         await model.load()
-        runner.open()
+        runner.gate.open()
         await outdated.value
         // The newer load is the truth: unstarred pi keeps no star, no card.
         #expect(model.starred == [])
@@ -194,14 +193,11 @@ import Testing
     }
 }
 
-/// The first `run` parks until `open()`; every call after answers at once.
-private final class GatedRunner: CommandRunning, @unchecked Sendable {
-    private let lock = NSLock()
-    private var calls = 0
-    private var waiting: CheckedContinuation<Void, Never>?
-    private var isOpen = false
-    /// Fires once, when the first call arrives.
-    var onFirstCall: (@Sendable () -> Void)?
+/// The first `run` parks at `gate` until the test opens it; every call
+/// after answers `later` at once, so an extra read cannot hang the test.
+private final class GatedRunner: CommandRunning, Sendable {
+    let gate = HoldGate()
+    private let calls = Mutex(0)
     let first: CommandResult
     let later: CommandResult
 
@@ -211,33 +207,15 @@ private final class GatedRunner: CommandRunning, @unchecked Sendable {
     }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        let number = lock.withLock { () -> Int in
-            calls += 1
-            return calls
+        let isFirst = calls.withLock { n -> Bool in
+            n += 1
+            return n == 1
         }
-        guard number == 1 else { return later }
-        lock.withLock { onFirstCall?() }
-        await withCheckedContinuation { continuation in
-            let parked = lock.withLock { () -> Bool in
-                if isOpen { return false }
-                waiting = continuation
-                return true
-            }
-            if !parked { continuation.resume() }
-        }
+        guard isFirst else { return later }
+        try await gate.pass()
         return first
     }
-
-    func open() {
-        let parked = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-            isOpen = true
-            defer { waiting = nil }
-            return waiting
-        }
-        parked?.resume()
-    }
 }
-
 
 /// Answers each run from a queue, then repeats the last reply.
 final class QueueRunner: CommandRunning, @unchecked Sendable {
@@ -347,8 +325,8 @@ final class QueueRunner: CommandRunning, @unchecked Sendable {
 @MainActor
 @Suite struct HarnessAccountNameModelTests {
     func tempNamesFile() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("quiver-names-\(UUID().uuidString)")
+        usageScratch
+            .appendingPathComponent("names-\(UUID().uuidString)")
             .appendingPathComponent("harness-names.json")
     }
 

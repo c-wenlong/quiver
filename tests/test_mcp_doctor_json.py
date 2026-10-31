@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 from quiver.harness.commands import cmd_doctor
 from quiver.harness.drift import Finding
+from quiver.console import strip_ansi
 from quiver.harness.path_health import NodeEnv, OffPathHit
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
@@ -640,6 +641,37 @@ HEALTHY = NodeEnv(
     global_bin="/usr/local/bin", global_bin_on_path=True)
 
 
+class DoctorTextNvmTest(unittest.TestCase):
+    """The text report's nvm section with node versions installed.
+
+    Every other doctor test points NVM_DIR at a missing directory, which
+    is how `swe doctor` shipped calling an is_dir_on_path it never
+    imported: on any machine with an nvm node it died with NameError.
+    """
+
+    def test_an_nvm_node_on_and_off_path_prints_its_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            nvm = Path(tmp) / ".nvm"
+            bin_dir = nvm / "versions" / "node" / "v22.0.0" / "bin"
+            bin_dir.mkdir(parents=True)
+            for path_value in (str(bin_dir), "/usr/bin"):
+                with self.subTest(PATH=path_value), patch.dict(
+                    "os.environ", {"NVM_DIR": str(nvm), "PATH": path_value}
+                ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
+                    "quiver.harness.path_health.probe_node_env", return_value=HEALTHY
+                ), patch(
+                    "quiver.harness.path_health.find_off_path_tools", return_value=[]
+                ), patch(
+                    "quiver.harness.drift.run_drift_checks", return_value=[]
+                ), patch("quiver.harness.doctor.setup_findings", return_value=[]), patch(
+                    "quiver.harness.doctor.issue_findings", return_value=[]
+                ):
+                    out = io.StringIO()
+                    with redirect_stdout(out):
+                        cmd_doctor([])
+                    self.assertIn("1 version(s)", strip_ansi(out.getvalue()))
+
+
 class DoctorJsonChecksTest(unittest.TestCase):
     """Each environment check, with the node probe stubbed so the result
     does not depend on the machine running the tests."""
@@ -807,7 +839,7 @@ class McpSyncJsonTest(unittest.TestCase):
         self.assertEqual(data["selected"], ["github"])
         self.assertEqual(data["targets"], [{"name": "cursor", "added": ["github"],
                                             "updated": [], "skipped": [], "pruned": [],
-                                            "unsupported": []}])
+                                            "unsupported": [], "via_gateway": []}])
         self.assertIn("github", self.cursor())
 
     def test_never_prints_a_secret_value(self):

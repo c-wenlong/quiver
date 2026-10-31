@@ -16,8 +16,6 @@ struct NewSessionView: View {
     @State private var prompt = ""
     /// The Model menu; `follow` re-defaults it on a harness change.
     @State private var model = ModelSelection()
-    @State private var showAllFolders = false
-    @State private var folderQuery = ""
     @State private var browsePath: [FolderBrowse] = []
     @State private var flow = LaunchFlow()
     /// The running launch, so Cancel or a swipe-down stops it before it
@@ -26,8 +24,6 @@ struct NewSessionView: View {
     /// The session list as it was when the sheet opened: the 15 s poll
     /// would otherwise re-sort the folders under a finger.
     @State private var rows: [SessionRow] = []
-
-    private static let foldersShown = 4
 
     var body: some View {
         NavigationStack(path: $browsePath) {
@@ -52,7 +48,7 @@ struct NewSessionView: View {
         return PageScroll {
             if machines.isEmpty {
                 StateCard(icon: "terminal", title: "No machine can start a session",
-                          message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                          message: NewSessionOptions.noMachineMessage(app.machines))
             } else {
                 GroupLabel(text: "Machine")
                 machinePicker(machines)
@@ -63,7 +59,9 @@ struct NewSessionView: View {
                                sessions: rows, disabled: flow.busy)
                     FirstPromptField(prompt: $prompt)
                     startSection(machine)
-                    folderSection(machine)
+                    RecentFolderPicker(machine: machine, sessions: rows, selected: folder, disabled: flow.busy,
+                                       browse: { browse(on: machine) },
+                                       pick: { pick(folder: $0, machine: machine) })
                 }
             }
         }
@@ -108,7 +106,7 @@ struct NewSessionView: View {
                         .font(Theme.control)
                         .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
                         .padding(.horizontal, 12)
-                        .frame(height: Theme.controlHeight)
+                        .scaledMinHeight(Theme.controlHeight)
                         .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
                         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
                             .strokeBorder(selected ? Theme.borderStrong : Theme.border, lineWidth: 1))
@@ -138,62 +136,19 @@ struct NewSessionView: View {
         }
     }
 
-    @ViewBuilder private func folderSection(_ machine: Machine) -> some View {
-        let folders = NewSessionOptions.folders(on: machine.id, sessions: rows)
-        let searching = !folderQuery.trimmingCharacters(in: .whitespaces).isEmpty
-        let matches = NewSessionOptions.matching(folders, query: folderQuery)
-        // The fold toggle and Browse sit at the top, so neither needs a
-        // scroll past hundreds of rows.
-        HStack(spacing: 14) {
-            Text(folders.isEmpty ? "Folder" : "Folder · \(folders.count) recent")
-                .font(Theme.groupLabel).foregroundStyle(Theme.textSecondary)
-            Spacer(minLength: 8)
-            Button {
-                browsePath = [FolderBrowse(machineId: machine.id, path: folder.map(FolderRow.parent))]
-            } label: {
-                Label("Browse", systemImage: "folder.badge.magnifyingglass")
-            }
-            .disabled(flow.busy)
-            if folders.count > Self.foldersShown && !searching {
-                Button(showAllFolders ? "Show fewer" : "Show all") { showAllFolders.toggle() }
-            }
-        }
-        .font(Theme.control)
-        .foregroundStyle(Theme.textPrimary)
-        .buttonStyle(.plain)
-        .padding(.horizontal, 4)
-        .padding(.top, 14)
-        if folders.isEmpty {
-            StateCard(icon: "folder", title: "No recent folders",
-                      message: "Folders show up here once a session has run in them on \(machine.displayName). Browse to pick any folder.")
-        } else {
-            FolderSearchField(query: $folderQuery)
-            let shown = searching || showAllFolders ? matches : Array(matches.prefix(Self.foldersShown))
-            if shown.isEmpty {
-                Text("No recent folder matches. Browse to find it.")
-                    .font(Theme.caption).foregroundStyle(Theme.textSecondary).padding(.horizontal, 4)
-            } else {
-                CardList(data: shown.map(FolderChoice.init)) { choice in
-                    Button { pick(folder: choice.path, machine: machine) } label: {
-                        FolderRow(path: choice.path, selected: choice.path == folder)
-                    }
-                    .buttonStyle(RowButtonStyle())
-                    .disabled(flow.busy)
-                }
-            }
-        }
-    }
-
     // MARK: Actions
 
     private func select(machine: Machine?) {
         guard let machine, !flow.busy else { return }
         machineId = machine.id
-        showAllFolders = false
-        folderQuery = ""
         harnessPicked = false
         flow.reset()
         pick(folder: NewSessionOptions.folders(on: machine.id, sessions: rows).first, machine: machine)
+    }
+
+    /// Browse opens beside the picked folder, or at the home folder.
+    private func browse(on machine: Machine) {
+        browsePath = [FolderBrowse(machineId: machine.id, path: folder.map(FolderRow.parent))]
     }
 
     private func pick(folder path: String?, machine: Machine) {
@@ -256,10 +211,10 @@ struct FolderBrowserView: View {
                     .padding(.horizontal, 4)
                 // Browse opens beside the picked folder; this climbs higher.
                 if let parent = listing.parent {
-                    CardList(data: [FolderChoice(path: parent)]) { up in
+                    CardList(data: [FolderPath(path: parent)]) { up in
                         NavigationLink(value: FolderBrowse(machineId: machineId, path: up.path)) {
                             HStack(spacing: 12) {
-                                Image(systemName: "arrow.up").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                                Image(systemName: "arrow.up").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
                                 Text("Up to \(FolderRow.name(up.path))").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                                 Spacer(minLength: 8)
                             }
@@ -278,10 +233,10 @@ struct FolderBrowserView: View {
                     CardList(data: listing.folders.filter { shown.contains($0.path) }) { entry in
                         NavigationLink(value: FolderBrowse(machineId: machineId, path: entry.path)) {
                             HStack(spacing: 12) {
-                                Image(systemName: "folder").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+                                Image(systemName: "folder").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
                                 Text(entry.name).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                                 Spacer(minLength: 8)
-                                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                                Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
                             }
                             .padding(.vertical, Theme.rowVertical).padding(.horizontal, Theme.rowHorizontal)
                             .contentShape(.rect)
@@ -326,15 +281,12 @@ struct FolderBrowserView: View {
         error = nil
         do {
             listing = try await client.folders(machine: machineId, path: current ?? path)
+        } catch is CancellationError {
+            // The picker closed mid-fetch: nothing failed.
         } catch {
             self.error = error.localizedDescription
         }
     }
-}
-
-private struct FolderChoice: Identifiable {
-    let path: String
-    var id: String { path }
 }
 
 /// The Model row every launch sheet shows under its harness picker: a
@@ -400,11 +352,11 @@ struct ModelField: View {
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(Theme.font(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textMuted)
             }
             .padding(.horizontal, 12)
-            .frame(height: Theme.fieldHeight)
+            .scaledMinHeight(Theme.fieldHeight)
             .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
             .contentShape(.rect)
@@ -427,7 +379,7 @@ struct FolderRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "folder").font(.system(size: 15)).foregroundStyle(Theme.textSecondary).frame(width: 20)
+            Image(systemName: "folder").font(Theme.rowIcon).foregroundStyle(Theme.textSecondary).iconColumn(20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(Self.name(path)).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(SessionGrouping.abbreviateHome(Self.parent(path))).font(Theme.caption).foregroundStyle(Theme.textSecondary)
@@ -435,7 +387,7 @@ struct FolderRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if selected {
-                Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                Image(systemName: "checkmark").font(Theme.font(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
             }
         }
         .padding(.vertical, Theme.rowVertical)

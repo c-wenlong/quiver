@@ -1,0 +1,5 @@
+{"type":"session_start","id":"11111111-2222-3333-4444-555555555555","cwd":"/work/app"}
+{"type":"message","timestamp":"2026-08-10T08:37:16.298Z"}
+{"type":"session_start","cwd":"/work/ignored"}
+{"type":"message","timestamp":"2026-08-10T08:40:00.000Z"}
+{"type":"todo_state","timestamp":"2026-08-10T08:41:00.000Z"}

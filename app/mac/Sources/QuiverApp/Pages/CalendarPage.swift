@@ -19,6 +19,25 @@ struct CalendarPage: View {
     }
 }
 
+/// Where the hour axis's now pill sits against its hour labels.
+enum CalendarHourAxis {
+    /// The pill's reach above and below the current time at 100% zoom:
+    /// 9pt text with 2pt padding, drawn 9pt above the line.
+    static let pillAbove: CGFloat = 9
+    static let pillBelow: CGFloat = 7
+    /// An hour label's height from the top of its hour at 100% zoom.
+    static let labelHeight: CGFloat = 12
+
+    /// Whether the pill, centred on `nowOffset` points down the day,
+    /// overlaps `hour`'s label; that label hides while it does. `scale`
+    /// is View › Zoom's factor on the 9pt text: the pill and the labels
+    /// grow with it, the hours do not.
+    static func pillCovers(hour: Int, nowOffset: CGFloat, hourHeight: CGFloat, scale: CGFloat = 1) -> Bool {
+        let top = CGFloat(hour) * hourHeight
+        return top < nowOffset + pillBelow * scale && top + labelHeight * scale > nowOffset - pillAbove * scale
+    }
+}
+
 private struct CalendarContent: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -224,7 +243,7 @@ private struct CalendarContent: View {
                     }
                     if !usageCards.isEmpty {
                         Text("Usage").font(Theme.font(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.textSecondary).textCase(.uppercase)
+                            .foregroundStyle(Theme.textSecondary)
                             .padding(.top, 8).padding(.bottom, 4)
                         ForEach(usageCards) { card in
                             UsageLegend(model: model, card: card)
@@ -551,10 +570,12 @@ private struct CalendarContent: View {
     }
 
     /// The resets the grid draws: every scheduled reset of every account
-    /// the Usage legend has ticked.
+    /// and window the Usage legend has ticked.
     private var usageResets: [UsageReset] {
         usageCards.flatMap { card in
-            model.isUsageHidden(card.id) ? [] : card.usageResets
+            model.isUsageHidden(card.id) ? [] : card.usageResets.filter {
+                !model.isUsageHidden(card.id, window: $0.window)
+            }
         }
     }
 
@@ -583,25 +604,34 @@ private struct CalendarContent: View {
     /// outside the horizontal scroll so it stays pinned while the
     /// columns slide underneath it.
     private func hourAxis(now: Date) -> some View {
-        ZStack(alignment: .topLeading) {
+        // Only the visible window's "today" gets the pill, not a buffer
+        // day's.
+        let nowOffset = model.days.first(where: { $0.contains(now) })
+            .map { Self.hourHeight * CGFloat(now.timeIntervalSince($0.start) / 3600) }
+        let scale = Theme.scaled(9) / 9
+        return ZStack(alignment: .topLeading) {
             VStack(spacing: 0) {
                 ForEach(0..<24, id: \.self) { hour in
                     Text(hourLabel(hour))
                         .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                         .frame(width: Self.axisWidth - 8, height: Self.hourHeight,
                                alignment: .topTrailing)
+                        // The pill is narrower than the gutter, so a label
+                        // it half-covers would show its tail beside it.
+                        .opacity(nowOffset.map {
+                            CalendarHourAxis.pillCovers(hour: hour, nowOffset: $0, hourHeight: Self.hourHeight,
+                                                        scale: scale)
+                        } == true ? 0 : 1)
                         .id("h\(hour)")
                 }
             }
-            // Only the visible window's "today" gets the pill, not a
-            // buffer day's.
-            if let today = model.days.first(where: { $0.contains(now) }) {
+            if let nowOffset {
                 Text(now, format: .dateTime.hour().minute())
                     .font(Theme.font(size: 9, weight: .medium))
                     .foregroundStyle(Theme.calendarNowText)
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(Theme.calendarNow, in: Capsule())
-                    .offset(y: Self.hourHeight * CGFloat(now.timeIntervalSince(today.start) / 3600) - 9)
+                    .offset(y: nowOffset - CalendarHourAxis.pillAbove * scale)
             }
         }
         .frame(width: Self.axisWidth)
@@ -1367,22 +1397,33 @@ private struct UsageLegend: View {
         }
     }
 
-    /// One window's row: its label, then how much of it is left. A kept
-    /// older or already-reset reading dims; a failed fetch reddens the
-    /// label — the same vocabulary the Accounts page's UsageBar speaks.
+    /// One window's row: a checkbox toggling its reset marker, its
+    /// label, then how much of it is left. A kept older or already-reset
+    /// reading dims; a failed fetch reddens the label — the same
+    /// vocabulary the Accounts page's UsageBar speaks.
     private func windowRow(_ window: UsageWindow, usage: AccountUsage, now: Date) -> some View {
         let left = max(0, 100 - Int(window.usedPercent.rounded()))
         let failed = usage.isStale && usage.status != .ok
         let past = window.resetsAt.map { $0 <= now } ?? false
         let reset = !failed && !past ? window.resetsAt : nil
-        return HStack(spacing: 6) {
-            Text(window.label).font(Theme.font(size: 10))
-                .foregroundStyle(failed ? Theme.dangerText : (hidden ? .secondary : .primary))
-            Spacer()
-            Text("\(left)% left" + (reset.map { " · \(UsageFormat.resetIn($0, now: now))" } ?? ""))
-                .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
+        let shown = !model.isUsageHidden(card.id, window: window.label)
+        return LegendToggle(action: { model.toggleUsage(card.id, window: window.label) }) {
+            HStack(spacing: 6) {
+                LegendCheckbox(shown: shown, color: color)
+                Text(window.label).font(Theme.font(size: 10))
+                    .foregroundStyle(failed ? Theme.dangerText
+                                     : (shown && !hidden ? .primary : .secondary))
+                Spacer()
+                Text("\(left)% left" + (reset.map { " · \(UsageFormat.resetIn($0, now: now))" } ?? ""))
+                    .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.leading, 18)
         }
-        .padding(.leading, 18)
+        .help(shown ? "Hide the \(window.label) reset marker"
+                    : "Show the \(window.label) reset marker")
+        .accessibilityLabel("\(card.usageTitle), \(window.label), \(shown ? "shown" : "hidden")")
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(shown ? "1" : "0")
         .frame(height: 20)
         .opacity(!failed && (usage.isStale || past) ? 0.55 : 1)
     }

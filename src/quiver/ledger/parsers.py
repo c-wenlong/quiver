@@ -42,7 +42,9 @@ def claude_records(line: bytes, account: str) -> list[LedgerRecord]:
         return []
     try:
         obj = json.loads(line)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        # RecursionError: a line nested too deep to parse. Raised, it
+        # stopped the scan at this line on every run, cursor unmoved.
         return []
     if not isinstance(obj, dict):
         return []
@@ -333,7 +335,7 @@ def codex_file_records(path: Path, account: str) -> list[LedgerRecord]:
             continue
         try:
             obj = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             continue
         if isinstance(obj, dict):
             out.extend(parser.records(obj))
@@ -369,7 +371,26 @@ def iter_lines(path: Path, offset: int = 0, end: list | None = None):
 # ---------------------------------------------------------------- sqlite sources
 
 def _open_ro(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    # as_uri() percent-encodes the path: a raw "#", "?" or "%" in a home
+    # folder's name would end the file: URI early or decode into another
+    # path, as the remote readers' openers already guard against.
+    return sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro",
+                           uri=True, timeout=5)
+
+
+def _db_tokens(value) -> int:
+    """A token count a database column holds, between 0 and
+    ``MAX_TOKENS`` (``Statement.tokens`` in ``DatabaseSources.swift``),
+    the cap the log readers' ``json_int`` applies. A corrupt count past
+    SQLite's 64-bit range failed the insert, and one near it overflowed
+    every later SUM over the ledger. A JSON string column reads as its
+    number, else 0, as SQLite's own integer conversion does."""
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            return 0
+    return json_int(value)
 
 
 def opencode_records(db: Path) -> list[LedgerRecord]:
@@ -398,14 +419,15 @@ def opencode_records(db: Path) -> list[LedgerRecord]:
     out: list[LedgerRecord] = []
     for (mid, session, created, directory, model, cost,
          inp, outp, reas, cread, cwrite, total, provider) in rows:
-        inp, outp, reas = int(inp or 0), int(outp or 0), int(reas or 0)
-        cread, cwrite = int(cread or 0), int(cwrite or 0)
-        inside = reas > 0 and total is not None and int(total) == inp + outp + cread + cwrite
+        inp, outp, reas = _db_tokens(inp), _db_tokens(outp), _db_tokens(reas)
+        cread, cwrite = _db_tokens(cread), _db_tokens(cwrite)
+        inside = (reas > 0 and total is not None
+                  and _db_tokens(total) == inp + outp + cread + cwrite)
         ev = UsageEvent(
             harness="opencode", account=account, session=session or "unknown",
             cwd=directory, model=opencode_model(provider, model), ts=(created or 0) / 1000,
-            input=max(0, inp), output=max(0, outp - reas if inside else outp),
-            cache_read=max(0, cread), cache_write=max(0, cwrite), reasoning=max(0, reas),
+            input=inp, output=max(0, outp - reas if inside else outp),
+            cache_read=cread, cache_write=cwrite, reasoning=reas,
             cost=float(cost) if isinstance(cost, (int, float)) and cost > 0 else None,
         )
         if ev.total > 0:
@@ -495,8 +517,8 @@ def devin_records(db: Path) -> list[LedgerRecord]:
         ev = UsageEvent(
             harness="devin", account=account, session=session or "unknown", cwd=cwd,
             model=model or "unknown", ts=ts,
-            input=max(0, int(inp)), output=max(0, int(outp)),
-            cache_read=max(0, int(cread or 0)), cache_write=max(0, int(cwrite or 0)),
+            input=_db_tokens(inp), output=_db_tokens(outp),
+            cache_read=_db_tokens(cread), cache_write=_db_tokens(cwrite),
         )
         if ev.total > 0 and request_id:
             out.append(LedgerRecord(key=f"devin:{request_id}", event=ev))
@@ -572,7 +594,7 @@ def pi_file_records(path: Path, account: str) -> list[LedgerRecord]:
             continue
         try:
             obj = json.loads(line)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             continue
         if isinstance(obj, dict):
             out.extend(parser.records(obj))
@@ -645,7 +667,7 @@ def droid_session_totals(settings: Path, account: str):
                 for line in lines:
                     try:
                         entry = json.loads(line)
-                    except (ValueError, UnicodeDecodeError):
+                    except (ValueError, UnicodeDecodeError, RecursionError):
                         continue
                     if not isinstance(entry, dict):
                         continue

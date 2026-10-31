@@ -203,7 +203,8 @@ private struct LinksStrip: View {
                                 }
                                 .primaryButton()
                                 .disabled(model.linking)
-                                .help("Runs swe init, which also links the shared skills and instructions and never replaces a real file.")
+                                .hoverTip("Runs swe init, which also links the shared skills and instructions and never replaces a real file.",
+                                          replacesLabel: false)
                             }
                             .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                         }
@@ -220,8 +221,9 @@ private struct LinksStrip: View {
                                 // a project edit on the AGENTS.md page may be
                                 // writing, so it waits for a clean model there.
                                 .disabled(model.linking || app.agentsMd.projectHasUnsavedChanges)
-                                .help(app.agentsMd.projectHasUnsavedChanges ? AgentsModel.saveFirst
-                                      : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.")
+                                .hoverTip(app.agentsMd.projectHasUnsavedChanges ? AgentsModel.saveFirst
+                                          : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.",
+                                          replacesLabel: false)
                         }
                     }
                 }
@@ -253,7 +255,7 @@ private struct FindingsCard: View {
                             HarnessMarkView(harness: finding.harness, size: 14)
                                 .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         }
-                        Text(finding.message)
+                        Text(finding.displayMessage(home: FileManager.default.homeDirectoryForCurrentUser.path))
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -676,7 +678,7 @@ private struct HookDetailView: View {
                                             Image(systemName: "lock")
                                                 .font(Theme.font(size: 10))
                                                 .foregroundStyle(Theme.textMuted)
-                                                .help("Another tool owns this file; Quiver never writes it.")
+                                                .hoverTip("Another tool owns this file; Quiver never writes it.")
                                         }
                                     }
                                 }
@@ -731,11 +733,13 @@ private struct HookDetailView: View {
     /// Save the script, then close; a save that fails keeps the panel open
     /// and says why.
     private func saveAndLeave() {
-        if let draft, draft.save() != .saved {
-            leaveError = "Couldn't save \(hook.script)."
-        } else {
-            leaveError = nil
-            onBack()
+        Task {
+            if let draft, await draft.save() != .saved || draft.isDirty {
+                leaveError = "Couldn't save \(hook.script)."
+            } else {
+                leaveError = nil
+                onBack()
+            }
         }
     }
 

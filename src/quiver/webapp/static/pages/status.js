@@ -9,7 +9,7 @@
 "use strict";
 
 const statusPage = { data: null, loading: false, gen: 0, expanded: new Set(), loadedAt: 0, timer: null,
-  catalogue: null, removing: null, removeError: "" };
+  catalogue: null, removing: null, removeError: "", untracking: new Set() };
 
 const STATUS_ICONS = {
   open: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
@@ -25,7 +25,7 @@ const statusIcon = (name) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STATUS_ICONS[name]}</svg>`;
 
 // The logos the Mac app draws for each page (StatusService.logoID), as
-// shipped in /app/: colour ones as they are, the rest in the text colour.
+// shipped beside the page: colour ones as they are, the rest in the text colour.
 const STATUS_LOGOS = {
   claude: "harness-claude-color.svg", openai: "harness-openai.svg", copilot: "harness-copilot.svg",
   cursor: "harness-cursor.svg", gemini: "harness-gemini-color.svg", devin: "harness-devin.svg",
@@ -42,6 +42,38 @@ const STATUS_LOGOS = {
   render: "harness-render.svg", upstash: "harness-upstash.svg",
   convex: "harness-convex.svg", linear: "harness-linear.svg",
   notion: "harness-notion.svg", twilio: "harness-twilio.svg", clerk: "harness-clerk.svg",
+  "mistral-vibe": "harness-mistral-vibe-color.svg", kimi: "harness-kimi.svg",
+  nebius: "harness-nebius.svg",
+  stability: "harness-stability.svg", ai21: "harness-ai21.svg", sambanova: "harness-sambanova.svg",
+  poe: "harness-poe.svg", writer: "harness-writer.svg", cartesia: "harness-cartesia-color.svg",
+  deepgram: "harness-deepgram.svg", droid: "harness-droid.svg", windsurf: "harness-windsurf.svg",
+  replit: "harness-replit.svg", sourcegraph: "harness-sourcegraph-color.svg",
+  augment: "harness-augment.svg", warp: "harness-warp.svg", manus: "harness-manus.svg",
+  lovable: "harness-lovable.svg", blackbox: "harness-blackbox.svg", kilo: "harness-kilo.svg",
+  ona: "harness-ona.svg", e2b: "harness-e2b.svg", browserbase: "harness-browserbase-color.svg",
+  tavily: "harness-tavily.svg", runloop: "harness-runloop.svg", arcade: "harness-arcade-color.svg",
+  morph: "harness-morph.svg", supermemory: "harness-supermemory.svg",
+  pypi: "harness-pypi.svg", crates: "harness-crates.svg", rubygems: "harness-rubygems.svg",
+  maven: "harness-maven.svg", bitbucket: "harness-bitbucket.svg", circleci: "harness-circleci.svg",
+  buildkite: "harness-buildkite.svg", travisci: "harness-travisci.svg", netlify: "harness-netlify.svg",
+  flyio: "harness-flyio.svg", linode: "harness-linode.svg", expo: "harness-expo.svg",
+  mongodb: "harness-mongodb.svg", pinecone: "harness-pinecone.svg", prisma: "harness-prisma.svg",
+  sanity: "harness-sanity.svg", contentful: "harness-contentful.svg", temporal: "harness-temporal.svg",
+  inngest: "harness-inngest.svg", astronomer: "harness-astronomer.svg", grafana: "harness-grafana.svg",
+  newrelic: "harness-newrelic.svg", honeycomb: "harness-honeycomb-color.svg",
+  incidentio: "harness-incidentio.svg", launchdarkly: "harness-launchdarkly.svg",
+  statsig: "harness-statsig-color.svg", snyk: "harness-snyk.svg", codecov: "harness-codecov.svg",
+  postman: "harness-postman.svg", ngrok: "harness-ngrok.svg", hashicorp: "harness-hashicorp.svg",
+  figma: "harness-figma.svg", atlassian: "harness-atlassian.svg", workos: "harness-workos-color.svg",
+  mailgun: "harness-mailgun.svg", discord: "harness-discord.svg", revenuecat: "harness-revenuecat.svg",
+  nvidia: "harness-nvidia-color.svg", anyscale: "harness-anyscale.svg",
+  bolt: "harness-bolt.svg", v0: "harness-v0.svg",
+  snowflake: "harness-snowflake.svg", clickhouse: "harness-clickhouse.svg",
+  cockroach: "harness-cockroach.svg", planetscale: "harness-planetscale.svg",
+  semaphore: "harness-semaphore.svg", sonatype: "harness-sonatype.svg",
+  langfuse: "harness-langfuse.svg", braintrust: "harness-braintrust.svg",
+  prefect: "harness-prefect.svg",
+  zapier: "harness-zapier-color.svg", make: "harness-make.svg", loom: "harness-loom.svg",
 };
 /* The logo cell: the shipped mark for a known id, else the service's
  * initial on a tile, so rows with no mark still line up (CatalogueRow
@@ -53,7 +85,7 @@ function statusLogo(id, name = "") {
     return `<span class="logo status-glyph" aria-hidden="true">${esc(letter.toUpperCase())}</span>`;
   }
   const mono = file.endsWith("-color.svg") ? "" : " mono";
-  return `<img class="logo${mono}" src="/app/${file}" alt="">`;
+  return `<img class="logo${mono}" src="/${file}" alt="">`;
 }
 
 
@@ -180,7 +212,7 @@ function paintStatus(error = "") {
     btn.onclick = () => { p.removing = null; p.removeError = ""; paintStatus(error); };
   }
   for (const btn of document.querySelectorAll("[data-status-remove-go]")) {
-    btn.onclick = () => statusUntrack(btn.dataset.statusRemoveGo);
+    btn.onclick = () => { btn.disabled = true; statusUntrack(btn.dataset.statusRemoveGo); };
   }
 }
 
@@ -216,7 +248,8 @@ function statusCard(raw) {
       <span>Stop tracking ${esc(s.name)}?</span>
       <span class="status-confirm-buttons">
         <button class="status-confirm-button" data-status-remove-cancel>Cancel</button>
-        <button class="status-confirm-button danger" data-status-remove-go="${esc(s.id)}">Stop tracking</button>
+        <button class="status-confirm-button danger" data-status-remove-go="${esc(s.id)}"${
+          p.untracking.has(s.id) ? " disabled" : ""}>Stop tracking</button>
       </span></div>` : "";
   return `<article class="card status-card">
     <div class="status-body">
@@ -250,19 +283,34 @@ function statusOnPage() {
  * payload, so the card list repaints without it. */
 async function statusUntrack(id) {
   const p = statusPage;
+  // One write per card: a second click would move the generation past
+  // the first's 200 and come back 404, leaving the card with an error.
+  if (p.untracking.has(id)) return;
+  p.untracking.add(id);
   // Bump the generation like renderStatus does: a list read still in
   // flight began before this write and must not put the card back. The
   // same stamp orders two writes, so only the latest reply is applied.
   const mine = ++p.gen;
   const { status, data } = await apiPost("/v1/app/status/untrack", { id });
+  p.untracking.delete(id);
   if (status === 401) return statusGate();
   if (status === 200 && data) {
     if (mine !== p.gen) return;
-    p.removing = null;
-    p.removeError = "";
+    if (p.removing === id) { p.removing = null; p.removeError = ""; }
     p.expanded.delete(id);
     statusKeep(data);
     if (statusOnPage()) paintStatus();
+    return;
+  }
+  // Already gone (another browser, or an earlier write whose reply was
+  // dropped): the hub's list no longer has the card, so read it again.
+  // A newer write or read is out already and its answer repaints, so a
+  // superseded reply starts nothing (its read could beat that write).
+  if (status === 404 && data && data.error && data.error.code === "unknown_service") {
+    p.expanded.delete(id);
+    if (mine !== p.gen) return;
+    if (p.removing === id) { p.removing = null; p.removeError = ""; }
+    if (statusOnPage()) renderStatus("status");
     return;
   }
   if (!statusOnPage()) return;
@@ -325,24 +373,21 @@ function statusProblem(s) {
 
 /* ------------------------------------------------------- the catalogue */
 
-const CAT_GROUPS = [[null, "All"], ["providers", "AI providers"], ["infrastructure", "Infrastructure"]];
-const CAT_TITLES = { providers: "AI providers", infrastructure: "Infrastructure" };
+const CAT_GROUPS = [[null, "All"], ["modelProviders", "Model providers"],
+  ["agentPlatforms", "Agent platforms"], ["cloud", "Cloud & network"], ["data", "Data"],
+  ["devtools", "Dev tools & quality"], ["registries", "Registries"],
+  ["observability", "Observability"], ["services", "Services & productivity"]];
+const CAT_TITLES = Object.fromEntries(CAT_GROUPS.slice(1));
 
 /* The sheet lives on document.body, so a page repaint behind it does not
- * close it (the app's sheet stays up while adds land). */
+ * close it (the app's sheet stays up while adds land). It is a route
+ * sheet (app.js bodySheet): leaving the page closes it. */
 function statusCatalogueDialog() {
-  let dlg = document.getElementById("status-catalogue");
-  if (dlg) return dlg;
-  dlg = document.createElement("dialog");
-  dlg.id = "status-catalogue";
-  dlg.className = "sheet status-catalogue";
+  const made = document.getElementById("status-catalogue");
+  if (made) return made;
+  const dlg = bodySheet("status-catalogue", "sheet status-catalogue");
   dlg.setAttribute("aria-labelledby", "status-catalogue-title");
   dlg.addEventListener("close", () => { statusPage.catalogue = null; dlg.replaceChildren(); });
-  document.body.appendChild(dlg);
-  // A sheet belongs to the status page: leaving it closes the sheet.
-  window.addEventListener("hashchange", () => {
-    if (currentRoute() !== "status" && dlg.open) dlg.close();
-  });
   return dlg;
 }
 

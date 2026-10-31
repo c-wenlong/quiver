@@ -14,9 +14,13 @@ final class FakeUsage: UsageFetching, @unchecked Sendable {
     /// Config homes asked of the no-network cache.
     var cachedRequests: [String] { lock.withLock { recordedCached } }
     private var recordedCached: [String] = []
+    /// When set, every live read parks here first, so a test can look at
+    /// the cards while the fetch is still running.
+    var gate: HoldGate?
 
     func usage(for key: AccountKey, force: Bool, freshFor _: TimeInterval) async -> AccountUsage {
-        lock.withLock {
+        try? await gate?.pass()
+        return lock.withLock {
             recorded.append((key, force))
             return byHome[key.configHome]
                 ?? AccountUsage(status: .signedOut, plan: nil, email: nil, windows: [], fetchedAt: nil, isStale: false)
@@ -56,15 +60,19 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
     private var recorded: [String] = []
     private var waiters: [CheckedContinuation<Void, Never>] = []
     var calls: [String] { lock.withLock { recorded } }
+    /// Bumped once each run is suspended, so a test awaits it.
+    let started = CountGate()
 
     func renew(home: String, isDefault _: Bool) async -> Bool {
         // Call record and waiter land under the same lock, so releaseAll
         // can never slip between them and leave the run suspended.
+        let started = self.started
         await withCheckedContinuation { continuation in
             lock.withLock {
                 recorded.append(home)
                 waiters.append(continuation)
             }
+            Task { await started.bump() }
         }
         return true
     }
@@ -89,6 +97,8 @@ final class FakeRunningInstances: RunningInstances {
 
 @MainActor
 @Suite struct AccountsModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
     let root: URL
     let store: ProfileStore
     let usage = FakeUsage()
@@ -96,8 +106,8 @@ final class FakeRunningInstances: RunningInstances {
     let running = FakeRunningInstances()
 
     init() throws {
-        root = FileManager.default.temporaryDirectory.appending(path: "accounts-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        scratch = try TempDir()
+        root = scratch.url
         store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         // Real stub CLIs on the injected PATH: signIn refuses when they
         // aren't executable, like a missing install.
@@ -504,12 +514,19 @@ final class FakeRunningInstances: RunningInstances {
         usage.cached[home] = AccountUsage(status: .rateLimited(until: .distantFuture),
                                           windows: reading.windows,
                                           fetchedAt: .now, isStale: true)
-        await model.load(force: false)
-        // The cache answered without a keychain read and the card saw it.
+        let gate = HoldGate()
+        usage.gate = gate
+        let load = Task { await model.load(force: false) }
+        // The fetch is parked, so the card shows only what the cache gave.
+        #expect(await gate.arrived())
         #expect(usage.cachedRequests.contains(home))
+        let card = model.cards.first { $0.id == "claude-default" }
+        #expect(card?.usage == usage.cached[home])
+        gate.open()
+        await load.value
     }
 
-    @Test func aSecondPressSkipsAccountsAlreadyRenewing() async throws {
+    @Test(.timeLimit(.minutes(1))) func aSecondPressSkipsAccountsAlreadyRenewing() async throws {
         let renewer = SuspendingRenewer()
         let model = AccountsModel(store: store, usage: usage, launcher: launcher,
                                   terminal: { .terminal }, loginPath: { "" }, renewer: renewer)
@@ -519,7 +536,7 @@ final class FakeRunningInstances: RunningInstances {
 
         async let first: Void = model.refreshFromButton()
         // Wait until the renewal is actually running before pressing again.
-        while renewer.calls.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await renewer.started.reach(1))
         #expect(model.renewing == ["claude-default"])
 
         // A second press loads but never starts a second claude run.
@@ -544,7 +561,13 @@ final class FakeRunningInstances: RunningInstances {
 
 @MainActor
 @Suite struct LaunchTargetTests {
-    let root = FileManager.default.temporaryDirectory.appending(path: "launch-\(UUID().uuidString)")
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    let root: URL
+    init() throws {
+        scratch = try TempDir()
+        root = scratch.url.appending(path: "launch")
+    }
     let launcher = FakeLauncher()
     /// Empty: never let a launch test see (or focus) the user's real apps.
     let running = FakeRunningInstances()
@@ -669,29 +692,28 @@ final class FakeRunningInstances: RunningInstances {
     /// catches a hang. Under full-suite load renew can notice even an
     /// instant exit a second or more late, so a short one would time out
     /// a clean run and report it as a failure.
-    private func cli(_ script: String, timeout: Duration = .seconds(60),
-                     sigtermGrace: Duration = .milliseconds(200))
-        throws -> (dir: URL, renewer: ClaudeSignInRenewer) {
-        let dir = FileManager.default.temporaryDirectory
-            .appending(path: "renew-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    private func cli(_ script: String, in temp: TempDir, timeout: Duration = .seconds(60),
+                     sigtermGrace: Duration = .milliseconds(200)) throws -> ClaudeSignInRenewer {
+        let dir = temp.url
         let executable = dir.appending(path: "claude")
         try script.write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755],
                                               ofItemAtPath: executable.path)
         let path = dir.path
-        return (dir, ClaudeSignInRenewer(
+        return ClaudeSignInRenewer(
             timeout: timeout, sigtermGrace: sigtermGrace,
             command: "claude", workingDirectory: dir,
-            environment: { ["PATH": path] }))
+            environment: { ["PATH": path] })
     }
 
     /// Runs `script` to its own exit and returns renew's answer with the
     /// child, so a test can check the answer came from the exit status
     /// and not from the timeout.
     private func runToExit(_ script: String) async throws -> (renewed: Bool, child: Process) {
-        var (dir, renewer) = try cli(script)
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let dir = temp.url
+        var renewer = try cli(script, in: temp)
         let child = ChildBox()
         renewer.launched = { child.set($0, readyAt: nil) }
         let renewed = await renewer.renew(home: dir.path, isDefault: true)
@@ -714,20 +736,19 @@ final class FakeRunningInstances: RunningInstances {
         // marker file proves the trap is in place. A loaded machine can
         // take longer than any fixed timeout to reach that line, so the
         // timeout starts only once the marker shows up.
-        var (dir, renewer) = try cli("#!/bin/sh\ntrap '' TERM\n/usr/bin/touch started\nexec /bin/sleep 60\n",
-                                     timeout: .milliseconds(500), sigtermGrace: .milliseconds(500))
-        defer { try? FileManager.default.removeItem(at: dir) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let dir = temp.url
+        var renewer = try cli("#!/bin/sh\ntrap '' TERM\n/usr/bin/touch started\nexec /bin/sleep 60\n",
+                              in: temp, timeout: .milliseconds(500), sigtermGrace: .milliseconds(500))
         let marker = dir.appending(path: "started").path
+        let folder = dir
         let child = ChildBox()
         renewer.launched = { process in
             child.set(process, readyAt: nil)
-            // The child is another process, so there is no gate to await:
-            // poll its marker, giving up if it dies or never gets there.
-            let deadline = ContinuousClock.now + .seconds(30)
-            while !FileManager.default.fileExists(atPath: marker),
-                  process.isRunning, ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(20))
-            }
+            // The child is another process: the folder's own change
+            // events say when its marker lands.
+            _ = await fileAppears("started", in: folder, timeout: .seconds(30))
             child.set(process, readyAt: ContinuousClock.now)
         }
         #expect(await renewer.renew(home: dir.path, isDefault: true) == false)

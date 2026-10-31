@@ -1,7 +1,6 @@
 """tail.py: record decoders, byte-offset source, snapshot diff, manager."""
 
 import json
-import tempfile
 import threading
 import time
 import unittest
@@ -10,6 +9,8 @@ from unittest.mock import patch
 
 from quiver.remote import tail
 from quiver.sessions.models import Session
+
+from tests._tempdir import temp_dir
 
 
 def _claude_user(text):
@@ -115,7 +116,7 @@ class TestDecoders(unittest.TestCase):
 
 class TestJsonlTailSource(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.path = self.tmp / "t.jsonl"
 
     def _write(self, records):
@@ -356,7 +357,7 @@ class TestSnapshotChangeGate(unittest.TestCase):
     """Snapshot stores re-read only when their change token moves."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.store = self.tmp / "store.json"
         self.store.write_text("{}")
 
@@ -377,7 +378,7 @@ class TestSnapshotChangeGate(unittest.TestCase):
             self.assertEqual(src.poll(), [])
             self.assertEqual(len(reads), 1, "polls after the first trust the unchanged token")
             # A write moves the token: the next poll reads and emits it.
-            time.sleep(0.01)
+            # The size changes, so this needs no wait for a new mtime.
             self.store.write_text('{"more": true}')
             out = src.poll()
             self.assertEqual([m["text"] for m in out], ["c"])
@@ -477,7 +478,7 @@ class TestDevinBoundedRead(unittest.TestCase):
     def test_result_keeps_its_tool_name_after_its_call_leaves_the_window(self):
         import sqlite3
         from quiver.reports import transcripts as tr
-        tmp = Path(tempfile.mkdtemp())
+        tmp = temp_dir(self)
         db = tmp / "sessions.db"
         conn = sqlite3.connect(db)
         conn.executescript(
@@ -507,7 +508,7 @@ class TestBackfillCap(unittest.TestCase):
     """A session seen for the first time backfills recent history only."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
 
     def test_jsonl_starts_on_a_whole_line_near_the_end(self):
         path = self.tmp / "t.jsonl"
@@ -577,7 +578,7 @@ class TestBackfillCap(unittest.TestCase):
 
 class TestOpencodeSource(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         import sqlite3
         self.db = self.tmp / "opencode.db"
         conn = sqlite3.connect(self.db)
@@ -754,7 +755,7 @@ class TestOpencodeSource(unittest.TestCase):
 
 class TestTailer(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
 
     def test_cursor_round_trip(self):
         path = self.tmp / "t.jsonl"
@@ -868,8 +869,10 @@ class TestTailer(unittest.TestCase):
         t.commit_cursor()
         self.assertTrue(t._cursor_path.exists())
         # Second poll with nothing new keeps the cursor settled.
+        settled = t._cursor_path.read_bytes()
         self.assertEqual(t.poll(time.time(), active=False), [])
         t.commit_cursor()
+        self.assertEqual(t._cursor_path.read_bytes(), settled)
 
 
 def _session_for():
@@ -879,7 +882,7 @@ def _session_for():
 
 class TestTailManager(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.events = []
 
     def _emit(self, key, ev):
@@ -1362,14 +1365,13 @@ class TestTailManager(unittest.TestCase):
             self.assertIsInstance(
                 tail.make_source(sess), tail.SnapshotSource
             )
-        with patch("quiver.remote.tail.expand_user",
-                   return_value=self.tmp):
-            db = self.tmp / "oc.db"
-            import sqlite3 as _sq
-            _sq.connect(db).close()
-            self.assertIsInstance(
-                tail.make_source(sess), tail.OpencodeSource
-            )
+        db = self.tmp / "oc.db"
+        import sqlite3 as _sq
+        _sq.connect(db).close()
+        with patch("quiver.remote.tail.expand_user", return_value=db):
+            src = tail.make_source(sess)
+        self.assertIsInstance(src, tail.OpencodeSource)
+        self.assertEqual((src.db_path, src.session_id), (db, "s"))
         sess.tool_name = "freebuff"
         with patch.object(tail, "resolve_jsonl_path",
                           return_value=None):
@@ -1391,13 +1393,147 @@ class TestTailManager(unittest.TestCase):
         self.assertIsNotNone(mgr.last_append_at("claude:y"))
 
 
+def _claude_limit(text, resets_at=1793323800, window="five_hour",
+                  ts="2026-10-29T22:55:25.053Z"):
+    """The 429 record Claude Code writes on a usage limit (real shape)."""
+    rec = _claude_assistant([{"type": "text", "text": text}])
+    rec.update({"isApiErrorMessage": True, "error": "rate_limit",
+                "apiErrorStatus": 429, "timestamp": ts})
+    if resets_at is not None:
+        rec["quotaLimits"] = {
+            "status": "rejected", "resetsAt": resets_at,
+            "rateLimitType": window, "overageStatus": "rejected",
+            "isUsingOverage": False}
+    return rec
+
+
+def _codex_limit(ts="2026-10-20T02:55:34.068Z"):
+    """A codex turn that ended on a usage limit (real shape)."""
+    return {"timestamp": ts, "type": "event_msg", "payload": {
+        "type": "task_complete", "turn_id": "t1", "last_agent_message": None,
+        "error": {"message": "You hit your spend cap set by the owner of "
+                             "your workspace.",
+                  "codex_error_info": "usage_limit_exceeded"}}}
+
+
+def _iso_ts(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(epoch))
+
+
+class TestLimitNotify(unittest.TestCase):
+    """notify kind ``limit`` from Claude Code and Codex limit records."""
+
+    def setUp(self):
+        self.tmp = temp_dir(self)
+        self.events = []
+        self.path = self.tmp / "t.jsonl"
+        self.path.write_text("")
+
+    def _manager(self, tool="claude"):
+        mgr = tail.TailManager(
+            lambda k, ev: self.events.append((k, ev)), "mbp", home=self.tmp)
+        sess = Session(timestamp=0, agent="x", path="/tmp",
+                       session_id="", tool_name=tool)
+        src = tail.JsonlTailSource(self.path, tool)
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([(f"{tool}:s", sess, "active")])
+        return mgr
+
+    def _append(self, *recs):
+        with open(self.path, "a") as fh:
+            for rec in recs:
+                fh.write(json.dumps(rec) + "\n")
+
+    def _limits(self):
+        return [ev["data"] for _k, ev in self.events
+                if ev["type"] == "notify" and ev["data"]["kind"] == "limit"]
+
+    def test_claude_decode_marks_rate_limit_only(self):
+        out = tail.decode_record("claude", _claude_limit(
+            "You've hit your session limit · resets 9:30am"))
+        self.assertEqual(out[0]["kind"], "error")
+        self.assertEqual(out[0][tail.LIMIT_MARK],
+                         {"resets_at": 1793323800.0, "window": "five_hour"})
+        # Older records without quotaLimits still count.
+        out = tail.decode_record("claude", _claude_limit("limit", None))
+        self.assertEqual(out[0][tail.LIMIT_MARK], {})
+        # Another API error is just an error.
+        rec = _claude_limit("Internal server error", None)
+        rec["error"] = "server_error"
+        self.assertNotIn(tail.LIMIT_MARK, tail.decode_record("claude", rec)[0])
+
+    def test_codex_decode_marks_usage_limit_only(self):
+        out = tail.decode_record("codex", _codex_limit())
+        self.assertEqual(out[0]["kind"], "error")
+        self.assertIn("spend cap", out[0]["text"])
+        self.assertEqual(out[0][tail.LIMIT_MARK], {})
+        plain = {"type": "event_msg", "payload": {
+            "type": "task_complete", "last_agent_message": "done"}}
+        self.assertEqual(tail.decode_record("codex", plain), [])
+
+    def test_claude_limit_rings_once_with_reset(self):
+        mgr = self._manager()
+        now = time.time()
+        text = "You've hit your session limit · resets 9:30am"
+        self._append(_claude_limit(text, resets_at=now + 3600,
+                                   ts=_iso_ts(now)))
+        mgr.tick(now)
+        [data] = self._limits()
+        self.assertEqual(data["message"], text)
+        self.assertAlmostEqual(data["resets_at"], now + 3600)
+        self.assertEqual(data["window"], "five_hour")
+        self.assertEqual(data["status"], "active")
+        # The marker never reaches the wire.
+        appended = [ev for _k, ev in self.events
+                    if ev["type"] == "message.appended"]
+        self.assertNotIn(tail.LIMIT_MARK, appended[0]["data"])
+        # A retry into the same limit is quiet; nothing repeats per poll.
+        self._append(_claude_limit(text, resets_at=now + 3600,
+                                   ts=_iso_ts(now + 60)))
+        mgr.tick(now + 60)
+        mgr.tick(now + 120)
+        self.assertEqual(len(self._limits()), 1)
+        # The next window's limit rings again.
+        self._append(_claude_limit(text, resets_at=now + 9000,
+                                   ts=_iso_ts(now + 4000)))
+        mgr.tick(now + 4000)
+        self.assertEqual(len(self._limits()), 2)
+
+    def test_codex_limit_repeats_only_after_window(self):
+        mgr = self._manager("codex")
+        now = time.time()
+        self._append(_codex_limit(_iso_ts(now)))
+        mgr.tick(now)
+        self.assertEqual(len(self._limits()), 1)
+        self.assertNotIn("resets_at", self._limits()[0])
+        self._append(_codex_limit(_iso_ts(now + 30)))
+        mgr.tick(now + 30)
+        self.assertEqual(len(self._limits()), 1)
+        later = now + tail.LIMIT_REPEAT_S + 10
+        self._append(_codex_limit(_iso_ts(later)))
+        mgr.tick(later)
+        self.assertEqual(len(self._limits()), 2)
+
+    def test_stale_limit_record_is_quiet(self):
+        mgr = self._manager()
+        now = time.time()
+        self._append(_claude_limit(
+            "old limit", ts=_iso_ts(now - tail.LIMIT_FRESH_S - 60)))
+        mgr.tick(now)
+        self.assertEqual(self._limits(), [])
+        # Still shown in the chat.
+        appended = [ev["data"]["text"] for _k, ev in self.events
+                    if ev["type"] == "message.appended"]
+        self.assertEqual(appended, ["old limit"])
+
+
 class TestSweepStale(unittest.TestCase):
     """``sweep_stale``: old journal + cursor pairs go, live ones stay."""
 
     def setUp(self):
         from quiver.remote.journal import Journal
 
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.journal = Journal(self.tmp)
         self.mgr = tail.TailManager(lambda k, e: None, "mbp", home=self.tmp)
         self.mgr.cursors_dir.mkdir(parents=True, exist_ok=True)
@@ -1481,9 +1617,10 @@ class TestSweepStale(unittest.TestCase):
                 target=self.mgr.sweep_stale, args=(self.journal,),
                 kwargs={"now": self.now})
             t.start()
-            started.wait(2)
+            self.assertTrue(started.wait(2))
             self.mgr.ensure("claude:back", sess, "")
-            t.join()
+            t.join(5)
+            self.assertFalse(t.is_alive())
         # The ensure waited for the sweep: both files went first, and
         # the tailer started fresh, so recent history backfills (one
         # started on the doomed journal would skip to the end).
@@ -1500,7 +1637,7 @@ class TestApprovalWatcher(unittest.TestCase):
     """TailManager._poll_approvals: pane prompt → requested/resolved."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.events = []
         self.mgr = tail.TailManager(
             lambda k, ev: self.events.append((k, ev)), "mbp",
@@ -1508,6 +1645,11 @@ class TestApprovalWatcher(unittest.TestCase):
         # Only the key matters to the watcher; no transcript needed.
         self.mgr.tailers["k1"] = object()
         self._t = time.time()
+        # The watcher records pending prompts in supervise's module-level
+        # dict: start empty and leave nothing for later tests.
+        p = patch.dict(tail.supervise._PENDING_APPROVALS, clear=True)
+        p.start()
+        self.addCleanup(p.stop)
 
     def _poll(self, pane="", meta=None):
         # Each call lands past the PANE_APPROVAL_S throttle window.
@@ -1580,6 +1722,9 @@ class TestApprovalWatcher(unittest.TestCase):
         evs = self._approval_events()
         self.assertEqual(evs[-1]["type"], "approval.resolved")
         self.assertEqual(evs[-1]["data"]["source"], "detached")
+        # The id alone, as the request carried it: the hub and the
+        # phone match the resolve to the open card by this string.
+        self.assertEqual(evs[-1]["data"]["request_id"], rid)
         self.assertIsNone(supervise.pending_approval("k1"))
 
     def test_headless_meta_skips_pane_check(self):
@@ -1700,7 +1845,7 @@ class TestTailWake(unittest.TestCase):
     KEY = "claude:s1"
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.events = []
         self.path = self.tmp / "s.jsonl"
         self.path.write_text(json.dumps(_claude_user("old")) + "\n")
@@ -1886,7 +2031,7 @@ class TestStatusProbe(unittest.TestCase):
     KEY = "claude:s1"
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = temp_dir(self)
         self.events = []
         self.noted = []
         self.probed = []
@@ -2099,6 +2244,30 @@ class TestStatusProbe(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(len(calls[0]), 4)
         self.assertEqual(set(self.mgr.statuses.values()), {"active"})
+
+
+class TestFreshSession(unittest.TestCase):
+    """``fresh_session`` brings a catalog copy's activity time up to date."""
+
+    def test_fresh_session_uses_tailer_activity(self):
+        tmp = temp_dir(self)
+        path = tmp / "t.jsonl"
+        path.write_text("")
+        mgr = tail.TailManager(lambda k, ev: None, "mbp", home=tmp)
+        stale = Session(timestamp=0, agent="x", path="/tmp",
+                        session_id="", tool_name="claude")
+        # Nothing tails the key: unchanged.
+        self.assertIs(mgr.fresh_session("claude:s", stale), stale)
+        src = tail.JsonlTailSource(path, "claude")
+        with patch.object(tail, "make_source", return_value=src):
+            mgr.sync([("claude:s", stale, "done")])
+        fresh = mgr.fresh_session("claude:s", stale)
+        self.assertGreater(fresh.timestamp, 0)  # the file's mtime
+        self.assertEqual(stale.timestamp, 0)    # the copy is untouched
+        mgr.last_append["claude:s"] = time.time() + 100
+        self.assertAlmostEqual(
+            mgr.fresh_session("claude:s", stale).timestamp,
+            mgr.last_append["claude:s"] * 1000)
 
 
 if __name__ == "__main__":

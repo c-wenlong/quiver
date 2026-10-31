@@ -80,7 +80,7 @@ struct AddRepoSheet: View {
                     }
                     .primaryButton()
                     .disabled(working)
-                    .help("Verify the repo exists, then pin it")
+                    .hoverTip("Verify the repo exists, then pin it", replacesLabel: false)
                 }
             }
         }

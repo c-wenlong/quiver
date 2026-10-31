@@ -41,6 +41,9 @@ private struct SectionHeading: View {
 // MARK: - Menu bar
 
 private struct MenuBarSection: View {
+    /// One width for the Menu bar card's three pickers, so they line up;
+    /// the limit names ("Claude: Personal · 7d Fable") need this much.
+    private static let pickerWidth: CGFloat = 220
     @Environment(AppModel.self) private var app
 
     private var limit: LimitReading? { app.menuBar.limit(in: app.limits.readings, now: .now) }
@@ -61,18 +64,18 @@ private struct MenuBarSection: View {
                 SettingsDivider()
                 SettingRow(title: "Shows", detail: "The first figure next to the icon.") {
                     SelectMenu(options: MenuBarFigure.allCases.map { ($0, $0.title) },
-                               selection: $app.menuBar.primary)
+                               selection: $app.menuBar.primary, width: Self.pickerWidth)
                 }
                 .disabled(!app.menuBar.isVisible)
                 SettingsDivider()
                 SettingRow(title: "Then", detail: "An optional second figure.") {
                     SelectMenu(options: MenuBarFigure.allCases.map { ($0, $0.title) },
-                               selection: $app.menuBar.secondary)
+                               selection: $app.menuBar.secondary, width: Self.pickerWidth)
                 }
                 .disabled(!app.menuBar.isVisible)
                 SettingsDivider()
                 SettingRow(title: "Limit to watch", detail: "The limit the icon's ring and the Limit figure follow.") {
-                    SelectMenu(options: limitOptions, selection: $app.menuBar.watchedLimit, width: 220,
+                    SelectMenu(options: limitOptions, selection: $app.menuBar.watchedLimit, width: Self.pickerWidth,
                                title: watchedIsMissing ? "Tightest of all" : nil)
                 }
                 .disabled(!app.menuBar.isVisible)
@@ -220,9 +223,15 @@ private struct ToggleRow<Icon: View>: View {
             icon
             Text(title).font(Theme.bodySmall).foregroundStyle(Theme.textLabel)
             Spacer(minLength: 16)
-            SettingSwitch(title: "Show \(title)", isOn: $isOn)
-                .disabled(locked)
-                .help(locked ? "At least one tab stays on" : "")
+            // A plain tooltip, and only when locked: a hover tip's tap
+            // would sit on the switch.
+            if locked {
+                SettingSwitch(title: "Show \(title)", isOn: $isOn)
+                    .disabled(true)
+                    .help("At least one tab stays on")
+            } else {
+                SettingSwitch(title: "Show \(title)", isOn: $isOn)
+            }
         }
         .padding(.vertical, 12)
         .accessibilityHint("Drag to reorder")

@@ -7,8 +7,10 @@ already uses, so a page on another site can't borrow the identity.
 """
 
 import json
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from quiver.remote import dismissals
@@ -33,6 +35,8 @@ class OwnerBase(unittest.TestCase):
         self.srv = _Server(sessions=[_session()])
         self.addCleanup(self.srv.stop)
         self.srv.state.trust_proxy = True
+        # The test client stands in for tailscale serve's connection.
+        self.srv.state.proxy_peer = lambda server, peer: True
         self.srv.state.owner_login = "dev@github"
         self.calls = []
 
@@ -123,10 +127,14 @@ class TestClientAddress(unittest.TestCase):
     """_proxied/_client_ip without a socket: which peer the hub trusts
     to speak for another address."""
 
-    def _handler(self, peer, forwarded=None, trust_proxy=True):
+    def _handler(self, peer, forwarded=None, trust_proxy=True,
+                 is_proxy=True):
         handler = hub_mod._Handler.__new__(hub_mod._Handler)
         handler.server = MagicMock()
         handler.server.state.trust_proxy = trust_proxy
+        handler.server.state.proxy_peer = MagicMock(return_value=is_proxy)
+        handler.connection = MagicMock()
+        handler.connection.getsockname.return_value = ("127.0.0.1", 8477)
         handler.client_address = (peer, 50000)
         handler.headers = (
             {"X-Forwarded-For": forwarded} if forwarded is not None else {}
@@ -161,8 +169,14 @@ class TestClientAddress(unittest.TestCase):
             self.assertEqual(h._client_ip(), peer)
 
 class TestWhoisCache(unittest.TestCase):
+    def setUp(self):
+        # HubState(None) would write machine.json under the real HOME.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+
     def test_hits_and_misses_expire(self):
-        state = hub_mod.HubState(None)
+        state = hub_mod.HubState(self.home)
         state.whois = MagicMock(side_effect=lambda ip: _PEERS.get(ip))
         clock = [1000.0]
         with patch.object(hub_mod.time, "time", lambda: clock[0]):
@@ -180,7 +194,7 @@ class TestWhoisCache(unittest.TestCase):
 
 
     def test_cache_stays_bounded(self):
-        state = hub_mod.HubState(None)
+        state = hub_mod.HubState(self.home)
         state.whois = lambda ip: None
         for i in range(300):
             state.whois_cached(f"100.64.1.{i}")
@@ -188,7 +202,7 @@ class TestWhoisCache(unittest.TestCase):
         self.assertLessEqual(len(state._whois_ip_locks), 257)
 
     def test_concurrent_callers_share_one_lookup(self):
-        state = hub_mod.HubState(None)
+        state = hub_mod.HubState(self.home)
         started = threading.Event()
         release = threading.Event()
         calls = []
@@ -200,6 +214,22 @@ class TestWhoisCache(unittest.TestCase):
             return _PEERS.get(ip)
 
         state.whois = slow_whois
+        # The lookup is released only once all four callers have missed
+        # the cache (the first twice: before and under its lock), so
+        # the other three really are queued behind it.
+        misses = []
+        all_missed = threading.Event()
+        real_hit = state._whois_hit
+
+        def whois_hit(ip):
+            found = real_hit(ip)
+            if not found[0]:
+                misses.append(ip)
+                if len(misses) >= 5:
+                    all_missed.set()
+            return found
+
+        state._whois_hit = whois_hit
         results = []
         threads = [threading.Thread(
             target=lambda: results.append(state.whois_cached(_OWNER_IP)))
@@ -208,6 +238,7 @@ class TestWhoisCache(unittest.TestCase):
         self.assertTrue(started.wait(5))
         for t in threads[1:]:
             t.start()
+        self.assertTrue(all_missed.wait(5))
         release.set()
         for t in threads:
             t.join(5)

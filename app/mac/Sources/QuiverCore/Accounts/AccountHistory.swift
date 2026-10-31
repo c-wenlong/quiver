@@ -110,22 +110,37 @@ public final class AccountHistory {
     /// A day map into six Monday-start weeks and six months, each ending
     /// at the current one.
     public static func history(days: [Date: Int], now: Date, calendar: Calendar) -> History {
-        var monday = calendar
-        monday.firstWeekday = 2
-        return History(weeks: periods(days, now: now, calendar: monday, component: .weekOfYear),
-                       months: periods(days, now: now, calendar: calendar, component: .month))
+        func periods(_ component: Calendar.Component) -> [UsagePeriod] {
+            periodBounds(now: now, calendar: calendar, component: component, count: 6).map { bounds in
+                let tokens = days.reduce(0) { sum, day in
+                    bounds.contains(day.key) ? sum + day.value : sum
+                }
+                return UsagePeriod(start: bounds.start, tokens: tokens, inProgress: bounds.inProgress)
+            }
+        }
+        return History(weeks: periods(.weekOfYear), months: periods(.month))
     }
 
-    private static func periods(_ days: [Date: Int], now: Date, calendar: Calendar,
-                                component: Calendar.Component) -> [UsagePeriod] {
+    /// One bucket of `periodBounds`: `start` inclusive, `end` exclusive.
+    struct PeriodBounds {
+        var start: Date
+        var end: Date
+        var inProgress: Bool
+        func contains(_ date: Date) -> Bool { date >= start && date < end }
+    }
+
+    /// `count` calendar periods ending at the current one, oldest first;
+    /// the current one is `inProgress`. Weeks start on Monday whatever the
+    /// calendar's own first weekday. Shared with the Codex account compare.
+    nonisolated static func periodBounds(now: Date, calendar: Calendar, component: Calendar.Component,
+                             count: Int) -> [PeriodBounds] {
+        var calendar = calendar
+        if component == .weekOfYear { calendar.firstWeekday = 2 }
         guard let current = calendar.dateInterval(of: component, for: now) else { return [] }
-        return (0..<6).reversed().map { back in
+        return (0..<count).reversed().map { back in
             let start = calendar.date(byAdding: component, value: -back, to: current.start)!
             let end = calendar.date(byAdding: component, value: 1, to: start)!
-            let tokens = days.reduce(0) { sum, day in
-                day.key >= start && day.key < end ? sum + day.value : sum
-            }
-            return UsagePeriod(start: start, tokens: tokens, inProgress: back == 0)
+            return PeriodBounds(start: start, end: end, inProgress: back == 0)
         }
     }
 }

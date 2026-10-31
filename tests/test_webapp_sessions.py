@@ -154,6 +154,19 @@ class TestBuild(unittest.TestCase):
         self.assertEqual((bare["ownership"], bare["attachable"]), ("observed", False))
 
 
+    def test_rows_carry_the_hubs_model_and_blank_when_unknown(self):
+        rows = [
+            {"key": "claude:a", "id": "a", "harness": "claude", "machine_id": "hub",
+             "model": "claude-opus-4-5-20251101", "last_active_at": 2},
+            {"key": "gemini:b", "id": "b", "harness": "gemini", "machine_id": "hub",
+             "last_active_at": 1},
+        ]
+        known, unknown = sessions.build(rows, {}, "hub", {}, scanned=True)
+        # Verbatim: the page drops the provider path and date stamp.
+        self.assertEqual(known["model"], "claude-opus-4-5-20251101")
+        self.assertEqual(unknown["model"], "")
+
+
 class TestCodexResume(unittest.TestCase):
     def test_a_resumed_thread_carries_every_rollout(self):
         store = LedgerStore(Path(tempfile.mkdtemp()) / "l.sqlite")
@@ -283,6 +296,18 @@ class TestSessionsRoute(HubBase):
         # A terminal owns it; claude can resume, so the chat offers Attach.
         self.assertEqual((row["ownership"], row["attachable"]), ("observed", True))
 
+    def test_rows_carry_the_models_of_the_newest_reply(self):
+        _, data = self.srv.request("GET", "/v1/app/sessions", headers=self.auth())
+        [row] = json.loads(data)["sessions"]
+        self.assertEqual(row["model"], "")  # the hub doesn't know it
+        # The hub's own catalog row says it (session_model.py): the page
+        # reuses that, it has no second transcript reader.
+        self.srv.state.catalog._model_of = lambda ss: ["claude-opus-5-20251101"] * len(ss)
+        self.srv.state.catalog.refresh()
+        _, data = self.srv.request("GET", "/v1/app/sessions", headers=self.auth())
+        [row] = json.loads(data)["sessions"]
+        self.assertEqual(row["model"], "claude-opus-5-20251101")
+
     @unittest.skipIf(__import__("os").geteuid() == 0, "root reads anything")
     def test_an_unreadable_source_keeps_its_sessions_visible(self):
         f = self.srv.home / ".claude" / "projects" / "p" / "s1.jsonl"
@@ -294,11 +319,11 @@ class TestSessionsRoute(HubBase):
         self.assertEqual(len(body["notes"]), 1)
 
     def test_page_script_is_served(self):
-        self.assertEqual(self.srv.request("GET", "/app/sessions.js")[0], 200)
-        status, body = self.srv.request("GET", "/app/pages.js")
+        self.assertEqual(self.srv.request("GET", "/sessions.js")[0], 200)
+        status, body = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
         self.assertIn(b"globalThis.SessionChat", body)
-        status, body = self.srv.request("GET", "/app/pages.css")
+        status, body = self.srv.request("GET", "/pages.css")
         self.assertIn(b".chat-composer", body)
 
 
@@ -841,6 +866,41 @@ return div.innerHTML;
         self.assertIsNone(out["junk"])
         self.assertEqual(out["lines"], {"ctxTop": ["a"], "del": ["b"], "add": ["B"], "ctxBot": ["c"]})
 
+    def test_tool_args_that_are_not_strings_render_no_diff(self):
+        """args_full is the transcript's tool input as the agent sent it,
+        so a field can be an array or an object: no diff, no throw."""
+        out = self.run_js("""
+          const call = (name, args) => T.toolDiff({ name, args_full: JSON.stringify(args) });
+          return [call("Write", { file_path: "a.txt", content: ["x"] }),
+                  call("Write", { file_path: ["a.txt"], content: "hi" }) !== null,
+                  call("Edit", { file_path: "a.py", old_string: { a: 1 }, new_string: 2 }),
+                  call("MultiEdit", { file_path: "a.py", edits: [{ old_string: ["x"], new_string: ["y"] }] }),
+                  call("NotebookEdit", { notebook_path: "n.ipynb", new_source: ["print(1)"] }),
+                  call("apply_patch", { patch: ["-a", "+b"] }) !== null];""")
+        self.assertEqual(out, [None, True, None, None, None, True])
+
+    def test_an_event_that_throws_is_skipped_not_fatal(self):
+        """One event the view can't draw is logged and skipped: the
+        backfill still draws the rest and resolves, and a live event
+        doesn't throw into the stream (whose reconnect would replay it)."""
+        out = self.run_js(r"""
+          const errors = [];
+          console.error = (...a) => errors.push(String(a[0]));
+          globalThis.nearBottom = () => true;
+          const log = { scrollTop: 0, scrollHeight: 0, clientHeight: 0, querySelectorAll: () => [] };
+          document.getElementById = (id) => (id === "chat-log" ? log : null);
+          globalThis.patchMeta = () => { throw new Error("boom"); };
+          globalThis.api = async () => ({ status: 200, data: { messages: [
+            { type: "session.meta", session: "k", seq: 1, data: {} },
+            { type: "session.status", session: "k", seq: 2, data: { status: "done" } }] } });
+          Object.assign(T.chat, { key: "k", gen: 1, seq: 0, row: { status: "active", ownership: "observed" } });
+          const status = await T.backfill(1);
+          const afterBackfill = { status, seq: T.chat.seq, row: T.chat.row.status };
+          T.showLive({ type: "session.meta", session: "k", seq: 3, data: {} });
+          return { afterBackfill, liveSeq: T.chat.seq, errors: errors.length };""")
+        self.assertEqual(out, {"afterBackfill": {"status": 200, "seq": 2, "row": "done"},
+                               "liveSeq": 3, "errors": 2})
+
     def test_page_preview_targets(self):
         """Which tool calls get Preview and the route path each asks for:
         the cases PagePreviewTests.swift pins for the phone."""
@@ -983,7 +1043,7 @@ return div.innerHTML;
         most three, none from code; the card opens a new tab with no
         opener or referrer."""
         out = self.run_js(r"""
-          const urls = (t) => T.linkUrls(t).map((u) => u.href);
+          const urls = (t) => T.linkUrls(T.md(t)).map((u) => u.href);
           return {
             mixed: urls("See [the page](https://www.claude.ai/code/artifact/abc?x=1&y=2) and "
               + "https://example.com, again https://example.com, mailto:a@b.c, `https://code.test/x`\n"
@@ -992,8 +1052,8 @@ return div.innerHTML;
             none: urls("no links here"),
             host: [T.linkHost(new URL("https://www.claude.ai/x")), T.linkHost(new URL("http://example.com"))],
             path: [T.linkPath(new URL("https://claude.ai/code/x?y=1")), T.linkPath(new URL("https://claude.ai/"))],
-            html: T.linkCardsHtml('Go to https://example.com/a?q="x"'),
-            empty: T.linkCardsHtml("plain"),
+            html: T.linkCardsHtml(T.md('Go to https://example.com/a?q="x"')),
+            empty: T.linkCardsHtml(T.md("plain")),
           };""")
         self.assertEqual(out["mixed"], ["https://www.claude.ai/code/artifact/abc?x=1&y=2", "https://example.com/"])
         self.assertEqual(out["many"], ["https://a.test/1", "https://b.test/2", "https://c.test/3"])
@@ -1121,6 +1181,140 @@ return div.innerHTML;
         self.assertNotEqual(out["error"], "")
         self.assertEqual(out["liveRows"], ["compact"])
         self.assertEqual(out["newest"], ["new"])
+
+    def test_attachment_caps_match_the_hub(self):
+        """The composer refuses what attachments.stage would, before
+        uploading, with the hub's own size cap and extension list."""
+        from quiver.remote import attachments
+        out = self.run_js("""
+          return {
+            exts: T.ATTACH.exts, max: T.ATTACH.maxBytes,
+            ext: [T.fileExt("a.PNG"), T.fileExt(".png"), T.fileExt("dir.v2/notes"), T.fileExt("x.tar.gz")],
+            problems: [T.attachProblem({ name: "a.png", size: 10 }),
+                       T.attachProblem({ name: "a.png", size: T.ATTACH.maxBytes + 1 }),
+                       T.attachProblem({ name: "a.zip", size: 10 }),
+                       T.attachProblem({ name: "Makefile", size: 10 }),
+                       T.attachProblem({ name: "a.txt", size: 0 })],
+            sizes: [T.formatBytes(900), T.formatBytes(2048), T.formatBytes(1536 * 1024), T.formatBytes(15 * 1048576)],
+            errors: [T.uploadError(413, null), T.uploadError(0, null),
+                     T.uploadError(422, { error: { message: "unsupported file type .exe" } }),
+                     T.uploadError(404, null), T.uploadError(500, null)],
+          };""")
+        self.assertEqual(set(out["exts"]), attachments.ALLOWED_EXTS)
+        self.assertEqual(out["max"], attachments.MAX_BYTES)
+        self.assertEqual(out["ext"], [".png", "", "", ".gz"])
+        self.assertEqual(out["problems"], [
+            "", "Too big: files can be up to 20 MB",
+            ".zip files can't be attached: images, PDFs and text only",
+            "Files without an extension can't be attached: images, PDFs and text only",
+            "The file is empty",
+        ])
+        self.assertEqual(out["sizes"], ["900 B", "2 KB", "1.5 MB", "15 MB"])
+        self.assertEqual(out["errors"], [
+            "Too big: files can be up to 20 MB", "Upload failed: connection lost",
+            "Unsupported file type .exe", "Update the hub to attach files from here",
+            "Upload failed (500)",
+        ])
+
+    def test_attachments_upload_block_send_and_ride_the_message(self):
+        """Each file uploads through the hub's attachments route with its
+        name encoded; Send is disabled while one is in flight; refused
+        files never upload; the ready refs go in the message body."""
+        out = self.run_js("""
+          const mk = (cls = "") => ({ innerHTML: "", value: "hi", disabled: false, title: "",
+            classList: { hidden: cls === "hidden", toggle(c, on) { if (c === "hidden") this.hidden = !!on; } } });
+          const els = { "chat-text": mk(), "chat-send": mk(), "chat-files": mk("hidden") };
+          document.getElementById = (id) => els[id] || null;
+          globalThis.authHeaders = (extra) => ({ "X-Quiver-Pair": "1", ...extra });
+          const calls = [];
+          let release = [];
+          globalThis.fetch = (url, opts) => {
+            calls.push({ url, method: opts.method, type: opts.headers["Content-Type"], body: opts.body.name });
+            return new Promise((r) => release.push(() => r({ status: 200,
+              json: async () => ({ ref: "1-abc-" + opts.body.name, name: opts.body.name, size: 42 }) })));
+          };
+          T.chat.key = "claude:s 1";
+          T.chat.rowKnown = true;
+          const out = {};
+          const started = T.addFiles([{ name: "shot one.png", size: 10, type: "image/png" },
+                                      { name: "tool.zip", size: 10 }, { name: "notes.md", size: 5 }]);
+          out.calls = calls;
+          out.states = T.uploads.items.map((it) => it.state);
+          out.sendDisabled = els["chat-send"].disabled;
+          out.chips = els["chat-files"].innerHTML;
+          out.filesHidden = els["chat-files"].classList.hidden;
+          // Enter while uploading: nothing is posted, the note says why.
+          await T.send();
+          out.note = T.uploads.note;
+          // Removing the markdown file mid-upload drops it for good.
+          T.removeUpload(T.uploads.items[2].id);
+          release.forEach((f) => f());
+          await Promise.all(started);
+          out.after = T.uploads.items.map((it) => [it.name, it.state, it.ref]);
+          out.sendAfter = els["chat-send"].disabled;
+          out.body = T.messageBody("look", "queue", "c1", T.uploads.items);
+          out.plain = T.messageBody("look", "queue", "c1", []);
+          return out;
+        """)
+        self.assertEqual(out["calls"], [
+            {"url": "/v1/sessions/claude%3As%201/attachments?name=shot%20one.png",
+             "method": "POST", "type": "image/png", "body": "shot one.png"},
+            {"url": "/v1/sessions/claude%3As%201/attachments?name=notes.md",
+             "method": "POST", "type": "application/octet-stream", "body": "notes.md"},
+        ])
+        self.assertEqual(out["states"], ["uploading", "failed", "uploading"])
+        self.assertTrue(out["sendDisabled"])
+        self.assertFalse(out["filesHidden"])
+        self.assertIn("Uploading…", out["chips"])
+        self.assertIn(".zip files can&#39;t be attached", out["chips"])
+        self.assertIn('aria-label="Remove shot one.png"', out["chips"])
+        self.assertEqual(out["note"], "Waiting for files to upload")
+        self.assertEqual(out["after"], [["shot one.png", "ready", "1-abc-shot one.png"],
+                                        ["tool.zip", "failed", ""]])
+        self.assertFalse(out["sendAfter"])
+        self.assertEqual(out["body"], {"text": "look", "mode": "queue", "client_id": "c1",
+                                       "attachments": ["1-abc-shot one.png"]})
+        self.assertEqual(out["plain"], {"text": "look", "mode": "queue", "client_id": "c1"})
+
+    def test_attachments_restore_on_refusal_and_clear_on_detach(self):
+        """A refused send gives its files back ahead of newer ones (not
+        after a lost connection or a dead ref); a detach drops them."""
+        out = self.run_js("""
+          // Any element the chat asks for: enough surface for
+          // updateOwnership's painters to run.
+          const els = {};
+          const stub = () => ({ innerHTML: "", value: "", disabled: false, title: "", textContent: "",
+            dataset: {}, style: {}, children: [],
+            classList: { hidden: false, toggle(c, on) { if (c === "hidden") this.hidden = !!on; },
+                         add() {}, remove() {}, contains() { return false; } },
+            setAttribute() {}, removeAttribute() {}, appendChild() {}, querySelector() { return null; },
+            querySelectorAll() { return []; }, addEventListener() {} });
+          document.getElementById = (id) => (els[id] = els[id] || stub());
+          document.body = stub();
+          globalThis.Fmt = new Proxy({}, { get: () => () => "" });
+          T.chat.key = "s1";
+          T.chat.rowKnown = true;
+          T.chat.row = { ownership: "attached", key: "s1" };
+          const ready = (ref) => ({ id: ref, name: ref, size: 1, state: "ready", ref, error: "", ctrl: null });
+          const out = {};
+          T.uploads.items = [ready("new")];
+          T.restoreUploads([ready("old"), ready("new")], 429, { error: { code: "backlog_full" } });
+          out.restored = T.uploads.items.map((it) => it.ref);
+          T.uploads.items = [];
+          T.restoreUploads([ready("a")], 0, null);
+          T.restoreUploads([ready("a")], 422, { error: { code: "bad_attachment" } });
+          out.notRestored = T.uploads.items.length;
+          // Detach: the session reads as observed and the chips go.
+          T.uploads.items = [ready("x")];
+          T.chat.row.ownership = "observed";
+          try { T.updateOwnership(); } catch (e) { out.err = String(e); }
+          out.afterDetach = T.uploads.items.length;
+          return out;
+        """)
+        self.assertNotIn("err", out)
+        self.assertEqual(out["restored"], ["old", "new"])
+        self.assertEqual(out["notRestored"], 0)
+        self.assertEqual(out["afterDetach"], 0)
 
     def test_mention_token_and_insert_match_the_iphone(self):
         """The @ menu's token and insertion rules, case for case with
@@ -1303,7 +1497,7 @@ class TestTranscriptSearchBox(unittest.TestCase):
             "globalThis.api = async (path) => { asked.push(path); return " + json.dumps(search_answer) + "; };\n"
             "globalThis.document = { getElementById: (id) => id === 'session-search' ? {} : null };\n"
             "globalThis.setTimeout = (f) => { f(); return 0; }; globalThis.clearTimeout = () => {};\n"
-            "globalThis.Fmt = { logo: () => '', harnessName: (h) => h, tokens: String, dollars: String };\n")
+            "globalThis.Fmt = { logo: () => '', harnessName: (h) => h, modelName: (m) => m || '', tokens: String, dollars: String };\n")
         script = (prelude + SESSIONS_JS.read_text(encoding="utf-8")
                   + "\nrepaintKeepingFocus = () => {};\n"
                   + "sessionsPage.data = { sessions: " + json.dumps(self.ROWS) + " };\n"
@@ -1394,6 +1588,182 @@ class TestTranscriptSearchBox(unittest.TestCase):
         """, {"status": 0, "data": None})
         self.assertEqual(out["kept"], ["k1"])
         self.assertIn("Couldn't reach transcript search", out["note"])
+
+
+FORMAT_JS = SESSIONS_JS.with_name("format.js")
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestSessionModelShown(unittest.TestCase):
+    """The newest reply's model on the Sessions list rows and the chat
+    header (#643), as the phone shows it: no provider path, no date stamp,
+    nothing when unknown."""
+
+    def run_js(self, body, with_sessions=True):
+        fmt = FORMAT_JS.read_text(encoding="utf-8")
+        prelude = (
+            "const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;')"
+            ".replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n"
+            "globalThis.window = { addEventListener() {} };\n"
+            "globalThis.document = { addEventListener() {}, getElementById: () => null };\n"
+            "globalThis.location = { hash: '' };\n")
+        # format.js declares `const Fmt`; run it in its own scope and hand
+        # the result to the page scripts as the global they read.
+        prelude += ("globalThis.Fmt = new Function(" + json.dumps(fmt)
+                    + " + '\\nreturn Fmt;')();\n")
+        if with_sessions:
+            source = SESSIONS_JS.read_text(encoding="utf-8")
+        else:
+            source = (STATIC / "pages" / "chat.js").read_text(encoding="utf-8")
+        script = (prelude + source + "\n(async () => { const out = await (async () => {"
+                  + body + "})(); process.stdout.write(JSON.stringify(out)); })();\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+        self.addCleanup(Path(f.name).unlink)
+        done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_model_name_drops_provider_and_date_stamp(self):
+        out = self.run_js("""
+          const raw = ["claude-opus-4-5-20251101", "anthropic/claude-opus-4-5",
+            "openrouter/nvidia/nemotron-3:free", "gpt-5.1-codex", "swe-2-max",
+            "model-2025110", "-20251101", "  claude-opus-4-5  ", "", "   ", null, undefined, 7];
+          return raw.map((m) => Fmt.modelName(m));""")
+        self.assertEqual(out, [
+            "claude-opus-4-5", "claude-opus-4-5", "nemotron-3:free",
+            "gpt-5.1-codex",  # a version is not a date stamp
+            "swe-2-max",
+            "model-2025110",  # seven digits are kept
+            "-20251101",      # never shortened to nothing
+            "claude-opus-4-5", "", "", "", "", ""])
+
+    def test_list_row_names_the_model_once(self):
+        out = self.run_js("""
+          const usage = (...models) => ({ tokens: 1, cost_usd: 0, models: models.map((model) => ({ model, tokens: 1 })) });
+          const base = { key: "k", harness: "claude", title: "t", last_active_at: 2e9, location: "Local" };
+          const sub = (r) => /<span class="session-sub">([^<]*)<\\/span>/.exec(sessionRow({ ...base, ...r }))[1];
+          return {
+            known: sub({ model: "claude-opus-4-5-20251101" }),
+            unknown: sub({}),
+            blank: sub({ model: "" }),
+            deduped: sub({ model: "claude-opus-4-5-20251101", usage: usage("claude-opus-4-5-20251101") }),
+            others: sub({ model: "anthropic/claude-opus-4-5", usage: usage("claude-sonnet-4-5", "claude-opus-4-5") }),
+            ledgerOnly: sub({ usage: usage("claude-sonnet-4-5") }),
+          };""")
+        # Time and duration follow, so pull out just the model words.
+        def models(sub):
+            return [p for p in sub.split(" · ") if p.startswith(("claude", "gpt"))]
+        self.assertEqual(models(out["known"]), ["claude-opus-4-5"])
+        self.assertEqual(models(out["unknown"]), [])
+        self.assertEqual(models(out["blank"]), [])
+        self.assertEqual(models(out["deduped"]), ["claude-opus-4-5"])
+        self.assertEqual(models(out["others"]), ["claude-opus-4-5, claude-sonnet-4-5"])
+        self.assertEqual(models(out["ledgerOnly"]), ["claude-sonnet-4-5"])
+
+    def test_chat_header_shows_the_model_after_the_folder(self):
+        out = self.run_js("""
+          const T = SessionChat._test;
+          return {
+            local: T.barSub({ harness: "claude", cwd: "/w/app", model: "claude-opus-4-5-20251101" }),
+            remote: T.barSub({ harness: "codex", cwd: "/w/app", model: "openai/gpt-5.1-codex", remote: true, machine: "Mac mini" }),
+            unknown: T.barSub({ harness: "claude", cwd: "/w/app" }),
+            none: T.barSub(null),
+          };""", with_sessions=False)
+        self.assertEqual(out["local"], "Claude Code · /w/app · claude-opus-4-5")
+        self.assertEqual(out["remote"], "Codex · /w/app · gpt-5.1-codex · Mac mini")
+        self.assertEqual(out["unknown"], "Claude Code · /w/app")
+        self.assertEqual(out["none"], "")
+
+    def test_chat_reads_the_model_again_after_a_reply(self):
+        """The row is read once at open and no event carries the model, so
+        a finished turn (and a return to the tab) reads it again."""
+        out = self.run_js("""
+          const T = SessionChat._test;
+          const out = {};
+          globalThis.setTimeout = (f) => { f(); return 0; };
+          T.chat.key = "s1"; T.chat.gen = 3;
+          T.chat.row = { harness: "claude", status: "active" };
+          const answer = (status, sessions) => { globalThis.api = async () => ({ status, data: { sessions } }); };
+          // A hub that fails, or doesn't know the model, leaves the header.
+          answer(503, null);
+          await T.refreshModel();
+          out.failed = T.chat.row.model || "";
+          answer(200, [{ key: "s1" }]);
+          await T.refreshModel();
+          out.unknown = T.chat.row.model || "";
+          // The opening reply names one; only the model is taken.
+          answer(200, [{ key: "s1", model: "claude-opus-4-5-20251101", status: "done" }]);
+          out.first = await T.refreshModel();
+          out.status = T.chat.row.status;
+          // A switch elsewhere changes it.
+          answer(200, [{ key: "s1", model: "claude-sonnet-4-5" }]);
+          out.switched = await T.refreshModel();
+          // An answer landing after the chat moved on is dropped.
+          let release;
+          globalThis.api = () => new Promise((r) => {
+            release = () => r({ status: 200, data: { sessions: [{ key: "s1", model: "late" }] } });
+          });
+          const slow = T.refreshModel();
+          T.chat.gen = 4;
+          release();
+          await slow;
+          out.late = T.chat.row.model;
+          return out;""", with_sessions=False)
+        self.assertEqual(out["failed"], "")
+        self.assertEqual(out["unknown"], "")
+        self.assertEqual(out["first"], "claude-opus-4-5-20251101")
+        self.assertEqual(out["status"], "active")
+        self.assertEqual(out["switched"], "claude-sonnet-4-5")
+        self.assertEqual(out["late"], "claude-sonnet-4-5")
+
+    def test_a_stale_read_is_repeated_until_the_catalog_catches_up(self):
+        """The turn's end can reach the stream before the hub's catalog
+        refresh (every 10 s) holds the new model, so one read may be stale:
+        it repeats after each wait until the model differs."""
+        out = self.run_js("""
+          const T = SessionChat._test;
+          const out = {};
+          const waits = [];
+          globalThis.setTimeout = (f, ms) => { waits.push(ms); f(); return 0; };
+          T.chat.key = "s1"; T.chat.gen = 3;
+          T.chat.row = { harness: "claude", model: "claude-sonnet-4-5" };
+          let reads = 0;
+          // The catalog is behind for the first two reads.
+          globalThis.api = async () => {
+            reads++;
+            const model = reads < 3 ? "claude-sonnet-4-5" : "claude-opus-4-5";
+            return { status: 200, data: { sessions: [{ key: "s1", model }] } };
+          };
+          out.shown = await T.refreshModel();
+          out.reads = reads; out.waits = waits.slice();
+          // A model that really didn't change reads once per wait, then stops.
+          reads = 0; waits.length = 0;
+          globalThis.api = async () => { reads++; return { status: 200, data: { sessions: [{ key: "s1", model: "claude-opus-4-5" }] } }; };
+          out.same = await T.refreshModel();
+          out.sameReads = reads; out.sameWaits = waits.slice();
+          // A newer turn end takes over from a read still waiting.
+          reads = 0;
+          const timers = [];
+          globalThis.setTimeout = (f) => { timers.push(f); return 0; };
+          const first = T.refreshModel();
+          await new Promise((r) => setImmediate(r));
+          const second = T.refreshModel();
+          await new Promise((r) => setImmediate(r));
+          out.readsBeforeWake = reads;
+          globalThis.setTimeout = (f) => { f(); return 0; };
+          timers.splice(0).forEach((f) => f());
+          await Promise.all([first, second]);
+          out.readsAfterWake = reads;
+          return out;""", with_sessions=False)
+        self.assertEqual(out["shown"], "claude-opus-4-5")
+        self.assertEqual((out["reads"], out["waits"]), (3, [6000, 6000]))
+        self.assertEqual(out["same"], "claude-opus-4-5")
+        self.assertEqual((out["sameReads"], out["sameWaits"]), (3, [6000, 6000]))
+        # Two reads were made and both are waiting; waking them, the first
+        # stops (superseded) and the second goes on through its two retries.
+        self.assertEqual(out["readsBeforeWake"], 2)
+        self.assertEqual(out["readsAfterWake"], 4)
 
 
 if __name__ == "__main__":

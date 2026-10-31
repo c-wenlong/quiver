@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from quiver.paths import CONFIG_DIR, CONFIG_FILE
+from quiver.paths import CONFIG_FILE
 
 
 # CONFIG_FILE now lives in paths.py so the layout has one owner.
@@ -305,9 +305,6 @@ def load_resolved_config(
     return resolve_config(load_config(path), overrides)
 
 
-merge_overrides = resolve_config
-
-
 def _looks_like_secret_key(key: object) -> bool:
     normalized = str(key).lower().replace("-", "_")
     return normalized in _SECRET_KEY_PARTS or normalized.endswith(
@@ -356,7 +353,9 @@ def validate_config(config: Mapping[str, Any]) -> list[ConfigIssue]:
         prefix = f"report.{role}"
         harness = get_value(config, f"{prefix}.harness", _MISSING)
         if harness is not _MISSING and harness is not None:
-            if harness not in SUPPORTED_REPORT_HARNESSES:
+            # isinstance first: a list or object here is unhashable, and the
+            # set lookup would raise instead of reporting the issue.
+            if not isinstance(harness, str) or harness not in SUPPORTED_REPORT_HARNESSES:
                 issues.append(ConfigIssue(
                     f"{prefix}.harness", "must be claude or codex"
                 ))
@@ -483,7 +482,7 @@ def report_setup_complete(config: Mapping[str, Any]) -> bool:
     for role in ("session", "writer"):
         harness = get_value(config, f"report.{role}.harness")
         model = get_value(config, f"report.{role}.model")
-        if harness not in SUPPORTED_REPORT_HARNESSES:
+        if not isinstance(harness, str) or harness not in SUPPORTED_REPORT_HARNESSES:
             return False
         if not isinstance(model, str) or not model.strip():
             return False

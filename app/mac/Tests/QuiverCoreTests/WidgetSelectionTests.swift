@@ -3,7 +3,7 @@ import Testing
 @testable import QuiverCore
 
 @Suite struct SourceSelectionTests {
-    let defaults = UserDefaults(suiteName: "SourceSelectionTests-\(UUID().uuidString)")!
+    let defaults = TestDefaults("SourceSelectionTests")
     let keys = (sources: "widgetLimitsHiddenSources", windows: "widgetLimitsHiddenSourceWindows")
 
     @Test func anEmptySelectionShowsEverything() {
@@ -108,7 +108,7 @@ import Testing
 }
 
 @Suite struct WidgetSelectionTests {
-    let defaults = UserDefaults(suiteName: "WidgetSelectionTests-\(UUID().uuidString)")!
+    let defaults = TestDefaults("WidgetSelectionTests")
 
     @Test func aHiddenHarnessLeavesTheOtherWidgets() {
         var selection = WidgetSelection()

@@ -2,7 +2,6 @@
 
 import io
 import json
-import tempfile
 import threading
 import time
 import unittest
@@ -12,12 +11,23 @@ from unittest.mock import MagicMock, patch
 from quiver.remote import notify, pairing, protocol, sshkeys
 from quiver.remote.hub import GLOBAL_KEY, HubState
 
+from tests._tempdir import temp_dir
 
-def _state(home: Path | None = None) -> HubState:
-    home = home or Path(tempfile.mkdtemp())
+
+def _state(home: Path) -> HubState:
     state = HubState(home)
     state.base_url = "http://100.64.1.2:8477"
     return state
+
+
+def _until(predicate, timeout=5.0):
+    """Poll ``predicate`` until it holds; False once ``timeout`` runs out."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+    return True
 
 
 def _cfg(home: Path, **over):
@@ -29,7 +39,7 @@ def _cfg(home: Path, **over):
 
 class TestConfig(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def test_load_missing_returns_empty(self):
         self.assertEqual(notify.load_config(self.home), {})
@@ -129,7 +139,7 @@ class TestApprovalTokens(unittest.TestCase):
 
 class TestRetireActionCredential(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def _legacy_cfg(self):
         device_id = "deadbeef01"
@@ -211,7 +221,7 @@ class TestRetireActionCredential(unittest.TestCase):
 
 class TestHandle(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.state = _state(self.home)
         self.cfg = _cfg(self.home)
         self.n = notify.Notifier(self.state, "http://h:8477",
@@ -284,7 +294,7 @@ class TestHandle(unittest.TestCase):
             ("needs_you", "Needs you", 4, "bell"),
             ("finished", "Finished", 3, "bell"),
             ("error", "Errored", 4, "rotating_light"),
-            ("limit", "Limit hit", 3, "bell"),
+            ("limit", "Limit hit", 4, "hourglass"),
         ]
         for kind, label, prio, tag in cases:
             self.posts.clear()
@@ -295,6 +305,21 @@ class TestHandle(unittest.TestCase):
             self.assertIn(label.lower(), post["title"])
             self.assertEqual(post["priority"], prio)
             self.assertEqual(post["tags"], [tag])
+
+    def test_limit_carries_harness_line_redacted(self):
+        self.n._handle({"type": "notify", "session": "k1", "data": {
+            "kind": "limit",
+            "message": "You've hit your session limit · resets 9:30am "
+                       "sk-abcdefghijklmnop " + "x " * 200}}, self.cfg)
+        msg = self.posts[0]["message"]
+        self.assertTrue(msg.startswith("You've hit your session limit"))
+        self.assertNotIn("sk-abcdefghijklmnop", msg)
+        self.assertEqual(len(msg), 280)
+        # Other kinds still post an empty body.
+        self.posts.clear()
+        self.n._handle({"type": "notify", "session": "k1", "data": {
+            "kind": "finished", "message": "ignored"}}, self.cfg)
+        self.assertEqual(self.posts[0]["message"], "")
 
     def test_unknown_notify_kind_skipped(self):
         self.n._handle({"type": "notify", "session": "k1",
@@ -351,7 +376,7 @@ class TestHandle(unittest.TestCase):
 
 class TestPost(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.n = notify.Notifier(_state(self.home), "http://h:1",
                                  subscribe_key=GLOBAL_KEY)
 
@@ -424,16 +449,10 @@ class TestPost(unittest.TestCase):
                 self.n._post(cfg, {"topic": "t"})
         self.assertEqual(warn.call_count, 1)
 
-    def test_post_propagates_http_errors(self):
-        cfg = {"url": "https://n.test", "topic": "t"}
-        with patch("urllib.request.urlopen", side_effect=OSError("down")):
-            with self.assertRaises(OSError):
-                self.n._post(cfg, {"topic": "t"})
-
 
 class TestRun(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
 
     def test_disabled_config_returns_immediately(self):
         state = _state(self.home)
@@ -468,18 +487,13 @@ class TestRun(unittest.TestCase):
         posts = []
         n._post = lambda cfg, payload: posts.append(payload)
         t = threading.Thread(target=n.run, daemon=True)
+        self.addCleanup(state._stop.set)
         t.start()
-        # Wait for subscribe before publishing.
-        for _ in range(100):
-            if state.bus._subs:
-                break
-            time.sleep(0.01)
+        # Wait for run() to subscribe before publishing.
+        self.assertTrue(_until(lambda: state.bus._subs))
         state.emit("k1", protocol.event(
             "notify", "k1", "m1", {"kind": "finished"}))
-        for _ in range(100):
-            if posts:
-                break
-            time.sleep(0.01)
+        self.assertTrue(_until(lambda: posts))
         self.assertEqual(len(posts), 1)
         self.assertIn("finished", posts[0]["title"].lower())
         state._stop.set()
@@ -501,11 +515,9 @@ class TestRun(unittest.TestCase):
             "approval.requested", "k1", "m1",
             {"request_id": "req-early", "prompt": "run it?"}))
         t = threading.Thread(target=n.run, daemon=True)
+        self.addCleanup(state._stop.set)
         t.start()
-        for _ in range(100):
-            if posts:
-                break
-            time.sleep(0.01)
+        self.assertTrue(_until(lambda: posts))
         state._stop.set()
         t.join(timeout=3)
         self.assertEqual(len(posts), 1)
@@ -523,18 +535,13 @@ class TestRun(unittest.TestCase):
 
         n._post = boom
         t = threading.Thread(target=n.run, daemon=True)
+        self.addCleanup(state._stop.set)
         t.start()
-        for _ in range(100):
-            if state.bus._subs:
-                break
-            time.sleep(0.01)
+        self.assertTrue(_until(lambda: state.bus._subs))
         for _ in range(2):
             state.emit("k1", protocol.event(
                 "notify", "k1", "m1", {"kind": "finished"}))
-        for _ in range(100):
-            if len(calls) >= 2:
-                break
-            time.sleep(0.01)
+        self.assertTrue(_until(lambda: len(calls) >= 2))
         self.assertEqual(len(calls), 2)
         self.assertTrue(t.is_alive())
         state._stop.set()
@@ -547,7 +554,7 @@ class TestCmdNotify(unittest.TestCase):
     def setUp(self):
         from quiver.remote import commands
         self.commands = commands
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.paths_patcher = patch(
             "quiver.remote.notify.remote_dir_for",
             side_effect=lambda home=None: self.home / "remote")

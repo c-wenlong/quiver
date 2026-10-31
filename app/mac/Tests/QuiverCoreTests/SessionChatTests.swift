@@ -39,8 +39,9 @@ final class HubStub: URLProtocol, @unchecked Sendable {
         return URLSession(configuration: config)
     }
 
-    /// The body a POST carried: URLSession hands a protocol the stream.
-    static func body(_ request: URLRequest) -> [String: String] {
+    /// The bytes a request carried: URLSession hands a protocol the body
+    /// as a stream, not as `httpBody`.
+    static func bodyData(_ request: URLRequest) -> Data {
         var data = request.httpBody ?? Data()
         if data.isEmpty, let stream = request.httpBodyStream {
             stream.open()
@@ -52,7 +53,63 @@ final class HubStub: URLProtocol, @unchecked Sendable {
             }
             stream.close()
         }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: String] ?? [:]
+        return data
+    }
+
+    /// The body a POST carried, as flat string fields.
+    static func body(_ request: URLRequest) -> [String: String] {
+        (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: String] ?? [:]
+    }
+
+    /// A request's query as a name → value dict.
+    static func query(_ request: URLRequest) -> [String: String] {
+        let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return Dictionary(items.map { ($0.name, $0.value ?? "") }) { _, b in b }
+    }
+}
+
+/// A live events connection: answers 200 with the frame `frame` picks
+/// for the request, then holds the connection open, as the hub does
+/// between events. Only a cancelled reader ever closes one, so `closed`
+/// counting up proves the reader's loop let go of it.
+final class HeldStream: URLProtocol, @unchecked Sendable {
+    struct Watch: Sendable {
+        let frame: @Sendable (URLRequest) -> String
+        let opened = CountGate()
+        let closed = CountGate()
+    }
+    private static let current = Mutex<Watch?>(nil)
+    /// Starts counting afresh, answering each connection with `frame`.
+    static func watch(_ frame: @escaping @Sendable (URLRequest) -> String) -> Watch {
+        let watch = Watch(frame: frame)
+        current.withLock { $0 = watch }
+        return watch
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let watch = Self.current.withLock({ $0 }) else { return }
+        Task { await watch.opened.bump() }
+        // Without a content type URLSession sniffs the first 512 bytes
+        // before handing over the response, and a short frame never gets
+        // there.
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                       headerFields: ["Content-Type": "text/event-stream"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(watch.frame(request).utf8))
+    }
+
+    override func stopLoading() {
+        guard let watch = Self.current.withLock({ $0 }) else { return }
+        Task { await watch.closed.bump() }
+    }
+
+    static func session() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [HeldStream.self]
+        return URLSession(configuration: config)
     }
 }
 
@@ -158,7 +215,10 @@ final class FakeLocator: HubLocating, @unchecked Sendable {
 extension HubStubbed {
 @MainActor
 @Suite struct LocalHubTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+    var dir: URL { scratch.url }
     var store: HubDeviceStore { HubDeviceStore(url: dir.appending(path: "remote/app-device.json")) }
 
     func hub(_ locator: FakeLocator) -> LocalHub {
@@ -241,6 +301,38 @@ extension HubStubbed {
         #expect(local.keys == .known(["claude:a", "codex:b"]))
         #expect(local.opensChat("codex:b"))
         #expect(!local.opensChat("claude:gone"))
+    }
+
+    @Test func theHubsRowsCarryEachSessionsModelAndNothingWhenUnknown() async throws {
+        let local = hub(FakeLocator(address: "127.0.0.1:8477"))
+        await local.refreshKeys()
+        #expect(local.models.isEmpty, "not paired: nothing to show")
+
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        HubStub.handler = { _ in
+            (200, Data(#"""
+            {"sessions": [{"key": "claude:a", "model": "claude-opus-4-5-20251101"},
+                          {"key": "codex:b"}, {"key": "pi:c", "model": ""}]}
+            """#.utf8))
+        }
+        await local.refreshKeys()
+        #expect(local.model(for: "claude:a") == "claude-opus-4-5-20251101")
+        #expect(local.model(for: "codex:b") == nil, "an older hub, or an unknown model")
+        #expect(local.keys == .known(["claude:a", "codex:b", "pi:c"]))
+
+        HubStub.handler = { _ in (401, Data()) }
+        await local.refreshKeys()
+        #expect(local.models.isEmpty, "a hub that stops answering shows no stale model")
+    }
+
+    @Test func aSessionRowDecodesAnOptionalModel() throws {
+        let with = try HubWire.decoder.decode(HubSessionRow.self,
+            from: Data(#"{"key": "claude:a", "model": "anthropic/claude-opus-4-5"}"#.utf8))
+        #expect(with.model == "anthropic/claude-opus-4-5")
+        #expect(with.modelLabel == "claude-opus-4-5")
+        let without = try HubWire.decoder.decode(HubSessionRow.self, from: Data(#"{"key": "claude:a"}"#.utf8))
+        #expect(without.model == nil)
+        #expect(without.modelLabel == nil)
     }
 
     @Test func aRevokedCredentialPairsAgain() async throws {
@@ -333,7 +425,10 @@ extension HubStubbed {
 extension HubStubbed {
 @MainActor
 @Suite struct SessionChatOpenTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+    var dir: URL { scratch.url }
 
     func opened(sessions: String, inbox: String = #"{"items": []}"#) async throws -> SessionChatModel {
         let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
@@ -364,6 +459,34 @@ extension HubStubbed {
     func event(_ type: String, seq: Int, _ data: String) -> HubEnvelope {
         HubEnvelope(type: type, session: "claude:s1", seq: seq,
                     data: try! HubWire.decoder.decode(HubJSON.self, from: Data(data.utf8)))
+    }
+
+    /// The header's model comes from the row read at open, and no event
+    /// carries it: a finished turn reads the row again.
+    @Test func theModelIsReadAgainAfterAReply() async throws {
+        let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:s1"}]}"#)
+        chat.modelRetryDelays = []
+        #expect(chat.row?.model == nil)
+        func answer(_ body: String, status: Int = 200) {
+            HubStub.handler = { req in
+                req.url?.path == "/v1/sessions" ? (status, Data(body.utf8)) : (404, Data())
+            }
+        }
+        // A hub that fails, or still doesn't know it, leaves the header.
+        answer("{}", status: 503)
+        await chat.refreshModel().value
+        #expect(chat.row?.model == nil)
+        answer(#"{"sessions": [{"key": "claude:s1"}]}"#)
+        await chat.refreshModel().value
+        #expect(chat.row?.model == nil)
+        // The first reply names one, a later switch changes it.
+        answer(#"{"sessions": [{"key": "claude:s1", "model": "claude-opus-4-5-20251101", "status": "done"}]}"#)
+        await chat.refreshModel().value
+        #expect(chat.row?.model == "claude-opus-4-5-20251101")
+        #expect(chat.row?.status != "done", "only the model is taken from the new row")
+        answer(#"{"sessions": [{"key": "claude:s1", "model": "claude-sonnet-4-5"}]}"#)
+        await chat.refreshModel().value
+        #expect(chat.row?.modelLabel == "claude-sonnet-4-5")
     }
 
     /// A hub page whose cursor doesn't move back (nothing new on it, and
@@ -403,6 +526,39 @@ extension HubStubbed {
         #expect(!chat.hasEarlier)
     }
 
+    /// The turn's end can reach the stream before the hub's catalog
+    /// refresh (every 10 s) holds the new model, so one read may be stale:
+    /// the read repeats after each wait until the model differs.
+    @Test func aStaleReadIsRepeatedUntilTheCatalogCatchesUp() async throws {
+        let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:s1", "model": "claude-sonnet-4-5"}]}"#)
+        let reads = Mutex(0)
+        let waits = Mutex<[Duration]>([])
+        HubStub.handler = { req in
+            guard req.url?.path == "/v1/sessions" else { return (404, Data()) }
+            // The catalog is behind for the first two reads.
+            let n = reads.withLock { $0 += 1; return $0 }
+            let model = n < 3 ? "claude-sonnet-4-5" : "claude-opus-4-5"
+            return (200, Data(#"{"sessions": [{"key": "claude:s1", "model": "\#(model)"}]}"#.utf8))
+        }
+        chat.modelRetryDelays = [.seconds(6), .seconds(6), .seconds(6)]
+        chat.modelSleep = { delay in waits.withLock { $0.append(delay) } }
+        await chat.refreshModel().value
+        #expect(chat.row?.model == "claude-opus-4-5")
+        #expect(reads.withLock { $0 } == 3, "stops as soon as the model differs")
+        #expect(waits.withLock { $0 } == [.seconds(6), .seconds(6)])
+
+        // A model that really didn't change reads once per wait, then gives up.
+        reads.withLock { $0 = 0 }
+        waits.withLock { $0 = [] }
+        HubStub.handler = { req in
+            reads.withLock { $0 += 1 }
+            return (200, Data(#"{"sessions": [{"key": "claude:s1", "model": "claude-opus-4-5"}]}"#.utf8))
+        }
+        await chat.refreshModel().value
+        #expect(reads.withLock { $0 } == 4)
+        #expect(waits.withLock { $0.count } == 3)
+    }
+
     @Test func aSessionTheHubDoesntListIsMissing() async throws {
         let chat = try await opened(sessions: #"{"sessions": [{"key": "claude:other"}]}"#)
         #expect(chat.missing)
@@ -432,11 +588,17 @@ extension HubStubbed {
     /// truncated back on every follow and never see a new event. When the
     /// history fetch fails, it retries before following on: with the
     /// cursor lowered no reconnect would say truncated again.
-    @Test(arguments: [false, true])
+    ///
+    /// The stream reconnects on its own a second after the wipe, which is
+    /// also how long the failed reload backs off, so either can ask from 2
+    /// first. The test waits for the reload itself to land instead of the
+    /// first ask from 2 (which once came before the retry, failing it).
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
     func aJournalWipedUnderTheCursorRestartsAtItsHead(failFirstReload: Bool) async throws {
         let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
         try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
         let pages = Mutex(0)
+        let followed = CountGate()
         HubStub.requests = []
         HubStub.handler = { req in
             let last = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
@@ -451,6 +613,7 @@ extension HubStubbed {
                     ? #"{"messages": [{"type": "message.appended", "seq": 500, "data": {"kind": "assistant", "text": "before"}}], "has_more": false}"#
                     : #"{"messages": [{"type": "message.appended", "seq": 2, "data": {"kind": "assistant", "text": "after wipe"}}], "has_more": false}"#).utf8))
             case "/v1/sessions/claude:s1/events":
+                Task { await followed.bump() }
                 if let last, let n = Int(last), n > 2 {
                     return (200, Data("""
                         data: {"type": "journal.truncated", "seq": 2}
@@ -475,20 +638,21 @@ extension HubStubbed {
                 .compactMap { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?
                     .queryItems?.first { $0.name == "last" }?.value }
         }
-        for _ in 0..<200 where !follows().contains("2") {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        #expect(follows().prefix(2) == ["500", "2"])
-        #expect(chat.items.map(\.id) == ["m2"])
+        // The newer history lands (after one retry when the first fails)...
+        #expect(await observe(until: { chat.items.map(\.id) == ["m2"] }))
         #expect(pages.withLock { $0 } == (failFirstReload ? 3 : 2))
+        // ...and the next follow asks from the head, not from 500 again.
+        #expect(await followed.reach(2))
+        #expect(follows().prefix(2) == ["500", "2"])
     }
 
     /// The stream's own reconnect: after journal.truncated at 2 it asks
-    /// from 2 next time, not from the 500 it started at.
+    /// from 2 next time, not from the 500 it started at. A session of its
+    /// own, so no other test's asks can land in its list.
     @Test func theStreamReconnectsFromATruncatedFramesSeq() async throws {
         HubStub.requests = []
         HubStub.handler = { req in
-            guard req.url?.path == "/v1/sessions/claude:s1/events" else { return (404, Data()) }
+            guard req.url?.path == "/v1/sessions/claude:reconnect/events" else { return (404, Data()) }
             return (200, Data("data: {\"type\": \"journal.truncated\", \"seq\": 2}\n\n".utf8))
         }
         let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!,
@@ -496,7 +660,7 @@ extension HubStubbed {
                                session: HubStub.session(), streamSession: HubStub.session())
         var truncated: [Int?] = []
         var disconnects = 0
-        for await event in client.events("claude:s1", last: 500) {
+        for await event in client.events("claude:reconnect", last: 500) {
             switch event {
             case .truncated(let seq): truncated.append(seq)
             case .disconnected: disconnects += 1
@@ -504,13 +668,71 @@ extension HubStubbed {
             }
             if truncated.count == 2 { break }
         }
-        let lasts = HubStub.requests.compactMap {
-            URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?
-                .queryItems?.first { $0.name == "last" }?.value
-        }
+        let lasts = HubStub.requests.filter { $0.url?.path == "/v1/sessions/claude:reconnect/events" }
+            .compactMap { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "last" }?.value }
         #expect(truncated == [2, 2])
         #expect(disconnects == 1)
         #expect(lasts == ["500", "2"])
+    }
+
+    /// A reader that leaves its loop without cancelling its task (a
+    /// `break`, a `return`) ends the stream: its connection closes and no
+    /// reconnect follows. A producer that outlived its reader would hold
+    /// the connection open and reconnect forever.
+    @Test(.timeLimit(.minutes(1))) func aReaderThatLeavesItsLoopClosesTheStream() async throws {
+        let watch = HeldStream.watch { _ in ": ka\n\n" }
+        let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!, credential: "secret",
+                               session: HubStub.session(), streamSession: HeldStream.session())
+        for await event in client.events("claude:held", last: 0) {
+            if case .connected = event { break }
+        }
+        // The counts bump in tasks of their own, so the close can land
+        // before the open: wait for both, then check nothing else opened.
+        #expect(await watch.closed.reach(1))
+        #expect(await watch.opened.reach(1))
+        #expect(await watch.opened.count == 1)
+    }
+
+    /// After journal.truncated the chat reloads and follows again from a
+    /// new stream; the old one closes rather than reconnecting alongside
+    /// it, and stop() closes the new one.
+    @Test(.timeLimit(.minutes(1))) func aFollowAfterTruncatedClosesTheOldStream() async throws {
+        let store = HubDeviceStore(url: dir.appending(path: "app-device.json"))
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let pages = Mutex(0)
+        HubStub.handler = { req in
+            switch req.url?.path {
+            case "/v1/sessions": return (200, Data(#"{"sessions": [{"key": "claude:s1"}]}"#.utf8))
+            case "/v1/sessions/claude:s1/messages":
+                let first = pages.withLock { n in n += 1; return n == 1 }
+                return (200, Data((first
+                    ? #"{"messages": [{"type": "message.appended", "seq": 500, "data": {"kind": "assistant", "text": "before"}}], "has_more": false}"#
+                    : #"{"messages": [{"type": "message.appended", "seq": 2, "data": {"kind": "assistant", "text": "after wipe"}}], "has_more": false}"#).utf8))
+            default: return (404, Data())
+            }
+        }
+        // From 500 the journal says truncated at 2; from 2 it is caught up.
+        let watch = HeldStream.watch { req in
+            let last = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "last" }?.value
+            return last == "500"
+                ? "data: {\"type\": \"journal.truncated\", \"seq\": 2}\n\n"
+                : "data: {\"type\": \"journal.caught-up\", \"seq\": 2}\n\n"
+        }
+        let hub = LocalHub(locator: FakeLocator(address: "127.0.0.1:8477"), store: store) {
+            HubClient(baseURL: $0, credential: $1, session: HubStub.session(), streamSession: HeldStream.session())
+        }
+        let chat = SessionChatModel(key: "claude:s1", hub: hub)
+        defer { chat.stop() }
+        await chat.start()
+        #expect(await watch.opened.reach(2))
+        #expect(await watch.closed.reach(1))
+        #expect(await observe(until: { chat.items.map(\.id) == ["m2"] }))
+        #expect(await watch.closed.count == 1)
+        chat.stop()
+        #expect(await watch.closed.reach(2))
+        #expect(await watch.opened.count == 2)
     }
 
     /// The placeholder a waiting approval opens with learns the pane's
@@ -530,7 +752,10 @@ extension HubStubbed {
 extension HubStubbed {
 @MainActor
 @Suite struct SessionChatSendTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+    var dir: URL { scratch.url }
 
     /// A chat opened on an attached (or observed) session whose `POST
     /// .../message` answers `send`.
@@ -595,8 +820,9 @@ extension HubStubbed {
     @Test func aFailedResultMarksTheBubble() async throws {
         let chat = try await opened(send: (202, #"{"ok": true, "waiting": true}"#))
         await chat.send("later", mode: "queue")
-        #expect(chat.items.first?.kind == .user("later", send: .accepted(waiting: true)))
-        let cid = String(try #require(chat.items.first?.id).dropFirst("send-".count))
+        // Held for the turn's end: it waits in the tray, not the transcript.
+        #expect(chat.items.isEmpty)
+        let cid = try #require(chat.tray.sends.first?.clientId)
         chat.apply(event("command.result", #"{"op": "message", "client_id": "\#(cid)", "ok": false, "note": "tmux gone"}"#))
         #expect(chat.items.first?.kind == .user("later", send: .failed("tmux gone")))
         #expect(!chat.working)
@@ -873,7 +1099,7 @@ extension HubStubbed {
         // Semaphore waits are off the cooperative pool (and the wait is
         // banned in async contexts outright on newer SDKs): park a GCD
         // thread on `posted` until the POST lands.
-        _ = await runOffPool { posted.wait(timeout: .now() + 10) }
+        _ = await offMain { posted.wait(timeout: .now() + 10) }
         chat.apply(event("approval.resolved", #"{"request_id": "r11", "decision": "allow"}"#))
         released.signal()
         await answer.value
@@ -885,10 +1111,11 @@ extension HubStubbed {
 
 /// Never answers: a request sits in flight until its task is cancelled.
 final class SilentHubStub: URLProtocol, @unchecked Sendable {
-    static let started = Mutex(0)
+    /// Counts requests that reached the stub, so a test waits for one.
+    static let started = CountGate()
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() { Self.started.withLock { $0 += 1 } }
+    override func startLoading() { Task { await Self.started.bump() } }
     override func stopLoading() {}
 }
 
@@ -900,11 +1127,9 @@ final class SilentHubStub: URLProtocol, @unchecked Sendable {
         config.protocolClasses = [SilentHubStub.self]
         let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!, credential: "c",
                                session: URLSession(configuration: config))
-        let before = SilentHubStub.started.withLock { $0 }
+        let before = await SilentHubStub.started.count
         let task = Task { try await client.sessions() }
-        while SilentHubStub.started.withLock({ $0 }) == before {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        #expect(await SilentHubStub.started.reach(before + 1))
         task.cancel()
         do {
             _ = try await task.value

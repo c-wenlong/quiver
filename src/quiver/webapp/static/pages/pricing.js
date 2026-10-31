@@ -2,9 +2,8 @@
  * each one resolves to and where it came from. Ports the Mac app's
  * PricingPage: a row opens its price form (PricingEditSheet), which saves
  * your own price or removes it, POST /v1/app/pricing/save|remove. Also
- * exports the helpers the Models page shares (QuiverPricing).
- * Everything sits in one closure: pages.js is a single script, so a
- * top-level name here could clash with another page's. */
+ * exports the helpers the Models page shares (QuiverPricing), on window:
+ * the bundle runs each page script in its own scope (pages/__init__.py). */
 (() => {
   "use strict";
 
@@ -14,7 +13,7 @@
    * so names stay aligned. */
   function brandLogo(brand, cls = "logo") {
     if (!brand || !brand.logo) return `<span class="${cls}" aria-hidden="true"></span>`;
-    return `<img class="${cls}${brand.mono ? " mono" : ""}" src="/app/${esc(brand.logo)}" alt="${esc(brand.name)}" title="${esc(brand.name)}">`;
+    return `<img class="${cls}${brand.mono ? " mono" : ""}" src="/${esc(brand.logo)}" alt="${esc(brand.name)}" title="${esc(brand.name)}">`;
   }
 
   /* A per-1M rate in plain dollars, as Overview's spend figures. */
@@ -265,7 +264,7 @@
   function sourceMark(r) {
     switch (r.spend_source) {
       case "billed": return r.billed_by.slice(0, 2).map((h) => Fmt.logo(h)).join("");
-      case "litellm": return '<img class="logo mono" src="/app/source-litellm.svg" alt="LiteLLM">';
+      case "litellm": return '<img class="logo mono" src="/source-litellm.svg" alt="LiteLLM">';
       case "quiver": return '<img class="logo qp-quiver" src="/icon-192.png" alt="Quiver">';
       case "yours": return `<span class="qp-symbol">${PERSON}</span>`;
       case "free": return `<span class="qp-symbol">${GIFT}</span>`;
@@ -295,18 +294,9 @@
   }
 
   /* The sheet lives outside the panel, so a repaint landing while it is
-   * open (a rescan, a filter) never throws away what is being typed. */
-  function priceSheet() {
-    let sheet = document.getElementById("qp-sheet");
-    if (!sheet) {
-      sheet = document.createElement("dialog");
-      sheet.className = "sheet qp-sheet";
-      sheet.id = "qp-sheet";
-      sheet.setAttribute("aria-label", "Price");
-      document.body.appendChild(sheet);
-    }
-    return sheet;
-  }
+   * open (a rescan, a filter) never throws away what is being typed. It
+   * is a route sheet (app.js bodySheet): leaving the page closes it. */
+  const priceSheet = () => bodySheet("qp-sheet", "sheet qp-sheet", "Price");
 
   function openPrice(model) {
     const r = modelRow(model), sheet = priceSheet();
@@ -358,11 +348,6 @@
 
   let priceForms = 0;
   const onPricing = () => currentRoute() === "pricing";
-  // The form sits outside the panel, so leaving the page must close it.
-  window.addEventListener("hashchange", () => {
-    const sheet = document.getElementById("qp-sheet");
-    if (sheet && sheet.open && !onPricing()) sheet.close();
-  });
 
   /* The sheet closes once the hub has written and repriced; the page then
    * repaints from its answer, read with the same period and filter. */

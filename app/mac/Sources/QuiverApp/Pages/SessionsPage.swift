@@ -271,6 +271,8 @@ private struct SessionsContent: View {
                                                     expanded: openedDays.contains(group.day))
                         ForEach(shown) { row in
                             SessionRow(row: row, project: model.project(for: row.session),
+                                       hubModel: app.hub.model(for: HubSessionRow.key(
+                                           harness: row.session.harness, id: row.session.id)),
                                        match: model.searchHit(for: row.session.id),
                                        open: { open(row) }, showDetails: { detail = row },
                                        resume: { resume(row) })
@@ -539,6 +541,9 @@ private struct SessionRow: View {
     var row: SessionsModel.Row
     /// The session's project resolved to its main repository.
     var project: String?
+    /// The model of the session's newest reply, from the hub's row; nil
+    /// when the hub doesn't list it or doesn't know the model.
+    var hubModel: String?
     /// The transcript hit this row surfaced on, for the snippet line; nil
     /// when it matched on metadata or content search is off.
     var match: SearchHit?
@@ -592,10 +597,11 @@ private struct SessionRow: View {
                 .opacity(hovering || resumeFocused ? 1 : 0)
                 .focused($resumeFocused)
                 .focusRing(resumeFocused, cornerRadius: Theme.iconButtonRadius)
-                .help(s.resume != nil ? "Resume in your terminal"
-                      : s.opensInBrowser ? "Open in Devin"
-                      : row.location == .cloud ? "A cloud session can't be resumed here"
-                      : "This harness has no resume command")
+                .hoverTip(s.resume != nil ? "Resume in your terminal"
+                          : s.opensInBrowser ? "Open in Devin"
+                          : row.location == .cloud ? "A cloud session can't be resumed here"
+                          : "This harness has no resume command",
+                          replacesLabel: false)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 8)
@@ -647,7 +653,8 @@ private struct SessionRow: View {
         if let project { parts.append(project) }
         parts.append(row.account ?? HarnessMark(s.harness).name)
         parts.append(row.location.title)
-        if let models = row.usage?.models, !models.isEmpty { parts.append(models.joined(separator: ", ")) }
+        let models = ModelLabel.rowModels(current: hubModel, used: row.usage?.models ?? [])
+        if !models.isEmpty { parts.append(models.joined(separator: ", ")) }
         parts.append(s.lastActiveAt.formatted(date: .omitted, time: .shortened))
         if let duration = row.duration, duration >= 60 { parts.append(Self.duration(duration)) }
         return parts.joined(separator: " · ")
@@ -753,10 +760,14 @@ private struct SessionRail: View {
                                     .font(Theme.nav)
                                     .lineLimit(1).truncationMode(.middle)
                                 Spacer(minLength: 6)
-                                if let color = Self.dotColor(row.session.status) {
+                                // Named for VoiceOver only: a .help inside the
+                                // RailRow's button label never shows, and a
+                                // hover tip's tap would take the row's click.
+                                if let color = Self.dotColor(row.session.status),
+                                   let title = StatusBadge.title(row.session.status) {
                                     Circle().fill(color)
                                         .frame(width: Theme.statusDot, height: Theme.statusDot)
-                                        .help(StatusBadge.title(row.session.status) ?? "")
+                                        .accessibilityLabel(title)
                                 }
                             }
                         }
@@ -884,10 +895,11 @@ struct SessionDetail: View {
                     .keyboardShortcut(.defaultAction)
                     .primaryButton()
                     .disabled(s.resume == nil && !s.opensInBrowser)
-                    .help(s.resume != nil ? "Resume in terminal"
-                          : s.opensInBrowser ? "Open the session in Devin's web app"
-                          : row.location == .cloud ? "A cloud session can't be resumed here"
-                          : "This session is no longer in \(HarnessMark(s.harness).name)'s history")
+                    .hoverTip(s.resume != nil ? "Resume in terminal"
+                              : s.opensInBrowser ? "Open the session in Devin's web app"
+                              : row.location == .cloud ? "A cloud session can't be resumed here"
+                              : "This session is no longer in \(HarnessMark(s.harness).name)'s history",
+                              replacesLabel: false)
             }
         }
         .padding(24)

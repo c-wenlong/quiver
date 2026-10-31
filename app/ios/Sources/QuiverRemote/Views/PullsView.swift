@@ -24,15 +24,12 @@ struct PullsView: View {
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
             if let error = model.error, !model.repos.isEmpty {
-                Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
-                    .font(Theme.caption).foregroundStyle(Theme.warningText)
-                    .lineLimit(2)
+                StaleNotice(error: error)
             }
             if !model.loaded {
                 LoadingRow(text: "Loading pull requests")
             } else if let error = model.error, model.repos.isEmpty {
-                StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") { Task { await model.load(client: app.client, refresh: true) } }
+                StateCard.unreachable(error) { Task { await model.load(client: app.client, refresh: true) } }
             } else if let blocked = model.envBlocked {
                 StateCard(icon: "exclamationmark.lock", title: "Can't reach GitHub",
                           message: "On \(model.machine ?? app.hubName): \(blocked)")
@@ -70,14 +67,14 @@ struct PullsView: View {
     }
 
     private var filterBar: some View {
-        HStack(spacing: 6) {
+        WrappingHStack {
             ForEach(PullFilter.allCases) { f in
                 FilterChip(title: f.title, count: PullGrouping.count(model.repos, filter: f), selected: filter == f) {
                     filter = f
                 }
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 4)
     }
 }
@@ -108,9 +105,9 @@ struct PullGlyph: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 15))
+            .font(Theme.rowIcon)
             .foregroundStyle(color)
-            .frame(width: 20)
+            .iconColumn(20)
             .accessibilityLabel(accessibility)
     }
 
@@ -145,7 +142,7 @@ struct ChecksGlyph: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 13))
+            .font(Theme.font(size: 13))
             .foregroundStyle(color)
             .accessibilityLabel("Checks \(state ?? "none")")
     }
@@ -196,8 +193,8 @@ struct PullRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(pr.title ?? "Untitled")
                     .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.tail)
-                HStack(spacing: 6) {
+                    .lineLimit(1, larger: 3).truncationMode(.tail)
+                WrappingHStack(spacing: 6) {
                     Text("#\(pr.number)")
                     ChecksGlyph(state: pr.checks)
                     if let mark = pr.reviewMark {
@@ -211,13 +208,13 @@ struct PullRowView: View {
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 if let badges = badges, !badges.isEmpty {
-                    HStack(spacing: 4) {
+                    WrappingHStack(spacing: 4) {
                         ForEach(Array(badges.enumerated()), id: \.offset) { Badge($0.element) }
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
         }
         .padding(.vertical, Theme.rowVertical)
         .padding(.horizontal, Theme.rowHorizontal)

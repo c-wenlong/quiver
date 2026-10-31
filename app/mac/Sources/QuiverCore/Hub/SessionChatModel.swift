@@ -113,6 +113,13 @@ public final class SessionChatModel {
     /// The prompt box's `/` menu: the commands this session's harness
     /// will run, fetched once while the menu is open.
     public let commands = SlashCommandMenu()
+    /// The prompt box's `@` menu: files under the session's folder,
+    /// searched as the `@word` is typed.
+    public let mentions = MentionSearch()
+    /// Queue-mode sends the hub holds until the turn ends, above the
+    /// prompt box with Edit, Remove and Send now; it holds the box's
+    /// text too, which Edit swaps a queued message into.
+    public let tray = QueuedTray()
 
     /// Messages per `/messages` page.
     public static let pageSize = 100
@@ -130,6 +137,12 @@ public final class SessionChatModel {
     /// The seq to page back from: the oldest message loaded.
     private var nextBefore: Int?
     private var streamTask: Task<Void, Never>?
+    private var modelTask: Task<Void, Never>?
+    /// Waits between the rereads of the model after a turn ends, past the
+    /// hub's 10 s catalog refresh. Tests pass none, or a sleeper that
+    /// returns at once.
+    var modelRetryDelays: [Duration] = [.seconds(6), .seconds(6)]
+    var modelSleep: @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) }
     /// Bumped by every start() and stop(), so a start() still fetching
     /// history doesn't open a stream after the chat was closed.
     private var generation = 0
@@ -172,6 +185,13 @@ public final class SessionChatModel {
         commands.fetch = { [hub, key] in
             try await hub.withClient { try await $0.commands(key) }
         }
+        mentions.fetch = { [hub, key] query in
+            try await hub.withClient { try await $0.files(key, query: query) }
+        }
+        tray.act = { [hub, key] cid, op, text in
+            try await hub.withClient { try await $0.queueAction(key, clientId: cid, op: op, text: text) }
+        }
+        mentions.machine = { [weak self] in self?.row?.machine ?? self?.row?.machineId ?? "that machine" }
     }
 
     /// The agent is mid-turn, or a send waits for its first reply.
@@ -217,6 +237,11 @@ public final class SessionChatModel {
                     picked: decisions[rid], state: answerState(rid))))
                 replayFloor = cursor
             }
+            // The tray outlives the page: the hub holds the sends. Read
+            // after history, so the list is no older than what's shown;
+            // a send that leaves after this has its echo and result in
+            // the stream.
+            await refreshQueue(gen) { [hub, key] in try await hub.withClient { try await $0.queue(key) } }
         } catch is CancellationError {
             return
         } catch {
@@ -233,10 +258,45 @@ public final class SessionChatModel {
         generation += 1
         streamTask?.cancel()
         streamTask = nil
+        modelTask?.cancel()
+        modelTask = nil
         connection = .connecting
         // The prompt box's menu may still be open from before stop();
         // the kept list fills it again at once on the next open.
         commands.reset()
+        mentions.reset()
+    }
+
+    /// Reads the hub's row again for the model alone. The chat reads its
+    /// row once on `start()` and no event carries the model, so a model
+    /// that first appears with the opening reply, or changes from another
+    /// client or the terminal, would stay as it was until a reopen.
+    ///
+    /// The hub answers `/v1/sessions` from a catalog it rebuilds every 10
+    /// seconds, and a turn's end can reach the stream before that, so one
+    /// read may still hold the old model. Until the model differs, this
+    /// reads again after each of `modelRetryDelays`. A failed read leaves
+    /// the header as it is.
+    @discardableResult
+    func refreshModel() -> Task<Void, Never> {
+        let gen = generation
+        modelTask?.cancel()
+        let task = Task { [weak self, key] in
+            var later = self?.modelRetryDelays[...] ?? []
+            while true {
+                guard let self, gen == generation, !Task.isCancelled else { return }
+                if let rows = try? await hub.withClient({ try await $0.sessions() }),
+                   gen == generation, !Task.isCancelled,
+                   let model = rows.first(where: { $0.key == key })?.model, row?.model != model {
+                    row?.model = model
+                    return
+                }
+                guard let delay = later.popFirst() else { return }
+                await modelSleep(delay)
+            }
+        }
+        modelTask = task
+        return task
     }
 
     private func follow(_ gen: Int, from last: Int) {
@@ -283,12 +343,26 @@ public final class SessionChatModel {
                         try? await Task.sleep(for: delay)
                         delay = min(delay * 2, .seconds(15))
                     }
+                    // Results and echoes past the cursor were dropped too:
+                    // the tray may hold sends that left meanwhile.
+                    await self.refreshQueue(gen) { try await client.queue(key) }
                     self.follow(gen, from: self.cursor)
                     return
                 case .event(let env): self.apply(env)
                 }
             }
         }
+    }
+
+    /// Takes the hub's list of held sends into the tray. Read after
+    /// history, so the list is no older than what's shown; a send held
+    /// while it was asked for stays.
+    private func refreshQueue(_ gen: Int, _ fetch: () async throws -> [HubWaitingSend]) async {
+        let asked = tray.holds
+        guard let sends = try? await fetch(), gen == generation else { return }
+        tray.merge(sends, known: Set(items.compactMap {
+            $0.id.hasPrefix("send-") ? String($0.id.dropFirst("send-".count)) : nil
+        }), asked: asked)
     }
 
     /// Replaces what's shown with the newest page of history.
@@ -406,7 +480,11 @@ public final class SessionChatModel {
             let status = env.decode(HubStatusData.self)?.status ?? ""
             row?.status = status
             // The turn ended (or stopped to ask) without a message to show.
-            if !replaying, !status.isEmpty, status != "active" { awaiting.removeAll() }
+            if !replaying, !status.isEmpty, status != "active" {
+                awaiting.removeAll()
+                // A reply just finished: the header's model may be new.
+                refreshModel()
+            }
         case "command.result":
             if let result = env.decode(HubCommandResult.self) { settle(result) }
         case "session.ownership":
@@ -498,6 +576,10 @@ public final class SessionChatModel {
                 return
             }
             items.remove(at: i)
+        } else if !replaying, msg.kind == "user", let text = msg.text {
+            // A queued send went out: it leaves the tray, and the echo
+            // lands in the transcript where it really is.
+            tray.noteEcho(text, echoes: Self.echoes)
         } else if !replaying, msg.kind != "user", msg.kind != "tool_result" {
             awaiting.removeAll()
         }
@@ -544,6 +626,15 @@ public final class SessionChatModel {
     /// A command's outcome: a send's bubble settles; any other failure, or
     /// a degraded result, gets a line of its own.
     private func settle(_ r: HubCommandResult) {
+        if r.op == "message", let cid = r.clientId, let held = tray.take(cid) {
+            // A queued send's result: removed, it's simply gone; sent and
+            // already echoed, the echo stands for it; otherwise it shows
+            // in the transcript as any send, settled below (an echo still
+            // replaces it).
+            if r.cancelled == true || (r.ok != false && held.echoed) { return }
+            items.append(HubChatItem(id: "send-\(cid)", kind: .user(held.send.text, send: .accepted(waiting: false))))
+            sentAt[cid] = Date().timeIntervalSince1970
+        }
         if r.op == "message", let cid = r.clientId {
             // Its bubble, or the entry the echo turned it into.
             guard let i = items.firstIndex(where: { $0.id == (echoed[cid] ?? "send-\(cid)") }),
@@ -606,7 +697,15 @@ public final class SessionChatModel {
             }
             // An echo or result may already have settled it.
             if let i = items.firstIndex(where: { $0.id == id }), case .user(_, .sending?) = items[i].kind {
-                items[i].kind = .user(text, send: .accepted(waiting: waiting))
+                if waiting {
+                    // The hub holds it until the turn ends: it waits in
+                    // the tray, out of the transcript.
+                    items.remove(at: i)
+                    awaiting.remove(cid)
+                    tray.hold(cid, text: text)
+                } else {
+                    items[i].kind = .user(text, send: .accepted(waiting: false))
+                }
             }
         } catch {
             refusal(error)

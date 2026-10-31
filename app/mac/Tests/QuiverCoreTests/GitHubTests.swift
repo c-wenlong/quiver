@@ -194,15 +194,22 @@ import Testing
 /// returned pin list.
 @MainActor
 @Suite struct GitHubModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     /// A runner that answers by argv suffix so one fake can serve the
     /// overview, a surface and the inbox in one test.
     final class Router: CommandRunning, @unchecked Sendable {
         var replies: [String: CommandResult] = [:]
-        private(set) var calls: [[String]] = []
+        private var log: [[String]] = []
         private let lock = NSLock()
+        /// Every call so far; read under the lock, since refreshes a test
+        /// spawned can still be appending.
+        var calls: [[String]] { lock.withLock { log } }
         init(_ replies: [String: CommandResult]) { self.replies = replies }
         func run(_ arguments: [String]) async throws -> CommandResult {
-            lock.withLock { calls.append(arguments) }
+            lock.withLock { log.append(arguments) }
             for (suffix, reply) in replies where arguments.joined(separator: " ").hasSuffix(suffix) {
                 return reply
             }
@@ -261,7 +268,7 @@ import Testing
     /// `@MainActor` isolation, and the queue's call into it traps on a
     /// dispatch assert — the gh-history crash from the field.
     @Test func boardSurfacesPersistOffTheMainActor() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appending(path: "gh-history-\(UUID().uuidString).db")
         defer { try? FileManager.default.removeItem(at: url) }
         // A repo with a Pages site — its persist closure is the literal
@@ -375,18 +382,18 @@ import Testing
     /// A drop while the first reorder's save is in flight used to be
     /// discarded: the optimistic order showed but nothing persisted it.
     /// The second order queues behind the first and lands when it settles.
-    @Test func reorderDropDuringSaveQueues() async {
+    @Test(.timeLimit(.minutes(1))) func reorderDropDuringSaveQueues() async {
+        /// The first save (`repo reorder o/c …`) holds until opened.
         final class Gate: CommandRunning, @unchecked Sendable {
             var replies: [String: CommandResult] = [:]
-            private(set) var calls: [[String]] = []
-            private var hold: CheckedContinuation<Void, Never>?
-            private var resumed = false
+            let hold = HoldGate()
+            private let lock = NSLock()
+            private var log: [[String]] = []
+            var calls: [[String]] { lock.withLock { log } }
             func run(_ arguments: [String]) async throws -> CommandResult {
-                calls.append(arguments)
+                lock.withLock { log.append(arguments) }
                 let joined = arguments.joined(separator: " ")
-                if joined.contains("repo reorder o/c"), !resumed {
-                    await withCheckedContinuation { hold = $0 }
-                }
+                if joined.contains("repo reorder o/c") { try await hold.pass() }
                 for (suffix, reply) in replies where joined.hasSuffix(suffix) {
                     return reply
                 }
@@ -395,7 +402,6 @@ import Testing
             func run(_ arguments: [String], input: Data?) async throws -> CommandResult {
                 try await run(arguments)
             }
-            func resume() { resumed = true; hold?.resume(); hold = nil }
         }
         let gate = Gate()
         gate.replies["gh --json"] = .init(status: 0, stdout: envelope(
@@ -411,11 +417,11 @@ import Testing
         await model.load(swe: swe)
 
         let first = Task { await model.reorderPins(["o/c", "o/a", "o/b"], swe: swe) }
-        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await gate.hold.arrived())
         await model.reorderPins(["o/b", "o/c", "o/a"], swe: swe)
         // The second drop shows immediately even though its save waits.
         #expect(model.pins.map(\.name) == ["o/b", "o/c", "o/a"])
-        gate.resume()
+        gate.hold.open()
         await first.value
 
         let reorders = gate.calls.map { $0.joined(separator: " ") }
@@ -464,16 +470,20 @@ import Testing
 
     /// A cancelled first inbox read must release `.loading`, or every
     /// later poll (even a forced refresh) early-returns on the guard.
-    @Test func cancelledInboxReadDoesNotStickLoading() async {
+    @Test(.timeLimit(.minutes(1))) func cancelledInboxReadDoesNotStickLoading() async {
+        /// Never answers; only cancellation lets the read go.
         final class Hanging: CommandRunning, @unchecked Sendable {
+            let hold = HoldGate()
             func run(_ arguments: [String]) async throws -> CommandResult {
-                try await Task.sleep(for: .seconds(60))
+                try await hold.pass()
                 return .init(status: 0, stdout: Data(), stderr: "")
             }
         }
         let model = GitHubModel()
-        let task = Task { await model.loadInbox(swe: SweClient(runner: Hanging())) }
-        try? await Task.sleep(for: .milliseconds(50))
+        let runner = Hanging()
+        let task = Task { await model.loadInbox(swe: SweClient(runner: runner)) }
+        // Cancel only once the read is in flight, the case under test.
+        #expect(await runner.hold.arrived())
         task.cancel()
         await task.value
         if case .loading = model.inbox { Issue.record("inbox stuck on .loading") }
@@ -489,13 +499,14 @@ import Testing
     }
 
     @Test func inboxLoadsNotificationsAndPolls() async {
-        let swe = SweClient(runner: router([
+        let calls = router([
             "gh inbox --limit=50 --all --json":
                 "\(env),\"status\":\"ok\",\"notifications\":[{"
                 + "\"id\":\"n1\",\"repo\":\"o/a\",\"title\":\"PR #7\",\"type\":\"PullRequest\","
                 + "\"reason\":\"review_requested\",\"unread\":true,"
                 + "\"updated_at\":\"2026-10-20T00:00:00Z\",\"url\":\"https://github.com/o/a/pull/7\"}]",
-        ]))
+        ])
+        let swe = SweClient(runner: calls)
         var now = Date(timeIntervalSince1970: 1_000)
         let model = GitHubModel(now: { now }, staleAfter: 60)
         await model.loadInbox(swe: swe)
@@ -506,10 +517,13 @@ import Testing
         #expect(notes.first?.id == "n1")
         #expect(model.inboxFetchedAt == Date(timeIntervalSince1970: 1_000))
         // Fresh: a non-forced reload is a no-op.
+        let fetched = calls.calls.count
         now = now.addingTimeInterval(30)
         await model.loadInbox(swe: swe)
+        #expect(calls.calls.count == fetched)
         // Forced always refetches.
         await model.loadInbox(swe: swe, force: true)
+        #expect(calls.calls.count == fetched + 1)
         guard case .loaded(let again) = model.inbox else {
             Issue.record("inbox failed after forced reload")
             return
@@ -520,7 +534,7 @@ import Testing
     // MARK: - warm-start snapshot
 
     private func tempSnapshot() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appending(path: "gh-test-\(UUID().uuidString).json")
     }
 
@@ -780,10 +794,9 @@ import Testing
         await model.loadFocusTab(.pulls, repo: "o/a", swe: swe)
         await model.loadFocusTab(.issues, repo: "o/a", swe: swe)
         let filled = calls.calls.count
-        model.invalidate(repo: "o/a", swe: swe)
-        for _ in 0..<200 where calls.calls.count == filled {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        let refreshes = model.invalidate(repo: "o/a", swe: swe)
+        #expect(refreshes.count == 1)
+        for refresh in refreshes { await refresh.value }
         #expect(calls.calls.count == filled + 1)
         // Issues' clock dropped: its next look refetches even inside
         // the stale window.
@@ -1026,7 +1039,7 @@ import Testing
     }
 
     private func tempDB() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appending(path: "gh-history-\(UUID().uuidString).db")
     }
 
@@ -1190,9 +1203,8 @@ import Testing
         await model.load(swe: swe)
         await model.loadTab(.pulls, repo: "o/b", swe: swe)
         let filled = calls.calls.count
-        // o/b is not selected: no immediate reload.
-        model.invalidate(repo: "o/b", swe: swe)
-        try? await Task.sleep(for: .milliseconds(50))
+        // o/b is not selected: no immediate reload is even started.
+        #expect(model.invalidate(repo: "o/b", swe: swe).isEmpty)
         #expect(calls.calls.count == filled)
         // But its times are gone: looking at it refetches despite the
         // stale window.
@@ -1213,31 +1225,31 @@ import Testing
         await model.load(swe: swe)
         await model.loadIfStale(swe: swe)
         let filled = calls.calls.count
-        model.invalidate(repo: "o/a", swe: swe)
-        for _ in 0..<200 where calls.calls.count == filled {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        let refreshes = model.invalidate(repo: "o/a", swe: swe)
+        #expect(refreshes.count == 1)
+        for refresh in refreshes { await refresh.value }
         #expect(calls.calls.count == filled + 1)
     }
 
     /// `invalidate` during an in-flight fetch must not drop the refresh:
     /// the in-flight reply predates the notification, so the surface
     /// fetches again after it lands.
-    @Test func invalidateQueuesBehindAnInFlightFetch() async {
-        /// First `--repo` call holds until released; later calls return
+    @Test(.timeLimit(.minutes(1))) func invalidateQueuesBehindAnInFlightFetch() async {
+        /// First `--repo` call holds until opened; later calls return
         /// immediately.
         final class Gated: CommandRunning, @unchecked Sendable {
-            private(set) var calls: [[String]] = []
-            var released = false
-            private var held = 0
+            let hold = HoldGate()
+            let started = CountGate()
+            private let lock = NSLock()
+            private var log: [[String]] = []
+            var calls: [[String]] { lock.withLock { log } }
             func run(_ arguments: [String]) async throws -> CommandResult {
-                calls.append(arguments)
-                if arguments.joined(separator: " ").contains("--repo=") {
-                    held += 1
-                    if held == 1 {
-                        while !released { try? await Task.sleep(for: .milliseconds(5)) }
-                    }
+                let first = lock.withLock { () -> Bool in
+                    log.append(arguments)
+                    return log.count == 1
                 }
+                await started.bump()
+                if first { try await hold.pass() }
                 let payload = "{\"schema\":1,\"data\":{\"github\":{\"status\":\"ok\","
                     + "\"login\":\"me\",\"error\":null},"
                     + "\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"pull_requests\":[]}]}}"
@@ -1252,15 +1264,14 @@ import Testing
         let model = GitHubModel()
         model.selected = "o/a"
         let inFlight = Task { await model.loadTab(.pulls, repo: "o/a", swe: swe) }
-        for _ in 0..<200 where calls.calls.isEmpty {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        model.invalidate(repo: "o/a", swe: swe)
-        calls.released = true
+        #expect(await calls.hold.arrived())
+        // The refresh finds the fetch running and queues behind it.
+        for refresh in model.invalidate(repo: "o/a", swe: swe) { await refresh.value }
+        #expect(calls.calls.count == 1)
+        calls.hold.open()
         await inFlight.value
-        for _ in 0..<200 where calls.calls.count < 2 {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        // The queued refresh runs once the held fetch lands.
+        #expect(await calls.started.reach(2))
         #expect(calls.calls.count == 2)
     }
 
@@ -1445,20 +1456,18 @@ import Testing
 
     /// A `load` that was in flight while a sync finished must not paint
     /// the sync's fresh catalog back to the older overview numbers.
-    @Test func staleOverviewDoesNotOverwriteASync() async {
-        /// Holds `gh --json` until released; `gh sync` answers at once.
+    @Test(.timeLimit(.minutes(1))) func staleOverviewDoesNotOverwriteASync() async {
+        /// Holds `gh --json` until opened; `gh sync` answers at once.
         final class Gated: CommandRunning, @unchecked Sendable {
-            private(set) var calls = 0
-            var released = false
+            let hold = HoldGate()
             func run(_ arguments: [String]) async throws -> CommandResult {
-                calls += 1
                 let joined = arguments.joined(separator: " ")
                 var payload: String
                 if joined.hasSuffix("gh sync --json") {
                     payload = "\"repos\":9,\"synced_at\":1700000100,"
                         + "\"owners\":[\"me\"],\"failed\":[]"
                 } else {
-                    while !released { try? await Task.sleep(for: .milliseconds(5)) }
+                    try await hold.pass()
                     payload = "\"github\":{\"status\":\"ok\",\"login\":\"me\","
                         + "\"error\":null},\"repos\":[],"
                         + "\"catalog\":{\"repos\":2,\"synced_at\":1700000000,"
@@ -1475,12 +1484,10 @@ import Testing
         let swe = SweClient(runner: gate)
         let model = GitHubModel()
         let loading = Task { await model.load(swe: swe) }
-        for _ in 0..<200 where gate.calls == 0 {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        #expect(await gate.hold.arrived())
         await model.syncGitHub(swe: swe)
         #expect(model.catalog?.repos == 9)
-        gate.released = true
+        gate.hold.open()
         await loading.value
         #expect(model.catalog?.repos == 9)
     }
@@ -1571,15 +1578,32 @@ import Testing
     }
 
     @Test func rerunSuccessDropsTheActionsFetchTime() async {
-        let swe = SweClient(runner: router([
+        let calls = router([
+            "gh run --limit=30 --repo=o/a --json":
+                "\(env),\"results\":[{\"repo\":\"o/a\",\"status\":\"ok\",\"runs\":[]}]",
             "gh run rerun 42 --repo=o/a --failed --json":
                 env + ",\"repo\":\"o/a\",\"run\":42,\"rerun\":true,\"failed_only\":true",
-        ]))
-        let model = GitHubModel()
+        ])
+        let swe = SweClient(runner: calls)
+        let model = GitHubModel(now: { Date(timeIntervalSince1970: 1_000) }, staleAfter: 60)
+        // Both Actions boards loaded and fresh: a stale check fetches nothing.
+        await model.loadTabIfStale(.actions, repo: "o/a", swe: swe)
+        await model.loadFocusTab(.actions, repo: "o/a", swe: swe)
+        let loaded = calls.calls.count
+        await model.loadTabIfStale(.actions, repo: "o/a", swe: swe)
+        await model.loadFocusTabIfStale(.actions, repo: "o/a", swe: swe)
+        #expect(calls.calls.count == loaded)
+
         let error = await model.rerunRun(repo: "o/a", run: 42,
                                          failedOnly: true, swe: swe)
         #expect(error == nil)
         #expect(model.actionError == nil)
+        // Still inside the stale window, yet each board refetches its runs.
+        let rerun = calls.calls.count
+        await model.loadTabIfStale(.actions, repo: "o/a", swe: swe)
+        #expect(calls.calls.count == rerun + 1)
+        await model.loadFocusTabIfStale(.actions, repo: "o/a", swe: swe)
+        #expect(calls.calls.count == rerun + 2)
     }
 
     @Test func markReadFlipsUnreadLocally() async {
@@ -1601,6 +1625,99 @@ import Testing
         let error = await model.markInboxRead(["1"], swe: swe)
         #expect(error == nil)
         #expect(model.unreadCount == 1)
+    }
+
+    /// One inbox read at a time: a second waits and reruns after, and a
+    /// read that was in flight when threads were marked read can't bring
+    /// them back as unread.
+    @Test(.timeLimit(.minutes(1))) func inboxReadsDontOverlapOrUndoAMarkRead() async throws {
+        final class HeldInbox: CommandRunning, @unchecked Sendable {
+            let router: Router
+            private let lock = NSLock()
+            private var holding = false
+            private var parked: CheckedContinuation<Void, Never>?
+            private(set) var listCalls = 0
+            /// Bumped each time a read parks, so the test awaits the park.
+            let parks = CountGate()
+            init(_ router: Router) { self.router = router }
+            func hold() { lock.withLock { holding = true } }
+            func open() {
+                let waiting = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                    holding = false
+                    defer { parked = nil }
+                    return parked
+                }
+                waiting?.resume()
+            }
+            var lists: Int { lock.withLock { listCalls } }
+            func run(_ arguments: [String]) async throws -> CommandResult {
+                if arguments.starts(with: ["gh", "inbox", "--limit=50"]) {
+                    // Only the first read after hold() parks, so a model
+                    // that overlaps reads fails the count, not hangs.
+                    let held = lock.withLock { () -> Bool in
+                        listCalls += 1
+                        defer { holding = false }
+                        return holding
+                    }
+                    if held {
+                        // The answer is decided now, as a real reply is.
+                        let reply = try await router.run(arguments)
+                        let parks = self.parks
+                        await withCheckedContinuation { continuation in
+                            lock.withLock { parked = continuation }
+                            Task { await parks.bump() }
+                        }
+                        return reply
+                    }
+                }
+                return try await router.run(arguments)
+            }
+        }
+        func payload(unread: Bool) -> String {
+            env + ",\"status\":\"ok\",\"notifications\":["
+                + "{\"id\":\"1\",\"repo\":\"o/a\",\"title\":\"A\",\"type\":\"Issue\","
+                + "\"reason\":\"mention\",\"unread\":\(unread),\"updated_at\":1700000000,"
+                + "\"url\":\"https://github.com/o/a/issues/1\"}]"
+        }
+        let router = router([
+            "gh inbox --limit=50 --all --json": payload(unread: true),
+            "gh inbox read 1 --json": env + ",\"all\":false,\"marked\":[\"1\"]",
+        ])
+        let runner = HeldInbox(router)
+        let swe = SweClient(runner: runner)
+        let model = GitHubModel()
+        await model.loadInbox(swe: swe)
+        #expect(model.unreadCount == 1)
+
+        runner.hold()
+        let first = Task { await model.loadInbox(swe: swe, force: true) }
+        #expect(await runner.parks.reach(1))
+        // A second forced read waits for the first instead of racing it.
+        let second = Task { await model.loadInbox(swe: swe, force: true) }
+        #expect(await observe { model.inboxWaiterCount == 1 })
+        #expect(runner.lists == 2)
+        #expect(await model.markInboxRead(["1"], swe: swe) == nil)
+        #expect(model.unreadCount == 0)
+        // GitHub now reports the thread read; the held read answered before.
+        router.replies["gh inbox --limit=50 --all --json"] = .init(
+            status: 0, stdout: envelope(payload(unread: false)), stderr: "")
+        runner.open()
+        await first.value
+        #expect(model.unreadCount == 0)
+        // The waiting forced caller reads again, and returns with its rows.
+        await second.value
+        #expect(runner.lists == 3)
+        #expect(model.unreadCount == 0)
+        // A plain poll that overlaps a read returns once that read landed.
+        runner.hold()
+        let third = Task { await model.loadInbox(swe: swe, force: true) }
+        #expect(await runner.parks.reach(2))
+        let poll = Task { await model.loadInbox(swe: swe) }
+        #expect(await observe { model.inboxWaiterCount == 1 })
+        runner.open()
+        await third.value
+        await poll.value
+        #expect(runner.lists == 4)
     }
 
     @Test func markAllReadClearsTheInbox() async {

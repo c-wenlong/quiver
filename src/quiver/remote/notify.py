@@ -343,13 +343,21 @@ class Notifier:
         label = _NOTIFY_KIND_TITLES.get(kind)
         if label is None:
             return
-        priority = 4 if kind in ("needs_you", "error") else 3
+        priority = 4 if kind in ("needs_you", "error", "limit") else 3
+        # A limit carries the harness's own line ("You've hit your
+        # session limit · resets 9:30am"), which says when work resumes.
+        message = ""
+        if kind == "limit":
+            message = _tr._redact_secrets(
+                str(data.get("message") or ""))[:_PROMPT_CAP]
+        tag = {"error": "rotating_light", "limit": "hourglass"}.get(
+            kind, "bell")
         self._post(cfg, {
             "topic": cfg["topic"],
             "title": f"{title}: {label.lower()}",
-            "message": "",
+            "message": message,
             "priority": priority,
-            "tags": ["rotating_light" if kind == "error" else "bell"],
+            "tags": [tag],
         })
 
     def _github(self, cfg: dict, data: dict) -> None:

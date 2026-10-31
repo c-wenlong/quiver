@@ -4,12 +4,16 @@ How `src/quiver` is organised: the controller / service / model split inside
 each domain package, the bottom layer, and where every `--json` payload is
 defined. For the data model itself (stores, caches, schemas) see
 [docs/data-model.md](data-model.md); for the app's view of the JSON shapes
-see `docs/json-contracts.md` on the frontend audit branch.
+see [docs/json-contracts.md](json-contracts.md). The hub and its web app
+(`remote/`, `webapp/`) have their own docs:
+[docs/remote-control.md](remote-control.md) and
+[docs/web-app.md](web-app.md).
 
 ## The convention
 
-Every domain package (`harness`, `sessions`, `mcp`, `plugins`, `skills`,
-`providers`, `find`, `init`, `reports`, `setup`) keeps three kinds of module:
+Every CLI domain package (`harness`, `sessions`, `mcp`, `plugins`,
+`skills`, `providers`, `find`, `init`, `hooks`, `reports`, `setup`) keeps
+three kinds of module:
 
 - **controller** — `commands.py` (or `*_commands.py`, `cli.py` for mcp):
   argv parsing through `expand_value_flags`, presentation (tables, colours,
@@ -38,17 +42,31 @@ An example per layer, from the harness domain:
 
 | package | controller | service | model (`--json` payloads) |
 |---|---|---|---|
-| `harness/` | `commands.py`, `discover_commands.py` | `registry.py`, `stars.py`, `archive.py`, `catalog.py`, `columns.py`, `tools.py`, `path_health.py`, `doctor.py`, `drift.py`, `rate_limits.py`, `discover.py` | `models.py`: `HarnessRow`, `RateLimitInfo`, `DoctorFinding`, `DoctorReport`, `StateReply`, `ArchiveReply`, `EditReply`, `DiscoveryRow` |
-| `sessions/` | `commands.py` | `aggregator.py`, `parse_cache.py`, `parsers.py`, `engines/`, `identity.py`, `status.py`, `query.py`, `picker.py`, `resume.py`, `usage.py`, `models_analytics.py`, `failures.py` | `models.py`: `Session`, `SessionRow`, `ResumeCmd` |
-| `mcp/` | `cli.py`, `discover_commands.py` | `inventory.py`, `formats.py`, `secrets.py`, `codex_io.py`, `discover.py`, `server.py` | `models.py`: `ServerRow`, `DiscoveryRow` |
+| `harness/` | `commands.py`, `discover_commands.py` | `registry.py`, `stars.py`, `archive.py`, `catalog.py`, `columns.py`, `tools.py`, `path_health.py`, `doctor.py`, `drift.py`, `rate_limits.py`, `codex_usage.py`, `remedies.py`, `installers.py`, `discover.py` | `models.py`: `HarnessRow`, `RateLimitInfo`, `DoctorFinding`, `DoctorReport`, `StateReply`, `ArchiveReply`, `EditReply`, `DiscoveryRow` |
+| `sessions/` | `commands.py` | `aggregator.py`, `parse_cache.py`, `parsers.py`, `engines/`, `opencode_store.py`, `identity.py`, `status.py`, `query.py`, `picker.py`, `resume.py`, `usage.py`, `models_analytics.py`, `failures.py`, `search_index.py`, `search_writer.py`, `search_decode.py`, `search_containers.py` | `models.py`: `Session`, `SessionRow`, `ResumeCmd` |
+| `mcp/` | `cli.py`, `discover_commands.py`, `gateway_commands.py` | `inventory.py`, `formats.py`, `secrets.py`, `codex_io.py`, `discover.py`, `server.py`, `gateway.py`, `gateway_server.py` | `models.py`: `ServerRow`, `DiscoveryRow` |
 | `plugins/` | `commands.py` | `actions.py`, `catalog.py` | `models.py`: `ActionResult` |
 | `skills/` | `commands.py`, `layout_commands.py`, `catalog_commands.py` | `layout.py`, `link_ops.py`, `inventory.py`, `discovery.py`, `catalog_discover.py`, `catalogs.py`, `symlinks.py`, `help_text.py` | `models.py`: `LinkReply`, `UnlinkReply`, `MoveReply`, `CatalogRow` |
-| `providers/` | `commands.py`, `cli.py` | `keys.py`, `registry.py`, `defaults.py`, `discover.py` | (no `--json` yet) |
+| `providers/` | `commands.py`, `cli.py` | `keys.py`, `keyfile.py`, `registry.py`, `defaults.py`, `discover.py`, `help_text.py` | (no `--json` yet) |
 | `find/` | `commands.py`, `browser.py` | `roots.py`, `plugins.py`, `mcps.py`, `plugin_drift.py`, `entries.py`, `tree.py`, `summary.py`, `highlight.py` | `models.py`: `DriftRow` |
 | `init/` | `commands.py` | `layout.py`, `manage.py`, `migrate.py`, `hooks.py` | `models.py`: `LinkRow` |
 | `hooks/` | `commands.py` | `inventory.py`, `settings.py`, `create.py`, `contracts.py` (per-harness hook contracts + registry overrides), `shared.py` (shared-hook deploy: events headers, generated wrappers, `.disabled`, pruning), `shim_runtime.py` (stdlib-only payload translator copied to `~/.quiver/hooks/_runtime/`) | `models.py`: `Declaration`, `HookRow`, `HookDrift` |
 | `reports/` | `commands.py` | `pipeline.py`, `transcripts.py`, `triage.py`, `batching.py`, `runners.py`, `work.py`, `followups.py`, `prompts.py`, `store.py` | `models.py`: report records |
 | `setup/` | `commands.py`, `wizard.py` | (wizard is the whole domain; allowed to print) | `models.py`: `HarnessPreview`, `McpPreview`, `SkillsPreview` |
+| `github/` | `cli.py` (`swe gh`) | `gh.py` (the only module in the package that spawns `gh`; the Copilot fetcher in `harness/rate_limits.py` runs `gh auth token` itself), `repos.py`, `manage.py`, `catalog.py`, `issues.py`, `pulls.py`, `shared.py` (the hub's cache, write lock and pins) | (no `models.py`; payloads are built in the service functions) |
+
+The remaining packages sit outside that convention:
+
+- `history/`: a compatibility shim that re-exports `Session` and
+  `get_all_sessions`; new code imports `quiver.sessions`.
+- `ledger/`: the usage ledger (scan, SQLite store, pricing, Overview
+  figures), a port of `QuiverCore/Ledger`. `models.py` holds
+  `UsageEvent` and `LedgerRecord`.
+- `status/`: service status pages (catalog, parsers, poller, the web
+  app's tracked services), a port of `QuiverCore/Status`.
+- `remote/` (`swe remote`, the hub and the satellite agent) and
+  `webapp/` (the web app's page builders); see their own docs linked
+  above.
 
 ## The bottom layer
 

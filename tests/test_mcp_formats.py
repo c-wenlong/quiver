@@ -97,6 +97,22 @@ class McpFormatsTest(unittest.TestCase):
         self.assertEqual(issues, [])
 
 
+    def test_claude_marks_remote_servers_with_their_type(self):
+        # Claude Code skips a url entry without "type".
+        self.assertEqual(
+            convert_server_between_formats({"url": "https://a/mcp"}, "standard", "claude"),
+            {"url": "https://a/mcp", "type": "http"},
+        )
+        self.assertEqual(
+            convert_server_between_formats({"url": "https://a/sse", "type": "sse"},
+                                           "standard", "claude")["type"],
+            "sse",
+        )
+        self.assertNotIn("type", convert_server_between_formats(
+            {"command": "node", "args": ["s.js"]}, "standard", "claude"))
+        self.assertEqual(get_conversion_issues({"url": "https://a/mcp"}, "standard", "claude"), [])
+
+
 class McpFormatEdgeCasesTest(unittest.TestCase):
     def test_base_handler_is_abstract(self):
         from quiver.mcp.formats import McpFormatHandler

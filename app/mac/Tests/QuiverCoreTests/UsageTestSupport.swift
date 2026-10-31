@@ -93,8 +93,8 @@ struct UsageHarness {
     let files = FakeFiles()
     let clock = TestClock()
     /// Nested a level down so the service has to create the parent itself.
-    let cacheURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("quiver-usage-tests-\(UUID().uuidString)")
+    let cacheURL = usageScratch
+        .appendingPathComponent("usage-\(UUID().uuidString)")
         .appendingPathComponent("state")
         .appendingPathComponent("usage.json")
 
@@ -164,18 +164,30 @@ func claudeCredentialsJSON(
     return String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
 }
 
+/// One folder per test process for the per-test files below, removed when
+/// the process exits, as `TestDefaults.folder` is. These helpers hand out
+/// a bare URL that the code under test writes to whenever it likes, often
+/// after the test's last use of the URL, so nothing owned by one test
+/// could remove its file without racing that write.
+let usageScratch: URL = {
+    let folder = FileManager.default.temporaryDirectory
+        .appending(path: "quiver-usage-tests-\(getpid())", directoryHint: .isDirectory)
+    atexit { try? FileManager.default.removeItem(at: usageScratch) }
+    return folder
+}()
+
 /// A per-test file URL for `OtherLimitsModel`'s snapshot, so no test ever
 /// touches the real `~/.quiver` cache.
 func tempSnapshotFile() -> URL {
-    FileManager.default.temporaryDirectory
-        .appendingPathComponent("quiver-limits-tests-\(UUID().uuidString)")
+    usageScratch
+        .appendingPathComponent("limits-\(UUID().uuidString)")
         .appendingPathComponent("app-other-limits.json")
 }
 
 /// Same for `HarnessAccountNameStore`: a per-test file URL, so the real
 /// `~/.quiver/accounts/harness-names.json` is never read or written.
 func tempNamesStore() -> HarnessAccountNameStore {
-    HarnessAccountNameStore(file: FileManager.default.temporaryDirectory
-        .appendingPathComponent("quiver-names-tests-\(UUID().uuidString)")
+    HarnessAccountNameStore(file: usageScratch
+        .appendingPathComponent("names-\(UUID().uuidString)")
         .appendingPathComponent("harness-names.json"))
 }

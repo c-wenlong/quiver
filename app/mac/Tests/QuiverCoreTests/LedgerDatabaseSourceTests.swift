@@ -18,6 +18,7 @@ func execute(_ sql: String, on url: URL) throws {
 @Suite struct LedgerOpenCodeTests {
     @Test func assistantMessagesBecomeEventsWithTheirRecordedCost() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
@@ -47,6 +48,7 @@ func execute(_ sql: String, on url: URL) throws {
 
     @Test func updatedAndNewMessagesArePickedUpWithoutDoubleCounting() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
@@ -65,11 +67,28 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(await ledger.events(in: allTime).count == 4)
     }
 
+    @Test func aCorruptHugeCountIsCappedInsteadOfTrapping() async throws {
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let db = temp.path("opencode/opencode.db")
+        try makeDatabase("opencode.sql", at: db)
+        try execute("""
+            INSERT INTO message VALUES ('msg_huge', 'ses_1', 1791100010000, 1791100010000,
+              '{"role":"assistant","modelID":"gpt-5.4","time":{"created":1791100010000},"tokens":{"input":9223372036854775000,"output":9223372036854775000,"reasoning":1,"cache":{"read":0,"write":0}}}');
+            """, on: db)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
+        try await ledger.scan(roots: LedgerRoots(openCodeDatabases: [db]))
+        let huge = try #require(await ledger.events(in: allTime).first { $0.inputTokens > 1_000_000 })
+        #expect(huge.inputTokens == JSONValue.maxTokens)
+        #expect(huge.outputTokens == JSONValue.maxTokens)
+    }
+
     /// A build that read only the legacy tables saved a fingerprint for
     /// the database as it stands; the 2.x reader must not take it as
     /// "nothing moved" and skip the rows that build never read.
     @Test func aFingerprintFromTheLegacyReaderDoesNotSkipTheScan() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
@@ -85,6 +104,7 @@ func execute(_ sql: String, on url: URL) throws {
     /// there under their `message` ids, which must not count twice.
     @Test func openCode2RepliesCountOnceAlongsideLegacyOnes() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
         try execute("""
@@ -117,6 +137,7 @@ func execute(_ sql: String, on url: URL) throws {
 @Suite struct LedgerDevinTests {
     @Test func eachRequestCountsOnceHoweverManyNodesCopyIt() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
         let ledger = try Ledger(directory: temp.path("cache"), pricing: try .bundled())
@@ -140,8 +161,25 @@ func execute(_ sql: String, on url: URL) throws {
         #expect(totals.costUSD > 0)
     }
 
+    @Test func aCorruptHugeCountIsCappedInsteadOfTrapping() async throws {
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let db = temp.path("devin/cli/sessions.db")
+        try makeDatabase("devin.sql", at: db)
+        try execute("""
+            UPDATE message_nodes SET chat_message = json_set(chat_message, '$.metadata.metrics',
+              json('{"input_tokens":9223372036854775000,"output_tokens":9223372036854775000}')) WHERE node_id = 5;
+            """, on: db)
+        let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
+        try await ledger.scan(roots: LedgerRoots(devinDatabases: [db]))
+        let huge = try #require(await ledger.events(in: allTime).first { $0.inputTokens > 1_000_000 })
+        #expect(huge.inputTokens == JSONValue.maxTokens)
+        #expect(huge.outputTokens == JSONValue.maxTokens)
+    }
+
     @Test func aRequestFinishedInPlaceIsCountedOnTheNextScan() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
@@ -159,6 +197,7 @@ func execute(_ sql: String, on url: URL) throws {
 
     @Test func aReplacedDatabaseIsReadFromTheStart() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
@@ -200,6 +239,7 @@ func execute(_ sql: String, on url: URL) throws {
 
     @Test func modelsCarryTheirProviderUnlessThereIsNone() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
         try execute(v2Tables + v2Reply("v_plain", #"{"id":"MiniMax-M3","providerID":"minimax"}"#)
@@ -230,6 +270,7 @@ func execute(_ sql: String, on url: URL) throws {
     /// no event is added, and no token or cent changes.
     @Test func aLedgerFromTheBareNameReaderIsRenamedInPlaceWithoutDoubleCounting() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
         try execute(v2Tables + v2Reply("v_one", #"{"id":"MiniMax-M3","providerID":"minimax"}"#), on: db)
@@ -277,6 +318,7 @@ func execute(_ sql: String, on url: URL) throws {
     /// no provider to read, so it keeps the name it was logged under.
     @Test func aRowWhoseSourceMessageIsGoneKeepsItsBareName() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
         let ledgerURL = temp.path("cache/ledger.sqlite")
@@ -304,6 +346,7 @@ func execute(_ sql: String, on url: URL) throws {
     /// nothing.
     @Test func aRelabellingReadMovesTheModelWhateverTheTotals() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         func event(_ model: String, tokens: Int) -> UsageEvent {
             UsageEvent(harness: "opencode", accountHome: "/h", sessionId: "s", model: model,
@@ -332,6 +375,7 @@ func execute(_ sql: String, on url: URL) throws {
 @Suite struct LedgerOpenCodeReplacementTests {
     @Test func aReplacedDatabaseIsReadFromTheStart() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("opencode/opencode.db")
         try makeDatabase("opencode.sql", at: db)
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
@@ -353,6 +397,7 @@ func execute(_ sql: String, on url: URL) throws {
 @Suite struct LedgerRollbackTests {
     @Test func aRolledBackScanLeavesNoStaleDimensionIds() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         let event = UsageEvent(harness: "claude", accountHome: "/h", sessionId: "s", model: "m",
                                timestamp: utc("2026-10-01T00:00:00Z"), inputTokens: 5)
@@ -373,6 +418,7 @@ func execute(_ sql: String, on url: URL) throws {
     /// the whole scan: the healthy source still reads.
     @Test func aBrokenSourceIsSkippedWithANoteAndTheRestStillScans() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let good = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: good)
         // Exists, opens, but has none of the expected tables: like OpenCode's
@@ -398,9 +444,13 @@ func execute(_ sql: String, on url: URL) throws {
     /// fails the scan, so the Overview can show the error.
     @Test func aCacheWriteFailureThrowsInsteadOfBecomingANote() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = temp.path("devin/cli/sessions.db")
         try makeDatabase("devin.sql", at: db)
         let ledger = try Ledger(directory: temp.path("cache"), pricing: .empty)
+        // The lock below is held for good, so waiting it out only costs
+        // the test two seconds before the same failure.
+        await ledger.setBusyTimeout(milliseconds: 0)
 
         // A second connection holding an exclusive lock makes every cache
         // operation fail, starting at BEGIN IMMEDIATE.
@@ -414,26 +464,23 @@ func execute(_ sql: String, on url: URL) throws {
         }
     }
 
-    /// The read-write connection waits out a held lock the way both
-    /// read-only ones do — without `sqlite3_busy_timeout` it returned
-    /// SQLITE_BUSY at once.
-    @Test func aWriteConnectionWaitsOutAHeldLock() throws {
+    /// Every connection waits out a held lock for two seconds instead of
+    /// failing at once: without `sqlite3_busy_timeout` the read-write one
+    /// returned SQLITE_BUSY immediately. SQLite reports the setting itself,
+    /// so the test needn't sit out a real two-second wait.
+    @Test func everyConnectionWaitsOutAHeldLock() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let url = temp.path("held.sqlite")
         try execute("CREATE TABLE seed (id INTEGER)", on: url)
-        let holder = try SQLiteDatabase(url: url)
-        try holder.execute("BEGIN EXCLUSIVE")
-        defer { try? holder.execute("ROLLBACK") }
-
-        let contender = try SQLiteDatabase(url: url)
-        let start = Date()
-        do {
-            try contender.execute("CREATE TABLE t (id INTEGER)")
-            Issue.record("expected SQLITE_BUSY")
-        } catch let error as SQLiteDatabase.Failure {
-            #expect(error.code == SQLITE_BUSY)
-            // It waited out the timeout instead of failing instantly.
-            #expect(Date().timeIntervalSince(start) > 1.0)
+        let connections = [
+            try SQLiteDatabase(),
+            try SQLiteDatabase(url: url),
+            try SQLiteDatabase(readOnly: url),
+            try SQLiteDatabase(readOnlyURI: "file:\(url.path)?mode=ro"),
+        ]
+        for db in connections {
+            #expect(try db.scalar("PRAGMA busy_timeout") == 2_000)
         }
     }
 
@@ -441,6 +488,7 @@ func execute(_ sql: String, on url: URL) throws {
     /// can show more than "error 1".
     @Test func aFailureDescribesTheSQLiteCodeAndMessage() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let db = try SQLiteDatabase(url: temp.path("x.sqlite"))
         do {
             _ = try db.prepare("SELECT nope FROM missing")
@@ -459,6 +507,7 @@ func execute(_ sql: String, on url: URL) throws {
     /// beside the database first so history whose logs are gone is not lost.
     @Test func aSchemaMismatchArchivesTheOldDatabaseBeforeRebuilding() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let url = temp.path("cache/ledger.sqlite")
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -496,6 +545,7 @@ func execute(_ sql: String, on url: URL) throws {
     /// appears beside it.
     @Test func aFreshDatabaseLeavesNoArchive() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         _ = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         let siblings = try FileManager.default.contentsOfDirectory(
             atPath: temp.path("cache").path)

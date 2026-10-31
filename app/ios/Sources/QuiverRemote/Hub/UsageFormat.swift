@@ -125,24 +125,35 @@ enum UsageFormat {
 
     // MARK: Spend
 
-    /// 842, 12.3K, 1.2M, 13B: one decimal under 100 of a unit, none above.
+    /// 842, 12K, 12.3K, 1.2M, 13B: one decimal, dropped when it is .0.
+    /// The Mac's `UsageFormat.tokens` and the web's `Fmt.tokens`, so the
+    /// three clients print the same figure for the same count.
     static func tokens(_ value: Int?) -> String {
-        let v = Double(max(0, value ?? 0))
-        let units: [(size: Double, suffix: String)] = [(1e3, "K"), (1e6, "M"), (1e9, "B"), (1e12, "T")]
-        guard var i = units.lastIndex(where: { v >= $0.size }) else { return "\(Int(v))" }
-        var scaled = v / units[i].size
-        // 999.96K would print as "1000K"; it reads as 1.0M.
-        if scaled >= 999.5, i + 1 < units.count {
-            i += 1
-            scaled = v / units[i].size
+        let count = max(0, value ?? 0)
+        let v = Double(count)
+        let units: [(limit: Double, suffix: String)] = [(1e3, "K"), (1e6, "M"), (1e9, "B")]
+        guard var unit = units.lastIndex(where: { v >= $0.limit }) else { return "\(count)" }
+        // The unit after rounding: 999,950 rounds to 1000K, which reads as 1M.
+        while unit + 1 < units.count, ((v / units[unit].limit) * 10).rounded() / 10 >= 1000 {
+            unit += 1
         }
-        return String(format: scaled < 99.95 ? "%.1f%@" : "%.0f%@", scaled, units[i].suffix)
+        return compact(v / units[unit].limit) + units[unit].suffix
     }
 
-    /// "$0.42", "$12.30", "$5,432": cents below $1,000, whole dollars above.
+    /// One decimal, without a trailing ".0".
+    private static func compact(_ value: Double) -> String {
+        let rounded = (value * 10).rounded() / 10
+        return rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
+    }
+
+    /// "$0", "<$0.01", "$0.42", "$12.30", "$123", "$5,432": cents below
+    /// $100, whole dollars from there, as the Mac's `UsageFormat.dollars`
+    /// and the web's `Fmt.dollars` print a spend.
     static func usd(_ value: Double?) -> String {
         let v = value ?? 0
-        let f = abs(v) >= 1000 ? usdWhole : usdCents
+        if v == 0 { return "$0" }
+        if v < 0.01 { return "<$0.01" }
+        let f = v < 100 ? usdCents : usdWhole
         return f.string(from: NSNumber(value: v)) ?? "$\(v)"
     }
 
@@ -161,15 +172,19 @@ enum UsageFormat {
         return f
     }
 
-    /// "$800", "$1.2K" for a chart axis.
+    /// "$800", "$1.2K" for a chart axis. A week of small spend scales
+    /// the axis to $1, with a tick at $0.50: rounded, that read "$1" twice
+    /// up the axis, so a tick between whole dollars keeps its cents.
     static func usdAxis(_ value: Double) -> String {
-        value >= 1000 ? "$" + tokens(Int(value.rounded())) : "$\(Int(value.rounded()))"
+        if value >= 1000 { return "$" + tokens(Int(value.rounded())) }
+        if value == value.rounded() { return "$\(Int(value))" }
+        return String(format: value < 10 ? "$%.2f" : "$%.1f", value)
     }
 
     /// One bar per day from `start` to `end` (ISO dates, inclusive), with
     /// days the hub left out (no usage) as zero. Oldest first.
     static func dailySeries(_ days: [OverviewResponse.Day], start: String?, end: String?,
-                            timeZone: TimeZone = .current) -> [DailySpend] {
+                            timeZone: TimeZone = .current, maxDays: Int = 1100) -> [DailySpend] {
         // Local midnight, so the chart's own date labels name the same day.
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
@@ -181,12 +196,17 @@ enum UsageFormat {
         var byDay: [Date: OverviewResponse.Day] = [:]
         for day in days { if let d = parse.date(from: day.date) { byDay[d] = day } }
         let known = byDay.keys.sorted()
-        guard let first = start.flatMap(parse.date(from:)) ?? known.first,
+        guard var first = start.flatMap(parse.date(from:)) ?? known.first,
               let last = end.flatMap(parse.date(from:)) ?? known.last, first <= last else { return [] }
+        // All time can run for years: the chart keeps the newest
+        // `maxDays`, so a long ledger never drops this week's bars.
+        if let floor = calendar.date(byAdding: .day, value: -(maxDays - 1), to: last), first < floor {
+            first = floor
+        }
         var out: [DailySpend] = []
         var cursor = first
-        // A malformed range can't loop forever: 400 days is past any period.
-        while cursor <= last, out.count < 400 {
+        // A malformed range can't loop forever.
+        while cursor <= last, out.count < maxDays {
             let day = byDay[cursor]
             out.append(DailySpend(date: cursor, cost: day?.costUsd ?? 0, tokens: day?.tokens ?? 0))
             guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }

@@ -245,6 +245,34 @@ class SearchTest(TempHomeTest):
         self.assertEqual(search_index.search(empty, "ledger"), [])
 
 
+class MergeHitsTest(TempHomeTest):
+    """``merge_hits``: the one FTS union ``swe session`` and MCP share."""
+
+    def _parsed(self):
+        return [Session(timestamp=1.0, agent="Claude Code", path="/work/proj",
+                        title="t", session_id="sess-alpha", tool_name="claude")]
+
+    def test_no_index_leaves_the_listing_alone(self):
+        sessions = self._parsed()
+        self.assertEqual(search_index.merge_hits(self.home, "ledger", sessions), (None, {}))
+        self.assertEqual(len(sessions), 1)
+
+    def test_hits_join_parsed_sessions_and_add_the_rest(self):
+        write_index(self.home)
+        sessions = self._parsed()
+        ids, best = search_index.merge_hits(self.home, "offsets", sessions)
+        self.assertEqual(ids, {"sess-alpha", "sess-gamma"})
+        self.assertEqual(set(best), {"sess-alpha", "sess-gamma"})
+        self.assertIn("offsets", best["sess-alpha"].snippet.lower())
+        # sess-gamma was only in the index: it joins the listing.
+        self.assertEqual([s.session_id for s in sessions], ["sess-alpha", "sess-gamma"])
+
+    def test_the_agent_filter_widens_aliases(self):
+        write_index(self.home)
+        ids, _ = search_index.merge_hits(self.home, "dark", [], agent_filter="cx")
+        self.assertEqual(ids, {"sess-beta"})
+
+
 class MatchKeysTest(unittest.TestCase):
     def test_plain_ids_match_themselves(self):
         self.assertEqual(search_index.match_keys("abc"), frozenset({"abc"}))

@@ -241,8 +241,11 @@ enum SearchKiroDecoder {
                     blocks.append(["type": "text", "text": data])
                 }
             case "json":
-                if block["data"] != nil,
-                   let raw = try? JSONSerialization.data(withJSONObject: block["data"] as Any),
+                // Foundation serializes only an object or array at the top;
+                // anything else raises an Objective-C exception `try?`
+                // can't catch, which would crash every scan of the file.
+                if let data = block["data"], JSONSerialization.isValidJSONObject(data),
+                   let raw = try? JSONSerialization.data(withJSONObject: data),
                    let text = String(data: raw, encoding: .utf8) {
                     blocks.append(["type": "text", "text": text])
                 }

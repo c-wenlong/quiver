@@ -56,7 +56,6 @@ DEFAULT_LIMIT = 50
 SNIPPET_MAX = 512
 # Snippet() is called per returned row; a huge page means hundreds of tiny
 # queries on the same connection. 512 bounds the work and the payload.
-_FTS_SNIPPET_TOKENS = 12
 
 # unicode61 with tokenchars '_.-/+' keeps runs of word characters plus
 # ``_ . - / +`` as one token. ``\w`` already covers ``_``.
@@ -367,6 +366,47 @@ def tool_names_for(agent_filter: str | None) -> list[str] | None:
     except ImportError:
         names = []
     return names or [agent_filter]
+
+
+def merge_hits(
+    home: Path | str | None,
+    query: str,
+    sessions: list[Session],
+    *,
+    limit: int = DEFAULT_LIMIT,
+    agent_filter: str | None = None,
+) -> tuple[set[str] | None, dict[str, SearchHit]]:
+    """Union the index's hits for ``query`` into a parsed listing.
+
+    ``sessions`` gains a ``Session`` for each hit the parsers did not list
+    (``resolve_hit_sessions``), in place. Returns ``(search_ids, best)``:
+    every session id the index matched, for ``SessionQuery.search_ids``
+    (None when there is no index or no hit), and each matched id's hit,
+    the one a parsed session joined to first. ``swe session --search``
+    and the MCP session tool both search this way.
+    """
+    if not available(home):
+        return None, {}
+    hits = search(home, query, limit=max(limit, DEFAULT_LIMIT),
+                  agents=tool_names_for(agent_filter))
+    if not hits:
+        return None, {}
+    search_ids = {h.session_id for h in hits if h.session_id}
+    hit_by_key = {key: h for h in hits for key in match_keys(h.session_id)}
+    best: dict[str, SearchHit] = {}
+    for session in sessions:
+        if not session.session_id:
+            continue
+        hit = next((hit_by_key[k] for k in match_keys(session.session_id)
+                    if k in hit_by_key), None)
+        if hit is not None:
+            search_ids.add(session.session_id)
+            best[session.session_id] = hit
+    sessions.extend(resolve_hit_sessions(hits, sessions))
+    for h in hits:
+        if h.session_id:
+            best.setdefault(h.session_id, h)
+    return search_ids, best
 
 
 def resolve_hit_sessions(hits: list[SearchHit], parsed: list[Session]) -> list[Session]:

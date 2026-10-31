@@ -63,7 +63,9 @@ struct ExperimentalSection: View {
             warning: {
                 if case .failed(let message) = updates.rebuildState { return message }
                 return updates.rebuildNotice
-            }()) {
+            }(),
+            danger: { if case .failed = updates.rebuildState { return true }
+                      return false }()) {
                 HStack(spacing: 12) {
                     Button("Check now") { Task { await updates.refresh(force: true) } }
                         .secondaryButton()
@@ -189,5 +191,7 @@ private struct SessionSearchRow: View {
             }
         }
         .padding(.vertical, 14)
+        .onAppear { model.statusVisible = true }
+        .onDisappear { model.statusVisible = false }
     }
 }

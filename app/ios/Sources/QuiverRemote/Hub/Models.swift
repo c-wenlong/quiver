@@ -280,7 +280,12 @@ struct OwnershipData: Decodable {
     /// The channel an attach took (nil once observed again).
     var mode: String? = nil
 }
-struct ApprovalRequested: Decodable { let requestId: String?; let prompt: String? }
+struct ApprovalRequested: Decodable {
+    let requestId: String?
+    let prompt: String?
+    /// The pane's numbered menu rows, when the hub read any.
+    let options: [ApprovalOption]?
+}
 struct ApprovalResolved: Decodable { let requestId: String?; let decision: String?; let source: String? }
 struct CommandResult: Decodable {
     let op: String?
@@ -390,9 +395,14 @@ struct SendAccepted: Decodable { let ok: Bool?; let waiting: Bool? }
 struct WaitingSend: Decodable, Equatable {
     let clientId: String
     let text: String?
-    /// Attachment refs as sent; kept raw, the tray only shows the text.
+    /// Attachment refs as sent; kept raw, so an odd entry can't fail the list.
     var attachments: [JSONValue]? = nil
     var queuedAt: Double? = nil
+
+    /// The refs that are strings, for the tray row's file count.
+    var attachmentRefs: [String] {
+        (attachments ?? []).compactMap { if case .string(let s) = $0 { s } else { nil } }
+    }
 }
 
 struct QueueResponse: Decodable { let sends: [WaitingSend] }
@@ -570,6 +580,8 @@ struct PullDetail: Decodable {
     let reviewRequests: [String]?
     let createdAt: String?
     let mergedAt: String?
+    /// Set once auto-merge is armed: GitHub merges when checks pass.
+    let autoMerge: PullAutoMerge?
     /// Where the hub's `pr_worktree` puts the checkout — the open
     /// sheet's "Starts in" line before the worktree exists.
     let worktree: String?
@@ -589,6 +601,12 @@ struct CheckRun: Decodable, Hashable {
     /// passing | failing | running | none
     let state: String?
     let url: String?
+}
+
+/// A PR's armed auto-merge: `method` is squash, rebase or merge.
+struct PullAutoMerge: Decodable, Hashable {
+    let method: String?
+    let enabledAt: String?
 }
 
 /// One `latestReviews` entry; `review_requests` decodes as names.
@@ -691,6 +709,14 @@ struct IssueComment: Decodable, Hashable {
     let url: String?
 }
 
+/// `POST /v1/issues/comment`: the comment as posted.
+struct IssueCommentReply: Decodable {
+    let ok: Bool?
+    let repo: String?
+    let number: Int?
+    let comment: IssueComment?
+}
+
 // MARK: Tasks (GET /v1/tasks…)
 
 /// `GET /v1/tasks`: the hub's work-item store over the sources' open
@@ -774,8 +800,9 @@ struct TaskRow: Decodable, Identifiable, Hashable, Sendable {
     /// leave it out; decoding still reads it.
     var status: String? = nil
 
-    /// The list's group key: the repo for GitHub, the project elsewhere.
-    var scope: String { repo ?? project ?? "" }
+    /// The list's group key: the repo for GitHub, the project elsewhere;
+    /// empty when the row names neither.
+    var scope: String { [repo, project].compactMap { $0 }.first { !$0.isEmpty } ?? "" }
     /// "o/r#5" for GitHub, "QUI-123" elsewhere.
     var refLabel: String {
         guard let ref, !ref.isEmpty else { return "" }

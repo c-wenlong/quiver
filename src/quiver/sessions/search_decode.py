@@ -134,8 +134,13 @@ def iso_seconds(seconds: float) -> str:
     double's own fraction, so both writers store the same string."""
     whole = math.floor(seconds)
     millis = math.floor((seconds - whole) * 1000)
-    stamp = datetime.fromtimestamp(whole, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    return f"{stamp}.{millis:03d}Z"
+    try:
+        moment = datetime.fromtimestamp(whole, timezone.utc)
+    except (OverflowError, OSError) as exc:
+        # Past what datetime holds: one ValueError for every caller, which
+        # the indexer already treats as a bad record, not a failed pass.
+        raise ValueError(f"timestamp out of range: {seconds}") from exc
+    return f"{moment.strftime('%Y-%m-%dT%H:%M:%S')}.{millis:03d}Z"
 
 
 def stamp_iso(value) -> str | None:
@@ -148,7 +153,10 @@ def stamp_iso(value) -> str | None:
     raw = float(value)
     if not math.isfinite(raw) or raw <= 0:
         return None
-    return iso_seconds(raw / 1000 if raw > 1_000_000_000_000 else raw)
+    try:
+        return iso_seconds(raw / 1000 if raw > 1_000_000_000_000 else raw)
+    except ValueError:
+        return None  # a junk stamp past year 9999 says nothing
 
 
 # -- injected turns (SearchInjectedTurn) ---------------------------------

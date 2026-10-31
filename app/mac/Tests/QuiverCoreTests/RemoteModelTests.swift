@@ -115,36 +115,45 @@ import Testing
              "expires_in_s": 300}}
             """#.utf8), stderr: "")
         }
-        let runner = SequencedRunner([(.milliseconds(400), pair("old")), (.milliseconds(10), pair("new"))])
+        // Each reply waits at its own gate, so the test picks the order.
+        let runner = GatedReplies([pair("old"), pair("new")])
         let model = RemoteModel(swe: SweClient(runner: runner))
-        async let first: Void = model.mintTicket()
-        try? await Task.sleep(for: .milliseconds(50))
+        let first = Task { await model.mintTicket() }
+        #expect(await runner.gates[0].arrived())
         model.dismissTicket()
-        async let second: Void = model.mintTicket()
-        _ = await (first, second)
+        let second = Task { await model.mintTicket() }
+        #expect(await runner.gates[1].arrived())
+        // The newer mint answers first; the older one lands after it.
+        runner.gates[1].open()
+        await second.value
+        runner.gates[0].open()
+        await first.value
         #expect(model.ticket?.token == "new")
         #expect(!model.pairing)
 
-        let late = SequencedRunner([(.milliseconds(200), pair("late"))])
+        let late = GatedReplies([pair("late")])
         let closed = RemoteModel(swe: SweClient(runner: late))
-        async let mint: Void = closed.mintTicket()
-        try? await Task.sleep(for: .milliseconds(50))
+        let mint = Task { await closed.mintTicket() }
+        #expect(await late.gates[0].arrived())
         closed.dismissTicket()
-        _ = await mint
+        late.gates[0].open()
+        await mint.value
         #expect(closed.ticket == nil)
 
         // An older mint failing while the newer one runs leaves the
         // spinner on and no error up.
-        let failing = SequencedRunner([(.milliseconds(50), .init(status: 1, stdout: Data(), stderr: "boom")),
-                                       (.milliseconds(1500), pair("fresh"))])
+        let failing = GatedReplies([.init(status: 1, stdout: Data(), stderr: "boom"), pair("fresh")])
         let racing = RemoteModel(swe: SweClient(runner: failing))
-        async let older: Void = racing.mintTicket()
-        try? await Task.sleep(for: .milliseconds(10))
-        async let newer: Void = racing.mintTicket()
-        await older
+        let older = Task { await racing.mintTicket() }
+        #expect(await failing.gates[0].arrived())
+        let newer = Task { await racing.mintTicket() }
+        #expect(await failing.gates[1].arrived())
+        failing.gates[0].open()
+        await older.value
         #expect(racing.pairing)
         #expect(racing.pairError == nil)
-        await newer
+        failing.gates[1].open()
+        await newer.value
         #expect(!racing.pairing)
         #expect(racing.ticket?.token == "fresh")
     }
@@ -152,10 +161,30 @@ import Testing
     /// A load cancelled with its page puts the previous status back
     /// instead of spinning for good.
     @Test func aCancelledLoadDoesNotSpinForever() async throws {
-        let runner = StuckRunner()
+        // One reply: the first load lands, the second call hangs until
+        // that load is cancelled.
+        let runner = GatedReplies([.init(status: 0, stdout: hubUp, stderr: "")])
+        runner.gates[0].open()
+        let model = RemoteModel(swe: SweClient(runner: runner))
+        await model.load()
+        let loaded = model.status
+        guard case .loaded = loaded else {
+            Issue.record("expected loaded, got \(loaded)")
+            return
+        }
+        let task = Task { await model.load() }
+        #expect(await runner.hanging())
+        task.cancel()
+        await task.value
+        #expect(model.status == loaded)
+    }
+
+    /// Cancelled before anything loaded, there is nothing to put back.
+    @Test func aCancelledFirstLoadGoesBackToIdle() async throws {
+        let runner = GatedReplies([])
         let model = RemoteModel(swe: SweClient(runner: runner))
         let task = Task { await model.load() }
-        while runner.started == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(await runner.hanging())
         task.cancel()
         await task.value
         #expect(model.status == .idle)
@@ -185,13 +214,45 @@ import Testing
         #expect(model.pairError?.contains("hub unreachable") == true)
     }
 
-    @Test func revokingRunsTheRevokeCommand() async {
-        let runner = FakeRunner(.init(status: 0, stdout: Data(
-            #"{"schema":1,"data":{"revoked":"dev-1","ok":true}}"#.utf8), stderr: ""))
+    @Test func revokingRunsTheRevokeCommandThenReloads() async {
+        let runner = QueueRunner([
+            .init(status: 0, stdout: Data(
+                #"{"schema":1,"data":{"revoked":"dev-1","ok":true}}"#.utf8), stderr: ""),
+            .init(status: 0, stdout: hubUp, stderr: ""),
+        ])
         let model = RemoteModel(swe: SweClient(runner: runner))
-        let device = RemoteStatus.Device(id: "dev-1")
-        // The second FakeRunner reply is the reload after a successful revoke.
-        await model.revoke(device)
-        #expect(runner.calls.first == ["remote", "devices", "--revoke=dev-1", "--json"])
+        await model.revoke(RemoteStatus.Device(id: "dev-1"))
+        #expect(runner.calls == [["remote", "devices", "--revoke=dev-1", "--json"],
+                                 ["remote", "status", "--json"]])
+        #expect(model.revoking.isEmpty)
+        #expect(model.revokeErrors["dev-1"] == nil)
+        guard case .loaded = model.status else {
+            Issue.record("expected loaded, got \(model.status)")
+            return
+        }
+    }
+
+    /// swe answering ok:false means the hub had no such device: say so,
+    /// and skip the reload.
+    @Test func aRevokeSweDidNotFindSaysSo() async {
+        let runner = QueueRunner([.init(status: 0, stdout: Data(
+            #"{"schema":1,"data":{"revoked":"dev-1","ok":false}}"#.utf8), stderr: "")])
+        let model = RemoteModel(swe: SweClient(runner: runner))
+        await model.revoke(RemoteStatus.Device(id: "dev-1"))
+        #expect(runner.calls.count == 1)
+        #expect(model.revoking.isEmpty)
+        #expect(model.revokeErrors["dev-1"] == "swe did not find that device")
+        #expect(model.status == .idle)
+    }
+
+    /// A failed revoke shows its error on the row and does not reload.
+    @Test func aFailedRevokeShowsWhyAndSkipsTheReload() async {
+        let runner = QueueRunner([.init(status: 1, stdout: Data(), stderr: "hub unreachable")])
+        let model = RemoteModel(swe: SweClient(runner: runner))
+        await model.revoke(RemoteStatus.Device(id: "dev-1"))
+        #expect(runner.calls.count == 1)
+        #expect(model.revoking.isEmpty)
+        #expect(model.revokeErrors["dev-1"]?.isEmpty == false)
+        #expect(model.status == .idle)
     }
 }

@@ -17,7 +17,7 @@ struct AgentsMdPage: View {
              scrolls: false) {
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task { await model.load(swe: app.swe) }
-                model.checkDisk()
+                Task { await model.checkDisk() }
             }
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)
@@ -32,7 +32,7 @@ struct AgentsMdPage: View {
         .task(id: app.swePath) { await model.load(swe: app.swe) }
         // Agents rewrite these files while they work; pick that up on return.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            model.checkDisk()
+            Task { await model.checkDisk() }
         }
     }
 }
@@ -88,7 +88,7 @@ private struct LinksStrip: View {
         Strip {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("Harnesses").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
-                    .help("From swe init --check")
+                    .hoverTip("From swe init --check", replacesLabel: false)
                 FlowLayout(spacing: 14, lineSpacing: 6) {
                     ForEach(report.instructionRows) { row in
                         if let link = row.instructions {
@@ -105,7 +105,7 @@ private struct LinksStrip: View {
                         }
                         .primaryButton()
                         .disabled(model.linking)
-                        .help("Runs swe init, which links what is missing and never replaces a real file.")
+                        .hoverTip("Runs swe init, which links what is missing and never replaces a real file.", replacesLabel: false)
                     }
                     .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                 }
@@ -119,8 +119,9 @@ private struct LinksStrip: View {
                     Button("Replace and back up…") { confirmingReplace = true }
                         .secondaryButton()
                         .disabled(model.linking || model.projectHasUnsavedChanges)
-                        .help(model.projectHasUnsavedChanges ? AgentsModel.saveFirst
-                              : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.")
+                        .hoverTip(model.projectHasUnsavedChanges ? AgentsModel.saveFirst
+                                  : "Runs swe init --force, which copies each real file in the way to ~/.quiver/backups before linking over it.",
+                                  replacesLabel: false)
                 }
             }
             if let error = model.linkError {
@@ -334,7 +335,7 @@ struct InstructionEditor: View {
                     .accessibilityElement(children: .combine)
                 }
                 if !readOnly {
-                    Button("Revert") { document.revert(); error = nil }
+                    Button("Revert") { Task { await document.revert(); error = nil } }
                         .secondaryButton()
                         .disabled(!document.isDirty)
                     Button("Save") { save(overwrite: false) }
@@ -365,7 +366,7 @@ struct InstructionEditor: View {
     @ViewBuilder private var editorContent: some View {
         if document.changedOnDisk {
             ChangedOnDiskBanner(
-                reload: { document.load(); error = nil },
+                reload: { Task { await document.load(); error = nil } },
                 overwrite: { save(overwrite: true) })
         }
         if let error {
@@ -407,14 +408,16 @@ struct InstructionEditor: View {
     }
 
     private func save(overwrite: Bool) {
-        switch document.save(overwrite: overwrite) {
-        case .saved:
-            error = nil
-            onSaved()
-        case .changedOnDisk:
-            error = nil
-        case .failed(let message):
-            error = message
+        Task {
+            switch await document.save(overwrite: overwrite) {
+            case .saved:
+                error = nil
+                onSaved()
+            case .changedOnDisk:
+                error = nil
+            case .failed(let message):
+                error = message
+            }
         }
     }
 }

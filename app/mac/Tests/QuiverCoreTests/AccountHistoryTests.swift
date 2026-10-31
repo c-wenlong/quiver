@@ -41,7 +41,8 @@ import Testing
         var queued: [String: [Int]]
         var reads: [Set<AccountHistory.Key>] = []
         var hold: String?
-        private(set) var holding = false
+        /// Bumped when a held read parks, so a test awaits the park.
+        let holding = CountGate()
         private var parked: CheckedContinuation<Void, Never>?
 
         init(_ queued: [String: [Int]]) { self.queued = queued }
@@ -52,8 +53,11 @@ import Testing
             for key in keys { result[key] = [day: queued[key.harness]!.removeFirst()] }
             if let hold, keys.contains(where: { $0.harness == hold }) {
                 self.hold = nil
-                holding = true
-                await withCheckedContinuation { parked = $0 }
+                let holding = self.holding
+                await withCheckedContinuation {
+                    parked = $0
+                    Task { await holding.bump() }
+                }
             }
             return result
         }
@@ -101,13 +105,13 @@ import Testing
 
     /// A scan that lands while a card's first figures are still loading
     /// rebuilds it, and the first read finishing late is dropped.
-    @Test func aScanDuringTheFirstBuildWins() async {
+    @Test(.timeLimit(.minutes(1))) func aScanDuringTheFirstBuildWins() async {
         let now = day(10, 16)
         let days = Days(["claude": [1, 7]])
         days.hold = "claude"
         let history = model(days, now: now)
         let first = Task { await history.show([claude]) }
-        while !days.holding { await Task.yield() }
+        #expect(await days.holding.reach(1))
         await history.recompute()
         #expect(history.histories[claude]?.weeks.last?.tokens == 7)
         days.release()

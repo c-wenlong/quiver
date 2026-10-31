@@ -56,16 +56,18 @@ Writes, all behind the device bearer and the Origin check:
 - ``key_value``: ``{"name"}`` answers ``{"name", "value"}``, the one reply
   that carries a value, for the eye and copy buttons.
 - ``revoke``: ``{"device_id"}`` signs one paired device out of the hub
-  (``swe remote devices --revoke``). The device must be one ``get``
-  lists. Revoking the device that sent the request also needs
+  (``swe remote devices --revoke``), or, for a ``tailnet:<node>`` id
+  from ``remote.signins``, stops one of the owner's tailnet devices
+  getting in without pairing. The device must be one ``get`` lists.
+  Revoking the device that sent the request also needs
   ``"confirm_this_device": true``: without it the answer is 409, so a
   stray click can't lock this browser out.
 
 The caller is either a paired device (``ctx.device_id`` is its id in
 devices.json) or the hub owner's own tailnet device, let in without
 pairing (``ctx.device_id`` is ``"tailnet:<node id>"``). ``remote.caller``
-says which; a tailnet caller has no row in the device list and nothing
-of its own to revoke, and an id of that form is refused outright.
+says which; a tailnet caller has no row in the device list but one in
+``remote.signins``, the owner's tailnet devices the hub has let in.
 """
 
 from __future__ import annotations
@@ -224,6 +226,7 @@ def _remote(ctx) -> dict:
         "public_url": public_url,
         "devices": remote_devices.rows(
             ctx.home, ctx.device_id, pairing.load_devices(ctx.home)),
+        "signins": remote_devices.signin_rows(ctx.home, ctx.device_id),
         "requests": pairing.list_requests(ctx.home),
         "token_ttl_s": int(pairing.TOKEN_TTL_S),
     }

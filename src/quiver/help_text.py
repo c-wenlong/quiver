@@ -368,6 +368,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe mcp edit <tool> <name>')}          Edit one server's config in one tool
   {c('cyan', 'swe mcp validate [tool...]')}          Validate MCP config shape for one/all tools
   {c('cyan', 'swe mcp doctor')}                      Deep diagnostics
+  {c('cyan', 'swe mcp gateway [share|install]')}     Run shared servers once for every session
 
 {c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for details on each — flags, examples, the exact
         model each command uses.

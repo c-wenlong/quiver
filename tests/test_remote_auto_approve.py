@@ -135,6 +135,42 @@ class TestAutoApproveRequest(unittest.TestCase):
         self.assertIsNone(pairing.auto_approve_request(
             self.home, r["request_id"], dict(_PHONE)))
 
+    def _pair_by_code(self):
+        r = pairing.request_pair(self.home, dict(_PHONE))
+        return pairing.approve_request(self.home, r["code"])["device_id"]
+
+    def test_refuses_a_node_whose_newest_device_was_revoked(self):
+        """A lost phone on the owner's own login must not walk back in."""
+        pairing.revoke_device(self.home, self._pair_by_code())
+        r = pairing.request_pair(self.home, dict(_PHONE))
+        self.assertIsNone(pairing.auto_approve_request(
+            self.home, r["request_id"], dict(_PHONE)))
+        self.assertEqual(len(pairing.list_requests(self.home)), 1)
+
+    def test_a_code_approval_after_a_revoke_lifts_it(self):
+        pairing.revoke_device(self.home, self._pair_by_code())
+        self._pair_by_code()  # the owner typed the code: a newer live row
+        r = pairing.request_pair(self.home, dict(_PHONE))
+        self.assertIsNotNone(pairing.auto_approve_request(
+            self.home, r["request_id"], dict(_PHONE)))
+
+    def test_refuses_a_node_whose_sign_in_was_revoked(self):
+        pairing.note_signin(self.home, _PHONE["node_id"])
+        self.assertTrue(pairing.revoke_signin(self.home, _PHONE["node_id"]))
+        r = pairing.request_pair(self.home, dict(_PHONE))
+        self.assertIsNone(pairing.auto_approve_request(
+            self.home, r["request_id"], dict(_PHONE)))
+        # And it stays revoked: only a typed code lifts a sign-in revoke.
+        self.assertTrue(pairing.signin_revoked(self.home, _PHONE["node_id"]))
+
+    def test_refuses_when_the_sign_ins_file_is_damaged(self):
+        path = pairing.signins_file(self.home)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("not json")
+        r = pairing.request_pair(self.home, dict(_PHONE))
+        self.assertIsNone(pairing.auto_approve_request(
+            self.home, r["request_id"], dict(_PHONE)))
+
     def test_a_code_approval_is_marked_too(self):
         r = pairing.request_pair(self.home, dict(_PHONE))
         res = pairing.approve_request(self.home, r["code"])
@@ -221,6 +257,18 @@ class TestHubRoute(unittest.TestCase):
         self.assert_pending(self.request(headers={
             **self._JSON, "Origin": "https://evil.example"}))
 
+    def test_the_log_line_escapes_the_requesters_name(self):
+        status, data = self.srv.request(
+            "POST", "/v1/pair/request",
+            body={"name": "ph\none\n2026-01-01 pair: forged\x1b[2J"},
+            headers=dict(self._JSON))
+        self.assertEqual(status, 201, data)
+        log = self.err.getvalue()
+        pair_lines = [ln for ln in log.splitlines() if "pair:" in ln]
+        self.assertEqual(len(pair_lines), 1, log)
+        self.assertNotIn("\x1b", log)
+        self.assertIn("\\x0a", pair_lines[0])
+
     def test_a_manual_approval_is_logged_too(self):
         pairing.set_auto_approve_owner(self.srv.home, False)
         r = self.request()
@@ -271,6 +319,22 @@ class TestCli(unittest.TestCase):
             self.assertEqual(out, "")
             self.assertIn("on or off", err)
         self.assertFalse(pairing.auto_approve_owner())
+
+    def test_refuses_other_actions_alongside(self):
+        """`--auto-approve=off --revoke=<id>` must not report success
+        while the device stays active."""
+        r = pairing.request_pair(None, dict(_PHONE))
+        did = pairing.approve_request(None, r["code"])["device_id"]
+        for extra in ([f"--revoke={did}"], ["--requests"],
+                      ["--approve=123456"], ["--deny=123456"],
+                      ["--approve=123456", "--request-id=x"]):
+            rc, out, err = _run(["devices", "--auto-approve=on", *extra,
+                                 "--json"])
+            self.assertEqual(rc, 1, extra)
+            self.assertEqual(out, "")
+            self.assertIn("can't be combined", err)
+        self.assertFalse(pairing.auto_approve_owner())
+        self.assertFalse(pairing.load_devices()[did].get("revoked_at"))
 
     def test_bare_flag_needs_a_value(self):
         rc, _, err = _run(["devices", "--auto-approve"])

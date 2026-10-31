@@ -19,6 +19,7 @@ from unittest import mock
 
 from quiver.console import strip_ansi
 from quiver.find.entries import HIDE_DIRS, Entry
+from tests._tempdir import temp_dir
 
 
 class EntryContractTest(unittest.TestCase):
@@ -33,11 +34,11 @@ class EntryContractTest(unittest.TestCase):
         self.assertFalse(Entry("gone").can_descend)
 
     def test_a_directory_descends(self):
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         self.assertTrue(Entry("d", d).can_descend)
 
     def test_a_file_does_not(self):
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "SKILL.md"
         f.write_text("x")
         self.assertFalse(Entry("f", f).can_descend)
@@ -92,7 +93,7 @@ class BrowserSafetyTest(unittest.TestCase):
         carry an OSC link or a clipboard write into the browser."""
         from quiver.find.browser import _file_preview
 
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "SKILL.md"
         f.write_text(
             "ok line\n"
@@ -112,7 +113,7 @@ class BrowserSafetyTest(unittest.TestCase):
         expandtabs or indented files lose their shape."""
         from quiver.find.browser import _file_preview
 
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "x.md"
         f.write_text("one\n\tdeep\n\t\tdeeper\n")
         rows = _file_preview(f, 10)
@@ -312,7 +313,7 @@ class PreviewTest(unittest.TestCase):
     """Arrowing onto a file shows the file, not the next folder."""
 
     def setUp(self):
-        self.d = Path(tempfile.mkdtemp())
+        self.d = temp_dir(self)
 
     def test_a_directory_previews_its_children(self):
         from quiver.find.browser import _preview
@@ -445,6 +446,25 @@ class ResizeTest(unittest.TestCase):
         rows = [ln for ln in buf.getvalue().split("\r\n") if "│" in ln]
         widths = {visible_len(r) for r in rows}
         self.assertEqual(len(widths), 1, f"ragged right edge: {sorted(widths)}")
+
+    def test_the_returned_count_is_the_lines_written(self):
+        """The count is how far the next redraw rewinds. It stayed at the
+        old two-line header's figure after the header became one line, so
+        every redraw climbed one line and ate whatever sat above it."""
+        import io
+        from contextlib import redirect_stdout
+
+        from quiver.find.browser import _render
+
+        many = [Entry(str(i)) for i in range(30)]
+        for entries, ratio in (([Entry("a")], (3, 9, 8)),     # no range line
+                               (many, (3, 9, 8)),             # range line
+                               ([Entry("a")], (2, 3, 5))):    # ratio note
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                drawn = _render([], 0, entries, 0, ["x"], "T", "crumb", 0,
+                                10, 140, ratio)
+            self.assertEqual(drawn, buf.getvalue().count("\r\n"))
 
     def test_widths_are_recomputed_from_the_ratio(self):
         from quiver.find.browser import _pane_widths

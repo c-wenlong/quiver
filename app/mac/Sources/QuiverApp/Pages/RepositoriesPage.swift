@@ -73,6 +73,13 @@ struct RepositoriesPage: View {
                         await model.loadTabIfStale(model.tab, repo: repo.name,
                                                    swe: swe)
                     }
+                    // The Review requested filter's flags ride along
+                    // with the pull requests they filter.
+                    if model.tab == .pulls {
+                        group.addTask {
+                            await model.loadReviewRequests(repo: repo.name, swe: swe)
+                        }
+                    }
                 }
             }
             // Poll while the page is open so merged PRs and finished CI
@@ -86,6 +93,11 @@ struct RepositoriesPage: View {
                         for tab in tabs {
                             group.addTask {
                                 await model.loadTab(tab, repo: repo.name, swe: swe)
+                            }
+                        }
+                        if model.tab == .pulls {
+                            group.addTask {
+                                await model.loadReviewRequests(repo: repo.name, swe: swe)
                             }
                         }
                     }
@@ -127,6 +139,11 @@ struct RepositoriesPage: View {
                             await model.loadTab(.actions, repo: repo.name, swe: swe)
                         }
                     }
+                    if model.tab == .pulls {
+                        group.addTask {
+                            await model.loadReviewRequests(repo: repo.name, swe: swe, force: true)
+                        }
+                    }
                 }
             }
         }
@@ -164,6 +181,12 @@ struct RepositoriesPage: View {
                         .frame(minWidth: 120, maxWidth: 260)
                         .help("Search titles, branches, authors and states like failing or draft (⌘K)")
                         .padding(.bottom, 4)
+                }
+                if model.tab == .pulls, !model.pullFilters.isEmpty {
+                    PullFilterPicker(options: model.pullFilters,
+                                     count: { model.pullCount($0) },
+                                     selection: Binding(get: { model.activePullFilter },
+                                                        set: { model.pullFilter = $0 }))
                 }
                 if let error = model.pinError ?? model.actionError {
                     ErrorCard(message: error)
@@ -226,6 +249,7 @@ struct RepositoriesPage: View {
                     RepoSurfaces(repo: pin.name, board: model.board(for: pin.name),
                                  tab: model.tab, query: model.query,
                                  unfiltered: model.showsAllRows(pin.name),
+                                 keepsPull: { model.keepsPull($0, repo: pin.name) },
                                  preview: 5,
                                  expandEdge: index == repos.count - 1 ? .cardBottom : .inset,
                                  openPr: { detail = PrSelection(repo: pin.name, number: $0) },
@@ -245,7 +269,9 @@ struct RepositoriesPage: View {
         }
         let place = model.shownRepo ?? "your pinned repos"
         return switch model.tab {
-        case .pulls: "No open pull requests in \(place)."
+        case .pulls: model.activePullFilter == .all
+            ? "No open pull requests in \(place)."
+            : "No open pull requests in \(place) match \(model.activePullFilter.title)."
         case .issues: "No open issues in \(place)."
         case .actions: "No workflow runs in \(place)."
         case .pages: "\(place) has no GitHub Pages site."
@@ -477,6 +503,23 @@ private struct RepoRail: View {
     }
 }
 
+// MARK: - Pull request filter
+
+/// All / Mine / Review requested above a pull request list. Only the
+/// filters the loaded flags can answer show; the caller hides the
+/// picker when none can.
+struct PullFilterPicker: View {
+    var options: [PullFilter]
+    /// The rows each filter would list, shown after its title.
+    var count: (PullFilter) -> Int
+    @Binding var selection: PullFilter
+
+    var body: some View {
+        Tabs(options: options.map { ($0, "\($0.title) \(count($0))") }, selection: $selection)
+            .hoverTip("Mine is pull requests you opened; Review requested is open ones waiting on your review, from gh pr status")
+    }
+}
+
 // MARK: - Repo surfaces
 
 /// One repo's tab surfaces — pull requests, issues, workflow runs,
@@ -495,6 +538,9 @@ struct RepoSurfaces: View {
     /// Skip row filtering — a dashboard section the query named keeps
     /// its whole board.
     var unfiltered = false
+    /// The Mine / Review requested filter on pull requests; applies
+    /// even where the search is skipped.
+    var keepsPull: (GhPr) -> Bool = { _ in true }
     /// The focus page's scroll loading: lists reveal `batch` rows at a
     /// time and the end sentinel grows the fetch window. Off here, the
     /// dashboard's 3-row collapse preview stays.
@@ -603,7 +649,9 @@ struct RepoSurfaces: View {
 
     /// The tab's rows after the search filter.
     private func pullsState() -> Loadable<[GhPr]> {
-        filtered(board.pulls, Self.prParts)
+        var state = board.pulls
+        if case .loaded(let rows) = state { state = .loaded(rows.filter(keepsPull)) }
+        return filtered(state, Self.prParts)
     }
 
     @ViewBuilder
@@ -685,7 +733,7 @@ struct RepoSurfaces: View {
                         ForEach(issue.labels.prefix(3), id: \.self) { Badge($0) }
                     }
                     Text("#\(issue.number) · \(issue.author)"
-                         + (issue.comments > 0 ? " · \(issue.comments) comments" : "")
+                         + (issue.comments > 0 ? " · \(RowWording.comments(issue.comments))" : "")
                          + (issue.updatedAt.date.map { " · \(UsageFormat.ago($0, now: .now))" } ?? ""))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .lineLimit(1).truncationMode(.middle)
@@ -724,7 +772,7 @@ struct RepoSurfaces: View {
                     preview: preview, edge: expandEdge,
                     window: window(for: .actions, rows: count(state))) { run in
             OpenRow(url: run.url, open: openURL.callAsFunction) {
-                RunIcon(status: run.status, conclusion: run.conclusion)
+                RunIcon(run: run)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(run.title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).truncationMode(.tail)
@@ -737,11 +785,11 @@ struct RepoSurfaces: View {
                 if model.actionBusy.contains("rerun:\(repo)#\(run.id)") {
                     ProgressView().controlSize(.small)
                 } else if let conclusion = run.conclusion {
-                    Badge(conclusion == "success" ? "Passed" : conclusion.capitalized)
+                    Badge(RowWording.conclusion(conclusion))
                 }
             }
             .contextMenu {
-                if run.conclusion == "failure" {
+                if run.failed {
                     Button("Re-run failed jobs") {
                         Task { await model.rerunRun(repo: repo, run: run.id,
                                                     failedOnly: true, swe: app.swe) }
@@ -1391,34 +1439,45 @@ struct PrStateIcons: View {
     }
 }
 
+/// How a board row words GitHub's counts and run conclusions.
+enum RowWording {
+    static func comments(_ count: Int) -> String {
+        "\(count) comment\(count == 1 ? "" : "s")"
+    }
+
+    /// `success` reads "Passed"; the rest in sentence case, so
+    /// `timed_out` reads "Timed out" rather than "Timed_out".
+    static func conclusion(_ conclusion: String) -> String {
+        if conclusion == "success" { return "Passed" }
+        let words = conclusion.replacingOccurrences(of: "_", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
+    }
+}
+
 /// A workflow run's status: running marks spin yellow, finished runs
-/// take their conclusion's colour.
+/// take their conclusion's colour. Failing is `GhRun.failed`, the same
+/// test the rail's dot and the search use, so a timed-out run reads red
+/// here too.
 private struct RunIcon: View {
-    var status: String?
-    var conclusion: String?
-    private var running: Bool { status == "in_progress" || status == "queued" }
+    var run: GhRun
     var body: some View {
         Image(systemName: symbol).font(Theme.font(size: 15)).foregroundStyle(color)
-            .symbolEffect(.rotate, options: .repeating, isActive: running)
+            .symbolEffect(.rotate, options: .repeating, isActive: run.running)
     }
     private var symbol: String {
-        if running { return "arrow.triangle.2.circlepath" }
-        switch conclusion {
+        if run.running { return "arrow.triangle.2.circlepath" }
+        if run.failed { return "xmark.circle.fill" }
+        switch run.conclusion {
         case "success": return "checkmark.circle.fill"
-        case "failure": return "xmark.circle.fill"
         case "cancelled": return "slash.circle"
         case "skipped": return "minus.circle"
         default: return "questionmark.circle"
         }
     }
     private var color: Color {
-        if status == "in_progress" || status == "queued" { return Theme.warning }
-        return switch conclusion {
-        case "success": Theme.success
-        case "failure": Theme.danger
-        case "cancelled", "skipped": Theme.textMuted
-        default: Theme.textMuted
-        }
+        if run.running { return Theme.warning }
+        if run.failed { return Theme.danger }
+        return run.conclusion == "success" ? Theme.success : Theme.textMuted
     }
 }
 

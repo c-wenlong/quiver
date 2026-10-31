@@ -54,6 +54,8 @@ final class PourBarView: NSView {
     /// Bumped by `begin`, so a fold's timer from an earlier pour neither
     /// calls its `done` nor fades the new pill.
     private var generation = 0
+    /// Ends the fold; tests swap in timers they fire by hand.
+    var schedule: MainTimer = MainTimer.runLoop
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -218,14 +220,11 @@ final class PourBarView: NSView {
 
         let end = Self.splitDuration + Double(count) * Self.splitStagger
         let current = generation
-        let timer = Timer(timeInterval: end, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.generation == current else { return }
-                done()
-                self.fadeOut()
-            }
+        schedule.after(end) { [weak self] in
+            guard let self, self.generation == current else { return }
+            done()
+            self.fadeOut()
         }
-        RunLoop.main.add(timer, forMode: .common)
     }
 
     // MARK: For tests

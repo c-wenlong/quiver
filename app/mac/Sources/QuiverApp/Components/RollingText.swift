@@ -88,6 +88,11 @@ final class RollingTextView: NSView {
     private var generation = 0
     /// The glyphs the latest roll is sliding out, removed once it lands.
     private var leaving: [CALayer] = []
+    /// Runs the tidy after a roll; tests swap in timers they fire by hand.
+    var schedule: MainTimer = MainTimer.runLoop
+    /// Whether to skip the roll (System Settings › Accessibility › Reduce
+    /// motion); tests pin it so a Mac with it on still runs them.
+    var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -111,7 +116,7 @@ final class RollingTextView: NSView {
         style = newStyle
         guard newText != text || restyled || cells.isEmpty else { return }
         let animated = !restyled && !cells.isEmpty && window != nil
-            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            && !reduceMotion()
         let old = text
         text = newText
         self.perCharacter = perCharacter
@@ -262,14 +267,10 @@ final class RollingTextView: NSView {
         // never comes for a window that isn't drawing. A newer roll bumps
         // `generation`, so this one's tidy can't touch its glyphs.
         let end = Self.duration + Double(count) * Self.stagger + 0.05
-        let timer = Timer(timeInterval: end, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.generation == current else { return }
-                self.tidy()
-            }
+        schedule.after(end) { [weak self] in
+            guard let self, self.generation == current else { return }
+            self.tidy()
         }
-        // Common modes, so it fires during a mouse drag or scroll too.
-        RunLoop.main.add(timer, forMode: .common)
     }
 
     /// Moves a glyph vertically and fades it, starting at `time`.
@@ -325,5 +326,19 @@ final class RollingTextView: NSView {
             return true
         }
         CATransaction.commit()
+    }
+}
+
+/// Runs a closure on the main actor after a delay. `runLoop` is a timer
+/// in the run loop's common modes, so it fires during a mouse drag or
+/// scroll too; tests use their own and fire it by hand.
+struct MainTimer {
+    let after: @MainActor (TimeInterval, @escaping @MainActor () -> Void) -> Void
+
+    static let runLoop = MainTimer { delay, body in
+        let timer = Timer(timeInterval: delay, repeats: false) { _ in
+            MainActor.assumeIsolated { body() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
     }
 }

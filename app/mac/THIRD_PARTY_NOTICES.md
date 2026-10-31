@@ -243,7 +243,10 @@ Where each came from is in `Resources/harness-icons.tsv`:
   Cloud, Huawei Cloud, iFlytek, SenseNova, KwaiKAT, Ollama, Poe, ZenMux,
   ElevenLabs and Atlas Cloud come from LobeHub icons
   (`@lobehub/icons-static-svg`), as do the status-page marks for
-  AssemblyAI, Baseten and Lambda. Synthetic, CheapestInference, Standard
+  AssemblyAI, Baseten, Lambda, Mistral AI, Stability AI, AI21, SambaNova,
+  Windsurf, Replit, Manus, Lovable, Tavily, Morph, Anyscale, Langfuse and
+  v0. Synthetic,
+  CheapestInference, Standard
   Compute, TaoToken, JD Cloud, State Cloud (China Telecom), SCNet, Charm,
   LLM Gateway and UCloud come from each company's own site or brand kit;
   China Unicom's from its logo file on English Wikipedia; Moore Threads'
@@ -254,8 +257,25 @@ Where each came from is in `Resources/harness-icons.tsv`:
   CC0-1.0), as do the status-page marks for Docker, Sentry, Datadog,
   Supabase, DigitalOcean, Render, Upstash, Convex, Linear, Notion, Clerk
   and Twilio (Twilio's is pinned to simple-icons 13.21.0, the last
-  release carrying it); Routing.Run's
+  release carrying it), Deepgram, Warp, Bitbucket, CircleCI, Buildkite,
+  Travis CI, Netlify, Fly.io, PyPI, RubyGems, MongoDB, Prisma, Postman,
+  Mailgun, Atlassian, Grafana, New Relic, ngrok, Figma, Discord,
+  HashiCorp, Expo, RevenueCat, Snyk, Codecov, Linode (Akamai's mark),
+  Sanity, Contentful, Temporal, Maven Central (the Apache Maven
+  feather), StackBlitz (the bolt Bolt.new's mark reuses), Braintrust,
+  ClickHouse, CockroachDB (Cockroach Labs), Loom, Make, PlanetScale,
+  Prefect, Semaphore, Snowflake, Sonatype and Zapier; Routing.Run's
   planet mark from Phosphor Icons (`@phosphor-icons/core`, MIT).
+- The remaining status-page marks come from each company's own site,
+  brand page or logo file: E2B, Ona, Pinecone, Runloop, Writer,
+  Supermemory, incident.io, LaunchDarkly, Inngest, Astronomer, Cartesia,
+  Browserbase, Arcade, Statsig, WorkOS and Honeycomb — several cropped to
+  the symbol where the site ships only a wordmark — and Sourcegraph's
+  swirl from its WorldVectorLogo copy. crates.io publishes no vector
+  mark, so its row carries the Rust logo from rust-lang/rust-artwork,
+  CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/). All are
+  trademarks of their owners, used only to name
+  them; where each came from is in `harness-icons.tsv`.
 - Continue comes from its repository (continuedev/continue,
   `docs/logo/light.svg`); aider from its repository (Aider-AI/aider,
   Apache-2.0, the site's pinned-tab icon); Crush from the

@@ -34,19 +34,17 @@ class TestWebAppRoutes(HubBase):
         }) + "\n")
 
     def test_pages_are_public_and_confined(self):
-        status, body = self.srv.request("GET", "/app/")
+        status, body = self.srv.request("GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn(b"/app/app.js", body)
-        self.assertIn(b"/app/model-menu.js", body)
-        for path in ("/app/app.js", "/app/format.js", "/app/model-menu.js", "/app/styles.css",
-                     "/app/harness-devin.svg"):
+        self.assertIn(b'src="/app.js"', body)
+        self.assertIn(b'src="/model-menu.js"', body)
+        for path in ("/app.js", "/format.js", "/model-menu.js", "/styles.css",
+                     "/harness-devin.svg"):
             self.assertEqual(self.srv.request("GET", path)[0], 200, path)
-        self.assertEqual(self.srv.request("GET", "/app")[0], 301)
-        for path in ("/app/../hub.py", "/app/%2e%2e/hub.py", "/app/api.py", "/app/x/y.js"):
+        # Only a flat asset name of a known type: nothing climbs out of
+        # the folder, and a Python module beside it is never served.
+        for path in ("/../hub.py", "/%2e%2e/hub.py", "/api.py", "/x/y.js", "/nope.js"):
             self.assertEqual(self.srv.request("GET", path)[0], 404, path)
-        # The remote PWA's own routes are gone; ``/`` lands here.
-        self.assertEqual(self.srv.request("GET", "/app.js")[0], 404)
-        self.assertEqual(self.srv.request("GET", "/")[0], 301)
 
     def test_overview_needs_a_device_and_reads_the_ledger(self):
         self.assertEqual(self.srv.request("GET", "/v1/app/overview")[0], 401)
@@ -76,12 +74,16 @@ class TestWebAppRoutes(HubBase):
 APP_JS = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/app.js"
 
 
-def app_js_function(name: str) -> str:
-    """The source of a top-level ``function name(...)`` in app.js, for node
-    tests that run one page script with app.js's globals stubbed: a page
-    calls the real helper, not a copy that could drift."""
+MANAGE_JS = APP_JS.with_name("manage.js")
+
+
+def app_js_function(name: str, js: Path = APP_JS) -> str:
+    """The source of a top-level ``function name(...)`` in app.js (or
+    ``js``, e.g. ``MANAGE_JS``), for node tests that run one page script
+    with app.js's globals stubbed: a page calls the real helper, not a copy
+    that could drift."""
     import re
-    found = re.search(r"^(?:async )?function %s\(.*?^\}\n" % re.escape(name), APP_JS.read_text(encoding="utf-8"),
+    found = re.search(r"^(?:async )?function %s\(.*?^\}\n" % re.escape(name), js.read_text(encoding="utf-8"),
                       re.S | re.M)
     assert found, name
     return found.group(0)
@@ -417,6 +419,16 @@ class TestBodySheets(unittest.TestCase):
             src = (APP_JS.parent / "pages" / f"{page}.js").read_text(encoding="utf-8")
             self.assertNotIn("<dialog", src, page)
 
+    def test_body_sheets_go_through_bodySheet(self):
+        """Compute, Pricing and Service status kept sheets on document.body
+        that route() never closed: Compute's stayed modal over the next
+        page, and the other two each carried their own hashchange copy."""
+        for page in ("compute", "pricing", "status"):
+            src = (APP_JS.parent / "pages" / f"{page}.js").read_text(encoding="utf-8")
+            self.assertIn("bodySheet(", src, page)
+            for made in ("<dialog", 'createElement("dialog")', '"hashchange"'):
+                self.assertNotIn(made, src, page)
+
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
@@ -554,7 +566,7 @@ class TestHarnessMark(unittest.TestCase):
     def test_every_shipped_logo_draws(self):
         files = sorted(p.name for p in FORMAT_JS.parent.glob("harness-*.svg"))
         ids = [f[len("harness-"):-len(".svg")].removesuffix("-color") for f in files]
-        drawn = self.fmt(json.dumps(ids) + ".map((id) => (Fmt.logo(id).match(/src=\"\\/app\\/([^\"]+)\"/) || [])[1] || null)")
+        drawn = self.fmt(json.dumps(ids) + ".map((id) => (Fmt.logo(id).match(/src=\"\\/([^\"]+)\"/) || [])[1] || null)")
         self.assertEqual(drawn, files)
 
     def test_marks_like_the_mac(self):
@@ -572,9 +584,29 @@ class TestHarnessMark(unittest.TestCase):
         logos = self.fmt("[Fmt.logo('claude-desktop'), Fmt.logo('codex-acc2'), Fmt.logo('copilot'), Fmt.logo('zed')]")
         self.assertIn("harness-claude-color.svg", logos[0])
         self.assertIn('alt="Codex (acc2)"', logos[1])
-        self.assertIn('class="logo mono" src="/app/harness-copilot.svg"', logos[2])
+        self.assertIn('class="logo mono" src="/harness-copilot.svg"', logos[2])
         self.assertEqual(logos[3], '<span class="logo" aria-hidden="true"></span>')
         self.assertEqual(self.fmt("Fmt.harnessName('codex-acc2')"), "Codex (acc2)")
+
+    def test_mark_view_is_the_macs_harness_mark_view(self):
+        """Skills, AGENTS.md and Hooks each had a copy that drew a second
+        account's or Devin cloud's logo without its word."""
+        out = self.fmt("['claude', 'claude-desktop', 'codex-acc2', 'devin-cloud', 'grok-bot', 'zed', 'a<b']"
+                       ".map((id) => Fmt.markView(id, 'sk-mark'))")
+        self.assertEqual(out[0], '<span class="sk-mark" title="Claude Code" aria-label="Claude Code">'
+                                 '<img class="logo" src="/harness-claude-color.svg" alt="Claude Code"><span>CLI</span></span>')
+        self.assertIn('alt="Claude Desktop"><span>Desktop</span></span>', out[1])
+        self.assertIn('alt="Codex (acc2)"><span>acc2</span></span>', out[2])
+        self.assertIn('src="/harness-devin.svg" alt="Devin cloud"><span>Cloud</span></span>', out[3])
+        self.assertIn('src="/harness-grok.svg" alt="Grok Bot"></span>', out[4])
+        self.assertEqual(out[5], '<span class="sk-mark" title="Zed" aria-label="Zed"><span>Zed</span></span>')
+        self.assertEqual(out[6], '<span class="sk-mark" title="A&lt;b" aria-label="A&lt;b"><span>A&lt;b</span></span>')
+        self.assertIn('class="logo logo-sm mono"', self.fmt("Fmt.markView('cursor', 'hk-mark', 'logo logo-sm')"))
+
+    def test_tilde_shortens_only_paths_under_home(self):
+        out = self.fmt("[Fmt.tilde('/h/u/a/b', '/h/u'), Fmt.tilde('/h/user2/a', '/h/u'),"
+                       " Fmt.tilde('/h/u', '/h/u'), Fmt.tilde('/h/u/a', ''), Fmt.tilde('/h/u/a', undefined)]")
+        self.assertEqual(out, ["~/a/b", "/h/user2/a", "/h/u", "/h/u/a", "/h/u/a"])
 
 
 if __name__ == "__main__":
