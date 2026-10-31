@@ -1391,12 +1391,17 @@ private struct UsageLegend: View {
     }
 
     var body: some View {
-        // The countdowns and the reset-passed dimming both depend on
-        // now; the grid's own minute ticker can't reach the panel.
+        // One ticker per row, so every row stays a direct child of the
+        // panel's legend stack; a shared TimelineView would gather them
+        // into one child re-spaced at the default gap, not the legend's
+        // 2pt. The countdowns and reset-passed dimming need now, which
+        // the grid's own minute ticker can't reach in the panel.
         TimelineView(.everyMinute) { context in
             accountRow(now: context.date)
-            if expanded, let usage {
-                ForEach(usage.windows, id: \.label) { window in
+        }
+        if expanded, let usage {
+            ForEach(usage.windows, id: \.label) { window in
+                TimelineView(.everyMinute) { context in
                     windowRow(window, usage: usage, now: context.date)
                 }
             }
