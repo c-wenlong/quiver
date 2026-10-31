@@ -110,6 +110,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Hub: per-device unread state for sessions.</strong> <code>POST /v1/sessions/&lt;key&gt;/read</code> moves the calling device's last-read cursor
+(body <code>{at?}</code>, default now), and every row from <code>GET /v1/sessions</code> and
+<code>GET /v1/app/sessions</code> carries <code>unread: true</code> when the session moved
+after that device's cursor. Cursors live per device in
+<code>data/remote/session_reads.json</code> (0600) beside <code>devices.json</code>, so a
+phone and a laptop keep separate state; the owner's tailnet browser
+gets its own <code>tailnet:&lt;node&gt;</code> cursors. A session the device never
+opened counts as unread only if it moved after the device paired, or
+after the hub learned this feature, whichever is later, so old rows
+start read. Satellite sessions work the same, stored on the hub. Each
+write prunes cursors for sessions the hub no longer lists and for
+revoked devices. Part of
+<a href="https://github.com/c-wenlong/quiver/issues/1439">#1439</a>; the client
+dots follow.</p>
+</li>
 <li><p><strong>Mac: the AGENTS.md page edits instruction chapters.</strong> When the shared
 file is chapter-managed (<code>~/.quiver/AGENTS_MD/index.txt</code> exists), the
 Global tab becomes a chapter editor instead of a flat-file editor: a
