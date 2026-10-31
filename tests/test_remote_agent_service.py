@@ -181,6 +181,12 @@ class AgentServiceTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("another swe remote agent already runs here", err)
         serve.assert_not_called()
+        # A refused start pairs nothing, so the saved hub stays put.
+        with patch.object(commands.agent_mod, "pair_agent") as pair:
+            rc, _, _ = self._run(["agent", "--hub=https://new.ts.net", "--token=T"])
+        self.assertEqual(rc, 1)
+        pair.assert_not_called()
+        self.assertEqual(agent_mod.load_agent(self.home)["hub"], "https://hub.tail.ts.net")
         lock.close()
         self.assertIsNone(agent_mod.lock_holder(self.home))
         with patch.object(commands.agent_mod, "serve", return_value=0) as serve, \

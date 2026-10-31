@@ -999,16 +999,18 @@ def _cmd_agent(flags: dict, json_view: bool = False) -> int:
         with contextlib.redirect_stdout(sys.stderr):
             rc = _cmd_agent_service(flags)
         return emit(agent_service_report()) if rc == 0 else rc
-    conf = _agent_conf(flags)
-    if conf is None:
-        return 1
     # One agent per ~/.quiver: two would each run every command the hub
     # queues. Under launchd or systemd this exits and the service retries.
+    # Taken before pairing, so a refused start leaves agent.json alone.
     lock, holder = agent_mod.take_lock()
     if lock is None:
         pid = f" (pid {holder})" if holder else ""
         print(c("red", f"{_stamp()}  another swe remote agent already runs here{pid}; "
                        "stop it first"), file=sys.stderr, flush=True)
+        return 1
+    conf = _agent_conf(flags)
+    if conf is None:
+        lock.close()
         return 1
     machine = catalog_mod.local_machine()
     print(
