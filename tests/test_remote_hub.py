@@ -1311,12 +1311,13 @@ class TestHubWriteRoutes(unittest.TestCase):
         status, body = self.srv.request("GET", "/v1/status")
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["ok"])
-        for path in ("/v1/sessions", "/v1/inbox", "/v1/devices/me",
-                     "/v1/app/harnesses"):
+        # Routes that read only the test server's own state: the
+        # /v1/app/* pages scan the real home's registry and sessions.
+        for path in ("/v1/sessions", "/v1/inbox", "/v1/devices/me"):
             status, body = self.srv.request("GET", path, headers=self.hdr)
             self.assertEqual(status, 200, path)
             self.assertIsInstance(json.loads(body), dict, path)
-        for path in ("/v1/nope", "/v1/app.js", "/v1/"):
+        for path in ("/v1/nope", "/v1/app.js", "/v1/", "/v1/app/nope"):
             status, body = self.srv.request("GET", path, headers=self.hdr)
             self.assertEqual(status, 404, path)
             self.assertIn("error", json.loads(body), path)
