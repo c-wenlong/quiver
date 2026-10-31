@@ -42,26 +42,50 @@ def collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> lis
         if differs:
             which_dir = str(Path(which_npm).parent)
             preferred_dir = str(Path(preferred).parent)
+            # Removing the PATH's npm is only safe when the preferred one
+            # is already reachable; otherwise it is the only npm there is.
+            preferred_on_path = is_dir_on_path(Path(preferred_dir))
+            # A shell-init edit does not reach the process already
+            # serving the web app: the check clears on the next hub start.
+            note = " A shell edit only counts from a new shell or a hub restart."
+            if preferred_on_path:
+                fix = (f"reorder PATH so {preferred_dir} wins, or remove "
+                       f"the npm at {which_npm}")
+                steps = ("Put {0} ahead of {1}, or remove npm from {1}."
+                         .format(preferred_dir, which_dir) + note)
+                prompt = (f"`which npm` resolves to {which_npm} but swe "
+                          f"prefers {preferred}. Inspect the shell init "
+                          f"files and reorder PATH so the preferred npm "
+                          f"wins, or remove npm from {which_dir}. Verify "
+                          f"with `swe doctor` from a new shell: the "
+                          f"npm.preferred finding should be gone.")
+            else:
+                fix = f"add {preferred_dir} to PATH ahead of {which_dir}"
+                steps = (f"{preferred_dir} is not on PATH, so removing "
+                         f"{which_dir}'s npm would leave none. Add "
+                         f"{preferred_dir} to PATH in your shell init."
+                         + note)
+                prompt = (f"`which npm` resolves to {which_npm} but swe "
+                          f"prefers {preferred}, and {preferred_dir} is "
+                          f"not on PATH at all. Inspect the shell init "
+                          f"files and add {preferred_dir} to PATH. Do "
+                          f"NOT remove {which_dir}'s npm: it is the only "
+                          f"one on PATH. Verify with `swe doctor` from a "
+                          f"new shell: the npm.preferred finding should "
+                          f"be gone.")
             findings.append(DoctorFinding(
                 "npm.preferred", "info",
                 f"which npm is {which_npm}; swe prefers {preferred}",
-                f"reorder PATH so {preferred_dir} wins, or remove the "
-                f"npm at {which_npm}",
+                fix,
                 source=f"PATH order: {which_dir} precedes {preferred_dir}",
                 remedies=(
                     {"kind": "steps",
                      "title": "Reorder PATH in your shell init",
-                     "detail": f"Put {preferred_dir} ahead of {which_dir}, "
-                               f"or remove npm from {which_dir}."},
+                     "detail": steps},
                     {"kind": "agent", "title": "Fix with agent",
                      "detail": "An agent inspects your shell init files "
                               "and makes the edit itself.",
-                     "prompt": f"`which npm` resolves to {which_npm} but "
-                               f"swe prefers {preferred}. Inspect the shell "
-                               f"init files and reorder PATH so the "
-                               f"preferred npm wins, or remove npm from "
-                               f"{which_dir}. Verify with `swe doctor`: the "
-                               f"npm.preferred finding should be gone."},
+                     "prompt": prompt},
                 )))
     if nvm_dirs and not any(is_dir_on_path(d) for d in nvm_dirs):
         findings.append(DoctorFinding(
@@ -82,6 +106,7 @@ def collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> lis
             source=f"found at {hit.path} [{hit.source}]",
             remedies=({"kind": "action", "action": "install", "via": via,
                        "title": "Reinstall with swe",
+                       "command": fix,
                        "detail": f"{fix}: reinstalls the way the stray "
                                 f"copy was installed, so it lands on PATH."},)
             if via else
@@ -377,12 +402,22 @@ def _marketplace_remedies(
         "detail": "The settings came from a machine that has them; "
                   "bring them over and the entries work again.",
     }]
+    # CLI-registered entries live in known_marketplaces.json, which Nix
+    # does not manage: they come out through the harness's own remove
+    # command under either management style.
+    cli_steps = [f"{name} plugin marketplace remove {m}" for m in by_cli]
     if nix:
+        drop_steps = []
+        if in_file:
+            drop_steps.append(
+                f"drop {', '.join(in_file)} from your Nix config "
+                f"(~/{_MARKETPLACE_CONFIG[name]} is generated)")
+        drop_steps += cli_steps
         remedies.append({
             "kind": "steps",
-            "title": "Or drop them from your Nix config",
-            "detail": f"~/{_MARKETPLACE_CONFIG[name]} is managed by Nix, "
-                      "so the entries leave there, not in the file itself.",
+            "title": f"Or drop the {len(missing)} entr"
+                     f"{'y' if len(missing) == 1 else 'ies'}",
+            "steps": drop_steps,
         })
     else:
         drop_steps = []
@@ -390,8 +425,7 @@ def _marketplace_remedies(
             drop_steps.append(
                 f"drop {', '.join(in_file)} from "
                 f"~/{_MARKETPLACE_CONFIG.get(name, 'settings')}")
-        drop_steps += [f"{name} plugin marketplace remove {m}"
-                       for m in by_cli]
+        drop_steps += cli_steps
         if drop_steps:
             remedies.append({
                 "kind": "steps",
@@ -404,18 +438,23 @@ def _marketplace_remedies(
         places = [config] + ([f"~/{_KNOWN_MARKETPLACES}"]
                              if name == "claude" and by_cli else [])
         if nix:
-            # The settings file resolves into the store: edits go in the
-            # Nix or home-manager config that generates it, never in the
-            # file itself.
+            # The settings file resolves into the store: its entries go
+            # in the Nix config that generates it; CLI-registered ones
+            # still leave through the harness's own remove command.
             prompt = (f"{config} is a symlink into /nix/store and "
                       f"registers {len(missing)} marketplace "
                       f"folder{'s' if len(missing) != 1 else ''} missing "
-                      f"on this machine ({listed}). Do NOT edit {config}: "
-                      "find the Nix or home-manager config that generates "
-                      "it and drop the entries there (or leave them and "
-                      "restore the folders). Verify with `swe doctor`: "
-                      "the setup.marketplace-missing finding should be "
-                      "gone.")
+                      f"on this machine ({listed}). Do NOT edit {config}. "
+                      + (f"For {', '.join(in_file)}: find the Nix or "
+                         "home-manager config that generates the file "
+                         "and drop the entries there. " if in_file else "")
+                      + (f"For {', '.join(by_cli)}: run `{name} plugin "
+                         "marketplace remove <name>` per entry, which "
+                         f"edits ~/{_KNOWN_MARKETPLACES}, or remove "
+                         "them there by hand. " if by_cli else "")
+                      + "Restore a folder instead when it should exist "
+                      "here. Verify with `swe doctor`: the "
+                      "setup.marketplace-missing finding should be gone.")
         else:
             prompt = (f"{config} registers {len(missing)} marketplace "
                       f"folder{'s' if len(missing) != 1 else ''} that do "

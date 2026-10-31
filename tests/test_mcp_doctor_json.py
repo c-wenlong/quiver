@@ -9,6 +9,7 @@ MCP configs carry API keys in ``env`` and ``headers``, and the hub keeps
 Nothing here may ever put a secret value on stdout.
 """
 
+import dataclasses
 import io
 import json
 import sys
@@ -802,6 +803,37 @@ class DoctorJsonChecksTest(unittest.TestCase):
         self.assertEqual([r["kind"] for r in finding["remedies"]],
                          ["steps", "agent"])
         self.assertIn("swe doctor", finding["remedies"][1]["prompt"])
+
+    def test_a_preferred_npm_off_path_never_offers_removal(self):
+        # Removing the only npm on PATH would leave none, so when the
+        # preferred directory is not on PATH the remedy adds it instead.
+        env = dataclasses.replace(HEALTHY, npm="/usr/bin/npm")
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ", {"NVM_DIR": str(Path(tmp) / "missing-nvm")}
+        ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
+            "quiver.harness.path_health.probe_node_env", return_value=env
+        ), patch(
+            "quiver.harness.path_health.preferred_npm_bin",
+            return_value="/opt/homebrew/bin/npm"
+        ), patch(
+            "quiver.harness.path_health.nvm_bin_dirs", return_value=[]
+        ), patch(
+            "quiver.harness.path_health.find_off_path_tools", return_value=[]
+        ), patch(
+            "quiver.harness.commands.shutil.which", return_value="/usr/bin/npm"
+        ), patch(
+            "quiver.harness.doctor.is_dir_on_path", return_value=False
+        ), patch("quiver.harness.drift.run_drift_checks", return_value=[]
+        ), patch("quiver.harness.doctor.setup_findings", return_value=[]):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = cmd_doctor(["--json"])
+        self.assertEqual(code, 0)
+        finding = json.loads(out.getvalue())["data"]["findings"][0]
+        self.assertEqual(finding["check"], "npm.preferred")
+        self.assertNotIn("remove", finding["fix"])
+        agent = finding["remedies"][1]
+        self.assertIn("NOT remove", agent["prompt"])
 
     def test_drift_findings_keep_their_area_and_severity(self):
         code, doc = self.run_doctor(drift=[

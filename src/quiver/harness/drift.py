@@ -604,17 +604,34 @@ def _hook_finding(d, home: Path) -> Finding:
             ))
     if d.kind == "undeclared":
         file = files[0] if files else ""
-        prompt = (f"{d.message}. Add a hook entry for it"
-                  + (f" to {file}" if file else " to the harness's "
-                                               "settings file")
-                  + ", or remove the link if the hook should not fire. "
-                    "Verify with `swe doctor`: the drift.hooks finding "
-                    "should be gone.")
+        nix = file and any(os.path.realpath(p).startswith("/nix/store/")
+                           for p in d.settings[:1])
+        if nix:
+            prompt = (f"{d.message}. The settings file {file} resolves "
+                      "into /nix/store, so do NOT edit it: add the hook "
+                      "entry in the Nix or home-manager config that "
+                      "generates it, or remove the link if the hook "
+                      "should not fire. Verify with `swe doctor`: the "
+                      "drift.hooks finding should be gone.")
+            fix = (f"{file} is managed by Nix: declare it in your Nix "
+                   "config, or delete the link")
+            steps_title = "Declare it in your Nix config"
+        else:
+            prompt = (f"{d.message}. Add a hook entry for it"
+                      + (f" to {file}" if file else " to the harness's "
+                                                   "settings file")
+                      + ", or remove the link if the hook should not "
+                        "fire. Verify with `swe doctor`: the drift.hooks "
+                        "finding should be gone.")
+            fix = ((f"declare it in {file}" if file
+                    else "declare it in the harness's settings file")
+                   + ", or delete the link")
+            steps_title = (f"Declare it in {file}" if file
+                           else "Declare it in the harness's settings "
+                                "file")
         return Finding(
             "warn", "hooks", d.message,
-            fix=(f"declare it in {file}" if file
-                 else "declare it in the harness's settings file")
-            + ", or delete the link",
+            fix=fix,
             harness=d.harness,
             source=f"would be declared in {file}" if file else None,
             remedies=(
@@ -622,9 +639,7 @@ def _hook_finding(d, home: Path) -> Finding:
                        "Adds the declaration or removes the link, then "
                        "verifies with swe doctor."),
                 {"kind": "steps",
-                 "title": (f"Declare it in {file}" if file
-                           else "Declare it in the harness's settings "
-                                "file"),
+                 "title": steps_title,
                  "detail": "swe hooks new writes the stanza to paste."},
             ))
     if d.kind == "unlinked":

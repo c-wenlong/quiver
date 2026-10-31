@@ -222,9 +222,13 @@ function doctorRemedy(f, id, r, i) {
   const p = doctorPage, key = remedyKey(id, i);
   let affordance = "";
   if (r.kind === "action") {
+    // A copyable command beside Run keeps the terminal path the confirm
+    // text offers when the runner needs a password.
+    const copy = r.command
+      ? `<button class="icon-button doctor-copy" data-doctor="copy" data-idx="${i}" aria-label="Copy the command" title="Copy the command">${doctorIcon("copy")}</button>` : "";
     affordance = p.running === key
       ? `<span class="doctor-running" role="status"><span class="doctor-spinner" aria-hidden="true"></span>Running…</span>`
-      : `<button class="doctor-button primary" data-doctor="run" data-idx="${i}" aria-expanded="${p.confirming === key}"${p.running ? " disabled" : ""}>Run</button>`;
+      : `${copy}<button class="doctor-button primary" data-doctor="run" data-idx="${i}" aria-expanded="${p.confirming === key}"${p.running ? " disabled" : ""}>Run</button>`;
   } else if (r.kind === "agent") {
     affordance = `<button class="doctor-button" data-doctor="agent" data-idx="${i}" aria-expanded="${p.agent && p.agent.id === id && p.agent.idx === i}"${p.agentBusy ? " disabled" : ""}>${esc(r.title)}</button>`;
   } else if (r.kind === "command" && r.command) {
@@ -488,7 +492,7 @@ async function doctorAgentLaunch(finding, idx) {
   const launch = await followLaunch(data, live);
   p.agentBusy = false;
   if (!launch) return;
-  if (launch.state === "started" || launch.state === "untracked") {
+  if (launch.state === "started") {
     p.agent = null;
     p.agentNote[id] = "The agent is on it: the session runs under Sessions, on the hub. Run the checks again when it finishes.";
   } else {
