@@ -4,8 +4,8 @@ The Tasks page (sidebar id `tasks`, hash route `#/tasks`, a task's
 detail at `#/tasks?task=<id>`): the work items the hub's agents are on —
 the task store (`~/.quiver/tasks.json`) overlaid on the sources' open
 items. It is the web half of the work-items surface the iOS app mirrors;
-GitHub is the first source, Linear rides along when configured, Notion
-is deferred.
+GitHub is the first source; Linear and Notion ride along when
+configured.
 
 | File | What |
 |---|---|
@@ -24,7 +24,8 @@ an agent.
 ## Payload
 
 ```json
-{"github": GhEnv, "linear": LinearEnv, "env_blocked"?: "…",
+{"github": GhEnv, "linear": LinearEnv, "notion": NotionEnv,
+ "env_blocked"?: "…",
  "repos"?: [{"name", "status", "error"}],
  "tasks": [TaskRow], "machine": "hub name", "machine_id": "…",
  "fetched_at": epoch}
@@ -104,8 +105,8 @@ open pull task), **Done** (`merged` or `closed`).
 **Rail.** Beside the list, whenever there are rows, sits the
 Repositories rail (same classes, same narrow-width chip strip), headed
 "Sources" with Refresh: "All tasks" with the tab's count, then GitHub
-repos under their owner, Linear projects under "Linear", any other
-source under its name, each with its count on the current tab; a group
+repos under their owner, Linear projects under "Linear", Notion
+databases under "Notion", any other source under its name, each with its count on the current tab; a group
 with nothing on the tab folds under "N quiet". Groups and rows sort by
 name so the rail holds still while the list reorders. Its dot lights
 while an agent runs on one of the group's tasks. A tap narrows the list
@@ -146,8 +147,9 @@ offerable. Both writes use the same bearer and Origin checks as every
 **Blocked and stale.** A blocked source still serves its stored rows
 under a "Last known state" note: GitHub shows the shared setup card
 (`gh auth login`/`brew install gh`, run on the hub machine), a failing
-Linear (`auth-required`, `bad-config`, `upstream-error`) a small offer
-card with its reason and a refresh; `disabled` means off, so no card.
+Linear or Notion (`auth-required`, `bad-config`, `upstream-error`) a
+small offer card each ("Notion: bad config") with its reason and a
+refresh; `disabled` means off, so no card.
 A per-repo fetch failure renders its own group with the error. A hub
 that answers nothing on a refresh keeps the last rows under an error
 card, as the other pages do. An empty store on a working env links to
@@ -164,12 +166,14 @@ or a write is open, so a reply can't yank the prompt mid-edit.
 - This page only renders the store; it cannot create, edit or dismiss
   tasks. The store's writes stay on the remote routes above, which the
   phone shares.
-- "Open on GitHub" is an external link; issue and PR bodies are not
-  shown here — the Repositories page's PR sheet is the detail surface
-  for a PR.
-- Linear tasks can link and unlink sessions and show their state, but
-  have no launch route: "New agent session" is GitHub-only, since the
-  launch needs a repo worktree. Notion is deferred entirely.
+- "Open on GitHub" ("Open in Linear", "Open in Notion" for those
+  sources) is an external link; issue and PR bodies are not shown
+  here — the Repositories page's PR sheet is the detail surface for a
+  PR.
+- Linear and Notion tasks can link and unlink sessions and show their
+  state in the source's own words (a Notion page's Status property),
+  but have no launch route: "New agent session" is GitHub-only, since
+  the launch needs a repo worktree.
 - The remote protocol is frozen: nothing here changes `GET /v1/tasks`
   or the link routes; `session_rows`/`launch_rows` exist only on the
   page's own payload.
