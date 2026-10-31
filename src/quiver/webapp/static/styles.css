@@ -142,15 +142,7 @@ button { font: inherit; color: inherit; }
 @keyframes skel-sweep { to { transform: translateX(320%); } }
 .skel-lines { display: flex; flex-direction: column; gap: 7px; }
 .skel-line { width: var(--w, 100%); height: 12px; }
-.skel-sub { width: var(--w, 100%); height: 10px; }
-.skel-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
-.skel-row + .skel-row { border-top: 1px solid var(--row-divider); }
-.skel-dot { width: 16px; height: 16px; border-radius: 50%; flex: none; }
-.skel-pill { width: 48px; height: 16px; border-radius: 8px; flex: none; }
-.skel-head { height: 20px; margin-bottom: 6px; }
 .skel-para { display: flex; flex-direction: column; gap: 9px; }
-.skel-chips { display: flex; gap: 8px; margin-top: 6px; }
-.skel-chip { width: 64px; height: 20px; border-radius: 10px; }
 @media (prefers-reduced-motion: reduce) {
   .skel::after { animation: none; }
 }
@@ -274,6 +266,16 @@ code { background: var(--subtle); border-radius: 4px; padding: 1px 4px; font-siz
 }
 
 /* Sessions */
+.machine-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.machine-chip { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; min-height: 36px; padding: 4px 12px;
+  border: 1px solid var(--border); border-radius: var(--field-radius); background: var(--card); color: var(--text-secondary);
+  font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+.machine-chip:hover { background: var(--tab-hover); }
+.machine-chip.selected { background: var(--selected); color: var(--text-primary); border-color: var(--border-strong); }
+.machine-text { display: flex; flex-direction: column; line-height: 1.25; }
+.machine-name { font-weight: 500; }
+.machine-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
+.machine-dot.online { background: var(--accent-fill); }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; }
 .field {
   height: 36px; border: 1px solid var(--border); border-radius: var(--field-radius); background: var(--card);

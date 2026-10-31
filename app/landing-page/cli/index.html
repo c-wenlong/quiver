@@ -154,7 +154,8 @@ States
 </code></pre>
 <h3 id="swe-instructions"><a class="anchor" href="#swe-instructions"></a><code>swe instructions</code></h3>
 <p><em>Compile shared instruction chapters into ~/.quiver/AGENTS.md</em></p>
-<pre><code class="language-text">  swe instructions build    Build the complete shared instruction file
+<pre><code class="language-text">  swe instructions init     Fold the current AGENTS.md into a first chapter
+  swe instructions build    Build the complete shared instruction file
   swe instructions check    Exit 1 if the generated file is missing or stale
   swe instructions watch    Build now, then rebuild on source changes
 
@@ -164,6 +165,8 @@ States
   Check writes nothing. Watch reports source errors and keeps waiting; Ctrl-C stops it.
   Harness symlinks keep pointing at the generated AGENTS.md. Edit the chapters,
   not the generated file. A running chat may need a new chat to read the update.
+
+  build, check and init take --json for the app's document.
 </code></pre>
 <h3 id="swe-setup"><a class="anchor" href="#swe-setup"></a><code>swe setup</code></h3>
 <p><em>Sectioned setup wizard for Quiver</em></p>
@@ -573,6 +576,12 @@ Flags
                                             commands it queues. Pair once with
                                             a token, then keep it running —
                                             outbound only, nothing listens.
+  swe remote agent --install             Keep the satellite running: its
+                                            own LaunchAgent or systemd user
+                                            unit, apart from the hub's.
+                                            Refused on a machine whose hub is
+                                            installed. --uninstall removes it;
+                                            --status [--json] shows it.
 
   The phone only ever talks to the hub, over Tailscale. Sessions list as
   observed (a human terminal owns them: read-only) until they run

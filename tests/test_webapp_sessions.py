@@ -1769,5 +1769,77 @@ class TestSessionModelShown(unittest.TestCase):
         self.assertEqual(out["readsAfterWake"], 4)
 
 
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestMachineStrip(unittest.TestCase):
+    """static/machine-strip.js (#1443): the Sessions page's machine chips,
+    ordered and worded as the Mac's "Other machines" group and the
+    iPhone's MachineStrip."""
+
+    def run_js(self, body):
+        source = (STATIC / "machine-strip.js").read_text(encoding="utf-8")
+        prelude = ("const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;')"
+                   ".replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(prelude + source + "\nconst NOW = 1800000000;\n(() => {" + body + "})();\n")
+        self.addCleanup(Path(f.name).unlink)
+        # The body prints its own JSON.
+        done = subprocess.run(["node", f.name], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_hidden_with_fewer_than_two_machines(self):
+        out = self.run_js("""process.stdout.write(JSON.stringify([
+  MachineStrip.chips(null, []), MachineStrip.chips([], []),
+  MachineStrip.chips([{ id: "a", name: "studio", online: true }], []),
+  MachineStrip.html([], "")]));""")
+        self.assertEqual(out, [[], [], [], ""])
+
+    def test_online_first_then_name_and_counts(self):
+        out = self.run_js("""
+const machines = [
+  { id: "c", name: "zed", online: true },
+  { id: "b", name: "alpha", online: false, last_seen_at: NOW - 7200 },
+  { id: "a", name: "mini.local", online: true },
+  { id: "d", name: "beta" },
+];
+const rows = [
+  { machine_id: "a", status: "active" }, { machine_id: "a", status: "active" },
+  { machine_id: "a", status: "followup" }, { machine_id: "a", status: "approval" },
+  { machine_id: "a", status: "done" }, { machine_id: "c", status: "active" },
+  { machine_id: null, status: "active" },
+];
+const chips = MachineStrip.chips(machines, rows, NOW);
+process.stdout.write(JSON.stringify(chips.map((c) => [c.name, c.online, c.detail])));""")
+        self.assertEqual(out, [
+            ["mini", True, "2 working · 2 waiting"],
+            ["zed", True, "1 working · 0 waiting"],
+            ["alpha", False, "last seen 2h"],
+            ["beta", False, "offline"]])
+
+    def test_last_seen_wording(self):
+        out = self.run_js("""process.stdout.write(JSON.stringify([
+  MachineStrip.lastSeen(NOW - 10, NOW), MachineStrip.lastSeen(NOW - 300, NOW),
+  MachineStrip.lastSeen(NOW - 3 * 86400, NOW), MachineStrip.lastSeen(0, NOW),
+  MachineStrip.lastSeen(null, NOW)]));""")
+        self.assertEqual(out, ["last seen just now", "last seen 5m", "last seen 3d",
+                               "offline", "offline"])
+
+    def test_click_toggles_and_a_gone_machine_clears(self):
+        out = self.run_js("""
+const list = MachineStrip.chips([{ id: "a", name: "x", online: true }, { id: "b", name: "y", online: true }], [], NOW);
+const rows = [{ key: "1", machine_id: "a" }, { key: "2", machine_id: "b" }];
+process.stdout.write(JSON.stringify({
+  choose: MachineStrip.toggled("", "a"), swap: MachineStrip.toggled("a", "b"), clear: MachineStrip.toggled("a", "a"),
+  kept: MachineStrip.effective("a", list), gone: MachineStrip.effective("zz", list),
+  filtered: MachineStrip.filter(rows, "a").map((r) => r.key), all: MachineStrip.filter(rows, "").length,
+  html: MachineStrip.html(list, "a")}));""")
+        self.assertEqual((out["choose"], out["swap"], out["clear"]), ("a", "b", ""))
+        self.assertEqual((out["kept"], out["gone"]), ("a", ""))
+        self.assertEqual((out["filtered"], out["all"]), (["1"], 2))
+        self.assertEqual(out["html"].count('class="machine-chip selected"'), 1)
+        self.assertEqual(out["html"].count("machine-dot online"), 2)
+        self.assertIn('aria-pressed="true"', out["html"])
+
+
 if __name__ == "__main__":
     unittest.main()

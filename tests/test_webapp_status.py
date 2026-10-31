@@ -1030,6 +1030,20 @@ class TestRelativeTime(unittest.TestCase):
         self.assertEqual(json.loads(done.stdout),
                          ["0", "950", "12.3K", "1M", "999.9K", "1M", "1B", "1000B"])
 
+    def test_thought_reads_the_thinking_duration(self):
+        # The same cases as the Mac's and the iPhone's ThoughtLabelTests (#1440).
+        fmt = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/format.js"
+        cases = [12, 12.4, 59.6, 65, 3600, 3725, 0, 0.3, None, -1, "12"]
+        src = (fmt.read_text(encoding="utf-8") + "\nprocess.stdout.write(JSON.stringify("
+               + json.dumps(cases) + ".map((n) => Fmt.thought(n === null ? undefined : n))"
+               + ".concat([Fmt.thought(NaN), Fmt.thought(Infinity)])));\n")
+        done = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), [
+            "Thought for 12s", "Thought for 12s", "Thought for 1m", "Thought for 1m 5s",
+            "Thought for 1h", "Thought for 1h 2m", "Thought for 1s", "Thought for 1s",
+            "Thought", "Thought", "Thought", "Thought", "Thought"])
+
 
 if __name__ == "__main__":
     unittest.main()

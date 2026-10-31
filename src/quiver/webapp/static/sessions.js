@@ -30,6 +30,9 @@ const sessionsPage = {
   data: null, gen: 0,
   query: "", tool: "", window: "90d", project: "", model: "",
   showTrivial: false, openDays: new Set(),
+  // The machine chip chosen in the strip ("" lists every machine), and the
+  // /v1/machines list the strip draws (null until it answers).
+  machine: "", machines: null,
   // /v1/search for `search.query`: key -> { snippet, marked }, whether the
   // hub has an index, and "pending" / "error" while it has no answer.
   search: { query: "", hits: new Map(), indexed: null, state: "" },
@@ -54,7 +57,7 @@ async function renderSessions(_id, rescan = false) {
   const panel = document.getElementById("panel");
   const gen = ++sessionsPage.gen;
   if (!sessionsPage.data || rescan) {
-    panel.innerHTML = `<div class="page">${sessionsHeader(true)}${Sk.cardRows(8)}</div>`;
+    panel.innerHTML = `<div class="page">${sessionsHeader(true)}${sessionsSkeleton()}</div>`;
   } else {
     paintSessions();
     if (sessionsPage.scrollY != null) window.scrollTo(0, sessionsPage.scrollY);
@@ -62,6 +65,9 @@ async function renderSessions(_id, rescan = false) {
   }
   sessionsPage.scrollY = null;
   const mark = pinLedger.clock;
+  // The strip is an extra: its read never holds up the list, and a
+  // failed one just hides the strip.
+  const machinesRead = api("/v1/machines");
   const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
   if (gen !== sessionsPage.gen) return;
   if (status === 401) return renderGate();
@@ -75,6 +81,11 @@ async function renderSessions(_id, rescan = false) {
   sessionsPage.data = data;
   paintSessions();
   scheduleTranscriptSearch();
+  machinesRead.then((m) => {
+    if (gen !== sessionsPage.gen) return;
+    sessionsPage.machines = m && m.status === 200 && m.data ? m.data.machines || [] : null;
+    if (onSessionsList()) repaintKeepingFocus();
+  });
 }
 
 function sessionsHeader(busy) {
@@ -180,6 +191,7 @@ function filteredSessions() {
   const s = sessionsPage;
   const start = windowStart(s.window);
   const q = s.query.trim().toLowerCase();
+  const machine = chosenMachine();
   const kept = [];
   let trivial = 0;
   for (const r of s.data.sessions) {
@@ -187,6 +199,7 @@ function filteredSessions() {
     // phone's Pinned section has no window at all.
     if (!r.pinned && start != null && r.last_active_at < start) continue;
     if (s.tool && r.harness !== s.tool) continue;
+    if (machine && r.machine_id !== machine) continue;
     if (s.project && r.project_key !== s.project) continue;
     if (s.model && !(r.usage && r.usage.models.some((m) => m.model === s.model))) continue;
     if (q) {
@@ -199,6 +212,19 @@ function filteredSessions() {
   }
   return { kept, trivial };
 }
+
+/* The strip's chips, and the chosen machine (dropped when no longer
+ * listed). The strip is an extra: without machine-strip.js (it failed to
+ * load) the list shows no strip and no machine filter. */
+const machineStrip = () => (typeof MachineStrip === "undefined" ? null : MachineStrip);
+const machineChips = () => {
+  const strip = machineStrip();
+  return strip ? strip.chips(sessionsPage.machines, sessionsPage.data.sessions) : [];
+};
+const chosenMachine = () => {
+  const strip = machineStrip();
+  return strip ? strip.effective(sessionsPage.machine, machineChips()) : "";
+};
 
 function paintSessions() {
   const s = sessionsPage, d = s.data;
@@ -214,7 +240,7 @@ function paintSessions() {
   const footer = trivial || s.showTrivial ? trivialFooter(trivial) : "";
   document.getElementById("panel").innerHTML = `<div class="page">
     ${sessionsHeader(false)}
-    <div class="stack">${notes}${actNote}${filterBar()}${searchNote(kept)}${summaryStrip(kept)}${body}${footer}</div>
+    <div class="stack">${notes}${actNote}${machineStrip() ? machineStrip().html(machineChips(), chosenMachine()) : ""}${filterBar()}${searchNote(kept)}${summaryStrip(kept)}${body}${footer}</div>
   </div>
   <dialog class="sheet" id="session-sheet"></dialog>`;
   bindSessionsHeader();
@@ -346,6 +372,24 @@ function rowModels(r) {
   const used = (r.usage ? r.usage.models.map((m) => m.model) : [])
     .filter((m) => !current || Fmt.modelName(m) !== current);
   return (current ? [current, ...used] : used).join(", ");
+}
+
+/* A table whose rows carry the real .session-row grid, so the loading
+ * card is the same shape as the painted one. */
+function sessionsSkeleton() {
+  const row = (i) => `<div class="session-row">
+    <span class="session-logo">${Sk.bar(16, 16)}</span>
+    <span class="session-main"><span class="session-title">${Sk.bar(`${58 - (i % 4) * 10}%`, 13)}</span>
+      <span class="session-sub">${Sk.bar(`${36 - (i % 3) * 8}%`, 10)}</span></span>
+    <span class="session-acts">${Sk.bar(20, 20)}</span>
+    <span class="num-col">${Sk.num(40)}</span>
+    <span class="num-col spend">${Sk.num(32)}</span>
+  </div>`;
+  const day = (n, off) => `<div class="day"><div class="day-label">${Sk.bar(90, 11)}</div>${
+    Array.from({ length: n }, (_, i) => row(i + off)).join("")}</div>`;
+  return `<div class="card sessions" role="status" aria-label="Loading">
+    <div class="session-head"><span>${Sk.bar(110, 11)}</span><span class="num-col">${Sk.num(40, 11)}</span><span class="num-col">${Sk.num(34, 11)}</span></div>
+    ${day(5, 0)}${day(4, 5)}</div>`;
 }
 
 function sessionRow(r) {
@@ -580,9 +624,22 @@ function bindSessionControls() {
     const el = document.getElementById(id);
     if (el) el.onchange = () => { s[key] = el.value; paintSessions(); };
   }
+  for (const btn of document.querySelectorAll(".machine-chip[data-machine]")) {
+    btn.onclick = () => {
+      const id = btn.dataset.machine;
+      const left = btn.parentElement.scrollLeft;
+      s.machine = machineStrip().toggled(chosenMachine(), id);
+      paintSessions();
+      // The repaint replaces the strip: keep its scroll and the focus.
+      const strip = document.querySelector(".machine-strip");
+      if (strip) strip.scrollLeft = left;
+      const again = [...document.querySelectorAll(".machine-chip[data-machine]")].find((b) => b.dataset.machine === id);
+      if (again) again.focus({ preventScroll: true });
+    };
+  }
   const clear = document.getElementById("clear-filters");
   if (clear) clear.onclick = () => {
-    Object.assign(s, { query: "", tool: "", project: "", model: "", window: "all" });
+    Object.assign(s, { query: "", tool: "", project: "", model: "", machine: "", window: "all" });
     scheduleTranscriptSearch();
     paintSessions();
   };
@@ -1264,7 +1321,8 @@ function nsPaint() {
   const folders = nsFolders(machine).slice(0, 6);
   const browseUi = browse ? `<div class="ns-browse">
       <div class="ns-path">${esc(browse.path || "…")}</div>
-      ${browse.loading ? Sk.rows(3, { pill: false }) : ""}
+      ${browse.loading ? `<div role="status" aria-label="Loading">${[60, 44, 52].map((w) =>
+        `<div class="ns-folder">${Sk.bar(`${w}%`, 12)}</div>`).join("")}</div>` : ""}
       ${browse.error ? `<p class="error">${esc(browse.error)}</p>` : ""}
       ${browse.parent ? `<button type="button" class="ns-folder" data-path="${esc(browse.parent)}">..</button>` : ""}
       ${(browse.folders || []).map((f) => `<button type="button" class="ns-folder" data-path="${esc(f.path)}">${esc(f.name)}/</button>`).join("")}
@@ -1316,7 +1374,7 @@ function nsPaint() {
   for (const b of sheet.querySelectorAll("[data-harness]")) {
     b.onclick = () => { ns.harness = b.dataset.harness; ns.harnessTouched = true; nsRefillModel(); nsPaint(); };
   }
-  for (const b of sheet.querySelectorAll(".ns-folder")) {
+  for (const b of sheet.querySelectorAll(".ns-folder[data-path]")) {
     b.onclick = () => {
       if (ns.browse) nsBrowse(b.dataset.path);   // inside the browser: descend
       else { nsPickFolder(b.dataset.path); }
@@ -1363,7 +1421,7 @@ function nsPaintLists() {
   box.innerHTML = folders.map((p) => `<button type="button" class="ns-folder"
       data-path="${esc(p)}"${busy ? " disabled" : ""}>${esc(p)}</button>`).join("")
     || '<p class="caption" style="padding:8px 10px">No recent folders match.</p>';
-  for (const b of box.querySelectorAll(".ns-folder")) {
+  for (const b of box.querySelectorAll(".ns-folder[data-path]")) {
     b.onclick = () => nsPickFolder(b.dataset.path);
   }
 }

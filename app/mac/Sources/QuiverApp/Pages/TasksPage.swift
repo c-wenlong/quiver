@@ -130,7 +130,7 @@ struct TasksPage: View {
             // reply: that banner can't say why this refresh failed.
             ErrorCard(message: error, actionTitle: "Refresh", action: refresh)
         } else if !model.loaded {
-            SkeletonRows(rows: 6, label: "Reading the task list…")
+            SkeletonRows(rows: 6, shape: .task, label: "Reading the task list…")
         } else {
             if let error = model.error {
                 // A failed refresh keeps the rows it already had —

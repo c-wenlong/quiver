@@ -183,8 +183,8 @@ remote/
   preview.py     # one .html/.svg file from a session's folder (/v1/sessions/{id}/preview)
   agent.py       # satellite daemon: dial hub, run local tail/inject
   notify.py      # needs-you/finished/error/GitHub-unread fan-out via ntfy
-  launchd.py     # serve --install: the hub as a per-user LaunchAgent
-  systemd.py     # serve --install on Linux: the hub as a systemd user unit
+  launchd.py     # serve/agent --install: the hub or satellite as a per-user LaunchAgent
+  systemd.py     # serve/agent --install on Linux: the hub or satellite as a systemd user unit
   setup.py       # swe remote setup: every step to a paired phone, --apply
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
   attachments.py # phone uploads staged on the session's machine
@@ -315,7 +315,27 @@ RemoteMessage:
   text                          # markdown for user/assistant
   tool:  {name, call_id, args_summary, args_full}
   result_ref                    # tool_result → tool_use call_id
+  duration_s                    # thinking only, when known
 ```
+
+`duration_s` ("Thought for 12s") is measured, not guessed. Claude Code
+and Codex write each content block as its own timestamped record the
+moment the block finishes, so a thinking record's timestamp is when the
+thinking ended and the record before it (the prompt, a tool result,
+Claude's `api-request`) is when it began. `JsonlTailSource` keeps that
+previous timestamp (`since`, saved in the cursor so a hub restart
+between the two still times it) and `stamp_thinking` sets the gap on a
+record that decodes to thinking alone. Records that belong to the
+thinking are not a start: Claude Code's empty thinking record written
+just before the full one, and Codex's `agent_reasoning` and
+`item_completed` Reasoning events. The gap to the *next* record would
+time the reply after the thinking, not the thinking. Because the start
+is always read before the thinking record, the value goes out on the
+first `message.appended` and nothing is patched later. A record mixing
+thinking with text (one record per reply) and the first record after a
+backfill start carry no duration. opencode parts and 2.x content blocks
+carry their own `time` span, which is used as is. Every other harness
+writes a whole reply as one record, so it sends none.
 
 `_redact_secrets` runs before anything leaves the process — prompt text
 is user-originated, transcript text is not.
@@ -1324,6 +1344,42 @@ enable-linger $USER`. A machine with no systemd user manager (some
 containers, WSL without systemd) is told to run `swe remote serve`
 under its own init system.
 
+### Keeping a satellite up
+
+`swe remote agent --install` does the same for a satellite, through the
+same code (`commands.Service`: one record per service with its launchd
+label, systemd unit and log). It writes its own
+`~/Library/LaunchAgents/com.cwenlong.quiver.remote-agent.plist` on a
+Mac and `~/.config/systemd/user/quiver-remote-agent.service` on Linux,
+so installing, restarting or removing it never touches the hub's
+service. It runs `swe remote agent` (the app's bundled `swe` on a Mac,
+under the same protected-folder rule), with the installing shell's
+`PATH`, logging to `~/.quiver/data/remote/agent.log`. The credential
+stays in `agent.json`: the service reads it at start, so no secret
+lands in the plist or unit. `--install --hub=URL --token=T` pairs first;
+`--install --hub=URL` alone puts `--hub` on the service's command line.
+Lingering is handled as for the hub. `--uninstall` stops and removes it,
+and `--status [--json]` shows whether this machine is paired, whether
+the service is installed and running, and whether the hub is installed.
+
+`--install` refuses on a machine whose own hub service is installed
+(the hub's plist or unit exists), and the hub's install (`serve
+--install`, `setup --apply`) refuses the other way round: the check sits
+in `install_service`, which every install path goes through. Both
+services run as the same user, so they share `~/.quiver/data/remote/`:
+each would read and move the other's tail cursors in `cursors/`, and a
+satellite would send its own hub's sessions back to it. The refusal
+names the other service's file and says which `--uninstall` to run.
+
+Only one `swe remote agent` runs per `~/.quiver`: it holds an `flock`
+on `data/remote/agent.lock` (its pid inside) for its lifetime, and a
+second one exits at start, so the hub's commands never run twice. Under
+launchd or systemd that exit is retried, so the service takes over once
+a shell-started agent stops. `--install` refuses while an agent started
+outside the service holds the lock; the service's own agent is the one
+a reinstall restarts.
+`install-app.sh` restarts either agent when it runs the app's bundle.
+
 ## Satellite — `agent.py`
 
 Same `tail.py`/`inject.py`, no listener: persistent outbound connection
@@ -1333,9 +1389,15 @@ hostname, specs, harnesses detected by the existing `discover`
 machinery. Hub stamps every session `machine_id` + reachability; queued
 commands wait in the hub journal until reconnect.
 
-The macOS app side is a Settings toggle + menu-bar status managing
-`swe remote agent` as a LaunchAgent ("Remote access: online as
-macbook"). All session data still flows through bundled `swe` — the app
+`swe remote agent --install` keeps it running across reboots and
+logouts (see "Keeping a satellite up" above). The macOS app side is a
+Settings › Remote switch, "Keep this Mac's agent running", that calls
+`swe remote agent --install|--uninstall --json` (`RemoteAgentModel`). It
+shows only on a satellite of another hub: `agent --status --json` says
+the Mac is paired (`configured`) and its own hub is not installed
+(`hub_installed` false), or the agent is already installed so it can be
+turned off. All session data
+still flows through bundled `swe` — the app
 never writes transcripts itself, same as the
 writes-go-through-tested-Python rule.
 
@@ -1343,6 +1405,16 @@ writes-go-through-tested-Python rule.
 
 [app/ios/ROADMAP.md](../app/ios/ROADMAP.md) tracks the client redesign:
 every page, component and feature, and the hub work each needs.
+
+The Mac app reaches another machine's hub through the web app too: its
+sidebar's machine switcher (#681) loads a picked hub's `/` in a web view
+inside the window, pinned to that hub's origin. The hub treats it as a
+browser on the Mac: the owner's own tailnet node gets in with no pairing
+(the web app sends `X-Quiver-Pair: 1` from the hub's own origin), and any
+other node sees the web app's pairing card, whose credential stays in
+that hub's persistent web data store. The switcher lists the hub this
+Mac's `agent.json` names and hubs added by address in Settings ›
+Integrations › Remote › Other hubs.
 
 Two clients. The web app (`src/quiver/webapp/`, served by the hub under
 `/`; older `/app/` links redirect there, query and fragment intact) works in any browser over
@@ -1434,8 +1506,12 @@ Screens:
 Beyond remote control, nearly free on this architecture: push for
 needs-you/finished/error/limit via the self-hosted ntfy (iOS background
 delivery needs `upstream-base-url: https://ntfy.sh` set, and ntfy `http`
-action buttons give approve/deny straight from the lock screen: a POST
-to `/v1/sessions/{id}/approval` over the tailnet, no app code); a
+action buttons answer straight from the lock screen: a POST to
+`/v1/sessions/{id}/approval` over the tailnet, no app code. When the
+event lists the pane's menu rows the buttons carry those labels — up
+to ntfy's three-action cap, with a longer menu's last slot linking to
+the session chat where every option answers — and prompts with no
+option list fall back to Allow/Deny/Always); a
 usage/limits dashboard (`swe list` data); transcript FTS across machines
 (the search index normalizes already); diff viewer + commit/push via
 `swe gh`; `$ swe report` cards; voice dictation; offline prompt queue.

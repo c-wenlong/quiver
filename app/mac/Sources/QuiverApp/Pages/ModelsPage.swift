@@ -179,13 +179,13 @@ private struct ModelsContent: View {
         } else if !model.hasLoaded && model.allModels.isEmpty {
             // Before the first key check `hasKey` is false: wait for it
             // rather than flash the no-key card on every launch.
-            SkeletonRows(rows: 8, label: "Loading benchmarks…")
+            ModelsSkeleton(model: model, label: "Loading benchmarks…")
         } else if !model.hasKey && !model.isLoading && model.allModels.isEmpty {
             // Cached benchmarks still show after the key is removed.
             noKey
         } else if model.allModels.isEmpty {
             if model.isLoading || model.isRefreshing {
-                SkeletonRows(rows: 8, label: "Fetching benchmarks…")
+                ModelsSkeleton(model: model, label: "Fetching benchmarks…")
             } else if let error = model.refreshError {
                 ErrorCard(message: "Couldn't fetch benchmarks: \(error)")
             } else if model.searching {
@@ -199,7 +199,7 @@ private struct ModelsContent: View {
                 EmptyCard(text: "No model or LiteLLM price key matches.",
                           icon: "magnifyingglass")
             } else if model.usagePending {
-                SkeletonRows(rows: 4, label: "Reading your usage…")
+                ModelsSkeleton(model: model, rows: 4, label: "Reading your usage…")
             } else {
                 EmptyCard(text: emptyText, icon: "chart.bar")
             }
@@ -958,5 +958,111 @@ private struct LinkSheet: View {
         .padding(24)
         .frame(width: 460, height: 480)
         .background(Theme.panel)
+    }
+}
+
+/// The loading stand-in for `results`: whichever of the chart or the
+/// table `viewMode` shows, the shimmer keeps that view's footprint.
+private struct ModelsSkeleton: View {
+    var model: ModelsModel
+    var rows = 8
+    var label: String
+    @State private var width: CGFloat = 0
+
+    var body: some View {
+        switch model.viewMode {
+        case .chart:
+            SkeletonRows(shape: .chart, label: label)
+        case .table:
+            table
+        }
+    }
+
+    @ViewBuilder private var table: some View {
+        let columns = TableColumns.widths(for: width, extraMetric: model.showsExtraMetric)
+        Card {
+            ScrollView(.horizontal) {
+                VStack(spacing: 0) {
+                    header(columns)
+                    Divider().overlay(Theme.border)
+                    VStack(spacing: 0) {
+                        ForEach(0..<rows, id: \.self) { row in
+                            tableRow(row, columns)
+                            Divider().overlay(Theme.rowDivider)
+                        }
+                    }
+                }
+                .frame(width: columns.total, alignment: .leading)
+            }
+            .scrollIndicators(.automatic)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(label))
+    }
+
+    private func header(_ columns: TableColumns) -> some View {
+        HStack(spacing: TableColumns.gap) {
+            SkeletonBlock(width: 42, height: 10)
+                .frame(width: columns.model, alignment: .leading)
+            SkeletonBlock(width: 36, height: 10)
+                .frame(width: columns.ranIn, alignment: .leading)
+            SkeletonBlock(width: 13, height: 13, radius: 3)
+                .frame(width: columns.intelligence, alignment: .trailing)
+            SkeletonBlock(width: 13, height: 13, radius: 3)
+                .frame(width: columns.coding, alignment: .trailing)
+            SkeletonBlock(width: 13, height: 13, radius: 3)
+                .frame(width: columns.reasoning, alignment: .trailing)
+            SkeletonBlock(width: 13, height: 13, radius: 3)
+                .frame(width: columns.speed, alignment: .trailing)
+            if model.showsExtraMetric {
+                SkeletonBlock(width: 13, height: 13, radius: 3)
+                    .frame(width: columns.extra, alignment: .trailing)
+            }
+            SkeletonBlock(width: 56, height: 10)
+                .padding(.leading, TableColumns.priceInset)
+                .frame(width: columns.price, alignment: .leading)
+            SkeletonBlock(width: 58, height: 10)
+                .frame(width: columns.cost, alignment: .leading)
+            SkeletonBlock(width: 60, height: 10)
+                .frame(width: columns.tokens, alignment: .trailing)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func tableRow(_ row: Int, _ columns: TableColumns) -> some View {
+        HStack(spacing: TableColumns.gap) {
+            HStack(spacing: 8) {
+                SkeletonBlock(width: 16, height: 16, radius: 4)
+                SkeletonBlock(width: 110 - CGFloat(row % 3) * 22, height: 12)
+            }
+            .frame(width: columns.model, alignment: .leading)
+            HStack(spacing: 4) {
+                SkeletonBlock(width: 14, height: 14, radius: 4)
+                if row % 2 == 0 { SkeletonBlock(width: 14, height: 14, radius: 4) }
+            }
+            .frame(width: columns.ranIn, alignment: .leading)
+            SkeletonBlock(width: 24, height: 11)
+                .frame(width: columns.intelligence, alignment: .trailing)
+            SkeletonBlock(width: 24, height: 11)
+                .frame(width: columns.coding, alignment: .trailing)
+            SkeletonBlock(width: 24, height: 11)
+                .frame(width: columns.reasoning, alignment: .trailing)
+            SkeletonBlock(width: 26, height: 11)
+                .frame(width: columns.speed, alignment: .trailing)
+            if model.showsExtraMetric {
+                SkeletonBlock(width: 28, height: 11)
+                    .frame(width: columns.extra, alignment: .trailing)
+            }
+            SkeletonBlock(width: 86, height: 11)
+                .padding(.leading, TableColumns.priceInset)
+                .frame(width: columns.price, alignment: .leading)
+            // The cost column's gradient scale: one mid-height bar.
+            SkeletonBlock(width: 64, height: 8, radius: 4)
+                .frame(width: columns.cost, alignment: .leading)
+            SkeletonBlock(width: 40, height: 11)
+                .frame(width: columns.tokens, alignment: .trailing)
+        }
+        .padding(.vertical, 10)
     }
 }

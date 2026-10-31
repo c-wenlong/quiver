@@ -246,12 +246,25 @@ const NeedsYou = (() => {
     </div>`;
   }
 
+  /* Notification rows in the card's own .gh-note shape. ``dot`` marks
+   * the GitHub card's unread dot; the Needs card leads with a logo. */
+  function notesSkeleton(n, { dot = false, needs = false } = {}) {
+    const rows = Array.from({ length: n }, (_, i) => `<div class="gh-note${dot && i % 3 === 0 ? " unread" : ""}">
+      <span class="gh-note-link">${dot ? Sk.bar(8, 8, "gh-note-dot") : ""}${Sk.bar(15, 15)}
+        <span class="gh-row-main"><span class="gh-note-title">${Sk.bar(`${56 - (i % 3) * 10}%`, 13)}</span>
+        <span class="caption gh-ellipsis">${Sk.bar(`${42 - (i % 2) * 10}%`, 11)}</span></span></span>
+      ${i % 3 === 0 ? Sk.bar(30, 30, "", "border-radius:6px;flex:none;margin-right:4px") : ""}</div>`).join("");
+    if (!needs) return `<div class="card gh-inbox" role="status" aria-label="Loading">${rows}</div>`;
+    return `<div class="card gh-inbox gh-needs" role="status" aria-label="Loading">
+      <div class="gh-need-head">${Sk.bar(100, 12)}<span class="gh-spacer"></span>${Sk.bar(40, 18, "", "border-radius:6px")}</div>${rows}</div>`;
+  }
+
   /* The Needs you card: a head per section with its Clear, then rows. */
   function needsContent() {
     const errors = [needs.error, needs.actionError].filter(Boolean)
       .map((m) => `<div class="card" role="alert"><span class="error">${esc(m)}</span></div>`).join("");
     if (!needs.items) {
-      return needs.error ? errors : Sk.cardRows(4);
+      return needs.error ? errors : notesSkeleton(4, { needs: true });
     }
     const groups = NeedsYou.groups(needs.items);
     if (!groups.length) {
@@ -317,7 +330,7 @@ const NeedsYou = (() => {
   function content() {
     const d = inbox.data;
     if (!d) {
-      return Sk.cardRows(5);
+      return notesSkeleton(5, { dot: true });
     }
     if (d.transport) return failCard(GhUI.failMessage(inbox.status, d));
     const setup = GhUI.envSetup(d.github);

@@ -62,7 +62,7 @@ const mcpSvg = (name, cls = "") =>
  * health included; an older one is read again, without health. */
 async function renderMcp() {
   if (mcpPage.data || mcpPage.failure) paintMcp();
-  else mcpShell(Sk.cardRows(6));
+  else mcpShell(mcpGridSkeleton());
   if (mcpPage.loading) return;
   if (mcpPage.data && Date.now() - mcpPage.at < MCP_MAX_AGE_MS) return;
   await mcpLoad(false);
@@ -176,6 +176,23 @@ function mcpHeader() {
      <button class="mcp-button" id="mcp-health" title="Run each server's command check and reach each URL"${
       mcpPage.checking ? " disabled" : ""}>${mcpSvg("health")}<span>${mcpPage.checking ? "Checking…" : "Check health"}</span></button>
      <button class="icon-button${busy ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Read the configs again">${icon("rescan")}</button>`);
+}
+
+/* The comparison grid's own shape: a Server name column and one cell
+ * column per harness, letter or tick per cell. */
+function mcpGridSkeleton() {
+  const cell = (i, j) => `<td class="mcp-cell">${(i + j) % 3 === 1
+    ? Sk.bar(10, 10, "", "margin:0 auto") : `<span class="mcp-absent">—</span>`}</td>`;
+  const row = (i) => `<tr class="mcp-row">
+    <td class="mcp-name-col"><div class="mcp-name-cell">${i % 2 ? "" : Sk.dot(8)}
+      <div class="mcp-name-main">${Sk.bar(110 - (i % 3) * 18, 13)}
+        <div class="mcp-secondary caption">${Sk.bar(`${46 - (i % 3) * 8}%`, 10)}</div></div></div></td>
+    ${[0, 1, 2].map((j) => cell(i, j)).join("")}</tr>`;
+  return `<div class="card mcp-grid-card" role="status" aria-label="Loading"><div class="table-wrap"><table class="mcp-grid">
+    <thead><tr><th class="mcp-name-col">${Sk.bar(44, 11)}</th>${[0, 1, 2].map(() =>
+      `<th class="mcp-col">${Sk.bar(16, 16, "", "margin:0 auto")}</th>`).join("")}</tr></thead>
+    <tbody><tr class="mcp-section"><td colspan="4">${Sk.bar(90, 11)}</td></tr>
+    ${Array.from({ length: 6 }, (_, i) => row(i)).join("")}</tbody></table></div></div>`;
 }
 
 function mcpShell(body) {

@@ -339,14 +339,16 @@ def check_registry_schema(registry: dict) -> list[Finding]:
 
 # Mirror of find/plugins.py's PLUGIN_FALLBACK — the pre-capabilities table
 # that only fires for a harness the registry has never heard of. Kept in
-# sync by hand; keyed by registry names (droid, not its ~/.factory home),
-# which is exactly what the name-mismatch check below enforces.
+# sync by hand; keyed by registry names (droid, not its ~/.factory home;
+# devin's store lives under ~/.local/share, not ~/.devin), which is exactly
+# what the name-mismatch check below enforces.
 PLUGIN_HARNESSES_CODE_TABLE: tuple[tuple[str, Path], ...] = (
     ("claude", Path(".claude/plugins")),
     ("droid", Path(".factory/plugins")),
     ("codex", Path(".codex/plugins")),
     ("cursor", Path(".cursor/plugins")),
     ("grok", Path(".grok/marketplace-cache")),
+    ("devin", Path(".local/share/devin/cli/plugins")),
 )
 
 

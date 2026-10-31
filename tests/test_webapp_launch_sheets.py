@@ -142,16 +142,18 @@ globalThis.Fmt = { ago: () => "1h", logo: () => "", harnessName: (n) => n || "",
   tokens: () => "0", dollars: () => "$0" };
 /* format.js's Sk: blocks parseEls can read like any other markup. */
 globalThis.Sk = (() => {
+  const width = (v) => (typeof v === "number" ? `${v}px` : v);
+  const status = 'role="status" aria-label="Loading"';
   const block = (w, h, cls = "") =>
-    `<div class="skel${cls ? ` ${cls}` : ""}" style="width:${typeof w === "number" ? `${w}px` : w};height:${h}px"></div>`;
-  const row = ({ icon = true, pill = true } = {}) =>
-    `<div class="skel-row">${icon ? '<div class="skel skel-dot"></div>' : ""}<div class="skel-lines"><div class="skel skel-line"></div><div class="skel skel-sub"></div></div>${pill ? '<div class="skel skel-pill"></div>' : ""}</div>`;
-  const rows = (n = 6, opts = {}) => `<div role="status">${Array.from({ length: n }, () => row(opts)).join("")}</div>`;
-  const lines = (n = 5) => `<div class="skel-para">${`<div class="skel skel-line"></div>`.repeat(n)}</div>`;
-  const card = (inner) => `<div class="card" role="status" aria-label="Loading">${inner}</div>`;
-  return { block, row, rows, lines, card, cardRows: (n, o) => card(rows(n, o)),
-    cardLines: (n) => card(lines(n)),
-    detail: () => card(`${block("42%", 20, "skel-head")}${lines(4)}<div class="skel-chips"><div class="skel skel-chip"></div></div>`) };
+    `<div class="skel${cls ? ` ${cls}` : ""}" ${status} style="width:${width(w)};height:${h}px"></div>`;
+  const bar = (w, h, cls = "", style = "") =>
+    `<div class="skel${cls ? ` ${cls}` : ""}" style="width:${width(w)};height:${h}px${style ? `;${style}` : ""}"></div>`;
+  const dot = (size = 16) => bar(size, size, "", "border-radius:50%;flex:none");
+  const pill = (w = 48, h = 16) => bar(w, h, "", `border-radius:${h / 2}px;flex:none`);
+  const num = (w = 40, h = 12) => bar(w, h, "", "margin-left:auto");
+  const linesInner = (n) => Array.from({ length: n }, (_, i) =>
+    `<div class="skel skel-line" style="width:${i === n - 1 ? 45 : 90 - (i % 4) * 12}%"></div>`).join("");
+  return { block, bar, dot, pill, num, linesInner };
 })();
 globalThis.authHeaders = (extra = {}) => ({ ...extra });
 globalThis.setInterval = () => 0;

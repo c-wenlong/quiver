@@ -551,6 +551,7 @@ to use their own login state and environment."""
     "instructions": (
         "Compile shared instruction chapters into ~/.quiver/AGENTS.md",
         f"""\
+  {c('cyan', 'swe instructions init')}     Fold the current AGENTS.md into a first chapter
   {c('cyan', 'swe instructions build')}    Build the complete shared instruction file
   {c('cyan', 'swe instructions check')}    Exit 1 if the generated file is missing or stale
   {c('cyan', 'swe instructions watch')}    Build now, then rebuild on source changes
@@ -560,7 +561,9 @@ to use their own login state and environment."""
   Build writes {c('bold', '~/.quiver/AGENTS.md')} atomically, only when its SHA256 changes.
   Check writes nothing. Watch reports source errors and keeps waiting; Ctrl-C stops it.
   Harness symlinks keep pointing at the generated AGENTS.md. Edit the chapters,
-  not the generated file. A running chat may need a new chat to read the update."""
+  not the generated file. A running chat may need a new chat to read the update.
+
+  build, check and init take {c('cyan', '--json')} for the app's document."""
     ),
     "init": (
         "Create ~/.quiver and symlink every harness to it",
@@ -769,6 +772,12 @@ to use their own login state and environment."""
                                             commands it queues. Pair once with
                                             a token, then keep it running —
                                             outbound only, nothing listens.
+  {c('cyan', 'swe remote agent --install')}             Keep the satellite running: its
+                                            own LaunchAgent or systemd user
+                                            unit, apart from the hub's.
+                                            Refused on a machine whose hub is
+                                            installed. --uninstall removes it;
+                                            --status [--json] shows it.
 
   The phone only ever talks to the hub, over Tailscale. Sessions list as
   {c('bold', 'observed')} (a human terminal owns them: read-only) until they run

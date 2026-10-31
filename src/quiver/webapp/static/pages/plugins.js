@@ -169,7 +169,33 @@ function paint() {
   if (page.tab === "explore" && page.sheet) openPlugin(page.sheet);
 }
 
-const loadingCard = () => Sk.cardRows(5);
+/* The health tab's own shape: a drift card per harness — severity dot,
+ * finding lines, the fix command block and a Fix button. */
+const driftSkeleton = () => `<div class="card pl-drift-card" role="status" aria-label="Loading">
+  <div class="pl-harness-title">${Sk.bar(16, 16)}${Sk.bar(110, 14)}<span class="caption">${Sk.bar(64, 11)}</span></div>
+  <div class="pl-drift-rows">${Array.from({ length: 3 }, (_, i) => `<div class="pl-drift runnable">
+    ${Sk.dot(8)}
+    <div class="pl-drift-main">
+      <div class="pl-line">${Sk.bar(120 - (i % 3) * 20, 13)}${Sk.pill(60)}</div>
+      ${Sk.bar(`${48 - (i % 2) * 10}%`, 11)}
+      <div class="pl-fix">${Sk.bar("100%", 34, "", "border-radius:6px")}</div>
+    </div>
+    <div class="pl-drift-action">${Sk.bar(40, 26, "", "border-radius:6px")}</div>
+  </div>`).join("")}</div></div>`;
+
+/* The marketplace cards' own shape: a head, then plugin rows —
+ * title/ref/desc/skills on the left, harness chips on the right. */
+const marketsSkeleton = () => `<div class="pl-markets" role="status" aria-label="Loading">${[0, 1].map((g) => `<div class="pl-market">
+  <div class="pl-market-head">${Sk.bar(120 - g * 24, 14)}${Sk.bar(80, 11)}</div>
+  <div class="pl-rows">${Array.from({ length: 3 }, (_, i) => `<div class="pl-row">
+    <div class="pl-row-main">
+      <div class="pl-line">${Sk.bar(130 - ((i + g) % 3) * 20, 13)}${Sk.bar(28, 10)}</div>
+      ${Sk.bar(`${40 - (i % 2) * 8}%`, 10)}
+      ${Sk.bar(`${58 - ((i + g) % 3) * 9}%`, 11)}
+      ${i % 2 ? "" : `<div class="pl-skills">${Sk.pill(60)}${Sk.pill(74)}</div>`}
+    </div>
+    <div class="pl-chips">${Sk.bar(88, 26, "", "border-radius:8px")}${i % 2 ? Sk.bar(88, 26, "", "border-radius:8px") : ""}</div>
+  </div>`).join("")}</div></div>`).join("")}</div>`;
 const errorCard = (text) => `<div class="card"><p class="error">${esc(text)}</p></div>`;
 const iconCard = (name, text, cls = "") =>
   `<div class="card"><p class="pl-label ${cls}">${svg(name)}<span>${text}</span></p></div>`;
@@ -179,7 +205,7 @@ const iconCard = (name, text, cls = "") =>
 function healthBody() {
   const d = page.data.health;
   const err = (page.error.health ? errorCard(page.error.health) : "") + fixOutcome() + confirmAllCard();
-  if (!d) return err || loadingCard("Checking plugin drift…");
+  if (!d) return err || driftSkeleton();
   if (d.sources === 0) {
     return err + iconCard("puzzle", "No plugins in ~/.quiver/plugins, so there is nothing to keep in step.", "muted-label");
   }
@@ -478,7 +504,7 @@ function problemLines(errors) {
 function exploreBody() {
   const d = page.data.explore;
   const err = page.error.explore ? errorCard(page.error.explore) : "";
-  if (!d) return err || loadingCard("Reading every marketplace…");
+  if (!d) return err || marketsSkeleton();
   const searching = !!needleOf(page.query);
   const sources = filtered(d);
   const harnessOpts = [["", "All harnesses"], ...d.harnesses.map((h) => [h, Fmt.harnessName(h)])];

@@ -70,7 +70,7 @@ function paintDoctor() {
     body = `<div class="card doctor-state"><p class="error" role="alert">${esc(p.error)}</p>
       <div><button class="doctor-button" data-doctor="reload">Try again</button></div></div>`;
   } else if (p.state !== "loaded" || !p.data) {
-    body = Sk.cardRows(6);
+    body = doctorSkeleton();
   } else if (!p.data.findings.length) {
     body = `${doctorLostError()}${doctorBlocked()}<div class="card doctor-state doctor-clear">
       <span class="doctor-seal">${doctorIcon("seal")}</span><p class="empty">Everything checks out.</p>
@@ -124,6 +124,21 @@ function doctorFindings(findings) {
       <button class="icon-button" data-doctor="reload" aria-label="Refresh" title="Run the checks again">${icon("rescan")}</button></div>
     <div class="doctor-rows">${shown.map(doctorRow).join("")}</div>${fold}
   </div>`;
+}
+
+/* The findings card's own rows: a severity dot, the message with a
+ * harness logo, the check name, and the fix command strip. */
+function doctorSkeleton() {
+  const row = (i) => `<div class="doctor-row">
+    <span class="doctor-dot" style="background:var(--border-strong)"></span>
+    <div class="doctor-main" style="flex:1;min-width:0">
+      <div class="doctor-message">${i % 2 ? "" : `<span class="doctor-logo">${Sk.bar(16, 16)}</span>`}${Sk.bar(`${58 - (i % 3) * 10}%`, 13)}</div>
+      ${Sk.bar(`${44 - (i % 2) * 8}%`, 11)}
+      ${i % 3 === 2 ? "" : `<div class="doctor-fix">${Sk.bar(`${46}%`, 18)}${Sk.bar(30, 30, "", "border-radius:8px;flex:none")}</div>`}
+    </div></div>`;
+  return `<div class="card doctor-card" role="status" aria-label="Loading">
+    <div class="doctor-card-head"><span class="card-title">${Sk.bar(80, 14)}</span></div>
+    <div class="doctor-rows">${Array.from({ length: 4 }, (_, i) => row(i)).join("")}</div></div>`;
 }
 
 function doctorRow(f, index) {

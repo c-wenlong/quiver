@@ -317,6 +317,157 @@ class TestJsonlTailSource(unittest.TestCase):
         self.assertEqual([m["text"] for m in src2.poll()], ["new"])
 
 
+def _at(rec, iso):
+    return dict(rec, timestamp=iso)
+
+
+class TestThinkingDuration(unittest.TestCase):
+    """``duration_s`` on thinking: the gap from the record before."""
+
+    def setUp(self):
+        self.tmp = temp_dir(self)
+        self.path = self.tmp / "t.jsonl"
+
+    def _write(self, records):
+        with open(self.path, "a") as fh:
+            for rec in records:
+                fh.write(json.dumps(rec) + "\n")
+
+    def _thinking(self, out):
+        return [m for m in out if m["kind"] == "thinking"]
+
+    def test_claude_timed_from_the_record_before(self):
+        self._write([
+            _at(_claude_user("go"), "2026-10-30T13:35:21.000Z"),
+            {"type": "api-request", "timestamp": "2026-10-30T13:35:21.500Z"},
+            # Claude Code writes an empty thinking block first.
+            _at(_claude_assistant([{"type": "thinking", "thinking": ""}]),
+                "2026-10-30T13:35:33.900Z"),
+            _at(_claude_assistant([{"type": "thinking", "thinking": "hmm"}]),
+                "2026-10-30T13:35:34.000Z"),
+            _at(_claude_assistant([{"type": "text", "text": "done"}]),
+                "2026-10-30T13:35:40.000Z"),
+        ])
+        out = tail.JsonlTailSource(self.path, "claude").poll()
+        [thought] = self._thinking(out)
+        self.assertEqual(thought["duration_s"], 12.5)
+        self.assertNotIn("duration_s", out[-1])
+
+    def test_unknown_when_nothing_came_before_or_blocks_mix(self):
+        self._write([
+            _at(_claude_assistant([{"type": "thinking", "thinking": "a"}]),
+                "2026-10-30T13:00:00Z"),
+            _at(_claude_user("go"), "2026-10-30T13:00:05Z"),
+            # One record holding the whole reply: no split to time.
+            _at(_claude_assistant([{"type": "thinking", "thinking": "b"},
+                                   {"type": "text", "text": "ok"}]),
+                "2026-10-30T13:00:09Z"),
+        ])
+        out = tail.JsonlTailSource(self.path, "claude").poll()
+        for thought in self._thinking(out):
+            self.assertNotIn("duration_s", thought)
+
+    def test_untimed_records_and_other_harnesses_leave_it_out(self):
+        self._write([
+            _claude_user("go"),
+            _claude_assistant([{"type": "thinking", "thinking": "a"}]),
+        ])
+        out = tail.JsonlTailSource(self.path, "claude").poll()
+        self.assertNotIn("duration_s", self._thinking(out)[0])
+        path = self.tmp / "pi.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in [
+            _at(_claude_user("go"), "2026-10-30T13:00:00Z"),
+            _at(_claude_assistant([{"type": "thinking", "thinking": "a"}]),
+                "2026-10-30T13:00:04Z"),
+        ]))
+        out = tail.JsonlTailSource(path, "pi").poll()
+        self.assertNotIn("duration_s", self._thinking(out)[0])
+
+    def test_codex_skips_the_reasoning_companion_events(self):
+        self._write([
+            {"timestamp": "2026-10-31T03:50:10.000Z", "type": "response_item",
+             "payload": {"type": "function_call_output", "call_id": "c1",
+                         "output": "ok"}},
+            {"timestamp": "2026-10-31T03:50:21.900Z", "type": "event_msg",
+             "payload": {"type": "agent_reasoning", "text": "plan"}},
+            {"timestamp": "2026-10-31T03:50:22.100Z", "type": "event_msg",
+             "payload": {"type": "item_completed",
+                         "item": {"type": "Reasoning"}}},
+            {"timestamp": "2026-10-31T03:50:22.600Z", "type": "response_item",
+             "payload": {"type": "reasoning",
+                         "summary": [{"type": "summary_text",
+                                      "text": "plan"}]}},
+        ])
+        out = tail.JsonlTailSource(self.path, "codex").poll()
+        self.assertEqual(self._thinking(out)[0]["duration_s"], 12.6)
+
+    def test_mark_survives_a_cursor_restore(self):
+        self._write([_at(_claude_user("go"), "2026-10-30T13:00:00Z")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        state = json.loads(json.dumps(src.state()))
+        self._write([
+            _at(_claude_assistant([{"type": "thinking", "thinking": "a"}]),
+                "2026-10-30T13:01:05Z"),
+        ])
+        src2 = tail.JsonlTailSource(self.path, "claude")
+        self.assertTrue(src2.restore(state))
+        self.assertEqual(self._thinking(src2.poll())[0]["duration_s"], 65.0)
+
+    def test_untimed_shown_record_clears_the_mark(self):
+        self._write([
+            _at(_claude_assistant([{"type": "text", "text": "hi"}]),
+                "2026-10-30T13:00:00Z"),
+            {"type": "agent-name", "name": "x"},  # bookkeeping: kept
+            _claude_user("an untimed prompt"),
+            _at(_claude_assistant([{"type": "thinking", "thinking": "a"}]),
+                "2026-10-30T15:00:00Z"),
+        ])
+        out = tail.JsonlTailSource(self.path, "claude").poll()
+        self.assertNotIn("duration_s", self._thinking(out)[0])
+        path = self.tmp / "b.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in [
+            _at(_claude_user("go"), "2026-10-30T13:00:00Z"),
+            {"type": "custom-title", "customTitle": "t"},
+            _at(_claude_assistant([{"type": "thinking", "thinking": "a"}]),
+                "2026-10-30T13:00:03Z"),
+        ]))
+        out = tail.JsonlTailSource(path, "claude").poll()
+        self.assertEqual(self._thinking(out)[0]["duration_s"], 3.0)
+
+    def test_mark_from_a_replaced_file_is_dropped(self):
+        self._write([_at(_claude_user("go"), "2026-10-30T13:00:00Z")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        state = src.state()
+        self.path.write_text(json.dumps(
+            _at(_claude_user("other file"), "2026-10-30T09:00:00Z")) + "\n")
+        reused = tail.JsonlTailSource(self.path, "claude")
+        self.assertFalse(reused.restore(state))
+        reused.skip_to_end()
+        self._write([
+            _at(_claude_assistant([{"type": "thinking", "thinking": "a"}]),
+                "2026-10-30T13:01:05Z"),
+        ])
+        self.assertNotIn("duration_s", self._thinking(reused.poll())[0])
+        # A rotation found mid-poll restarts the stream with no mark.
+        src2 = tail.JsonlTailSource(self.path, "claude")
+        src2.poll()
+        self.assertIsNotNone(src2.state()["since"])
+        self.path.write_text(json.dumps(
+            _at(_claude_assistant([{"type": "thinking", "thinking": "b"}]),
+                "2026-10-30T13:02:00Z")) + "\n")
+        self.assertNotIn("duration_s", self._thinking(src2.poll())[0])
+
+    def test_opencode_spans(self):
+        self.assertEqual(tail._span_ms({"start": 1000, "end": 13_250}), 12.2)
+        self.assertEqual(
+            tail._span_ms({"created": 1000, "completed": 66_000}), 65.0)
+        self.assertIsNone(tail._span_ms({"start": 1000}))
+        self.assertIsNone(tail._span_ms({"start": 5000, "end": 1000}))
+        self.assertIsNone(tail._span_ms(None))
+
+
 class TestSnapshotSource(unittest.TestCase):
     def _session(self):
         return Session(timestamp=0, agent="X", path="/tmp",
@@ -606,7 +757,8 @@ class TestOpencodeSource(unittest.TestCase):
 
     def test_incremental_parts(self):
         self._add_part("p1", 1000, {"type": "text", "text": "hello"})
-        self._add_part("p2", 1001, {"type": "reasoning", "text": "hmm"})
+        self._add_part("p2", 1001, {"type": "reasoning", "text": "hmm",
+                                    "time": {"start": 1001, "end": 4501}})
         self._add_part("p3", 1002, {
             "type": "tool", "tool": "Bash", "id": "c1",
             "state": {"status": "completed", "output": "done",
@@ -617,6 +769,8 @@ class TestOpencodeSource(unittest.TestCase):
         kinds = [m["kind"] for m in out]
         self.assertEqual(kinds, ["assistant", "thinking",
                                  "tool_use", "tool_result"])
+        self.assertEqual(out[1]["duration_s"], 3.5)
+        self.assertNotIn("duration_s", out[0])
         self.assertEqual(src.poll(), [])
         self._add_part("p4", 1003, {"type": "text", "text": "more"})
         out = src.poll()
@@ -1801,6 +1955,50 @@ class TestApprovalWatcher(unittest.TestCase):
         ev = self._approval_events()[0]
         self.assertEqual(ev["data"]["prompt"], "Approval requested")
 
+    def test_request_carries_choice_menu_options(self):
+        # An unnumbered ask-question list rides the event as positional
+        # rows — the card lists the real labels instead of the
+        # allow/always/deny guess, and the injector walks them with
+        # arrow keys.
+        pane = (
+            " Which engine?\n"
+            "\n"
+            " ❭ SQLite\n"
+            "   Postgres\n"
+            "   Other (type your own)\n"
+            "\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self._poll(pane, meta={"mode": "tmux", "tmux": "qv-k1"})
+        ev = self._approval_events()[0]
+        opts = ev["data"]["options"]
+        self.assertEqual(
+            [(o["n"], o["label"]) for o in opts],
+            [("1", "SQLite"), ("2", "Postgres"),
+             ("3", "Other (type your own)")])
+        self.assertEqual(ev["data"]["prompt"], "Which engine?")
+
+    def test_request_carries_devin_select_options(self):
+        # Devin's select widget marks the selected row "❭" — every row
+        # reaches the card, option 1 included.
+        pane = (
+            " How would you like to log in?\n"
+            "\n"
+            " ❭ 1 Log in with browser\n"
+            "   2 Paste a token manually\n"
+            "   3 Back\n"
+            "\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self._poll(pane, meta={"mode": "tmux", "tmux": "qv-k1"})
+        ev = self._approval_events()[0]
+        self.assertEqual(
+            [(o["n"], o["label"]) for o in ev["data"]["options"]],
+            [("1", "Log in with browser"),
+             ("2", "Paste a token manually"), ("3", "Back")])
+        self.assertEqual(ev["data"]["prompt"],
+                         "How would you like to log in?")
+
 
 class TestApprovalPromptLine(unittest.TestCase):
     def test_skips_blank_and_unmatched_lines(self):
@@ -1813,6 +2011,23 @@ class TestApprovalPromptLine(unittest.TestCase):
             tail._approval_prompt_line("plain\noutput\n"),
             "Approval requested")
         self.assertEqual(tail._approval_prompt_line(""), "Approval requested")
+
+    def test_stale_menu_above_live_choices_keeps_live_question(self):
+        # The numbered menu scrolled up is dead; the choice list below
+        # is what the card answers, so the question must come from the
+        # zone above that live block, not above the stale one.
+        pane = (
+            " Which branch?\n"
+            " 1. main\n"
+            " 2. dev\n"
+            "\n"
+            " Which engine?\n"
+            " ❭ SQLite\n"
+            "   Postgres\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self.assertEqual(
+            tail._approval_prompt_line(pane), "Which engine?")
 
     def test_menu_row_is_never_the_prompt(self):
         # The banner scrolled off: "2 Yes, allow `sudo` commands" is a

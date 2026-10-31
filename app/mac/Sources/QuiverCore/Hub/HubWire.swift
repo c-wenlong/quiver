@@ -119,14 +119,18 @@ public struct HubMessage: Codable, Sendable, Equatable {
     public var ts: Double?
     public var tool: HubToolCall?
     public var resultRef: String?
+    /// How long a `thinking` message's model thought, in seconds; nil
+    /// when the hub could not tell (#1440).
+    public var durationS: Double?
 
     public init(kind: String?, text: String? = nil, ts: Double? = nil, tool: HubToolCall? = nil,
-                resultRef: String? = nil) {
+                resultRef: String? = nil, durationS: Double? = nil) {
         self.kind = kind
         self.text = text
         self.ts = ts
         self.tool = tool
         self.resultRef = resultRef
+        self.durationS = durationS
     }
 }
 

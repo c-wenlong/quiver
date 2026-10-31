@@ -24,6 +24,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revoked devices. Part of
   [#1439](https://github.com/c-wenlong/quiver/issues/1439); the client
   dots follow.
+- **Mac: the AGENTS.md page edits instruction chapters.** When the shared
+  file is chapter-managed (`~/.quiver/AGENTS_MD/index.txt` exists), the
+  Global tab becomes a chapter editor instead of a flat-file editor: a
+  drag-to-reorder rail mirrors index.txt order, `+` creates a chapter with
+  a heading and lists it, `−` unlists a chapter while leaving the file on
+  disk, and every save runs `swe instructions build` so the file every
+  harness reads never goes stale. The generated output shows read-only
+  with a Current/Stale/Not built state and a Rebuild button for edits
+  made elsewhere. With no index the flat editor stays, joined by a
+  "Convert to chapters" card that runs the new `swe instructions init` —
+  which folds the current AGENTS.md into `AGENTS_MD/main.md` (stripping
+  compiler comments when it was generated) and builds. `build`, `check`
+  and `init` take `--json`: `check` reports the chapter list, staleness
+  and any source refusal, so the page knows which mode to draw.
+
+- **Mac: a machine switcher opens another machine's hub in the window.**
+  The sidebar's first row picks "This Mac" (the native pages) or another
+  machine's hub, whose web app then fills the window in a web view. The
+  hub signs it in as it does a browser on this Mac: the owner's own
+  tailnet device needs no pairing, any other device gets the web app's
+  pairing card. The view stays on that hub's origin (other links open in
+  the default browser, `file:` never loads), keeps its own web data per
+  hub, and a strip in the title bar names the machine. The list holds the
+  hub this Mac's satellite agent reports to and hubs added by address in
+  Settings › Integrations › Remote › Other hubs; the last pick is
+  remembered ([#681](https://github.com/c-wenlong/quiver/issues/681)).
+
+- **iPhone and web: a machine strip on the Sessions page.** One chip
+  per machine the hub lists, with an online dot, its name, "N working
+  · M waiting" and, when it is offline, "last seen 2h". Tapping a chip
+  shows only that machine's sessions; tapping it again shows all. The
+  strip hides when the hub has one machine, and orders machines like
+  the Mac's "Other machines" group (online first, then name). No new
+  hub route
+  ([#1443](https://github.com/c-wenlong/quiver/issues/1443)).
+
+- **iPhone, web and Mac: thinking cards say how long the model
+  thought.** A thinking card reads "Thought for 12s" or "Thought for
+  1m 5s" from the hub's `duration_s`, and plain "Thought" when the hub
+  sent none. One formatting rule per client (`ThoughtLabel.text` on
+  iOS and the Mac, `Fmt.thought` on the web)
+  ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
+
+- **Remote approvals show and answer unnumbered menus too.** A
+  tmux-mode prompt whose options are an arrow-select list ("❭ Option
+  A", the shape of Devin's ask-question panel) now reaches the approval
+  card as its real labels, numbered top to bottom, instead of the
+  generic Allow / Always / Deny guess. Answering a row walks the pane's
+  cursor with arrow keys and confirms; numbered menus keep sending
+  their own digit, and Devin's select widget now parses its selected
+  row ("❭" is a different glyph than Claude's "❯"). Option labels join
+  the request fingerprint, so a question that swaps its choices can't
+  be answered by a stale tap.
+
+- **Approval pushes carry the menu's own option buttons.** When the
+  event lists the pane's choices, the ntfy actions are those labels —
+  up to the three actions a push can hold, with a longer menu's last
+  slot linking to the session chat where every option answers —
+  instead of a fixed Allow / Deny / Always. Prompts with no option
+  list keep the three semantic buttons, and tapping the notification
+  itself now opens the session's chat.
+
+- **Hub: thinking messages carry how long the model thought.**
+  `kind: "thinking"` messages from Claude Code, Codex and opencode now
+  carry `duration_s`, so the clients can show "Thought for 12s". Claude
+  Code and Codex time it from the record before the thinking record to
+  the thinking record; opencode from its own reasoning `time` span.
+  Other harnesses, and records with no usable timestamps, leave it out
+  ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
+
+- **Mac: Settings › Remote can keep this Mac's agent running.** On a Mac
+  paired as a satellite of another machine's hub, a "Keep this Mac's
+  agent running" switch installs or removes the agent's LaunchAgent
+  through `swe remote agent --install` / `--uninstall`, and says whether
+  it is running. The switch is hidden on the Mac that hosts the hub and
+  on a Mac that was never paired
+  ([#1438](https://github.com/c-wenlong/quiver/issues/1438)).
+
+- **`swe remote agent --install` keeps a satellite running.** Like
+  `swe remote serve --install`, it runs `swe remote agent` as a
+  LaunchAgent on macOS (`com.cwenlong.quiver.remote-agent`) or a systemd
+  user unit on Linux (`quiver-remote-agent.service`), separate from the
+  hub's, so it starts at login or boot and restarts if it exits. It logs
+  to `~/.quiver/data/remote/agent.log`, turns on lingering or says how,
+  and refuses on a machine whose own hub is installed (and the hub's
+  install refuses next to an installed agent), since the two would share
+  `data/remote/cursors/`. Only one agent runs per `~/.quiver`: a second
+  one exits at start, and `--install` refuses while a shell-started
+  agent runs. `--uninstall` removes it and
+  `--status [--json]` shows it. `install-app.sh` now restarts the agent
+  on a new bundle as it does the hub
+  ([#1438](https://github.com/c-wenlong/quiver/issues/1438)).
 
 - **`swe init`: the hub's MCP servers in extra accounts.** A fourth
   switch, `accounts.sync.mcp`, off by default (`swe config set

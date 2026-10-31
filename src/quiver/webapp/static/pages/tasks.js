@@ -135,7 +135,16 @@
 
   const emptyCard = (text, iconName = "issueClosed") =>
     `<div class="card"><div class="gh-empty">${ico(iconName, "gh-muted")}<span>${esc(text)}</span></div></div>`;
-  const loadingCard = () => Sk.cardRows(6);
+  /* The task list's own shape: a grouped box of .gh-row task rows, so
+   * the shimmer lands where real rows will. */
+  const loadingCard = () => `<div class="gh-box" role="status" aria-label="Loading">
+    <div class="gh-group-head">${Sk.bar(130, 12)}</div>
+    <div class="gh-surface last">${Array.from({ length: 5 }, (_, i) => `<div class="gh-row gh-center">
+      <span class="gh-row-lead">${Sk.dot(15)}</span>
+      <span class="gh-row-main"><span class="gh-row-title"><span class="gh-title">${Sk.bar(220 - (i % 3) * 34, 13)}</span>${i % 3 ? "" : Sk.pill(50)}</span>
+      <span class="gh-row-sub">${Sk.bar(`${40 - (i % 2) * 10}%`, 11)}</span></span>
+      <span class="gh-row-side">${i % 2 ? Sk.pill(58) : ""}</span>
+    </div>`).join("")}</div></div>`;
 
   /* ------------------------------------------------------------- list */
 
@@ -502,7 +511,7 @@
     const busy = !!x.phase;
     let picker;
     if (x.harnesses === null) {
-      picker = Sk.block("60%", 32);
+      picker = Sk.block("100%", 32);
     } else if (!x.harnesses.length) {
       picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Providers.</div>`;
     } else {
@@ -540,7 +549,11 @@
         .some((v) => v && String(v).toLowerCase().includes(q))));
     let list;
     if (x.sessions === null) {
-      list = Sk.rows(4, { pill: false });
+      list = `<div class="tk-pick" role="status" aria-label="Loading">${Array.from({ length: 4 }, (_, i) => `<div class="gh-note"><span class="gh-note-link tk-still">
+        ${Sk.bar(16, 16)}
+        <span class="gh-row-main"><span class="gh-note-title">${Sk.bar(`${52 - (i % 3) * 10}%`, 13)}</span>
+        <span class="caption gh-ellipsis">${Sk.bar(`${42 - (i % 2) * 8}%`, 11)}</span></span></span>
+        ${Sk.bar(44, 27, "", "border-radius:6px;flex:none;margin-right:4px")}</div>`).join("")}</div>`;
     } else if (!x.sessions.length) {
       list = `<div class="caption gh-muted">No session is running on the hub.</div>`;
     } else if (!found.length) {
