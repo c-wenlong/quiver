@@ -74,6 +74,8 @@ public final class AccountSyncModel {
     public private(set) var report: AccountSyncReport?
     public private(set) var busy = false
     public private(set) var error: String?
+    /// A new account asked for a pass while another was running.
+    private var pendingSync = false
 
     private let swe: SweClient
 
@@ -103,23 +105,40 @@ public final class AccountSyncModel {
             try await swe.setAccountSync(piece, on: on)
             try await apply()
         } catch {
-            self.error = error.localizedDescription
+            // Re-read the switches, but keep saying why this one failed.
+            let message = error.localizedDescription
             await load()
+            self.error = message
         }
+        if pendingSync { await runPasses() }
     }
 
     /// After an account is added, so it starts out linked rather than
-    /// waiting for the next switch or `swe init`.
+    /// waiting for the next switch or `swe init`. While another pass runs,
+    /// the request waits and runs after it: that pass may have read the
+    /// profiles before the new account was saved.
     public func syncIfOn() async {
         if report == nil { await load() }
-        guard anyOn, !busy else { return }
+        guard anyOn else { return }
+        if busy {
+            pendingSync = true
+            return
+        }
         busy = true
         defer { busy = false }
-        do {
-            try await apply()
-        } catch {
-            self.error = error.localizedDescription
-        }
+        await runPasses()
+    }
+
+    /// One pass, then another for each request that came in meanwhile.
+    private func runPasses() async {
+        repeat {
+            pendingSync = false
+            do {
+                try await apply()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        } while pendingSync
     }
 
     private func apply() async throws {

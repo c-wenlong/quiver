@@ -41,7 +41,7 @@ struct AccountsPage: View {
             }
             // Only Claude and Codex extra accounts have a CLI home swe can
             // link into; with none, the switches would do nothing.
-            if model.cards.contains(where: { !$0.profile.isDefault }) {
+            if model.cards.contains(where: { !$0.profile.isDefault && $0.profile.vendor.hasDefaultProfile }) {
                 SharedContentCard(sync: app.accountSync)
             }
             // One grid for every account: Quiver's own profiles first, vendors

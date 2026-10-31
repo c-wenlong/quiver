@@ -52,6 +52,30 @@ import Testing
         #expect(off.calls == [["init", "--accounts", "--check", "--json"]])
     }
 
+    @Test func aFailedSwitchKeepsItsReasonAfterTheReload() async throws {
+        let runner = AccountSyncRunner(fixture: try fixture("swe-init-accounts"), holdConfig: false,
+                                    configFails: true)
+        let sync = AccountSyncModel(swe: SweClient(runner: runner))
+        await sync.set(.hooks, on: true)
+        #expect(sync.error?.contains("config.json is read-only") == true)
+        #expect(sync.report != nil)
+    }
+
+    @Test func anAccountAddedDuringAPassGetsAPassOfItsOwn() async throws {
+        let runner = AccountSyncRunner(fixture: try fixture("swe-init-accounts"), holdConfig: true,
+                                    configFails: false)
+        let sync = AccountSyncModel(swe: SweClient(runner: runner))
+        await sync.load()
+        let flip = Task { await sync.set(.hooks, on: true) }
+        await runner.configEntered.wait()
+        #expect(sync.busy)
+        await sync.syncIfOn()  // busy: queued, not dropped
+        runner.releaseConfig.signal()
+        await flip.value
+        #expect(runner.calls.filter { $0 == ["init", "--accounts", "--json"] }.count == 2)
+        #expect(!sync.busy)
+    }
+
     @Test func aPassThatCouldNotRunShowsWhy() async throws {
         let runner = FakeRunner(.init(status: 1, stdout: Data(
             #"{"schema": 1, "data": {"account_sync": null, "accounts": [], "notes": ["account sync skipped: cannot read config.json"]}}"#
