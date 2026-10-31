@@ -163,7 +163,8 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
     }
 
     private let llmsBody = """
-    {"data": [{"id": "m1", "name": "Claude Opus 5.5", "slug": "opus",
+    {"pagination": {"page": 1, "page_size": 200, "total_pages": 1, "has_more": false},
+     "data": [{"id": "m1", "name": "Claude Opus 5.5", "slug": "opus",
                "model_creator": {"id": "c", "name": "Anthropic", "slug": "anthropic"},
                "evaluations": {"artificial_analysis_intelligence_index": 58.0},
                "pricing": {"price_1m_blended_3_to_1": 15.0}}]}
@@ -287,6 +288,28 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(errors[.llms] == "HTTP 429")
         #expect(store.languageModels()?.map(\.id) == ["old1", "old2"])
         #expect(store.meta()[AAEndpoint.llms.rawValue]?.rateLimitHeaders?["Retry-After"] == "3600")
+    }
+
+    /// An empty page that claims more, or a page with no `has_more`, is
+    /// not a clear end: the feed fails and the stored models stay.
+    @Test func anUnclearEndOfPagesKeepsTheStoredModels() async throws {
+        for second in [page([], page: 2, hasMore: true),
+                       Data(#"{"data": [{"id": "m2", "name": "m2", "slug": "m2"}]}"#.utf8)] {
+            let dir = try TempDir()
+            let transport = StubHTTP()
+            transport.handler = { request in
+                let url = try #require(request.url)
+                if url.query?.contains("page=2") == true { return (second, 200, [:]) }
+                if url.path.contains("/language/") { return (self.page(["m1"], page: 1, hasMore: true), 200, [:]) }
+                return (Data("{}".utf8), 200, [:])
+            }
+            let store = makeStore(dir)
+            try store.database.recordAAPayload(.llms, body: page(["old1", "old2"], page: 1, hasMore: false),
+                                               at: nil, status: 200, rateLimitHeaders: nil, url: nil)
+            let errors = await store.refresh(key: "key", transport: transport)
+            #expect(errors[.llms] == "Unusable response")
+            #expect(store.languageModels()?.map(\.id) == ["old1", "old2"])
+        }
     }
 
     /// After the legacy routes retire, a 410 says what to do.
@@ -1080,7 +1103,7 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
             count.withLock { $0 += 1 }
             try await gate.pass()
-            let body = #"{"data":[{"id":"m","name":"M","slug":"m","model_creator":{"id":"c","name":"C","slug":"c"},"evaluations":{},"pricing":{}}]}"#
+            let body = #"{"pagination":{"has_more":false},"data":[{"id":"m","name":"M","slug":"m","model_creator":{"id":"c","name":"C","slug":"c"},"evaluations":{},"pricing":{}}]}"#
             return (body.data(using: .utf8)!,
                     HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: [:])!)
         }

@@ -390,8 +390,13 @@ public struct ArtificialAnalysisStore: Sendable {
             if first == nil { first = object; firstBody = data }
             rows += pageRows
             last = (response.statusCode, headers)
-            let hasMore = (object["pagination"] as? [String: Any])?["has_more"] as? Bool ?? false
-            guard hasMore, !pageRows.isEmpty else { break }
+            // Only a clear end saves: a page without `has_more`, or an
+            // empty page that claims more, would let a partial feed
+            // delete the stored models missing from it.
+            guard let hasMore = (object["pagination"] as? [String: Any])?["has_more"] as? Bool,
+                  !(hasMore && pageRows.isEmpty)
+            else { return .failure("Unusable response", status: response.statusCode, headers: headers, url: url) }
+            guard hasMore else { break }
             guard page < AAEndpoint.maxPages else {
                 return .failure("Too many pages", status: response.statusCode, headers: headers, url: url)
             }
