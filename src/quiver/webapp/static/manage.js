@@ -24,7 +24,7 @@ async function renderHarnesses() {
   // Paint before awaiting, cached or loading, so the previous page's
   // controls never stay on screen while the request runs.
   if (!harnessesPage.data) {
-    panel.innerHTML = `<div class="page">${harnessesHeader()}<div class="card"><p class="empty">Reading the registry…</p></div></div>`;
+    panel.innerHTML = `<div class="page">${harnessesHeader()}${Sk.cardRows(6)}</div>`;
     bindRefresh(renderHarnesses, () => { harnessesPage.data = null; });
   } else {
     paintHarnesses();
@@ -506,7 +506,7 @@ function detectSheet(s) {
           ${f.short_path ? `<span class="caption muted harness-detect-path">${esc(f.short_path)}</span>` : ""}
         </label>`).join("")}</div>`;
   } else if (!s.error) {
-    body = `<p class="caption harness-scanning"><span class="harness-spinner" aria-hidden="true"></span>Scanning PATH and ~/ for coding CLIs…</p>`;
+    body = Sk.rows(4);
   } else {
     body = "";
   }
@@ -706,8 +706,7 @@ async function renderAccounts(_id, refresh = false) {
   const panel = document.getElementById("panel");
   const gen = ++accountsPage.gen;
   if (!accountsPage.data || refresh) {
-    panel.innerHTML = `<div class="page">${accountsHeader(true)}<div class="card"><p class="empty">${
-      accountsPage.data ? "Refreshing…" : "Reading limits…"}</p></div></div>`;
+    panel.innerHTML = `<div class="page">${accountsHeader(true)}${Sk.cardRows(5)}</div>`;
   } else {
     paintAccounts();
   }

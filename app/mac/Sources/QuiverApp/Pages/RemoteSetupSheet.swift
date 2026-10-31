@@ -67,7 +67,7 @@ struct RemoteSetupSheet: View {
                 Task { await setup.load() }
             }
         } else {
-            LoadingCard(text: "Checking Tailscale and the hub…")
+            SkeletonDetail()
         }
     }
 

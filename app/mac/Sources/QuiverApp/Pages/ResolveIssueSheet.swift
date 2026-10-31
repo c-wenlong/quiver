@@ -48,7 +48,7 @@ struct ResolveIssueSheet: View {
             title
             switch state {
             case .idle, .loading:
-                LoadingCard(text: "Fetching the issue…")
+                SkeletonDetail()
             case .failed(let message):
                 ErrorCard(message: message, actionTitle: "Refresh") {
                     Task { await loadIssue() }

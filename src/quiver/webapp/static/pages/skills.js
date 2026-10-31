@@ -151,7 +151,7 @@ async function renderSkillsList() {
   const p = skillsPage, gen = routeGen, mine = ++p.seq;
   if (!p.data) {
     document.getElementById("panel").innerHTML = `<div class="page">${skillsHeader(true)}
-      <div class="card"><p class="empty">Reading skills…</p></div></div>`;
+      ${Sk.cardRows(6)}</div>`;
     bindSkillsHeader();
   } else {
     paintSkills();
@@ -641,7 +641,7 @@ async function renderSkillDetail(path) {
   if (cached) paintSkillDetail(cached);
   else {
     document.getElementById("panel").innerHTML = `<div class="page">${skillsHeader(true)}${skillsBack()}
-      <div class="card"><p class="empty">Reading the skill…</p></div></div>`;
+      ${Sk.detail()}</div>`;
     bindSkillsHeader();
   }
   const { status, data } = await api(`/v1/app/skills?skill=${encodeURIComponent(path)}`);

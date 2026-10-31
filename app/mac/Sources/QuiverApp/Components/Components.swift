@@ -820,6 +820,94 @@ struct SkeletonBlock: View {
     }
 }
 
+/// A stand-in for a list a fetch is still reading: `rows` fake entries —
+/// a mark, a title line and a detail line, a trailing chip — laid out like
+/// the real rows so the page doesn't jump when they land.
+struct SkeletonRows: View {
+    var rows = 6
+    /// False inside a larger callout — renders bare, no second frame.
+    var framed = true
+    /// False when the real rows carry no leading mark.
+    var icons = true
+    /// False when the real rows carry no trailing chip.
+    var pills = true
+
+    var body: some View {
+        Group {
+            if framed { Card { content } } else { content }
+        }
+    }
+
+    private var content: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<rows, id: \.self) { row in
+                HStack(spacing: 10) {
+                    if icons { SkeletonBlock(width: 16, height: 16, radius: 8) }
+                    VStack(alignment: .leading, spacing: 6) {
+                        SkeletonBlock(height: 12)
+                            .padding(.trailing, CGFloat(row % 3) * 64 + 40)
+                        SkeletonBlock(height: 10)
+                            .padding(.trailing, CGFloat(row % 2) * 96 + 120)
+                    }
+                    if pills {
+                        Spacer(minLength: 8)
+                        SkeletonBlock(width: 48, height: 16, radius: 8)
+                    }
+                }
+                .padding(.vertical, 10)
+            }
+        }
+    }
+}
+
+/// A stand-in for a text body still being read — a file's lines, an
+/// editor, a document preview.
+struct SkeletonLines: View {
+    var rows = 8
+    /// False inside a larger callout — renders bare, no second frame.
+    var framed = true
+
+    var body: some View {
+        Group {
+            if framed { Card { content } } else { content }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ForEach(0..<rows, id: \.self) { row in
+                SkeletonBlock(height: 12)
+                    .padding(.trailing, CGFloat(row % 4) * 56 + (row == rows - 1 ? 200 : 0))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A stand-in for a fetched detail — an issue, a pull request, a script —
+/// while its body is still on the wire: a heading, some paragraph lines,
+/// a row of chips.
+struct SkeletonDetail: View {
+    /// False inside a larger callout — renders bare, no second frame.
+    var framed = true
+
+    var body: some View {
+        Group {
+            if framed { Card { content } } else { content }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SkeletonBlock(width: 220, height: 20, radius: Theme.controlRadius)
+            SkeletonLines(rows: 4, framed: false)
+            HStack(spacing: 8) {
+                ForEach(0..<2, id: \.self) { _ in SkeletonBlock(width: 64, height: 20, radius: 10) }
+            }
+        }
+    }
+}
+
 // MARK: - Rail
 
 /// A small chromeless icon button for header rows: a rail's header, or

@@ -197,7 +197,7 @@ function onPage() {
 async function render() {
   const gen = routeGen;
   if (!page.data) {
-    paintShell(`<div class="card"><p class="empty">Looking for coding agents on this machine…</p></div>`);
+    paintShell(Sk.cardRows(5));
     if (!(await load(gen))) return;
   } else if (page.hubStale && !(await reloadAfterClone())) {
     return;

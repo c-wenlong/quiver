@@ -251,7 +251,7 @@ const NeedsYou = (() => {
     const errors = [needs.error, needs.actionError].filter(Boolean)
       .map((m) => `<div class="card" role="alert"><span class="error">${esc(m)}</span></div>`).join("");
     if (!needs.items) {
-      return needs.error ? errors : `<div class="card"><div class="gh-empty">${GhUI.ico("running", "gh-muted gh-spin")}<span>Reading what needs you…</span></div></div>`;
+      return needs.error ? errors : Sk.cardRows(4);
     }
     const groups = NeedsYou.groups(needs.items);
     if (!groups.length) {
@@ -317,7 +317,7 @@ const NeedsYou = (() => {
   function content() {
     const d = inbox.data;
     if (!d) {
-      return `<div class="card"><div class="gh-empty">${GhUI.ico("running", "gh-muted gh-spin")}<span>Reading GitHub notifications…</span></div></div>`;
+      return Sk.cardRows(5);
     }
     if (d.transport) return failCard(GhUI.failMessage(inbox.status, d));
     const setup = GhUI.envSetup(d.github);

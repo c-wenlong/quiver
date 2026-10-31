@@ -164,7 +164,7 @@ struct RepositoriesPage: View {
                 Task { await model.refresh(swe: app.swe) }
             }
         } else if !model.probed {
-            LoadingCard(text: "Checking gh and the pinned repos…")
+            SkeletonRows(rows: 4)
         } else if model.pins.isEmpty {
             EmptyCard(text: "Pin a repository to see its pull requests, issues and CI here.",
                       icon: "shippingbox", actionTitle: "Add repository") { adding = true }
@@ -817,7 +817,7 @@ struct RepoSurfaces: View {
         Group {
             switch board.pages {
             case .idle, .loading:
-                LoadingCard(text: "Reading the Pages settings…", framed: false)
+                SkeletonRows(rows: 2, framed: false, icons: false, pills: false)
             case .failed(let message):
                 ErrorCard(message: message, framed: false)
             case .loaded(let pages):
@@ -1007,7 +1007,7 @@ private struct SurfaceList<Row: Identifiable & Equatable & Sendable, Content: Vi
     var body: some View {
         switch state {
         case .idle, .loading:
-            LoadingCard(text: "Fetching…", framed: false)
+            SkeletonRows(rows: 5, framed: false)
                 .padding(statePadding)
         case .failed(let message):
             ErrorCard(message: message, framed: false)

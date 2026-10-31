@@ -184,7 +184,7 @@ async function renderSettings() {
   if (p.data) paintSettings();
   else {
     document.getElementById("panel").innerHTML = `<div class="page">${settingsHeader()}
-      <div class="card"><p class="empty">Reading the hub's settings…</p></div></div>`;
+      ${Sk.cardRows(5)}</div>`;
   }
   const { status, data } = await api("/v1/app/settings");
   if (gen !== routeGen || mine !== p.gen) return;
@@ -385,7 +385,7 @@ function providersSection() {
 
 function inferenceTab() {
   const prov = settingsPage.data && settingsPage.data.providers;
-  if (!prov) return `<div class="card"><p class="empty">Reading…</p></div>`;
+  if (!prov) return Sk.cardRows(4);
   const rows = prov.keys || [];
   const withValue = rows.filter((r) => r.has_value).length;
   const p = settingsPage;
@@ -604,7 +604,7 @@ function settingsUptime(seconds) {
 
 function remoteCards() {
   const d = settingsPage.data;
-  if (!d) return `<div class="set-card">${setRow("Checking hub…", "swe remote status")}</div>`;
+  if (!d) return `<div class="set-card">${Sk.rows(3)}</div>`;
   const r = d.remote;
   const bits = [r.hub.machine && r.hub.machine.name, r.public_url || r.hub_addr,
     r.hub.uptime_s != null ? `up ${settingsUptime(r.hub.uptime_s)}` : null].filter(Boolean);
@@ -655,7 +655,7 @@ const SETUP_BADGE = {
 function setupCard() {
   const p = settingsPage;
   const s = p.setup;
-  if (!s) return p.setupBusy ? `<div class="set-card">${setRow("Checking setup…", "Tailscale, the certificate, the hub and tailscale serve")}</div>` : "";
+  if (!s) return p.setupBusy ? `<div class="set-card">${Sk.rows(3)}</div>` : "";
   if (s.error) {
     return setCard([setRow("Couldn't check setup", s.error, '<button class="set-button" id="set-setup-recheck">Check again</button>', { warning: s.error, danger: true })], "Set up remote control");
   }
@@ -831,7 +831,7 @@ function settingsStopClock() {
 
 function filesSection() {
   const paths = settingsPage.data && settingsPage.data.paths;
-  if (!paths) return `<div class="card"><p class="empty">Reading…</p></div>`;
+  if (!paths) return Sk.cardRows(4);
   return `<div class="set-stack">${setCard([
     setRow("swe executable", paths.swe ? `In use: ${paths.swe}.` : "swe isn't on the hub's PATH."),
     setRow("API keys file", `In use: ${paths.api_keys}.`),

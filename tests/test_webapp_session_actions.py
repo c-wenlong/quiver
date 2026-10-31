@@ -64,6 +64,7 @@ class TestSessionActionRules(unittest.TestCase):
         "globalThis.location = { hash: '' };\n"
         "globalThis.Fmt = { logo: () => '', harnessName: (h) => h, modelName: (m) => m || '',"
         " tokens: String, dollars: String };\n"
+        "globalThis.Sk = new Proxy({}, { get: () => () => '' });\n"
         "globalThis.renderGate = () => { gated++; };\nlet gated = 0;\n"
         "const posts = [];\nlet answer = () => ({ status: 200, data: {} });\n"
         "globalThis.apiPost = async (path, body) => { posts.push({ path, body }); return answer(path, body); };\n")
@@ -430,7 +431,8 @@ class TestChatHeaderMeta(unittest.TestCase):
             "globalThis.window = { addEventListener() {} };\n"
             "globalThis.document = { addEventListener() {}, getElementById: () => null };\n"
             "globalThis.location = { hash: '' };\n"
-            "globalThis.Fmt = { modelName: (m) => m || '', harnessName: (h) => h };\n")
+            "globalThis.Fmt = { modelName: (m) => m || '', harnessName: (h) => h };\n"
+            "globalThis.Sk = new Proxy({}, { get: () => () => '' });\n")
         body = """
             const T = SessionChat._test;
             T.chat.key = "k";

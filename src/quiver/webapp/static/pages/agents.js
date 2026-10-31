@@ -81,7 +81,7 @@ function paintAgents(loading) {
   let body;
   if (p.scope === "project" && !loading) body = agentsProject();
   else if (p.scope === "global" && p.globalError && !loading) body = `<div class="card"><p class="error">${esc(p.globalError)}</p></div>`;
-  else if (loading || !p.data) body = `<div class="card"><p class="empty">Checking links…</p></div>`;
+  else if (loading || !p.data) body = Sk.cardRows(5);
   else body = agentsGlobal(p.data);
   document.getElementById("panel").innerHTML = `<div class="page">${agentsHeader(loading)}
     <div class="stack">${agentsTabs()}${body}</div></div>`;
@@ -226,7 +226,7 @@ function agentsProject() {
       suggestions ? " Recent session folders are suggested as you type." : ""}</p>`;
   }
   if (p.projectError) return `${strip}<div class="card"><p class="error">${esc(p.projectError)}</p></div>`;
-  if (!pr) return `${strip}<div class="card"><p class="empty">Reading the folder…</p></div>`;
+  if (!pr) return `${strip}${Sk.cardRows(3)}`;
   const files = pr.files;
   if (!files.some((f) => f.name === p.file)) p.file = files[0].name;
   const tabTitle = (f) => (f.links_to ? `${f.name} → ${f.links_to}` : f.exists ? f.name : `${f.name} (new)`);

@@ -58,7 +58,7 @@ struct IssueDetailSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             switch state {
             case .idle, .loading:
-                LoadingCard(text: "Fetching the issue…")
+                SkeletonDetail()
                 footer(nil)
             case .failed(let message):
                 ErrorCard(message: message, actionTitle: "Refresh") {

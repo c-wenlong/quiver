@@ -62,7 +62,7 @@ const mcpSvg = (name, cls = "") =>
  * health included; an older one is read again, without health. */
 async function renderMcp() {
   if (mcpPage.data || mcpPage.failure) paintMcp();
-  else mcpShell(`<div class="card"><p class="empty">Reading the configs…</p></div>`);
+  else mcpShell(Sk.cardRows(6));
   if (mcpPage.loading) return;
   if (mcpPage.data && Date.now() - mcpPage.at < MCP_MAX_AGE_MS) return;
   await mcpLoad(false);

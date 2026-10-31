@@ -117,7 +117,7 @@
     S.loading = true;
     if (!S.data) {
       document.getElementById("panel").innerHTML = `<div class="page cal-page">${header()}
-        <div class="card"><p class="empty">Reading activity…</p></div></div>`;
+        ${Sk.cardRows(6, { icon: false })}</div>`;
       bindHeader();
     } else if (S.lead) {
       // A swipe landed: the grid already shows where it rests.

@@ -57,7 +57,7 @@ struct HooksPage: View {
         if let error = model.actionError { ErrorCard(message: error) }
         switch model.state {
         case .idle, .loading:
-            LoadingCard(text: "Reading hooks…")
+            SkeletonRows(rows: 6)
         case .failed(let message):
             // An swe from before `hooks` existed fails the whole page with
             // its own words; say what fixes it rather than echoing argv.
@@ -555,10 +555,10 @@ private struct HookDetailView: View {
                         onSaved: reload)
                         .frame(height: 460)
                 } else {
-                    LoadingCard(text: "Opening the script…")
+                    SkeletonLines(rows: 10)
                 }
             } else {
-                LoadingCard(text: "Checking the script…")
+                SkeletonDetail()
             }
         }
         .task(id: [hook.source, home.path, String(refresh)]) {

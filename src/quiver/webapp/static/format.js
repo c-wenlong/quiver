@@ -322,3 +322,34 @@ const Fmt = (() => {
     resetIn, windowLabel, planTitle, money, balance, onDemand,
     copyIcon, copy, copyTick, shellWord };
 })();
+
+/* Loading skeletons: blocks laid out like the rows or document a fetch
+ * is still reading, styled by the .skel/.sk-* rules in styles.css. A
+ * page's "Reading…" card becomes Sk.cardRows(n) so what arrives lands
+ * without the layout jumping. */
+const Sk = (() => {
+  const width = (v) => (typeof v === "number" ? `${v}px` : v);
+  /* One shimmering block; w as %/px, h in px. */
+  const block = (w, h, cls = "") =>
+    `<div class="skel${cls ? ` ${cls}` : ""}" style="width:${width(w)};height:${h}px"></div>`;
+  /* One fake list row: a mark, a title line over a detail line, a pill. */
+  const row = ({ icon = true, pill = true, i = 0 } = {}) =>
+    `<div class="sk-row">${icon ? '<div class="skel sk-dot"></div>' : ""}
+      <div class="sk-lines">
+        <div class="skel sk-line" style="width:${64 - (i % 3) * 16}%"></div>
+        <div class="skel sk-sub" style="width:${40 - (i % 2) * 12}%"></div>
+      </div>${pill ? '<div class="skel sk-pill"></div>' : ""}</div>`;
+  const rows = (n = 6, opts = {}) =>
+    Array.from({ length: n }, (_, i) => row({ ...opts, i })).join("");
+  /* Paragraph or file lines, the last one short. */
+  const lines = (n = 5) =>
+    `<div class="sk-para">${Array.from({ length: n }, (_, i) =>
+      `<div class="skel sk-line" style="width:${i === n - 1 ? 45 : 90 - (i % 4) * 12}%"></div>`).join("")}</div>`;
+  const card = (inner) => `<div class="card" role="status" aria-label="Loading">${inner}</div>`;
+  const cardRows = (n = 6, opts = {}) => card(rows(n, opts));
+  const cardLines = (n = 5) => card(lines(n));
+  /* A fetched detail — heading, paragraph, chips — for sheets and panes. */
+  const detail = () => card(`${block("42%", 20, "sk-head")}${lines(4)}
+    <div class="sk-chips"><div class="skel sk-chip"></div><div class="skel sk-chip"></div></div>`);
+  return { block, row, rows, lines, card, cardRows, cardLines, detail };
+})();
