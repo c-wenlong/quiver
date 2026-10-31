@@ -22,7 +22,6 @@ tailnet IP, was working.
 from __future__ import annotations
 
 import json
-import plistlib
 import subprocess
 import sys
 import tempfile
@@ -387,13 +386,7 @@ def _get(url: str, timeout: float) -> tuple[bool, str]:
 
 
 def _agent(home: Path | None, run: Runner) -> tuple[list[str] | None, bool]:
-    path = launchd.plist_path(home)
-    try:
-        args = plistlib.loads(path.read_bytes()).get("ProgramArguments")
-    except (OSError, ValueError, plistlib.InvalidFileException):
-        return None, False
-    loaded, pid = launchd.loaded_pid(run)
-    return (list(args) if isinstance(args, list) else None), bool(loaded and pid)
+    return launchd.status(home, run)
 
 
 def _state_file(home: Path | None) -> Path:

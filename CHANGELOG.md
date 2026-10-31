@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe remote agent --install` keeps a satellite running.** Like
+  `swe remote serve --install`, it runs `swe remote agent` as a
+  LaunchAgent on macOS (`com.cwenlong.quiver.remote-agent`) or a systemd
+  user unit on Linux (`quiver-remote-agent.service`), separate from the
+  hub's, so it starts at login or boot and restarts if it exits. It logs
+  to `~/.quiver/data/remote/agent.log`, turns on lingering or says how,
+  and refuses on a machine whose own hub is installed, since the two
+  would share `data/remote/cursors/`. `--uninstall` removes it and
+  `--status [--json]` shows it. `install-app.sh` now restarts the agent
+  on a new bundle as it does the hub
+  ([#1438](https://github.com/c-wenlong/quiver/issues/1438)).
+
 - **Mac: Sessions lists other machines' sessions.** Below this Mac's
   Pinned and day groups, an "Other machines" group shows the hub's rows
   for each satellite: a subheader per machine with a green or grey dot
