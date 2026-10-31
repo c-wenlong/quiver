@@ -1,0 +1,3 @@
+# Docs site generator only. The core package stays stdlib-only; do not
+# add this to pyproject.toml. Pinned to a release older than 7 days.
+mistune==3.3.4
