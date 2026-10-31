@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac: the AGENTS.md page edits instruction chapters.** When the shared
+  file is chapter-managed (`~/.quiver/AGENTS_MD/index.txt` exists), the
+  Global tab becomes a chapter editor instead of a flat-file editor: a
+  drag-to-reorder rail mirrors index.txt order, `+` creates a chapter with
+  a heading and lists it, `−` unlists a chapter while leaving the file on
+  disk, and every save runs `swe instructions build` so the file every
+  harness reads never goes stale. The generated output shows read-only
+  with a Current/Stale/Not built state and a Rebuild button for edits
+  made elsewhere. With no index the flat editor stays, joined by a
+  "Convert to chapters" card that runs the new `swe instructions init` —
+  which folds the current AGENTS.md into `AGENTS_MD/main.md` (stripping
+  compiler comments when it was generated) and builds. `build`, `check`
+  and `init` take `--json`: `check` reports the chapter list, staleness
+  and any source refusal, so the page knows which mode to draw.
+
 - **Mac: a machine switcher opens another machine's hub in the window.**
   The sidebar's first row picks "This Mac" (the native pages) or another
   machine's hub, whose web app then fills the window in a web view. The

@@ -29,10 +29,15 @@ struct AgentsMdPage: View {
             case .project: ProjectInstructions()
             }
         }
-        .task(id: app.swePath) { await model.load(swe: app.swe) }
+        .task(id: app.swePath) {
+            async let links: () = model.load(swe: app.swe)
+            async let chaptered: () = app.chapters.load(swe: app.swe)
+            _ = await (links, chaptered)
+        }
         // Agents rewrite these files while they work; pick that up on return.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await model.checkDisk() }
+            Task { await app.chapters.checkDisk() }
         }
     }
 }
@@ -42,6 +47,7 @@ private struct GlobalInstructions: View {
 
     var body: some View {
         let model = app.agentsMd
+        let chapters = app.chapters
         switch model.check {
         case .idle, .loading:
             SkeletonRows(rows: 5, shape: .link, label: "Checking links…")
@@ -50,14 +56,256 @@ private struct GlobalInstructions: View {
         case .loaded(let report):
             VStack(alignment: .leading, spacing: 12) {
                 LinksStrip(report: report)
-                if let document = model.global {
-                    let linked = report.instructionRows.filter { $0.instructions?.state == .linked }.count
-                    InstructionEditor(
-                        document: document,
-                        title: displayPath(document.url),
-                        subtitle: linked == 1 ? "Linked into 1 harness" : "Linked into \(linked) harnesses")
+                switch chapters.status {
+                case .loaded(let check) where check.indexExists:
+                    ChaptersEditor(check: check)
+                case .idle, .loading:
+                    SkeletonRows(rows: 8, shape: .file, label: "Reading chapters…")
+                default:
+                    // A failed check means an swe without instructions: the
+                    // flat file is the only thing there is to edit.
+                    FlatInstructions(report: report, document: model.global)
                 }
             }
+        }
+    }
+}
+
+/// The flat-file editing path: the shared AGENTS.md itself, plus the offer
+/// to split it into chapters once `swe instructions check` says none exist.
+private struct FlatInstructions: View {
+    @Environment(AppModel.self) private var app
+    var report: InitCheck
+    var document: InstructionDocument?
+
+    var body: some View {
+        let chapters = app.chapters
+        // A loaded, non-chapter check is the only state where converting is
+        // meaningful; a failed one is an old swe that cannot build anyway.
+        if case .loaded(let check) = chapters.status, !check.indexExists {
+            Strip {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Chapters").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                        Text("Split AGENTS.md into ordered sections you edit separately; swe rebuilds the file every harness reads.")
+                            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if chapters.converting { ProgressView().controlSize(.small) }
+                    Button(chapters.converting ? "Converting…" : "Convert to chapters", systemImage: "square.split.2x1") {
+                        Task { await chapters.convert(swe: app.swe) }
+                    }
+                    .secondaryButton()
+                    .disabled(chapters.converting)
+                    .hoverTip("Runs swe instructions init: your AGENTS.md becomes main.md under ~/.quiver/AGENTS_MD.", replacesLabel: false)
+                }
+                if let error = chapters.convertError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(Theme.caption).foregroundStyle(Theme.dangerText)
+                }
+            }
+        }
+        if let document {
+            let linked = report.instructionRows.filter { $0.instructions?.state == .linked }.count
+            InstructionEditor(
+                document: document,
+                title: displayPath(document.url),
+                subtitle: linked == 1 ? "Linked into 1 harness" : "Linked into \(linked) harnesses")
+        }
+    }
+}
+
+/// Chapter mode: the ordered sources of the generated AGENTS.md. The rail
+/// edits index.txt (order, add, remove); the editor edits the selected
+/// chapter; the strip previews and rebuilds the output.
+private struct ChaptersEditor: View {
+    @Environment(AppModel.self) private var app
+    var check: InstructionsCheck
+    @State private var adding = false
+    @State private var newName = ""
+    @State private var addError: String?
+
+    var body: some View {
+        let chapters = app.chapters
+        HStack(alignment: .top, spacing: 12) {
+            rail
+            VStack(alignment: .leading, spacing: 12) {
+                if let name = chapters.selected,
+                   let chapter = check.chapters.first(where: { $0.name == name }) {
+                    let position = check.chapters.firstIndex(where: { $0.name == name })! + 1
+                    InstructionEditor(
+                        document: chapters.document(for: chapter),
+                        title: chapter.name,
+                        subtitle: "Chapter \(position) of \(check.chapters.count)") {
+                        Task { await chapters.build(swe: app.swe) }
+                    }
+                    .id(chapter.name)
+                } else {
+                    Card(title: "No chapters", subtitle: "index.txt lists none yet") {
+                        EmptyView()
+                    } content: {
+                        Text("Add a chapter to start the shared instruction file.")
+                            .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                OutputStrip(check: check)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .alert("New chapter", isPresented: $adding) {
+            TextField("name or folder/name (.md added)", text: $newName)
+            Button("Cancel", role: .cancel) { newName = "" }
+            Button("Add") {
+                Task {
+                    if let problem = await chapters.addChapter(named: newName, swe: app.swe) {
+                        addError = problem
+                    } else {
+                        newName = ""
+                        addError = nil
+                    }
+                }
+            }
+        } message: {
+            Text("A .md file under ~/.quiver/AGENTS_MD, added at the end of index.txt.")
+        }
+    }
+
+    /// The ordered chapter list: drag to reorder (rewrites index.txt),
+    /// select to edit, remove to unlist without deleting the file.
+    private var rail: some View {
+        let chapters = app.chapters
+        return Strip {
+            HStack(spacing: 8) {
+                Text("Chapters").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                Text("\(check.chapters.count)").font(Theme.caption).foregroundStyle(Theme.textMuted)
+                Spacer(minLength: 4)
+                Button("Add", systemImage: "plus") { adding = true }
+                    .iconButton()
+                    .hoverTip("Add a chapter at the end of index.txt", replacesLabel: false)
+            }
+            if let addError {
+                Text(addError).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ScrollView {
+                ReorderableRows(check.chapters) { name, before in
+                    Task { await chapters.move(chapter: name, before: before, swe: app.swe) }
+                } row: { chapter in
+                    ChapterRow(chapter: chapter, chapters: chapters)
+                }
+            }
+            .frame(maxHeight: 300)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: 190)
+    }
+
+    private struct ChapterRow: View {
+        var chapter: InstructionsCheck.Chapter
+        var chapters: ChaptersModel
+        @Environment(AppModel.self) private var app
+        @State private var hovering = false
+
+        var body: some View {
+            let selected = chapters.selected == chapter.name
+            HStack(spacing: 6) {
+                Button { chapters.selected = chapter.name } label: {
+                    HStack(spacing: 6) {
+                        Text(chapter.name)
+                            .font(Theme.font(size: 12, design: .monospaced))
+                            .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
+                            .lineLimit(1).truncationMode(.middle)
+                        if chapters.isDirty(chapter.name) {
+                            Circle().fill(Theme.warning).frame(width: Theme.statusDot, height: Theme.statusDot)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                if !chapter.exists {
+                    Text("missing").font(Theme.caption).foregroundStyle(Theme.dangerText)
+                } else if hovering || selected {
+                    Button("Remove", systemImage: "minus") {
+                        Task { await chapters.remove(chapter: chapter.name, swe: app.swe) }
+                    }
+                    .iconButton()
+                    .hoverTip("Remove from index.txt; the file stays on disk", replacesLabel: false)
+                }
+            }
+            .padding(.vertical, 3)
+            .padding(.horizontal, 6)
+            .background(selected ? Theme.field : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+            .onHover { hovering = $0 }
+            .contextMenu {
+                Button("Remove from index") {
+                    Task { await chapters.remove(chapter: chapter.name, swe: app.swe) }
+                }
+            }
+        }
+    }
+}
+
+/// The generated AGENTS.md: build state, a Rebuild for edits made outside
+/// the app, and a read-only preview of what the harnesses get.
+private struct OutputStrip: View {
+    @Environment(AppModel.self) private var app
+    var check: InstructionsCheck
+    @State private var showOutput = false
+
+    var body: some View {
+        let chapters = app.chapters
+        return VStack(alignment: .leading, spacing: 12) {
+            Strip {
+                HStack(spacing: 10) {
+                    Text("Generated AGENTS.md").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
+                    stateLabel
+                    Spacer(minLength: 8)
+                    if let note = chapters.buildNote {
+                        Text(note).font(Theme.caption).foregroundStyle(Theme.textMuted)
+                    }
+                    if chapters.building { ProgressView().controlSize(.small) }
+                    Button(chapters.building ? "Building…" : "Rebuild", systemImage: "arrow.clockwise") {
+                        Task { await chapters.build(swe: app.swe) }
+                    }
+                    .secondaryButton()
+                    .disabled(chapters.building)
+                    .hoverTip("Runs swe instructions build", replacesLabel: false)
+                    Button(showOutput ? "Hide" : "Preview", systemImage: showOutput ? "chevron.up" : "chevron.down") {
+                        withAnimation { showOutput.toggle() }
+                    }
+                    .iconButton()
+                }
+                if let error = check.error {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(Theme.caption).foregroundStyle(Theme.dangerText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let error = chapters.buildError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(Theme.caption).foregroundStyle(Theme.dangerText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if showOutput, let document = chapters.output {
+                InstructionEditor(document: document, title: displayPath(document.url),
+                                  subtitle: "Built from the chapters — read-only",
+                                  readOnly: true)
+                    .frame(height: 220)
+            }
+        }
+    }
+
+    @ViewBuilder private var stateLabel: some View {
+        if check.error != nil {
+            Label("Source problem", systemImage: "exclamationmark.triangle")
+                .font(Theme.caption).foregroundStyle(Theme.dangerText)
+        } else if check.stale == true || !check.outputExists {
+            Label(check.outputExists ? "Stale" : "Not built", systemImage: "exclamationmark.circle")
+                .font(Theme.caption).foregroundStyle(Theme.warningText)
+        } else {
+            Label("Current", systemImage: "checkmark.circle")
+                .font(Theme.caption).foregroundStyle(Theme.success)
         }
     }
 }
