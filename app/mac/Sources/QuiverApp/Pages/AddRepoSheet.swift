@@ -94,6 +94,9 @@ struct AddRepoSheet: View {
         // only a pause actually hits GitHub. An emptied field clears the
         // list right away — `search("")` does that itself.
         .task(id: query) {
+            // New text ends the marker: clearing the field emptied the
+            // results, so retyping the same words must search again.
+            submitted = nil
             if query.trimmingCharacters(in: .whitespaces).isEmpty {
                 await model.search("", swe: app.swe)
                 return
