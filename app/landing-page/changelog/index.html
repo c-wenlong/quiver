@@ -25,7 +25,8 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth;
+       scroll-padding-top: 76px; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: inherit; }
 code { font-family: var(--mono); font-size: 0.92em; }
@@ -71,6 +72,16 @@ footer { border-top: 1px solid var(--line); padding: 32px; margin-top: 64px; dis
 footer .right { display: flex; gap: 20px; }
 footer a { color: var(--text-3); text-decoration: none; }
 footer a:hover { color: var(--text); }
+
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px; }
+  nav { gap: 16px; }
+  nav .links, nav .right a.plain { display: none; }
+  .doc { padding-top: 32px; }
+  .doc h1 { font-size: 27px; }
+  .doc h2 { font-size: 21px; }
+  footer { flex-direction: column; align-items: flex-start; }
+}
 </style>
 </head>
 <body>
@@ -1318,7 +1329,7 @@ rather than losing the only handle on a leaked credential. Paired
 devices keep working on the approval route unchanged.</p>
 </li>
 </ul>
-<h2 id="1-1-1-2026-10-26"><a class="anchor" href="#1-1-1-2026-10-26"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v1.1.1">1.1.1</a> - 2026-10-26</h2>
+<h2 id="111---2026-10-26"><a class="anchor" href="#111---2026-10-26"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v1.1.1">1.1.1</a> - 2026-10-26</h2>
 <h3 id="fixed-1"><a class="anchor" href="#fixed-1"></a>Fixed</h3>
 <ul>
 <li><p><strong>&quot;Clear search data&quot; could hang the app.</strong> With the session-index
@@ -1455,7 +1466,7 @@ the bundled logos the Mac and iPhone apps draw at
 PWA's list shows the logo in place of the harness's name.</p>
 </li>
 </ul>
-<h2 id="1-1-0-2026-10-26"><a class="anchor" href="#1-1-0-2026-10-26"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v1.1.0">1.1.0</a> - 2026-10-26</h2>
+<h2 id="110---2026-10-26"><a class="anchor" href="#110---2026-10-26"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v1.1.0">1.1.0</a> - 2026-10-26</h2>
 <h3 id="added-1"><a class="anchor" href="#added-1"></a>Added</h3>
 <ul>
 <li><p><strong>Shared hooks across harnesses, plus hook CRUD.</strong> The <code>hooks</code> domain
@@ -2896,7 +2907,7 @@ session server (<code>python -m quiver.mcp_server</code>) runs over stdio, which
 the advisory lists as unaffected, so there was no live exposure; the
 floor only keeps a fresh install off the vulnerable range.</li>
 </ul>
-<h2 id="1-0-0-2026-10-13"><a class="anchor" href="#1-0-0-2026-10-13"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v1.0.0">1.0.0</a> - 2026-10-13</h2>
+<h2 id="100---2026-10-13"><a class="anchor" href="#100---2026-10-13"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v1.0.0">1.0.0</a> - 2026-10-13</h2>
 <p>First stable release. <code>swe</code> and the Quiver macOS app share one data model
 under <code>~/.quiver</code>, every <code>--json</code> command uses the <code>{schema, data}</code>
 envelope, and the design is documented under <a href="https://github.com/c-wenlong/quiver/tree/main/docs">docs/</a>: data model,
@@ -3499,7 +3510,7 @@ token renders <code>re-login</code> whether or not a refresh token is present,
 since quiver cannot refresh it.</p>
 </li>
 </ul>
-<h2 id="0-2-10-2026-08-25"><a class="anchor" href="#0-2-10-2026-08-25"></a>[0.2.10] - 2026-08-25</h2>
+<h2 id="0210---2026-08-25"><a class="anchor" href="#0210---2026-08-25"></a>[0.2.10] - 2026-08-25</h2>
 <h3 id="changed-8"><a class="anchor" href="#changed-8"></a>Changed</h3>
 <ul>
 <li><strong>Harness state consolidated into one file: <code>config/harness.json</code>.</strong>
@@ -3571,7 +3582,7 @@ already documents <code>swe harness star</code>.</li>
 <li>Dead <code>demo</code> symlink, stale coverage artifacts, and <code>.jules/</code> session
 notes (parked under <code>.archive/</code>, gitignored) cleaned out of the repo.</li>
 </ul>
-<h2 id="0-2-9-2026-08-20"><a class="anchor" href="#0-2-9-2026-08-20"></a>[0.2.9] - 2026-08-20</h2>
+<h2 id="029---2026-08-20"><a class="anchor" href="#029---2026-08-20"></a>[0.2.9] - 2026-08-20</h2>
 <h3 id="fixed-7"><a class="anchor" href="#fixed-7"></a>Fixed</h3>
 <ul>
 <li><strong>v0.2.8 could not start on Python 3.10 or 3.11.</strong> <code>swe find</code>'s summary line
@@ -3590,7 +3601,7 @@ the release. Two earlier attempts at this guard silently passed:
 reaches the parser. It uses the builtin <code>compile()</code> now, and is verified
 against the actual v0.2.8 defect.</li>
 </ul>
-<h2 id="0-2-8-2026-08-20"><a class="anchor" href="#0-2-8-2026-08-20"></a>[0.2.8] - 2026-08-20</h2>
+<h2 id="028---2026-08-20"><a class="anchor" href="#028---2026-08-20"></a>[0.2.8] - 2026-08-20</h2>
 <h3 id="added-9"><a class="anchor" href="#added-9"></a>Added</h3>
 <ul>
 <li><strong><code>swe find</code>.</strong> The read-only counterpart to <code>swe init</code>: where the shared
@@ -3649,7 +3660,7 @@ file. <code>mcp/servers/</code> is gitignored, since it is 21 nested git repos a
 <code>mcp.json</code> records how to rebuild it.</p>
 </li>
 </ul>
-<h2 id="0-2-7-2026-08-20"><a class="anchor" href="#0-2-7-2026-08-20"></a>[0.2.7] - 2026-08-20</h2>
+<h2 id="027---2026-08-20"><a class="anchor" href="#027---2026-08-20"></a>[0.2.7] - 2026-08-20</h2>
 <h3 id="added-10"><a class="anchor" href="#added-10"></a>Added</h3>
 <ul>
 <li><p><strong><code>swe init --migrate</code>.</strong> Moves a pre-0.2.7 <code>~/.config/swe</code> into <code>~/.quiver</code>,
@@ -4261,7 +4272,7 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
 <code>test_fetch_codex_success</code> when the suite ran in alphabetical order.</p>
 </li>
 </ul>
-<h2 id="0-2-6-2026-07-17"><a class="anchor" href="#0-2-6-2026-07-17"></a>[0.2.6] - 2026-07-17</h2>
+<h2 id="026---2026-07-17"><a class="anchor" href="#026---2026-07-17"></a>[0.2.6] - 2026-07-17</h2>
 <h3 id="added-11"><a class="anchor" href="#added-11"></a>Added</h3>
 <ul>
 <li><code>swe autocomplete [zsh|bash|fish]</code> — generate and inject shell tab-completion</li>
@@ -4287,7 +4298,7 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
 <li><code>commands.py</code> and <code>usage.py</code> import from central <code>identity.py</code> instead of local mappings</li>
 <li>README updated with autocomplete, favourites, providers, doctor, install, edit, and --search/--refresh docs</li>
 </ul>
-<h2 id="0-2-5-2026-07-06"><a class="anchor" href="#0-2-5-2026-07-06"></a>[0.2.5] - 2026-07-06</h2>
+<h2 id="025---2026-07-06"><a class="anchor" href="#025---2026-07-06"></a>[0.2.5] - 2026-07-06</h2>
 <h3 id="added-12"><a class="anchor" href="#added-12"></a>Added</h3>
 <ul>
 <li><code>swe skills help &lt;topic&gt;</code> — per-topic help (catalog, discover, tree, link, unlink, move, scope)</li>
@@ -4299,7 +4310,7 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
 <li>Expanded <code>swe help skills</code>, <code>swe help setup</code>, and <code>swe help discover</code></li>
 <li>CONTRIBUTING and tests README updated for package layout and new test files</li>
 </ul>
-<h2 id="0-2-4-2026-07-06"><a class="anchor" href="#0-2-4-2026-07-06"></a>[0.2.4] - 2026-07-06</h2>
+<h2 id="024---2026-07-06"><a class="anchor" href="#024---2026-07-06"></a>[0.2.4] - 2026-07-06</h2>
 <h3 id="added-13"><a class="anchor" href="#added-13"></a>Added</h3>
 <ul>
 <li><code>swe skills tree</code> — show harness symlink layout (codex/claude/cursor → shared)</li>
@@ -4307,13 +4318,13 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
 <li><code>swe skills link</code> / <code>unlink</code> / <code>move</code> — manage symlinks and move skills between roots</li>
 <li>Skills list shows <strong>VISIBLE VIA</strong> (all harness scopes that see each skill)</li>
 </ul>
-<h2 id="0-2-3-2026-07-06"><a class="anchor" href="#0-2-3-2026-07-06"></a>[0.2.3] - 2026-07-06</h2>
+<h2 id="023---2026-07-06"><a class="anchor" href="#023---2026-07-06"></a>[0.2.3] - 2026-07-06</h2>
 <h3 id="added-14"><a class="anchor" href="#added-14"></a>Added</h3>
 <ul>
 <li><code>swe skills discover</code> — scan <code>~/Desktop</code> and <code>~/Documents</code> for <code>*/skills/</code> catalogs</li>
 <li><code>swe skills catalog add|list|remove</code> — register extra skill directories in <code>skill_catalogs.json</code></li>
 </ul>
-<h2 id="0-2-2-2026-07-06"><a class="anchor" href="#0-2-2-2026-07-06"></a>[0.2.2] - 2026-07-06</h2>
+<h2 id="022---2026-07-06"><a class="anchor" href="#022---2026-07-06"></a>[0.2.2] - 2026-07-06</h2>
 <h3 id="added-15"><a class="anchor" href="#added-15"></a>Added</h3>
 <ul>
 <li><code>swe mcp discover</code> — find MCP servers across tool configs vs <code>~/.config/swe/mcp.json</code></li>
@@ -4326,7 +4337,7 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
 <li><code>swe setup</code> now covers harnesses, MCP, and skills roots in one wizard</li>
 <li>README commands table documents <code>setup</code>, <code>discover</code>, and <code>harness discover</code></li>
 </ul>
-<h2 id="0-2-1-2026-07-06"><a class="anchor" href="#0-2-1-2026-07-06"></a>[0.2.1] - 2026-07-06</h2>
+<h2 id="021---2026-07-06"><a class="anchor" href="#021---2026-07-06"></a>[0.2.1] - 2026-07-06</h2>
 <h3 id="added-16"><a class="anchor" href="#added-16"></a>Added</h3>
 <ul>
 <li><code>swe harness discover</code> — scan PATH for AI coding CLIs not yet in <code>tools.json</code> (dry-run by default)</li>
@@ -4335,7 +4346,7 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
 <li><code>swe discover</code> alias for <code>swe harness discover</code></li>
 <li>Repo mascot (<code>assets/mascot.png</code>) in README</li>
 </ul>
-<h2 id="0-2-0-2026-07-06"><a class="anchor" href="#0-2-0-2026-07-06"></a>[0.2.0] - 2026-07-06</h2>
+<h2 id="020---2026-07-06"><a class="anchor" href="#020---2026-07-06"></a>[0.2.0] - 2026-07-06</h2>
 <h3 id="changed-15"><a class="anchor" href="#changed-15"></a>Changed</h3>
 <ul>
 <li>Refactored monolithic <code>cli.py</code> into domain packages: <code>harness/</code>, <code>sessions/</code>, <code>skills/</code>, <code>mcp/</code></li>
@@ -4343,7 +4354,7 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
 <li>Added unit tests for harness registry, sessions aggregator, models analytics, and skills discovery (30 tests total)</li>
 <li>CI runs tests verbosely across Python 3.10–3.13</li>
 </ul>
-<h2 id="0-1-0-2026-07-06"><a class="anchor" href="#0-1-0-2026-07-06"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v0.1.0">0.1.0</a> - 2026-07-06</h2>
+<h2 id="010---2026-07-06"><a class="anchor" href="#010---2026-07-06"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v0.1.0">0.1.0</a> - 2026-07-06</h2>
 <h3 id="added-17"><a class="anchor" href="#added-17"></a>Added</h3>
 <ul>
 <li>Initial open-source release of <strong>quiver</strong> (CLI command: <code>swe</code>)</li>

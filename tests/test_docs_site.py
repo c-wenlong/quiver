@@ -117,6 +117,22 @@ class RenderTests(unittest.TestCase):
         self.assertIn('id="swe-list-ls"', html)
         self.assertIn('id="nix-1"', html)  # second heading dedupes
 
+    def test_anchor_slugs_match_github_for_punctuation(self):
+        # GitHub drops punctuation rather than hyphenating it, so a
+        # fragment copied from a repo page resolves here too.
+        self.assertEqual(docs_site.github_slug("1.1.1 - 2026-10-26"),
+                         "111---2026-10-26")
+        self.assertEqual(docs_site.github_slug("`swe report` (report!)"),
+                         "swe-report-report")
+
+    def test_slug_counters_are_per_page(self):
+        # One document's heading names never shift another page's anchors.
+        pages = {}
+        for _ in range(2):
+            render = docs_site._renderer()
+            pages[render("## Install")] = True
+        self.assertEqual(len(pages), 1)
+
     def test_pages_render_the_site_chrome(self):
         render = docs_site._renderer()
         page = docs_site.render_page("changelog", render("# Hi\n\nbody"))

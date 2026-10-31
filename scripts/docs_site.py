@@ -53,7 +53,7 @@ _CODE_SPAN = re.compile(r"(`+)(.+?)\1", re.S)
 _URLISH = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*:|//)")
 # <img src="..."> / <a href="..."> inside markdown (README badges etc.)
 _HTML_ATTR = re.compile(r'\b(src|href)="([^"]+)"')
-_NON_SLUG = re.compile(r"[^a-z0-9]+")
+_NON_WORD = re.compile(r"[^\w\- ]")
 
 
 def strip_ansi(text: str) -> str:
@@ -175,7 +175,8 @@ PAGE_CSS = """
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth;
+       scroll-padding-top: 76px; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: inherit; }
 code { font-family: var(--mono); font-size: 0.92em; }
@@ -221,6 +222,16 @@ footer { border-top: 1px solid var(--line); padding: 32px; margin-top: 64px; dis
 footer .right { display: flex; gap: 20px; }
 footer a { color: var(--text-3); text-decoration: none; }
 footer a:hover { color: var(--text); }
+
+@media (max-width: 640px) {
+  .wrap { padding: 0 16px; }
+  nav { gap: 16px; }
+  nav .links, nav .right a.plain { display: none; }
+  .doc { padding-top: 32px; }
+  .doc h1 { font-size: 27px; }
+  .doc h2 { font-size: 21px; }
+  footer { flex-direction: column; align-items: flex-start; }
+}
 """
 
 
@@ -260,8 +271,16 @@ def _footer() -> str:
 </footer>"""
 
 
+def github_slug(text: str) -> str:
+    """GitHub's heading-anchor rule: strip tags and punctuation, keep
+    word chars and hyphens, lowercase, spaces to hyphens."""
+    plain = re.sub(r"<[^>]+>", "", text).lower()
+    return _NON_WORD.sub("", plain).replace(" ", "-")
+
+
 def _renderer():
-    """A mistune renderer that adds ``id`` anchors to h1-h4."""
+    """A mistune renderer that adds ``id`` anchors to h1-h4. One per
+    document: the slug dedupe counter is per page, like GitHub's."""
     import mistune
 
     class Anchored(mistune.HTMLRenderer):
@@ -273,8 +292,7 @@ def _renderer():
             html = super().heading(text, level, **attrs)
             if level > 4:
                 return html
-            slug = _NON_SLUG.sub("-", re.sub(r"<[^>]+>", "", text)
-                                 .strip().lower()).strip("-")
+            slug = github_slug(text)
             n = self._used.get(slug, 0)
             self._used[slug] = n + 1
             slug = slug if n == 0 else f"{slug}-{n}"
@@ -287,9 +305,24 @@ def _renderer():
         plugins=["table", "strikethrough", "task_lists"])
 
 
+_MERMAID = """<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+  for (const el of document.querySelectorAll('pre > code.language-mermaid')) {
+    const div = document.createElement('div');
+    div.className = 'mermaid';
+    div.textContent = el.textContent;
+    el.parentElement.replaceWith(div);
+  }
+  await mermaid.run();
+</script>
+"""
+
+
 def render_page(slug: str, body_html: str) -> str:
     """Wrap rendered Markdown ``body_html`` in the site chrome."""
     title, desc = TITLES[slug]
+    mermaid = _MERMAID if 'class="language-mermaid"' in body_html else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -310,21 +343,20 @@ def render_page(slug: str, body_html: str) -> str:
 {body_html}
 </main>
 {_footer()}
-</body>
+{mermaid}</body>
 </html>
 """
 
 
 def build_pages(root: Path) -> tuple[dict[str, str], list[str]]:
     """All generated pages, ``slug -> html``, plus unresolvable links."""
-    render = _renderer()
     pages: dict[str, str] = {}
     missing: list[str] = []
     for src, slug in SOURCES.items():
         text = (root / src).read_text(encoding="utf-8")
         text = rewrite_links(text, src, root, missing)
-        pages[slug] = render_page(slug, render(text))
-    pages["cli"] = render_page("cli", render(cli_page(root)))
+        pages[slug] = render_page(slug, _renderer()(text))
+    pages["cli"] = render_page("cli", _renderer()(cli_page(root)))
     return pages, missing
 
 
