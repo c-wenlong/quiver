@@ -249,12 +249,29 @@ enum TaskGrouping {
             add(Key(github: true, title: owner), failure.name,
                 label: shortName(failure.name), hit: 0, running: false)
         }
+        // The list and the chips group by name across sources, so a name
+        // two sources share (a Linear team and a Notion database both
+        // "QUI") is one group: each of its menu rows counts that group.
+        var totals: [String: (count: Int, running: Bool)] = [:]
+        for group in groups.values {
+            for scope in group.values {
+                let total = totals[scope.name] ?? (0, false)
+                totals[scope.name] = (total.count + scope.count, total.running || scope.running)
+            }
+        }
         let byName = { (a: String, b: String) in a.localizedStandardCompare(b) == .orderedAscending }
         return groups.keys
             .sorted { $0.github != $1.github ? $0.github : byName($0.title, $1.title) }
             .map { key in
-                TaskRailGroup(title: key.title,
-                              scopes: (groups[key] ?? [:]).values.sorted { byName($0.label, $1.label) })
+                let scopes = (groups[key] ?? [:]).values.map { scope in
+                    var scope = scope
+                    scope.count = totals[scope.name]?.count ?? scope.count
+                    scope.running = totals[scope.name]?.running ?? scope.running
+                    return scope
+                }
+                return TaskRailGroup(title: key.title,
+                                     scopes: scopes.sorted { byName($0.label, $1.label) },
+                                     github: key.github)
             }
     }
 
@@ -305,7 +322,10 @@ struct TaskRailScope: Identifiable, Equatable {
 struct TaskRailGroup: Identifiable, Equatable {
     let title: String
     let scopes: [TaskRailScope]
-    var id: String { title }
+    /// A GitHub owner's group, kept apart from a source of the same
+    /// title (an owner named "Linear").
+    var github = false
+    var id: String { (github ? "owner:" : "source:") + title }
 }
 
 /// The tasks page's row filters: everything, what an agent is on, the

@@ -29,7 +29,9 @@ struct TasksView: View {
         let sections = TaskGrouping.sections(of: model.tasks, failed: model.failedRepos,
                                              filter: filter, scope: scope)
         PageScroll {
-            if model.loaded, !model.tasks.isEmpty {
+            // Failed repos alone still get the menu: a pick on one of
+            // them must be able to go back to All tasks.
+            if model.loaded, !model.tasks.isEmpty || !model.failedRepos.isEmpty {
                 scopeMenu(scope)
                 filterBar(scope)
             }

@@ -209,6 +209,23 @@ final class TaskRowTests: XCTestCase {
         XCTAssertEqual(rail[0].scopes.map(\.count), [0, 0, 0])
     }
 
+    /// A name two sources share is one list group, so both menu rows
+    /// count that group; an owner named like a source keeps its own id.
+    func testSharedScopeNamesCountTheSharedGroup() {
+        let tasks = [
+            row("a", source: "linear", ref: "QUI-1", repo: nil, project: "QUI", running: true),
+            row("b", source: "notion", kind: "page", ref: "x", repo: nil, project: "QUI"),
+            row("c", repo: "Linear/app"),
+        ]
+        let rail = TaskGrouping.rail(of: tasks, filter: .all)
+        XCTAssertEqual(rail.map(\.title), ["Linear", "Linear", "Notion"])
+        XCTAssertEqual(Set(rail.map(\.id)).count, 3)
+        let qui = rail.flatMap(\.scopes).filter { $0.name == "QUI" }
+        XCTAssertEqual(qui.map(\.count), [2, 2])
+        XCTAssertEqual(qui.map(\.running), [true, true])
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .all, scope: "QUI"), 2)
+    }
+
     func testQuietScopesFoldButThePickStays() {
         let group = TaskRailGroup(title: "acme", scopes: [
             TaskRailScope(name: "acme/api", label: "api", count: 2, running: false),
