@@ -213,10 +213,11 @@ public struct APIKeysFile: Equatable, Sendable {
     /// The new name has to be a valid variable name not already exported.
     public mutating func rename(name: String, to newName: String) throws {
         guard Self.isValidName(newName) else { throw APIKeysError.invalidName(newName) }
-        guard newName != name else { return }
         let all = entries
         guard all.filter({ $0.name == name }).count <= 1 else { throw APIKeysError.duplicate(name) }
         guard let entry = all.first(where: { $0.name == name }) else { throw APIKeysError.notFound(name) }
+        // Renaming a key to its own name is a no-op, once it is known to exist.
+        guard newName != name else { return }
         guard !all.contains(where: { $0.name == newName }), unsafeLines[newName] == nil else {
             throw APIKeysError.nameTaken(newName)
         }
