@@ -2109,7 +2109,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(404, "not_found", "unknown route")
             return
 
-        self._serve_static(path)
+        self._serve_static(path, parsed.query)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -3490,7 +3490,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     # -- static ------------------------------------------------------------
 
-    def _serve_static(self, path: str) -> None:
+    def _serve_static(self, path: str, query: str = "") -> None:
         """The web app (``quiver/webapp/static``) at the root: ``/`` is its
         page and each asset a flat name beside it (``/app.js``,
         ``/harness-claude.svg``). Every non-API path lands here, and only
@@ -3502,7 +3502,9 @@ class _Handler(BaseHTTPRequestHandler):
         # The app lived under ``/app/`` until #944, and pair links minted
         # then (``/app/#pair=<token>``) are still out there: send them,
         # and a page cached with ``/app/…`` asset paths, to the same name
-        # at the root. The fragment survives the redirect.
+        # at the root. The browser keeps the fragment across a redirect;
+        # the query string is copied onto ``Location`` here.
+        suffix = f"?{query}" if query else ""
         if path == "/app" or path.startswith("/app/"):
             rest = path[len("/app/"):]
             # Only a name this handler would serve: anything else (say
@@ -3510,10 +3512,10 @@ class _Handler(BaseHTTPRequestHandler):
             if rest and not self._is_webapp_name(rest):
                 self._send_error(404, "not_found", "unknown route")
                 return
-            self._redirect("/" + rest)
+            self._redirect("/" + rest + suffix)
             return
         if path == "/index.html":
-            self._redirect("/")
+            self._redirect("/" + suffix)
             return
         name = path[1:] or "index.html"
         if name in _BUNDLES:

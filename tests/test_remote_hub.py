@@ -1269,7 +1269,10 @@ class TestHubWriteRoutes(unittest.TestCase):
             self.assertEqual(status, 200, path)
         for path, where in (("/app/", "/"), ("/app", "/"), ("/index.html", "/"),
                             ("/app/app.js", "/app.js"),
-                            ("/app/pages.css", "/pages.css")):
+                            ("/app/pages.css", "/pages.css"),
+                            ("/app/?x=1&y=2", "/?x=1&y=2"),
+                            ("/app/app.js?v=3", "/app.js?v=3"),
+                            ("/index.html?x=1", "/?x=1")):
             conn = http.client.HTTPConnection(
                 "127.0.0.1", self.srv.port, timeout=5)
             try:
@@ -1300,6 +1303,24 @@ class TestHubWriteRoutes(unittest.TestCase):
                      "/hub.py", "/pages/chat.js"):
             status, _ = self.srv.request("GET", path)
             self.assertEqual(status, 404, path)
+
+    def test_root_mount_leaves_the_api_alone(self):
+        """The app at ``/`` is no catch-all: every root endpoint the hub
+        has (all under ``/v1/``) still answers as API JSON, and an
+        unknown ``/v1/`` path is the API's 404, never the app's page."""
+        status, body = self.srv.request("GET", "/v1/status")
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        # Routes that read only the test server's own state: the
+        # /v1/app/* pages scan the real home's registry and sessions.
+        for path in ("/v1/sessions", "/v1/inbox", "/v1/devices/me"):
+            status, body = self.srv.request("GET", path, headers=self.hdr)
+            self.assertEqual(status, 200, path)
+            self.assertIsInstance(json.loads(body), dict, path)
+        for path in ("/v1/nope", "/v1/app.js", "/v1/", "/v1/app/nope"):
+            status, body = self.srv.request("GET", path, headers=self.hdr)
+            self.assertEqual(status, 404, path)
+            self.assertIn("error", json.loads(body), path)
 
     def _headers(self, path, headers=None):
         conn = http.client.HTTPConnection(

@@ -383,7 +383,7 @@ GET  /v1/inbox                       pending decisions; ?done=1 adds finished-to
 GET  /v1/app/overview                the web app's Overview (docs/web-app.md)
 GET  /v1/app/sessions                the web app's Sessions: catalog rows + usage
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
-GET  /                               the web app's page; its assets are flat names beside it (/app.js); /app/… redirects to the same name here, fragment intact
+GET  /                               the web app's page; its assets are flat names beside it (/app.js); /app/… 301s to the same name here, query and fragment intact
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
 GET  /v1/devices                     every paired device (device_view rows + paired_via + this_device) and the pending pair requests, for the pair-requests-and-devices screen
@@ -1308,7 +1308,7 @@ writes-go-through-tested-Python rule.
 every page, component and feature, and the hub work each needs.
 
 Two clients. The web app (`src/quiver/webapp/`, served by the hub under
-`/`; older `/app/` links redirect there, fragment intact) works in any browser over
+`/`; older `/app/` links redirect there, query and fragment intact) works in any browser over
 Tailscale: its `#pair=` fragment trades a pair token for the credential
 it keeps in localStorage, and pending pair requests are decided inline
 in Settings › Integrations › Remote. On iPhone the client is native

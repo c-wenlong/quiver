@@ -35,7 +35,7 @@ work each one needs.
 | Other devices | iPhone and iPad only | Android, any browser, and the `#approve` page on a Mac |
 
 Decision: the iPhone client is SwiftUI. The PWA's "every other device"
-role later moved to the web app (`/app/`), which took its `#pair=` and
+role later moved to the web app (now at the hub's `/`; `/app/` redirects there), which took its `#pair=` and
 `#approve` fragments and deleted the standalone client. The checkboxes
 below track the SwiftUI app.
 
@@ -241,7 +241,7 @@ and per-source env blocks so a missing token explains an empty page.
 - [ ] Diff viewer with commit and push through `swe gh`
 - [ ] iPad layout: sessions list and chat side by side
 - [ ] Protocol version check, with a "hub is newer, update the app" message
-- [x] Browser client: the web app at `/app/` replaced the standalone PWA outright, taking its `#pair=` and `#approve` fragments, so no restyle was needed
+- [x] Browser client: the web app (at `/`, first shipped at `/app/`) replaced the standalone PWA outright, taking its `#pair=` and `#approve` fragments, so no restyle was needed
 - [x] SSH console: a terminal on the hub's machine for when the hub is down, dialling sshd over the tailnet with a Secure Enclave key (SwiftNIO SSH + SwiftTerm), in the hub menu on Sessions
 - [x] Hub: `GET /v1/ssh` (host keys to pin, login user) and `POST /v1/ssh/key`; `swe remote ssh --on` writes paired phones' keys into `authorized_keys`, and a revoke removes them
 - [ ] Hub: satellites install the same keys and report their host keys, so the console reaches every machine
