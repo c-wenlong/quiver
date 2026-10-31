@@ -110,6 +110,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Mac: a machine switcher opens another machine's hub in the window.</strong>
+The sidebar's first row picks &quot;This Mac&quot; (the native pages) or another
+machine's hub, whose web app then fills the window in a web view. The
+hub signs it in as it does a browser on this Mac: the owner's own
+tailnet device needs no pairing, any other device gets the web app's
+pairing card. The view stays on that hub's origin (other links open in
+the default browser, <code>file:</code> never loads), keeps its own web data per
+hub, and a strip in the title bar names the machine. The list holds the
+hub this Mac's satellite agent reports to and hubs added by address in
+Settings › Integrations › Remote › Other hubs; the last pick is
+remembered (<a href="https://github.com/c-wenlong/quiver/issues/681">#681</a>).</p>
+</li>
 <li><p><strong>Hub: thinking messages carry how long the model thought.</strong>
 <code>kind: &quot;thinking&quot;</code> messages from Claude Code, Codex and opencode now
 carry <code>duration_s</code>, so the clients can show &quot;Thought for 12s&quot;. Claude

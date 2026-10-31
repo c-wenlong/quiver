@@ -202,6 +202,10 @@ describe_xml="$(xml_escape "$describe")"
 channel_xml="$(xml_escape "$channel")"
 commit_xml="$(xml_escape "$commit")"
 source_path_xml="$(xml_escape "$source_path")"
+# NSAllowsArbitraryLoadsInWebContent: a hub on `swe remote serve --tailnet`
+# answers plain http on its tailnet address (WireGuard already encrypts
+# it), and the machine switcher's web view must reach it. It covers web
+# views only, and that view never leaves the hub's origin (HubNavigation).
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -226,6 +230,7 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
   <key>NSDesktopFolderUsageDescription</key><string>Quiver runs swe and reads session folders, some of which live in your Desktop folder.</string>
   <key>NSDocumentsFolderUsageDescription</key><string>Quiver runs swe and reads session folders, some of which live in your Documents folder.</string>
   <key>NSAppleEventsUsageDescription</key><string>Quiver opens your terminal to run a sign-in or resume a session.</string>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoadsInWebContent</key><true/></dict>
 ${sparkle_plist}</dict>
 </plist>
 PLIST

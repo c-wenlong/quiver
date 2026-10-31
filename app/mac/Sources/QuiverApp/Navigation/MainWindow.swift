@@ -96,7 +96,15 @@ struct MainWindow: View {
                 .frame(width: model.sidebarCollapsed
                     ? Theme.sidebarCollapsedWidth : sidebarWidth)
             // A page never sizes the window: it gets the panel's space.
-            PanelFrame { PageView(section: model.selection ?? .overview) }
+            PanelFrame {
+                // Another machine's hub replaces the native pages; This
+                // Mac brings them back.
+                if let hub = model.machines.selected {
+                    HubWebPage(hub: hub)
+                } else {
+                    PageView(section: model.selection ?? .overview)
+                }
+            }
                 .background(Theme.panel)
                 .overlay(alignment: .leading) {
                     Theme.border.frame(width: 1)
@@ -147,6 +155,14 @@ struct MainWindow: View {
         }
         .onAppear {
             model.openMainWindow = { [openWindow] in openWindow(id: "main") }
+        }
+        // The hub this Mac's satellite agent reports to joins the machine
+        // switcher. An older swe without `agent --status` keeps the list
+        // as it was.
+        .task(id: model.swePath) {
+            if let status = try? await model.swe.remoteAgentStatus() {
+                model.machines.setAgentHub(status.configured ? status.hub : nil)
+            }
         }
         // Outermost, so a card from any page covers the sidebar too.
         .sheetHost()
@@ -233,6 +249,7 @@ private struct Sidebar: View {
     private var list: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                MachineSwitcherButton(collapsed: !isExpanded)
                 ForEach(model.sidebar.visibleGroups) { group in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(group.title)
@@ -244,7 +261,8 @@ private struct Sidebar: View {
                             // never move vertically.
                             .opacity(isExpanded ? 1 : 0)
                         ForEach(model.sidebar.sections(in: group)) { section in
-                            NavItem(section: section, isSelected: model.selection == section,
+                            NavItem(section: section,
+                                    isSelected: model.selection == section && !model.machines.showsHub,
                                     isFocused: focused == section,
                                     collapsed: !isExpanded,
                                     badge: section == .inbox ? model.github.unreadCount

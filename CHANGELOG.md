@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac: a machine switcher opens another machine's hub in the window.**
+  The sidebar's first row picks "This Mac" (the native pages) or another
+  machine's hub, whose web app then fills the window in a web view. The
+  hub signs it in as it does a browser on this Mac: the owner's own
+  tailnet device needs no pairing, any other device gets the web app's
+  pairing card. The view stays on that hub's origin (other links open in
+  the default browser, `file:` never loads), keeps its own web data per
+  hub, and a strip in the title bar names the machine. The list holds the
+  hub this Mac's satellite agent reports to and hubs added by address in
+  Settings › Integrations › Remote › Other hubs; the last pick is
+  remembered ([#681](https://github.com/c-wenlong/quiver/issues/681)).
+
 - **Hub: thinking messages carry how long the model thought.**
   `kind: "thinking"` messages from Claude Code, Codex and opencode now
   carry `duration_s`, so the clients can show "Thought for 12s". Claude
