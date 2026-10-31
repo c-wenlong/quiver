@@ -45,6 +45,9 @@ targets:
         # screen size (black bars top and bottom).
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # The shared Keychain group, read by SharedContainer. The build
+        # fills in the signing team, so no team id is in the source.
+        QuiverKeychainGroup: $(AppIdentifierPrefix)com.quiver.remote.shared
         NSCameraUsageDescription: Scan the pair QR that swe remote pair --app shows.
         CFBundleURLTypes:
           - CFBundleURLName: com.quiver.remote.pair
@@ -63,6 +66,15 @@ targets:
             ts.net:
               NSIncludesSubdomains: true
               NSExceptionAllowsInsecureHTTPLoads: true
+    # The App Group holds the hub list and the shared Keychain group the
+    # hubs' credentials, so the share extension and the widget can read
+    # the paired hubs (KeychainHubStore). Signing with automatic style
+    # registers both on the team's App IDs.
+    entitlements:
+      path: QuiverRemote.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.quiver.remote]
+        keychain-access-groups: [$(AppIdentifierPrefix)com.quiver.remote.shared]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quiver.remote

@@ -8,8 +8,8 @@ final class KeychainHubStoreTests: XCTestCase {
 
     override func setUp() {
         suite = "quiver.tests.\(UUID().uuidString)"
-        store = KeychainHubStore(service: "com.quiver.remote.tests.\(UUID().uuidString)",
-                                 defaults: UserDefaults(suiteName: suite)!)
+        store = KeychainHubStore(keychain: SystemKeychain(service: "com.quiver.remote.tests.\(UUID().uuidString)"),
+                                 sharedGroup: nil, defaults: UserDefaults(suiteName: suite)!, legacyDefaults: nil)
     }
 
     override func tearDown() {
@@ -82,5 +82,15 @@ final class KeychainHubStoreTests: XCTestCase {
         // the new item.
         XCTAssertFalse(store.legacyPairingLeft)
         XCTAssertEqual(store.load().hubs.map(\.credential.credential), ["old-single"])
+    }
+
+    func testTheBuildCanWriteTheSharedGroup() throws {
+        let group = try XCTUnwrap(SharedContainer.keychainGroup, "Info.plist names the shared group")
+        let keychain = SystemKeychain(service: "com.quiver.remote.tests.\(UUID().uuidString)")
+        guard keychain.write(Data("x".utf8), account: "probe", group: group) else {
+            throw XCTSkip("this build isn't signed with the shared Keychain group")
+        }
+        defer { keychain.delete(account: "probe", group: nil) }
+        XCTAssertEqual(keychain.read(account: "probe", group: nil)?.group, group)
     }
 }
