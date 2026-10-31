@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iPhone, web and Mac: thinking cards say how long the model
+  thought.** A thinking card reads "Thought for 12s" or "Thought for
+  1m 5s" from the hub's `duration_s`, and plain "Thought" when the hub
+  sent none. One formatting rule per client (`ThoughtLabel.text` on
+  iOS and the Mac, `Fmt.thought` on the web)
+  ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
+
 - **Hub: thinking messages carry how long the model thought.**
   `kind: "thinking"` messages from Claude Code, Codex and opencode now
   carry `duration_s`, so the clients can show "Thought for 12s". Claude

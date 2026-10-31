@@ -9,7 +9,8 @@ public struct HubChatItem: Identifiable, Equatable, Sendable {
         /// echoes it (and stays when it failed, or went out degraded).
         case user(String, send: HubSendState?)
         case assistant(String)
-        case thinking(String)
+        /// `seconds` is how long the model thought, when the hub knew.
+        case thinking(String, seconds: Double?)
         case tool(HubToolCall, result: String?)
         /// `options` is the pane's numbered menu when the ask carried it;
         /// `picked` is the decision the card lights as chosen (the row
@@ -851,7 +852,7 @@ public final class SessionChatModel {
         case "user":
             list.append(HubChatItem(id: id, kind: .user(text, send: nil)))
         case "thinking":
-            list.append(HubChatItem(id: id, kind: .thinking(text)))
+            list.append(HubChatItem(id: id, kind: .thinking(text, seconds: msg.durationS)))
         case "tool_use":
             guard let tool = msg.tool else { return }
             var result: String?

@@ -110,6 +110,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>iPhone, web and Mac: thinking cards say how long the model
+thought.</strong> A thinking card reads &quot;Thought for 12s&quot; or &quot;Thought for
+1m 5s&quot; from the hub's <code>duration_s</code>, and plain &quot;Thought&quot; when the hub
+sent none. One formatting rule per client (<code>ThoughtLabel.text</code> on
+iOS and the Mac, <code>Fmt.thought</code> on the web)
+(<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
+</li>
 <li><p><strong>Hub: thinking messages carry how long the model thought.</strong>
 <code>kind: &quot;thinking&quot;</code> messages from Claude Code, Codex and opencode now
 carry <code>duration_s</code>, so the clients can show &quot;Thought for 12s&quot;. Claude

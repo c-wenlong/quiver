@@ -420,8 +420,8 @@ private struct ChatItemView: View {
                        send: send) { Task { await model.retry(item) } }
         case .assistant(let text):
             AssistantReply(text: text)
-        case .thinking(let text):
-            ThinkingCard(text: text)
+        case .thinking(let text, let seconds):
+            ThinkingCard(text: text, seconds: seconds)
         case .tool(let call, let result):
             ToolCard(call: call, result: result, pages: model.pageTargets(for: call)) { model.previewing = $0 }
         case .approval(let rid, let prompt, let state):
@@ -719,6 +719,7 @@ struct CappedWidth: Layout {
 
 private struct ThinkingCard: View {
     let text: String
+    let seconds: Double?
     @State private var open = false
 
     var body: some View {
@@ -726,7 +727,7 @@ private struct ThinkingCard: View {
             Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "brain").font(Theme.font(size: 12))
-                    Text("Thought").font(Theme.control)
+                    Text(ThoughtLabel.text(seconds)).font(Theme.control)
                     Image(systemName: open ? "chevron.up" : "chevron.down").font(Theme.disclosure)
                 }
                 .foregroundStyle(Theme.textSecondary)
