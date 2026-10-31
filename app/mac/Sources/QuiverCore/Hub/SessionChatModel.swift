@@ -152,7 +152,11 @@ public final class SessionChatModel {
     /// The read a live message scheduled, until it posts. Set only
     /// while the chat is open.
     private(set) var readTask: Task<Void, Never>?
-    /// The read `stop()` sent for one still due, for tests to await.
+    /// The read `start()` sent once the hub listed the row; never
+    /// awaited by the chat, so a slow write can't hold up history.
+    private(set) var readOnOpen: Task<Void, Never>?
+    /// The read `stop()` sent, covering what the chat showed; for tests
+    /// to await.
     private(set) var readFlush: Task<Void, Never>?
     /// The chat counts as open for read state: between the first
     /// `start()` and `stop()`.
@@ -247,11 +251,10 @@ public final class SessionChatModel {
             self.row = row
             hub.noteRow(row)
             noteActivity(row.lastActiveAt)
-            // The hub lists it, so it takes a read now. Awaited, one
-            // loopback round trip, so a test sees it in order; a failure
-            // changes nothing, since the tracker already hid the dot.
-            await hub.postRead(key)
-            guard gen == generation else { return }
+            // The hub lists it, so it takes a read now, beside the
+            // history read rather than before it. A failure changes
+            // nothing, since the tracker already hid the dot.
+            readOnOpen = Task { [hub, key] in await hub.postRead(key) }
             let page = try await hub.withClient { [key] in try await $0.messages(key, limit: Self.pageSize) }
             guard gen == generation else { return }
             load(page)
@@ -291,12 +294,11 @@ public final class SessionChatModel {
         if readOpen {
             readOpen = false
             hub.chatClosed(key, activity: newestActivity)
-            // A read still due goes now rather than with the timer.
-            if let due = readTask {
-                due.cancel()
-                readTask = nil
-                readFlush = Task { [hub, key] in await hub.postRead(key) }
-            }
+            // One more read, due or not: it covers whatever the chat
+            // showed, history that landed after the opening read included.
+            readTask?.cancel()
+            readTask = nil
+            readFlush = Task { [hub, key] in await hub.postRead(key) }
         }
         modelTask?.cancel()
         modelTask = nil

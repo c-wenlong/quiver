@@ -57,7 +57,7 @@ struct UnreadTracker: Equatable {
 /// When the open chat's read cursor goes to the hub. Opening posts at
 /// once (`ReadPoster`); after that each new message pushes a trailing
 /// post `interval` past it, so a burst of replies costs one request, and
-/// a post still waiting goes out when the chat closes. Pure: the caller
+/// closing posts once more. Pure: the caller
 /// passes the time.
 struct ReadDebounce: Equatable {
     static let interval: TimeInterval = 3
@@ -128,9 +128,12 @@ final class ReadPoster {
         arm()
     }
 
-    /// The chat closed: a post it left waiting goes now.
+    /// The chat closed: one more post, due or not, covering whatever it
+    /// showed (history that loaded after the opening post included). A
+    /// post it left waiting goes with it.
     func closed(_ key: String) {
-        if let waiting = schedule.flush(key) { post(waiting) }
+        _ = schedule.flush(key)
+        post(key)
     }
 
     /// Another hub went on screen: nothing waiting may reach it.

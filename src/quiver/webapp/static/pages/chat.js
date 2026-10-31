@@ -2817,6 +2817,7 @@ const SessionChat = (() => {
     const machine = (data.machines || []).find((m) => m.id === row.machine_id);
     chat.row = Object.assign({}, chat.row || {}, row, machine && machine.name ? { machine: machine.name } : {});
     chat.rowKnown = true;
+    unreadHook("seen", chat.key, row.last_active_at);
     updateOwnership();
     // The folder is known now: absolute page paths become previewable.
     repaintPreviewButtons();

@@ -479,6 +479,9 @@ extension HubStubbed {
         let chat = SessionChatModel(key: "claude:s1", hub: hub)
         await chat.start()
         chat.stop()
+        // The open's and close's reads land before a test reads the POSTs.
+        await chat.readOnOpen?.value
+        await chat.readFlush?.value
         return chat
     }
 
@@ -814,6 +817,9 @@ extension HubStubbed {
         let chat = SessionChatModel(key: "claude:s1", hub: hub)
         await chat.start()
         chat.stop()
+        // The open's and close's reads land before a test reads the POSTs.
+        await chat.readOnOpen?.value
+        await chat.readFlush?.value
         return chat
     }
 

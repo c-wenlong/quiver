@@ -128,7 +128,7 @@ final class UnreadTests: XCTestCase {
     }
 
     @MainActor
-    func testThePosterPostsOnOpenOnceAfterABurstAndFlushesOnClose() async {
+    func testThePosterPostsOnOpenOnceAfterABurstAndOnClose() async {
         var clock = 0.0
         var posted: [String] = []
         let poster = ReadPoster(now: { clock }, sleep: { clock += $0 }, post: { posted.append($0) })
@@ -153,7 +153,7 @@ final class UnreadTests: XCTestCase {
         XCTAssertEqual(posted.count, 3, "and the timer has nothing left")
 
         poster.closed("a")
-        XCTAssertEqual(posted.count, 3, "a close with nothing waiting posts nothing")
+        XCTAssertEqual(posted.count, 4, "a close always posts, covering what the chat showed")
     }
 
     @MainActor
@@ -172,7 +172,6 @@ final class UnreadTests: XCTestCase {
         poster.message("a")
         poster.reset()
         await poster.settle()
-        poster.closed("a")
         XCTAssertEqual(posted, [], "another hub went on screen: nothing goes to it")
     }
 
@@ -183,6 +182,7 @@ final class UnreadTests: XCTestCase {
         let app = AppModel(hub: PairedHub(baseURL: URL(string: "http://hub.test:8477")!,
                                           credential: Credential(deviceId: "d", credential: "c", name: nil)))
         let posted = expectation(description: "read posted")
+        posted.assertForOverFulfill = false  // the close posts again
         var keys: [String] = []
         app.markReadOnHub = { client, key in
             XCTAssertEqual(client.baseURL.host, "hub.test")

@@ -116,6 +116,44 @@ class TestSessionUnread(unittest.TestCase):
         self.assertEqual(out["total"], 1)
         self.assertIsNone(out["open"])
 
+    def test_closing_always_posts_once_so_history_shown_counts(self):
+        out = self.run_js("""
+            await SessionUnread.opened("k", 1);
+            posts.length = 0;
+            await SessionUnread.closed("k");
+            return posts.length;""")
+        self.assertEqual(out, 1)
+
+    def test_a_hidden_tab_posts_nothing(self):
+        out = self.run_js("""
+            await SessionUnread.opened("k", 1);
+            posts.length = 0;
+            SessionUnread.activity("k");
+            let shown = false;
+            unread.visible = () => shown;
+            await fire();  // hid before the timer fired
+            const whileHidden = posts.length;
+            shown = true;
+            SessionUnread.activity("k");  // chat.js asks again when the tab shows
+            await fire();
+            const onShow = posts.length;
+            shown = false;
+            await SessionUnread.closed("k");
+            return { whileHidden, onShow, afterHiddenClose: posts.length };""")
+        self.assertEqual(out, {"whileHidden": 0, "onShow": 1, "afterHiddenClose": 1})
+
+    def test_a_chat_from_a_link_marks_its_row_once_known(self):
+        out = self.run_js("""
+            answer = () => ({ status: 500, data: null });
+            await SessionUnread.opened("k", 0);
+            SessionUnread.seen("k", 42);
+            SessionUnread.seen("other", 99);  // not the open chat
+            answer = () => { throw new Error("offline"); };
+            await SessionUnread.closed("k");
+            return [unread.marks.get("k"), unread.marks.has("other"),
+                    unreadShown({ key: "k", unread: true, last_active_at: 42 })];""")
+        self.assertEqual(out, [42, False, False])
+
     def test_opening_another_chat_closes_the_first(self):
         out = self.run_js("""
             await SessionUnread.opened("a", 1);
@@ -167,6 +205,7 @@ class TestChatCallsTheReadHooks(unittest.TestCase):
     def test_hooks_are_wired(self):
         src = CHAT_JS.read_text(encoding="utf-8")
         for call in ('unreadHook("opened", key', 'unreadHook("closed", chat.key)',
+                     'unreadHook("seen", chat.key, row.last_active_at)',
                      'unreadHook("activity", chat.key)'):
             self.assertIn(call, src)
         self.assertEqual(src.count('unreadHook("activity"'), 2)

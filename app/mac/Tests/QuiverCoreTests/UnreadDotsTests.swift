@@ -190,6 +190,7 @@ extension HubStubbed {
         let chat = SessionChatModel(key: "claude:s1", hub: hub)
         chat.readSleep = { _ in try? await gate.pass() }
         await chat.start()
+        await chat.readOnOpen?.value
         return (hub, chat)
     }
 
@@ -203,7 +204,7 @@ extension HubStubbed {
         let gate = HoldGate()
         let (hub, chat) = try await openChat(gate)
         defer { chat.stop() }
-        #expect(Self.reads().count == 1, "the open's read, before history")
+        #expect(Self.reads().count == 1, "the open's read")
         #expect(!hub.isUnread("claude:s1"))
         #expect(chat.readTask == nil, "history is not live activity")
 
@@ -239,12 +240,15 @@ extension HubStubbed {
         gate.open()
     }
 
-    @Test func aClosedChatWithNothingDuePostsNoMore() async throws {
+    @Test func closingPostsOnceEvenWithNothingDue() async throws {
         let gate = HoldGate()
         let (_, chat) = try await openChat(gate)
         chat.stop()
-        #expect(chat.readFlush == nil)
-        #expect(Self.reads().count == 1)
+        await chat.readFlush?.value
+        #expect(Self.reads().count == 2, "the close covers history shown after the opening read")
+        // A second stop sends nothing more.
+        chat.stop()
+        #expect(Self.reads().count == 2)
         gate.open()
     }
 }

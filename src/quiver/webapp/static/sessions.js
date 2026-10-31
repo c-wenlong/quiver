@@ -853,7 +853,9 @@ function repaintList() {
  * (its `tailnet:<node>` or paired-device cursor) and moves the cursor on
  * POST /v1/sessions/{key}/read. The chat posts when it opens, again at
  * most every READ_EVERY_MS while messages arrive, and once more when it
- * closes if one is still due. A dot clears at once through a local mark
+ * closes, which covers whatever it showed. A hidden tab posts nothing:
+ * the hub's cursor is the time of the post, so a read sent while hidden
+ * would cover replies nobody saw. A dot clears at once through a local mark
  * (key -> the newest hub time it covers); the next list read drops marks
  * the hub has caught up with. The iPhone and Mac apps follow the same
  * rules. */
@@ -861,6 +863,7 @@ const READ_EVERY_MS = 3000;
 const unread = {
   openKey: null, marks: new Map(), timer: null, due: null,
   // Swapped by tests.
+  visible: () => typeof document === "undefined" || document.visibilityState !== "hidden",
   setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (t) => clearTimeout(t),
 };
 
@@ -900,12 +903,10 @@ async function unreadPost(key) {
   if (res && res.status === 200 && res.data && typeof res.data.at === "number") unreadMark(key, res.data.at);
 }
 
-function unreadFlush() {
+function unreadCancel() {
   if (unread.timer != null) unread.clearTimer(unread.timer);
   unread.timer = null;
-  const key = unread.due;
   unread.due = null;
-  return key ? unreadPost(key) : Promise.resolve();
 }
 
 const SessionUnread = {
@@ -913,8 +914,13 @@ const SessionUnread = {
     if (unread.openKey && unread.openKey !== key) SessionUnread.closed(unread.openKey);
     unread.openKey = key;
     unreadMark(key, activity);
-    if (unread.due === key) { unread.clearTimer(unread.timer); unread.timer = null; unread.due = null; }
+    unreadCancel();
     return unreadPost(key);
+  },
+  /* The open chat learned its row (a chat opened from a link has none
+   * before): the mark covers it even if the opening post failed. */
+  seen(key, activity) {
+    if (key === unread.openKey) unreadMark(key, activity);
   },
   /* A live message in the open chat: one post per READ_EVERY_MS at most,
    * so a burst (or a reply that keeps streaming) costs a few requests. */
@@ -922,12 +928,20 @@ const SessionUnread = {
     if (key !== unread.openKey) return;
     if (unread.timer != null) return;
     unread.due = key;
-    unread.timer = unread.setTimer(() => { unread.timer = null; unreadFlush(); }, READ_EVERY_MS);
+    unread.timer = unread.setTimer(() => {
+      unread.timer = null;
+      // Hidden since: the read waits for the tab to show (chat.js asks
+      // again then).
+      if (!unread.visible() || unread.due !== key) return;
+      unread.due = null;
+      unreadPost(key);
+    }, READ_EVERY_MS);
   },
   closed(key) {
     if (!key || key !== unread.openKey) return Promise.resolve();
     unread.openKey = null;
-    return unreadFlush();
+    unreadCancel();
+    return unread.visible() ? unreadPost(key) : Promise.resolve();
   },
 };
 globalThis.SessionUnread = SessionUnread;

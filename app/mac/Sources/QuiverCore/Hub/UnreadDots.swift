@@ -11,8 +11,7 @@ import Foundation
 // row the hub doesn't list has no dot.
 //
 // A chat open on screen posts `POST /v1/sessions/{key}/read` when it
-// opens, again (debounced) as messages arrive, and once more on close
-// when one is still due. `UnreadTracker` hides a dot at once rather than
+// opens, again (debounced) as messages arrive, and once more on close. `UnreadTracker` hides a dot at once rather than
 // waiting for the next list read to bring the hub's answer.
 
 /// What the hub answers a read: the cursor it stored.
