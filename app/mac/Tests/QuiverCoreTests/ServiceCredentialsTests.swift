@@ -182,10 +182,10 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
         try await credentials.set("ARTIFICIAL_ANALYSIS_API_KEY", value: "aa-key")
         let transport = ProbeTransport(.success((Data(), 200)))
         let service = try #require(ServiceCredentials.services.first { $0.id == "artificial-analysis" })
-        #expect(service.probe?.label == "Test (uses 1 of 1,000 daily requests)")
+        #expect(service.probe?.label == "Test (uses 1 of 100 daily requests)")
         #expect(await credentials.probe(service, transport: transport) == .works)
         let request = try #require(transport.requests.first)
-        #expect(request.url?.absoluteString == "https://artificialanalysis.ai/api/v2/data/llms/models")
+        #expect(request.url?.absoluteString == "https://artificialanalysis.ai/api/v2/language/models/free")
         #expect(request.value(forHTTPHeaderField: "x-api-key") == "aa-key")
     }
 }

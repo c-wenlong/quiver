@@ -246,7 +246,7 @@ private struct ModelsContent: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Add an Artificial Analysis key in Settings › Integrations")
                     .font(Theme.bodySmall).foregroundStyle(Theme.textPrimary)
-                Text("The Models page needs a free Artificial Analysis API key to download benchmarks. 1,000 requests a day are free.")
+                Text("The Models page needs a free Artificial Analysis API key to download benchmarks. 100 requests a day are free.")
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                 HStack(spacing: 12) {
                     Button("Open Settings › Integrations") {
