@@ -26,6 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not edited them. Closes
   [#888](https://github.com/c-wenlong/quiver/issues/888).
 
+- **Hub: switch the model of a headless Claude Code session.** The
+  `model` control op on a `headless` session records the pick on the
+  session's supervised row, and the next `claude -p --resume` run takes
+  it as `--model`, so the switch applies from the next turn. Claude Code
+  rows now list `headless` in `model_modes`, so the iPhone's Model menu
+  shows on them with no app change
+  ([#643](https://github.com/c-wenlong/quiver/issues/643)).
+
+- **Hub: switch the model of a Codex session attached through the
+  app-server.** The `model` control op on an `appserver` session
+  records the pick on the session's supervised row, and the next
+  `turn/start` carries it as its model override, so the switch applies
+  from the next turn. Codex rows now list `appserver` in `model_modes`,
+  so the iPhone's Model menu shows on them with no app change
+  ([#643](https://github.com/c-wenlong/quiver/issues/643)).
+
 - **Mac: Sessions lists other machines' sessions.** Below this Mac's
   Pinned and day groups, an "Other machines" group shows the hub's rows
   for each satellite: a subheader per machine with a green or grey dot

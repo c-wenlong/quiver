@@ -421,6 +421,39 @@ class TestHeadlessRun(unittest.TestCase):
         out = self.inj.control(self.session, "interrupt", "")
         self.assertFalse(out.ok)
 
+    def test_model_switch_rides_the_next_run_as_a_flag(self):
+        supervise.mark(self.inj.home, self.inj.key,
+                       {"mode": "headless", "tool_name": "claude",
+                        "model": "sonnet"})
+        with patch.object(inject.subprocess, "Popen") as popen:
+            out = self.inj.control(self.session, "model", "opus")
+        self.assertTrue(out.ok, out.note)
+        self.assertIn("next turn", out.note)
+        popen.assert_not_called()  # nothing runs until the next send
+        self.assertEqual(
+            supervise.meta_for(self.inj.home, self.inj.key)["model"], "opus")
+        proc = _FakeProc([json.dumps({"type": "result", "result": "ok"})])
+        with patch.object(inject.subprocess, "Popen",
+                          return_value=proc) as popen:
+            out = self.inj.send(
+                self.session, {"text": "go", "mode": "queue"}, "done")
+        self.assertTrue(out.ok, out.note)
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv[argv.index("--model") + 1], "opus")
+
+    def test_model_switch_refusals(self):
+        out = self.inj.control(self.session, "model", "opus")
+        self.assertFalse(out.ok)
+        self.assertIn("detached", out.note)
+        supervise.mark(self.inj.home, self.inj.key,
+                       {"mode": "headless", "tool_name": "claude"})
+        # empty, a flag smuggled in as the value, a second line
+        for bad in ("", "--dangerously-skip-permissions", "opus\n/clear"):
+            out = self.inj.control(self.session, "model", bad)
+            self.assertFalse(out.ok, bad)
+        self.assertNotIn(
+            "model", supervise.meta_for(self.inj.home, self.inj.key))
+
     def test_detach_unmarks(self):
         supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
         out = self.inj.control(self.session, "detach", "")
