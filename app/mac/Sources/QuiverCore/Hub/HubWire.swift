@@ -87,6 +87,8 @@ public struct HubSessionRow: Codable, Sendable, Equatable {
 
 struct HubSessionsResponse: Decodable {
     let sessions: [HubSessionRow]
+    /// The same list `GET /v1/machines` answers; nil from an older hub.
+    let machines: [HubMachine]?
 }
 
 /// `GET /v1/inbox`: sessions waiting on someone, with the approval's
@@ -296,6 +298,8 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
     public var id: String
     public var name: String?
     public var online: Bool?
+    /// Epoch seconds the hub last heard from the machine.
+    public var lastSeenAt: Double?
     /// Every harness swe detected there.
     public var harnesses: [String]?
     /// What a launch there accepts, in Provider visibility order; nil
@@ -333,10 +337,11 @@ public struct HubMachine: Decodable, Sendable, Equatable, Identifiable {
                 modelAtLaunch: [String]? = nil, effortAtLaunch: [String]? = nil,
                 yoloAtLaunch: [String]? = nil,
                 lastModels: [String: String]? = nil,
-                recentModels: [String: [String]]? = nil) {
+                recentModels: [String: [String]]? = nil, lastSeenAt: Double? = nil) {
         self.id = id
         self.name = name
         self.online = online
+        self.lastSeenAt = lastSeenAt
         self.harnesses = harnesses
         self.launchable = launchable
         self.harnessNames = harnessNames

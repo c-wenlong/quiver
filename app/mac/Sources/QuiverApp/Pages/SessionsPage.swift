@@ -2,8 +2,8 @@ import QuiverCore
 import SwiftUI
 
 /// The token and spend columns, shared between the header and each row.
-private let tokensColumnWidth: CGFloat = 80
-private let spendColumnWidth: CGFloat = 84
+let tokensColumnWidth: CGFloat = 80
+let spendColumnWidth: CGFloat = 84
 
 /// Every recent session across harnesses, with what it cost. Modelled on
 /// TokenTracker's Sessions page: search and filters, a summary strip, then
@@ -41,6 +41,9 @@ private struct SessionsContent: View {
     private static let foldLimit = 10
     /// Days the user has unfolded.
     @State private var openedDays: Set<Date> = []
+    /// This Mac's hub machine id from machine.json, read once per visit:
+    /// its rows are the list above, never the Other machines group.
+    @State private var localMachineId: String?
     /// Dismissed hints stay dismissed.
     @AppStorage("devinKeyHintDismissed") private var devinKeyHintDismissed = false
     @AppStorage("settingsSection") private var settingsSection = ""
@@ -216,6 +219,8 @@ private struct SessionsContent: View {
         }
         // Opening the page again within a minute shows the same list.
         .task(id: app.swePath) {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            localMachineId = await offMain { IssueResolve.localMachineId(home: home) }
             async let keyStatus: Void = app.services.reload()
             async let hubKeys: Void = app.hub.refreshKeys()
             await model.loadIfStale(for: app.swePath)
@@ -273,6 +278,7 @@ private struct SessionsContent: View {
             if model.rows.isEmpty {
                 EmptyCard(text: "No sessions listed.", icon: "clock",
                           actionTitle: "Open Harnesses") { app.selection = .harnesses }
+                otherMachines
             } else {
                 EmptyCard(text: "No sessions match these filters.", icon: "clock",
                           actionTitle: "Clear filters") {
@@ -280,6 +286,7 @@ private struct SessionsContent: View {
                     // The default window is 90 days; clearing means all time.
                     model.filter.window = .all
                 }
+                otherMachines
             }
             hiddenFooter
         } else {
@@ -338,10 +345,48 @@ private struct SessionsContent: View {
                             }
                         }
                     }
+                    // Below this Mac's groups; the filters don't reach it.
+                    otherMachines
                 }
                 hiddenFooter
             }
         }
+    }
+
+    /// The hub's sessions on other machines, from the read that fills the
+    /// overlay; gone while no satellite lists one or the hub is down.
+    @ViewBuilder private var otherMachines: some View {
+        let group = OtherMachines.build(rows: app.hub.hubRows, machines: app.hub.hubMachines,
+                                        localMachineId: localMachineId)
+        if !group.isEmpty {
+            OtherMachinesGroup(group: group, meta: { app.hub.meta(for: $0) },
+                               open: { open($0) }, act: { action, row in run(action, on: chatRow(row)) })
+        }
+    }
+
+    /// The chat row for a satellite session: its hub key reads as
+    /// `harness:id@machine`, and the chat opens it through the hub like
+    /// the iPhone does.
+    /// Its title is the harness's own, never the hub name the last read
+    /// carried: the overlay lays the current name over it, so a name
+    /// cleared here doesn't linger in the chat header or Rename sheet.
+    private func chatRow(_ other: OtherMachines.Row) -> SessionsModel.Row {
+        let active = other.hub.lastActiveAt.map { Date(timeIntervalSince1970: $0) } ?? .now
+        var hub = other.hub
+        let own = (hub.harnessTitle ?? hub.title)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        hub.title = own?.isEmpty == false ? own : nil
+        return SessionsModel.chatRow(for: other.key, rows: [], hub: hub, now: active)
+            ?? SessionsModel.Row(session: SessionInfo(id: other.sessionId, harness: other.hub.harness ?? "",
+                                                      agent: other.hub.agent ?? "", cwd: other.hub.cwd,
+                                                      title: hub.title, titleSource: nil, lastActiveAt: active,
+                                                      status: other.hub.status, resume: nil),
+                                 usage: nil)
+    }
+
+    private func open(_ other: OtherMachines.Row) {
+        opening = UUID()
+        detail = nil
+        chat = chatRow(other)
     }
 
     private func sessionRow(_ row: SessionsModel.Row) -> some View {

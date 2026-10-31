@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mac: Sessions lists other machines' sessions.** Below this Mac's
+  Pinned and day groups, an "Other machines" group shows the hub's rows
+  for each satellite: a subheader per machine with a green or grey dot
+  ("<name> · offline" when it is down), then each session's title and
+  "status · folder · harness · model" ("Working", "Idle 2h", or "Last
+  seen 1d" for an offline machine). Tokens and Spend read "–", since the
+  hub sends no usage. A click opens the chat through the hub, as on the
+  iPhone, and Pin, Rename and Fork work as on this Mac's rows. The rows
+  come from the `/v1/sessions` read the page already makes, so filters
+  and search leave them alone, and the group hides when no other machine
+  reports a session or the hub is down
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 - **iPhone app: Tasks gets the scope menu and five-row groups** the Mac
   and web already have (#941, #942). A menu above the filter chips
   stands in for the Repositories rail: All tasks, then GitHub repos
