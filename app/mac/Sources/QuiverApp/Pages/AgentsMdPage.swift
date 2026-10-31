@@ -195,13 +195,10 @@ private struct ChaptersEditor: View {
     private var rail: some View {
         let chapters = app.chapters
         return Strip {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Text("Chapters").font(Theme.cardTitle).foregroundStyle(Theme.textPrimary)
                 Text("\(check.uniqueChapters.count)").font(Theme.caption).foregroundStyle(Theme.textMuted)
                 Spacer(minLength: 4)
-                Button("Add", systemImage: "plus") { adding = true }
-                    .iconButton()
-                    .hoverTip("Add a chapter at the end of index.txt", replacesLabel: false)
             }
             if let addError {
                 Text(addError).font(Theme.caption).foregroundStyle(Theme.dangerText)
@@ -214,48 +211,84 @@ private struct ChaptersEditor: View {
                     ChapterRow(chapter: chapter, chapters: chapters)
                 }
             }
-            .frame(maxHeight: 300)
+            .frame(maxHeight: 330)
             .fixedSize(horizontal: false, vertical: true)
+            // The footer add, like the repos rail's "Add repository".
+            Button { adding = true } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus").font(Theme.font(size: 12))
+                    Text("Add chapter").font(Theme.nav)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Theme.textMuted)
+                .padding(.horizontal, 8)
+                .frame(height: Theme.navRowHeight)
+                .contentShape(.rect)
+            }
+            .plainButton(cornerRadius: Theme.controlRadius)
+            .hoverTip("Add a chapter at the end of index.txt", replacesLabel: false)
+            .padding(.top, 4)
         }
-        .frame(width: 190)
+        .frame(width: 236)
     }
 
+    /// A rail row: the basename is the identity and never truncates, so
+    /// the folder drops to a muted line under it rather than squeezing it.
     private struct ChapterRow: View {
         var chapter: InstructionsCheck.Chapter
         var chapters: ChaptersModel
         @Environment(AppModel.self) private var app
         @State private var hovering = false
 
+        private var base: String { (chapter.name as NSString).lastPathComponent }
+        private var folder: String { (chapter.name as NSString).deletingLastPathComponent }
+
         var body: some View {
             let selected = chapters.selected == chapter.name
-            HStack(spacing: 6) {
-                Button { chapters.selected = chapter.name } label: {
-                    HStack(spacing: 6) {
-                        Text(chapter.name)
-                            .font(Theme.font(size: 12, design: .monospaced))
-                            .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
-                            .lineLimit(1).truncationMode(.middle)
-                        if chapters.isDirty(chapter.name) {
-                            Circle().fill(Theme.warning).frame(width: Theme.statusDot, height: Theme.statusDot)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(base)
+                        .font(Theme.nav)
+                        .lineLimit(1).truncationMode(.tail)
+                    if chapters.isDirty(chapter.name) {
+                        Circle().fill(Theme.warning)
+                            .frame(width: Theme.statusDot, height: Theme.statusDot)
+                    }
+                    Spacer(minLength: 4)
+                    if !chapter.exists {
+                        Text("missing").font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    } else if hovering {
+                        Button {
+                            Task { await chapters.remove(chapter: chapter.name, swe: app.swe) }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(Theme.font(size: 10, weight: .semibold))
+                                .foregroundStyle(Theme.textMuted)
+                                .frame(width: 20, height: 20)
+                                .contentShape(.rect)
                         }
+                        .plainButton(cornerRadius: Theme.controlRadius)
+                        .hoverTip("Remove from index.txt; the file stays on disk", replacesLabel: false)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
-                if !chapter.exists {
-                    Text("missing").font(Theme.caption).foregroundStyle(Theme.dangerText)
-                } else if hovering || selected {
-                    Button("Remove", systemImage: "minus") {
-                        Task { await chapters.remove(chapter: chapter.name, swe: app.swe) }
-                    }
-                    .iconButton()
-                    .hoverTip("Remove from index.txt; the file stays on disk", replacesLabel: false)
+                if !folder.isEmpty {
+                    Text(folder)
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .lineLimit(1).truncationMode(.head)
                 }
             }
-            .padding(.vertical, 3)
-            .padding(.horizontal, 6)
-            .background(selected ? Theme.field : .clear, in: .rect(cornerRadius: Theme.controlRadius))
+            .foregroundStyle(selected ? Theme.textPrimary : Theme.textNav)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(selected ? Theme.navActive : hovering ? Theme.hover : .clear,
+                        in: .rect(cornerRadius: Theme.controlRadius))
+            .contentShape(.rect)
+            .onTapGesture { chapters.selected = chapter.name }
             .onHover { hovering = $0 }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction(.default) { chapters.selected = chapter.name }
+            .accessibilityHint("Drag to reorder")
             .contextMenu {
                 Button("Remove from index") {
                     Task { await chapters.remove(chapter: chapter.name, swe: app.swe) }
