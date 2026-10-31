@@ -128,6 +128,37 @@ class TestOpencodeServe(unittest.TestCase):
                          {"providerID": "acme", "modelID": "kimi-k3"})
         self.assertEqual(payload["variant"], "high")
 
+    def test_model_switch_rides_the_next_prompt(self):
+        session = _session()
+        supervise.mark(self.home, "opencode:s1",
+                       {**_meta("serve", "opencode"), "model": "acme/kimi-k3"})
+        inj = self._injector()
+        res = inj.control(session, "model", "openrouter/anthropic/claude-4")
+        self.assertTrue(res.ok, res.note)
+        self.assertIn("next turn", res.note)
+        self.assertEqual(self.calls, [])  # nothing is sent now
+        res = inj.send(session, {"text": "hi", "mode": "queue"}, "idle")
+        self.assertTrue(res.ok)
+        # split at the first slash: the rest is the model id
+        self.assertEqual(self.calls[-1][2]["model"],
+                         {"providerID": "openrouter",
+                          "modelID": "anthropic/claude-4"})
+
+    def test_model_switch_refusals(self):
+        session = _session()
+        inj = self._injector()
+        res = inj.control(session, "model", "acme/kimi-k3")
+        self.assertFalse(res.ok)
+        self.assertIn("detached", res.note)
+        supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))
+        # a bare name, an empty side, empty, a second line
+        for bad in ("kimi-k3", "acme/", "", "acme/k\n/clear"):
+            res = inj.control(session, "model", bad)
+            self.assertFalse(res.ok, bad)
+        self.assertIn("provider/model", inj.control(
+            session, "model", "kimi-k3").note)
+        self.assertNotIn("model", supervise.meta_for(self.home, "opencode:s1"))
+
     def test_send_steer_degrades_when_active(self):
         session = _session()
         supervise.mark(self.home, "opencode:s1", _meta("serve", "opencode"))

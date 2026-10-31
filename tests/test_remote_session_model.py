@@ -270,8 +270,8 @@ class TestRows(unittest.TestCase):
         _key, row = catalog_mod.session_to_row(
             _session("s1", "opencode"), "done", "m", {})
         self.assertNotIn("model", row)
-        # opencode's TUI has no /model <name>: no channel switches it.
-        self.assertEqual(row["model_modes"], [])
+        # opencode's TUI has no /model <name>: only serve switches it.
+        self.assertEqual(row["model_modes"], ["serve"])
 
     def test_codex_switches_in_tmux_and_appserver(self):
         self.assertEqual(session_model.model_modes("codex"),

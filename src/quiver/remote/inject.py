@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from quiver.remote import attachments, supervise
+from quiver.remote.launch_model import provider_split
 from quiver.reports import transcripts as _tr
 from quiver.sessions.models import Session
 from quiver.sessions.resume import account_env
@@ -679,11 +680,10 @@ class OpencodeServeInjector:
         # server parses — channel_tuning_error enforces it; a stale or
         # hand-edited meta without the slash is left to the server's
         # default), effort as the model's variant.
-        model = str(meta.get("model") or "")
-        if "/" in model:
-            provider, _, model_id = model.partition("/")
-            payload["model"] = {"providerID": provider,
-                                "modelID": model_id}
+        split = provider_split(str(meta.get("model") or ""))
+        if split is not None:
+            payload["model"] = {"providerID": split[0],
+                                "modelID": split[1]}
         effort = str(meta.get("effort") or "")
         if effort:
             payload["variant"] = effort
@@ -749,6 +749,12 @@ class OpencodeServeInjector:
             self._release(session)
             supervise.unmark(self.home, self.key)
             return InjectResult(True, "detached; session is observed again")
+        if op == "model":
+            # The next prompt_async carries it as its {providerID,
+            # modelID}; a bare name is refused (channel_tuning_error),
+            # since the server would drop it for its own default.
+            return switch_model(self.home, self.key, "serve", "opencode",
+                                value)
         return InjectResult(
             False, f"unsupported_control: {op} needs a live TUI"
         )
