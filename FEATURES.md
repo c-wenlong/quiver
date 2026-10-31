@@ -59,7 +59,7 @@ Status words:
 | MCP servers | yes | yes | - | |
 | MCP gateway (shared servers) | - | - | - | CLI only: `swe mcp gateway`. The Mac and web MCP pages show a shared server's harness entry as its 127.0.0.1 URL |
 | Hooks | yes | yes | - | |
-| Shared content in extra accounts | yes | - | - | `accounts.sync.instructions` / `skills` / `hooks` in config.json, applied by `swe init` (#888). Mac: the Accounts page's Shared content switches, shown once an extra Claude or Codex account exists; a new account is synced when it is added. Web: the AGENTS.md and Hooks pages don't list account rows yet, and there are no switches. MCP servers are not synced into accounts yet |
+| Shared content in extra accounts | yes | - | - | `accounts.sync.instructions` / `skills` / `hooks` / `mcp` in config.json, applied by `swe init` (#888). `mcp` merges the hub's servers into each account's `.claude.json` `mcpServers` or `config.toml` `[mcp_servers]`. Mac: the Accounts page's Shared content switches, shown once an extra Claude or Codex account exists; a new account is synced when it is added. Web: the AGENTS.md and Hooks pages don't list account rows yet, and there are no switches. |
 | Models | yes | part | - | Web: no Artificial Analysis benchmarks (the hub holds no AA key), and each logged name is its own row |
 
 ## System

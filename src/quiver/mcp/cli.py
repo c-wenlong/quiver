@@ -490,6 +490,41 @@ def _jsonc_member_indent(text: str, vstart: int) -> str:
     return line[: len(line) - len(line.lstrip())]
 
 
+def splice_json_member(raw: str, key: str, value) -> str | None:
+    """``raw`` with only top-level ``key``'s value replaced by ``value``.
+
+    Every other byte of the text stays as it was; an absent member is
+    appended inside the root object. Returns None when the member cannot
+    be found or inserted cleanly.
+    """
+    rendered = json.dumps(value, indent=2, ensure_ascii=False)
+    span = _jsonc_key_span(raw, key)
+    if span is not None:
+        vstart, vend = span
+        # The span of the last member runs up to the root's closing brace;
+        # keep the whitespace before that brace where it was.
+        while vend > vstart and raw[vend - 1] in " \t\r\n":
+            vend -= 1
+        indent = _jsonc_member_indent(raw, vstart)
+        return raw[:vstart] + rendered.replace("\n", "\n" + indent) + raw[vend:]
+    # Member absent: append inside the root object, matching the two-
+    # space indent these files use.
+    close = raw.rfind("}")
+    if close == -1:
+        return None
+    head = raw[:close].rstrip()
+    member = f'"{key}": {rendered.replace(chr(10), chr(10) + "  ")}'
+    if head.endswith("{") or head.endswith(","):
+        return head + "\n  " + member + "\n" + raw[close:]
+    # The comma must land on live JSON: when a // comment trails
+    # the last member, splicing at head would park it inside the
+    # comment and break the file. Insert after the value instead.
+    vend = _jsonc_last_value_end(raw)
+    if vend is None:
+        return None
+    return raw[:vend] + ",\n  " + member + "\n" + raw[vend:]
+
+
 def _save_jsonc_slice(path: Path, key: str, value) -> bool:
     """Rewrite only ``key``'s value in a .jsonc file, keeping its comments.
 
@@ -500,36 +535,9 @@ def _save_jsonc_slice(path: Path, key: str, value) -> bool:
         raw = path.read_text(encoding="utf-8")
     except OSError:
         return False
-    rendered = json.dumps(value, indent=2, ensure_ascii=False)
-    span = _jsonc_key_span(raw, key)
-    if span is not None:
-        vstart, vend = span
-        indent = _jsonc_member_indent(raw, vstart)
-        new_text = (
-            raw[:vstart]
-            + rendered.replace("\n", "\n" + indent)
-            + raw[vend:]
-        )
-    else:
-        # Member absent: append inside the root object, matching the two-
-        # space indent these files use.
-        close = raw.rfind("}")
-        if close == -1:
-            return False
-        head = raw[:close].rstrip()
-        member = f'"{key}": {rendered.replace(chr(10), chr(10) + "  ")}'
-        if head.endswith("{"):
-            new_text = head + "\n  " + member + "\n" + raw[close:]
-        elif head.endswith(","):
-            new_text = head + "\n  " + member + "\n" + raw[close:]
-        else:
-            # The comma must land on live JSON: when a // comment trails
-            # the last member, splicing at head would park it inside the
-            # comment and break the file. Insert after the value instead.
-            vend = _jsonc_last_value_end(raw)
-            if vend is None:
-                return False
-            new_text = raw[:vend] + ",\n  " + member + "\n" + raw[vend:]
+    new_text = splice_json_member(raw, key, value)
+    if new_text is None:
+        return False
     atomic_write_text(path, new_text, private=True)
     return True
 
