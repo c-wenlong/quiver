@@ -195,6 +195,95 @@ class ConflictTest(unittest.TestCase):
         self.assertEqual(os.listdir(home / ".claude" / "hooks"), [])
 
 
+class ReviewFixesTest(unittest.TestCase):
+    def test_a_hooks_file_is_a_conflict_not_a_crash(self):
+        home = _home(self)
+        _profiles(home, WORK)
+        _flags(home, hooks=True, skills=True)
+        hub = hooks_dir(home) / "claude"
+        hub.mkdir(parents=True)
+        (hub / "guard.py").write_text("print(1)\n")
+        (_acct(home) / "hooks").write_text("not a folder\n")
+        rows, _ = _sync(home)
+        self.assertEqual(rows[("hooks", str(_acct(home) / "hooks" / "guard.py"))], "conflict")
+        # Work before and after it still lands and is recorded.
+        self.assertEqual(rows[("skills", str(_acct(home) / "skills"))], "linked")
+        self.assertEqual(len(accounts.load_manifest(home)), 1)
+
+    def test_a_link_failure_becomes_a_conflict_row(self):
+        from unittest import mock
+
+        home = _home(self)
+        _profiles(home, WORK)
+        _flags(home, skills=True)
+        with mock.patch.object(Path, "symlink_to", side_effect=PermissionError(13, "denied")):
+            rows, _ = _sync(home)
+        self.assertEqual(list(rows.values()), ["conflict"])
+        self.assertEqual(accounts.load_manifest(home), [])
+
+    def test_a_dotdot_link_into_the_shared_tree_is_the_accounts_own(self):
+        home = _home(self)
+        _profiles(home, WORK)
+        _flags(home, skills=True)
+        private = home / ".quiver" / "private-skills"
+        private.mkdir()
+        (_acct(home) / "skills").symlink_to(f"{skills_dir(home)}/../private-skills")
+        rows, _ = _sync(home)
+        self.assertEqual(list(rows.values()), ["conflict"])
+
+    def test_unlink_never_follows_a_hooks_folder_swapped_for_a_link(self):
+        home = _home(self)
+        _profiles(home, WORK)
+        _flags(home, hooks=True)
+        hub = hooks_dir(home) / "claude"
+        hub.mkdir(parents=True)
+        (hub / "guard.py").write_text("print(1)\n")
+        _sync(home)
+        # The account's hooks/ becomes a link to the default home's, which
+        # holds a link with the very same target.
+        default_hooks = home / ".claude" / "hooks"
+        default_hooks.mkdir()
+        (default_hooks / "guard.py").symlink_to(hub / "guard.py")
+        acct_hooks = _acct(home) / "hooks"
+        (acct_hooks / "guard.py").unlink()
+        acct_hooks.rmdir()
+        acct_hooks.symlink_to(default_hooks)
+        _flags(home, hooks=False)
+        rows, _ = _sync(home)
+        self.assertEqual(rows, {})
+        self.assertTrue((default_hooks / "guard.py").is_symlink())
+        self.assertEqual(accounts.load_manifest(home), [])
+
+    def test_a_damaged_record_stops_the_pass(self):
+        home = _home(self)
+        _profiles(home, WORK)
+        _flags(home, skills=True)
+        _sync(home)
+        record = json.loads(accounts.manifest_file(home).read_text())
+        record["links"].append({"path": 3})
+        accounts.manifest_file(home).write_text(json.dumps(record))
+        _flags(home, skills=False)
+        rows, notes = _sync(home)
+        self.assertEqual((rows, len(notes)), ({}, 1))
+        self.assertTrue((_acct(home) / "skills").is_symlink())
+        self.assertIn('"path": 3', accounts.manifest_file(home).read_text())
+
+    def test_check_json_says_why_the_pass_was_skipped(self):
+        home = _home(self)
+        _profiles(home, WORK)
+        _flags(home, skills=True)
+        (home / ".quiver" / "accounts" / "profiles.json").write_text("{nope")
+        run = init_commands.run_init(home, check_only=True, quiet=True)
+        doc = init_commands.check_document(home, run)
+        self.assertEqual(doc["accounts"], [])
+        self.assertEqual(len(doc["account_notes"]), 1)
+
+    def test_defaults_show_every_switch_off(self):
+        from quiver.configuration import get_value, resolve_config
+
+        self.assertIs(get_value(resolve_config({}), "accounts.sync.skills"), False)
+
+
 class SwitchOffTest(unittest.TestCase):
     def test_off_removes_only_the_links_swe_made(self):
         home = _home(self)

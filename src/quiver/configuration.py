@@ -28,6 +28,9 @@ SUPPORTED_REPORT_HARNESSES = frozenset({"claude", "codex"})
 ACCOUNT_SYNC_PRIMITIVES = ("instructions", "skills", "hooks")
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "accounts": {
+        "sync": {"instructions": False, "skills": False, "hooks": False},
+    },
     "report": {
         "session": {"harness": None, "model": None, "args": []},
         "writer": {"harness": None, "model": None, "args": []},

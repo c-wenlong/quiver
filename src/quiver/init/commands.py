@@ -331,6 +331,8 @@ class InitRun:
     # from the rows above: --force never applies to them, so nothing that
     # offers "replace the blocked paths" may count them.
     account_rows: list[AccountRow] = field(default_factory=list)
+    # Why the account pass did not run (an unreadable file), if it didn't.
+    account_notes: list[str] = field(default_factory=list)
 
     def rows_json(self) -> list[dict]:
         """Every path with its result, for `swe setup --apply --json`."""
@@ -465,7 +467,7 @@ def run_init(home: Path, *, check_only: bool = False, force: bool = False,
         home, patterns, registry, check_only=check_only)
     scaffold.extend(account_notes)
     return InitRun(scaffold, instructions, skills, inst_rows, skill_rows, hook_rows,
-                   account_rows)
+                   account_rows, account_notes)
 
 
 def check_document(home: Path, run: InitRun | None = None) -> dict:
@@ -485,6 +487,7 @@ def check_document(home: Path, run: InitRun | None = None) -> dict:
         "harnesses": _link_json(run.instructions, run.skills),
         "account_sync": flags,
         "accounts": [row.to_json() for row in run.account_rows],
+        "account_notes": run.account_notes,
     }
 
 

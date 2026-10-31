@@ -29,9 +29,12 @@ lives inside ``~/.quiver`` and holds that account's own login:
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -248,6 +251,8 @@ def _points_into_shared(dest: Path, home: Path) -> bool:
         return False
     if not literal.is_absolute():
         literal = dest.parent / literal
+    # Lexically, so ~/.quiver/skills/../private reads as private.
+    literal = Path(os.path.normpath(literal))
     try:
         resolved = dest.resolve()
     except (OSError, RuntimeError):
@@ -264,8 +269,12 @@ def classify(label: str, acct: AccountHome, dest: Path, source: Path,
     """Classify one account target without touching the filesystem."""
     if acct.path.is_symlink() or not acct.path.is_dir():
         return LinkStatus(label, dest, "skipped", MISSING_HOME_DETAIL, source)
+    ancestor = _nearest_existing(dest.parent)
+    if not ancestor.is_dir():
+        return LinkStatus(label, dest, "conflict",
+                          f"{ancestor.name} is the account's own file, left alone", source)
     if not _within(acct.path, accounts_root(home)) \
-            or not _within(_nearest_existing(dest.parent), acct.path):
+            or not _within(ancestor, acct.path):
         # A home or a hooks/ folder that is a link out (to ~/.claude/hooks,
         # say) would put this link somewhere that is not the account's.
         return LinkStatus(label, dest, "conflict", OUTSIDE_DETAIL, source)
@@ -326,25 +335,59 @@ def load_manifest(home: Path) -> list[dict]:
     links = data.get("links") if isinstance(data, dict) else None
     if not isinstance(links, list):
         raise AccountSyncUnavailable(f"{path}: no links list")
-    return [e for e in links if isinstance(e, dict)
-            and all(isinstance(e.get(k), str) for k in ("path", "source", "primitive", "account"))]
+    for entry in links:
+        # One damaged entry stops the pass: dropping it would lose the only
+        # note that swe made that link, so switching off could never remove it.
+        if not isinstance(entry, dict) or not all(
+                isinstance(entry.get(k), str) for k in ("path", "source", "primitive", "account")):
+            raise AccountSyncUnavailable(f"{path}: a damaged entry, fix or remove the file")
+    return links
 
 
 def save_manifest(home: Path, links: list[dict]) -> None:
     path = manifest_file(home)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
     body = {"version": 1, "links": sorted(links, key=lambda e: e["path"])}
-    tmp.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def _still_ours(entry: dict) -> bool:
-    """The recorded link is still there and still says what swe wrote."""
-    path = Path(entry["path"])
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
     try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(body, indent=2) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+@contextlib.contextmanager
+def _locked(home: Path):
+    """One account pass at a time (the app and a terminal can overlap):
+    the record is read, acted on and saved under one flock."""
+    lock = _paths.cache_dir_for(home) / "account-links.lock"  # cache/: never versioned
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock, "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _still_ours(entry: dict, home: Path) -> bool:
+    """The recorded link is still there, still says what swe wrote, and
+    still sits in its account home: no folder on the way was swapped for a
+    link out (an account's hooks/ pointed at ~/.claude/hooks would make the
+    default home's own link look like this one)."""
+    path = Path(entry["path"])
+    root = accounts_root(home)
+    try:
+        rel = path.parent.relative_to(root)
+        if len(rel.parts) < 3 or rel.parts[2] != "home":
+            return False
+        if path.parent.resolve() != root.resolve() / rel:
+            return False
         return path.is_symlink() and os.readlink(path) == entry["source"]
-    except OSError:
+    except (OSError, RuntimeError, ValueError):
         return False
 
 
@@ -357,14 +400,18 @@ def _link(status: LinkStatus, home: Path) -> str:
         return "conflict"
     if not _within(_nearest_existing(path.parent), accounts_root(home)):
         return "conflict"
-    if status.state == "relink":
-        if not path.is_symlink():
+    try:
+        if status.state == "relink":
+            if not path.is_symlink():
+                return "conflict"
+            path.unlink()
+        elif os.path.lexists(path):
             return "conflict"
-        path.unlink()
-    elif os.path.lexists(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(status.source)
+    except OSError as exc:
+        status.detail = f"could not link: {exc.strerror or exc}"
         return "conflict"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.symlink_to(status.source)
     return "linked"
 
 
@@ -372,6 +419,14 @@ def sync_accounts(home: Path, patterns: list[str], registry: dict, *,
                   check_only: bool) -> tuple[list[AccountRow], list[str]]:
     """Link every switched-on primitive into every account home, and unlink
     what swe made for a switched-off one. Returns (rows, notes)."""
+    if check_only:
+        return _sync_accounts(home, patterns, registry, check_only=True)
+    with _locked(home):
+        return _sync_accounts(home, patterns, registry, check_only=False)
+
+
+def _sync_accounts(home: Path, patterns: list[str], registry: dict, *,
+                   check_only: bool) -> tuple[list[AccountRow], list[str]]:
     try:
         flags = sync_flags(home)
         manifest = load_manifest(home)
@@ -388,10 +443,10 @@ def sync_accounts(home: Path, patterns: list[str], registry: dict, *,
     keep: list[dict] = []
     for entry in manifest:
         if entry["path"] in wanted:
-            if _still_ours(entry):
+            if _still_ours(entry, home):
                 keep.append(entry)
             continue
-        if not _still_ours(entry):
+        if not _still_ours(entry, home):
             continue  # gone, or no longer the link swe made: forget it
         detail = OFF_DETAIL if not flags.get(entry["primitive"]) else GONE_DETAIL
         status = LinkStatus(entry["account"], Path(entry["path"]), "unlink", detail,
