@@ -177,10 +177,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     /// Both quit paths (the app menu and the panel's Quit) come through
-    /// here; AGENTS.md and hook drafts live only in memory.
+    /// here; AGENTS.md, chapter and hook drafts live only in memory.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let app = AppModel.shared
-        let agentsMdDirty = app.agentsMd.hasUnsavedChanges
+        let agentsMdDirty = app.agentsMd.hasUnsavedChanges || app.chapters.hasUnsavedChanges
         let hooksDirty = app.hooks.hasUnsavedChanges
         guard agentsMdDirty || hooksDirty else { return .terminateNow }
         let alert = NSAlert()
