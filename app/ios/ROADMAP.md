@@ -194,6 +194,10 @@ and per-source env blocks so a missing token explains an empty page.
   adoption)
 - [x] Client: `tasks()`, `linkTask`, `unlinkTask` in `HubClient`;
   `TasksModel` filters, groups and marks stale rows
+- [x] The Mac and web's Repositories rail and five-row groups (#941,
+  #942): a scope menu over the chips (owners, then Linear and other
+  sources, quiet scopes folded), chip counts within the pick, and
+  "Show N more" past five rows a group
 - [ ] Merge the same work filed in two sources into one task (the
   hub's keying job, when a second source is in real use)
 

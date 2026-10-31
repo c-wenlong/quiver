@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iPhone app: Tasks gets the scope menu and five-row groups** the Mac
+  and web already have (#941, #942). A menu above the filter chips
+  stands in for the Repositories rail: All tasks, then GitHub repos
+  under their owner, Linear projects under "Linear" and other sources
+  under their own name, each with its count on the current chip and
+  "agent running" where one is on it; scopes with nothing on the chip
+  fold into an "N quiet" submenu. A pick narrows the list and the chip
+  counts and shows every row of that group. Otherwise each group shows
+  five rows, then "Show N more" / "Show less". A failed repo's error
+  sits under its own group header, and a scope the next refresh drops
+  falls back to All tasks
+  ([#970](https://github.com/c-wenlong/quiver/issues/970)).
+
 - **Mac: `app/mac/script/setup-machine.sh` sets up a new dev Mac.** It
   checks that full Xcode is selected (printing the `sudo xcode-select -s`
   fix when Command Line Tools are), puts the checkout on `main` at

@@ -18,12 +18,27 @@ struct TasksView: View {
     /// sheet for.
     @State private var launching: TaskRow?
     @State private var startedKey: String?
+    /// The scope menu's pick (a repo, project or source); nil is every task.
+    @State private var shown: String?
+    /// "scope:filter" keys opened past their five-row preview.
+    @State private var expanded: Set<String> = []
+
+    /// The pick while the reply still names it; a refresh that drops it
+    /// falls back to every task.
+    private var liveScope: String? {
+        TaskGrouping.shownScope(shown, tasks: model.tasks, failed: model.failedRepos)
+    }
 
     var body: some View {
-        let sections = TaskGrouping.sections(of: model.tasks, filter: filter)
+        let scope = liveScope
+        let sections = TaskGrouping.sections(of: model.tasks, failed: model.failedRepos,
+                                             filter: filter, scope: scope)
         PageScroll {
-            if model.loaded, !model.tasks.isEmpty {
-                filterBar
+            // Failed repos alone still get the menu: a pick on one of
+            // them must be able to go back to All tasks.
+            if model.loaded, !model.tasks.isEmpty || !model.failedRepos.isEmpty {
+                scopeMenu(scope)
+                filterBar(scope)
             }
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
@@ -55,43 +70,30 @@ struct TasksView: View {
                     } else {
                         StateCard(icon: "checklist", title: emptyTitle, message: emptyMessage)
                     }
-                } else if sections.isEmpty && model.failedRepos.isEmpty {
-                    StateCard(icon: "checklist", title: emptyTitle, message: emptyMessage)
+                } else if sections.isEmpty {
+                    StateCard(icon: "checklist", title: emptyTitle,
+                              message: TaskGrouping.emptyText(filter, scope: scope))
                 } else {
                     ForEach(sections) { section in
-                        if let rows = section.rows {
-                            GroupLabel(text: section.name, trailing: "\(rows.count)")
-                            // A failed repo keeps its stored rows under
-                            // its error, in its own group.
-                            if let failed = model.failedRepos.first(where: { $0.name == section.name }) {
-                                StateCard(icon: "exclamationmark.triangle", title: "Can't list this repo's work",
-                                          message: failed.error ?? failed.status ?? "unknown error", tone: .error)
-                            }
-                            CardList(data: rows) { task in
-                                SwipeRow(key: task.id, leading: [.newSession], trailing: [],
-                                         coordinator: swipes,
-                                         perform: { _ in launching = task }) {
-                                    NavigationLink(value: Route.task(task.id)) {
-                                        TaskRowView(task: task, stale: model.stale(task))
-                                    }
-                                    .buttonStyle(RowButtonStyle())
-                                    .contentShape(.contextMenuPreview, .rect(cornerRadius: Theme.blockRadius))
-                                    .contextMenu {
-                                        TaskRowMenu(task: task) { launching = task }
-                                    }
-                                }
-                            }
+                        let rows = section.rows ?? []
+                        GroupLabel(text: section.name, trailing: rows.isEmpty ? nil : "\(rows.count)")
+                        // A failed repo keeps its stored rows under its
+                        // error, in its one group.
+                        if let error = section.error {
+                            StateCard(icon: "exclamationmark.triangle", title: "Can't list this repo's work",
+                                      message: error, tone: .error)
                         }
-                    }
-                    // `gh` failed on these repos: their slots stay,
-                    // dimmed, with why.
-                    ForEach(model.failedRepos.filter { repo in !sections.contains { $0.name == repo.name } }) { repo in
-                        GroupLabel(text: repo.name)
-                        StateCard(icon: "exclamationmark.triangle", title: "Can't list this repo's work",
-                                  message: repo.error ?? repo.status ?? "unknown error", tone: .error)
+                        if !rows.isEmpty {
+                            groupCard(section, rows: rows, narrowed: scope != nil)
+                        }
                     }
                 }
             }
+        }
+        // Once the fallback shows All tasks it stays picked: a later
+        // task in the dropped scope doesn't reselect it unasked.
+        .onChange(of: liveScope) { _, now in
+            if now == nil { shown = nil }
         }
         .modifier(CloseSwipesOnScroll(swipes: swipes))
         .refreshable { await model.load(client: app.client, refresh: true) }
@@ -116,16 +118,141 @@ struct TasksView: View {
         }
     }
 
-    private var filterBar: some View {
+    /// The filter chips, counting within the scope menu's pick.
+    private func filterBar(_ scope: String?) -> some View {
         WrappingHStack {
             ForEach(TaskFilter.allCases) { f in
-                FilterChip(title: f.title, count: TaskGrouping.count(model.tasks, filter: f), selected: filter == f) {
+                FilterChip(title: f.title, count: TaskGrouping.count(model.tasks, filter: f, scope: scope),
+                           selected: filter == f) {
                     filter = f
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The Mac and web's Repositories rail as one menu: "All tasks", then
+    /// each GitHub owner's repos, Linear projects under "Linear", other
+    /// sources under their own name, each with its count under the
+    /// current chip. Scopes with nothing under the chip fold into an
+    /// "N quiet" submenu. A pick narrows the list and the chip counts.
+    private func scopeMenu(_ scope: String?) -> some View {
+        let groups = TaskGrouping.rail(of: model.tasks, failed: model.failedRepos, filter: filter)
+        return Menu {
+            Button { shown = nil } label: {
+                scopeLabel("All tasks", count: TaskGrouping.count(model.tasks, filter: filter),
+                           running: false, selected: scope == nil)
+            }
+            ForEach(groups) { group in
+                let split = TaskGrouping.split(group, shown: scope)
+                Section(group.title) {
+                    ForEach(split.active) { scopeButton($0, selected: scope) }
+                    if !split.quiet.isEmpty {
+                        Menu("\(split.quiet.count) quiet") {
+                            ForEach(split.quiet) { scopeButton($0, selected: scope) }
+                        }
+                    }
+                }
+            }
+            Section {
+                Button { Task { await model.load(client: app.client, refresh: true) } } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: scope == nil ? "square.stack" : "folder")
+                    .foregroundStyle(Theme.textSecondary)
+                Text(scope ?? "All tasks")
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text("\(TaskGrouping.count(model.tasks, filter: filter, scope: scope))")
+                    .foregroundStyle(Theme.textMuted).monospacedDigit()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(Theme.chevron).foregroundStyle(Theme.textMuted)
+            }
+            .font(Theme.control)
+            .padding(.horizontal, 12)
+            .scaledMinHeight(Theme.controlHeight)
+            .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show tasks from")
+        .accessibilityValue(scope ?? "All tasks")
         .padding(.top, 4)
+    }
+
+    private func scopeButton(_ row: TaskRailScope, selected: String?) -> some View {
+        Button { shown = row.name } label: {
+            scopeLabel(row.label, count: row.count, running: row.running, selected: row.name == selected)
+        }
+    }
+
+    /// A menu row: the scope's name with its count, and "agent running"
+    /// where the rail draws its green dot. A checkmark marks the pick.
+    @ViewBuilder
+    private func scopeLabel(_ title: String, count: Int, running: Bool, selected: Bool) -> some View {
+        let detail = (count == 1 ? "1 task" : "\(count) tasks") + (running ? " · agent running" : "")
+        if selected {
+            Label { Text(title); Text(detail) } icon: { Image(systemName: "checkmark") }
+        } else {
+            Text(title)
+            Text(detail)
+        }
+    }
+
+    /// One group's rows in a card: the first five, then a "Show N more"
+    /// row that opens the rest, as Repositories does on the Mac and web.
+    private func groupCard(_ section: TaskSection, rows: [TaskRow], narrowed: Bool) -> some View {
+        let key = TaskGrouping.foldKey(section, filter: filter)
+        let open = expanded.contains(key)
+        let fold = TaskGrouping.fold(rows, expanded: open, narrowed: narrowed)
+        return VStack(spacing: 0) {
+            ForEach(Array(fold.visible.enumerated()), id: \.element.id) { index, task in
+                if index > 0 { Rectangle().fill(Theme.border).frame(height: 1).padding(.leading, Theme.rowHorizontal) }
+                taskRow(task)
+            }
+            if fold.hidden > 0 {
+                Rectangle().fill(Theme.border).frame(height: 1)
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        if open { expanded.remove(key) } else { expanded.insert(key) }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: open ? "chevron.up" : "chevron.down").font(Theme.chevron)
+                        Text(open ? "Show less" : "Show \(fold.hidden) more")
+                    }
+                    .font(Theme.control).foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(open ? "Shows only the first \(TaskGrouping.preview)" : "Shows every task")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background(Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: Theme.cardRadius))
+    }
+
+    private func taskRow(_ task: TaskRow) -> some View {
+        SwipeRow(key: task.id, leading: [.newSession], trailing: [],
+                 coordinator: swipes,
+                 perform: { _ in launching = task }) {
+            NavigationLink(value: Route.task(task.id)) {
+                TaskRowView(task: task, stale: model.stale(task))
+            }
+            .buttonStyle(RowButtonStyle())
+            .contentShape(.contextMenuPreview, .rect(cornerRadius: Theme.blockRadius))
+            .contextMenu {
+                TaskRowMenu(task: task) { launching = task }
+            }
+        }
     }
 
     /// The amber card a blocked source puts over the list: its rows are
@@ -164,11 +291,10 @@ struct TasksView: View {
         }
     }
 
+    /// The hub has no tasks at all; a filter or scope with nothing in it
+    /// says so through `TaskGrouping.emptyText`.
     private var emptyMessage: String {
-        if !model.tasks.isEmpty {
-            return "No task matches this filter right now."
-        }
-        return "Issues and pull requests from the hub's pinned repos show up here, with the sessions and launches linked to them."
+        "Issues and pull requests from the hub's pinned repos show up here, with the sessions and launches linked to them."
     }
 }
 
