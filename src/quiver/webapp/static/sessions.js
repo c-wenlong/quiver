@@ -65,11 +65,11 @@ async function renderSessions(_id, rescan = false) {
   }
   sessionsPage.scrollY = null;
   const mark = pinLedger.clock;
-  const [{ status, data }, machines] = await Promise.all([
-    api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`), api("/v1/machines")]);
+  // The strip is an extra: its read never holds up the list, and a
+  // failed one just hides the strip.
+  const machinesRead = api("/v1/machines");
+  const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
   if (gen !== sessionsPage.gen) return;
-  // The strip is an extra: a failed machine list just hides it.
-  sessionsPage.machines = machines.status === 200 && machines.data ? machines.data.machines || [] : null;
   if (status === 401) return renderGate();
   if (status !== 200 || !data) {
     const msg = failText(status, data, "then refresh");
@@ -81,6 +81,11 @@ async function renderSessions(_id, rescan = false) {
   sessionsPage.data = data;
   paintSessions();
   scheduleTranscriptSearch();
+  machinesRead.then((m) => {
+    if (gen !== sessionsPage.gen) return;
+    sessionsPage.machines = m && m.status === 200 && m.data ? m.data.machines || [] : null;
+    if (onSessionsList()) repaintKeepingFocus();
+  });
 }
 
 function sessionsHeader(busy) {
@@ -620,7 +625,17 @@ function bindSessionControls() {
     if (el) el.onchange = () => { s[key] = el.value; paintSessions(); };
   }
   for (const btn of document.querySelectorAll(".machine-chip[data-machine]")) {
-    btn.onclick = () => { s.machine = machineStrip().toggled(chosenMachine(), btn.dataset.machine); paintSessions(); };
+    btn.onclick = () => {
+      const id = btn.dataset.machine;
+      const left = btn.parentElement.scrollLeft;
+      s.machine = machineStrip().toggled(chosenMachine(), id);
+      paintSessions();
+      // The repaint replaces the strip: keep its scroll and the focus.
+      const strip = document.querySelector(".machine-strip");
+      if (strip) strip.scrollLeft = left;
+      const again = [...document.querySelectorAll(".machine-chip[data-machine]")].find((b) => b.dataset.machine === id);
+      if (again) again.focus({ preventScroll: true });
+    };
   }
   const clear = document.getElementById("clear-filters");
   if (clear) clear.onclick = () => {

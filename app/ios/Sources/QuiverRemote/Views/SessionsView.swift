@@ -25,14 +25,15 @@ struct SessionsView: View {
     var body: some View {
         let chips = MachineStrip.chips(machines: app.machines, rows: app.displaySessions)
         let machine = MachineStrip.effective(machineFilter, chips: chips)
-        let rows = MachineStrip.filter(app.displaySessions, machine: machine).filter(filter.includes)
+        let onMachine = MachineStrip.filter(app.displaySessions, machine: machine)
+        let rows = onMachine.filter(filter.includes)
         let groups = SessionGrouping.groupsWithPins(rows, machines: app.machines)
         PageScroll {
             if search.isActive {
                 searchResults
             } else {
                 if !chips.isEmpty { machineStrip(chips, selected: machine) }
-                filterBar
+                filterBar(over: onMachine)
             }
             if search.isActive {
                 EmptyView()
@@ -282,10 +283,12 @@ struct SessionsView: View {
         .padding(.top, 4)
     }
 
-    private var filterBar: some View {
+    /// The status chips count the rows on the chosen machine, so a chip
+    /// never promises sessions the list below doesn't show.
+    private func filterBar(over rows: [SessionRow]) -> some View {
         WrappingHStack {
             ForEach(SessionFilter.allCases) { f in
-                FilterChip(title: f.title, count: app.displaySessions.filter(f.includes).count, selected: filter == f) {
+                FilterChip(title: f.title, count: rows.filter(f.includes).count, selected: filter == f) {
                     filter = f
                 }
             }
