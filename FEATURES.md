@@ -92,7 +92,7 @@ hosts the hub; the web app and the iOS app are its clients.
 | Machine strip on Sessions | - | yes | yes | One chip per machine from the hub's machine list (online dot, name, "N working · M waiting", "last seen 2h" offline); tap filters the list to that machine, tap again clears it; hidden with one machine (#1443). Web and iOS only: the Mac already groups other machines' sessions (#1436) |
 | SSH console | - | - | yes | iOS-only by design: a shell to the hub machine over tailnet sshd, usable when the hub is down |
 | Machine vitals | yes | yes | planned | Compute page on Mac and Web; iOS P9 carries the samples over the hub |
-| Push notifications | - | - | - | The hub's ntfy posts reach the ntfy app, not Quiver; APNs planned |
+| Push notifications | - | - | - | The hub's ntfy posts reach the ntfy app, not Quiver. Approval pushes carry the menu's own option buttons up to ntfy's three-action cap (a longer menu's last slot links to the chat), else Allow/Deny/Always; APNs planned |
 
 ## Ported logic
 

@@ -149,6 +149,14 @@ row (&quot;❭&quot; is a different glyph than Claude's &quot;❯&quot;). Option
 the request fingerprint, so a question that swaps its choices can't
 be answered by a stale tap.</p>
 </li>
+<li><p><strong>Approval pushes carry the menu's own option buttons.</strong> When the
+event lists the pane's choices, the ntfy actions are those labels —
+up to the three actions a push can hold, with a longer menu's last
+slot linking to the session chat where every option answers —
+instead of a fixed Allow / Deny / Always. Prompts with no option
+list keep the three semantic buttons, and tapping the notification
+itself now opens the session's chat.</p>
+</li>
 <li><p><strong>Hub: thinking messages carry how long the model thought.</strong>
 <code>kind: &quot;thinking&quot;</code> messages from Claude Code, Codex and opencode now
 carry <code>duration_s</code>, so the clients can show &quot;Thought for 12s&quot;. Claude

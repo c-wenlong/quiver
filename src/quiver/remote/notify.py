@@ -64,9 +64,15 @@ _POST_TIMEOUT_S = 5.0
 # The approval prompt is a convenience, not a record — enough to decide,
 # short enough that a lock screen shows it whole.
 _PROMPT_CAP = 280
-# The decisions the push's action buttons send — all an action token
-# may answer with (the hub refuses anything else under one).
+# The semantic decisions the push's action buttons send; a bare digit
+# answers the menu row with that number (option buttons send those).
+# The approval route accepts nothing else under an action token.
 ACTION_DECISIONS = frozenset({"allow", "deny", "always"})
+# ntfy apps render at most this many action buttons; a menu with more
+# trades its tail for a link to the chat, where every option answers.
+_ACTION_MAX = 3
+# Button labels are a glance, not a document — the chat shows them full.
+_ACTION_LABEL_CAP = 40
 
 
 def _config_path(home: Path | None) -> Path:
@@ -320,17 +326,47 @@ class Notifier:
                 str(data.get("prompt") or "Approval requested")
             )[:_PROMPT_CAP]
             token = self._state.approval_tokens.mint(key, rid)
-            actions = [
-                self._action(key, rid, "allow", "Allow", token),
-                self._action(key, rid, "deny", "Deny", token),
-                self._action(key, rid, "always", "Always", token),
+            chat_url = (
+                f"{self._base}/#/sessions?chat="
+                f"{urllib.parse.quote(key, safe='')}"
+            )
+            options = [
+                (str(o.get("n") or ""), str(o.get("label") or ""))
+                for o in (data.get("options") or [])
+                if isinstance(o, dict)
             ]
+            options = [(n, l) for n, l in options if n.isdigit() and l]
+            if options:
+                # One button per listed row while they fit; a longer
+                # menu shows its first rows plus a link to the chat,
+                # where every option answers. The push is a shortcut,
+                # never the only way in.
+                shown = options if len(options) <= _ACTION_MAX \
+                    else options[:_ACTION_MAX - 1]
+                actions = [
+                    self._action(key, rid, n, l[:_ACTION_LABEL_CAP],
+                                 token)
+                    for n, l in shown
+                ]
+                if len(options) > _ACTION_MAX:
+                    actions.append({
+                        "action": "view",
+                        "label": f"All {len(options)} options…",
+                        "url": chat_url,
+                    })
+            else:
+                actions = [
+                    self._action(key, rid, "allow", "Allow", token),
+                    self._action(key, rid, "deny", "Deny", token),
+                    self._action(key, rid, "always", "Always", token),
+                ]
             self._post(cfg, {
                 "topic": cfg["topic"],
                 "title": f"{title}: approval needed",
                 "message": prompt,
                 "priority": 5,
                 "tags": ["lock"],
+                "click": chat_url,
                 "actions": actions,
             })
             return

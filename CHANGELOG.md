@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the request fingerprint, so a question that swaps its choices can't
   be answered by a stale tap.
 
+- **Approval pushes carry the menu's own option buttons.** When the
+  event lists the pane's choices, the ntfy actions are those labels —
+  up to the three actions a push can hold, with a longer menu's last
+  slot linking to the session chat where every option answers —
+  instead of a fixed Allow / Deny / Always. Prompts with no option
+  list keep the three semantic buttons, and tapping the notification
+  itself now opens the session's chat.
+
 - **Hub: thinking messages carry how long the model thought.**
   `kind: "thinking"` messages from Claude Code, Codex and opencode now
   carry `duration_s`, so the clients can show "Thought for 12s". Claude

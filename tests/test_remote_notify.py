@@ -285,6 +285,53 @@ class TestHandle(unittest.TestCase):
         self.n._handle(ev, self.cfg)
         self.assertEqual(len(self.posts[0]["message"]), 280)
 
+    def test_approval_options_become_buttons(self):
+        # The pane's own menu rows are the buttons — the push answers
+        # the real choices, not the allow/deny/always guess.
+        ev = {"type": "approval.requested", "session": "claude:s1",
+              "data": {"request_id": "req-1", "prompt": "Pick?",
+                       "options": [{"n": "1", "label": "SQLite"},
+                                   {"n": "2", "label": "Postgres"}]}}
+        self.n._handle(ev, self.cfg)
+        actions = self.posts[0]["actions"]
+        self.assertEqual([a["label"] for a in actions],
+                         ["SQLite", "Postgres"])
+        self.assertTrue(all(a["action"] == "http" for a in actions))
+        bodies = [json.loads(a["body"])["decision"] for a in actions]
+        self.assertEqual(bodies, ["1", "2"])
+        # Tapping the push itself opens the session's chat, key escaped.
+        self.assertEqual(
+            self.posts[0]["click"],
+            "http://h:8477/#/sessions?chat=claude%3As1")
+
+    def test_approval_long_menu_trades_tail_for_chat_link(self):
+        # More rows than a push holds: the first stay buttons, the last
+        # slot links to the chat where all of them answer.
+        opts = [{"n": str(i), "label": f"Row {i}"} for i in range(1, 8)]
+        ev = {"type": "approval.requested", "session": "k1",
+              "data": {"request_id": "req-1", "prompt": "Pick?",
+                       "options": opts}}
+        self.n._handle(ev, self.cfg)
+        actions = self.posts[0]["actions"]
+        self.assertEqual(len(actions), 3)
+        self.assertEqual([a["label"] for a in actions[:2]],
+                         ["Row 1", "Row 2"])
+        view = actions[2]
+        self.assertEqual(view["action"], "view")
+        self.assertEqual(view["label"], "All 7 options…")
+        self.assertEqual(view["url"], "http://h:8477/#/sessions?chat=k1")
+
+    def test_approval_options_fill_the_push(self):
+        # Exactly at the cap every row stays a button — no link needed.
+        opts = [{"n": str(i), "label": f"Row {i}"} for i in range(1, 4)]
+        ev = {"type": "approval.requested", "session": "k1",
+              "data": {"request_id": "req-1", "prompt": "Pick?",
+                       "options": opts}}
+        self.n._handle(ev, self.cfg)
+        actions = self.posts[0]["actions"]
+        self.assertEqual(len(actions), 3)
+        self.assertTrue(all(a["action"] == "http" for a in actions))
+
     def test_action_url_escapes_session_key(self):
         act = self.n._action("a b@c/d", "r", "allow", "Allow", "c")
         self.assertIn("a%20b%40c%2Fd", act["url"])
