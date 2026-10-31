@@ -76,6 +76,27 @@ import Testing
         #expect(!sync.busy)
     }
 
+    @Test func mcpRowsNameTheirServerAndBlockedFilesShowApart() async throws {
+        let runner = FakeRunner(.init(status: 0, stdout: Data(#"""
+            {"schema": 1, "data": {"account_sync": {"instructions": false, "skills": false, "hooks": false, "mcp": true},
+             "accounts": [
+              {"account": "claude/claude-work", "primitive": "mcp", "path": "/h/.claude.json", "state": "conflict",
+               "detail": "server github: the account's own server, left alone", "name": "github"},
+              {"account": "codex/codex-alt", "primitive": "mcp", "path": "/h/config.toml", "state": "blocked",
+               "detail": "invalid TOML, not changed", "name": null},
+              {"account": "claude/claude-work", "primitive": "skills", "path": "/h/skills", "state": "linked",
+               "detail": ""}],
+             "notes": []}}
+            """#.utf8), stderr: ""))
+        let sync = AccountSyncModel(swe: SweClient(runner: runner))
+        await sync.load()
+        #expect(sync.isOn(.mcp))
+        let report = try #require(sync.report)
+        #expect(report.conflicts.map(\.target) == ["github"])
+        #expect(report.blocked.map(\.target) == ["config.toml"])
+        #expect(report.accounts.last?.target == "skills")
+    }
+
     @Test func aPassThatCouldNotRunShowsWhy() async throws {
         let runner = FakeRunner(.init(status: 1, stdout: Data(
             #"{"schema": 1, "data": {"account_sync": null, "accounts": [], "notes": ["account sync skipped: cannot read config.json"]}}"#

@@ -117,6 +117,53 @@ sent none. One formatting rule per client (<code>ThoughtLabel.text</code> on
 iOS and the Mac, <code>Fmt.thought</code> on the web)
 (<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
 </li>
+<li><p><strong>Hub: thinking messages carry how long the model thought.</strong>
+<code>kind: &quot;thinking&quot;</code> messages from Claude Code, Codex and opencode now
+carry <code>duration_s</code>, so the clients can show &quot;Thought for 12s&quot;. Claude
+Code and Codex time it from the record before the thinking record to
+the thinking record; opencode from its own reasoning <code>time</code> span.
+Other harnesses, and records with no usable timestamps, leave it out
+(<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
+</li>
+<li><p><strong>Mac: Settings › Remote can keep this Mac's agent running.</strong> On a Mac
+paired as a satellite of another machine's hub, a &quot;Keep this Mac's
+agent running&quot; switch installs or removes the agent's LaunchAgent
+through <code>swe remote agent --install</code> / <code>--uninstall</code>, and says whether
+it is running. The switch is hidden on the Mac that hosts the hub and
+on a Mac that was never paired
+(<a href="https://github.com/c-wenlong/quiver/issues/1438">#1438</a>).</p>
+</li>
+<li><p><strong><code>swe remote agent --install</code> keeps a satellite running.</strong> Like
+<code>swe remote serve --install</code>, it runs <code>swe remote agent</code> as a
+LaunchAgent on macOS (<code>com.cwenlong.quiver.remote-agent</code>) or a systemd
+user unit on Linux (<code>quiver-remote-agent.service</code>), separate from the
+hub's, so it starts at login or boot and restarts if it exits. It logs
+to <code>~/.quiver/data/remote/agent.log</code>, turns on lingering or says how,
+and refuses on a machine whose own hub is installed (and the hub's
+install refuses next to an installed agent), since the two would share
+<code>data/remote/cursors/</code>. Only one agent runs per <code>~/.quiver</code>: a second
+one exits at start, and <code>--install</code> refuses while a shell-started
+agent runs. <code>--uninstall</code> removes it and
+<code>--status [--json]</code> shows it. <code>install-app.sh</code> now restarts the agent
+on a new bundle as it does the hub
+(<a href="https://github.com/c-wenlong/quiver/issues/1438">#1438</a>).</p>
+</li>
+<li><p><strong><code>swe init</code>: the hub's MCP servers in extra accounts.</strong> A fourth
+switch, <code>accounts.sync.mcp</code>, off by default (<code>swe config set accounts.sync.mcp true</code>, or the new &quot;MCP servers&quot; switch on the Mac
+Accounts page's Shared content card). With it on, <code>swe init</code> merges
+every server in <code>~/.quiver/mcp.json</code>, rendered as <code>swe mcp sync quiver</code>
+renders it, into each extra Claude account's <code>.claude.json</code> (the
+<code>mcpServers</code> member only) and each extra Codex account's <code>config.toml</code>
+(<code>[mcp_servers.&lt;name&gt;]</code> tables only). The login and every other key
+keep their bytes. A server the account already has under the same name
+is reported as a conflict and left alone, and a file that is not valid
+JSON or TOML is reported and never written. Writes go through a temp
+file and rename after a backup in <code>~/.quiver/backups</code>. Each server swe
+writes is recorded in <code>data/account-mcp.json</code>, and switching off then
+running <code>swe init</code> removes only those, and only while the account has
+not edited them. Closes
+<a href="https://github.com/c-wenlong/quiver/issues/888">#888</a>.</p>
+</li>
 <li><p><strong>Hub: switch the model of an opencode session attached through
 <code>opencode serve</code>.</strong> The <code>model</code> control op on a <code>serve</code> session
 records a <code>provider/model</code> pick on the session's supervised row, and

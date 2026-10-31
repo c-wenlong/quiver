@@ -16,7 +16,7 @@ and the fixture that pins the shape. Fixtures live under
 | `swe edit <name> ... --json` | `HarnessEditResult` | `swe-edit.json` |
 | `swe skills --json` | `SkillInventory` | `swe-skills.json` |
 | `swe skills link|unlink ... --json` | `LinkReply` | `swe-skills-link.json`, `swe-skills-unlink.json` |
-| `swe init --check --json` | `InitCheck`. Also `account_sync` (`{instructions, skills, hooks}` booleans, null when config.json is unreadable) and `accounts` (`[{account, primitive, path, state, detail}]`, one row per extra-account target; `state` is the init vocabulary in its `would-` form plus `would-unlink`) and `account_notes` (why the account pass was skipped, empty when it ran). `swe init --accounts [--check] --json` is `{account_sync, accounts, notes}` and exits 1 when `notes` is not empty | `swe-init-check.json` |
+| `swe init --check --json` | `InitCheck`. Also `account_sync` (`{instructions, skills, hooks, mcp}` booleans, null when config.json is unreadable) and `accounts` (`[{account, primitive, path, state, detail}]`, one row per extra-account target; an `mcp` row also has `name`, the server, or null for a row about the whole file, and `path` is the account's `.claude.json` or `config.toml`; `blocked` means that file could not be read or edited safely and was not written; `state` is the init vocabulary in its `would-` form plus `would-unlink`) and `account_notes` (why the account pass was skipped, empty when it ran). `swe init --accounts [--check] --json` is `{account_sync, accounts, notes}` and exits 1 when `notes` is not empty | `swe-init-check.json` |
 | `swe hooks list [--harness=<id>] --json` | `{"hooks": [HookRow]}` — `name`, `harness`, `tier` (`shared`/`harness`/`foreign`), `source_path`, `dest_path`, `link_status` (the init link vocabulary plus `foreign`), `enabled`, `events_supported` (normalized event names), `declared` (`{event, matcher, file}`) | |
 | `swe hooks info <name> --json` | `{"script", "harnesses": [row]}` — the `list` row shape plus `detail`, `summary`, and `declared` carrying `timeout` and `command` too | |
 | `swe hooks check --json` | `{"findings": [{"kind", "harness", "message"}]}` — `kind` is `declared-missing`/`undeclared`/`unlinked`/`managed` (`managed` is a note, not drift; exit 1 when anything else is present) | |
@@ -112,7 +112,14 @@ replays the journal.
 
 `message.appended.data` is a RemoteMessage: `{kind: user|assistant|
 thinking|tool_use|tool_result|compaction|system|approval|error, text,
-ts, tool: {name, call_id, args_summary, args_full}?, result_ref?}`.
+ts, tool: {name, call_id, args_summary, args_full}?, result_ref?,
+duration_s?}`. `duration_s` is on `thinking` only: how long the model
+thought, in seconds rounded to 0.1, and absent when unknown (clients
+then show plain "Thought"). For Claude Code and Codex it is the gap from
+the record before the thinking record to the thinking record, because
+both write each block as its own record when the block finishes; for
+opencode it is the part's own `time` span. It is set when the message is
+first emitted and never patched later.
 Writes (`POST /v1/sessions/{key}/message|approval|control`, `POST
 /v1/sessions`) answer `409 not_attached` while a session is `observed`.
 
@@ -152,6 +159,7 @@ The CLI side of remote also speaks `--json`:
 |---|---|
 | `swe remote status --json` | `{hub: {ok, v} or {ok:false}, hub_addr, machines: [{id, name, online, last_seen_at}], devices: [DeviceRow]}`; exits 1 when the hub is unreachable but still emits the envelope |
 | `swe remote devices --json` | `{devices: [DeviceRow]}`; `--revoke=<id>` → `{revoked, ok}`; `--requests` → `{requests: [PairRequestRow], auto_approve_owner}`; `--auto-approve=on|off` → `{auto_approve_owner}`; `--approve=<code>` → `{ok, device_id, name, node_name, login}`; `--deny=<code>` → `{ok}`. A code that matches nothing answers `{ok: false}`; `--approve` then exits 1 but `--deny` exits 0, so read `ok`. `--request-id=<id>` holds either to that one request; wrong `--approve` codes count toward the request's five-try lockout, wrong `--deny` codes don't |
+| `swe remote agent --status --json` | `{configured, hub, supported, problem, installed, running, service, program, log, hub_installed}`: `configured` is true when `agent.json` holds a hub and a credential (`hub` is that URL, never the credential); `supported` is false with `problem` saying why when this machine has no launchd or systemd user manager; `installed` and `running` describe the satellite's own LaunchAgent or systemd unit at `service`, `program` is its command line (null when not installed); `hub_installed` is true when this machine's hub service is installed, which makes `--install` refuse. `--install --json` and `--uninstall --json` do the action, print its prose and any refusal on stderr, and emit the same report after it (nothing on stdout when they fail) |
 | `swe remote pair --json` | `{host, port, token, name, url, deep_link, expires_in_s}` — `url` opens the web app's pair handler (`/#pair=…`), `deep_link` is the `quiver://pair?…` form for the iOS app; `expires_in_s` is the token TTL |
 | `swe remote setup --json` | `{ready, platform, url, steps: [SetupStep]}` in order: `tailscale.installed`, `tailscale.signed_in`, `tailscale.magicdns`, `tailscale.https`, `tailscale.cert`, `hub.service`, `hub.reachable`, `phone.paired`. `SetupStep` is `{id, title, state, detail, action}`; `state` is `ok`, `todo` (Quiver does it with `--apply`), `needs_you`, `failed` or `blocked` (waits for an earlier step). `action` is null or `{kind, label, url? , app?, command?}` with `kind` `open` (a URL), `launch` (a macOS app), `command` (to copy), `apply` (run `swe remote setup --apply`) or `pair`. `url` is the https address phones reach, or `""` before MagicDNS. `--apply` emits the report after doing every `todo` it can; `--recheck` fetches the certificate again instead of using the cached result |
 | `swe remote notify --json` | `{notify: {url?, topic?, ntfy_token?, enabled, action_credential?}}` with credential fields redacted to `***` |

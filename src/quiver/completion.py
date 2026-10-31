@@ -117,6 +117,10 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--hub=", "Hub URL (http://<tailscale-ip>:8477)"),
         ("--token=", "One-time pair token from swe remote pair"),
         ("--name=", "Device name recorded on pair"),
+        ("--install", "Keep the agent running (LaunchAgent or systemd unit)"),
+        ("--uninstall", "Stop the agent service and remove it"),
+        ("--status", "Show whether the agent service is installed and running"),
+        ("--json", "Print --status as JSON"),
     ],
     "remote setup": [
         ("--apply", "Do every step Quiver can do itself"),

@@ -139,18 +139,21 @@ if [ -e "$dest" ]; then
   mv "$dest" "$dest.old"
 fi
 mv "$staged" "$dest"
-# A remote hub LaunchAgent (swe remote serve --install) runs this bundle's
-# swe: restart it so it serves the new code rather than a mix of both.
-hub_plist="$HOME/Library/LaunchAgents/com.cwenlong.quiver.remote-hub.plist"
-if [ -f "$hub_plist" ]; then
-  hub_program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$hub_plist" 2>/dev/null || true)"
-  case "$hub_program" in
+# A remote hub or satellite LaunchAgent (swe remote serve|agent --install)
+# runs this bundle's swe: restart it so it runs the new code rather than a
+# mix of both.
+for role in hub agent; do
+  label="com.cwenlong.quiver.remote-$role"
+  plist="$HOME/Library/LaunchAgents/$label.plist"
+  [ -f "$plist" ] || continue
+  program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)"
+  case "$program" in
     "$dest"/*)
-      launchctl kickstart -k "gui/$(id -u)/com.cwenlong.quiver.remote-hub" >/dev/null 2>&1 \
-        && echo "install-app: restarted the remote hub on the new bundle" || true
+      launchctl kickstart -k "gui/$(id -u)/$label" >/dev/null 2>&1 \
+        && echo "install-app: restarted the remote $role on the new bundle" || true
       ;;
   esac
-fi
+done
 rm -rf "$dest.old"
 open "$dest"
 echo "install-app: installed $commit at $dest"

@@ -716,6 +716,11 @@ def cmd_init(args) -> int:
     if acct_conflicts:
         _print_paths("Not synced, the account already has its own:", acct_conflicts, home)
         print(f"  {c('dim', 'Move it aside, then run swe init again. --force never replaces these.')}\n")
+    acct_blocked = [(s_, r) for s_, r in acct_rows if r == "blocked"]
+    if acct_blocked:
+        _print_paths("Not changed, the account's file could not be edited safely:",
+                     acct_blocked, home)
+        print()
     if not full:
         print(f"  {c('dim', 'swe init --full lists every path.')}\n")
     if hub_url is not None:
@@ -769,10 +774,14 @@ def print_init_help() -> None:
       swe config set accounts.sync.instructions true
       swe config set accounts.sync.skills true
       swe config set accounts.sync.hooks true
+      swe config set accounts.sync.mcp true
     then run swe init (or swe init --accounts, which does only this).
     Set one back to false and run it again to remove only the links swe
     made there. Anything the account already has in
     that place is reported and left alone, even with --force.
+    mcp merges the servers in ~/.quiver/mcp.json into each account's
+    .claude.json (mcpServers only) or config.toml ([mcp_servers] only),
+    never any other key; a server the account names itself is left alone.
 
   {c('bold', 'States')}
     {c('green', 'linked')}      already points at the canonical file

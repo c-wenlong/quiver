@@ -2,7 +2,8 @@
 
 The Linux twin of ``launchd.py``: ``swe remote serve --install`` writes
 ``~/.config/systemd/user/quiver-remote-hub.service``, enables it and
-(re)starts it. ``Restart=always`` brings the hub back when it exits,
+(re)starts it; ``swe remote agent --install`` does the same for the
+satellite under ``quiver-remote-agent.service``. ``Restart=always`` brings the hub back when it exits,
 which is also how a ``--tailnet`` hub waits for Tailscale at boot: it
 exits until the tailnet address exists.
 
@@ -25,6 +26,10 @@ from pathlib import Path
 from typing import Callable
 
 UNIT = "quiver-remote-hub.service"
+# The satellite (``swe remote agent --install``) gets its own unit, so
+# installing one never rewrites or stops the other.
+AGENT_UNIT = "quiver-remote-agent.service"
+HUB_DESCRIPTION = "Quiver remote hub (swe remote serve)"
 # Seconds systemd waits before restarting a hub that exited (launchd's
 # ThrottleInterval twin).
 RESTART_S = 15
@@ -32,12 +37,12 @@ RESTART_S = 15
 Runner = Callable[..., subprocess.CompletedProcess]
 
 
-def unit_path(home: Path | None = None) -> Path:
+def unit_path(home: Path | None = None, unit: str = UNIT) -> Path:
     if home is None and os.environ.get("XDG_CONFIG_HOME"):
         base = Path(os.environ["XDG_CONFIG_HOME"])
     else:
         base = (home or Path.home()) / ".config"
-    return base / "systemd" / "user" / UNIT
+    return base / "systemd" / "user" / unit
 
 
 def _quote(arg: str) -> str:
@@ -49,7 +54,8 @@ def _quote(arg: str) -> str:
     return '"' + arg.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def build_unit(program: list[str], log_path: Path, path_env: str) -> str:
+def build_unit(program: list[str], log_path: Path, path_env: str,
+               description: str = HUB_DESCRIPTION) -> str:
     """The unit: run ``program`` at boot (with lingering) and on exit.
 
     systemd starts user services with a bare PATH, and the hub shells out
@@ -59,7 +65,7 @@ def build_unit(program: list[str], log_path: Path, path_env: str) -> str:
     exec_start = " ".join(_quote(a) for a in program)
     return "\n".join([
         "[Unit]",
-        "Description=Quiver remote hub (swe remote serve)",
+        f"Description={description}",
         "After=network-online.target",
         "Wants=network-online.target",
         "",
@@ -96,24 +102,26 @@ def _message(res: subprocess.CompletedProcess, what: str) -> str:
 
 
 def install(program: list[str], log_path: Path, path_env: str,
-            home: Path | None = None, run: Runner = subprocess.run) -> tuple[Path, str]:
+            home: Path | None = None, run: Runner = subprocess.run,
+            unit: str = UNIT, description: str = HUB_DESCRIPTION) -> tuple[Path, str]:
     """Write the unit, enable it and (re)start it. Returns the unit path
     and a note on lingering ("" when it is on).
 
     Raises RuntimeError with systemctl's message when a step fails.
     """
-    path = unit_path(home)
+    path = unit_path(home, unit)
     path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(build_unit(program, log_path, path_env), encoding="utf-8")
-    for args in (("daemon-reload",), ("enable", UNIT), ("restart", UNIT)):
+    path.write_text(build_unit(program, log_path, path_env, description), encoding="utf-8")
+    for args in (("daemon-reload",), ("enable", unit), ("restart", unit)):
         res = _ctl(run, *args)
         if res.returncode != 0:
             raise RuntimeError(_message(res, args[0]))
     return path, ensure_linger(run)
 
 
-def uninstall(home: Path | None = None, run: Runner = subprocess.run) -> bool:
+def uninstall(home: Path | None = None, run: Runner = subprocess.run,
+              unit: str = UNIT) -> bool:
     """Stop and disable the hub and remove the unit. False when none was
     installed.
 
@@ -121,11 +129,11 @@ def uninstall(home: Path | None = None, run: Runner = subprocess.run) -> bool:
     hub that is still active; a failed disable of an absent unit is the
     normal "nothing to stop" case.
     """
-    path = unit_path(home)
+    path = unit_path(home, unit)
     existed = path.exists()
-    res = _ctl(run, "disable", "--now", UNIT)
+    res = _ctl(run, "disable", "--now", unit)
     if res.returncode != 0 and existed:
-        active = (_ctl(run, "is-active", UNIT).stdout or "").strip()
+        active = (_ctl(run, "is-active", unit).stdout or "").strip()
         if active not in {"inactive", "failed"}:
             # "active", "activating", or no answer from the manager at
             # all: the hub may still be serving, so keep its unit.
@@ -165,11 +173,12 @@ def ensure_linger(run: Runner = subprocess.run) -> str:
     return "" if lingering(run) else LINGER_FIX
 
 
-def status(home: Path | None = None, run: Runner = subprocess.run) -> tuple[list[str] | None, bool]:
+def status(home: Path | None = None, run: Runner = subprocess.run,
+           unit: str = UNIT) -> tuple[list[str] | None, bool]:
     """(ExecStart words, active): the installed unit's command line, or
     None without a unit, and whether systemd runs it now."""
     try:
-        text = unit_path(home).read_text(encoding="utf-8")
+        text = unit_path(home, unit).read_text(encoding="utf-8")
     except OSError:
         return None, False
     args = None
@@ -180,7 +189,7 @@ def status(home: Path | None = None, run: Runner = subprocess.run) -> tuple[list
             except ValueError:
                 args = None
     try:
-        active = (_ctl(run, "is-active", UNIT).stdout or "").strip() == "active"
+        active = (_ctl(run, "is-active", unit).stdout or "").strip() == "active"
     except OSError:
         active = False
     return args, active
