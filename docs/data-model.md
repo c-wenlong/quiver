@@ -178,6 +178,10 @@ MAX(ts)           SEARCH events USING COVERING INDEX events_ts
   refresh or link. `prices.key` references it, so `prices JOIN
   model_aliases` lists every priced key of one model.
 - `payloads(source, fetch_id, body)`: each AA endpoint's last good body.
+  The language feed's pages (200 models each on AA's V2 API) are merged
+  into one body before it is stored, so `models` is only ever replaced by
+  the whole feed. Older rows hold the legacy `/api/v2/data/*` shape, which
+  the decoder still reads.
 - `meta(key, value)`: the `schema` marker.
 
 Builds before the catalog kept `cache/pricing/litellm.json` and

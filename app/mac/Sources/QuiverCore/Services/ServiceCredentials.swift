@@ -67,13 +67,13 @@ public actor ServiceCredentials {
             keyURL: URL(string: "https://app.devin.ai/settings/api")!),
         KnownService(
             id: "artificial-analysis", name: "Artificial Analysis",
-            help: "From artificialanalysis.ai › Insights Platform › API keys. Free tier: 1,000 requests a day.",
+            help: "From artificialanalysis.ai › Insights Platform › API keys. Free tier: 100 requests a day.",
             fields: ["ARTIFICIAL_ANALYSIS_API_KEY"],
             probe: .init(field: "ARTIFICIAL_ANALYSIS_API_KEY",
-                         label: "Test (uses 1 of 1,000 daily requests)",
-                         url: "https://artificialanalysis.ai/api/v2/data/llms/models",
+                         label: "Test (uses 1 of 100 daily requests)",
+                         url: "https://artificialanalysis.ai/api/v2/language/models/free",
                          header: "x-api-key", bearer: false),
-            keyURL: URL(string: "https://artificialanalysis.ai/api-reference")!),
+            keyURL: URL(string: "https://artificialanalysis.ai/data-api/docs")!),
     ]
 
     /// `services.json` under ~/.quiver/config: per-key dates, never values.

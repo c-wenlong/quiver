@@ -110,6 +110,46 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         #expect(second.timeToFirstToken == nil)
     }
 
+    /// The V2 Free shape, from AA's docs: speed and latency nested under
+    /// `performance` (TTFA gained `_seconds`), no creator slug, no blended
+    /// price, and no per-benchmark scores.
+    @Test func decodesTheV2FreeShape() throws {
+        let json = """
+        {"tier": "free", "intelligence_index_version": 5,
+         "pagination": {"page": 1, "page_size": 200, "total_pages": 1, "has_more": false},
+         "data": [{"id": "cd68", "name": "GLM-5.3 (Max)", "slug": "glm-5-3", "release_date": "2026-08-18",
+           "model_creator": {"id": "6743", "name": "Z AI"},
+           "evaluations": {"artificial_analysis_intelligence_index": 31.7,
+                           "artificial_analysis_coding_index": null},
+           "artificial_analysis_intelligence_index_cost": {"total_cost": 3495.62},
+           "pricing": {"price_1m_input_tokens": 1.4, "price_1m_output_tokens": 4.4,
+                       "price_1m_cache_hit_tokens": 0.26, "price_1m_cache_write_tokens": null},
+           "performance": {"median_output_tokens_per_second": 80.07,
+                           "median_time_to_first_token_seconds": 2.22,
+                           "median_time_to_first_answer_token_seconds": 27.19,
+                           "median_end_to_end_response_time_seconds": 33.44}},
+          {"id": "p2", "name": "Kimi K3", "slug": "kimi-k3",
+           "model_creator": {"id": "m", "name": "Moonshot AI", "country": null},
+           "evaluations": {}, "pricing": {"price_1m_input_tokens": 0, "price_1m_output_tokens": 2.0},
+           "performance": {"median_output_tokens_per_second": null}}]}
+        """
+        let models = try AAModelsResponse.decode(Data(json.utf8))
+        let glm = try #require(models.first)
+        #expect(glm.creatorName == "Z AI" && glm.creatorSlug == "zai")
+        #expect(ModelVendor.of(glm).id == "zai")
+        #expect(glm.intelligence == 31.7)
+        #expect(glm.evaluations["artificial_analysis_coding_index"] == nil)
+        #expect(glm.coding == nil && glm.reasoning == nil)
+        #expect(glm.priceInput == 1.4 && glm.priceOutput == 4.4)
+        // 3:1 blend computed locally: (3 × 1.4 + 4.4) / 4.
+        #expect(abs((glm.priceBlended ?? 0) - 2.15) < 1e-9)
+        #expect(glm.speed == 80.07 && glm.timeToFirstToken == 2.22 && glm.timeToFirstAnswer == 27.19)
+        let kimi = models[1]
+        #expect(kimi.creatorSlug == "moonshotai" && ModelVendor.of(kimi).id == "moonshot")
+        // An unmeasured input price leaves the blend unknown, not output / 4.
+        #expect(kimi.priceBlended == nil && kimi.speed == nil)
+    }
+
     @Test func rejectsAResponseWithNoDataArray() {
         #expect(throws: AAError.badResponse) {
             _ = try AAModelsResponse.decode(#"{"status": 200}"#.data(using: .utf8)!)
@@ -168,7 +208,7 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         let dir = try TempDir()
         let transport = StubHTTP()
         transport.handler = { request in
-            if request.url?.path.hasSuffix("/data/llms/models") == true {
+            if request.url?.path.contains("/language/models") == true {
                 return ("not json".data(using: .utf8)!, 200, [:])
             }
             return ("{}".data(using: .utf8)!, 200, [:])
@@ -181,6 +221,88 @@ private final class StubHTTP: HTTPTransport, @unchecked Sendable {
         // The other endpoints still saved.
         #expect(store.raw(.textToImage) != nil)
         #expect(store.raw(.llms) == nil)
+    }
+
+    private func page(_ ids: [String], page: Int, hasMore: Bool) -> Data {
+        let rows = ids.map { #"{"id": "\#($0)", "name": "\#($0)", "slug": "\#($0)", "model_creator": {"id": "c", "name": "Anthropic"}, "evaluations": {}, "pricing": {}, "performance": {}}"# }
+        return Data("""
+        {"tier": "free", "intelligence_index_version": 5,
+         "pagination": {"page": \(page), "page_size": 2, "total_pages": 2, "has_more": \(hasMore)},
+         "data": [\(rows.joined(separator: ","))]}
+        """.utf8)
+    }
+
+    /// A Free key gets 403 on the Pro route and drops to /free, then every
+    /// page lands: the models table holds the whole feed, not page 1.
+    @Test func aFreeKeyFallsBackToFreeAndReadsEveryPage() async throws {
+        let dir = try TempDir()
+        let transport = StubHTTP()
+        transport.handler = { request in
+            let url = try #require(request.url)
+            if url.path == "/api/v2/language/models" {
+                #expect(url.query == "prompt_type=medium")
+                return (Data(#"{"error": "Pro required"}"#.utf8), 403, ["X-AA-Tier": "free"])
+            }
+            if url.path == "/api/v2/language/models/free" {
+                return url.query == "page=2"
+                    ? (self.page(["m3"], page: 2, hasMore: false), 200,
+                       ["X-RateLimit-Remaining": "97", "X-AA-Tier": "free"])
+                    : (self.page(["m1", "m2"], page: 1, hasMore: true), 200, ["X-RateLimit-Remaining": "98"])
+            }
+            return (Data(#"{"tier": "free", "data": []}"#.utf8), 200, [:])
+        }
+        let store = makeStore(dir)
+        // A model from an earlier refresh that is still on page 2 stays.
+        try store.database.recordAAPayload(.llms, body: page(["m3"], page: 1, hasMore: false), at: nil,
+                                           status: 200, rateLimitHeaders: nil, url: nil)
+        let errors = await store.refresh(key: "key", transport: transport)
+        #expect(errors.isEmpty)
+        let llmsPaths = transport.requests.compactMap(\.url).filter { $0.path.contains("/language/") }
+        #expect(llmsPaths.map(\.absoluteString) == [
+            "https://artificialanalysis.ai/api/v2/language/models?prompt_type=medium",
+            "https://artificialanalysis.ai/api/v2/language/models/free",
+            "https://artificialanalysis.ai/api/v2/language/models/free?page=2",
+        ])
+        #expect(store.languageModels()?.map(\.id) == ["m1", "m2", "m3"])
+        let meta = store.meta()[AAEndpoint.llms.rawValue]
+        #expect(meta?.rateLimitHeaders == ["X-RateLimit-Remaining": "97", "X-AA-Tier": "free"])
+        #expect(store.database.lastSuccess(source: "aa:llms")?.url == AAEndpoint.llms.url.absoluteString)
+        #expect(transport.requests.allSatisfy { $0.value(forHTTPHeaderField: "x-api-key") == "key" })
+    }
+
+    /// A failed page fails the feed: page 1 alone must not replace the table.
+    @Test func aFailedPageKeepsTheStoredModels() async throws {
+        let dir = try TempDir()
+        let transport = StubHTTP()
+        transport.handler = { request in
+            let url = try #require(request.url)
+            if url.query?.contains("page=2") == true { return (Data(), 429, ["Retry-After": "3600"]) }
+            if url.path.contains("/language/") { return (self.page(["m1"], page: 1, hasMore: true), 200, [:]) }
+            return (Data("{}".utf8), 200, [:])
+        }
+        let store = makeStore(dir)
+        try store.database.recordAAPayload(.llms, body: page(["old1", "old2"], page: 1, hasMore: false),
+                                           at: nil, status: 200, rateLimitHeaders: nil, url: nil)
+        let errors = await store.refresh(key: "key", transport: transport)
+        #expect(errors[.llms] == "HTTP 429")
+        #expect(store.languageModels()?.map(\.id) == ["old1", "old2"])
+        #expect(store.meta()[AAEndpoint.llms.rawValue]?.rateLimitHeaders?["Retry-After"] == "3600")
+    }
+
+    /// After the legacy routes retire, a 410 says what to do.
+    @Test func goneSaysToUpdate() async throws {
+        let dir = try TempDir()
+        let transport = StubHTTP()
+        transport.handler = { _ in (Data(), 410, [:]) }
+        let errors = await makeStore(dir).refresh(key: "key", transport: transport)
+        #expect(errors[.textToImage] == "HTTP 410: Artificial Analysis retired this API. Update Quiver.")
+    }
+
+    @Test func everyEndpointIsAV2Route() {
+        for endpoint in AAEndpoint.allCases {
+            #expect(!endpoint.path.contains("/data/"), "\(endpoint)")
+            #expect(endpoint.path.hasSuffix("/models/free"), "\(endpoint)")
+        }
     }
 
     @Test func stalenessTurnsOnMissingAndOldDataOnly() throws {

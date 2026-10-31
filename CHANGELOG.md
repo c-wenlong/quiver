@@ -631,6 +631,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mac app: Artificial Analysis moves to its V2 API.** AA retires the
+  legacy `/api/v2/data/*` routes on November 4, 2026, so the Models page
+  refresh and the Settings › Services "Test" probe now call
+  `/api/v2/language/models` and `/api/v2/media/<feed>/models/free`. The
+  language feed tries the Pro route (`prompt_type=medium`, matching the
+  old speeds) and drops to `/free` on a Free key's 403, then reads every
+  page, so a refresh keeps all ~700 models instead of the first 200. Speed
+  and latency are read from the new nested `performance` object; the
+  creator slug AA dropped is derived from the creator name, so vendor
+  colours still match; the blended price, Pro-only now, is computed as
+  `(3 × input + output) / 4` when absent. On a Free key the Coding and
+  Reasoning columns stay empty (AA puts per-benchmark scores behind Pro),
+  and their hover notes say so. Stored rows in the old shape still
+  decode. The quota text now says 100 requests a day, and a `410` reads
+  "Artificial Analysis retired this API. Update Quiver."
+  [#948](https://github.com/c-wenlong/quiver/issues/948).
+
 - **Mac app: less CPU while idle.** The trend sampler no longer reads
   every HID temperature sensor each tick when the SMC already gave the
   CPU, SSD and battery temperatures, and the session search status line
