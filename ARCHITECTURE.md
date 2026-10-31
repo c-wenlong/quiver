@@ -255,6 +255,8 @@ A file is **global** when it sits directly in a harness root (`~/.<tool>/` or
 
 This rule drives `--scope=[all,global,local]` across `swe find`.
 
+For `swe init`, `archived` also means unmanaged: a path of an archived harness that would change is reported `ignored` ("archived in harness.json"), while an already-`linked` path stays linked — init never unlinks. Known harnesses are declared in `init/layout.py`'s `HARNESS_SIGNATURES`: skills and instruction targets plus `evidence`, an any-of list of home-relative paths that mean "installed" (the targets' own parents count implicitly). Evidence exists because it can live away from the targets — kilo proves itself with `~/.config/kilo` while its skills root is `~/.kilo/skills`. Registry `capabilities.instructions.file` / `capabilities.skills.root` entries always override or extend signatures. A discovered skills root that no registry entry, alias or signature claims triggers the init picker (`--yes` registers all without asking): ticked harnesses are registered and linked, unticked ones are archived and left alone.
+
 ## Discovery
 
 Two scans, deliberately different:
