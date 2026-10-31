@@ -273,6 +273,31 @@ class TestTmuxInjector(unittest.TestCase):
         self.assertIn("not on screen", out.note)
         sk.assert_not_called()
 
+    def test_approval_serializes_walks_per_pane(self):
+        # A second answer cannot even capture the pane until the first
+        # walk's keys have all landed — interleaved arrows would select
+        # a row nobody asked for.
+        lock = inject.TmuxInjector._pane_locks.setdefault(
+            self.key, threading.Lock())
+        sent = []
+
+        def _key(_name, key):
+            sent.append(key)
+            return True
+
+        with patch.object(supervise, "capture_pane",
+                          return_value=self.DEVIN_QUESTION), \
+             patch.object(supervise, "send_key", side_effect=_key):
+            with lock:
+                t = threading.Thread(
+                    target=self.inj.approval,
+                    args=(self.session, "r1", "2"))
+                t.start()
+                time.sleep(0.1)
+                self.assertEqual(sent, [])  # parked on the lock
+            t.join(2)
+        self.assertEqual(sent, ["Down", "Enter"])
+
     def test_approval_choice_unreachable_mid_walk(self):
         with patch.object(supervise, "capture_pane",
                           return_value=self.DEVIN_QUESTION), \

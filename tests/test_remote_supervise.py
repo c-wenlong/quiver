@@ -404,6 +404,14 @@ class TestTmuxHelpers(unittest.TestCase):
         self.assertEqual(
             supervise.approval_fingerprint(self.DEVIN_QUESTION),
             supervise.approval_fingerprint(moved))
+        # The Other row carries an approval marker, so its cursor used
+        # to ride into the hash — selecting it must not rotate the id.
+        on_other = self.DEVIN_QUESTION.replace(
+            " ❭ SQLite\n", "   SQLite\n").replace(
+            "   Other (type your own)", " ❭ Other (type your own)")
+        self.assertEqual(
+            supervise.approval_fingerprint(self.DEVIN_QUESTION),
+            supervise.approval_fingerprint(on_other))
 
     def test_tmux_real_call(self):
         cp = self._cp(rc=0)

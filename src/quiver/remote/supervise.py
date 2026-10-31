@@ -475,6 +475,9 @@ def menu_options(pane: str) -> list[tuple[str, str]]:
 # row's positional id is a key distance, not a keystroke.
 _CHOICE_CURSOR = re.compile(r"^\s*([❭❯›])\s+(\S.*?)\s*$")
 _CHOICE_LABEL_MAX = 80
+# A cursor glyph decorating a line — for fingerprint normalization,
+# where the same row must hash identically selected or not.
+_CURSOR_ROW = re.compile(r"^[❭❯›]\s+")
 
 
 def _choice_row(line: str) -> tuple[str, int, bool, bool] | None:
@@ -695,7 +698,10 @@ def approval_fingerprint(pane: str) -> str:
     if ctx:
         lines.append(ctx)
     for ln in pane.splitlines():
-        text = ln.strip()
+        # Cursor decoration never counts: "❭ Other (type your own)" and
+        # "Other (type your own)" are the same row at different cursor
+        # positions, and a local arrow move must not rotate the id.
+        text = _CURSOR_ROW.sub("", ln.strip())
         if not text:
             continue
         low = text.lower()

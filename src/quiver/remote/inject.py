@@ -135,6 +135,10 @@ class TmuxInjector:
     # injector is built per request; bounded so a long-lived hub does
     # not grow it forever.
     _answered: dict[str, "collections.deque[str]"] = {}
+    # One lock per pane serializes a whole approval: the hub serves
+    # each client on its own thread, and two answers racing the same
+    # menu would otherwise interleave their arrow keys mid-walk.
+    _pane_locks: dict[str, threading.Lock] = {}
 
     def __init__(self, home: Path | None, session_key: str) -> None:
         self.home = home
@@ -168,6 +172,14 @@ class TmuxInjector:
             decision.isdigit() and len(decision) <= 2
         ):
             return InjectResult(False, f"unknown decision {decision}")
+        # Checks, pane capture, the key walk and the answered mark are
+        # one critical section per pane — a concurrent reply must see
+        # either the request still open or the menu already consumed.
+        lock = self._pane_locks.setdefault(self.key, threading.Lock())
+        with lock:
+            return self._approval(session, request_id, decision)
+
+    def _approval(self, session: Session, request_id: str, decision: str) -> InjectResult:
         # The TUI menu does not display request ids, so we cannot bind a
         # reply to *the* on-screen prompt. What we can bind: reject a
         # request_id we already answered, and require a visible
