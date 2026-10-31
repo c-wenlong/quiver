@@ -103,6 +103,20 @@ public final class LocalHub {
     /// has no entry; an unknown or down hub leaves it empty.
     public private(set) var models: [String: String] = [:]
 
+    /// The hub's pins, names and fork flags by hub key, from the same read
+    /// as `keys`, with the pins chosen here since laid over it
+    /// (`SessionHubMeta.swift`). Empty while the hub is down, unknown or
+    /// unpaired: the Sessions rows then offer no pin, rename or fork.
+    public internal(set) var overlay = HubSessionOverlay()
+    /// Pins chosen here that a list read started too early must not undo.
+    var pins = SessionPinLedger()
+    /// Meta applied from `session.meta` events and answered calls, in
+    /// order. A list read that left before one reached us would put back
+    /// what it replaced, so `refreshKeys` lays the newer ones over its
+    /// answer the way `pins` does for unconfirmed pin choices.
+    var metaLog: [(at: Int, key: String, reply: HubMetaReply)] = []
+    var metaClock = 0
+
     /// The hub's base once a client exists — scopes kept command lists,
     /// so a repointed hub never shows the last hub's answers.
     public var connectedHub: String? { current?.baseURL.absoluteString }
@@ -221,37 +235,65 @@ public final class LocalHub {
         } else {
             guard let address = try? await locator.hubAddress(), let base = Self.baseURL(address) else {
                 keys = .unavailable
-                models = [:]
+                forgetRows()
                 return
             }
             guard let saved = store.credential(for: address) else {
                 keys = .unknown
-                models = [:]
+                forgetRows()
                 return
             }
             client = current ?? makeClient(base, saved)
             current = client
         }
+        // Pins chosen after this read leaves are newer than its answer.
+        let mark = pins.mark
+        let metaMark = metaClock
         do {
             let rows = try await client.sessions()
             keys = .known(Set(rows.map(\.key)))
             models = Dictionary(rows.compactMap { row in row.model.map { (row.key, $0) } },
                                 uniquingKeysWith: { _, newest in newest })
+            var read = HubSessionOverlay(rows)
+            pins.overlay(&read, fetchedFrom: mark)
+            // A meta applied after this read left (a `session.meta` or an
+            // answered rename or pin) is newer than its answer too.
+            for entry in metaLog where entry.at > metaMark {
+                let held = pins.held(entry.key)
+                read.update(entry.key) { meta in
+                    meta.apply(entry.reply)
+                    if let held {
+                        meta.pinned = held.pinned
+                        meta.pinnedAt = held.pinnedAt
+                    }
+                }
+            }
+            metaLog.removeAll { $0.at <= metaMark }
+            overlay = read
         } catch let error as HubError where error.isUnauthorized {
             // Only this client's credential: another call may have paired
             // again meanwhile.
             refused(client)
             keys = .unknown
-            models = [:]
+            forgetRows()
         } catch let error as HubError where error.code == "network" {
             // A hub that stopped since: forget the address with the client.
             if current?.credential == client.credential { current = nil }
             keys = .unavailable
-            models = [:]
+            forgetRows()
+        } catch is CancellationError {
+            // The page that asked went away: the hub didn't change.
+            return
         } catch {
             keys = .unknown
-            models = [:]
+            forgetRows()
         }
+    }
+
+    /// What the last read of the hub's rows said, gone with the hub.
+    private func forgetRows() {
+        models = [:]
+        overlay = HubSessionOverlay()
     }
 
     /// The model of session `key`'s newest reply, as the hub reported it
