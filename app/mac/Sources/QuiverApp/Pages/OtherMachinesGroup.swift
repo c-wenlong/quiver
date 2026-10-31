@@ -83,10 +83,12 @@ private struct OtherMachineRow: View {
     var act: (SessionMenuAction) -> Void
     @State private var hovering = false
 
-    /// A rename made here shows before the next read of the hub.
+    /// The hub's current name, so a rename or "Use the original name"
+    /// made here shows before the next read; the session id when the
+    /// hub knows no title at all.
     private var title: String {
-        if let meta, !meta.title.isEmpty { return meta.title }
-        return row.title
+        guard let meta else { return row.title }
+        return meta.title.isEmpty ? row.sessionId : meta.title
     }
 
     var body: some View {

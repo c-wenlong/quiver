@@ -367,12 +367,18 @@ private struct SessionsContent: View {
     /// The chat row for a satellite session: its hub key reads as
     /// `harness:id@machine`, and the chat opens it through the hub like
     /// the iPhone does.
+    /// Its title is the harness's own, never the hub name the last read
+    /// carried: the overlay lays the current name over it, so a name
+    /// cleared here doesn't linger in the chat header or Rename sheet.
     private func chatRow(_ other: OtherMachines.Row) -> SessionsModel.Row {
         let active = other.hub.lastActiveAt.map { Date(timeIntervalSince1970: $0) } ?? .now
-        return SessionsModel.chatRow(for: other.key, rows: [], hub: other.hub, now: active)
+        var hub = other.hub
+        let own = (hub.harnessTitle ?? hub.title)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        hub.title = own?.isEmpty == false ? own : nil
+        return SessionsModel.chatRow(for: other.key, rows: [], hub: hub, now: active)
             ?? SessionsModel.Row(session: SessionInfo(id: other.sessionId, harness: other.hub.harness ?? "",
                                                       agent: other.hub.agent ?? "", cwd: other.hub.cwd,
-                                                      title: other.title, titleSource: nil, lastActiveAt: active,
+                                                      title: hub.title, titleSource: nil, lastActiveAt: active,
                                                       status: other.hub.status, resume: nil),
                                  usage: nil)
     }
