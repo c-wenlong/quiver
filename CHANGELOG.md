@@ -857,6 +857,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Hub: old `/app/` links keep their query string.** The redirects from
+  `/app/…` and `/index.html` to the web app at `/` now carry the query
+  onto `Location` (the browser already kept `#pair=` and `#approve`
+  fragments), and a test pins that no `/v1/` route falls through to the
+  app's page ([#943](https://github.com/c-wenlong/quiver/issues/943)).
+
 - **Remote: attached files reach harnesses that don't read `@` refs.**
   Every channel used to put a phone attachment into the prompt as
   `@/abs/path`, which only some harnesses expand. Claude Code, Gemini

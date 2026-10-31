@@ -91,7 +91,7 @@ import Testing
     @Test func mintingATicketDecodesBothLinks() async throws {
         let pair = Data(#"""
         {"schema": 1, "data": {"host": "100.1.2.3", "port": 8477, "token": "tok",
-         "name": "MacBook", "url": "http://100.1.2.3:8477/app/#pair=tok",
+         "name": "MacBook", "url": "http://100.1.2.3:8477/#pair=tok",
          "deep_link": "quiver://pair?host=100.1.2.3&port=8477&token=tok&name=MacBook",
          "expires_in_s": 300}}
         """#.utf8)
@@ -100,7 +100,7 @@ import Testing
         await model.mintTicket()
         let ticket = try #require(model.ticket)
         #expect(runner.calls == [["remote", "pair", "--json"]])
-        #expect(ticket.url == "http://100.1.2.3:8477/app/#pair=tok")
+        #expect(ticket.url == "http://100.1.2.3:8477/#pair=tok")
         #expect(ticket.deepLink.hasPrefix("quiver://pair?"))
         #expect(ticket.expiresInS == 300)
     }
@@ -111,7 +111,7 @@ import Testing
         func pair(_ token: String) -> CommandResult {
             .init(status: 0, stdout: Data(#"""
             {"schema": 1, "data": {"host": "h", "port": 1, "token": "\#(token)", "name": null,
-             "url": "http://h:1/app/#pair=\#(token)", "deep_link": "quiver://pair?token=\#(token)",
+             "url": "http://h:1/#pair=\#(token)", "deep_link": "quiver://pair?token=\#(token)",
              "expires_in_s": 300}}
             """#.utf8), stderr: "")
         }

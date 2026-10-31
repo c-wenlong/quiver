@@ -55,12 +55,13 @@ final class PairLinkTests: XCTestCase {
     }
 
     func testBrowserFragmentForm() {
-        let link = PairLink(URL(string: "http://mac.ts.net:8477/app/#pair=tok&name=ipad")!)
+        let link = PairLink(URL(string: "http://mac.ts.net:8477/#pair=tok&name=ipad")!)
         XCTAssertEqual(link?.baseURL.absoluteString, "http://mac.ts.net:8477")
         XCTAssertEqual(link?.token, "tok")
         XCTAssertEqual(link?.name, "ipad")
-        // Older tickets minted before the web app took `/` keep parsing.
-        let legacy = PairLink(URL(string: "http://mac.ts.net:8477/#pair=tok")!)
+        // Tickets minted while the web app lived at `/app/` keep parsing.
+        let legacy = PairLink(URL(string: "http://mac.ts.net:8477/app/#pair=tok")!)
+        XCTAssertEqual(legacy?.baseURL.absoluteString, "http://mac.ts.net:8477")
         XCTAssertEqual(legacy?.token, "tok")
     }
 
@@ -75,7 +76,7 @@ final class PairLinkTests: XCTestCase {
     }
 
     func testHttpsFragmentLinkWithoutAPortIs443() {
-        XCTAssertEqual(PairLink(URL(string: "https://mac.tailnet.ts.net/app/#pair=tok")!)?.baseURL.absoluteString,
+        XCTAssertEqual(PairLink(URL(string: "https://mac.tailnet.ts.net/#pair=tok")!)?.baseURL.absoluteString,
                        "https://mac.tailnet.ts.net")
         XCTAssertEqual(PairLink(URL(string: "http://mac.ts.net/app/#pair=tok")!)?.baseURL.absoluteString,
                        "http://mac.ts.net:8477")

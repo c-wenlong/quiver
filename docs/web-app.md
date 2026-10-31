@@ -46,8 +46,12 @@ from the gate itself: "Pair with Tailscale" posts
 below trades a pair token through the app's own `#pair=` fragment, and
 either mints a device credential (`Authorization: Bearer`, kept in
 `localStorage` under the hub's origin). The app lived under `/app/`
-until #944: that path now redirects to the same name at `/`, fragment
-intact, so a `/app/#pair=` link minted then still lands. Satellite routes (`/v1/agent/*`) always want a bearer.
+until #944: that path now 301-redirects to the same name at `/`, query
+and fragment intact, so a `/app/#pair=` link or `/app/#approve` bookmark
+minted then still lands. The browser keeps the fragment across the
+redirect (it never reaches the hub); the hub copies the query onto
+`Location`. Only a name the root serves is redirected, so no `/app/…`
+path can point `Location` at another host. Satellite routes (`/v1/agent/*`) always want a bearer.
 Behind `tailscale serve`, run the hub with `--public-url=https://…` so it
 reads the tailnet client from Serve's headers: "Pair with Tailscale" then
 works, and the Origin check accepts the `https://` origin Serve presents.
