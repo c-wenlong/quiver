@@ -12,7 +12,7 @@ work each one needs.
 | Topic | Decision |
 |---|---|
 | Look | The TokenTracker style package (`systems/tokentracker` in design-systems), dark first, the same as the Mac app. Near-black page, `#171717` hairline cards, white primary buttons, green only for "active" and "on", amber for "needs you", red for errors and destructive actions, sentence case everywhere, a visible focus ring. Values come from its `tokens.json`. |
-| Icon | The Mac app's dark icon (`app/mac/Icons/AppIcon-dark.png`) |
+| Icon | `assets/logo-square.png`, the same art as the Mac app's icon |
 | Client | Native SwiftUI on iPhone (`app/ios/`), decided 2026-10-23. The hub's web app at `/` is the client for browsers and other devices; it took the standalone PWA's `#pair=` and `#approve` fragments and the PWA is gone. See "SwiftUI or PWA" below. |
 | Signing | A paid Apple Developer team, so profiles last a year and APNs, TestFlight, widgets and Live Activities are all available |
 | Push | ntfy stays the push path until the APNs work under "Features" lands |

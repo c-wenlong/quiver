@@ -872,6 +872,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **New icon and logo everywhere; the pixel-art mascot is gone.** The
+  Mac and iPhone app icons, the web app's icons, the landing site and
+  the README now use the new mark: three arrowheads above `swe` on a
+  dark tile. The web app serves `favicon.ico`, `favicon.svg`,
+  `favicon-32.png` and `apple-touch-icon.png`, plus a
+  `manifest.webmanifest` that lists `icon-192.png`, `icon-512.png` and
+  a maskable `icon-maskable-512.png` for home-screen shortcuts. The
+  landing site gets the same favicons. The mascot banner, the README's
+  mascot picture and the landing page's mascot figure are removed. The
+  source art (square, rounded and a transparent mark for dark
+  backgrounds) lives in `assets/`. The new set has no light variant, so
+  the Mac app's Light and Dark icon choices in Settings show the same
+  icon for now.
 - **Mac app: Artificial Analysis moves to its V2 API.** AA retires the
   legacy `/api/v2/data/*` routes on November 4, 2026, so the Models page
   refresh and the Settings › Services "Test" probe now call
