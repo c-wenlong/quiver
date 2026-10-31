@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hub: switch the model of a headless Claude Code session.** The
+  `model` control op on a `headless` session records the pick on the
+  session's supervised row, and the next `claude -p --resume` run takes
+  it as `--model`, so the switch applies from the next turn. Claude Code
+  rows now list `headless` in `model_modes`, so the iPhone's Model menu
+  shows on them with no app change
+  ([#643](https://github.com/c-wenlong/quiver/issues/643)).
+
 - **Hub: switch the model of a Codex session attached through the
   app-server.** The `model` control op on an `appserver` session
   records the pick on the session's supervised row, and the next

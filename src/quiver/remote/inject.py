@@ -386,6 +386,12 @@ class ClaudeHeadlessInjector:
                     pass
             supervise.unmark(self.home, self.key)
             return InjectResult(True, "detached; session is observed again")
+        if op == "model":
+            # The next print-mode run reads it off the row as --model
+            # (send(), under the session lock); a run in flight keeps
+            # the model it started with.
+            return switch_model(self.home, self.key, "headless", "claude",
+                                value)
         return InjectResult(
             False, f"unsupported_control: {op} needs a live TUI"
         )
