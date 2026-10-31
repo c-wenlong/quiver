@@ -30,6 +30,9 @@ const sessionsPage = {
   data: null, gen: 0,
   query: "", tool: "", window: "90d", project: "", model: "",
   showTrivial: false, openDays: new Set(),
+  // The machine chip chosen in the strip ("" lists every machine), and the
+  // /v1/machines list the strip draws (null until it answers).
+  machine: "", machines: null,
   // /v1/search for `search.query`: key -> { snippet, marked }, whether the
   // hub has an index, and "pending" / "error" while it has no answer.
   search: { query: "", hits: new Map(), indexed: null, state: "" },
@@ -62,8 +65,11 @@ async function renderSessions(_id, rescan = false) {
   }
   sessionsPage.scrollY = null;
   const mark = pinLedger.clock;
-  const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
+  const [{ status, data }, machines] = await Promise.all([
+    api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`), api("/v1/machines")]);
   if (gen !== sessionsPage.gen) return;
+  // The strip is an extra: a failed machine list just hides it.
+  sessionsPage.machines = machines.status === 200 && machines.data ? machines.data.machines || [] : null;
   if (status === 401) return renderGate();
   if (status !== 200 || !data) {
     const msg = failText(status, data, "then refresh");
@@ -180,6 +186,7 @@ function filteredSessions() {
   const s = sessionsPage;
   const start = windowStart(s.window);
   const q = s.query.trim().toLowerCase();
+  const machine = chosenMachine();
   const kept = [];
   let trivial = 0;
   for (const r of s.data.sessions) {
@@ -187,6 +194,7 @@ function filteredSessions() {
     // phone's Pinned section has no window at all.
     if (!r.pinned && start != null && r.last_active_at < start) continue;
     if (s.tool && r.harness !== s.tool) continue;
+    if (machine && r.machine_id !== machine) continue;
     if (s.project && r.project_key !== s.project) continue;
     if (s.model && !(r.usage && r.usage.models.some((m) => m.model === s.model))) continue;
     if (q) {
@@ -199,6 +207,19 @@ function filteredSessions() {
   }
   return { kept, trivial };
 }
+
+/* The strip's chips, and the chosen machine (dropped when no longer
+ * listed). The strip is an extra: without machine-strip.js (it failed to
+ * load) the list shows no strip and no machine filter. */
+const machineStrip = () => (typeof MachineStrip === "undefined" ? null : MachineStrip);
+const machineChips = () => {
+  const strip = machineStrip();
+  return strip ? strip.chips(sessionsPage.machines, sessionsPage.data.sessions) : [];
+};
+const chosenMachine = () => {
+  const strip = machineStrip();
+  return strip ? strip.effective(sessionsPage.machine, machineChips()) : "";
+};
 
 function paintSessions() {
   const s = sessionsPage, d = s.data;
@@ -214,7 +235,7 @@ function paintSessions() {
   const footer = trivial || s.showTrivial ? trivialFooter(trivial) : "";
   document.getElementById("panel").innerHTML = `<div class="page">
     ${sessionsHeader(false)}
-    <div class="stack">${notes}${actNote}${filterBar()}${searchNote(kept)}${summaryStrip(kept)}${body}${footer}</div>
+    <div class="stack">${notes}${actNote}${machineStrip() ? machineStrip().html(machineChips(), chosenMachine()) : ""}${filterBar()}${searchNote(kept)}${summaryStrip(kept)}${body}${footer}</div>
   </div>
   <dialog class="sheet" id="session-sheet"></dialog>`;
   bindSessionsHeader();
@@ -598,9 +619,12 @@ function bindSessionControls() {
     const el = document.getElementById(id);
     if (el) el.onchange = () => { s[key] = el.value; paintSessions(); };
   }
+  for (const btn of document.querySelectorAll(".machine-chip[data-machine]")) {
+    btn.onclick = () => { s.machine = machineStrip().toggled(chosenMachine(), btn.dataset.machine); paintSessions(); };
+  }
   const clear = document.getElementById("clear-filters");
   if (clear) clear.onclick = () => {
-    Object.assign(s, { query: "", tool: "", project: "", model: "", window: "all" });
+    Object.assign(s, { query: "", tool: "", project: "", model: "", machine: "", window: "all" });
     scheduleTranscriptSearch();
     paintSessions();
   };

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iPhone and web: a machine strip on the Sessions page.** One chip
+  per machine the hub lists, with an online dot, its name, "N working
+  · M waiting" and, when it is offline, "last seen 2h". Tapping a chip
+  shows only that machine's sessions; tapping it again shows all. The
+  strip hides when the hub has one machine, and orders machines like
+  the Mac's "Other machines" group (online first, then name). No new
+  hub route
+  ([#1443](https://github.com/c-wenlong/quiver/issues/1443)).
+
 - **iPhone, web and Mac: thinking cards say how long the model
   thought.** A thinking card reads "Thought for 12s" or "Thought for
   1m 5s" from the hub's `duration_s`, and plain "Thought" when the hub

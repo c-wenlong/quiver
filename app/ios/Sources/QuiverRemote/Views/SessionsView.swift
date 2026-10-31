@@ -6,6 +6,8 @@ struct SessionsView: View {
     /// The tab's navigation path, so a just-started session's chat can open.
     @Binding var path: [Route]
     @State private var filter: SessionFilter = .all
+    /// The machine chip chosen in the strip; nil lists every machine.
+    @State private var machineFilter: String?
     @State private var showDevices = false
     @State private var showConsole = false
     @State private var showNewSession = false
@@ -21,12 +23,15 @@ struct SessionsView: View {
     @State private var toast: ListToast?
 
     var body: some View {
-        let rows = app.displaySessions.filter(filter.includes)
+        let chips = MachineStrip.chips(machines: app.machines, rows: app.displaySessions)
+        let machine = MachineStrip.effective(machineFilter, chips: chips)
+        let rows = MachineStrip.filter(app.displaySessions, machine: machine).filter(filter.includes)
         let groups = SessionGrouping.groupsWithPins(rows, machines: app.machines)
         PageScroll {
             if search.isActive {
                 searchResults
             } else {
+                if !chips.isEmpty { machineStrip(chips, selected: machine) }
                 filterBar
             }
             if search.isActive {
@@ -264,6 +269,19 @@ struct SessionsView: View {
         error.localizedDescription
     }
 
+    private func machineStrip(_ chips: [MachineStrip.Chip], selected: String?) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(chips) { chip in
+                    MachineChip(chip: chip, selected: chip.id == selected) {
+                        machineFilter = MachineStrip.toggled(selected, tapping: chip.id)
+                    }
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
     private var filterBar: some View {
         WrappingHStack {
             ForEach(SessionFilter.allCases) { f in
@@ -455,5 +473,35 @@ struct CloseSwipesOnScroll: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// One machine in the strip: its online dot, name and what it is doing.
+struct MachineChip: View {
+    var chip: MachineStrip.Chip
+    var selected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Circle().fill(chip.online ? Theme.accentFill : Theme.borderStrong).frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(chip.name).font(Theme.control)
+                        .foregroundStyle(selected ? Theme.textPrimary : Theme.textLabel)
+                    Text(chip.detail).font(Theme.small).foregroundStyle(Theme.textMuted)
+                }
+            }
+            .padding(.horizontal, 12)
+            .scaledMinHeight(Theme.controlHeight)
+            .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .strokeBorder(selected ? Theme.borderStrong : Theme.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(chip.name), \(chip.online ? "online" : "offline"), \(chip.detail)")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityHint(selected ? "Shows every machine" : "Shows only this machine's sessions")
     }
 }
