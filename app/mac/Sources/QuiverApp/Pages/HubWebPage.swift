@@ -89,10 +89,18 @@ final class HubWebViews {
     func reload(_ hub: HubOrigin) { entries[hub]?.reload() }
 
     /// A hub removed in Settings: its view goes, and its web data (the
-    /// pairing credential included) with it once nothing holds the view.
+    /// pairing credential included) with it. Clearing the store's data
+    /// can't fail, even while a view still holds the store, so a hub added
+    /// again starts signed out; dropping the then-empty store from disk is
+    /// tidy-up only, and it may refuse while the old view is still alive.
     func forget(_ hub: HubOrigin) {
         entries[hub] = nil
-        Task { try? await WKWebsiteDataStore.remove(forIdentifier: hub.dataStoreID) }
+        let id = hub.dataStoreID
+        Task {
+            let store = WKWebsiteDataStore(forIdentifier: id)
+            await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+            try? await WKWebsiteDataStore.remove(forIdentifier: id)
+        }
     }
 }
 
