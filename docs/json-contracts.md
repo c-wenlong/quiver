@@ -219,10 +219,13 @@ The CLI side of remote also speaks `--json`:
   and `remedies`: the ways out, best first, each `{kind, title, detail?}`.
   `kind` is `action` (swe can run the fix; `action`/`via` name it),
   `agent` (a `prompt` to hand a coding agent), `command` (a `command` to
-  copy) or `steps` (manual work, `steps` listed). `fix` stays the
-  one-line summary for clients without remedy support. The command may
-  exit nonzero with valid JSON, so the client is called with
-  `allowFailure`.
+  copy) or `steps` (manual work, `steps` listed). An `action` remedy can
+  carry the target the runner edits: `script` + `settings` + `targets`
+  (the missing command tokens, so a working entry that shares the
+  basename survives) for `undeclare`, `settings_entries` + `cli_entries`
+  for `marketplace-drop`. `fix` stays the one-line summary for clients
+  without remedy support. The command may exit nonzero with valid JSON,
+  so the client is called with `allowFailure`.
 - `SessionListPayload`: `sessions` (`id`, `harness`, `agent`, `cwd`,
   `title`, `title_source`, `last_active_at`, `status`, `resume`) plus
   `failures` for parsers that crashed.

@@ -162,6 +162,102 @@ class TestRun(_TempHome, unittest.TestCase):
         self.assertEqual((caught.exception.status, caught.exception.code),
                          (404, "unknown_remedy"))
 
+    def test_undeclare_drops_the_declaration_and_backs_up(self):
+        self.seed({"claude": {"command": "claude"}})
+        claude = self.home / ".claude"
+        claude.mkdir()
+        settings = claude / "settings.json"
+        settings.write_text(json.dumps({"hooks": {"Stop": [
+            {"hooks": [{"command": "gone.py"},
+                       {"command": "keep.py"}]}]}}))
+        from quiver.harness.drift import check_hook_drift
+        with patch("quiver.harness.drift.run_drift_checks",
+                   side_effect=lambda home=None, repo_root=None:
+                       check_hook_drift(home or self.home)):
+            finding = self.finding("drift.hooks")
+            drop = next(r for r in finding["remedies"]
+                        if r.get("action") == "undeclare")
+            self.assertEqual(drop["script"], "gone.py")
+            self.assertEqual(drop["targets"], ["gone.py"])
+            reply = doctor_page.post(self.ctx, "run", {
+                "check": finding["check"], "message": finding["message"],
+                "action": "undeclare"})
+        self.assertEqual((reply["ran"], reply["error"]), ("undeclare", None))
+        hooks = json.loads(settings.read_text())["hooks"]
+        self.assertEqual(hooks, {"Stop": [{"hooks": [{"command": "keep.py"}]}]})
+        backups = list((self.home / ".quiver" / "backups").iterdir())
+        self.assertEqual(len(backups), 1)
+        self.assertNotIn("gone.py", json.dumps(
+            [f["message"] for f in reply["report"]["findings"]]))
+
+    def test_marketplace_drop_removes_the_entries(self):
+        self.seed({"claude": {"command": "claude"}})
+        claude = self.home / ".claude"
+        claude.mkdir()
+        settings = claude / "settings.json"
+        settings.write_text(json.dumps({"extraKnownMarketplaces": {
+            "nus": {"source": {"source": "directory",
+                               "path": str(self.home / "gone" / "nus")}}}}))
+        plugins = claude / "plugins"
+        plugins.mkdir()
+        known = plugins / "known_marketplaces.json"
+        known.write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}}}))
+        finding = self.finding("setup.marketplace-missing")
+        drop = next(r for r in finding["remedies"]
+                    if r.get("action") == "marketplace-drop")
+        self.assertEqual((drop["settings_entries"], drop["cli_entries"]),
+                         (["nus"], ["added"]))
+        reply = doctor_page.post(self.ctx, "run", {
+            "check": finding["check"], "message": finding["message"],
+            "action": "marketplace-drop"})
+        self.assertEqual((reply["ran"], reply["error"]),
+                         ("marketplace-drop", None))
+        self.assertEqual(json.loads(settings.read_text())
+                         ["extraKnownMarketplaces"], {})
+        self.assertEqual(json.loads(known.read_text()), {})
+        self.assertNotIn("setup.marketplace-missing",
+                         self.checks(reply["report"]))
+
+    def test_a_busy_plugin_write_defers_the_drop(self):
+        self.seed({"claude": {"command": "claude"}})
+        from quiver.webapp.pages import plugins
+        plugins._WRITE_LOCK.acquire()
+        try:
+            busy = doctor_page._run_undeclare(
+                self.home, "claude", ["gone.py"], ["/x"])
+            self.assertIn("still running", busy)
+            busy = doctor_page._run_marketplace_drop(
+                self.home, ["x"], ["y"])
+            self.assertIn("still running", busy)
+        finally:
+            plugins._WRITE_LOCK.release()
+
+    def test_undeclare_joins_per_file_errors(self):
+        self.seed({"claude": {"command": "claude"}})
+        claude = self.home / ".claude"
+        claude.mkdir()
+        real = self.home / "real-settings.json"
+        real.write_text(json.dumps({"hooks": {"Stop": [
+            {"hooks": [{"command": "gone.py"}]}]}}))
+        link = claude / "settings.json"
+        link.symlink_to(real)
+        error = doctor_page._run_undeclare(
+            self.home, "claude", ["gone.py"], [str(link)])
+        self.assertIn("managed elsewhere", error)
+
+    def test_a_remedy_without_its_fields_is_refused(self):
+        report = DoctorReport([DoctorFinding(
+            "x", "warning", "m", "fix it",
+            remedies=({"kind": "action", "action": "undeclare"},))])
+        with patch("quiver.harness.commands.doctor_report", return_value=report):
+            with self.assertRaises(PageError) as caught:
+                doctor_page.post(self.ctx, "run", {
+                    "check": "x", "message": "m", "action": "undeclare"})
+        self.assertEqual((caught.exception.status, caught.exception.code),
+                         (404, "unknown_remedy"))
+
     def test_discover_lists_nothing_blocked(self):
         self.seed()
         with patch.dict(doctor_page.RUNNERS, {"discover": lambda home: None}):

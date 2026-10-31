@@ -99,6 +99,170 @@ class SetupFindingsTest(unittest.TestCase):
                       "on this machine: design, nus", got[0].message)
         self.assertIn("~/.claude/settings.json", got[0].fix)
 
+    def test_the_drop_action_carries_its_targets(self):
+        self._declare(["nus"])
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "known_marketplaces.json").write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}}}))
+        got = [f for f in self.findings({"claude": {"command": "claude"}})
+               if f.check == "setup.marketplace-missing"]
+        drop = next(r for r in got[0].remedies
+                    if r.get("action") == "marketplace-drop")
+        self.assertEqual(drop["settings_entries"], ["nus"])
+        self.assertEqual(drop["cli_entries"], ["added"])
+
+    def test_a_nix_settings_file_leaves_the_cli_entries_droppable(self):
+        settings = self._declare(["nus"])
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "known_marketplaces.json").write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}}}))
+        real_realpath = os.path.realpath
+
+        def realpath(path, *a, **k):
+            if pathlib.Path(path) == settings:
+                return "/nix/store/abc-settings.json"
+            return real_realpath(path, *a, **k)
+
+        with mock.patch("os.path.realpath", side_effect=realpath):
+            got = [f for f in self.findings({"claude": {"command": "claude"}})
+                   if f.check == "setup.marketplace-missing"]
+        drop = next(r for r in got[0].remedies
+                    if r.get("action") == "marketplace-drop")
+        self.assertEqual((drop["settings_entries"], drop["cli_entries"]),
+                         ([], ["added"]))
+
+    def test_an_entry_in_both_files_is_dropped_from_both(self):
+        # A marketplace registered in settings AND through the CLI needs
+        # two deletes: removing only the settings copy leaves the known
+        # copy, and the warning survives the Run.
+        self._declare(["nus"])
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "known_marketplaces.json").write_text(json.dumps({
+            "nus": {"source": {"source": "directory",
+                               "path": str(self.home / "gone" / "nus")}}}))
+        got = [f for f in self.findings({"claude": {"command": "claude"}})
+               if f.check == "setup.marketplace-missing"]
+        drop = next(r for r in got[0].remedies
+                    if r.get("action") == "marketplace-drop")
+        self.assertEqual((drop["settings_entries"], drop["cli_entries"]),
+                         (["nus"], ["nus"]))
+
+    def test_a_managed_settings_file_leaves_only_the_cli_targets(self):
+        settings = self._declare(["nus"])
+        real = self.home / "real-settings.json"
+        settings.rename(real)
+        settings.symlink_to(real)
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "known_marketplaces.json").write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}}}))
+        got = [f for f in self.findings({"claude": {"command": "claude"}})
+               if f.check == "setup.marketplace-missing"]
+        drop = next(r for r in got[0].remedies
+                    if r.get("action") == "marketplace-drop")
+        self.assertEqual((drop["settings_entries"], drop["cli_entries"]),
+                         ([], ["added"]))
+        self.assertIn("managed elsewhere", got[0].fix)
+
+    def test_another_harness_gets_no_drop_action(self):
+        from quiver.harness.doctor import _marketplace_remedies
+        remedies = _marketplace_remedies("codex", ["x"], ["x"], [], False)
+        self.assertNotIn("marketplace-drop",
+                         [r.get("action") for r in remedies])
+
+    def test_drop_marketplace_entries_edits_both_files(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+        settings = self._declare(["nus", "design", "here"], present=["here"])
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        known = plugins / "known_marketplaces.json"
+        known.write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}},
+            "kept": {"source": {"source": "directory",
+                                "path": str(self.home / "x" / "kept")}}}))
+        error = drop_marketplace_entries(self.home, ["nus", "design"], ["added"])
+        self.assertIsNone(error)
+        extra = json.loads(settings.read_text())["extraKnownMarketplaces"]
+        # "remote" is the github-sourced entry _declare adds: not missing.
+        self.assertEqual(sorted(extra), ["here", "remote"])
+        self.assertEqual(list(json.loads(known.read_text())), ["kept"])
+        self.assertEqual(len(list((self.hub() / "backups").iterdir())), 2)
+
+    def test_a_managed_settings_file_is_skipped_not_failed(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+        settings = self._declare(["nus"])
+        real = self.home / "real-settings.json"
+        settings.rename(real)
+        settings.symlink_to(real)
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        known = plugins / "known_marketplaces.json"
+        known.write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}}}))
+        error = drop_marketplace_entries(self.home, ["nus"], ["added"])
+        self.assertIn("managed elsewhere", error)
+        self.assertIn("nus", json.loads(real.read_text())["extraKnownMarketplaces"])
+        self.assertEqual(json.loads(known.read_text()), {})
+
+    def test_an_unreadable_file_is_reported_and_the_other_still_drops(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+
+        settings = self._declare(["nus"])
+        settings.write_text("{corrupt")
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        known = plugins / "known_marketplaces.json"
+        known.write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}}}))
+        error = drop_marketplace_entries(self.home, ["nus"], ["added"])
+        self.assertIn("could not read", error)
+        self.assertEqual(json.loads(known.read_text()), {})
+
+    def test_a_non_object_and_a_missing_map_are_reported(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+
+        settings = self._declare(["nus"])
+        settings.write_text(json.dumps(["nus"]))
+        error = drop_marketplace_entries(self.home, ["nus"], [])
+        self.assertIn("not a JSON object", error)
+        settings.write_text(json.dumps({"other": {}}))
+        error = drop_marketplace_entries(self.home, ["nus"], [])
+        self.assertIn("has no extraKnownMarketplaces map", error)
+
+    def test_a_missing_name_is_silent_a_missing_file_reports(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+
+        self._declare(["nus"])
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "known_marketplaces.json").write_text(json.dumps({}))
+        self.assertIsNone(
+            drop_marketplace_entries(self.home, ["ghost"], ["ghost"]))
+        (self.home / ".claude" / "settings.json").unlink()
+        error = drop_marketplace_entries(self.home, ["nus"], [])
+        self.assertIn("could not read", error)
+
+    def test_a_file_changed_under_the_read_is_reported(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+
+        self._declare(["nus"])
+        with mock.patch("quiver.hooks.settings._unchanged",
+                        side_effect=ValueError("changed")):
+            error = drop_marketplace_entries(self.home, ["nus"], [])
+        self.assertIn("changed", error)
+        self.assertIn("nus", json.loads(
+            (self.home / ".claude" / "settings.json")
+            .read_text())["extraKnownMarketplaces"])
+
     def test_a_nix_managed_settings_file_says_so(self):
         settings = self._declare(["nus"])
         registry = {"claude": {"command": "claude"}}

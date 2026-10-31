@@ -659,9 +659,12 @@ def _declared_missing(
         candidates = ([d for d in (root, dest_roots.get(name),
                                  root_dir / name)
                        if d is not None] + dir_homes)
-        # basename -> (the event labels, the settings files) declaring it,
-        # for one merged finding
-        missing: dict[str, tuple[set[str], set[Path]]] = {}
+        # basename -> (the event labels, the settings files, the missing
+        # token keys) declaring it, for one merged finding. The key is
+        # the resolved path when the token expands, else the token as
+        # written: one basename can be missing in one command and
+        # present in another, so the drop matches tokens.
+        missing: dict[str, tuple[set[str], set[Path], set[str]]] = {}
         for decl in decls:
             toks = split_command(decl.command)
             homes = candidates + [decl.settings.parent / "hooks"]
@@ -688,15 +691,18 @@ def _declared_missing(
                 if base in guarded_bases or (
                         expanded is not None and expanded in guarded_paths):
                     continue
-                labels, files = missing.setdefault(base, (set(), set()))
+                labels, files, keys = missing.setdefault(
+                    base, (set(), set(), set()))
                 labels.add(decl.label())
                 files.add(decl.settings)
-        for base, (labels, files) in sorted(missing.items()):
+                keys.add(str(expanded) if expanded is not None else bare)
+        for base, (labels, files, keys) in sorted(missing.items()):
             where = ", ".join(sorted(labels))
             out.append(HookDrift(
                 "declared-missing", name,
                 f"declared {base} ({where}) but no such script is on disk",
                 script=base, settings=tuple(sorted(files)),
+                targets=tuple(sorted(keys)),
             ))
     return out
 

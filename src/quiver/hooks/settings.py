@@ -21,8 +21,13 @@ a harness that declared only ``capabilities.hooks.root``.
 
 Everything here tolerates: a missing file, unparseable JSON, and schema
 drift (``hooks`` that is not a dict, groups that are not lists, entries
-that are not objects) each read as no declarations, never an error. These
-files are only ever read; quiver never writes one.
+that are not objects) each read as no declarations, never an error.
+
+The one write is ``drop_script_declarations``: Doctor's "Drop the
+declaration" runs it, and only after ``declaration_managed_elsewhere``
+clears the file (a symlinked or unwritable file is owned by whatever
+manages it) and a backup lands in ~/.quiver/backups. Everything else is
+read-only.
 """
 
 from __future__ import annotations
@@ -264,6 +269,118 @@ def declaration_managed_elsewhere(path: Path) -> bool:
         return path.is_file() and not os.access(path, os.W_OK)
     except OSError:
         return False
+
+
+def _unchanged(path: Path, before) -> None:
+    """Refuse a write when the file moved under the read.
+
+    The drop helpers read, edit and write a whole settings file; a plugin
+    toggle or a hand edit landing between the read and the write would be
+    silently reverted. ``before`` is the ``os.stat`` taken just after the
+    read.
+    """
+    if before is None:
+        return
+    try:
+        now = path.stat()
+    except OSError:
+        return
+    if (now.st_mtime_ns, now.st_size) != (before.st_mtime_ns, before.st_size):
+        raise ValueError(f"{path} changed while it was being read; run it again")
+
+
+def drop_script_declarations(
+    path: Path,
+    targets,
+    registry: dict,
+    harness: str,
+    home: Path,
+) -> int:
+    """Remove the hook entries whose commands invoke a ``targets`` token.
+
+    Doctor's deterministic half of a declared-missing fix. ``targets``
+    are the finding's missing tokens (the resolved path when one could
+    be computed, else the token as written): one basename can be missing
+    in one command and alive in another, so matching is by token, never
+    by basename. Raises rather than reports: the caller shows the
+    exception's text, as every doctor runner does. Refuses a file
+    managed elsewhere (symlinked, unwritable), a harness whose settings
+    file only points at a generated one, and a file that changed under
+    the read. Backs the file up before writing. Returns how many entries
+    came out.
+    """
+    from quiver.paths import atomic_write_text, backup_tree
+
+    keys = {str(t) for t in targets}
+    if not keys:
+        raise ValueError("nothing to drop: no missing tokens named")
+    contract = contract_for(registry, harness, home)
+    if contract.managed_hooks_key:
+        raise ValueError(
+            f"{path} only points at a generated file; edit what generates it")
+    if declaration_managed_elsewhere(path):
+        raise ValueError(f"{path} is managed elsewhere; edit it there")
+    try:
+        before = path.stat()
+    except OSError:
+        before = None
+    data = _read_json(path)
+    if data is None:
+        raise ValueError(f"{path} is not a JSON object")
+    hooks_map = data.get("hooks")
+    if not isinstance(hooks_map, dict):
+        raise ValueError(f"{path} declares no hooks")
+
+    def invokes_target(command) -> bool:
+        if not isinstance(command, str):
+            return False
+        for raw in split_command(command):
+            token = raw.strip("'\"").rstrip(";")
+            if not is_script_token(token):
+                continue
+            expanded = expand_command_path(token, home)
+            if (str(expanded) if expanded is not None else token) in keys:
+                return True
+        return False
+
+    removed = 0
+    if contract.schema == "flat":
+        for event, entries in list(hooks_map.items()):
+            if not isinstance(entries, list):
+                continue
+            kept = [e for e in entries if not (
+                    isinstance(e, dict) and invokes_target(e.get("command")))]
+            removed += len(entries) - len(kept)
+            if kept:
+                hooks_map[event] = kept
+            else:
+                del hooks_map[event]
+    else:
+        for event, groups in list(hooks_map.items()):
+            if not isinstance(groups, list):
+                continue
+            kept_groups = []
+            for group in groups:
+                hooks = group.get("hooks") if isinstance(group, dict) else None
+                if not isinstance(hooks, list):
+                    kept_groups.append(group)
+                    continue
+                kept = [h for h in hooks if not (
+                        isinstance(h, dict) and invokes_target(h.get("command")))]
+                removed += len(hooks) - len(kept)
+                if kept:
+                    group["hooks"] = kept
+                    kept_groups.append(group)
+            if kept_groups:
+                hooks_map[event] = kept_groups
+            else:
+                del hooks_map[event]
+    if not removed:
+        raise ValueError(f"{path} declares no hook naming a missing script")
+    _unchanged(path, before)
+    backup_tree(path, home)
+    atomic_write_text(path, json.dumps(data, indent=2) + "\n")
+    return removed
 
 
 def split_command(command: str) -> list[str]:
