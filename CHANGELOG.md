@@ -738,6 +738,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remote: attached files reach harnesses that don't read `@` refs.**
+  Every channel used to put a phone attachment into the prompt as
+  `@/abs/path`, which only some harnesses expand. Claude Code, Gemini
+  CLI and Qwen Code still get `@path`; every other harness (Codex,
+  OpenCode, Cursor, Droid, Pi, ...) now gets the path in plain text,
+  `[Attached file: /abs/path] <message>`, and reads the file with its
+  own tools. Which harness gets which is harness.json
+  `capabilities.attachments.at_refs`, over a fallback table in
+  `remote/attachments.py`
+  ([#516](https://github.com/c-wenlong/quiver/issues/516)).
+
 - **MCP gateway: no longer throttled by macOS.** The LaunchAgent was
   written with `ProcessType: Background`, as the remote hub's is, and
   macOS throttled its servers: `so__x`'s 6 MB tool list took 6.9 s
