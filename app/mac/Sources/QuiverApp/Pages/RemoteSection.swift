@@ -10,6 +10,9 @@ struct RemoteSection: View {
     @Environment(AppModel.self) private var app
     @State private var model: RemoteModel?
     @State private var requests: PairRequestsModel?
+    /// `swe remote agent`'s background service, for a Mac that is a
+    /// satellite of another machine's hub.
+    @State private var agent: RemoteAgentModel?
     @State private var showsSetup = false
     @State private var showsAllDevices = false
     @State private var target: PairTarget = .web
@@ -27,6 +30,7 @@ struct RemoteSection: View {
             cardHeader("Hub", detail: "The swe your phones reach over Tailscale.")
             hubRows
             SettingsDivider()
+            agentRows
             cardHeader("Paired devices", detail: "Phones signed in to the hub.")
             deviceRows
             SettingsDivider()
@@ -37,9 +41,12 @@ struct RemoteSection: View {
         .task(id: app.swePath) {
             let remote = RemoteModel(swe: app.swe)
             model = remote
+            let satellite = RemoteAgentModel(swe: app.swe)
+            agent = satellite
             async let status: Void = remote.load()
             async let report: Void = setup.load()
-            _ = await (status, report)
+            async let agentStatus: Void = satellite.load()
+            _ = await (status, report, agentStatus)
         }
         // Polls only while this section is on screen: SwiftUI cancels the
         // task when it leaves, which ends the loop.
@@ -208,6 +215,28 @@ struct RemoteSection: View {
         }
     }
 
+    /// Only on a satellite of another hub (`RemoteAgentStatus.offersKeepRunning`):
+    /// a switch for the agent's LaunchAgent, through `swe remote agent
+    /// --install` / `--uninstall`.
+    @ViewBuilder private var agentRows: some View {
+        if let agent, agent.showsToggle, let status = agent.status {
+            cardHeader("This Mac's agent",
+                       detail: "Sends this Mac's sessions to the hub on another machine.")
+            SettingRow(title: "Keep this Mac's agent running",
+                       detail: status.detail,
+                       warning: agent.error) {
+                HStack(spacing: 8) {
+                    if agent.saving { ProgressView().controlSize(.small) }
+                    SettingSwitch(title: "Keep this Mac's agent running",
+                                  isOn: Binding(get: { status.installed },
+                                                set: { on in Task { await agent.setKeepRunning(on) } }))
+                        .disabled(agent.saving)
+                }
+            }
+            SettingsDivider()
+        }
+    }
+
     /// Owner auto-approve: hidden until swe reports the setting, so an
     /// older swe without it shows no switch that can't work.
     @ViewBuilder private var autoApproveRow: some View {
@@ -294,7 +323,8 @@ struct RemoteSection: View {
         Task {
             async let status: Void? = model?.load()
             async let report: Void = setup.load()
-            _ = await (status, report)
+            async let agentStatus: Void? = agent?.load()
+            _ = await (status, report, agentStatus)
         }
     }
 }
