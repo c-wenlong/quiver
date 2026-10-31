@@ -321,6 +321,22 @@ class TestHandle(unittest.TestCase):
         self.assertEqual(view["label"], "All 7 options…")
         self.assertEqual(view["url"], "http://h:8477/#/sessions?chat=k1")
 
+    def test_approval_colliding_buttons_link_to_chat(self):
+        # Two rows sharing their first 40 chars would render identical
+        # buttons sending different answers — the chat decides instead.
+        same = "Allow `git -C /very/long/path/to/some/repo "
+        ev = {"type": "approval.requested", "session": "k1",
+              "data": {"request_id": "req-1", "prompt": "Pick?",
+                       "options": [{"n": "1", "label": same + "push`"},
+                                   {"n": "2", "label": same + "reset`"},
+                                   {"n": "3", "label": "Deny"}]}}
+        self.n._handle(ev, self.cfg)
+        actions = self.posts[0]["actions"]
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["action"], "view")
+        self.assertEqual(
+            actions[0]["url"], "http://h:8477/#/sessions?chat=k1")
+
     def test_approval_options_fill_the_push(self):
         # Exactly at the cap every row stays a button — no link needed.
         opts = [{"n": str(i), "label": f"Row {i}"} for i in range(1, 4)]
