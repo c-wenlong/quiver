@@ -23,9 +23,14 @@ struct TasksView: View {
     /// "scope:filter" keys opened past their five-row preview.
     @State private var expanded: Set<String> = []
 
+    /// The pick while the reply still names it; a refresh that drops it
+    /// falls back to every task.
+    private var liveScope: String? {
+        TaskGrouping.shownScope(shown, tasks: model.tasks, failed: model.failedRepos)
+    }
+
     var body: some View {
-        // A refresh that drops the picked scope falls back to every task.
-        let scope = TaskGrouping.shownScope(shown, tasks: model.tasks, failed: model.failedRepos)
+        let scope = liveScope
         let sections = TaskGrouping.sections(of: model.tasks, failed: model.failedRepos,
                                              filter: filter, scope: scope)
         PageScroll {
@@ -84,6 +89,11 @@ struct TasksView: View {
                     }
                 }
             }
+        }
+        // Once the fallback shows All tasks it stays picked: a later
+        // task in the dropped scope doesn't reselect it unasked.
+        .onChange(of: liveScope) { _, now in
+            if now == nil { shown = nil }
         }
         .modifier(CloseSwipesOnScroll(swipes: swipes))
         .refreshable { await model.load(client: app.client, refresh: true) }
