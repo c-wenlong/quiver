@@ -334,6 +334,38 @@ class SwitchOffTest(unittest.TestCase):
         self.assertIn("github", _claude(home)["mcpServers"])
 
 
+class ReviewFixesTest(unittest.TestCase):
+    def test_a_linkignored_account_is_never_written(self):
+        home = _setup(self)
+        _flags(home, mcp=True)
+        before = (_acct(home) / ".claude.json").read_bytes()
+        rows, _ = accounts.sync_accounts(home, [".quiver/accounts/claude"], {}, check_only=False)
+        got = {(r.status.label, r.name): r.result for r in rows}
+        self.assertEqual(got[("claude/claude-work", None)], "ignored")
+        self.assertEqual((_acct(home) / ".claude.json").read_bytes(), before)
+        self.assertIn("github", _codex(home)["mcp_servers"])
+
+    def test_backups_are_private_even_from_a_readable_file(self):
+        home = _setup(self)
+        os.chmod(_acct(home) / ".claude.json", 0o644)
+        _flags(home, mcp=True)
+        _sync(home)
+        backups = list((home / ".quiver" / "backups").iterdir())
+        self.assertTrue(backups)
+        for b in backups:
+            self.assertEqual(os.stat(b).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(_acct(home) / ".claude.json").st_mode & 0o777, 0o644)
+
+    def test_a_damaged_secrets_file_skips_with_a_note(self):
+        home = _setup(self)
+        (home / ".quiver" / "secrets" / "mcp" / ".api_keys").write_bytes(b"\xff\xfe bad")
+        _flags(home, mcp=True)
+        before = (_acct(home) / ".claude.json").read_bytes()
+        _, notes = _sync(home)
+        self.assertTrue(notes and "MCP account sync skipped" in notes[0])
+        self.assertEqual((_acct(home) / ".claude.json").read_bytes(), before)
+
+
 class RefuseTest(unittest.TestCase):
     def test_invalid_json_is_reported_and_never_written(self):
         home = _setup(self, claude_json='{"oauthAccount": {"x": 1}, oops')

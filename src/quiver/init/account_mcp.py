@@ -55,7 +55,13 @@ from quiver.init.accounts import (
     AccountSyncUnavailable,
     _plain,
 )
-from quiver.init.layout import ARCHIVED_DETAIL, LinkStatus, archived_names
+from quiver.init.layout import (
+    ARCHIVED_DETAIL,
+    IGNORED_DETAIL,
+    LinkStatus,
+    archived_names,
+    is_linkignored,
+)
 
 PRIMITIVE = "mcp"
 
@@ -159,7 +165,10 @@ def hub_entries(home: Path, fmt: str) -> tuple[dict[str, dict], dict[str, str]]:
     if not isinstance(servers, dict):
         raise AccountSyncUnavailable("mcp.json: mcpServers is not an object")
     settings = gateway.settings_of(data)
-    store = load_secrets(home)
+    try:
+        store = load_secrets(home)
+    except (UnicodeError, ValueError) as exc:
+        raise AccountSyncUnavailable(f"cannot read the MCP secrets file: {exc}") from exc
     out: dict[str, dict] = {}
     skipped: dict[str, str] = {}
     for name, raw in servers.items():
@@ -278,6 +287,31 @@ def _render(vendor: str, text: str, doc: dict, servers: dict,
     return new
 
 
+def _backup(path: Path, data: bytes, home: Path) -> Path:
+    """``data`` into ~/.quiver/backups under ``backup_tree``'s naming, but
+    always 0600: these files hold a login and resolved tokens, and the
+    backups folder is not private the way an account home is."""
+    from datetime import datetime
+
+    folder = _paths.backups_dir_for(home)
+    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        flat = str(path.relative_to(home)).replace("/", "_")
+    except ValueError:
+        flat = str(path).lstrip("/").replace("/", "_")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest, n = folder / f"{flat}.{stamp}", 1
+    while True:
+        try:
+            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            break
+        except FileExistsError:
+            dest, n = folder / f"{flat}.{stamp}.{n}", n + 1
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    return dest
+
+
 def _write(path: Path, original: bytes | None, text: str, home: Path) -> None:
     """Temp file + rename, keeping the mode, with a backup of the old file.
 
@@ -288,6 +322,10 @@ def _write(path: Path, original: bytes | None, text: str, home: Path) -> None:
         mode = os.stat(path).st_mode & 0o777
     except OSError:
         mode = 0o600
+    if original is not None:
+        # From the bytes we parsed, before the last check, so nothing slow
+        # sits between that check and the rename.
+        _backup(path, original, home)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -299,8 +337,6 @@ def _write(path: Path, original: bytes | None, text: str, home: Path) -> None:
             current = None
         if current != original:
             raise _Changed
-        if original is not None:
-            _paths.backup_tree(path, home)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -419,7 +455,7 @@ def _one_account(acct: _Account, home: Path, on: bool, desired: dict[str, dict],
     return rows, record, False
 
 
-def sync_mcp(home: Path, registry: dict, on: bool, accounts: list, *,
+def sync_mcp(home: Path, patterns: list[str], registry: dict, on: bool, accounts: list, *,
              check_only: bool) -> tuple[list, list[str]]:
     """Merge the hub's servers into every account home, or take out the
     ones swe added once the switch is off. Returns (rows, notes)."""
@@ -445,9 +481,12 @@ def sync_mcp(home: Path, registry: dict, on: bool, accounts: list, *,
         filename, fmt = ACCOUNT_FILES[acct.vendor]
         target = _Account(acct.label, acct.vendor, acct.path, acct.path / filename)
         mine = by_file.pop(str(target.path), {})
-        if acct.vendor in archived:
-            if on:
-                rows.append(_row(target, "ignored", "ignored", ARCHIVED_DETAIL, None))
+        frozen = (IGNORED_DETAIL if is_linkignored(target.path, home, patterns)
+                  else ARCHIVED_DETAIL if acct.vendor in archived else None)
+        if frozen is not None:
+            # .linkignore or an archived harness: touch nothing, forget nothing.
+            if on or mine:
+                rows.append(_row(target, "ignored", "ignored", frozen, None))
             after = mine
         else:
             desired, skipped = sources.get(fmt, ({}, {}))

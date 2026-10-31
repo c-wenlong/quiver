@@ -460,7 +460,7 @@ def _sync_accounts(home: Path, patterns: list[str], registry: dict, *,
 
     rows, notes = _sync_links(home, patterns, registry, flags, manifest, accounts,
                               check_only=check_only)
-    mcp_rows, mcp_notes = sync_mcp(home, registry, flags.get("mcp", False), accounts,
+    mcp_rows, mcp_notes = sync_mcp(home, patterns, registry, flags.get("mcp", False), accounts,
                                    check_only=check_only)
     return rows + mcp_rows, notes + mcp_notes
 
