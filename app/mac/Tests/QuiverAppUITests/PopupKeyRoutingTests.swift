@@ -20,6 +20,15 @@ import Testing
                                      key: panel()) == .quit)
     }
 
+    /// The quit alert is itself an app-modal panel: quitting from inside its
+    /// run would ask again and stack a second alert.
+    @Test func cmdQDuringAModalRunPassesThrough() {
+        #expect(PopupKeyRouting.action(chars: "q", flags: [.command],
+                                     key: panel(), inModal: true) == .passThrough)
+        #expect(PopupKeyRouting.action(chars: "w", flags: [.command],
+                                     key: panel(), inModal: true) == .sendEscape)
+    }
+
     @Test func escOnTheMenuBarPanelCloses() {
         let bar = MenuBarPanel(contentViewController: NSViewController())
         var closed = false

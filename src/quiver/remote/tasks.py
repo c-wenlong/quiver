@@ -42,8 +42,8 @@ only. Each row's ``state_source`` says which it got: ``live``,
 
 ``TaskSource`` is the seam other trackers plug into: ``list()``
 for what the source has open, ``get(ref)`` to refresh one stored task's
-state. GitHub and Linear are live adapters (``remote/linear.py``);
-Notion refs still only validate and link.
+state. GitHub, Linear (``remote/linear.py``) and Notion
+(``remote/notion.py``) are live adapters.
 """
 
 from __future__ import annotations
@@ -60,6 +60,7 @@ from quiver.github import gh, manage, repos
 from quiver.paths import (atomic_write_text, remote_dir_for,
                           task_states_cache_for)
 from quiver.remote import linear as linear_mod
+from quiver.remote import notion as notion_mod
 from quiver.remote import protocol
 from quiver.github import shared as G
 
@@ -106,9 +107,14 @@ def states_file(home: Path | str | None = None) -> Path:
 
 def task_id(task: dict) -> str:
     """A task's canonical id: ``source:kind:scope:ref``, lowercased.
-    ``scope`` is the repo for github, the project anywhere else."""
+    ``scope`` is the repo for github, the project anywhere else. A
+    Notion page id reads in its dashed form however it was spelled, so
+    a link made with a bare id meets the row the source lists."""
     scope = task.get("repo") or task.get("project") or ""
-    return f"{task.get('source')}:{task.get('kind')}:{scope}:{task.get('ref')}".lower()
+    ref = task.get("ref")
+    if task.get("source") == "notion":
+        ref = notion_mod.normalize_id(str(ref or "")) or ref
+    return f"{task.get('source')}:{task.get('kind')}:{scope}:{ref}".lower()
 
 
 def parse_ref(body) -> dict:
@@ -184,6 +190,8 @@ def parse_ref(body) -> dict:
                 f"task_ref.project is over {MAX_PROJECT} characters")
         if project:
             task["project"] = project
+        if source == "notion":
+            task["ref"] = notion_mod.normalize_id(ref) or ref
     return task
 
 
@@ -241,14 +249,38 @@ def _load(home: Path | str | None) -> dict[str, dict]:
             if isinstance(session_values, list) else []
         launches = [s for s in launch_values if isinstance(s, str)] \
             if isinstance(launch_values, list) else []
-        out[str(tid)] = {
+        row = {
             "task": dict(entry["task"]),
             "sessions": sessions,
             "launches": launches,
             "created_at": _num(entry.get("created_at")),
             "last_active_at": _num(entry.get("last_active_at")),
         }
+        key = str(tid)
+        if row["task"].get("source") == "notion":
+            # A page linked before refs were normalized sits under its
+            # bare-id key: re-key it, folding into the dashed one.
+            key = task_id(row["task"])
+            row["task"]["ref"] = notion_mod.normalize_id(
+                str(row["task"].get("ref") or "")) or row["task"].get("ref")
+        if key in out:
+            row = _fold(out[key], row)
+        out[key] = row
     return out
+
+
+def _fold(a: dict, b: dict) -> dict:
+    """Two stored entries for one task, as one: links unioned in order,
+    the earliest creation and the latest activity."""
+    return {
+        "task": b["task"] if b["last_active_at"] >= a["last_active_at"]
+        else a["task"],
+        "sessions": list(dict.fromkeys(a["sessions"] + b["sessions"])),
+        "launches": list(dict.fromkeys(a["launches"] + b["launches"])),
+        "created_at": min(a["created_at"] or b["created_at"],
+                          b["created_at"] or a["created_at"]),
+        "last_active_at": max(a["last_active_at"], b["last_active_at"]),
+    }
 
 
 def _num(value) -> float:
@@ -466,7 +498,7 @@ def list_view(state, args) -> tuple[int, dict]:
     """``GET /v1/tasks``: the store over what the sources list.
 
     ``{tasks: [TaskRow], repos?: [per-repo failures], github, linear,
-    env_blocked?, machine, machine_id, fetched_at?}``. A ``TaskRow`` is
+    notion, env_blocked?, machine, machine_id, fetched_at?}``. A ``TaskRow`` is
     the TaskRef fields plus ``id``, derived ``state``, ``sessions``,
     ``launches``, ``agent_running``, ``linked``, ``last_active_at``,
     ``created_at`` (linked tasks) and ``pr`` (the PR an issue's
@@ -480,24 +512,32 @@ def list_view(state, args) -> tuple[int, dict]:
     block (``disabled`` with no section, ``auth-required``/
     ``upstream-error`` with the reason in ``error``). A blocked source
     leaves its stored tasks showing their last-known state, from the
-    state cache.
+    state cache. ``notion`` answers the same block as ``linear``; a
+    Notion database that fails names itself in ``error`` while the
+    other databases' rows still list.
     """
     refresh = _refresh(args)
     stored = _load(state.home)
     sources = {"github": GitHubTasks(state.home, refresh=refresh),
                "linear": linear_mod.LinearTasks(state.home,
+                                                refresh=refresh),
+               "notion": notion_mod.NotionTasks(state.home,
                                                 refresh=refresh)}
     env = sources["github"].probe()
-    lin = sources["linear"].probe()
+    # The configured-tracker sources, each answering its own env block.
+    trackers = {"linear": (linear_mod, "Linear"),
+                "notion": (notion_mod, "Notion")}
+    envs = {name: sources[name].probe() for name in trackers}
     body = {"github": G.env_payload(env),
-            "linear": linear_mod.env_payload(lin),
+            **{name: mod.env_payload(envs[name])
+               for name, (mod, _label) in trackers.items()},
             "machine": (state.machine or {}).get("name"),
             "machine_id": state.machine_id,
             "tasks": []}
     rows: dict[str, dict] = {}
     source_state: dict[str, str] = {}
     # A source's own word for the state, where it has one beyond the
-    # ladder's: a Linear workflow state's name.
+    # ladder's: a Linear workflow state's name, a Notion status.
     status_name: dict[str, str] = {}
     # Tasks a source listed this round, and those whose PR a read
     # answered outright: a listed issue with no open PR on its branch
@@ -524,35 +564,39 @@ def list_view(state, args) -> tuple[int, dict]:
     elif env.status in ("unavailable", "auth-required"):
         body["env_blocked"] = gh.env_error(env)
 
-    if lin.status == "ok":
-        listed = sources["linear"].list()
-        if listed.get("status") == "ok":
-            for item in listed["tasks"]:
-                tid = task_id(item["task"])
-                rows[tid] = {**item["task"], "id": tid,
-                             "sessions": [], "launches": [],
-                             "pr": item.get("pr"),
-                             "updated_at": item.get("updated_at")}
-                source_state[tid] = str(item.get("state") or "")
-                if item.get("status_name"):
-                    status_name[tid] = str(item["status_name"])
-                on_list.add(tid)
-                if item.get("pr") is not None:
-                    pr_read.add(tid)
+    for name, (_mod, label) in trackers.items():
+        if envs[name].status != "ok":
+            continue
+        listed = sources[name].list()
+        # A failed list answers no rows; a partly failed one (a Notion
+        # database whose mapping doesn't fit) still answers the rest.
+        for item in listed.get("tasks") or []:
+            tid = task_id(item["task"])
+            rows[tid] = {**item["task"], "id": tid,
+                         "sessions": [], "launches": [],
+                         "pr": item.get("pr"),
+                         "updated_at": item.get("updated_at")}
+            source_state[tid] = str(item.get("state") or "")
+            if item.get("status_name"):
+                status_name[tid] = str(item["status_name"])
+            on_list.add(tid)
+            if item.get("pr") is not None:
+                pr_read.add(tid)
+        if listed.get("status") == "ok" or listed.get("tasks"):
             if listed.get("fetched_at") is not None:
                 fetched.append(listed["fetched_at"])
             if listed.get("truncated"):
-                # More open issues than one list reads: say so rather
+                # More open items than one list reads: say so rather
                 # than pass the first pages off as all of them.
-                body["linear"] = {**body["linear"], "truncated": True}
-        else:
+                body[name] = {**body[name], "truncated": True}
+        if listed.get("status") != "ok":
             # The probe passed but the fetch failed anyway: say so on
-            # the linear block and keep the stored rows' last state.
-            body["linear"] = {**body["linear"],
-                              "status": str(listed.get("status")
-                                            or "upstream-error"),
-                              "error": listed.get("error")
-                                       or "Linear is unreachable"}
+            # the source's block and keep the stored rows' last state.
+            body[name] = {**body[name],
+                          "status": str(listed.get("status")
+                                        or "upstream-error"),
+                          "error": listed.get("error")
+                                   or f"{label} is unreachable"}
 
     for tid, entry in stored.items():
         task = entry["task"]
@@ -571,8 +615,9 @@ def list_view(state, args) -> tuple[int, dict]:
     readers = {}
     if env.status == "ok":
         readers["github"] = sources["github"].get
-    if lin.status == "ok":
-        readers["linear"] = sources["linear"].get
+    for name in trackers:
+        if envs[name].status == "ok":
+            readers[name] = sources[name].get
     if readers:
         # A stored task's own read sees what the open list can't: the
         # merged PR behind a ``quiver/issue-<n>`` branch, a closed
@@ -699,7 +744,7 @@ def _status(row: dict, source_name: str) -> str:
     progress reads off the pipeline: an agent running, then its PR, then
     the merge; a linked session that has ended says nothing, so the
     issue reads Open again rather than "in progress" forever. Linear's
-    workflow state passes through by name ("In Review").
+    workflow state and a Notion status pass through by name ("In Review").
     """
     state = row.get("state") or "open"
     if row.get("source") == "github":
@@ -739,7 +784,9 @@ def _derive(kind, source_state: str, pr, linked: bool) -> str:
         return "in_progress" if linked or source_state == "in_progress" \
             else "open"
     # card / page: a link or the source's own word is all there is to
-    # infer from, for now.
+    # infer from — a Notion row whose status reads done is closed.
+    if source_state == "closed":
+        return "closed"
     return "in_progress" if linked or source_state == "in_progress" \
         else "open"
 

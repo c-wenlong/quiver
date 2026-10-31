@@ -320,6 +320,10 @@ let fakeKey = "sk-ant-api03-SECRET0000000000000000abcd"
         #expect(throws: APIKeysError.notFound("NO_SUCH_KEY")) {
             try file.rename(name: "NO_SUCH_KEY", to: "NEW_KEY")
         }
+        // Renaming a missing key to its own name is still "not found".
+        #expect(throws: APIKeysError.notFound("NO_SUCH_KEY")) {
+            try file.rename(name: "NO_SUCH_KEY", to: "NO_SUCH_KEY")
+        }
         #expect(file.text == Self.moveFile)
     }
 

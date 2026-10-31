@@ -154,8 +154,19 @@ class TestTmuxInjector(unittest.TestCase):
             )
         self.assertTrue(out.ok)
         sent = st.call_args[0][1]
-        self.assertIn("@/tmp/a.png", sent)
-        self.assertIn("@/tmp/b.png", sent)
+        self.assertEqual(sent, "@/tmp/a.png @/tmp/b.png look")
+
+    def test_attachment_paths_inline_for_other_harness(self):
+        # A codex pane types the path plainly: its @ is a TUI picker.
+        with patch.object(supervise, "send_text", return_value=True) as st:
+            self.inj.send(
+                _session(tool="codex"),
+                {"text": "look", "mode": "queue",
+                 "attachments": ["/tmp/a.png"]},
+                "done",
+            )
+        self.assertEqual(st.call_args[0][1],
+                         "[Attached file: /tmp/a.png] look")
 
     def test_approval_digit(self):
         pane = "Do you want to proceed? 1. Yes 2. Yes, and don't ask again"
@@ -816,3 +827,64 @@ class TestHubWrites(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAttachmentCapability(unittest.TestCase):
+    """``capabilities.attachments`` over ``ATTACH_FALLBACK``."""
+
+    def test_fallback_table(self):
+        for name in ("claude", "gemini", "qwen"):
+            self.assertTrue(attachments.at_refs(name, {}), name)
+        for name in ("codex", "opencode", "cursor", "droid", "pi", ""):
+            self.assertFalse(attachments.at_refs(name, {}), name)
+
+    def test_registry_wins(self):
+        reg = {
+            "codex": {"capabilities": {"attachments": {"at_refs": True}}},
+            "claude": {"capabilities": {"attachments": {"supported": False}}},
+            "gemini": {"capabilities": {"attachments": {"at_refs": False}}},
+            # Malformed declarations fall back to the table.
+            "qwen": {"capabilities": {"attachments": "yes"}},
+            "pi": {"capabilities": "nope"},
+        }
+        self.assertTrue(attachments.at_refs("codex", reg))
+        self.assertFalse(attachments.at_refs("claude", reg))
+        self.assertFalse(attachments.at_refs("gemini", reg))
+        self.assertTrue(attachments.at_refs("qwen", reg))
+        self.assertFalse(attachments.at_refs("pi", reg))
+
+    def test_wrong_field_types_are_ignored(self):
+        for bad in ({"at_refs": "yes"}, {"at_refs": None}, {"at_refs": 1},
+                    {"supported": None}, {"supported": 0},
+                    {"supported": "false"}):
+            reg = {"claude": {"capabilities": {"attachments": bad}},
+                   "codex": {"capabilities": {"attachments": bad}}}
+            self.assertTrue(attachments.at_refs("claude", reg), bad)
+            self.assertFalse(attachments.at_refs("codex", reg), bad)
+
+    def test_prompt_text_shapes(self):
+        paths = ["/x/a b.png", "/x/c.pdf"]
+        self.assertEqual(
+            attachments.prompt_text("hi", paths, "claude", {}),
+            "@/x/a b.png @/x/c.pdf hi")
+        self.assertEqual(
+            attachments.prompt_text("hi", paths, "codex", {}),
+            "[Attached file: /x/a b.png] [Attached file: /x/c.pdf] hi")
+        # No text: just the refs; no paths: the text untouched.
+        self.assertEqual(
+            attachments.prompt_text("", ["/x/a.png"], "codex", {}),
+            "[Attached file: /x/a.png]")
+        self.assertEqual(attachments.prompt_text("hi", [], "codex", {}), "hi")
+        # Always one line: a tmux pane would submit at a newline.
+        self.assertNotIn(
+            "\n", attachments.prompt_text("hi", paths, "codex", {}))
+
+    def test_reads_registry_when_not_given(self):
+        from quiver.harness import registry
+        reg = {"pi": {"capabilities": {"attachments": {"at_refs": True}}}}
+        with patch.object(registry, "load_registry_readonly",
+                          return_value=reg):
+            self.assertTrue(attachments.at_refs("pi"))
+        with patch.object(registry, "load_registry_readonly",
+                          side_effect=ValueError):
+            self.assertTrue(attachments.at_refs("claude"))

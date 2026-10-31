@@ -50,6 +50,24 @@ class SkillsSymlinksTest(unittest.TestCase):
             self.assertTrue(cursor_link.is_symlink())
             self.assertEqual(cursor_link.resolve(), shared.resolve())
 
+    def test_apply_replaces_a_dangling_skills_link(self):
+        # A root still pointing at the removed ~/.agents/skills: exists()
+        # is False, so it is hinted, and applying used to raise
+        # FileExistsError because the dead link still held the path.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            shared = home / ".quiver" / "skills"
+            shared.mkdir(parents=True)
+            (home / ".cursor").mkdir()
+            link = home / ".cursor" / "skills"
+            link.symlink_to(home / ".agents" / "skills")
+
+            hints = skills_symlink_hints(home=home)
+            applied = apply_skills_symlink_hints(hints, home=home)
+            self.assertIn("symlink cursor", applied)
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(link.resolve(), shared.resolve())
+
     def test_no_hint_for_a_harness_whose_home_is_missing(self):
         # No ~/.augment means augment is not installed: offering a link
         # there would make the dir, and init then reads it as evidence.

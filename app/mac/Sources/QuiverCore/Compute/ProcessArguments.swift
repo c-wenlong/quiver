@@ -23,7 +23,9 @@ public enum ProcessArguments {
     public static func parse(_ buffer: [UInt8]) -> [String] {
         let size = buffer.count
         guard size > MemoryLayout<Int32>.size else { return [] }
-        let argc = Int(buffer.withUnsafeBytes { $0.load(as: Int32.self) })
+        let argc = Int(buffer.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) })
+        // A negative count would make the range below trap.
+        guard argc > 0 else { return [] }
         var i = MemoryLayout<Int32>.size
         while i < size && buffer[i] != 0 { i += 1 }   // exec path
         while i < size && buffer[i] == 0 { i += 1 }   // padding

@@ -38,6 +38,8 @@ final class TasksDecodingTests: XCTestCase {
       "github": {"status": "ok", "login": "octocat", "error": null},
       "linear": {"status": "auth-required", "login": null,
                  "error": "linear.key_ref is unset"},
+      "notion": {"status": "bad-config", "login": null,
+                 "error": "notion.databases[0].properties.status is required"},
       "fetched_at": 1767323045.0
     }
     """
@@ -48,6 +50,7 @@ final class TasksDecodingTests: XCTestCase {
         XCTAssertEqual(body.machineId, "m-1")
         XCTAssertNil(body.envBlocked)
         XCTAssertEqual(body.linear?.status, "auth-required")
+        XCTAssertEqual(body.notion?.status, "bad-config")
         XCTAssertEqual(body.fetchedAt, 1767323045.0)
 
         let issue = body.tasks[0]
@@ -182,6 +185,18 @@ final class TaskRowTests: XCTestCase {
         XCTAssertEqual(row("a", kind: "issue").sourceLine, "GitHub issue · o/r")
         XCTAssertEqual(row("a", kind: "pull").sourceLine, "GitHub pull request · o/r")
         XCTAssertEqual(row("a", source: "linear", repo: nil, project: "QUI").sourceLine, "Linear · QUI")
+        XCTAssertEqual(row("a", source: "notion", kind: "page", repo: nil, project: "Roadmap").sourceLine,
+                       "Notion · Roadmap")
+        XCTAssertEqual(row("a", source: "notion", kind: "page", repo: nil, project: nil).sourceLine, "Notion")
+        XCTAssertEqual(row("a").openLabel, "Open on GitHub")
+        XCTAssertEqual(row("a", source: "linear", repo: nil, project: "QUI").openLabel, "Open in Linear")
+        XCTAssertEqual(row("a", source: "notion", kind: "page", repo: nil, project: "Roadmap").openLabel,
+                       "Open in Notion")
+        // A Notion Status property's own words pass through.
+        var page = row("a", source: "notion", kind: "page", repo: nil, project: "Roadmap",
+                       state: "in_progress")
+        page.status = "Doing"
+        XCTAssertEqual(page.stateLabel, "Doing")
         // The ladder is never the text (#875): an issue whose agent has
         // finished reads Open, a running one Agent running.
         XCTAssertEqual(row("a", state: "in_progress", running: false).stateLabel, "Open")
@@ -197,6 +212,38 @@ final class TaskRowTests: XCTestCase {
         XCTAssertEqual(linear.stateLabel, "Started")
         // A ref under a repo reads "o/r#5"; a bare ref stays itself.
         XCTAssertEqual(row("a", ref: "QUI-1", repo: nil, project: "QUI").refLabel, "QUI-1")
+    }
+
+    @MainActor
+    func testNotionRowsAreStaleWhileNotionFailsAndFreshOnceItRecovers() throws {
+        func reply(_ notion: String) throws -> TasksResponse {
+            let json = #"{"tasks": [{"id": "notion:page:roadmap:p1", "source": "notion", "kind": "page", "project": "Roadmap", "ref": "p1", "title": "Plan Q3", "state": "open", "sessions": [], "launches": [], "agent_running": false, "linked": false, "last_active_at": 1.0}], "machine": "kai", "machine_id": "m-1", "github": {"status": "ok"}, "notion": "#
+                + notion + "}"
+            return try Hub.decoder.decode(TasksResponse.self, from: Data(json.utf8))
+        }
+        let model = TasksModel()
+        model.apply(try reply(#"{"status": "upstream-error", "error": "Notion answered HTTP 502"}"#))
+        XCTAssertEqual(model.notionBlocked, "Notion answered HTTP 502")
+        XCTAssertTrue(model.stale(model.tasks[0]))
+        model.apply(try reply(#"{"status": "ok", "login": "Kai"}"#))
+        XCTAssertNil(model.notionBlocked)
+        XCTAssertFalse(model.stale(model.tasks[0]))
+    }
+
+    func testKeyedSourceBlockedReason() throws {
+        func env(_ json: String) throws -> GhEnv {
+            try Hub.decoder.decode(GhEnv.self, from: Data(json.utf8))
+        }
+        // Off, fine or absent (an older hub) is no banner.
+        XCTAssertNil(TasksModel.blocked(nil, source: "Notion"))
+        XCTAssertNil(TasksModel.blocked(try env(#"{"status": "ok"}"#), source: "Notion"))
+        XCTAssertNil(TasksModel.blocked(try env(#"{"status": "disabled"}"#), source: "Notion"))
+        // Configured but failing: the hub's reason, else the status word.
+        XCTAssertEqual(TasksModel.blocked(
+            try env(#"{"status": "bad-config", "error": "no status property"}"#), source: "Notion"),
+            "no status property")
+        XCTAssertEqual(TasksModel.blocked(try env(#"{"status": "upstream-error"}"#), source: "Notion"),
+                       "upstream-error")
     }
 
     func testCopyLinkPrefersTheDeepLinkForIssues() {

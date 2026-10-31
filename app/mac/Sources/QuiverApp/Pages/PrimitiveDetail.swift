@@ -372,13 +372,15 @@ struct PartsCard: View {
     @State private var newPart: PrimitiveParts.Kind?
     @State private var newName = ""
     @State private var newError: String?
+    /// The create in flight; a New opened since makes its answer stale.
+    @State private var creating: UUID?
     @State private var trashEntry: PrimitiveTree.Entry?
     @State private var error: String?
 
     var body: some View {
         Card(title: "Contents", subtitle: displayPath(root), monoSubtitle: true) {
             if editable && !kinds.isEmpty {
-                NewPartMenu(kinds: kinds) { newPart = $0 }
+                NewPartMenu(kinds: kinds) { creating = nil; newError = nil; newPart = $0 }
             }
         } content: {
             treeContent
@@ -406,7 +408,7 @@ struct PartsCard: View {
             get: { newPart != nil }, set: { if !$0 { newPart = nil } })) {
             TextField("name", text: $newName)
             Button("Create") { create() }
-            Button("Cancel", role: .cancel) { newPart = nil; newName = "" }
+            Button("Cancel", role: .cancel) { newPart = nil; newName = ""; newError = nil }
         } message: {
             Text(newError ?? "A new \(newPart?.title ?? "part") under \(displayPath(root)).")
         }
@@ -519,7 +521,11 @@ struct PartsCard: View {
     /// Open `entry` in the sheet; it runs the size, type and ownership
     /// check itself once it is up, and spins until that lands.
     private func present(_ entry: PrimitiveTree.Entry) {
-        selected = entry.previewPath
+        present(path: entry.previewPath)
+    }
+
+    private func present(path: String) {
+        selected = path
         if let window = NSApp.keyWindow ?? NSApp.mainWindow {
             sheetSize = CGSize(width: max(900, window.frame.width * 0.9),
                                height: max(640, window.frame.height * 0.9))
@@ -550,28 +556,41 @@ struct PartsCard: View {
         }
     }
 
+    /// The alert closes after any of its buttons runs, so a failed
+    /// create opens it again, name kept, with the reason as its message.
     private func create() {
         guard let kind = newPart else { return }
         guard PrimitiveParts.isValidName(newName) else {
             newError = "Use kebab-case: lowercase letters, numbers and dashes."
+            // After this close lands, not inside it.
+            Task { @MainActor in newPart = kind }
             return
         }
         // create resolves the folder with realpath, which a synced or
         // stale folder can block: off the main actor, like the walk.
         let root = root, name = newName
+        let request = UUID()
+        creating = request
         Task {
-            switch await offMain({ Result { try PrimitiveParts.create(kind, named: name, in: root) } }) {
+            let result = await offMain({ Result { try PrimitiveParts.create(kind, named: name, in: root) } })
+            // A New opened while this waited on disk owns the alert now.
+            let current = creating == request
+            if current { creating = nil }
+            switch result {
             case .success(let file):
-                newPart = nil
-                newName = ""
-                newError = nil
                 // A folded card could hide the new file, so show every row.
                 showsAll = true
-                selected = file.path
                 reload()
                 onChanged()
+                guard current else { return }
+                newName = ""
+                newError = nil
+                // Straight into the editor, as picking the file would.
+                present(path: file.path)
             case .failure(let error):
+                guard current else { return }
                 newError = error.localizedDescription
+                newPart = kind
             }
         }
     }

@@ -43,6 +43,7 @@ PAIR_ROLES = frozenset({"phone", "satellite"})
 _DEVICES_BASENAME = "devices.json"
 _TOKENS_BASENAME = "pair_tokens.json"
 _REQUESTS_BASENAME = "pair_requests.json"
+_SETTINGS_BASENAME = "pairing.json"
 # The hub owner's tailnet devices that got in without pairing, by node:
 # when each was seen, and whether the owner revoked it.
 _SIGNINS_BASENAME = "tailnet_signins.json"
@@ -97,6 +98,10 @@ def tokens_file(home: Path | str | None = None) -> Path:
 
 def requests_file(home: Path | str | None = None) -> Path:
     return remote_dir_for(home) / _REQUESTS_BASENAME
+
+
+def settings_file(home: Path | str | None = None) -> Path:
+    return remote_dir_for(home) / _SETTINGS_BASENAME
 
 
 def signins_file(home: Path | str | None = None) -> Path:
@@ -846,41 +851,166 @@ def approve_request(
                 return None
             if approver_node_id and approver_node_id == row.get("node_id"):
                 raise SelfApproval(row.get("node_id") or "")
-            device_id, credential = _mint_device(
-                home_path, row["name"],
-                extra={
-                    "paired_via": "tailscale",
-                    # The tailnet request flow is for phones; satellites
-                    # pair with a token (agent.pair_agent).
-                    "role": "phone",
-                    "tailscale_node": row.get("node_id") or "",
-                    "tailscale_login": row.get("login") or "",
-                    "node_name": row.get("node_name") or "",
-                    **(row.get("device_meta") or {}),
-                },
-            )
-            row["status"] = "approved"
-            row["device_id"] = device_id
-            # The owner just approved a device on this node, so a sign-in
-            # revoked earlier (the phone was found) works again.
-            node = str(row.get("node_id") or "")
-            signins = load_signins(home_path) if node else {}
-            if signins.get(node, {}).get("revoked_at"):
-                signins[node]["revoked_at"] = None
-                _save_signins(home_path, signins)
-            # Fresh window: a phone mid-poll at the old deadline must
-            # still collect its credential.
-            row["expires_at"] = now + REQUEST_TTL_S
-            # Kept until the phone polls it out; the file is 0600.
-            row["credential"] = credential
-            _save_requests(home_path, rows)
-            return {
-                "device_id": device_id,
-                "name": row["name"],
-                "node_name": row.get("node_name") or "",
-            }
+            return _approve_row(home_path, rows, row, now, "code")
         _save_requests(home_path, rows)
         return None
+
+
+def _approve_row(
+    home_path: Path | None, rows: list[dict], row: dict, now: float,
+    approved_via: str,
+) -> dict:
+    """Mint the device for one pending request and mark it approved.
+
+    The one approval path: a typed code and an owner auto-approval write
+    the same device row, told apart only by ``approved_via``. Caller
+    holds ``_state_lock`` and has checked ``row`` is pending.
+    """
+    device_id, credential = _mint_device(
+        home_path, row["name"],
+        extra={
+            "paired_via": "tailscale",
+            "approved_via": approved_via,
+            # The tailnet request flow is for phones; satellites
+            # pair with a token (agent.pair_agent).
+            "role": "phone",
+            "tailscale_node": row.get("node_id") or "",
+            "tailscale_login": row.get("login") or "",
+            "node_name": row.get("node_name") or "",
+            **(row.get("device_meta") or {}),
+        },
+    )
+    row["status"] = "approved"
+    row["approved_via"] = approved_via
+    row["device_id"] = device_id
+    if approved_via == "code":
+        # The owner just approved a device on this node, so a sign-in
+        # revoked earlier (the phone was found) works again. Only a typed
+        # code says so: an auto-approval never undoes a revoke.
+        node = str(row.get("node_id") or "")
+        signins = load_signins(home_path) if node else {}
+        if signins.get(node, {}).get("revoked_at"):
+            signins[node]["revoked_at"] = None
+            _save_signins(home_path, signins)
+    # Fresh window: a phone mid-poll at the old deadline must
+    # still collect its credential.
+    row["expires_at"] = now + REQUEST_TTL_S
+    # Kept until the phone polls it out; the file is 0600.
+    row["credential"] = credential
+    _save_requests(home_path, rows)
+    return {
+        "device_id": device_id,
+        "name": row["name"],
+        "node_name": row.get("node_name") or "",
+        "login": row.get("login") or "",
+    }
+
+
+# -- owner auto-approve -------------------------------------------------------
+#
+# Opt-in, off by default: a pair request from the hub owner's own,
+# untagged tailnet device is approved without a code. Every fact it
+# rests on must be known; anything missing or unexpected refuses.
+
+
+def auto_approve_owner(home: Path | str | None = None) -> bool:
+    """Whether owner auto-approve is on. Only a literal ``true`` in
+    ``pairing.json`` counts; a missing, unreadable or odd file is off."""
+    data = _read_json(settings_file(home), {})
+    return data.get("auto_approve_owner") is True
+
+
+def set_auto_approve_owner(home: Path | str | None, on: bool) -> bool:
+    """Turn owner auto-approve on or off; returns the saved value."""
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        path = settings_file(home_path)
+        data = _read_json(path, {})
+        data["auto_approve_owner"] = bool(on)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps(data, indent=1), private=True)
+    return bool(on)
+
+
+def owner_auto_approve_refusal(
+    peer: dict | None, owner_login: str, enabled: bool,
+    own_node_id: str = "",
+) -> str | None:
+    """Why a request from ``peer`` is NOT auto-approved, or None when it
+    is: the setting is on, the hub knows its owner and its own node, and
+    the peer is an untagged node of that same login with a node id that
+    isn't the hub's own. A request from the hub's own node came from some
+    process on that machine, whichever local user runs it, so it proves
+    nothing about the owner."""
+    if not enabled:
+        return "off"
+    if not isinstance(owner_login, str) or not owner_login:
+        return "no_owner"
+    if not isinstance(peer, dict):
+        return "no_peer"
+    # ``tagged`` must be known and False: a tagged node belongs to no
+    # user, and a peer record that doesn't say is not trusted either.
+    if peer.get("tagged") is not False:
+        return "tagged"
+    login = peer.get("login")
+    if not isinstance(login, str) or not login:
+        return "no_login"
+    if login != owner_login:
+        return "other_login"
+    node = str(peer.get("node_id") or "")
+    if not node:
+        return "no_node"
+    if not isinstance(own_node_id, str) or not own_node_id:
+        return "no_own_node"
+    if node == own_node_id:
+        return "own_node"
+    return None
+
+
+def auto_approve_request(
+    home: Path | str | None, request_id: str, peer: dict
+) -> dict | None:
+    """Approve the pending request ``request_id`` without a code, for a
+    peer ``owner_auto_approve_refusal`` already cleared. The row must
+    still be pending and come from that peer's node and login, so a
+    request swapped in between the two steps is never approved."""
+    home_path = Path(home) if home is not None else None
+    with _state_lock(home_path):
+        now = time.time()
+        rows = _prune_requests(_load_requests(home_path), now)
+        for row in rows:
+            if row.get("request_id") != request_id:
+                continue
+            if (
+                row.get("status") != "pending"
+                or not row.get("node_id")
+                or row.get("node_id") != str(peer.get("node_id") or "")
+                or row.get("login") != str(peer.get("login") or "")
+            ):
+                return None
+            if node_revoked(home_path, row["node_id"]):
+                # A lost phone stays out until the owner types its code.
+                return None
+            return _approve_row(home_path, rows, row, now, "owner_auto")
+        return None
+
+
+def node_revoked(home: Path | str | None, node_id: str) -> bool:
+    """True when the owner revoked this tailnet node: its sign-in is
+    revoked (or the sign-ins file can't be read), or the newest device
+    paired from it is revoked. A later code approval mints a newer live
+    device, which lifts this."""
+    if signin_revoked(home, node_id):
+        return True
+    newest = None
+    for row in load_devices(home).values():
+        if row.get("tailscale_node") != node_id:
+            continue
+        if newest is None or (row.get("created_at") or 0) >= (
+            newest.get("created_at") or 0
+        ):
+            newest = row
+    return bool(newest and newest.get("revoked_at"))
 
 
 def deny_request(

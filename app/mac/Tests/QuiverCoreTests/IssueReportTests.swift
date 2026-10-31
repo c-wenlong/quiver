@@ -84,6 +84,13 @@ import Testing
         #expect(IssueReport.merged(issues: [live], report: nil) == nil)
     }
 
+    @Test func theHomeIsMaskedOnlyAsAWholePathAtItsStart() {
+        let text = IssueReport.redact(
+            "home /Users/ana, ~ at (/Users/ana/x) and \"/Users/ana\"; /Users/anabel/y and /backup/Users/ana/z stay",
+            home: "/Users/ana/")
+        #expect(text == "home ~, ~ at (~/x) and \"~\"; /Users/anabel/y and /backup/Users/ana/z stay")
+    }
+
     @Test func aRootHomeIsNotMasked() {
         #expect(IssueReport.redact("/etc/hosts", home: "/") == "/etc/hosts")
     }

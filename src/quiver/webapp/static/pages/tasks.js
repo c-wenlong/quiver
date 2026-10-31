@@ -287,9 +287,15 @@
    * no setup card, but the GitHub rows are only what the store kept. */
   const githubFailed = (d) => !!(d.github && d.github.status === "upstream-error");
 
+  /* Sources the hub reads with a configured key, each answering its own
+   * env block shaped like ``github``'s. */
+  const KEYED_SOURCES = ["linear", "notion"];
+  /* Configured but failing; ``disabled`` means off, not broken. */
+  const sourceFailing = (env) => !!(env && env.status !== "ok" && env.status !== "disabled");
+
   /* The blocked-source offer: gh's setup card for GitHub, a plain offer
-   * for a configured-but-failing Linear (``disabled`` means off, not
-   * broken, so it earns no card). */
+   * for a configured-but-failing Linear or Notion (``disabled`` earns
+   * no card). */
   function sourceCards(d) {
     const cards = [];
     const setup = GhUI.envSetup(d.github);
@@ -300,11 +306,13 @@
           <p class="card-subtitle">${esc(d.github.error || "gh failed on the hub this refresh.")}</p></div>
         <button type="button" class="offer-button tk-source-refresh">Refresh</button></div>`);
     }
-    const lin = d.linear;
-    if (lin && lin.status !== "ok" && lin.status !== "disabled") {
+    for (const src of KEYED_SOURCES) {
+      const env = d[src];
+      if (!sourceFailing(env)) continue;
+      const name = sourceName(src);
       cards.push(`<div class="card offer"><div class="offer-text">
-          <div class="card-title">Linear: ${esc(String(lin.status).replace(/-/g, " "))}</div>
-          <p class="card-subtitle">${esc(lin.error || "Linear did not answer this refresh.")}</p></div>
+          <div class="card-title">${esc(name)}: ${esc(String(env.status).replace(/-/g, " "))}</div>
+          <p class="card-subtitle">${esc(env.error || `${name} did not answer this refresh.`)}</p></div>
         <button type="button" class="offer-button tk-source-refresh">Refresh</button></div>`);
     }
     return cards;
@@ -315,7 +323,7 @@
     if (!d) return loadingCard("Reading the task list…");
     const cards = sourceCards(d);
     const blocked = GhUI.envSetup(d.github) || githubFailed(d)
-      || (d.linear && d.linear.status !== "ok" && d.linear.status !== "disabled");
+      || KEYED_SOURCES.some((src) => sourceFailing(d[src]));
     const stored = tasks().length;
     const inScope = (name) => !page.shown || name === page.shown;
     const rows = tasks().filter((t) => filterOf().test(t) && inScope(groupName(t)));
@@ -393,7 +401,7 @@
         paintList();
       };
     }
-    // GitHub and Linear can each put up a Refresh card at once.
+    // GitHub, Linear and Notion can each put up a Refresh card at once.
     for (const retry of document.querySelectorAll("#panel .tk-source-refresh")) {
       retry.onclick = () => load(true);
     }
@@ -559,13 +567,16 @@
       <div class="gh-confirm-buttons"><button type="button" class="gh-button" id="tk-link-cancel">Cancel</button></div></div>`;
   }
 
+  /* "Open on GitHub", "Open in Linear", "Open in Notion". */
+  const openLabel = (t) => (t.source === "github" ? "Open on GitHub" : `Open in ${sourceName(t.source)}`);
+
   function detailHeader(t) {
     const where = t.repo || t.project || "";
     return pageHeader(t.title || refLabel(t),
       `${refLabel(t)} · ${where} · ${statusOf(t)}`,
       `<a class="gh-button" href="#/tasks" title="Back to the task list">${ico("chevronLeft")}<span>Tasks</span></a>
        <button class="icon-button${page.loading ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Fetch again">${icon("rescan")}</button>
-       ${safeHref(t.url) ? `<a class="icon-button" href="${safeHref(t.url)}" target="_blank" rel="noopener" title="Open on ${t.source === "github" ? "GitHub" : esc(t.source)}" aria-label="Open on ${esc(t.source)}">${ico("external")}</a>` : ""}`);
+       ${safeHref(t.url) ? `<a class="icon-button" href="${safeHref(t.url)}" target="_blank" rel="noopener" title="${esc(openLabel(t))}" aria-label="${esc(openLabel(t))}">${ico("external")}</a>` : ""}`);
   }
 
   function detailContent(t) {

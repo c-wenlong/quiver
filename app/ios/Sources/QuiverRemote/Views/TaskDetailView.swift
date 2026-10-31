@@ -147,8 +147,7 @@ struct TaskDetailView: View {
             .primaryButton()
             if let url = task.url.flatMap(URL.init) {
                 Button { openURL(url) } label: {
-                    Label(task.source == "linear" ? "Open in Linear" : "Open on GitHub",
-                          systemImage: "safari")
+                    Label(task.openLabel, systemImage: "safari")
                 }
                 .secondaryButton()
             }

@@ -418,7 +418,13 @@ public final class HooksModel {
     private static func fetch(_ swe: SweClient, checkTimeout: Duration) async throws -> HookInventory {
         async let listed = swe.hooksList()
         let checked = Task { try await swe.hooksCheck() }
-        let list = try await listed
+        // A failed list ends the load: the check, an unstructured task,
+        // would otherwise run on until its own timeout.
+        let list: HookInventory
+        do { list = try await listed } catch {
+            checked.cancel()
+            throw error
+        }
         do {
             let report = try await withDeadline(checkTimeout, onTimeout: { CheckTimedOut() }) {
                 try await checked.value

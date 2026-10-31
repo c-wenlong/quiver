@@ -190,6 +190,7 @@ def remote_dir_for(home: Path | None = None) -> Path:
     Holds ``devices.json`` (paired phone credentials, mode 600),
     ``inbox_dismissals.json`` (per-device inbox dismissals, mode 600),
     ``ssh.json`` (whether paired phones' SSH keys may log in),
+    ``pairing.json`` (pairing settings: owner auto-approve, off by default),
     ``machine.json`` (this machine's stable remote id), ``pair_tokens.json``
     (one-time pairing hand-offs), ``cursors/`` (per-session transcript read
     offsets), ``journal/`` (per-session event logs) and ``inbox/`` (staged

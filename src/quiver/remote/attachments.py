@@ -3,7 +3,8 @@
 ``POST /v1/sessions/{key}/attachments`` writes bytes under
 ``data/remote/inbox/<slug>/`` and returns a ``ref`` the next message
 command can list; the injector rewrites refs into the local path
-(``@path`` for harnesses that support it). For satellite sessions the
+(``prompt_text``: ``@path`` for harnesses whose prompt expands it, the
+plain path in brackets for the rest). For satellite sessions the
 agent holds the same store and the hub streams bytes down the existing
 connection — the file never lives anywhere but the session's machine.
 
@@ -33,6 +34,76 @@ ALLOWED_EXTS = {
     ".pdf",
     ".txt", ".md", ".csv", ".json", ".log", ".diff", ".patch",
 }
+
+
+# How a harness's prompt takes an attached file, declared in harness.json
+# as ``capabilities.attachments``:
+#
+#   at_refs  true: the harness expands ``@/abs/path`` in a submitted
+#            prompt into the file itself (Claude Code in its TUI and in
+#            ``-p``; Gemini CLI and Qwen Code through their ``@`` command
+#            processor). False or absent: the path goes in as plain text,
+#            ``[Attached file: /abs/path]``, and the agent reads it with
+#            its own tools. Codex's and OpenCode's ``@`` is a picker in
+#            the TUI only: typed text stays literal, and over their
+#            app-server / serve APIs it never runs at all.
+#
+# ``ATTACH_FALLBACK`` is the read-only floor for a harness whose registry
+# entry declares nothing, like ``launch_model.MODEL_FALLBACK``: a
+# registry ``capabilities.attachments`` entry's fields override it, and
+# ``supported: false`` turns ``@`` refs off.
+ATTACH_FALLBACK: dict[str, dict] = {
+    "claude": {"at_refs": True},
+    "gemini": {"at_refs": True},
+    "qwen": {"at_refs": True},
+}
+
+
+def capability(name: str, reg: dict | None = None) -> dict:
+    """``name``'s attachment capability: the registry's
+    ``capabilities.attachments`` over ``ATTACH_FALLBACK``. ``reg`` is the
+    loaded registry; None reads it (read-only)."""
+    if reg is None:
+        from quiver.harness import registry
+
+        try:
+            reg = registry.load_registry_readonly()
+        except (OSError, ValueError):
+            reg = {}
+    entry = reg.get(name) if isinstance(reg, dict) else None
+    # A hand-edited registry can hold anything here; a malformed
+    # declaration is ignored rather than failing the send.
+    caps = (entry if isinstance(entry, dict) else {}).get("capabilities")
+    caps = caps.get("attachments") if isinstance(caps, dict) else None
+    base = dict(ATTACH_FALLBACK.get(name) or {})
+    if isinstance(caps, dict):
+        # Only a real boolean counts: a typo ("yes", null) leaves the
+        # fallback as it was instead of flipping the format.
+        if caps.get("supported") is False:
+            return {"at_refs": False}
+        if isinstance(caps.get("at_refs"), bool):
+            base["at_refs"] = caps["at_refs"]
+    return base
+
+
+def at_refs(name: str, reg: dict | None = None) -> bool:
+    """Whether ``name``'s prompt expands ``@/abs/path`` refs."""
+    return capability(name, reg).get("at_refs") is True
+
+
+def prompt_text(
+    text: str, paths: list[str], harness: str, reg: dict | None = None
+) -> str:
+    """The prompt line with ``paths`` referenced the way ``harness``
+    takes them. One line either way: a tmux pane would submit at a
+    newline."""
+    if not paths:
+        return text
+    if at_refs(harness, reg):
+        refs = " ".join(f"@{path}" for path in paths)
+    else:
+        refs = " ".join(f"[Attached file: {path}]" for path in paths)
+    return f"{refs} {text}" if text else refs
 
 
 def inbox_dir(home: Path | None, session_key: str) -> Path:
