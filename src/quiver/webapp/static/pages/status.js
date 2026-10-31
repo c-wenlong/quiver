@@ -106,7 +106,7 @@ async function renderStatus(_id, force = false) {
     paintStatus();
   } else {
     document.getElementById("panel").innerHTML = `<div class="page">${statusHeader()}
-      <div class="card"><p class="empty">Reading the status pages…</p></div></div>`;
+      ${Sk.cardRows(4)}</div>`;
     const { status, data } = await api("/v1/app/status?cached=1");
     if (gen !== routeGen || mine !== p.gen) return;
     if (status === 401) return statusGate();
@@ -430,7 +430,7 @@ function statusPaintCatalogue(keepFocus = false) {
       data-status-cat-group="${id == null ? "" : id}">${label}</button>`).join("")}</div>`;
   let body;
   if (!c.data && !c.error) {
-    body = `<p class="empty status-cat-empty">Reading the catalogue…</p>`;
+    body = Sk.rows(5);
   } else {
     const shown = statusCatShown(c);
     const total = c.data ? c.data.entries.length : 0;

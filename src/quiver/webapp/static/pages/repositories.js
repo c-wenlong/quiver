@@ -410,10 +410,8 @@ const PrFilter = (() => {
     const body = `<div class="gh-empty">${ico(iconName, "gh-muted")}<span>${esc(text)}</span></div>`;
     return framed ? `<div class="card">${body}</div>` : `<div class="gh-state">${body}</div>`;
   }
-  const loadingCard = (text, framed = true) => {
-    const body = `<div class="gh-empty">${ico("running", "gh-muted gh-spin")}<span>${esc(text)}</span></div>`;
-    return framed ? `<div class="card">${body}</div>` : `<div class="gh-state">${body}</div>`;
-  };
+  const loadingCard = (text, framed = true) =>
+    framed ? Sk.cardRows(5) : `<div class="gh-state">${Sk.rows(5)}</div>`;
   const errorCard = (text, framed = true, action = "") => {
     const body = `<div class="gh-error-row"><span class="error">${esc(text)}</span>${action}</div>`;
     return framed ? `<div class="card">${body}</div>` : `<div class="gh-state">${body}</div>`;
@@ -421,7 +419,7 @@ const PrFilter = (() => {
 
   /* Pages is one facts panel, not a row list. */
   function pagesPanel(state) {
-    if (state.kind === "loading") return loadingCard("Reading the Pages settings…", false);
+    if (state.kind === "loading") return `<div class="gh-state">${Sk.rows(2, { icon: false, pill: false })}</div>`;
     if (state.kind === "failed") return errorCard(state.message, false);
     const site = state.rows;
     if (!site) return emptyCard("This repo has no GitHub Pages site.", "globe", false);
@@ -1447,7 +1445,7 @@ const PrFilter = (() => {
     if (!x || !pr) return "";
     const busy = !!x.phase;
     let picker;
-    if (x.harnesses === null) picker = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading what the hub can start…</div>`;
+    if (x.harnesses === null) picker = Sk.block("60%", 32);
     else if (!x.harnesses.length) picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Providers.</div>`;
     else picker = `<select class="field" id="gh-session-harness" aria-label="Harness"${busy || x.started ? " disabled" : ""}>${
       x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;
@@ -1765,7 +1763,7 @@ const PrFilter = (() => {
     if (!x || !issue) return "";
     const busy = !!x.phase, off = busy || x.started ? " disabled" : "";
     let picker;
-    if (x.harnesses === null) picker = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading what the hub can start…</div>`;
+    if (x.harnesses === null) picker = Sk.block("60%", 32);
     else if (!x.harnesses.length) picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Providers.</div>`;
     else picker = `<select class="field" id="gh-resolve-harness" aria-label="Harness"${off}>${
       x.harnesses.map((h) => `<option value="${esc(h.name)}"${h.name === x.harness ? " selected" : ""}>${esc(h.display_name)}</option>`).join("")}</select>`;

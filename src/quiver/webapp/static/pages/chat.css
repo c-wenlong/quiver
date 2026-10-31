@@ -302,22 +302,12 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
 .msg.approval.resolved:not(.open) .approval-actions,
 .msg.approval.resolved:not(.open) .approval-note { display: none; }
 
-/* Skeleton while the transcript loads: grey blocks in the log's shape,
- * a light band sweeping them. */
+/* Skeleton while the transcript loads: grey blocks in the log's shape.
+ * The .skel block and its sweep are shared, in styles.css. */
 .chat-skel { display: flex; flex-direction: column; gap: 14px; padding-bottom: 8px; }
-.skel-lines { display: flex; flex-direction: column; gap: 7px; }
-.skel { position: relative; overflow: hidden; background: var(--border); border-radius: 6px; }
-.skel-line { width: var(--w, 100%); height: 12px; }
 .skel-bubble { align-self: flex-end; width: 42%; height: 36px; border-radius: 14px; }
 .skel-bubble.short { width: 28%; }
 .skel-tool { height: 34px; border-radius: 10px; }
-.skel::after {
-  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 45%;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--border-strong) 70%, transparent), transparent);
-  transform: translateX(-100%);
-  animation: skel-sweep 1.4s linear infinite;
-}
-@keyframes skel-sweep { to { transform: translateX(320%); } }
 
 /* Working dots */
 .chat-working {
@@ -331,7 +321,6 @@ dialog.sheet.preview-sheet[open] { display: flex; flex-direction: column; }
 @keyframes chat-wave { 0%, 60%, 100% { opacity: .3; transform: none; } 30% { opacity: 1; transform: translateY(-2px); } }
 @media (prefers-reduced-motion: reduce) {
   .arrive { animation: none; }
-  .skel::after { animation: none; }
   .chat-working span { animation: none; opacity: .6; }
 }
 

@@ -31,7 +31,7 @@ struct PluginExplorer: View {
         }
         switch model.state {
         case .idle, .loading:
-            LoadingCard(text: "Reading every marketplace…")
+            SkeletonRows(rows: 6, label: "Reading every marketplace…")
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded:
@@ -52,7 +52,7 @@ struct PluginExplorer: View {
             } else if let index = model.index {
                 content(index)
             } else {
-                LoadingCard(text: "Reading every marketplace…")
+                SkeletonRows(rows: 6, label: "Reading every marketplace…")
             }
         }
     }

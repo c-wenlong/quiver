@@ -105,7 +105,7 @@ function renderCompute(_id, refresh = false) {
   clearTimeout(p.timer);
   if (!p.data) {
     document.getElementById("panel").innerHTML = `<div class="page compute-page">${computeHeader(true)}
-      <div class="card"><p class="empty">Sampling processes…</p></div></div>`;
+      ${Sk.cardRows(8)}</div>`;
     bindComputeHeader();
   } else {
     paintCompute(refresh);

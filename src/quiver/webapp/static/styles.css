@@ -128,6 +128,33 @@ button { font: inherit; color: inherit; }
 .error { color: var(--danger-text); font-size: 13px; }
 .empty { color: var(--text-secondary); font-size: 14px; padding: 8px 0; }
 
+/* Loading skeletons: grey blocks in the shape of the rows or document
+ * they stand in for, a light band sweeping them. The Sk helpers in
+ * format.js compose these; chat.css's .chat-skel shapes build on .skel.
+ * Layout classes stay under .skel-*: skills.css already owns .sk-*. */
+.skel { position: relative; overflow: hidden; background: var(--border); border-radius: 6px; display: block; }
+.skel::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 45%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--border-strong) 70%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: skel-sweep 1.4s linear infinite;
+}
+@keyframes skel-sweep { to { transform: translateX(320%); } }
+.skel-lines { display: flex; flex-direction: column; gap: 7px; }
+.skel-line { width: var(--w, 100%); height: 12px; }
+.skel-sub { width: var(--w, 100%); height: 10px; }
+.skel-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+.skel-row + .skel-row { border-top: 1px solid var(--row-divider); }
+.skel-dot { width: 16px; height: 16px; border-radius: 50%; flex: none; }
+.skel-pill { width: 48px; height: 16px; border-radius: 8px; flex: none; }
+.skel-head { height: 20px; margin-bottom: 6px; }
+.skel-para { display: flex; flex-direction: column; gap: 9px; }
+.skel-chips { display: flex; gap: 8px; margin-top: 6px; }
+.skel-chip { width: 64px; height: 20px; border-radius: 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .skel::after { animation: none; }
+}
+
 /* A card offering a next step (Overview's first-run setup) */
 .card.offer { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .offer-text { min-width: 0; flex: 1 1 260px; }

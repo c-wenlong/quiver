@@ -55,7 +55,7 @@ private struct HarnessList: View {
     var body: some View {
         switch model.state {
         case .idle, .loading:
-            LoadingCard(text: "Reading the registry…")
+            SkeletonRows(rows: 6, label: "Reading the registry…")
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let all):

@@ -85,8 +85,7 @@
     const gen = routeGen, seq = ++state.seq;
     const panel = document.getElementById("panel");
     if (!state.data || rescan) {
-      panel.innerHTML = `<div class="page qp-page">${header(true)}<div class="card"><p class="empty">${
-        state.data ? "Rescanning…" : "Reading your usage logs…"}</p></div></div>`;
+      panel.innerHTML = `<div class="page qp-page">${header(true)}${Sk.cardRows(6)}</div>`;
       bindHeader();
     } else {
       paint();

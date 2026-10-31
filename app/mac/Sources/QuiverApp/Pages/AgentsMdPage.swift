@@ -44,7 +44,7 @@ private struct GlobalInstructions: View {
         let model = app.agentsMd
         switch model.check {
         case .idle, .loading:
-            LoadingCard(text: "Checking links…")
+            SkeletonRows(rows: 5, label: "Checking links…")
         case .failed(let message):
             ErrorCard(message: message)
         case .loaded(let report):
@@ -352,7 +352,9 @@ struct InstructionEditor: View {
         } content: {
             switch document.state {
             case .loading:
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                SkeletonLines(rows: 12, framed: false)
+                    .padding(Theme.cardPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.dangerText)
             case .ready:

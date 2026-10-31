@@ -2689,7 +2689,7 @@ const SessionChat = (() => {
     if (chat.rail.error) {
       html = `<div class="cr-note">${esc(chat.rail.error)}</div>`;
     } else if (!rows) {
-      html = `<div class="cr-note">${chat.rail.loading ? "Listing sessions…" : "No sessions listed."}</div>`;
+      html = chat.rail.loading ? Sk.rows(6, { pill: false }) : '<div class="cr-note">No sessions listed.</div>';
     } else if (!rows.length) {
       html = '<div class="cr-note">No sessions listed.</div>';
     } else {

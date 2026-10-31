@@ -135,8 +135,7 @@
 
   const emptyCard = (text, iconName = "issueClosed") =>
     `<div class="card"><div class="gh-empty">${ico(iconName, "gh-muted")}<span>${esc(text)}</span></div></div>`;
-  const loadingCard = (text) =>
-    `<div class="card"><div class="gh-empty">${ico("running", "gh-muted gh-spin")}<span>${esc(text)}</span></div></div>`;
+  const loadingCard = () => Sk.cardRows(6);
 
   /* ------------------------------------------------------------- list */
 
@@ -503,7 +502,7 @@
     const busy = !!x.phase;
     let picker;
     if (x.harnesses === null) {
-      picker = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading what the hub can start…</div>`;
+      picker = Sk.block("60%", 32);
     } else if (!x.harnesses.length) {
       picker = `<div class="caption gh-muted">No harness can start on the hub: install one there, or turn it on in Settings › Providers.</div>`;
     } else {
@@ -541,7 +540,7 @@
         .some((v) => v && String(v).toLowerCase().includes(q))));
     let list;
     if (x.sessions === null) {
-      list = `<div class="caption gh-muted">${ico("running", "gh-spin gh-small")} Reading sessions…</div>`;
+      list = Sk.rows(4, { pill: false });
     } else if (!x.sessions.length) {
       list = `<div class="caption gh-muted">No session is running on the hub.</div>`;
     } else if (!found.length) {

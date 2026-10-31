@@ -76,7 +76,7 @@ async function renderHooksList() {
   const p = hooksPage, gen = routeGen, mine = ++p.seq;
   if (!p.data) {
     document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(true)}
-      <div class="card"><p class="empty">Reading hooks…</p></div></div>`;
+      ${Sk.cardRows(6)}</div>`;
     bindHooksHeader();
   } else {
     paintHooks();
@@ -243,7 +243,7 @@ function hkRow(h) {
 async function renderHookDetail(name, harness, tier) {
   const p = hooksPage, gen = routeGen, mine = ++p.seq;
   document.getElementById("panel").innerHTML = `<div class="page">${hooksHeader(false)}${hkBack()}
-    <div class="card"><p class="empty">Reading the hook…</p></div></div>`;
+    ${Sk.detail()}</div>`;
   bindHooksHeader();
   const q = new URLSearchParams({ hook: name });
   if (harness) q.set("harness", harness);

@@ -45,8 +45,12 @@ private struct PricingContent: View {
                        selection: $model.period, width: nil)
         } content: {
             if model.groups.isEmpty {
-                Card { Text(model.isLoading ? "Reading your usage logs…" : "No usage in this period.")
-                        .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary) }
+                if model.isLoading {
+                    SkeletonRows(rows: 5, label: "Reading your usage logs…")
+                } else {
+                    Card { Text("No usage in this period.")
+                            .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary) }
+                }
             }
             ForEach(model.groups) { group in
                 ProviderCard(group: group, expanded: expanded.contains(group.id),

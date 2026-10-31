@@ -54,8 +54,7 @@ async function renderSessions(_id, rescan = false) {
   const panel = document.getElementById("panel");
   const gen = ++sessionsPage.gen;
   if (!sessionsPage.data || rescan) {
-    panel.innerHTML = `<div class="page">${sessionsHeader(true)}<div class="card"><p class="empty">${
-      sessionsPage.data ? "Refreshing…" : "Listing sessions…"}</p></div></div>`;
+    panel.innerHTML = `<div class="page">${sessionsHeader(true)}${Sk.cardRows(8)}</div>`;
   } else {
     paintSessions();
     if (sessionsPage.scrollY != null) window.scrollTo(0, sessionsPage.scrollY);
@@ -1265,7 +1264,7 @@ function nsPaint() {
   const folders = nsFolders(machine).slice(0, 6);
   const browseUi = browse ? `<div class="ns-browse">
       <div class="ns-path">${esc(browse.path || "…")}</div>
-      ${browse.loading ? '<p class="caption">Listing folders…</p>' : ""}
+      ${browse.loading ? Sk.rows(3, { pill: false }) : ""}
       ${browse.error ? `<p class="error">${esc(browse.error)}</p>` : ""}
       ${browse.parent ? `<button type="button" class="ns-folder" data-path="${esc(browse.parent)}">..</button>` : ""}
       ${(browse.folders || []).map((f) => `<button type="button" class="ns-folder" data-path="${esc(f.path)}">${esc(f.name)}/</button>`).join("")}

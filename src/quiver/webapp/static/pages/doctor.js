@@ -70,7 +70,7 @@ function paintDoctor() {
     body = `<div class="card doctor-state"><p class="error" role="alert">${esc(p.error)}</p>
       <div><button class="doctor-button" data-doctor="reload">Try again</button></div></div>`;
   } else if (p.state !== "loaded" || !p.data) {
-    body = `<div class="card doctor-state"><p class="empty">Running checks…</p></div>`;
+    body = Sk.cardRows(6);
   } else if (!p.data.findings.length) {
     body = `${doctorLostError()}${doctorBlocked()}<div class="card doctor-state doctor-clear">
       <span class="doctor-seal">${doctorIcon("seal")}</span><p class="empty">Everything checks out.</p>

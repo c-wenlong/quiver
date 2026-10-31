@@ -271,7 +271,7 @@ private struct SessionsContent: View {
         let groups = model.groupedByDay()
         let pinned = model.pinnedRows()
         if model.rows.isEmpty && model.isLoading {
-            LoadingCard(text: "Listing sessions…")
+            SkeletonRows(rows: 8, label: "Listing sessions…")
         } else if groups.isEmpty && pinned.isEmpty {
             // Every matching row can be trivial: the footer still shows
             // what was hidden and offers "Show" to reveal them.

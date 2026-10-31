@@ -169,7 +169,7 @@ function paint() {
   if (page.tab === "explore" && page.sheet) openPlugin(page.sheet);
 }
 
-const loadingCard = (text) => `<div class="card"><p class="empty">${esc(text)}</p></div>`;
+const loadingCard = () => Sk.cardRows(5);
 const errorCard = (text) => `<div class="card"><p class="error">${esc(text)}</p></div>`;
 const iconCard = (name, text, cls = "") =>
   `<div class="card"><p class="pl-label ${cls}">${svg(name)}<span>${text}</span></p></div>`;

@@ -82,7 +82,7 @@ struct TaskDetailPage: View {
                     }
                 }
             } else {
-                LoadingCard(text: "Reading the task list…")
+                SkeletonRows(rows: 6, label: "Reading the task list…")
             }
         }
         .onDisappear { launchTask?.cancel() }

@@ -1498,7 +1498,8 @@ class TestTranscriptSearchBox(unittest.TestCase):
             "globalThis.api = async (path) => { asked.push(path); return " + json.dumps(search_answer) + "; };\n"
             "globalThis.document = { getElementById: (id) => id === 'session-search' ? {} : null };\n"
             "globalThis.setTimeout = (f) => { f(); return 0; }; globalThis.clearTimeout = () => {};\n"
-            "globalThis.Fmt = { logo: () => '', harnessName: (h) => h, modelName: (m) => m || '', tokens: String, dollars: String };\n")
+            "globalThis.Fmt = { logo: () => '', harnessName: (h) => h, modelName: (m) => m || '', tokens: String, dollars: String };\n"
+            "globalThis.Sk = new Proxy({}, { get: () => () => '' });\n")
         script = (prelude + SESSIONS_JS.read_text(encoding="utf-8")
                   + "\nrepaintKeepingFocus = () => {};\n"
                   + "sessionsPage.data = { sessions: " + json.dumps(self.ROWS) + " };\n"
@@ -1608,10 +1609,11 @@ class TestSessionModelShown(unittest.TestCase):
             "globalThis.window = { addEventListener() {} };\n"
             "globalThis.document = { addEventListener() {}, getElementById: () => null };\n"
             "globalThis.location = { hash: '' };\n")
-        # format.js declares `const Fmt`; run it in its own scope and hand
-        # the result to the page scripts as the global they read.
-        prelude += ("globalThis.Fmt = new Function(" + json.dumps(fmt)
-                    + " + '\\nreturn Fmt;')();\n")
+        # format.js declares `const Fmt` and `const Sk`; run it in its own
+        # scope and hand both to the page scripts as the globals they read.
+        prelude += ("const __fmt = new Function(" + json.dumps(fmt)
+                    + " + '\\nreturn { Fmt, Sk };')();\n"
+                    "globalThis.Fmt = __fmt.Fmt; globalThis.Sk = __fmt.Sk;\n")
         if with_sessions:
             source = SESSIONS_JS.read_text(encoding="utf-8")
         else:

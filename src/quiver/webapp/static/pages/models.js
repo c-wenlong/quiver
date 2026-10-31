@@ -16,8 +16,7 @@
   async function render(_id, rescan = false) {
     const gen = routeGen, seq = ++state.seq;
     if (!state.data || rescan) {
-      document.getElementById("panel").innerHTML = `<div class="page qp-page">${header(true)}<div class="card"><p class="empty">${
-        state.data ? "Rescanning…" : "Reading your usage…"}</p></div></div>`;
+      document.getElementById("panel").innerHTML = `<div class="page qp-page">${header(true)}${Sk.cardRows(8)}</div>`;
       bindHeader();
     } else {
       paint();

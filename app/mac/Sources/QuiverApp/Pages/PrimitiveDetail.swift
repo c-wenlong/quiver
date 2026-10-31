@@ -148,7 +148,7 @@ struct ManifestCard: View {
                     }
                 }
             } else {
-                ProgressView()
+                SkeletonLines(rows: 4, framed: false)
             }
         }
         // Keyed by the file: a card reused for another plugin or skill
@@ -266,7 +266,7 @@ struct FrontmatterCard: View {
                     }
                 }
             } else {
-                ProgressView()
+                SkeletonLines(rows: 4, framed: false)
             }
         }
         // Keyed by the file: a card reused for another plugin or skill
@@ -450,7 +450,7 @@ struct PartsCard: View {
                 }
             }
         } else {
-            ProgressView()
+            SkeletonRows(rows: 4, framed: false)
         }
     }
 
@@ -674,7 +674,9 @@ struct PrimitiveFileSheet: View {
             }
             switch check?.canPreview {
             case .none:
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                SkeletonLines(rows: 12, framed: false)
+                    .padding(Theme.cardPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             case .some(false):
                 HStack {
                     Text(displayPath(url))
@@ -695,7 +697,9 @@ struct PrimitiveFileSheet: View {
                                       subtitle: displayPath(url), monoSubtitle: true,
                                       readOnly: !fileEditable, close: requestClose, onSaved: onSaved)
                 } else {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    SkeletonLines(rows: 12, framed: false)
+                        .padding(Theme.cardPadding)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             }
         }
@@ -826,7 +830,7 @@ struct PluginDetailView: View {
             if folders != nil, !editable { lockNote }
             header
             if folders == nil {
-                LoadingCard(text: "Reading the plugin's folder…")
+                SkeletonRows(rows: 5, label: "Reading the plugin's folder…")
             } else {
                 if let manifest { ManifestCard(url: manifest, onSaved: reload) }
                 if let dir {
@@ -1077,7 +1081,7 @@ struct SkillDetailView: View {
                 }
                 PartsCard(root: root, editable: editable, drafts: drafts, onChanged: reload)
             } else {
-                LoadingCard(text: "Reading the skill's folder…")
+                SkeletonRows(rows: 5, label: "Reading the skill's folder…")
             }
         }
         // `realpath` and `fileExists` on a synced or stale folder can
