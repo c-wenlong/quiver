@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hub: per-device unread state for sessions.** `POST
+  /v1/sessions/<key>/read` moves the calling device's last-read cursor
+  (body `{at?}`, default now), and every row from `GET /v1/sessions` and
+  `GET /v1/app/sessions` carries `unread: true` when the session moved
+  after that device's cursor. Cursors live per device in
+  `data/remote/session_reads.json` (0600) beside `devices.json`, so a
+  phone and a laptop keep separate state; the owner's tailnet browser
+  gets its own `tailnet:<node>` cursors. A session the device never
+  opened counts as unread only if it moved after the device paired, or
+  after the hub learned this feature, whichever is later, so old rows
+  start read. Satellite sessions work the same, stored on the hub. Each
+  write prunes cursors for sessions the hub no longer lists and for
+  revoked devices. Part of
+  [#1439](https://github.com/c-wenlong/quiver/issues/1439); the client
+  dots follow.
+
 - **`swe init`: the hub's MCP servers in extra accounts.** A fourth
   switch, `accounts.sync.mcp`, off by default (`swe config set
   accounts.sync.mcp true`, or the new "MCP servers" switch on the Mac

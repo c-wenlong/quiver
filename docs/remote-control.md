@@ -168,6 +168,7 @@ remote/
   catalog.py     # session registry: local + satellite rows, machine-scoped
   devices.py     # the paired-device list + revoke, shared by /v1/devices and web Settings
   dismissals.py  # per-device inbox dismissals (inbox_dismissals.json, 0600)
+  readstate.py   # per-device last-read cursors, the rows' unread flag (session_reads.json, 0600)
   sessionmeta.py # pins and display names, hub-wide (session_meta.json, 0600)
   tasks.py       # work-item store: sessions/launches linked to tasks (tasks.json, 0600)
   tail.py        # byte-offset transcript readers → events (read path)
@@ -212,7 +213,7 @@ of them function-local, and two other packages borrow from it:
 `mcp/gateway_commands.py` uses `remote.launchd` and `ledger/pricing.py`
 uses `remote.agent._urlopen`. State under
 `~/.quiver/data/remote/` (`devices.json` 0600, `inbox_dismissals.json`
-0600, `session_meta.json` 0600, `tasks.json` 0600, `cursors/`, `journal/`) —
+0600, `session_reads.json` 0600, `session_meta.json` 0600, `tasks.json` 0600, `cursors/`, `journal/`) —
 gitignored like the rest of `data/`. New commands run the usual
 checklist: `completion.py`, `help_text.py`, `docs/json-contracts.md`.
 
@@ -385,6 +386,7 @@ GET  /v1/app/sessions                the web app's Sessions: catalog rows + usag
 GET  /v1/app/harnesses               the web app's Harnesses: swe list --scope=all rows
 GET  /                               the web app's page; its assets are flat names beside it (/app.js); /app/… 301s to the same name here, query and fragment intact
 POST /v1/inbox/dismiss               {key, last_active_at} → cleared for this device
+POST /v1/sessions/{id}/read          {at?} → this device's last-read cursor; rows carry unread
 POST /v1/pair                        QR payload → device credential; optional {device:{kind,model,client,os}} metadata
 GET  /v1/devices                     every paired device (device_view rows + paired_via + this_device) and the pending pair requests, for the pair-requests-and-devices screen
 POST /v1/devices/revoke              {device_id, confirm_this_device?} sign one device out → {revoked, this_device, devices}
@@ -1387,6 +1389,27 @@ Screens:
   activity brings it back. Dismissals prune 30 days after they were
   made and never hide an approval. `?done=1` adds sessions that
   finished since the hub's local midnight as `done` items.
+
+- **Unread dots** — every session row the hub serves (`GET /v1/sessions`,
+  `GET /v1/app/sessions`) carries `unread` for the calling device: true
+  when the row's `last_active_at` is newer than that device's last-read
+  cursor. A client posts `POST /v1/sessions/{id}/read` when a chat opens
+  and again as messages arrive while it stays open. `last_active_at` is
+  when the transcript last moved, which in practice is the agent's
+  reply, since a user turn is followed by one. The hub keeps
+  `device_id → key → at` in `session_reads.json` beside `devices.json`
+  (0600), so a phone and a laptop keep separate state; the owner's
+  tailnet browser reads as its `tailnet:<node>` id, the Mac app as its
+  paired device. A session the device never opened is judged against a
+  baseline, the later of when the device paired (`created_at`, or the
+  sign-in's `first_seen_at`) and when the store began (`since`, set on
+  the first listing), so pairing a phone or upgrading the hub leaves
+  old rows read. The cursor defaults to the later of now and the row's
+  own `last_active_at`, so a satellite clock running ahead can't leave a
+  just-opened chat unread, and it never moves back. Each write prunes
+  cursors for sessions the catalog no longer lists (skipped while it
+  lists nothing) and for revoked or unpaired devices, and keeps the
+  newest 5,000 per device.
 
   GitHub's "needs you" joins the same feed: `serve` wires the hub's
   own `gh` login into the catalog's refresh loop through the web app's

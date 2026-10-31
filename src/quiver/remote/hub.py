@@ -45,6 +45,7 @@ from quiver.remote import (
     inject,
     notify,
     pairing,
+    readstate,
     peer as peer_mod,
     preview as preview_mod,
     protocol,
@@ -1855,7 +1856,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/v1/sessions":
             self._send_json(200, {
-                "sessions": self._state.catalog.rows(),
+                "sessions": readstate.annotate(
+                    self._state.home, device_id, self._state.catalog.rows()),
                 "machines": list(
                     catalog_mod.load_machines(self._state.home).values()
                 ),
@@ -1960,6 +1962,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(503, "ledger_unavailable", str(exc))
                 return
             body["machine"] = self._state.machine.get("name")
+            body["sessions"] = readstate.annotate(
+                self._state.home, device_id, body.get("sessions") or [])
             self._send_json(200, body)
             return
 
@@ -2370,6 +2374,9 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if action in sessionmeta.ACTIONS:
                 self._session_meta(key, action)
+                return
+            if action == "read":  # hub-side, satellite rows included
+                self._mark_read(device_id, key, row)
                 return
             if action == "task":  # tasks.py: link a work item, hub-side
                 self._send_json(*tasks_mod.link_request(
@@ -3340,6 +3347,33 @@ class _Handler(BaseHTTPRequestHandler):
         row["ownership"] = protocol.OWNERSHIP_ATTACHED
         self._emit_ownership(key)
         self._send_json(200, {"ok": True, "note": note})
+
+    def _mark_read(self, device_id: str, key: str, row: dict) -> None:
+        """``POST /v1/sessions/{key}/read {at?}``: this device's
+        last-read cursor (``readstate.py``). ``at`` defaults to now, and
+        any ``at`` is held to the later of now and the row's own
+        ``last_active_at``: a satellite clock a little ahead can't leave
+        a just-opened chat unread, and a client can't park a cursor in
+        the far future."""
+        body = self._read_body()
+        if body is None:
+            self._send_error(400, "bad_body", "unreadable JSON body")
+            return
+        at = body.get("at")
+        if not readstate.valid_at(at):
+            self._send_error(422, "bad_read", "at must be a number")
+            return
+        ceiling = max(time.time(), readstate.num(row.get("last_active_at")))
+        at = ceiling if at is None else min(float(at), ceiling)
+        try:
+            stored = readstate.mark_read(
+                self._state.home, device_id, key, at,
+                (str(r.get("key") or "") for r in self._state.catalog.rows()),
+            )
+        except OSError:
+            self._send_error(500, "store_failed", "could not save the read")
+            return
+        self._send_json(200, {"ok": True, "at": stored})
 
     def _session_meta(self, key: str, action: str) -> None:
         """``POST /v1/sessions/{key}/pin|title``: kept on the hub for
