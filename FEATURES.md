@@ -58,6 +58,7 @@ Status words:
 | MCP servers | yes | yes | - | |
 | MCP gateway (shared servers) | - | - | - | CLI only: `swe mcp gateway`. The Mac and web MCP pages show a shared server's harness entry as its 127.0.0.1 URL |
 | Hooks | yes | yes | - | |
+| Shared content in extra accounts | - | - | - | CLI only for now: `accounts.sync.instructions` / `skills` / `hooks` in config.json, applied by `swe init` (#888). The Mac Accounts page switches are owed |
 | Models | yes | part | - | Web: no Artificial Analysis benchmarks (the hub holds no AA key), and each logged name is its own row |
 
 ## System

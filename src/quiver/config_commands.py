@@ -79,6 +79,8 @@ def cmd_config(args: list[str]) -> int:
             updated = dotted_set(load_config(), args[1], parse_config_value(args[2]))
             save_config(updated)
             print(c("green", f"  Set {args[1]}"))
+            if args[1].startswith("accounts.sync"):
+                print(c("dim", "  Run swe init to sync the account homes."))
             return 0
 
         if command == "unset":
@@ -86,6 +88,8 @@ def cmd_config(args: list[str]) -> int:
                 raise ConfigurationError("Usage: swe config unset <key>")
             save_config(dotted_unset(load_config(), args[1]))
             print(c("green", f"  Unset {args[1]}"))
+            if args[1].startswith("accounts.sync"):
+                print(c("dim", "  Run swe init to sync the account homes."))
             return 0
 
         if command == "edit":

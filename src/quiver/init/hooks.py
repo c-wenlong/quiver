@@ -145,7 +145,10 @@ def hook_root(registry: dict, name: str, home: Path) -> tuple[Path | None, str]:
             return None, UNSUPPORTED_DETAIL
         if caps.get("root"):
             return _expand_root(caps["root"], home), ""
-    fallback = HOOK_FALLBACK.get(name)
+    # Through __getattr__, not the bare global: the table is filled lazily,
+    # and a first call from inside this module would hit a NameError.
+    table = globals().get("HOOK_FALLBACK") or __getattr__("HOOK_FALLBACK")
+    fallback = table.get(name)
     if fallback is not None:
         return home / fallback, ""
     return None, NO_ROOT_DETAIL

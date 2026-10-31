@@ -22,6 +22,11 @@ from quiver.paths import CONFIG_FILE
 # CONFIG_FILE now lives in paths.py so the layout has one owner.
 SUPPORTED_REPORT_HARNESSES = frozenset({"claude", "codex"})
 
+# accounts.sync.<name>: what `swe init` links into each extra account home.
+# init/accounts.py owns the behaviour; the names live here so the bottom
+# layer can validate them without importing a domain package.
+ACCOUNT_SYNC_PRIMITIVES = ("instructions", "skills", "hooks")
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "report": {
         "session": {"harness": None, "model": None, "args": []},
@@ -384,6 +389,19 @@ def validate_config(config: Mapping[str, Any]) -> list[ConfigIssue]:
         "report.transcript.max_message_chars",
     ):
         _positive_int(config, key, issues)
+
+    sync = get_value(config, "accounts.sync", _MISSING)
+    if sync is not _MISSING:
+        if not isinstance(sync, Mapping):
+            issues.append(ConfigIssue("accounts.sync", "must be an object of true/false switches"))
+        else:
+            for name, value in sync.items():
+                if name not in ACCOUNT_SYNC_PRIMITIVES:
+                    issues.append(ConfigIssue(
+                        f"accounts.sync.{name}",
+                        "unknown, expected one of " + ", ".join(ACCOUNT_SYNC_PRIMITIVES)))
+                elif not isinstance(value, bool):
+                    issues.append(ConfigIssue(f"accounts.sync.{name}", "must be true or false"))
     return issues
 
 
