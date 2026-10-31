@@ -8,7 +8,8 @@ struct ChatItem: Identifiable, Equatable {
     enum Kind: Equatable {
         case user(text: String, send: SendState?)
         case assistant(String)
-        case thinking(String)
+        /// `seconds` is how long the model thought, when the hub knew.
+        case thinking(String, seconds: Double?)
         case tool(ToolCall, result: String?)
         case approval(requestId: String, prompt: String, state: ApprovalState)
         case compaction
@@ -613,7 +614,7 @@ final class ChatModel {
         case "user":
             list.append(ChatItem(id: id, kind: .user(text: text, send: nil)))
         case "thinking":
-            list.append(ChatItem(id: id, kind: .thinking(text)))
+            list.append(ChatItem(id: id, kind: .thinking(text, seconds: msg.durationS)))
         case "tool_use":
             guard let tool = msg.tool else { return }
             var result: String?

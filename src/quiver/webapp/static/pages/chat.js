@@ -2173,7 +2173,7 @@ const SessionChat = (() => {
     } else if (kind === "system") {
       div.innerHTML = `<span class="text">${esc(msg.text || "")}</span>`;
     } else if (kind === "thinking") {
-      div.innerHTML = `<details><summary><span class="tool-ic">${iconSvg("thought")}</span>Thought</summary><div class="text">${md(msg.text)}</div></details>`;
+      div.innerHTML = `<details><summary><span class="tool-ic">${iconSvg("thought")}</span>${esc(Fmt.thought(msg.duration_s))}</summary><div class="text">${md(msg.text)}</div></details>`;
     } else if (kind === "approval") {
       approvalCard(div, msg);
     } else if (kind === "error") {
