@@ -36,6 +36,12 @@ import Testing
         #expect(ProcessArguments.parse(Array(full.dropLast(1))) == ["/bin/x", "a", "b"])
     }
 
+    @Test func aNegativeOrZeroArgcReadsNoArguments() {
+        // 0xFFFFFFFF reads as argc -1, which used to trap in `0..<min(argc, 256)`.
+        #expect(ProcessArguments.parse([0xFF, 0xFF, 0xFF, 0xFF] + Array("/bin/x\0a\0".utf8)) == [])
+        #expect(ProcessArguments.parse(buffer(argc: 0, exec: "/bin/x", arguments: ["/bin/x"])) == [])
+    }
+
     @Test func parseRejectsATooSmallBuffer() {
         #expect(ProcessArguments.parse([1, 0]) == [])
         #expect(ProcessArguments.parse([]) == [])
