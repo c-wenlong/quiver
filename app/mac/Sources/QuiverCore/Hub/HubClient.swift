@@ -131,6 +131,29 @@ public struct HubClient: Sendable {
         try await send(request("GET", Self.sessionPath(key, "commands")))
     }
 
+    /// The queue-mode sends the hub holds for `key` until its turn ends,
+    /// oldest first: the chat's Queued tray. Empty for a satellite's
+    /// session, whose sends never wait on the hub.
+    public func queue(_ key: String) async throws -> [HubWaitingSend] {
+        try await send(request("GET", Self.sessionPath(key, "queue")), as: HubQueueResponse.self).sends
+    }
+
+    /// Acts on one waiting send: `steer` sends it now, `cancel` drops it,
+    /// `edit` replaces its text in place. A steer's outcome arrives later
+    /// as its `command.result`.
+    public func queueAction(_ key: String, clientId: String, op: String, text: String? = nil) async throws {
+        var body: [String: any Sendable] = ["client_id": clientId, "op": op]
+        if let text { body["text"] = text }
+        _ = try await raw(request("POST", Self.sessionPath(key, "queue"), body: body))
+    }
+
+    /// Paths under the session's working folder matching `query`, for
+    /// the prompt box's `@` menu. Hub-machine sessions only: a
+    /// satellite's session answers `files_unavailable`.
+    public func files(_ key: String, query: String, limit: Int = MentionSearch.limit) async throws -> FilesResponse {
+        try await send(request("GET", Self.sessionPath(key, "files"), query: ["q": query, "limit": "\(limit)"]))
+    }
+
     /// `interrupt` stops the agent's turn. Returns true when the hub
     /// queued it for a satellite (202), whose `command.result` follows.
     @discardableResult
@@ -288,8 +311,10 @@ public struct HubClient: Sendable {
     }
 
     /// One session's live events after `last`, reconnecting with backoff
-    /// until the consuming task is cancelled or the hub refuses the
-    /// credential.
+    /// until the hub refuses the credential or the reader goes away: its
+    /// task cancelled, or its loop left by `break` or `return`. Either
+    /// way the stream terminates, and `onTermination` cancels the loop
+    /// and its connection.
     public func events(_ key: String, last: Int) -> AsyncStream<HubStreamEvent> {
         AsyncStream { continuation in
             let task = Task {

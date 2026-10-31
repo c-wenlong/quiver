@@ -38,6 +38,8 @@ final class UsageModel {
         async let limits: Void = loadUsage(app: app, refresh: refresh)
         async let spend: Void = loadPeriod(app: app, period, force: true)
         _ = await (limits, spend)
+        // A cancelled load fetched nothing, so the next open still loads.
+        guard !Task.isCancelled else { return }
         loadedAt = Date()
     }
 
@@ -46,6 +48,8 @@ final class UsageModel {
         do {
             usage = try await client.usage(refresh: refresh)
             usageError = nil
+        } catch is CancellationError {
+            // The tab went away mid-fetch: nothing failed.
         } catch {
             usageError = message(error, app: app, client: client)
         }
@@ -56,6 +60,7 @@ final class UsageModel {
         do {
             overviews[period] = try await client.overview(period: period)
             overviewErrors[period] = nil
+        } catch is CancellationError {
         } catch {
             overviewErrors[period] = message(error, app: app, client: client)
         }

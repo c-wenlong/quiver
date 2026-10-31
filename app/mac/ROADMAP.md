@@ -126,6 +126,7 @@ Phases in order. Phase 4 can run alongside 1 to 3.
 **Phase 2. First-run setup**
 - [x] `swe setup --apply` seeds `~/.quiver` and links AGENTS.md, skills and hooks. `--adopt=<file>` and `--starred=a,b` added ([#373](https://github.com/c-wenlong/quiver/pull/373)).
 - [x] Four-step setup window: agents, shared AGENTS.md, skills and MCP, look, notifications. Settings › General can open it again ([#375](https://github.com/c-wenlong/quiver/pull/375)).
+- [x] The links step clones your hub repo (`swe setup --hub=<url> --json`) while `~/.quiver` has no hub yet ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
 **Phase 3. Add and edit from the app.** Every Manage page edits or syncs what exists, but almost none can create.
 - [x] API keys: a provider picker built from `providers/defaults.py` and `APIKeyCheck.swift`, with a "Get a key" link instead of the free-text Provider and Variable fields. Test a key before saving. ([#397](https://github.com/c-wenlong/quiver/pull/397))

@@ -273,13 +273,26 @@ public struct MacTemperatureSampler: TemperatureSampling {
         return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 
+    /// The components `TemperatureReading.summarise` can take from HID.
+    static let hidComponents: Set<ThermalComponent> = [.cpu, .battery, .ssd]
+
     public func read() -> TemperatureReading? {
         let smc = AppleSMC()
         let temperatures = smc.flatMap { ThermalKeys.read(keys, from: $0) }
-        let fallback = hid.read()
-        guard temperatures != nil || fallback != nil else { return nil }
-        var reading = (temperatures ?? TemperatureReading([:])).filling(from: fallback)
+        guard var reading = Self.combine(temperatures, hid: hid.read) else { return nil }
         reading.fans = smc.flatMap { FanSummary.from(FanKeys.read($0)) }
         return reading
+    }
+
+    /// The SMC's reading with HID filling the gaps. HID only fills what the
+    /// SMC left out, and reading every sensor's event was the trend tick's
+    /// largest cost, so `hid` is not called when the SMC already answered
+    /// everything HID could add.
+    static func combine(_ temperatures: TemperatureReading?,
+                        hid: () -> TemperatureReading?) -> TemperatureReading? {
+        let answered = Set(temperatures?.values.keys.map { $0 } ?? [])
+        let fallback = hidComponents.isSubset(of: answered) ? nil : hid()
+        guard temperatures != nil || fallback != nil else { return nil }
+        return (temperatures ?? TemperatureReading([:])).filling(from: fallback)
     }
 }

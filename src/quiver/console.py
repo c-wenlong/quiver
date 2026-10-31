@@ -312,10 +312,6 @@ def lpad(text: str, width: int) -> str:
     return strip_ansi(text) + " " * (width - visible_len(text))
 
 
-def rpad(text: str, width: int) -> str:
-    return " " * (width - visible_len(text)) + strip_ansi(text)
-
-
 def cpad(color: str, text: str, width: int) -> str:
     plain = strip_ansi(text)
     return c(color, plain + " " * max(0, width - cell_len(plain)))

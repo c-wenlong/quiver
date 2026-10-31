@@ -373,6 +373,29 @@ server hides. The walk covers JSON and TOML, files sitting directly in
 `$HOME` (`~/.claude.json` belongs to no harness directory), and follows
 the same vendored rule as the rest of `find`.
 
+### The gateway
+
+Each harness session starts its own copy of every stdio server it is
+configured with. With 17 servers that was 26 processes and about 1.3 GB
+per Claude Code session. A hub entry marked `"shared": true` (`swe mcp
+gateway share`) runs once instead, in `swe mcp gateway serve`, a
+LaunchAgent (`com.cwenlong.quiver.mcp-gateway`) that serves it as MCP
+streamable HTTP at `http://127.0.0.1:8478/mcp/<name>`. While mcp.json's
+`gateway.enabled` is set (by `install`), `swe mcp sync quiver ...` writes
+that URL for a shared server instead of its command; Claude Desktop takes
+no URL server, so it keeps the command.
+
+One stdio process is one MCP session, so the gateway multiplexes
+(`mcp/gateway_server.py`): it runs the handshake once and answers each
+client's `initialize` from it, renumbers request ids, forwards only the
+spec's client requests (Claude Code probes HTTP servers with
+`server/discover`, which crashes older Python SDK servers), refuses the
+server's own requests to a client, and drops notifications. That is only
+right for servers without per-session state, so `share` refuses a
+browser or REPL server without `--force`. `discover` and `list` read a
+synced gateway URL as the hub's own server (`gateway.matches_hub`), so the
+URL never flows back into the hub.
+
 ## Drift
 
 `swe doctor` used to check one thing: Node/PATH mismatches hiding a

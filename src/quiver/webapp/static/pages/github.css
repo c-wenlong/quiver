@@ -10,6 +10,7 @@
 .gh-success { color: var(--success); }
 .gh-danger { color: var(--danger); }
 .gh-danger-text { color: var(--danger-text); }
+.gh-warning-text { color: var(--warning-text); }
 .gh-warning { color: var(--warning); }
 .gh-warn-text { color: var(--warning-text); }
 .gh-merged { color: var(--gh-purple); }
@@ -39,6 +40,8 @@
 /* An inline confirm naming exactly what a write will do. */
 .gh-confirm { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--border-strong); border-radius: 12px; padding: 12px 14px; background: var(--subtle); }
 .card.gh-confirm { background: var(--card); }
+/* A field's caption sits close to its field. */
+.gh-confirm label.caption + .field { margin-top: -6px; }
 .gh-confirm-text { font-size: 13px; color: var(--text-primary); line-height: 1.45; overflow-wrap: anywhere; }
 .gh-confirm-text code { font-size: 12px; }
 .gh-confirm-buttons { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
@@ -71,6 +74,8 @@ a.icon-button { color: inherit; }
 .gh-tab.selected { color: var(--text-primary); border-bottom-color: var(--text-primary); }
 .gh-search { flex: 0 1 260px; min-width: 120px; height: 32px; margin-bottom: 5px; }
 .gh-toolbar-spin { margin-bottom: 13px; }
+/* The Pull requests tab's All / Mine / Review requested, under the tabs. */
+.gh-pr-filter { align-self: flex-start; max-width: 100%; margin-top: -6px; }
 
 /* The rows box: a header per repo, its rows under it. */
 .gh-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--card-radius); overflow: hidden; }
@@ -222,6 +227,12 @@ select.field.gh-method { height: 32px; width: 180px; flex: 0 1 180px; }
 /* PR body markdown */
 .gh-md { font-size: 13px; color: var(--text-secondary); line-height: 1.5; padding: 10px 14px; overflow-wrap: anywhere; }
 .gh-md > :first-child { margin-top: 0; }
+/* The issue sheet's comments: one row each in a settings card, read only. */
+.gh-comment { padding: 10px 0; border-top: 1px solid var(--row-divider); }
+.gh-comment:first-child { border-top: 0; }
+.gh-comment-head { display: flex; align-items: center; gap: 8px; }
+.gh-md.gh-comment-body { padding: 4px 0 0; }
+.gh-md.gh-comment-body > :last-child { margin-bottom: 0; }
 .gh-md p { margin: 0 0 8px; }
 .gh-md a { color: var(--link); }
 .gh-md-h { color: var(--text-primary); font-weight: 600; margin: 4px 0 8px; }
@@ -262,6 +273,29 @@ select.field.gh-method { height: 32px; width: 180px; flex: 0 1 180px; }
 }
 .gh-note.unread .gh-note-title { font-size: 14px; font-weight: 500; color: var(--text-primary); }
 .gh-inbox > .caption { padding: 10px 6px 0; }
+/* Needs you: the iOS Inbox's sections over the GitHub list, each head
+ * with the Clear its toolbar menu has. */
+.gh-inbox-heading { margin: 0 0 -8px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.gh-need-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px 2px; font-size: 12px; font-weight: 500; }
+.gh-need-head:not(:first-child) { margin-top: 10px; }
+.gh-need-head + .gh-note { border-top: 0; }
+.gh-need-section.gh-warning { color: var(--warning-text); }
+.gh-need-section.gh-danger { color: var(--danger-text); }
+.gh-need-clear {
+  border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: 12px;
+  padding: 2px 6px; border-radius: 6px; cursor: pointer;
+}
+.gh-need-clear:hover { background: var(--hover); color: var(--text-primary); }
+.gh-need-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none; background: var(--text-muted); }
+.gh-need-dot.status-active { background: var(--accent); }
+.gh-need-dot.status-error { background: var(--danger-text); }
+.gh-need-dot.status-approval, .gh-need-dot.status-followup, .gh-need-dot.status-interrupted { background: var(--warning-text); }
+.gh-need-title { font-size: 14px; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-need-meta { display: flex; align-items: center; gap: 6px; }
+.gh-need-review {
+  align-self: center; flex: none; font-size: 12px; padding: 3px 10px; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 6px;
+}
 
 /* Add repository: the rail's last row, and AddRepoSheet's droplist. */
 .gh-rail-add { color: var(--text-muted); margin-top: 14px; }
@@ -348,3 +382,11 @@ dialog.gh-add-sheet { width: min(520px, calc(100vw - 32px)); }
 /* PR sheet: Open in session. */
 .gh-session .field { width: 100%; }
 .gh-session-prompt { resize: vertical; min-height: 64px; font: inherit; font-size: 13px; line-height: 1.4; }
+
+/* Issue sheet: the comment box under the thread, and Resolve's
+   "Also post as a comment". */
+.gh-composer { display: flex; flex-direction: column; gap: 6px; }
+.gh-composer-row { display: flex; align-items: flex-end; gap: 8px; }
+.gh-composer-row .field { flex: 1; min-width: 0; min-height: 52px; }
+.gh-check { display: flex; align-items: center; gap: 6px; margin-top: -4px; cursor: pointer; }
+.gh-check input { margin: 0; accent-color: var(--accent); }

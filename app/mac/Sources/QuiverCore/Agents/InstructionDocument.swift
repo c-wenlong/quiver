@@ -39,22 +39,47 @@ public final class InstructionDocument: Identifiable {
 
     public init(url: URL) {
         self.url = url
+        writeURL = url
     }
 
     public var isDirty: Bool { text != savedText }
 
-    /// Where a save writes: the end of the symlink chain at `url`.
-    public var writeURL: URL { Self.resolveLinks(url) }
+    /// Where a save writes: the end of the symlink chain at `url`, as the
+    /// last read or write found it (`url` itself before the first read).
+    public private(set) var writeURL: URL
 
     /// The target, when `url` is a symlink; for saying where edits land.
     public var linkTarget: URL? {
-        let target = writeURL
-        return target.standardizedFileURL == url.standardizedFileURL ? nil : target
+        writeURL.standardizedFileURL == url.standardizedFileURL ? nil : writeURL
     }
 
-    /// Reads the file, replacing any edits.
-    public func load() {
-        switch Self.read(writeURL) {
+    /// The save in flight, so a second save waits for the first and
+    /// compares against what it wrote rather than reporting a conflict.
+    private var saving: Task<SaveOutcome, Never>?
+    /// Test seam: awaited just before a save's disk write, so a test can
+    /// hold a save in flight.
+    var beforeWrite: (@MainActor () async -> Void)?
+
+    /// Reads the file, replacing any edits. The read (and the symlink walk
+    /// before it) runs off the main actor: a file under a synced or stale
+    /// folder can block `stat` or `read` for as long as it likes.
+    public func load() async {
+        let url = self.url
+        // The editor stays open while a reload reads; typing in that window
+        // must not be thrown away by the text the read brings back.
+        let typed = text
+        let (target, result) = await offMain { () -> (URL, Result<Data?, Error>) in
+            let target = Self.resolveLinks(url)
+            return (target, Self.read(target))
+        }
+        writeURL = target
+        if text != typed, state == .ready {
+            // Edited while reading: keep the edits, and flag the file when
+            // it no longer holds what they were made against.
+            if case .success(let data) = result, data != baseline { changedOnDisk = true }
+            return
+        }
+        switch result {
         case .success(let data):
             guard let data else {
                 apply(text: "", baseline: nil)
@@ -74,9 +99,9 @@ public final class InstructionDocument: Identifiable {
     /// that change is what comes back: the edits were the only reason not
     /// to load it, and keeping the stale text would leave the conflict
     /// flag up with nothing left to conflict.
-    public func revert() {
+    public func revert() async {
         if changedOnDisk {
-            load()
+            await load()
         } else {
             text = savedText
         }
@@ -84,42 +109,92 @@ public final class InstructionDocument: Identifiable {
 
     /// Looks at the disk again: picks up an outside change when there are no
     /// edits to lose, and flags it when there are.
-    public func checkDisk() {
+    public func checkDisk() async {
         if case .failed = state, !isDirty {
             // Whatever stopped the last read (a broken link, a permission)
             // may be fixed by now.
-            load()
+            await load()
             return
         }
-        guard state == .ready, case .success(let current) = Self.read(writeURL),
-              current != baseline else { return }
+        guard state == .ready, saving == nil else { return }
+        let url = self.url
+        let known = baseline
+        guard case .success(let current) = await offMain({ Self.read(Self.resolveLinks(url)) }),
+              current != known,
+              // A save or load that landed meanwhile already knows the file.
+              baseline == known, saving == nil
+        else { return }
         if isDirty {
             changedOnDisk = true
         } else {
-            load()
+            await load()
         }
     }
 
     /// Writes `text`, unless the file changed on disk since it was read and
-    /// `overwrite` is false.
+    /// `overwrite` is false. The read-compare-write runs off the main actor
+    /// as one step; text typed while it runs stays as unsaved edits.
     @discardableResult
-    public func save(overwrite: Bool = false) -> SaveOutcome {
+    public func save(overwrite: Bool = false) async -> SaveOutcome {
+        while let running = saving {
+            _ = await running.value
+            // A finished save's own frame may not have run yet to clear
+            // the slot; clear it here so this loop can't spin on it.
+            if saving == running { saving = nil }
+        }
         // Only a file that was read can be written: while loading, or after
         // a failed read (not UTF-8, a broken link), `text` is not the file,
         // and an overwrite would replace the file with it.
         guard state == .ready else {
             return .failed("\(url.lastPathComponent) hasn't been read, so it can't be saved.")
         }
-        let target = writeURL
+        let url = self.url
+        let edited = text
+        let known = baseline
+        let task = Task { () -> SaveOutcome in
+            await beforeWrite?()
+            let (target, written) = await offMain { () -> (URL, Result<Data, SaveFailure>) in
+                let target = Self.resolveLinks(url)
+                return (target, Self.write(edited, to: target, ifStill: overwrite ? nil : .some(known)))
+            }
+            writeURL = target
+            switch written {
+            case .success(let data):
+                savedText = edited
+                baseline = data
+                existsOnDisk = true
+                changedOnDisk = false
+                state = .ready
+                return .saved
+            case .failure(.changedOnDisk):
+                changedOnDisk = true
+                return .changedOnDisk
+            case .failure(.failed(let message)):
+                return .failed(message)
+            }
+        }
+        saving = task
+        let outcome = await task.value
+        if saving == task { saving = nil }
+        return outcome
+    }
+
+    private enum SaveFailure: Error {
+        case changedOnDisk
+        case failed(String)
+    }
+
+    /// `text` written atomically at `target`, keeping the file's mode.
+    /// `ifStill` (when not nil) is the bytes the file must still hold.
+    private nonisolated static func write(_ text: String, to target: URL,
+                                          ifStill expected: Data??) -> Result<Data, SaveFailure> {
         let current: Data?
-        switch Self.read(target) {
+        switch read(target) {
         case .success(let data): current = data
-        case .failure(let error): return .failed("Couldn't read \(target.path): \(error.localizedDescription)")
+        case .failure(let error):
+            return .failure(.failed("Couldn't read \(target.path): \(error.localizedDescription)"))
         }
-        if !overwrite && current != baseline {
-            changedOnDisk = true
-            return .changedOnDisk
-        }
+        if let expected, current != expected { return .failure(.changedOnDisk) }
         let data = Data(text.utf8)
         do {
             // An atomic write replaces the file, which would reset its mode.
@@ -129,11 +204,9 @@ public final class InstructionDocument: Identifiable {
                 try? FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: target.path)
             }
         } catch {
-            return .failed("Couldn't save \(target.path): \(error.localizedDescription)")
+            return .failure(.failed("Couldn't save \(target.path): \(error.localizedDescription)"))
         }
-        let edited = text
-        apply(text: edited, baseline: data)
-        return .saved
+        return .success(data)
     }
 
     private func apply(text: String, baseline: Data?) {

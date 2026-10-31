@@ -155,5 +155,3 @@ SHELL_CONFIGS = {
         "profile_instructions": "source ~/.config/fish/config.fish",
     },
 }
-
-SUPPORTED_SHELLS = list(SHELL_CONFIGS.keys())

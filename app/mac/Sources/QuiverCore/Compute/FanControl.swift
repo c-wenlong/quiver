@@ -2,6 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import Observation
+import Security
 
 /// Installs and removes the root fan helper. The real one goes through
 /// the macOS administrator prompt; tests count calls.
@@ -30,7 +31,12 @@ public enum FanHelperInstallError: Error, Equatable, LocalizedError {
 /// launchd job and starts it; from then on Quiver steers it through the
 /// control file without asking again.
 public struct AdministratorInstaller: FanHelperInstalling {
-    public init() {}
+    /// The team that signed the running app (`signingTeam`); tests swap it.
+    private let team: @Sendable () throws -> String?
+
+    public init(team: @escaping @Sendable () throws -> String? = AdministratorInstaller.signingTeam) {
+        self.team = team
+    }
 
     static func shell(_ text: String) -> String {
         "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -45,23 +51,61 @@ public struct AdministratorInstaller: FanHelperInstalling {
         return "do shell script \"\(apple(command))\" with prompt \"\(apple(prompt))\" with administrator privileges"
     }
 
+    /// The code requirement the helper must meet before it runs as root:
+    /// QuiverFanHelper, signed through Apple by the team that signed the
+    /// app. Nothing running as the user can produce that signature, so a
+    /// helper patched in the (user-writable) bundle fails it.
+    static func helperRequirement(team: String) -> String {
+        "=identifier \"\(FanHelper.bundledName)\" and anchor apple generic"
+            + " and certificate leaf[subject.OU] = \"\(team)\""
+    }
+
+    /// The root script's signature step: `tool` must meet
+    /// `helperRequirement`, or it is deleted and the install stops.
+    static func signatureCheck(tool: String, team: String) -> String {
+        "{ /usr/bin/codesign --verify --strict -R \(shell(helperRequirement(team: team))) \(shell(tool)) 2>/dev/null"
+            + " || { /bin/rm -f \(shell(tool)); echo 'The fan helper is not signed by the team that signed Quiver.' >&2;"
+            + " exit 1; }; }"
+    }
+
+    /// A team identifier as Apple issues them: ten capitals and digits.
+    static func isTeamIdentifier(_ value: String) -> Bool {
+        value.count == 10 && value.allSatisfy { ("A"..."Z").contains($0) || ("0"..."9").contains($0) }
+    }
+
     /// Copy the executable, check the copy is byte for byte the one
     /// hashed before the prompt (anything running as the user could swap
-    /// the bundle's copy while the prompt is up), ad-hoc sign it (it no
-    /// longer sits in the bundle its signature sealed), write the job from
-    /// trusted text as root, and (re)start it.
-    public static func installCommand(executable: String, sha256: String, control: URL) -> String {
-        let tool = shell(FanHelper.installedExecutable), job = shell(FanHelper.installedPlist)
+    /// the bundle's copy while the prompt is up), and, when the app is
+    /// signed by a team, that the copy carries that team's signature: the
+    /// hash only proves the file didn't change during the prompt, not that
+    /// it is the helper Quiver shipped. Then ad-hoc sign it, unload the old
+    /// job, move the copy into place, write the job from trusted text as
+    /// root, and start it. Every check runs on the root-owned staged copy,
+    /// which nothing running as the user can change, and the live path
+    /// only changes once the old job can no longer relaunch it.
+    /// `team` is nil only for an ad-hoc build, which has no signature to
+    /// check against and keeps the hash alone.
+    public static func installCommand(executable: String, sha256: String, team: String?,
+                                      control: URL) -> String {
+        let staged = FanHelper.installedExecutable + ".new"
+        let tool = shell(FanHelper.installedExecutable), new = shell(staged), job = shell(FanHelper.installedPlist)
+        let signature = team.map { " && " + signatureCheck(tool: staged, team: $0) } ?? ""
+        // Everything is checked on a staged copy beside the live one: an
+        // installed KeepAlive job may relaunch its executable at any
+        // moment, so the live path only ever changes to a checked file,
+        // and only once the old job is unloaded.
         return "/bin/mkdir -p /Library/PrivilegedHelperTools"
-            + " && /usr/bin/install -m 755 -o root -g wheel \(shell(executable)) \(tool)"
-            + " && { [ \"$(/usr/bin/shasum -a 256 \(tool) | /usr/bin/cut -d ' ' -f 1)\" = \(shell(sha256)) ]"
-            + " || { /bin/rm -f \(tool); echo 'The fan helper changed during install.' >&2; exit 1; }; }"
-            + " && /usr/bin/codesign --force --sign - \(tool)"
-            + " && /usr/bin/printf '%s' \(shell(FanHelper.plistLine(control: control))) > \(job)"
-            + " && /usr/sbin/chown root:wheel \(job) && /bin/chmod 644 \(job)"
+            + " && /usr/bin/install -m 755 -o root -g wheel \(shell(executable)) \(new)"
+            + " && { [ \"$(/usr/bin/shasum -a 256 \(new) | /usr/bin/cut -d ' ' -f 1)\" = \(shell(sha256)) ]"
+            + " || { /bin/rm -f \(new); echo 'The fan helper changed during install.' >&2; exit 1; }; }"
+            + signature
+            + " && /usr/bin/codesign --force --sign - \(new)"
             // A reinstall unloads the old job first; launchd needs a beat
             // before the label can load again.
             + " && { /bin/launchctl bootout system/\(FanHelper.label) 2>/dev/null && /bin/sleep 1; true; }"
+            + " && /bin/mv -f \(new) \(tool)"
+            + " && /usr/bin/printf '%s' \(shell(FanHelper.plistLine(control: control))) > \(job)"
+            + " && /usr/sbin/chown root:wheel \(job) && /bin/chmod 644 \(job)"
             + " && /bin/launchctl bootstrap system \(job)"
     }
 
@@ -76,14 +120,47 @@ public struct AdministratorInstaller: FanHelperInstalling {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// The team that signed the running app, or nil for an ad-hoc build.
+    /// Throws when the signature can't be read or the code on disk no
+    /// longer matches what is running: a bundle re-signed under the app
+    /// must not read as "ad-hoc" and skip the helper's check.
+    public static func signingTeam() throws -> String? {
+        func check(_ status: OSStatus, _ what: String) throws {
+            guard status == errSecSuccess else {
+                throw FanHelperInstallError.failed("Couldn't check Quiver's own signature (\(what): \(status)).")
+            }
+        }
+        var code: SecCode?
+        try check(SecCodeCopySelf([], &code), "self")
+        guard let code else { throw FanHelperInstallError.failed("Couldn't check Quiver's own signature.") }
+        try check(SecCodeCheckValidity(code, [], nil), "validity")
+        var staticCode: SecStaticCode?
+        try check(SecCodeCopyStaticCode(code, [], &staticCode), "static code")
+        guard let staticCode else { throw FanHelperInstallError.failed("Couldn't check Quiver's own signature.") }
+        var info: CFDictionary?
+        try check(SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info),
+                  "signing information")
+        let team = (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
+        guard let team, !team.isEmpty else { return nil }
+        guard isTeamIdentifier(team) else {
+            throw FanHelperInstallError.failed("Quiver's signature names an odd team (\(team)).")
+        }
+        return team
+    }
+
     public func install(executable: String, control: URL) async throws {
         guard !control.path.contains(where: \.isNewline), !executable.contains(where: \.isNewline) else {
             throw FanHelperInstallError.failed("Quiver's paths can't hold a line break for the fan helper.")
         }
-        guard let hash = await runOffPool({ Self.sha256(of: executable) }) else {
+        let team = try self.team()
+        if let team, !Self.isTeamIdentifier(team) {
+            throw FanHelperInstallError.failed("Quiver's signature names an odd team (\(team)).")
+        }
+        guard let hash = await offMain({ Self.sha256(of: executable) }) else {
             throw FanHelperInstallError.failed("Couldn't read \(executable).")
         }
-        try await run(Self.script(Self.installCommand(executable: executable, sha256: hash, control: control),
+        try await run(Self.script(Self.installCommand(executable: executable, sha256: hash, team: team,
+                                                      control: control),
                                   prompt: "Quiver wants to install a helper that sets the fan speed. "
                                       + "You'll only be asked once."))
     }
@@ -93,7 +170,7 @@ public struct AdministratorInstaller: FanHelperInstalling {
     }
 
     private func run(_ script: String) async throws {
-        let (status, error) = await runOffPool { () -> (Int32, String) in
+        let (status, error) = await offMain { () -> (Int32, String) in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             process.arguments = ["-e", script]
@@ -340,7 +417,7 @@ public final class FanControl {
     /// every fan manual means the helper holds them.
     public func refresh() async {
         let reader = self.reader, status = self.status
-        (fans, helperStatus) = await runOffPool { (reader(), status()) }
+        (fans, helperStatus) = await offMain { (reader(), status()) }
         // The install check spawns launchctl, so it runs on the first read
         // and after a request the helper never took, not every tick.
         // Cleared before the wait, so overlapping refreshes don't each
@@ -349,7 +426,7 @@ public final class FanControl {
         if installUnchecked {
             installUnchecked = false
             let isInstalled = self.isInstalled, control = self.control
-            helperInstalled = await runOffPool { isInstalled(control) }
+            helperInstalled = await offMain { isInstalled(control) }
         }
         loaded = true
         settle()

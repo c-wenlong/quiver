@@ -38,7 +38,7 @@ struct IssuesView: View {
             // A failed refresh keeps the rows it already had — the
             // notice says why they're stale rather than replacing them.
             if let error = listError, !listed.isEmpty {
-                Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
                     .font(Theme.caption).foregroundStyle(Theme.warningText)
                     .lineLimit(2)
             }
@@ -52,8 +52,7 @@ struct IssuesView: View {
                           message: error, tone: .error,
                           actionTitle: "Try again") { Task { await model.loadClosed(client: app.client, refresh: true) } }
             } else if let error = listError, model.repos.isEmpty, model.closedRepos.isEmpty {
-                StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub", message: error, tone: .error,
-                          actionTitle: "Try again") {
+                StateCard.unreachable(error) {
                     Task {
                         if closed {
                             await model.loadClosed(client: app.client, refresh: true)
@@ -130,14 +129,14 @@ struct IssuesView: View {
     }
 
     private var filterBar: some View {
-        HStack(spacing: 6) {
+        WrappingHStack {
             ForEach(IssueFilter.allCases) { f in
                 FilterChip(title: f.title, count: count(f), selected: filter == f) {
                     filter = f
                 }
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 4)
     }
 
@@ -214,9 +213,9 @@ struct IssueGlyph: View {
 
     var body: some View {
         Image(systemName: state == "open" ? "exclamationmark.circle" : "checkmark.circle")
-            .font(.system(size: 15))
+            .font(Theme.rowIcon)
             .foregroundStyle(state == "open" ? Theme.accentFill : Theme.textMuted)
-            .frame(width: 20)
+            .iconColumn(20)
             .accessibilityLabel(state == "open" ? "Open" : "Closed")
     }
 }
@@ -235,8 +234,8 @@ struct IssueRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(issue.title ?? "Untitled")
                     .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.tail)
-                HStack(spacing: 6) {
+                    .lineLimit(1, larger: 3).truncationMode(.tail)
+                WrappingHStack(spacing: 6) {
                     Text("#\(issue.number)")
                     if let author = issue.author, !author.isEmpty, author != "-" {
                         Text("· \(author)").lineLimit(1)
@@ -249,13 +248,13 @@ struct IssueRowView: View {
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 if let badges = badges, !badges.isEmpty {
-                    HStack(spacing: 4) {
+                    WrappingHStack(spacing: 4) {
                         ForEach(Array(badges.enumerated()), id: \.offset) { Badge($0.element) }
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
         }
         .padding(.vertical, Theme.rowVertical)
         .padding(.horizontal, Theme.rowHorizontal)

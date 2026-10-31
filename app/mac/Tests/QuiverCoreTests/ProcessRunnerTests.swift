@@ -57,17 +57,12 @@ import Testing
         // flaky. The child marks when it is running, then execs into the
         // sleep so the signal reaches it. A working cancel ends it with
         // SIGTERM; a broken one lets the sleep exit 0.
-        let marker = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: marker) }
+        let temp = try TempDir()
         let runner = ProcessRunner(executable: "/bin/sh", environment: env)
-        let task = Task { try await runner.run(["-c", "touch '\(marker.path)'; exec sleep 30"]) }
+        let task = Task { try await runner.run(["-c", "touch '\(temp.path("up").path)'; exec sleep 30"]) }
 
         // Cancel only once the child is up, not after a guessed delay.
-        let deadline = Date().addingTimeInterval(20)
-        while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        let childStarted = FileManager.default.fileExists(atPath: marker.path)
+        let childStarted = await fileAppears("up", in: temp.url)
         // Cancel before the check, so a failed check leaves no child behind.
         task.cancel()
         try #require(childStarted)
@@ -81,42 +76,26 @@ import Testing
         // it. The sleep ignores SIGTERM, as a build tool mid-write may:
         // a terminate alone (which reaches the child's process group)
         // left it running, holding the pipes, after its page went away.
-        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let pidFile = dir.appending(path: "child.pid")
-        let ready = dir.appending(path: "ready")
+        let temp = try TempDir()
         let runner = ProcessRunner(executable: "/bin/sh", environment: env)
         // The sleep outlasts the runner's 120 s default bound, so neither
         // its own exit nor the bound can stand in for a working cancel.
-        let script = "(trap '' TERM; touch '\(ready.path)'; exec sleep 300) & "
-            + "echo $! > '\(pidFile.path)'; wait"
+        let script = "(trap '' TERM; touch '\(temp.path("trapped").path)'; exec sleep 300) & "
+            + writePid("$!", to: "child.pid", in: temp) + "; wait"
         let task = Task { try await runner.run(["-c", script]) }
         // Cancel only once the trap is in place and the pid is written.
-        let startDeadline = Date().addingTimeInterval(20)
-        while !FileManager.default.fileExists(atPath: ready.path)
-                || (try? String(contentsOf: pidFile, encoding: .utf8))?.hasSuffix("\n") != true,
-              Date() < startDeadline {
-            try await Task.sleep(for: .milliseconds(25))
-        }
+        let trapped = await fileAppears("trapped", in: temp.url)
+        let grandchild = await pid(in: "child.pid", of: temp)
         task.cancel()
         let cancelledAt = Date()
-        let grandchild = pid_t(
-            (try? String(contentsOf: pidFile, encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
-        try #require(FileManager.default.fileExists(atPath: ready.path))
-        try #require(grandchild != nil && grandchild! > 0)
+        try #require(trapped)
+        let pid = try #require(grandchild)
 
         _ = try? await task.value
         // The SIGKILL pass comes two seconds after the cancel; the bound
         // only catches a call left waiting on the pipes.
         #expect(Date().timeIntervalSince(cancelledAt) < 60)
-        // Dead already, but reaped on launchd's schedule: poll the pid.
-        let reapDeadline = Date().addingTimeInterval(10)
-        while kill(grandchild!, 0) == 0, Date() < reapDeadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        #expect(kill(grandchild!, 0) != 0)
+        #expect(await processEnds(pid))
     }
 
     @Test func aCancelBeforeLaunchNeverStartsTheChild() async throws {
@@ -124,8 +103,8 @@ import Testing
         // fires before the launch every time, with no timing involved. A
         // launch that ignored it would start the child, which touches the
         // marker, and run would return its exit instead of throwing.
-        let marker = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: marker) }
+        let temp = try TempDir()
+        let marker = temp.path("started")
         let runner = ProcessRunner(executable: "/bin/sh", environment: env)
         let task = Task {
             withUnsafeCurrentTask { $0?.cancel() }
@@ -140,6 +119,9 @@ import Testing
 @Suite struct ProcessRunnerTimeoutTests {
     let env = ["PATH": "/usr/bin:/bin"]
 
+    /// Runs the real wall-clock deadline. The killed child's exit used to
+    /// race the timeout report, and about one run in a hundred answered
+    /// with the SIGTERM status instead of throwing.
     @Test func aRunThatNeverFinishesIsStoppedAtTheDeadline() async throws {
         let runner = ProcessRunner(executable: "/bin/sh", environment: env)
         let started = Date()
@@ -157,13 +139,17 @@ import Testing
         // sh exits at once, but the sleep it spawned keeps the stdout
         // pipe open, so the readers would wait on EOF forever. The
         // deadline resumes the call anyway.
+        let temp = try TempDir()
         let runner = ProcessRunner(executable: "/bin/sh", environment: env)
         let started = Date()
         await #expect(throws: SweError.timedOut) {
-            try await runner.run(["-c", "sleep 30 & exit 0"], input: nil,
-                                 timeout: .milliseconds(500))
+            try await runner.run(["-c", "sleep 30 & " + writePid("$!", to: "sleep.pid", in: temp) + "; exit 0"],
+                                 input: nil, timeout: .milliseconds(500))
         }
         #expect(Date().timeIntervalSince(started) < 20)
+        // sh had exited, so nothing swept the sleep: end it here rather
+        // than leave it running for half a minute after the suite.
+        if let pid = await pid(in: "sleep.pid", of: temp), isLive(pid) { kill(pid, SIGKILL) }
     }
 
     @Test func aTimeoutStopsTheWholeCommandTree() async throws {
@@ -173,37 +159,18 @@ import Testing
         // `build-app.sh` leaving `swift build` alive. The sleep ignores
         // SIGTERM, so only the tree walk's SIGKILL pass can end it (the
         // terminate already reaches the child's process group).
-        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let pidFile = dir.appending(path: "child.pid")
-        let runner = ProcessRunner(executable: "/bin/sh", environment: env)
-        let task = Task {
-            try await runner.run(
-                ["-c", "(trap '' TERM; exec sleep 60) & echo $! > '\(pidFile.path)'; wait"],
-                // Two seconds, so the trap is in place well before the
-                // deadline's SIGTERM even on a busy runner.
-                input: nil, timeout: .seconds(2))
+        let temp = try TempDir()
+        var runner = ProcessRunner(executable: "/bin/sh", environment: env)
+        // The deadline fires once the trap is in place and the pid is
+        // written, however long a busy machine takes to get there.
+        runner.deadlineTimer = .once(["trapped", "child.pid"], appearIn: temp)
+        let script = "(trap '' TERM; touch '\(temp.path("trapped").path)'; exec sleep 60) & "
+            + writePid("$!", to: "child.pid", in: temp) + "; wait"
+        await #expect(throws: SweError.timedOut) {
+            try await runner.run(["-c", script], input: nil, timeout: .seconds(1))
         }
-        // Poll rather than guess when the grandchild exists.
-        let startDeadline = Date().addingTimeInterval(10)
-        while !FileManager.default.fileExists(atPath: pidFile.path), Date() < startDeadline {
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        let grandchild = pid_t(
-            try String(contentsOf: pidFile, encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines))
-        try #require(grandchild != nil && grandchild! > 0)
-
-        await #expect(throws: SweError.timedOut) { try await task.value }
-
-        // The orphan is dead already, but launchd reaps it on its own
-        // schedule — poll the pid instead of sleeping a guessed delay.
-        let reapDeadline = Date().addingTimeInterval(10)
-        while kill(grandchild!, 0) == 0, Date() < reapDeadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        #expect(kill(grandchild!, 0) != 0)
+        let grandchild = try #require(await pid(in: "child.pid", of: temp))
+        #expect(await processEnds(grandchild))
     }
 
     @Test func aQuickRunInsideItsDeadlineAnswers() async throws {
@@ -228,9 +195,8 @@ import Testing
 
 @Suite struct LoginShellTimeoutTests {
     @Test func aShellThatHangsFallsBackWithinTheTimeLimit() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let shell = dir.appending(path: "slow-shell")
+        let temp = try TempDir()
+        let shell = temp.path("slow-shell")
         try "#!/bin/sh\nsleep 30\n".write(to: shell, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
 
@@ -246,56 +212,48 @@ import Testing
     @Test func aShellThatIgnoresSIGTERMIsKilledAtTheTimeout() async throws {
         // An interactive zsh ignores SIGTERM. A terminate alone left the
         // shell and its startup file's child running after the fallback.
-        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let pidFile = dir.appending(path: "pids")
-        let shell = dir.appending(path: "stubborn-shell")
-        try "#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $$ $! > '\(pidFile.path)'\nwait\n"
+        let temp = try TempDir()
+        let shell = temp.path("stubborn-shell")
+        try "#!/bin/sh\ntrap '' TERM\nsleep 30 &\n\(writePid("$$ $!", to: "pids", in: temp))\nwait\n"
             .write(to: shell, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
 
-        let env = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"], timeout: .milliseconds(500))
+        // The deadline fires once the shell has started its child and
+        // said so; on a wall clock a busy machine could fire it first,
+        // and the pids were never written.
+        let env = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"],
+                                           timeout: .seconds(1), deadline: .once(["pids"], appearIn: temp))
         #expect(env["PATH"] == "/usr/bin:/bin")
-        let pids = ((try? String(contentsOf: pidFile, encoding: .utf8)) ?? "")
+        let pids = ((try? String(contentsOf: temp.path("pids"), encoding: .utf8)) ?? "")
             .split(whereSeparator: \.isWhitespace).compactMap { pid_t($0) }
         try #require(pids.count == 2)
         // The shell and the child its startup file was waiting on.
-        let reapDeadline = Date().addingTimeInterval(10)
-        while pids.contains(where: { kill($0, 0) == 0 }), Date() < reapDeadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        #expect(pids.allSatisfy { kill($0, 0) != 0 })
+        for pid in pids { #expect(await processEnds(pid)) }
     }
 
     @Test func aTimedOutShellsNestedCommandsAreKilledToo() async throws {
         // The shell waits on a helper that waits on its own command. Killing
         // the helper before listing its children let the grandchild
         // reparent to launchd and outlive the timeout.
-        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let pidFile = dir.appending(path: "grandchild.pid")
-        let shell = dir.appending(path: "nested-shell")
-        try "#!/bin/sh\ntrap '' TERM\n/bin/sh -c \"sleep 30 & echo \\$! > '\(pidFile.path)'; wait\" &\nwait\n"
+        let temp = try TempDir()
+        let shell = temp.path("nested-shell")
+        let inner = "sleep 30 & " + writePid("\\$!", to: "grandchild.pid", in: temp) + "; wait"
+        try "#!/bin/sh\ntrap '' TERM\n/bin/sh -c \"\(inner)\" &\nwait\n"
             .write(to: shell, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
 
-        _ = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"], timeout: .milliseconds(500))
-        let pid = pid_t((try? String(contentsOf: pidFile, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
-        try #require(pid != nil && pid! > 0)
-        let reapDeadline = Date().addingTimeInterval(10)
-        while kill(pid!, 0) == 0, Date() < reapDeadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        #expect(kill(pid!, 0) != 0)
+        // The deadline fires once the grandchild exists. On a wall clock
+        // a busy machine fired it before the helper had started its
+        // command, so no pid was written and the test failed.
+        _ = await LoginShell.resolve(shell: shell.path, base: ["PATH": "/usr/bin:/bin"],
+                                     timeout: .seconds(1), deadline: .once(["grandchild.pid"], appearIn: temp))
+        let pid = try #require(await pid(in: "grandchild.pid", of: temp))
+        #expect(await processEnds(pid))
     }
 
     @Test func aWorkingShellSuppliesItsPATH() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let shell = dir.appending(path: "fake-shell")
+        let temp = try TempDir()
+        let shell = temp.path("fake-shell")
         try "#!/bin/sh\necho HOME=/x\necho PATH=/custom/bin:/usr/bin\n".write(to: shell, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
 
@@ -316,10 +274,8 @@ import Testing
     }
 
     @Test func sweOverridesAreDroppedWhenTheShellAnswers() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let shell = dir.appending(path: "fake-shell")
+        let temp = try TempDir()
+        let shell = temp.path("fake-shell")
         try "#!/bin/sh\necho PATH=/fake/answered/bin\necho SWE_RATE_LIMITS_TTL=inf\n"
             .write(to: shell, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
@@ -351,7 +307,7 @@ import Testing
         var calls: Int { lock.withLock { count } }
     }
 
-    @Test func aFailedReadIsRetriedAndASuccessIsKept() async throws {
+    @Test func aFailedReadIsRetriedAndASuccessIsKept() async {
         let reads = Reads([nil, ["PATH": "/login/bin"]])
         let cache = ShellEnvironmentCache(retryAfter: .zero) {
             reads.next()
@@ -363,10 +319,7 @@ import Testing
         #expect(reads.calls == 1)
         // The next call answers at once and starts a retry behind it.
         #expect(await cache.environment() == ["PATH": "/usr/bin"])
-        let deadline = Date().addingTimeInterval(10)
-        while await cache.environment() != ["PATH": "/login/bin"], Date() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        await cache.settle()
         #expect(await cache.environment() == ["PATH": "/login/bin"])
         #expect(reads.calls == 2)
     }
@@ -395,5 +348,45 @@ import Testing
         let results = await [a, b]
         #expect(results == [["PATH": "/login/bin"], ["PATH": "/login/bin"]])
         #expect(reads.calls == 1)
+    }
+}
+
+/// A shell command that writes `value` to `name` in `temp` all at once
+/// (a temp file renamed into place), so a reader that sees the file
+/// never sees half a pid.
+private func writePid(_ value: String, to name: String, in temp: TempDir) -> String {
+    let path = temp.path(name).path
+    return "echo \(value) > '\(path).tmp' && mv '\(path).tmp' '\(path)'"
+}
+
+/// The pid written by `writePid`, once the file appears; nil if it never
+/// does or holds no pid.
+private func pid(in name: String, of temp: TempDir) async -> pid_t? {
+    guard await fileAppears(name, in: temp.url),
+          let text = try? String(contentsOf: temp.path(name), encoding: .utf8),
+          let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0
+    else { return nil }
+    return pid
+}
+
+extension DeadlineTimer {
+    /// Fires once every file in `names` exists in `temp`, whatever the
+    /// timeout says: the child writes them when the tree the test means
+    /// to stop is in place. Fires anyway after `gateTimeout`, so a
+    /// broken setup fails the test instead of hanging it.
+    static func once(_ names: [String], appearIn temp: TempDir) -> DeadlineTimer {
+        /// The work item crosses into the task; only `DispatchQueue`
+        /// ever runs it.
+        final class Fire: @unchecked Sendable {
+            let item: DispatchWorkItem
+            init(_ item: DispatchWorkItem) { self.item = item }
+        }
+        return DeadlineTimer { _, item in
+            let fire = Fire(item)
+            Task {
+                for name in names { _ = await fileAppears(name, in: temp.url) }
+                DispatchQueue.global().async(execute: fire.item)
+            }
+        }
     }
 }

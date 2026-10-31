@@ -4,7 +4,6 @@ import Testing
 
 @Suite struct ActivityFileIndexTests {
     /// A counter safe to capture from @Sendable parse closures.
-    private final class Count: @unchecked Sendable { var value = 0 }
 
     private func file(_ dir: TempDir, _ name: String, _ body: String) throws -> String {
         let url = dir.url.appending(path: name)
@@ -21,7 +20,7 @@ import Testing
     @Test func anUnchangedFileIsNotReparsed() async throws {
         let dir = try TempDir()
         let path = try file(dir, "a.jsonl", "one")
-        let parses = Count()
+        let parses = Box(0)
         let parse: @Sendable (String) throws -> [ActivityFileIndex.IndexedSession] = { p in
             parses.value += 1
             return [.init(sessionId: p, accountHome: "/h", cwd: nil, timestamps: [1])]
@@ -59,7 +58,7 @@ import Testing
         let stamp = ActivityFileIndex.stamp(URL(fileURLWithPath: path))!
         let first = ActivityFileIndex(url: url)
         _ = try await first.sessions(files: { [path: stamp] }, force: true, parse: session("s1"))
-        let parses = Count()
+        let parses = Box(0)
         let second = ActivityFileIndex(url: url)
         let sessions = try await second.sessions(files: { [path: stamp] }, force: true) { @Sendable _ in
             parses.value += 1
@@ -72,12 +71,11 @@ import Testing
     @Test func theThrottleHoldsForThirtySecondsAndForceBypassesIt() async throws {
         let dir = try TempDir()
         let path = try file(dir, "a.jsonl", "one")
-        final class Now: @unchecked Sendable { var value = Date(timeIntervalSince1970: 1_000) }
-        let now = Now()
+        let now = Box(Date(timeIntervalSince1970: 1_000))
         let index = ActivityFileIndex(url: dir.url.appending(path: "cache/s.json"),
                                       now: { now.value })
         let stamp = ActivityFileIndex.stamp(URL(fileURLWithPath: path))!
-        let parseCalls = Count()
+        let parseCalls = Box(0)
         let parse: @Sendable (String) throws -> [ActivityFileIndex.IndexedSession] = { _ in
             parseCalls.value += 1
             return [.init(sessionId: "s", accountHome: "/h", cwd: nil, timestamps: [2])]
@@ -106,13 +104,10 @@ extension ActivityFileIndexTests {
         let dir = try TempDir()
         let good = try file(dir, "good.jsonl", "one")
         let bad = try file(dir, "bad.jsonl", "corrupt")
-        var now = Date(timeIntervalSince1970: 1_000)
-        final class Now: @unchecked Sendable { var value: Date
-            init(_ d: Date) { value = d } }
-        let clock = Now(now)
+        let clock = Box(Date(timeIntervalSince1970: 1_000))
         let index = ActivityFileIndex(url: dir.url.appending(path: "cache/s.json"),
                                       now: { clock.value })
-        let attempts = Count()
+        let attempts = Box(0)
         let parse: @Sendable (String) throws -> [ActivityFileIndex.IndexedSession] = { path in
             if path.hasSuffix("bad.jsonl") {
                 attempts.value += 1
@@ -137,10 +132,8 @@ extension ActivityFileIndexTests {
 extension ActivityFileIndexTests {
     @Test func theThrottleSkipsFileDiscoveryToo() async throws {
         let dir = try TempDir()
-        final class Count: @unchecked Sendable { var value = 0 }
-        let discoveries = Count()
-        final class Now: @unchecked Sendable { var value = Date(timeIntervalSince1970: 1_000) }
-        let clock = Now()
+        let discoveries = Box(0)
+        let clock = Box(Date(timeIntervalSince1970: 1_000))
         let index = ActivityFileIndex(url: dir.url.appending(path: "cache/s.json"),
                                       now: { clock.value })
         let parse: @Sendable (String) throws -> [ActivityFileIndex.IndexedSession] = { _ in [] }

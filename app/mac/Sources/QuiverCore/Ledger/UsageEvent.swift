@@ -88,10 +88,6 @@ public struct UsageEvent: Sendable, Equatable, Hashable, Codable {
     public var totalTokens: Int {
         inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens
     }
-
-    /// Tokens of the prompt, which decide whether a request crosses a model's
-    /// long-context price threshold.
-    public var promptTokens: Int { inputTokens + cacheReadTokens + cacheWriteTokens }
 }
 
 /// A parsed event plus what the ledger needs to deduplicate it.

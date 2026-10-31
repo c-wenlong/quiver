@@ -5,9 +5,12 @@ The Mac app's Calendar page (`CalendarPage.swift`, model in
 hub machine, drawn as blocks of activity per project on a day grid.
 
 Files: `src/quiver/webapp/pages/calendar.py` (data),
+`src/quiver/webapp/pages/_activity.py` (the session-file and Cursor
+app sources),
 `src/quiver/webapp/static/pages/calendar.js` and `calendar.css` (page),
-`LedgerStore.activity_events` (the one store read it adds),
-`tests/test_webapp_calendar.py`.
+`LedgerStore.activity_events` and `activity_session_stats` (the store
+reads it adds), `tests/test_webapp_calendar.py` and
+`tests/test_webapp_calendar_sources.py`.
 
 ## What it shows
 
@@ -37,7 +40,9 @@ Files: `src/quiver/webapp/pages/calendar.py` (data),
   and time; the chevron folds them.
 - **Block details**: hovering a block shows its card (project, account,
   range, active time, responses, tokens and spend, and up to eight
-  sessions with their own range, responses, tokens and spend). A click
+  sessions with their own range, responses, tokens and spend). Blocks
+  from session files (Pi, Factory Droid, Freebuff) and the Cursor app
+  have no tokens, so their card stops at responses. A click
   opens the session's detail (the Sessions page's sheet) when the block
   has one session, else the project's session list, where each row
   opens its detail. The "+N" chip's card lists the hidden blocks with
@@ -60,7 +65,42 @@ Ported from `Activity.swift`, `ActivityBlocks.swift` and
 3. Sessions whose whole history is only helper calls (Devin's
    `summarizer` and `compactor`) or that are accidental (the Sessions
    page's rule) draw nothing.
-4. Blocks regroup by harness, account and project, the key being the
+4. Pi and Factory Droid come from their own session files instead
+   (`FileActivitySources.swift`): every `*.jsonl` under
+   `~/.pi/agent/sessions` and `~/.factory/sessions`, hidden files and
+   folders skipped. Each `message` line's ISO `timestamp` is a
+   response; the first `session` (Pi) or `session_start` (Droid) line
+   with a string `cwd` names the folder. A Pi session's id is the file's
+   full path, a Droid one's the file stem, as swe names them. The whole
+   history is read, so a block keeps its real ends, and the step 2 rule
+   makes the blocks. A session whose ledger history (under its own
+   account) is accidental draws nothing; one the ledger has never seen
+   stays. The account is `~/.pi` or `~/.factory`. The files are listed
+   again at most every 30 seconds (refresh does it at once), and parsed
+   again only when their mtime or size changes.
+
+   Freebuff (`FreebuffActivity`): every
+   `<project>/chats/<chat>/run-state.json` under
+   `~/.config/manicode/projects`, account `~/.config/manicode`. The
+   chat folder's name is the session id; each entry of
+   `sessionState.mainAgentState.messageHistory` with a numeric `sentAt`
+   (epoch milliseconds) is a response, and a history holding anything
+   but objects is no session. The folder is the agent's `cwd` or
+   `initialCwd`, else `sessionState.initialCwd`, else the file's own
+   `initialCwd`. The ledger doesn't log Freebuff, so nothing is dropped
+   as accidental.
+
+   The Cursor app (`CursorAppActivity`): each account root's
+   `User/globalStorage/state.vscdb`, opened read-only. The roots are
+   `~/Library/Application Support/Cursor` plus each extra Cursor
+   profile's `~/.quiver/accounts/cursor/<id>/desktop`, and the root is
+   the block's account ("Cursor", or "Cursor: <profile>"). Every
+   `cursorDiskKV` row keyed `bubbleId:<composer>:<bubble>` is a response
+   at its `createdAt` (an ISO time or epoch milliseconds), grouped by
+   composer; `task-` composers (subagents) are left out. A chat has no
+   folder, so its blocks read "No folder". The ledger's Cursor feed
+   events stay off the calendar, as on the Mac.
+5. Blocks regroup by harness, account and project, the key being the
    repository root, so worktrees of one repository merge and same-named
    folders of different ones stay apart, and merge while the next
    starts within the gap. Every Grok Bot session is the one "Grok Bot"
@@ -118,15 +158,18 @@ listing gets a stand-in row from the ledger, as the app's
 
 ## How it differs from the Mac app
 
-- **Sources**: only the ledger's harnesses on the hub machine. The Mac
-  app also reads Pi, Factory Droid and Freebuff session files, the
-  Cursor editor's own state and Devin cloud sessions, none of which the
-  web ledger reads yet; a satellite's activity is not shown either.
+- **Sources**: the ledger's harnesses, Pi, Factory Droid and Freebuff
+  session files and the Cursor app's database, on the hub machine. Devin
+  cloud sessions stay Mac-only: the Mac app syncs them from Devin's API
+  with the token in its Settings into its own store, which the hub
+  doesn't share. A satellite's activity is not shown either.
+  The hub keeps its file index in memory; the Mac's copy in
+  `~/.quiver/cache/calendar` is its own.
 - **Grok Bot titles** come from the names the Mac app remembered in
   `~/.quiver/data/grok-bot-names.json` (read only); the hub has no Bot
   roster, so a deleted Bot reads as its short id, not "Deleted Bot".
 - **Tokens and spend** are added to the block card and the project
-  sheet; the app shows time and responses only.
+  sheet for ledger harnesses; the app shows time and responses only.
 - **No swiping**: the grid steps a whole range with the chevrons or
   arrows instead of sliding a day at a time with buffer columns.
 - **Side panel**: collapsing hides it (the toggle or S brings it back);

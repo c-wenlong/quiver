@@ -220,9 +220,9 @@ class TestRoute(HubBase):
         self.assertIn("bad json", data.decode())
 
     def test_page_script_and_styles_are_bundled(self):
-        status, body = self.srv.request("GET", "/app/pages.js")
+        status, body = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
-        self.assertIn(b".pl-market", self.srv.request("GET", "/app/pages.css")[1])
+        self.assertIn(b".pl-market", self.srv.request("GET", "/pages.css")[1])
 
 
 # ---------------------------------------------------------------- Fixes

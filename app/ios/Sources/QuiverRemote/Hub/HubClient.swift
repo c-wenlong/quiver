@@ -25,9 +25,18 @@ struct HubError: LocalizedError, Equatable {
     var errorDescription: String? { message }
     var isUnauthorized: Bool { status == 401 }
 
+    static let networkMessage = "Can't reach the hub. Check that Tailscale is on."
+
     static func network(_ error: Error) -> HubError {
-        HubError(status: 0, code: "network",
-                 message: "Can't reach the hub. Check that Tailscale is on.")
+        HubError(status: 0, code: "network", message: networkMessage)
+    }
+
+    /// The message under a "Can't reach the hub" title. The network
+    /// error's first sentence is that title, so only the next step stays
+    /// (the web app's "Check the connection, then try again", worded for
+    /// the tailnet). Any other failure keeps its own words.
+    static func detail(underUnreachableTitle message: String) -> String {
+        message == networkMessage ? "Check that Tailscale is on, then try again." : message
     }
 }
 
@@ -36,8 +45,11 @@ struct HubError: LocalizedError, Equatable {
 struct HubClient: Sendable {
     let baseURL: URL
     let credential: String?
+    /// The session REST calls go through; tests hand in one whose
+    /// protocol is stubbed.
+    var session: URLSession = HubClient.requestSession
 
-    private static let session: URLSession = {
+    static let requestSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.waitsForConnectivity = false
@@ -102,8 +114,15 @@ struct HubClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await Self.session.data(for: req)
+            (data, response) = try await session.data(for: req)
         } catch {
+            // URLSession reports a cancelled task as URLError(.cancelled):
+            // leaving a page is not a hub that can't be reached, so callers
+            // get CancellationError and ignore it.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled
+                || Task.isCancelled {
+                throw CancellationError()
+            }
             throw HubError.network(error)
         }
         let http = response as? HTTPURLResponse
@@ -156,6 +175,15 @@ struct HubClient: Sendable {
         case "bad_key": "The hub didn't accept this phone's SSH key. Update the hub."
         case "unknown_device": "The hub doesn't know this device any more."
         case "bad_dismiss": "The hub couldn't clear that row. Update the app or the hub."
+        case "too_large": "That file is over the hub's 20 MB limit."
+        case "bad_attachment":
+            // A send naming a ref the hub no longer has (swept after a
+            // week, or the session ended), else the stage's own reason.
+            if fallback?.hasPrefix("unknown attachment") == true {
+                "The hub no longer has an attached file. Attach it again."
+            } else {
+                fallback.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "The hub refused that file."
+            }
         default: fallback ?? "The hub answered with an error (\(status))."
         }
     }
@@ -207,6 +235,32 @@ struct HubClient: Sendable {
                                       body: body))
     }
 
+    /// `POST /v1/app/repositories/merge {repo, number, method, auto}`:
+    /// the web app's merge, which the hub serves to any paired device.
+    /// The hub reads the PR again first and refuses (409) a merge the
+    /// detail page wouldn't offer any more; GitHub's own refusals come
+    /// back as a 502 in its words.
+    func mergePull(repo: String, number: Int, method: MergeMethod, auto: Bool) async throws {
+        _ = try await raw(mergeRequest(repo: repo, number: number, method: method, auto: auto))
+    }
+
+    func mergeRequest(repo: String, number: Int, method: MergeMethod, auto: Bool) -> URLRequest {
+        request("POST", "/v1/app/repositories/merge",
+                body: ["repo": repo, "number": number, "method": method.rawValue, "auto": auto])
+    }
+
+    /// `POST /v1/app/repositories/rerun {repo, run, failed}`: re-run a
+    /// workflow run's failed jobs, or all of them. GitHub decides what
+    /// can re-run; its refusal comes back as a 502 in its words.
+    func rerunRun(repo: String, run: Int, failed: Bool) async throws {
+        _ = try await raw(rerunRequest(repo: repo, run: run, failed: failed))
+    }
+
+    func rerunRequest(repo: String, run: Int, failed: Bool) -> URLRequest {
+        request("POST", "/v1/app/repositories/rerun",
+                body: ["repo": repo, "run": run, "failed": failed])
+    }
+
     /// "o/r" as the `/v1/pulls/<owner>/<repo>` path pair, each part
     /// percent-encoded on its own.
     static func repoPath(_ repo: String) -> String {
@@ -233,16 +287,37 @@ struct HubClient: Sendable {
                                query: refresh ? ["refresh": "1"] : [:]))
     }
 
-    /// `POST /v1/issues/resolve {repo, number, harness, prompt?, model?}`
+    /// `POST /v1/issues/resolve {repo, number, harness, prompt?, context?, model?}`
     /// → a launch on branch `quiver/issue-<n>` in the issue's worktree;
     /// poll `launch(_:)` for the session key, as for `startSession`. An
-    /// empty `prompt` lets the hub build its resolve brief; a nil `model`
-    /// sends no pick.
-    func resolveIssue(repo: String, number: Int, harness: String, prompt: String, model: String? = nil) async throws -> LaunchStatus {
+    /// empty `prompt` lets the hub build its resolve brief; `context`
+    /// joins it as a "Context for this run" block; a nil `model` sends
+    /// no pick.
+    func resolveIssue(repo: String, number: Int, harness: String, prompt: String,
+                      context: String = "", model: String? = nil) async throws -> LaunchStatus {
+        try await send(resolveIssueRequest(repo: repo, number: number, harness: harness,
+                                           prompt: prompt, context: context, model: model))
+    }
+
+    func resolveIssueRequest(repo: String, number: Int, harness: String, prompt: String,
+                             context: String = "", model: String? = nil) -> URLRequest {
         var body: [String: Any] = ["repo": repo, "number": number, "harness": harness]
         if !prompt.isEmpty { body["prompt"] = prompt }
+        if !context.isEmpty { body["context"] = context }
         if let model, !model.isEmpty { body["model"] = model }
-        return try await send(request("POST", "/v1/issues/resolve", body: body))
+        return request("POST", "/v1/issues/resolve", body: body)
+    }
+
+    /// `POST /v1/issues/comment {repo, number, body}`: post a comment on
+    /// the issue through the hub's own `gh` login, as the Mac posts
+    /// through `gh` on the Mac. The hub trims the text and refuses a
+    /// blank one; GitHub's own refusals come back as a 502 in its words.
+    func commentOnIssue(repo: String, number: Int, body: String) async throws -> IssueCommentReply {
+        try await send(commentRequest(repo: repo, number: number, body: body))
+    }
+
+    func commentRequest(repo: String, number: Int, body: String) -> URLRequest {
+        request("POST", "/v1/issues/comment", body: ["repo": repo, "number": number, "body": body])
     }
 
     // MARK: Tasks
@@ -295,9 +370,48 @@ struct HubClient: Sendable {
         return try await send(request("GET", "/v1/sessions/\(Self.encodeKey(key))/messages", query: query))
     }
 
-    func sendMessage(_ key: String, text: String, mode: String, clientId: String) async throws -> SendAccepted {
-        try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/message",
-                               body: ["text": text, "mode": mode, "client_id": clientId]))
+    /// `attachments` are refs `uploadAttachment` returned; the hub turns
+    /// each into the staged file's path on the session's machine.
+    func sendMessage(_ key: String, text: String, mode: String, clientId: String,
+                     attachments: [String] = []) async throws -> SendAccepted {
+        var body: [String: Any] = ["text": text, "mode": mode, "client_id": clientId]
+        if !attachments.isEmpty { body["attachments"] = attachments }
+        return try await send(request("POST", "/v1/sessions/\(Self.encodeKey(key))/message", body: body))
+    }
+
+    /// Uploads with a longer idle timeout than the 15 s of plain calls: a
+    /// 20 MB photo over a slow tailnet hop can pause longer than that.
+    private static let uploadSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config)
+    }()
+
+    /// `POST /v1/sessions/{key}/attachments?name=`: stages one file on the
+    /// session's machine (a satellite's pulls it from the hub) and returns
+    /// its ref for the next message. The body is the raw bytes; `progress`
+    /// gets the fraction sent, off the main thread.
+    func uploadAttachment(_ key: String, name: String, data: Data,
+                          progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> StagedAttachment {
+        var req = request("POST", "/v1/sessions/\(Self.encodeKey(key))/attachments", query: ["name": name])
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let body: Data
+        let response: URLResponse
+        do {
+            (body, response) = try await Self.uploadSession.upload(for: req, from: data,
+                                                                   delegate: UploadProgress(report: progress))
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw HubError.network(error)
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else { throw Self.error(status: status, body: body) }
+        do {
+            return try Hub.decoder.decode(StagedAttachment.self, from: body)
+        } catch {
+            throw HubError(status: status, code: "bad_response", message: "The hub sent something this app doesn't understand. Update the app or the hub.")
+        }
     }
 
     /// Queue-mode sends still waiting for the session to go idle, oldest first.
@@ -469,5 +583,18 @@ struct HubClient: Sendable {
         var body: [String: Any] = ["device_id": id]
         if confirmThisDevice { body["confirm_this_device"] = true }
         _ = try await raw(request("POST", "/v1/devices/revoke", body: body))
+    }
+}
+
+/// Reports an upload's progress as a fraction of the bytes to send.
+private final class UploadProgress: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let report: @Sendable (Double) -> Void
+
+    init(report: @escaping @Sendable (Double) -> Void) { self.report = report }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                    totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        guard totalBytesExpectedToSend > 0 else { return }
+        report(Double(totalBytesSent) / Double(totalBytesExpectedToSend))
     }
 }

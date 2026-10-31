@@ -361,35 +361,41 @@ import Testing
     func clearWaitsForACallInsideTheLock() async throws {
         let temp = try TempDir()
         let store = try store(temp)
-        let holding = OSAllocatedUnfairLock(initialState: false)
-        let release = OSAllocatedUnfairLock(initialState: false)
-        let cleared = OSAllocatedUnfairLock(initialState: false)
+        let holding = CountGate()
+        let clearing = CountGate()
+        let cleared = CountGate()
+        // Set on the clearer's own thread the moment clear() returns, so
+        // the check below cannot miss a clear that already finished.
+        let finished = OSAllocatedUnfairLock(initialState: false)
+        // The holder blocks its own thread, never a pool worker.
+        let release = DispatchSemaphore(value: 0)
+        // A failed wait below must not leave the holder blocked for good.
+        defer { release.signal() }
 
         Thread.detachNewThread {
             store.storeLock.withLock {
-                holding.withLock { $0 = true }
-                while !release.withLock({ $0 }) {
-                    Thread.sleep(forTimeInterval: 0.005)
-                }
+                Task { await holding.bump() }
+                release.wait()
             }
         }
-        while !holding.withLock({ $0 }) {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        try #require(await holding.reach(1))
 
         Thread.detachNewThread {
+            Task { await clearing.bump() }
             store.clear()
-            cleared.withLock { $0 = true }
+            finished.withLock { $0 = true }
+            Task { await cleared.bump() }
         }
-        // Long enough for the clearer to be scheduled many times over.
+        try #require(await clearing.reach(1))
+        // The one sleep left on purpose: nothing marks the clearer as
+        // parked inside `lock()`, so this window is what gives a clear()
+        // that skips the lock time to finish. A correct one can never
+        // finish while the lock is held, so the window cannot fail it.
         try await Task.sleep(for: .milliseconds(100))
-        #expect(!cleared.withLock { $0 }, "clear() ran while another call held the lock")
+        #expect(!finished.withLock { $0 }, "clear() ran while another call held the lock")
 
-        release.withLock { $0 = true }
-        for _ in 0..<1_000 where !cleared.withLock({ $0 }) {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        try #require(cleared.withLock { $0 })
+        release.signal()
+        try #require(await cleared.reach(1))
         #expect(throws: (any Error).self) { try store.files() }
     }
 }

@@ -9,6 +9,11 @@ private final class SetupRunner: CommandRunning, @unchecked Sendable {
     var applied: String
     /// swe exits 1 when linking stopped, with the JSON still on stdout.
     var appliedStatus: Int32 = 0
+    /// `swe setup --hub=…`: the preview it answers with, or the refusal it
+    /// exits 1 with on stderr.
+    var cloned: String = "{}"
+    var clonedStatus: Int32 = 0
+    var cloneRefusal: String?
     private(set) var calls: [[String]] = []
 
     init(preview: String, applied: String = "{}") {
@@ -18,6 +23,13 @@ private final class SetupRunner: CommandRunning, @unchecked Sendable {
 
     func run(_ arguments: [String]) async throws -> CommandResult {
         calls.append(arguments)
+        if arguments.contains(where: { $0.hasPrefix("--hub=") }) {
+            if let cloneRefusal {
+                return CommandResult(status: 1, stdout: Data(), stderr: "  \(cloneRefusal)\n")
+            }
+            return CommandResult(status: clonedStatus, stdout: Data(#"{"schema": 1, "data": \#(cloned)}"#.utf8),
+                                 stderr: clonedStatus == 0 ? "" : "  setup failed: can't read .linkignore\n")
+        }
         let apply = arguments.contains("--apply")
         let body = apply ? applied : preview
         return CommandResult(status: apply ? appliedStatus : 0, stdout: Data(#"{"schema": 1, "data": \#(body)}"#.utf8), stderr: "")
@@ -35,6 +47,25 @@ private let previewJSON = """
              "result": "would-conflict", "detail": "real file, needs --force"}],
    "adopt_candidates": [{"harness": "claude", "path": "/h/.claude/CLAUDE.md"},
                         {"harness": "codex", "path": "/h/.codex/AGENTS.md"}]}}
+"""
+
+/// The preview on a Mac whose ~/.quiver has no hub yet.
+private let hubPreviewJSON = previewJSON.replacingOccurrences(
+    of: #""skills": [],"#,
+    with: #""skills": [], "hub": {"can_clone": true, "demo_url": null, "cloned": null},"#)
+
+/// What `swe setup --hub=… --json` answers once it cloned: the hub's own
+/// AGENTS.md is there, so nothing is offered to adopt.
+private let clonedPreviewJSON = """
+{"harness": [], "mcp": [], "skills": [],
+ "instructions": {
+   "agents_file": "/h/.quiver/AGENTS.md", "agents_file_exists": true,
+   "agents_file_customised": true, "rows": [], "adopt_candidates": []},
+ "hub": {"can_clone": false, "demo_url": null,
+         "cloned": {"url": "https://github.com/me/hub.git", "path": "/h/.quiver",
+                    "marketplaces": [{"harness": "claude", "marketplace": "mine", "error": null},
+                                     {"harness": "codex", "marketplace": "mine",
+                                      "error": "codex is not on PATH"}]}}}
 """
 
 private func applied(leftAlone: Bool) -> String {
@@ -201,6 +232,103 @@ private func applied(leftAlone: Bool) -> String {
         await setup.next(order: [])
         #expect(setup.step == .links)
         #expect(setup.applyError == "Fix ~/.quiver/.linkignore")
+    }
+
+    @Test func theHubFieldShowsOnlyWhileQuiverHasNoHub() async {
+        let fresh = model(SetupRunner(preview: hubPreviewJSON))
+        await fresh.load()
+        #expect(fresh.offersHub)
+        guard case .loaded(let preview) = fresh.preview else { return }
+        #expect(preview.hub?.demoUrl == nil)
+
+        // An swe from before --hub sends no hub key: no field.
+        let old = model(SetupRunner(preview: previewJSON))
+        await old.load()
+        #expect(!old.offersHub)
+
+        let hubThere = model(SetupRunner(preview: hubPreviewJSON.replacingOccurrences(
+            of: #""can_clone": true"#, with: #""can_clone": false"#)))
+        await hubThere.load()
+        #expect(!hubThere.offersHub)
+    }
+
+    @Test func cloneRunsSweSetupHubAndShowsTheClonedHub() async {
+        let runner = SetupRunner(preview: hubPreviewJSON, applied: applied(leftAlone: false))
+        runner.cloned = clonedPreviewJSON
+        let setup = model(runner)
+        await setup.load()
+        #expect(setup.start == .file("/h/.claude/CLAUDE.md"))
+        setup.hubURL = "  https://me:tok@github.com/me/hub.git \n"
+        await setup.cloneHub()
+
+        #expect(runner.calls.last == ["setup", "--hub=https://me:tok@github.com/me/hub.git",
+                                      "--json", "--non-interactive"])
+        #expect(setup.hubError == nil)
+        #expect(!setup.cloning)
+        #expect(setup.hubURL.isEmpty)
+        #expect(setup.cloned?.url == "https://github.com/me/hub.git")
+        #expect(setup.cloned?.marketplaces.compactMap(\.error) == ["codex is not on PATH"])
+        #expect(!setup.offersHub)
+        // The hub brought its own AGENTS.md: nothing to adopt, so the apply
+        // that follows sends no --adopt.
+        #expect(setup.start == .seed)
+        #expect(setup.untouchedCandidates.isEmpty)
+        await setup.next(order: [])
+        await setup.next(order: [])
+        #expect(runner.calls.last == ["setup", "--apply", "--json", "--starred="])
+    }
+
+    @Test func aRefusedCloneSaysWhyAndKeepsTheURL() async {
+        let runner = SetupRunner(preview: hubPreviewJSON)
+        runner.cloneRefusal = "can't reach https://github.com/me/nope.git: repository not found"
+        let setup = model(runner)
+        await setup.load()
+        setup.hubURL = "https://github.com/me/nope.git"
+        await setup.cloneHub()
+        #expect(setup.hubError == "can't reach https://github.com/me/nope.git: repository not found")
+        #expect(setup.hubURL == "https://github.com/me/nope.git")
+        #expect(setup.offersHub, "the field stays to try again")
+        #expect(setup.cloned == nil)
+        // A failed run reads the machine again, so the sheet shows what is on disk.
+        #expect(runner.calls.last == ["setup", "--json", "--non-interactive"])
+    }
+
+    @Test func aRefusedCloneKeepsTheStartYouPicked() async {
+        let runner = SetupRunner(preview: hubPreviewJSON)
+        runner.cloneRefusal = "can't reach x"
+        let setup = model(runner)
+        await setup.load()
+        setup.start = .seed
+        setup.hubURL = "x"
+        await setup.cloneHub()
+        #expect(setup.start == .seed, "the reload must not switch you back to adopting CLAUDE.md")
+
+        setup.start = .file("/h/.codex/AGENTS.md")
+        await setup.cloneHub()
+        #expect(setup.start == .file("/h/.codex/AGENTS.md"))
+    }
+
+    @Test func aCloneWhosePreviewFailedStillShowsTheClone() async {
+        // swe cloned, then its preview stopped (exit 1, document on stdout).
+        let runner = SetupRunner(preview: hubPreviewJSON)
+        runner.cloned = clonedPreviewJSON
+        runner.clonedStatus = 1
+        let setup = model(runner)
+        await setup.load()
+        setup.hubURL = "https://github.com/me/hub.git"
+        await setup.cloneHub()
+        #expect(setup.hubError == nil)
+        #expect(setup.cloned?.url == "https://github.com/me/hub.git")
+        #expect(!setup.offersHub, "no second Clone over the hub it just made")
+    }
+
+    @Test func aBlankURLRunsNothing() async {
+        let runner = SetupRunner(preview: hubPreviewJSON)
+        let setup = model(runner)
+        await setup.load()
+        setup.hubURL = "   "
+        await setup.cloneHub()
+        #expect(runner.calls.allSatisfy { !$0.contains(where: { $0.hasPrefix("--hub") }) })
     }
 
     @Test func anApplyStepErrorIsShownAndHoldsTheStep() async {

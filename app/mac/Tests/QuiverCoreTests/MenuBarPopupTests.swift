@@ -9,9 +9,7 @@ private func reading(_ harness: String, _ source: String, _ window: String) -> L
 
 @Suite struct MenuBarPopupTests {
     private func defaults() -> UserDefaults {
-        let name = "MenuBarPopupTests.\(UUID().uuidString)"
-        let suite = UserDefaults(suiteName: name)!
-        suite.removePersistentDomain(forName: name)
+        let suite = TestDefaults("MenuBarPopupTests")
         return suite
     }
 

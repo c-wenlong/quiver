@@ -22,7 +22,7 @@ struct ChatView: View {
             ToolbarItem(placement: .principal) {
                 let row = app.session(key)
                 VStack(spacing: 1) {
-                    Text(row?.displayTitle ?? "Session").font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                    Text(row?.displayTitle ?? "Session").font(Theme.barTitle).lineLimit(1)
                     HStack(spacing: 4) {
                         HarnessIcon(harness: row?.harness, name: row?.harnessName ?? "", size: 11)
                         Text(SessionGrouping.shortDir(row?.cwd))
@@ -37,7 +37,7 @@ struct ChatView: View {
                                 .accessibilityLabel("Model \(current)")
                         }
                     }
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    .font(Theme.small).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 .frame(maxWidth: 240)
             }
@@ -370,12 +370,12 @@ private struct ToolRunCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "wrench.and.screwdriver").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 16)
+                    Image(systemName: "wrench.and.screwdriver").font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
+                        .iconColumn(16)
                     Text("Used \(items.count) tools").font(Theme.control).foregroundStyle(Theme.textPrimary)
                     Text(names).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold))
+                    Image(systemName: open ? "chevron.up" : "chevron.down").font(Theme.disclosure)
                         .foregroundStyle(Theme.textMuted)
                 }
                 .padding(.horizontal, 12).frame(minHeight: 40)
@@ -414,7 +414,10 @@ private struct ChatItemView: View {
     var body: some View {
         switch item.kind {
         case .user(let text, let send):
-            UserBubble(text: text, send: send) { Task { await model.retry(item) } }
+            // An echo the hub wrote with files starts with their "@path"s.
+            let echo = AttachmentRules.splitEcho(text)
+            UserBubble(text: echo.text, files: echo.names.isEmpty ? model.fileNames(for: item.id) : echo.names,
+                       send: send) { Task { await model.retry(item) } }
         case .assistant(let text):
             AssistantReply(text: text)
         case .thinking(let text):
@@ -422,7 +425,9 @@ private struct ChatItemView: View {
         case .tool(let call, let result):
             ToolCard(call: call, result: result, pages: model.pageTargets(for: call)) { model.previewing = $0 }
         case .approval(let rid, let prompt, let state):
-            ApprovalCard(prompt: prompt, state: state) { decision in Task { await model.decide(rid, decision: decision) } }
+            ApprovalCard(prompt: prompt, state: state, options: model.approvalOptions[rid] ?? []) { decision in
+                Task { await model.decide(rid, decision: decision) }
+            }
         case .compaction:
             HStack(spacing: 8) {
                 Rectangle().fill(Theme.border).frame(height: 1)
@@ -454,7 +459,7 @@ struct WorkingIndicator: View {
                 WorkingVerb()
             }
             .font(Theme.caption)
-            .padding(.leading, 9).padding(.trailing, 12).frame(height: 30)
+            .padding(.leading, 9).padding(.trailing, 12).scaledMinHeight(30)
             .background(Theme.card, in: .capsule)
             .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
             WorkingClock(since: since)
@@ -467,25 +472,31 @@ struct WorkingIndicator: View {
 
 private struct UserBubble: View {
     let text: String
+    var files: [String] = []
     let send: SendState?
     let retry: () -> Void
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
+            if !files.isEmpty { SentFiles(names: files).opacity(send == .sending ? 0.6 : 1) }
             Text(text)
                 .font(Theme.body).foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Theme.selected, in: .rect(cornerRadius: 16))
+                // The Mac app's user bubble: `subtle` with a hairline. In
+                // light mode `selected` is the page's own colour, so a
+                // fill alone left the message with no bubble at all.
+                .background(Theme.subtle, in: .rect(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.border, lineWidth: 1))
                 .opacity(send == .sending ? 0.6 : 1)
             switch send {
-            case .sending?: Text("Sending").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-            case .queued(let note)?: Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-            case .delivered(let note?)?: Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            case .sending?: Text("Sending").font(Theme.small).foregroundStyle(Theme.textMuted)
+            case .queued(let note)?: Text(note).font(Theme.small).foregroundStyle(Theme.textMuted)
+            case .delivered(let note?)?: Text(note).font(Theme.small).foregroundStyle(Theme.textMuted)
             case .delivered(nil)?: EmptyView()
             case .failed(let note)?:
                 Button(action: retry) {
-                    Label("\(note). Tap to retry", systemImage: "arrow.clockwise").font(.system(size: 11))
+                    Label("\(note). Tap to retry", systemImage: "arrow.clockwise").font(Theme.small)
                 }
                 .foregroundStyle(Theme.dangerText)
             case nil: EmptyView()
@@ -537,7 +548,7 @@ private struct BlockView: View {
         switch block {
         case .heading(let level, let text):
             Text(RichText.inline(text))
-                .font(.system(size: level == 1 ? 20 : level == 2 ? 17 : 15, weight: .semibold))
+                .font(Theme.font(size: level == 1 ? 20 : level == 2 ? 17 : 15, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, level <= 2 ? 6 : 2)
@@ -547,7 +558,7 @@ private struct BlockView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if let (box, rest) = Markdown.taskBox(text) {
                     Image(systemName: box == .done ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 14))
+                        .font(Theme.font(size: 14))
                         .foregroundStyle(box == .done ? Theme.accent : Theme.textSecondary)
                         .frame(minWidth: 14, alignment: .trailing)
                         .accessibilityLabel(box == .done ? "Done" : "To do")
@@ -674,7 +685,7 @@ private struct NoteChip: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 14)).foregroundStyle(Theme.textSecondary).frame(width: 18)
+            Image(systemName: icon).font(Theme.font(size: 14)).foregroundStyle(Theme.textSecondary).iconColumn(18)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(2)
                 Text(detail).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1).truncationMode(.middle)
@@ -714,9 +725,9 @@ private struct ThinkingCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "brain").font(.system(size: 12))
+                    Image(systemName: "brain").font(Theme.font(size: 12))
                     Text("Thought").font(Theme.control)
-                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold))
+                    Image(systemName: open ? "chevron.up" : "chevron.down").font(Theme.disclosure)
                 }
                 .foregroundStyle(Theme.textSecondary)
             }
@@ -743,8 +754,8 @@ private struct ToolCard: View {
             HStack(spacing: 0) {
                 Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: Self.icon(call.name)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                            .frame(width: 16)
+                        Image(systemName: Self.icon(call.name)).font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
+                            .iconColumn(16)
                         Text(ToolArgs.summary(call))
                             .font(Theme.mono).foregroundStyle(Theme.textPrimary)
                             .lineLimit(1).truncationMode(.middle)
@@ -753,7 +764,7 @@ private struct ToolCard: View {
                             Text("+\(diff.added)").font(Theme.mono).foregroundStyle(Theme.success)
                             Text("−\(diff.removed)").font(Theme.mono).foregroundStyle(Theme.dangerText)
                         }
-                        Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold))
+                        Image(systemName: open ? "chevron.up" : "chevron.down").font(Theme.disclosure)
                             .foregroundStyle(Theme.textMuted)
                     }
                     .padding(.leading, 12).padding(.trailing, pages.isEmpty ? 12 : 8).frame(minHeight: 40)
@@ -804,7 +815,7 @@ private struct ToolCard: View {
     private var previewLabel: some View {
         Label("Preview", systemImage: "eye").labelStyle(.titleAndIcon)
             .font(Theme.control).foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, 10).frame(height: Theme.controlHeight - 4)
+            .padding(.horizontal, 10).scaledMinHeight(Theme.controlHeight - 4)
             .background(Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.borderStrong, lineWidth: 1))
             .contentShape(.rect)
@@ -835,7 +846,7 @@ struct DiffView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 HStack(alignment: .top, spacing: 6) {
-                    Text(sign(line.kind)).foregroundStyle(color(line.kind)).frame(width: 8)
+                    Text(sign(line.kind)).foregroundStyle(color(line.kind)).iconColumn(8)
                     Text(line.text.isEmpty ? " " : line.text)
                         .foregroundStyle(line.kind == .meta ? Theme.textMuted : Theme.textLabel)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -862,6 +873,8 @@ struct DiffView: View {
 private struct ApprovalCard: View {
     let prompt: String
     let state: ApprovalState
+    /// The pane's menu rows; empty keeps Allow / Always / Deny.
+    let options: [ApprovalOption]
     let decide: (String) -> Void
 
     var body: some View {
@@ -876,7 +889,23 @@ private struct ApprovalCard: View {
             Text(verbatim: prompt).font(Theme.monoBody).foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            if isOpen {
+            if isOpen && !options.isEmpty {
+                // The pane's own rows, so an answer the three buttons
+                // can't name (always in this project, edit, describe)
+                // is still reachable. Its number is the decision.
+                VStack(spacing: 6) {
+                    ForEach(options) { option in
+                        Button { decide(option.n) } label: {
+                            Text(verbatim: ApprovalMenu.buttonTitle(option))
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 6)
+                        }
+                        .buttonStyle(MenuRowButtonStyle())
+                    }
+                }
+                .disabled(state == .submitting)
+            } else if isOpen {
                 HStack(spacing: 8) {
                     Button("Allow") { decide("allow") }.primaryButton(compact: true).frame(maxWidth: .infinity)
                     Button("Always") { decide("always") }.secondaryButton(compact: true).frame(maxWidth: .infinity)
@@ -899,14 +928,25 @@ private struct ApprovalCard: View {
         switch state { case .pending, .submitting, .failed: true; default: false }
     }
 
-    private var title: String {
-        switch state {
-        case .pending, .failed: "Approval needed"
-        case .submitting: "Sending"
-        case .queued: "Queued, waiting for the machine"
-        case .resolved(let d?): d == "deny" ? "Denied" : d == "always" ? "Always allowed" : "Allowed"
-        case .resolved(nil): "Answered"
-        }
+    private var title: String { ApprovalMenu.title(state, options: options) }
+}
+
+/// A menu row answer: the secondary button's hairline and fill, but
+/// left-aligned and as tall as a wrapped label needs.
+private struct MenuRowButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.control)
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(minHeight: Theme.controlHeight)
+            .background(configuration.isPressed ? Theme.selected : Theme.card,
+                        in: .rect(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .strokeBorder(Theme.borderStrong, lineWidth: 1))
+            .opacity(enabled ? 1 : 0.45)
     }
 }
 
@@ -915,17 +955,32 @@ private struct ApprovalCard: View {
 private struct AttachCard: View {
     let model: ChatModel
     let row: SessionRow?
+    @Environment(\.dynamicTypeSize) private var size
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                Image(systemName: "eye").font(.system(size: 16)).foregroundStyle(Theme.textSecondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Watching only").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            // At accessibility sizes the button goes under the words (beside
+            // them it left the words a column a few letters wide), and the
+            // bar sheds what the button already says, so the transcript
+            // keeps most of the screen.
+            let large = size.isAccessibilitySize
+            let layout = large
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                : AnyLayout(HStackLayout(spacing: 12))
+            layout {
+                HStack(spacing: 12) {
+                    if !large {
+                        Image(systemName: "eye").font(Theme.font(size: 16)).foregroundStyle(Theme.textSecondary)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Watching only").font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                        if !(large && row?.canAttach == true && !model.attachQueued) {
+                            Text(subtitle).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
                 if model.attachQueued {
                     ProgressView().controlSize(.small)
                 } else if row?.canAttach == true {
@@ -980,18 +1035,22 @@ struct SendOrStopButton: View {
                     RoundedRectangle(cornerRadius: 3).fill(.white).frame(width: 13, height: 13)
                         .transition(swap)
                 } else {
-                    Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold))
+                    Image(systemName: "arrow.up").font(Theme.font(size: 16, weight: .semibold))
                         .foregroundStyle(Theme.primaryForeground)
                         .transition(swap)
                 }
             }
             .frame(width: 40, height: 40)
+            // The circle is a fixed 40pt, so its arrow stops growing at
+            // xxxLarge; a long press shows it large instead.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .opacity(action == .disabled ? 0.4 : 1)
             .animation(.easeOut(duration: 0.15), value: action)
         }
         .buttonStyle(.plain)
         .disabled(action == .disabled)
         .accessibilityLabel(action == .stop ? "Stop the agent" : "Send")
+        .accessibilityShowsLargeContentViewer()
     }
 }
 
@@ -1020,6 +1079,7 @@ private struct Composer: View {
         let editing = model.editingId != nil
         let mentions = model.mentions
         let commands = model.commands
+        let files = model.attachments
         VStack(spacing: 8) {
             if !tray.isEmpty {
                 QueuedTray(sends: tray, note: model.trayNote, editingId: model.editingId,
@@ -1039,7 +1099,16 @@ private struct Composer: View {
                 MentionMenu(entries: mentions.entries, answered: mentions.answered, error: mentions.error) { pick($0) }
                     .transition(arrival)
             }
+            // An edit changes a queued message's text only; the files
+            // picked for the next message wait, as the draft does.
+            if !editing, !files.isEmpty || files.notice != nil {
+                AttachmentChips(attachments: files,
+                                needsText: model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .transition(arrival)
+            }
             HStack(alignment: .bottom, spacing: 8) {
+                AttachButton(attachments: files)
+                    .disabled(editing)
                 PromptField(placeholder: editing ? "Edit the queued message" : "Message the session",
                             text: $model.draft, cursor: $cursor, moveCaret: $moveCaret)
                     .font(Theme.body)
@@ -1049,7 +1118,8 @@ private struct Composer: View {
                     .background(Theme.field, in: .rect(cornerRadius: 22))
                     .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Theme.border, lineWidth: 1))
                 SendOrStopButton(action: ChatModel.composerAction(draft: model.draft, agentWorking: model.canInterrupt,
-                                                                  editing: editing),
+                                                                  editing: editing, files: files.items.count,
+                                                                  filesBusy: files.blocksSend),
                                  onSend: { Task { await model.send() } },
                                  onStop: { Task { await model.interrupt() } })
                     .disabled(model.savingEdit)
@@ -1059,6 +1129,7 @@ private struct Composer: View {
         .animation(.easeOut(duration: 0.2), value: editing)
         .animation(.easeOut(duration: 0.15), value: mentions.isOpen)
         .animation(.easeOut(duration: 0.15), value: commands.isOpen)
+        .animation(.easeOut(duration: 0.2), value: files.items.map(\.id))
         .onChange(of: model.editingId) { _, id in
             // The queued message's text replaced the draft: caret to its end.
             cursor = nil
@@ -1113,10 +1184,10 @@ private struct EditBar: View {
     var body: some View {
         HStack(spacing: 8) {
             if editing {
-                Image(systemName: "pencil").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                Image(systemName: "pencil").font(Theme.badge).foregroundStyle(Theme.textSecondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Editing queued message").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                    if let note { Text(note).font(.system(size: 11)).foregroundStyle(Theme.dangerText).lineLimit(1) }
+                    if let note { Text(note).font(Theme.small).foregroundStyle(Theme.dangerText).lineLimit(1) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if saving { ProgressView().controlSize(.mini) }
@@ -1163,7 +1234,7 @@ struct QueuedTray: View {
             .padding(.leading, 14)
             .padding(.trailing, 2)
             if let note {
-                Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                Text(note).font(Theme.small).foregroundStyle(Theme.textMuted)
                     .padding(.horizontal, 14).padding(.bottom, 4)
             }
             if sends.count > visibleRows {
@@ -1214,16 +1285,25 @@ private struct QueuedRow: View {
                     SendingSpinner()
                 } else {
                     Image(systemName: editing ? "pencil.circle" : "circle.dashed")
-                        .font(.system(size: 15))
+                        .font(Theme.rowIcon)
                         .foregroundStyle(Theme.textMuted)
                 }
             }
-            .frame(width: 18)
-            Text(send.text.replacingOccurrences(of: "\n", with: " "))
-                .font(Theme.body).foregroundStyle(editing ? Theme.textSecondary : Theme.textPrimary)
-                .lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .opacity(send.phase == .posting ? 0.6 : 1)
+            .iconColumn(18)
+            HStack(spacing: 6) {
+                Text(send.text.replacingOccurrences(of: "\n", with: " "))
+                    .font(Theme.body).foregroundStyle(editing ? Theme.textSecondary : Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.tail)
+                if !send.attachments.isEmpty {
+                    // The files go out with it; an edit keeps them.
+                    Label("\(send.attachments.count)", systemImage: "paperclip")
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                        .labelStyle(.titleAndIcon).fixedSize()
+                        .accessibilityLabel(send.attachments.count == 1 ? "1 file" : "\(send.attachments.count) files")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(send.phase == .posting ? 0.6 : 1)
             if let note = send.note {
                 Text(note).font(Theme.caption)
                     .foregroundStyle(send.phase == .left ? Theme.textMuted : Theme.dangerText)
@@ -1257,8 +1337,9 @@ private struct TrayIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 15))
+            Image(systemName: symbol).font(Theme.rowIcon)
                 .foregroundStyle(Theme.textSecondary)
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 .frame(width: 44, height: 44)
                 .contentShape(.rect)
         }

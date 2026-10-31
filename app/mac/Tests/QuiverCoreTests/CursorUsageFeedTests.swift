@@ -6,6 +6,10 @@ import Testing
 /// The Cursor usage feed: `swe harness usage-events cursor --json` mapped
 /// into ledger records, deduplicated across overlapping fetches.
 @Suite struct CursorUsageFeedTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     let allTime = DateInterval(start: .distantPast, end: .distantFuture)
     let account = "/home/user/Library/Application Support/Cursor"
 
@@ -50,24 +54,24 @@ import Testing
         CursorUsageFeed(ledger: ledger, swe: { SweClient(runner: runner) },
                         accounts: { accounts },
                         progressFile: progressFile
-                            ?? FileManager.default.temporaryDirectory
+                            ?? scratch.url
                                 .appending(path: "cursor-feed-\(UUID().uuidString).json"))
     }
 
     /// A progress file that already knows `profiles[home] = accountId`
     /// and that account's `through` mark.
     private func progressFile(_ home: String, _ accountId: String,
-                            through: Double, in temp: TempDir) -> URL {
+                            through: Double, in temp: TempDir) throws -> URL {
         let url = temp.url.appending(path: "cache/cursor-feed.json")
         let body: [String: Any] = [
             "schema": 1,
             "profiles": [home: accountId],
             "accounts": [accountId: ["through": through]],
         ]
-        let data = try! JSONSerialization.data(withJSONObject: body)
-        try! FileManager.default.createDirectory(
+        let data = try JSONSerialization.data(withJSONObject: body)
+        try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try! data.write(to: url)
+        try data.write(to: url)
         return url
     }
 
@@ -542,7 +546,7 @@ import Testing
         let temp = try TempDir()
         let ledger = try Ledger(directory: temp.path("cache"))
         // This profile used to answer as uid-old, which has a mark.
-        let file = progressFile(account, "uid-old", through: 1791700100, in: temp)
+        let file = try progressFile(account, "uid-old", through: 1791700100, in: temp)
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"],
              reply("ok", twoEvents, accountId: "uid-new")),
@@ -636,7 +640,7 @@ import Testing
     @Test func anIncompleteReplyIngestsButDoesNotAdvanceThrough() async throws {
         let temp = try TempDir()
         let ledger = try Ledger(directory: temp.path("cache"))
-        let file = progressFile(account, "uid-1", through: 1791700100, in: temp)
+        let file = try progressFile(account, "uid-1", through: 1791700100, in: temp)
         let runner = LockedRunner([
             (["harness", "usage-events", "cursor"],
              reply("incomplete", twoEvents, accountId: "uid-1")),

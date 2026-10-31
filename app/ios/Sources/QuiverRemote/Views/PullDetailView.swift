@@ -1,11 +1,16 @@
 import SwiftUI
 
 /// One pull request in full: title and meta, the rendered body, the
-/// per-check rows and reviews, then Open on GitHub and the primary
-/// Open in session. Reads `GET /v1/pulls/<o>/<r>/<n>`.
+/// per-check rows and reviews, then the primary Open in session, merge
+/// with a strategy or arm auto-merge (behind a confirm, as on the Mac
+/// and web), and Open on GitHub. A check row from a GitHub Actions run
+/// re-runs that run's failed jobs, or all of them, from its menu.
+/// Reads `GET /v1/pulls/<o>/<r>/<n>`; the writes are the web app's
+/// `POST /v1/app/repositories/merge` and `…/rerun`.
 struct PullDetailView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
+    @Environment(\.dynamicTypeSize) private var size
     let repo: String
     let number: Int
     /// The tab pushes the new session's chat once a launch lands.
@@ -17,6 +22,15 @@ struct PullDetailView: View {
     @State private var startedKey: String?
     /// Bumped per load so a late reply can't overwrite a newer one.
     @State private var generation = 0
+    @State private var method: MergeMethod = .squash
+    /// The write the confirm dialog is asking about.
+    @State private var asking: MergeAsk?
+    @State private var merging = false
+    /// A merge's error stays on the page, under the buttons.
+    @State private var mergeError: String?
+    /// Workflow runs whose re-run is in flight.
+    @State private var rerunning: Set<Int> = []
+    @State private var rerunError: String?
 
     var body: some View {
         PageScroll {
@@ -24,7 +38,7 @@ struct PullDetailView: View {
                 // A failed refresh keeps the PR it already had — the
                 // notice says why it's stale rather than replacing it.
                 if let error {
-                    Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle")
+                    Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
                         .font(Theme.caption).foregroundStyle(Theme.warningText)
                         .lineLimit(2)
                 }
@@ -52,6 +66,19 @@ struct PullDetailView: View {
         .navigationTitle("\(repo)#\(number)")
         .navigationBarTitleDisplayMode(.inline)
         .task { if reply == nil { await load() } }
+        .confirmationDialog(asking == .auto ? "Arm auto-merge" : "Merge pull request",
+                            isPresented: Binding(get: { asking != nil },
+                                                 set: { if !$0 { asking = nil } }),
+                            titleVisibility: .visible, presenting: asking) { ask in
+            if let pr = reply?.pr {
+                Button(PullActions.confirmButton(ask, pr)) { Task { await merge(ask) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { ask in
+            if let pr = reply?.pr {
+                Text(PullActions.confirmMessage(ask, pr, repo: repo, method: method))
+            }
+        }
         // The chat opens after the sheet is gone, so the push isn't
         // lost under the dismiss animation.
         .sheet(isPresented: $opening, onDismiss: {
@@ -74,6 +101,9 @@ struct PullDetailView: View {
             let body = try await client.pull(repo: repo, number: number, refresh: refresh)
             guard gen == generation else { return }
             (reply, error) = Self.landing(body, over: reply)
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch {
             guard gen == generation else { return }
             self.error = error.localizedDescription
@@ -88,6 +118,47 @@ struct PullDetailView: View {
             return (shown, body.error ?? "GitHub couldn't read the pull request.")
         }
         return (body, nil)
+    }
+
+    /// Merge or arm auto-merge, then read the PR again: the hub dropped
+    /// its cached copy, so the page shows merged or armed. A 409 or 404
+    /// means the page was out of date; the error stays and the PR is
+    /// read again so it shows what the hub saw. The buttons stay busy
+    /// until that read lands, so the old picture can't be acted on twice.
+    private func merge(_ ask: MergeAsk) async {
+        guard let client = app.client, !merging else { return }
+        merging = true
+        mergeError = nil
+        defer { merging = false }
+        do {
+            try await client.mergePull(repo: repo, number: number, method: method, auto: ask == .auto)
+            await load(refresh: true)
+        } catch is CancellationError {
+            return
+        } catch {
+            mergeError = error.localizedDescription
+            if let e = error as? HubError, e.status == 409 || e.status == 404 {
+                await load(refresh: true)
+            }
+        }
+    }
+
+    /// Re-run a workflow run's failed jobs, or all of them. Success
+    /// reads the PR again; the checks flip on GitHub's schedule.
+    private func rerun(_ run: Int, failed: Bool) async {
+        guard let client = app.client, !rerunning.contains(run) else { return }
+        rerunning.insert(run)
+        rerunError = nil
+        // Busy until the fresh read lands, as for a merge.
+        defer { rerunning.remove(run) }
+        do {
+            try await client.rerunRun(repo: repo, run: run, failed: failed)
+            await load(refresh: true)
+        } catch is CancellationError {
+            return
+        } catch {
+            rerunError = error.localizedDescription
+        }
     }
 
     // MARK: Sections
@@ -133,11 +204,14 @@ struct PullDetailView: View {
     @ViewBuilder private func stats(_ pr: PullDetail) -> some View {
         let bits = statBits(pr)
         let labels = pr.labels ?? []
-        if !bits.isEmpty || !labels.isEmpty {
+        if !bits.isEmpty || !labels.isEmpty || pr.autoMerge != nil {
             HStack(spacing: 4) {
                 if !bits.isEmpty {
                     Text(bits.joined(separator: " · "))
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                }
+                if let auto = pr.autoMerge {
+                    Badge("Auto-merge · \(auto.method ?? "on")")
                 }
                 ForEach(Array(labels.prefix(4).enumerated()), id: \.offset) { Badge($0.element) }
             }
@@ -150,6 +224,17 @@ struct PullDetailView: View {
                 Label("Open in session", systemImage: "play")
             }
             .primaryButton()
+            if PullActions.offersMerge(pr) {
+                mergeControls(pr)
+            }
+            // Outside the open-only controls: a merge refused because the
+            // PR closed meanwhile still says why after the re-read.
+            if let mergeError {
+                Text(mergeError).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if let url = pr.url.flatMap(URL.init) {
                 Button { openURL(url) } label: {
                     Label("Open on GitHub", systemImage: "safari")
@@ -160,31 +245,131 @@ struct PullDetailView: View {
         .padding(.top, 4)
     }
 
+    /// The strategy menu, then Merge and Auto-merge; both ask first.
+    /// The phone has no hover, so why a button is off is written under.
+    private func mergeControls(_ pr: PullDetail) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Menu {
+                Picker("Merge strategy", selection: $method) {
+                    ForEach(MergeMethod.allCases) { Text($0.title).tag($0) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(method.title)
+                    Image(systemName: "chevron.up.chevron.down").font(Theme.small)
+                }
+                .font(Theme.control).foregroundStyle(Theme.textPrimary)
+                .scaledMinHeight(Theme.controlHeight)
+            }
+            .disabled(merging)
+            .accessibilityLabel("Merge strategy, \(method.title)")
+            StackingRow {
+                Button {
+                    mergeError = nil
+                    asking = .merge
+                } label: {
+                    if merging {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Merge", systemImage: "arrow.triangle.merge")
+                    }
+                }
+                .secondaryButton()
+                .disabled(merging || PullActions.mergeBlock(pr) != nil)
+                Button {
+                    mergeError = nil
+                    asking = .auto
+                } label: {
+                    Label("Auto-merge", systemImage: "clock")
+                }
+                .secondaryButton()
+                .disabled(merging || PullActions.autoBlock(pr) != nil)
+            }
+            if let note = PullActions.blockNote(pr) {
+                Text(note).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            }
+        }
+    }
+
+    @ViewBuilder private func checkName(_ run: CheckRun) -> some View {
+        Text(run.name ?? "check").font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(1, larger: 3)
+        if let workflow = run.workflow, !workflow.isEmpty {
+            Text(workflow).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1, larger: 2)
+        }
+    }
+
+    /// A check row's ⋯ menu: Re-run failed jobs (a run with a failing
+    /// check only) and Re-run all jobs. The run spins while it's asked.
+    private func rerunMenu(_ run: Int, name: String, checks: [CheckRun]) -> some View {
+        let busy = rerunning.contains(run)
+        return Menu {
+            if PullActions.runFailed(run, in: checks, repo: repo) {
+                Button {
+                    Task { await rerun(run, failed: true) }
+                } label: { Label("Re-run failed jobs", systemImage: "arrow.clockwise") }
+            }
+            Button {
+                Task { await rerun(run, failed: false) }
+            } label: { Label("Re-run all jobs", systemImage: "arrow.clockwise") }
+        } label: {
+            Group {
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "ellipsis.circle").font(Theme.font(size: 16))
+                        .foregroundStyle(Theme.textSecondary)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(.rect)
+        }
+        .disabled(busy)
+        .accessibilityLabel("Re-run \(name)")
+    }
+
     @ViewBuilder private func checksSection(_ pr: PullDetail) -> some View {
         let runs = pr.checkRuns ?? []
         if !runs.isEmpty {
             GroupLabel(text: "Checks", trailing: pr.checks)
+            if let rerunError {
+                Text(rerunError).font(Theme.caption).foregroundStyle(Theme.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
             CardList(data: runs.enumerated().map(CheckSlot.init)) { slot in
                 let run = slot.run
+                let runId = PullActions.runId(run.url, repo: repo)
                 let row = HStack(spacing: 12) {
                     ChecksGlyph(state: run.state)
-                    Text(run.name ?? "check").font(Theme.control).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    if let workflow = run.workflow, !workflow.isEmpty {
-                        Text(workflow).font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
+                    // Above the default size the workflow goes under the
+                    // name, which gets more lines: beside each other they
+                    // cut "test (3.11, shard 1)" to "test (".
+                    if size > .large {
+                        VStack(alignment: .leading, spacing: 2) { checkName(run) }
+                    } else {
+                        checkName(run)
                     }
                     Spacer(minLength: 8)
                     if run.url != nil {
-                        Image(systemName: "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Image(systemName: "arrow.up.right").font(Theme.font(size: 12)).foregroundStyle(Theme.textMuted)
                     }
                 }
                 .padding(.vertical, Theme.rowVertical - 2)
-                .padding(.horizontal, Theme.rowHorizontal)
+                .padding(.leading, Theme.rowHorizontal)
+                .padding(.trailing, runId == nil ? Theme.rowHorizontal : 4)
                 .contentShape(.rect)
-                if let url = run.url.flatMap(URL.init) {
-                    Button { openURL(url) } label: { row }
-                        .buttonStyle(RowButtonStyle())
-                } else {
-                    row
+                HStack(spacing: 0) {
+                    if let url = run.url.flatMap(URL.init) {
+                        Button { openURL(url) } label: { row }
+                            .buttonStyle(RowButtonStyle())
+                    } else {
+                        row
+                    }
+                    if let runId {
+                        rerunMenu(runId, name: run.name ?? "check", checks: runs)
+                            .padding(.trailing, Theme.rowHorizontal - 12)
+                    }
                 }
             }
         }
@@ -298,7 +483,7 @@ struct OpenPullSheet: View {
                     startSection(machine)
                 } else {
                     StateCard(icon: "terminal", title: "No machine can start a session",
-                              message: "Update swe on the hub. A machine offers the harnesses swe lists there, minus the ones switched off in Quiver's Provider visibility.")
+                              message: NewSessionOptions.noMachineMessage(app.machines))
                 }
             }
             .navigationTitle("Open in session")

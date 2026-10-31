@@ -78,6 +78,7 @@ final class AppModel {
         // hub must not overwrite (or unpair) the new one.
         let pairedAtStart = hub
         let pinMark = pins.mark
+        let attachedAtStart = Set(sessions.filter(\.isAttached).map(\.key))
         do {
             async let s = client.sessions()
             // done=1 so the Inbox's "Finished today" rows ship with it.
@@ -85,7 +86,15 @@ final class AppModel {
             let (sessionsBody, inboxBody) = try await (s, i)
             guard hub == pairedAtStart else { return }
             let fetched = pins.overlay(sessionsBody.sessions, fetchedFrom: pinMark)
+            // Attached both when this refresh asked and now, and the hub
+            // says it isn't: detached elsewhere. One attached while the
+            // request was out isn't judged by an answer older than that.
+            let attachedNow = Set(sessions.filter(\.isAttached).map(\.key))
             sessions = fetched
+            for key in attachedAtStart.intersection(attachedNow)
+            where fetched.first(where: { $0.key == key })?.isAttached != true {
+                handedBack(key)
+            }
             let now = Date()
             pendingDetaches = pendingDetaches.filter { key, at in
                 now.timeIntervalSince(at) < Self.detachWaitCap && fetched.first { $0.key == key }?.isAttached != false
@@ -98,10 +107,11 @@ final class AppModel {
             refreshedAt = Date()
             connection = .online
             loadError = nil
+        } catch is CancellationError {
+            // The app left the screen, or another hub went on it: not a
+            // hub that can't be reached.
+            return
         } catch let error as HubError {
-            // Cancelled (the app left the screen, or another hub went on
-            // it): URLSession's cancel arrives as a network error, which
-            // would flash "Can't reach the hub" for a hub that's fine.
             guard hub == pairedAtStart, !Task.isCancelled else { return }
             if error.isUnauthorized { unpair(from: client); return }
             connection = .offline
@@ -255,6 +265,7 @@ final class AppModel {
     /// A session's status or ownership changed on the live stream; patch
     /// the cached row so the list agrees before the next poll.
     func patch(_ key: String, status: String? = nil, ownership: String? = nil) {
+        if let ownership, ownership != "attached" { handedBack(key) }
         guard let i = sessions.firstIndex(where: { $0.key == key }) else { return }
         if let status { sessions[i].status = status }
         if let ownership {
@@ -262,6 +273,13 @@ final class AppModel {
             // Handed back: a detach waiting for the turn to end is done.
             if ownership != "attached" { pendingDetaches[key] = nil }
         }
+    }
+
+    /// The session is no longer attached. The hub deletes its staged
+    /// files on detach, so a cached chat's picked files (even one not on
+    /// screen) would name files that are gone: drop them.
+    private func handedBack(_ key: String) {
+        chats.first { $0.key == key }?.attachments.clear()
     }
 
     /// A `session.ownership` event: the owner and, with it, the channel,
@@ -492,9 +510,18 @@ final class AppModel {
         } catch {
             guard gen == pairingGen else { return false }
             pairing.busy = false
-            pairing.error = error.localizedDescription
+            pairFailed(error, link: link)
             return false
         }
+    }
+
+    /// A pair with `link` failed with `error`. The code counts as spent
+    /// only for the link still on offer (or a scanned one, with no
+    /// offer): a pair that was out when a fresh link replaced the offer
+    /// must not take Pair away from the new token, which was never sent.
+    func pairFailed(_ error: Error, link: PairLink) {
+        pairing.error = error.localizedDescription
+        pairing.codeSpent = PairingFlow.spendsCode(error) && (pairOffer == nil || pairOffer == link)
     }
 
     func pair(token: String) async {
@@ -589,8 +616,9 @@ final class AppModel {
 
 struct PairingFlow {
     var host: String = KeychainHubStore.lastHost ?? ""
-    /// The hub accepted the pair code but this phone couldn't keep the
-    /// credential: that code is used up, so pairing needs a new one.
+    /// The pair code can't pair again, so pairing needs a new one: the
+    /// hub accepted it but this phone couldn't keep the credential, or
+    /// the hub turned it down as expired or already used.
     var codeSpent = false
     var deviceName: String = PairingFlow.defaultDeviceName
     var busy = false
@@ -598,6 +626,14 @@ struct PairingFlow {
     var pending: PendingPairing?
 
     static var defaultDeviceName: String { "iPhone" }
+
+    /// Whether a failed pair used the code up: the hub answers
+    /// `pair_failed` for a token it doesn't know or that expired, and
+    /// sending it again gets the same answer. Anything else (the hub
+    /// unreachable, rate limited) can work on a retry.
+    static func spendsCode(_ error: Error) -> Bool {
+        (error as? HubError)?.code == "pair_failed"
+    }
 }
 
 struct PendingPairing {
@@ -673,12 +709,16 @@ struct DismissalLedger {
     mutating func drop(_ key: String) { stamps[key] = nil }
 
     /// `items` minus rows a still-in-flight dismiss already cleared;
-    /// entries retire once the hub ships a row newer than the stamp.
+    /// entries retire once the hub ships a row newer than the stamp. A
+    /// pending approval always passes: the hub ships one whatever was
+    /// dismissed, and a session cleared moments ago can ask for approval
+    /// without its `last_active_at` moving past the stamp.
     mutating func overlay(_ items: [InboxItem]) -> [InboxItem] {
         guard !stamps.isEmpty else { return items }
         var out: [InboxItem] = []
         out.reserveCapacity(items.count)
         for item in items {
+            if item.sessionStatus == .approval { out.append(item); continue }
             guard let stamp = stamps[item.key] else { out.append(item); continue }
             if item.dismissStamp > stamp {
                 stamps[item.key] = nil
@@ -790,5 +830,14 @@ enum RelativeTime {
         if s < 3600 { return "\(Int(s / 60))m" }
         if s < 86_400 { return "\(Int(s / 3600))h" }
         return "\(Int(s / 86_400))d"
+    }
+
+    /// `short` worded to stand alone, as the web app's `Fmt.ago`:
+    /// "just now", "5m ago". `short` reads "now" for the first minute,
+    /// which can't take an "ago" after it. Empty for a missing time.
+    static func ago(_ ts: Double?, now: Double = Date().timeIntervalSince1970) -> String {
+        let s = short(ts, now: now)
+        if s.isEmpty { return "" }
+        return s == "now" ? "just now" : "\(s) ago"
     }
 }

@@ -56,15 +56,19 @@ final class SuspendingRenewer: ClaudeSignInRenewing, @unchecked Sendable {
     private var recorded: [String] = []
     private var waiters: [CheckedContinuation<Void, Never>] = []
     var calls: [String] { lock.withLock { recorded } }
+    /// Bumped once each run is suspended, so a test awaits it.
+    let started = CountGate()
 
     func renew(home: String, isDefault _: Bool) async -> Bool {
         // Call record and waiter land under the same lock, so releaseAll
         // can never slip between them and leave the run suspended.
+        let started = self.started
         await withCheckedContinuation { continuation in
             lock.withLock {
                 recorded.append(home)
                 waiters.append(continuation)
             }
+            Task { await started.bump() }
         }
         return true
     }
@@ -89,6 +93,8 @@ final class FakeRunningInstances: RunningInstances {
 
 @MainActor
 @Suite struct AccountsModelTests {
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
     let root: URL
     let store: ProfileStore
     let usage = FakeUsage()
@@ -96,8 +102,8 @@ final class FakeRunningInstances: RunningInstances {
     let running = FakeRunningInstances()
 
     init() throws {
-        root = FileManager.default.temporaryDirectory.appending(path: "accounts-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        scratch = try TempDir()
+        root = scratch.url
         store = ProfileStore(root: root.appending(path: ".quiver/accounts"), userHome: root)
         // Real stub CLIs on the injected PATH: signIn refuses when they
         // aren't executable, like a missing install.
@@ -509,7 +515,7 @@ final class FakeRunningInstances: RunningInstances {
         #expect(usage.cachedRequests.contains(home))
     }
 
-    @Test func aSecondPressSkipsAccountsAlreadyRenewing() async throws {
+    @Test(.timeLimit(.minutes(1))) func aSecondPressSkipsAccountsAlreadyRenewing() async throws {
         let renewer = SuspendingRenewer()
         let model = AccountsModel(store: store, usage: usage, launcher: launcher,
                                   terminal: { .terminal }, loginPath: { "" }, renewer: renewer)
@@ -519,7 +525,7 @@ final class FakeRunningInstances: RunningInstances {
 
         async let first: Void = model.refreshFromButton()
         // Wait until the renewal is actually running before pressing again.
-        while renewer.calls.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await renewer.started.reach(1))
         #expect(model.renewing == ["claude-default"])
 
         // A second press loads but never starts a second claude run.
@@ -544,7 +550,13 @@ final class FakeRunningInstances: RunningInstances {
 
 @MainActor
 @Suite struct LaunchTargetTests {
-    let root = FileManager.default.temporaryDirectory.appending(path: "launch-\(UUID().uuidString)")
+    /// This test's own folder, removed with its contents when the test ends.
+    let scratch: TempDir
+    let root: URL
+    init() throws {
+        scratch = try TempDir()
+        root = scratch.url.appending(path: "launch")
+    }
     let launcher = FakeLauncher()
     /// Empty: never let a launch test see (or focus) the user's real apps.
     let running = FakeRunningInstances()
@@ -718,16 +730,13 @@ final class FakeRunningInstances: RunningInstances {
                                      timeout: .milliseconds(500), sigtermGrace: .milliseconds(500))
         defer { try? FileManager.default.removeItem(at: dir) }
         let marker = dir.appending(path: "started").path
+        let folder = dir
         let child = ChildBox()
         renewer.launched = { process in
             child.set(process, readyAt: nil)
-            // The child is another process, so there is no gate to await:
-            // poll its marker, giving up if it dies or never gets there.
-            let deadline = ContinuousClock.now + .seconds(30)
-            while !FileManager.default.fileExists(atPath: marker),
-                  process.isRunning, ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(20))
-            }
+            // The child is another process: the folder's own change
+            // events say when its marker lands.
+            _ = await fileAppears("started", in: folder, timeout: .seconds(30))
             child.set(process, readyAt: ContinuousClock.now)
         }
         #expect(await renewer.renew(home: dir.path, isDefault: true) == false)

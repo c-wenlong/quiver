@@ -233,8 +233,11 @@ class TestBrands(unittest.TestCase):
 
     def test_the_table_mirrors_the_swift_one_row_for_row(self):
         import re
-        swift = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources"
-                 / "QuiverCore" / "Models" / "ModelBrands.swift").read_text()
+        path = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources"
+                / "QuiverCore" / "Models" / "ModelBrands.swift")
+        if not path.exists():
+            self.skipTest("no app/mac/ in this checkout")
+        swift = path.read_text()
         ids = re.findall(r'\.init\(id: "([^"]+)"', swift)
         self.assertEqual([b[0] for b in _brands.BRANDS], ids)
 
@@ -330,10 +333,10 @@ class TestRoute(HubBase):
         self.assertFalse((self.srv.home / ".quiver" / "config" / "pricing.json").exists())
 
     def test_bundles_carry_both_pages(self):
-        status, body = self.srv.request("GET", "/app/pages.js")
+        status, body = self.srv.request("GET", "/pages.js")
         self.assertEqual(status, 200)
         for name in ("source-litellm.svg", "harness-openai.svg"):
-            self.assertEqual(self.srv.request("GET", f"/app/{name}")[0], 200, name)
+            self.assertEqual(self.srv.request("GET", f"/{name}")[0], 200, name)
 
 
 if __name__ == "__main__":

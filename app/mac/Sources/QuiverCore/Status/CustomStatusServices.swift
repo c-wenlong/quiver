@@ -64,7 +64,9 @@ public final class CustomStatusServices: StatusServiceStoring, @unchecked Sendab
         var pageURL: URL
         /// Nil in records written before feeds could sit off /api/v2.
         var feedURL: URL?
-        var group: StatusService.Group
+        /// The raw string, so a group written before the split is still
+        /// legible as one and `service(_:)` can migrate just those.
+        var group: String
     }
 
     private struct Prefs: Codable {
@@ -79,11 +81,25 @@ public final class CustomStatusServices: StatusServiceStoring, @unchecked Sendab
         self.defaults = defaults
     }
 
+    /// The groups before the eight-way split. A record still carrying
+    /// one was last saved under the old layout, so a catalogue page it
+    /// names follows the catalogue's group; anything else gets the
+    /// mapped group. Records saved since keep their own string — a
+    /// group the user picked is never rewritten on load.
+    private static let legacyGroups: [String: StatusService.Group] =
+        ["providers": .modelProviders, "infrastructure": .services]
+
     private func service(_ record: Record) -> StatusService {
-        StatusService(id: record.id, name: record.name, pageURL: record.pageURL,
-                      feed: .statuspage(record.feedURL
-                          ?? record.pageURL.appending(path: "api/v2/summary.json")),
-                      group: record.group, isCustom: true)
+        let feed = record.feedURL ?? record.pageURL.appending(path: "api/v2/summary.json")
+        let group: StatusService.Group
+        if let legacy = Self.legacyGroups[record.group] {
+            group = StatusCatalogue.all
+                .first(where: { $0.host == feed.host() })?.group ?? legacy
+        } else {
+            group = StatusService.Group(rawValue: record.group) ?? .services
+        }
+        return StatusService(id: record.id, name: record.name, pageURL: record.pageURL,
+                             feed: .statuspage(feed), group: group, isCustom: true)
     }
 
     public func load() -> StatusServicePrefs {
@@ -104,7 +120,7 @@ public final class CustomStatusServices: StatusServiceStoring, @unchecked Sendab
         let stored = Prefs(
             custom: prefs.custom.filter(\.isCustom).map {
                 Record(id: $0.id, name: $0.name, pageURL: $0.pageURL,
-                       feedURL: $0.feedURL, group: $0.group)
+                       feedURL: $0.feedURL, group: $0.group.rawValue)
             },
             hidden: prefs.hidden,
             overrides: prefs.overrides)

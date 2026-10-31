@@ -103,13 +103,35 @@ _STATUSPAGE_STATES = {
 }
 
 
-# The groups the page shows, in order, with their headings.
+# The groups the page shows, in order, with their headings — the same
+# ids and titles as the app's `StatusService.Group` cases. The first
+# two are the "provider" groups: only they reach the menu bar on a
+# minor incident.
 GROUPS: tuple[tuple[str, str], ...] = (
-    # The model providers and tools the harnesses run on.
-    ("providers", "AI providers"),
-    # What installing and shipping depends on.
-    ("infrastructure", "Infrastructure"),
+    # The model APIs the harnesses run on.
+    ("modelProviders", "Model providers"),
+    # The agent products and coding platforms built on them.
+    ("agentPlatforms", "Agent platforms"),
+    # Hosting, edge and connectivity.
+    ("cloud", "Cloud & network"),
+    # Databases and data platforms.
+    ("data", "Data"),
+    # Source control, CI, quality and API tooling.
+    ("devtools", "Dev tools & quality"),
+    # Package registries.
+    ("registries", "Registries"),
+    # Monitoring, tracing and incident management.
+    ("observability", "Observability"),
+    # Workflow, identity, comms and team tools.
+    ("services", "Services & productivity"),
 )
+
+
+# Group strings in stores written before the split: a custom page that
+# read "providers" lands under model providers, one that read
+# "infrastructure" under services. Catalogue ids and hosts still win —
+# `tracked.py` re-derives a catalogue page's group at load.
+LEGACY_GROUPS = {"providers": "modelProviders", "infrastructure": "services"}
 
 
 @dataclass(frozen=True)
@@ -156,27 +178,27 @@ def _statuspage(id: str, name: str, base: str, group: str, logo: str | None) -> 
 # the app's StatusService.logoID: a company's brand mark ("openai"), and
 # GitHub's page under Copilot's.
 SERVICES: tuple[StatusService, ...] = (
-    _statuspage("claude", "Claude", "https://status.claude.com", "providers", "claude"),
-    _statuspage("openai", "OpenAI / Codex", "https://status.openai.com", "providers", "openai"),
-    _statuspage("github", "GitHub / Copilot", "https://www.githubstatus.com", "providers", "copilot"),
+    _statuspage("claude", "Claude", "https://status.claude.com", "modelProviders", "claude"),
+    _statuspage("openai", "OpenAI / Codex", "https://status.openai.com", "modelProviders", "openai"),
+    _statuspage("github", "GitHub / Copilot", "https://www.githubstatus.com", "agentPlatforms", "copilot"),
     # Cursor's page moved to status.x.ai, which serves the Statuspage
     # shape under /api/compat rather than /api/v2.
     StatusService(
         id="cursor", name="Cursor", page_url="https://status.x.ai",
         feed_url="https://status.x.ai/api/compat/summary.json",
-        group="providers", logo="cursor"),
+        group="agentPlatforms", logo="cursor"),
     # AI Studio's status page has no JSON behind it; Google Cloud's feed
     # covers the Gemini API on Vertex (renamed "Gemini on Agent Platform").
     StatusService(
         id="gemini", name="Gemini", page_url="https://aistudio.google.com/status",
-        feed_url="https://status.cloud.google.com/incidents.json", group="providers",
+        feed_url="https://status.cloud.google.com/incidents.json", group="modelProviders",
         feed="google_cloud",
         products=frozenset({"Z0FZJAMvEB4j3NbCJs6B", "Vertex Gemini API", "Gemini on Agent Platform"}),
         note="Gemini API incidents from Google Cloud's status feed", logo="gemini"),
-    _statuspage("devin", "Devin", "https://www.devinstatus.com", "providers", "devin"),
-    _statuspage("npm", "npm", "https://status.npmjs.org", "infrastructure", "npm"),
-    _statuspage("vercel", "Vercel", "https://www.vercel-status.com", "infrastructure", "vercel"),
-    _statuspage("cloudflare", "Cloudflare", "https://www.cloudflarestatus.com", "infrastructure", "cloudflare"),
+    _statuspage("devin", "Devin", "https://www.devinstatus.com", "agentPlatforms", "devin"),
+    _statuspage("npm", "npm", "https://status.npmjs.org", "registries", "npm"),
+    _statuspage("vercel", "Vercel", "https://www.vercel-status.com", "cloud", "vercel"),
+    _statuspage("cloudflare", "Cloudflare", "https://www.cloudflarestatus.com", "cloud", "cloudflare"),
 )
 
 

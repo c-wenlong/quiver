@@ -1,6 +1,7 @@
 /* Sessions chat: remote control inside the Sessions page. Opening a
  * session row shows its transcript, live over the hub's SSE, with the
- * composer (Queue/Steer, Stop), approval cards and Attach. Ported from
+ * composer (Queue/Steer, Stop, file attachments), approval cards and
+ * Attach. Ported from
  * the remote PWA's chat, which this file replaced: the same session
  * routes, the same ownership rules and the same event handling.
  *
@@ -1504,12 +1505,20 @@ const SessionChat = (() => {
         <div class="skel-lines"><div class="skel skel-line" style="--w:78%"></div><div class="skel skel-line" style="--w:90%"></div><div class="skel skel-line" style="--w:48%"></div></div>
       </div></div>
       <div class="chat-working hidden" id="chat-working" role="status" aria-label="Agent is working"><span></span><span></span><span></span></div>
+      <div class="chat-tray hidden" id="chat-tray" role="region" aria-label="Queued messages"></div>
+      <div class="chat-editbar hidden" id="chat-editbar"></div>
       <div class="chat-menu hidden" id="chat-menu" role="listbox" aria-label="Commands"></div>
+      <div class="chat-files hidden" id="chat-files" aria-label="Attached files" aria-live="polite"></div>
       <form class="chat-composer" id="chat-composer" autocomplete="off">
         <select class="field chat-mode" id="chat-mode" aria-label="Send mode"
           title="Queue waits for the agent to finish its turn; Steer writes now">
           <option value="queue">Queue</option><option value="steer">Steer</option>
         </select>
+        <button type="button" class="icon-button chat-clip" id="chat-clip" aria-label="Attach files"
+          title="Attach images, PDFs or text files, up to 20 MB each" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5 12.4 19a5 5 0 0 1-7-7l7.8-7.8a3.3 3.3 0 0 1 4.7 4.7l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.2-7.2"
+            fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <input type="file" class="hidden" id="chat-file" multiple tabindex="-1" aria-hidden="true">
         <textarea class="field chat-text" id="chat-text" rows="1" placeholder="Loading…" disabled
           role="combobox" aria-controls="chat-menu" aria-expanded="false" aria-autocomplete="list"></textarea>
         <button type="button" class="icon-button chat-stop" id="chat-stop" aria-label="Stop" title="Stop the agent's turn" disabled>
@@ -1525,6 +1534,8 @@ const SessionChat = (() => {
     paintBar();
     paintRail();
     bindComposer();
+    bindTray();
+    paintTray();
   }
 
   /* The bar's second line: harness, folder, then the model of the newest
@@ -1560,6 +1571,8 @@ const SessionChat = (() => {
       <span class="chat-conn" id="chat-conn"><span class="dot"></span><span class="caption" id="chat-conn-label"></span></span>
       ${r.ownership === "attached" ? `<button type="button" class="icon-button" id="chat-detach" aria-label="Detach" title="Detach, or keep it running in tmux">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg></button>` : ""}
+      ${chat.row && typeof openSessionMenu === "function" ? `<button type="button" class="icon-button" id="chat-more"
+        aria-label="More actions" aria-haspopup="menu" title="Pin, rename or fork">${MORE_ICON}</button>` : ""}
       ${chat.details ? `<button type="button" class="icon-button" id="chat-details" aria-label="Details" title="Details">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg></button>` : ""}`;
     setConn(chat.connState || "connecting");
@@ -1567,6 +1580,9 @@ const SessionChat = (() => {
     if (chip) Fmt.copyTick(chip, () => `tmux attach -t ${Fmt.shellWord((chat.row || {}).tmux || "")}`);
     const detachBtn = $("chat-detach");
     if (detachBtn) detachBtn.onclick = openDetachSheet;
+    // sessions.js's row menu: Pin, Rename and Fork, on this session.
+    const more = $("chat-more");
+    if (more) more.onclick = () => openSessionMenu(Object.assign({ key: chat.key }, chat.row), more);
     const details = $("chat-details");
     if (details) {
       details.onclick = async () => {
@@ -1610,7 +1626,13 @@ const SessionChat = (() => {
     if (input.disabled && menu.open) closeMenu();
     input.placeholder = !chat.rowKnown ? "Loading…"
       : observed ? "Read-only until this session is attached" : "Message the session";
-    $("chat-send").disabled = !chat.rowKnown || observed;
+    const clip = $("chat-clip");
+    if (clip) clip.disabled = !chat.rowKnown || observed;
+    // A detach deletes the session's staged files on the hub, so refs
+    // held from before it are dead: the chips go, and any upload still
+    // in flight is aborted.
+    if (observed && uploads.items.length) resetUploads();
+    paintSendState();
     $("chat-stop").disabled = !chat.rowKnown || observed || chat.stopping;
     $("chat-mode").classList.toggle("hidden", observed);
     // attachable means "has resume flags"; the hub also refuses while the
@@ -1625,6 +1647,7 @@ const SessionChat = (() => {
     updateWorking();
     paintBar();
     paintRailRows();
+    paintTray();
   }
 
   function paintBanner(show, canAttach, busy) {
@@ -1891,6 +1914,20 @@ const SessionChat = (() => {
 
   /* --------------------------------------------------------------- events */
 
+  /* A pin or rename (`session.meta`, or sessions.js after its own write):
+   * the header's title, and the row the menu reads. */
+  function applyMeta(d) {
+    if (!chat.row) return;
+    if ("harness_title" in d) chat.row.harness_title = d.harness_title || "";
+    if ("title" in d) chat.row.title = d.title || chat.row.harness_title || "";
+    if ("pinned" in d) {
+      chat.row.pinned = !!d.pinned;
+      chat.row.pinned_at = d.pinned ? d.pinned_at ?? null : null;
+    }
+    paintBar();
+    paintRail();
+  }
+
   function appendEvent(ev, live = true) {
     const stick = live && nearBottom();
     const d = ev.data || {};
@@ -1921,6 +1958,13 @@ const SessionChat = (() => {
         if (chat.row.ownership !== "attached") chat.detaching = false;
         updateOwnership();
       }
+    } else if (ev.type === "session.meta") {
+      // Through sessions.js when it's there, so the list's row (and a
+      // pin chosen here and not yet answered) agree; it calls applyMeta.
+      if (ev.session === chat.key) {
+        if (typeof patchMeta === "function") patchMeta(chat.key, d);
+        else applyMeta(d);
+      }
     } else if (ev.type === "approval.requested") {
       appendMessage({ kind: "approval", text: d.prompt || "Approval requested", request_id: d.request_id || "", options: d.options || [] }, live, ev.seq);
     } else if (ev.type === "command.result") {
@@ -1940,6 +1984,18 @@ const SessionChat = (() => {
     const log = $("chat-log");
     let settled = false;
     if (d.op === "message" && d.client_id) {
+      // A queued send left the tray: removed, it's just gone (here or
+      // from another device, never a failure); sent or failed, it joins
+      // the transcript as a send and settles below.
+      const entry = takeQueued(d.client_id, d.cancelled ? "That message was removed" : undefined);
+      chat.tray.settled.add(d.client_id);
+      if (d.cancelled) {
+        settled = true;
+        const gone = log.querySelector(`.msg.user[data-client-id="${CSS.escape(d.client_id)}"]`);
+        if (gone) gone.remove();
+      } else if (entry) {
+        appendOptimistic(entry.text, d.client_id);
+      }
       const b = log.querySelector(`.msg.user.pending[data-client-id="${CSS.escape(d.client_id)}"]`);
       if (b) {
         settled = true;
@@ -2089,6 +2145,8 @@ const SessionChat = (() => {
         const note = hit.querySelector(".send-note");
         if (note && hit.classList.contains("degraded")) carried = note.textContent;
         hit.remove();
+      } else {
+        echoLeavesTray(msg.text);
       }
     }
     if (live && kind !== "user" && kind !== "tool_result") chat.awaitingReply = false;
@@ -2627,6 +2685,9 @@ const SessionChat = (() => {
     chat.rail.loading = true;
     chat.rail.error = "";
     paintRail();
+    // sessions.js's pin ledger: a pin chosen while this read was out
+    // isn't undone by it.
+    const mark = typeof pinLedger !== "undefined" ? pinLedger.clock : 0;
     const { status, data } = await api(`/v1/app/sessions${rescan ? "?rescan=1" : ""}`);
     if (gen !== chat.gen) return;
     chat.rail.loading = false;
@@ -2640,6 +2701,7 @@ const SessionChat = (() => {
       paintRail();
       return;
     }
+    if (typeof pinOverlay === "function") pinOverlay(data.sessions || [], mark);
     const page = railPage();
     if (page) page.data = data; else chat.railData = data;
     paintRail();
@@ -2651,27 +2713,33 @@ const SessionChat = (() => {
    * once at open and no event carries the model, so one that first
    * appears with the opening reply, or changes from another client or
    * the terminal, would show as it was until a reopen. A failed read, or
-   * a hub that doesn't know the model, leaves the header as it is. One
-   * read at a time; returns the model now shown. */
-  let modelRead = null;
-  function refreshModel() {
-    if (modelRead || !chat.key || !chat.row) return modelRead || Promise.resolve("");
+   * a hub that doesn't know the model, leaves the header as it is.
+   *
+   * The hub answers /v1/sessions from a catalog it rebuilds every 10
+   * seconds, and a turn's end can reach the stream before that, so one
+   * read may still hold the old model. Until the model differs, it reads
+   * again after each of MODEL_RETRY_MS. A newer call takes over from one
+   * still waiting. Returns the model now shown. */
+  const MODEL_RETRY_MS = [6000, 6000];
+  let modelCall = 0;
+  async function refreshModel() {
+    if (!chat.key || !chat.row) return "";
     const gen = chat.gen;
-    modelRead = (async () => {
-      try {
-        const { status, data } = await api("/v1/sessions");
-        if (gen !== chat.gen || status !== 200 || !data) return "";
-        const row = (data.sessions || []).find((r) => r.key === chat.key);
-        if (row && row.model && chat.row && row.model !== chat.row.model) {
-          chat.row.model = row.model;
-          paintBar();
-        }
-        return (chat.row && chat.row.model) || "";
-      } finally {
-        modelRead = null;
+    const call = ++modelCall;
+    for (let i = 0; ; i++) {
+      const { status, data } = await api("/v1/sessions");
+      if (gen !== chat.gen || call !== modelCall) break;
+      const row = status === 200 && data && (data.sessions || []).find((r) => r.key === chat.key);
+      if (row && row.model && chat.row && row.model !== chat.row.model) {
+        chat.row.model = row.model;
+        paintBar();
+        break;
       }
-    })();
-    return modelRead;
+      if (i >= MODEL_RETRY_MS.length) break;
+      await new Promise((resolve) => setTimeout(resolve, MODEL_RETRY_MS[i]));
+      if (gen !== chat.gen || call !== modelCall) break;
+    }
+    return (gen === chat.gen && chat.row && chat.row.model) || "";
   }
 
   /* The catalog row: ownership, attachable and status as the hub has them
@@ -2751,7 +2819,7 @@ const SessionChat = (() => {
     const logStatus = await backfill(gen);
     if (gen !== chat.gen) return;
     const [rowStatus, waiting] = logStatus === 401 ? [401, ""]
-      : await Promise.all([loadRow(gen), pendingApproval(gen)]);
+      : await Promise.all([loadRow(gen), pendingApproval(gen), loadQueue(gen)]);
     if (gen !== chat.gen) return;
     if (rowStatus === 401 || logStatus === 401) {
       close();
@@ -2783,6 +2851,8 @@ const SessionChat = (() => {
     chat.row = null;
     chat.toolCards.clear();
     resetMenus();
+    resetUploads();
+    resetTray();
   }
 
   /* ------------------------------------------------------------- composer */
@@ -2828,6 +2898,11 @@ const SessionChat = (() => {
           return;
         }
       }
+      if (e.key === "Escape" && chat.tray.editingId) {
+        e.preventDefault();
+        cancelEdit();
+        return;
+      }
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         form.requestSubmit();
@@ -2867,9 +2942,227 @@ const SessionChat = (() => {
     });
     form.onsubmit = (e) => { e.preventDefault(); send(); };
     $("chat-stop").onclick = interrupt;
+    bindAttachments(form, input);
   }
 
-  function appendOptimistic(text, clientId) {
+  /* ---------------------------------------------------------- attachments
+     Files ride a message the iPhone's way: each is uploaded on its own
+     through POST .../attachments (raw bytes, the name in ?name=), which
+     stages it on the session's machine and answers a `ref`; the send
+     then lists the refs in `attachments`, and the hub's injector puts
+     `@path` in front of the text. The hub's caps are checked here first
+     so a refusal reads plainly (attachments.py: MAX_BYTES, ALLOWED_EXTS). */
+
+  const ATTACH = {
+    maxBytes: 20 * 1024 * 1024,
+    exts: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".pdf",
+      ".txt", ".md", ".csv", ".json", ".log", ".diff", ".patch"],
+  };
+
+  /* A name's extension as the hub reads it (Path.suffix, lowercased): a
+   * dotfile such as ".png" has none. */
+  function fileExt(name) {
+    const base = String(name || "").split(/[\\/]/).pop();
+    const dot = base.lastIndexOf(".");
+    return dot > 0 ? base.slice(dot).toLowerCase() : "";
+  }
+
+  /* Why the hub would refuse this file, or "". */
+  function attachProblem(file) {
+    if (!file || !file.size) return "The file is empty";
+    if (file.size > ATTACH.maxBytes) return "Too big: files can be up to 20 MB";
+    const ext = fileExt(file.name);
+    if (!ATTACH.exts.includes(ext)) {
+      return `${ext ? `${ext} files` : "Files without an extension"} can't be attached: images, PDFs and text only`;
+    }
+    return "";
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+    const mb = n / (1024 * 1024);
+    return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+  }
+
+  /* The line a failed upload's chip shows. */
+  function uploadError(status, data) {
+    if (status === 413) return "Too big: files can be up to 20 MB";
+    if (!status) return "Upload failed: connection lost";
+    const msg = errorText(data);
+    if (msg) return msg.charAt(0).toUpperCase() + msg.slice(1);
+    return status === 404 ? "Update the hub to attach files from here" : `Upload failed (${status})`;
+  }
+
+  /* The composer's files, in the order they were added. Each item is
+   * { id, name, size, state: "uploading" | "ready" | "failed", ref,
+   * error, ctrl }. `note` is a one-off line under the chips. */
+  const uploads = { items: [], seq: 0, note: "" };
+
+  const uploading = () => uploads.items.some((it) => it.state === "uploading");
+
+  function resetUploads() {
+    for (const it of uploads.items) if (it.ctrl) it.ctrl.abort();
+    uploads.items = [];
+    uploads.note = "";
+    paintFiles();
+  }
+
+  /* Adds files from the picker, a drop or a paste. Ones the hub would
+   * refuse show as failed chips at once; the rest upload side by side.
+   * Returns the uploads it started, for tests. */
+  function addFiles(list) {
+    const input = $("chat-text");
+    if (!chat.key || !input || input.disabled) return [];
+    uploads.note = "";
+    const started = [];
+    for (const file of Array.from(list || [])) {
+      const item = { id: ++uploads.seq, name: file.name || "file", size: file.size || 0,
+        state: "uploading", ref: "", error: "", ctrl: null };
+      const problem = attachProblem(file);
+      uploads.items.push(item);
+      if (problem) {
+        item.state = "failed";
+        item.error = problem;
+      } else {
+        started.push(upload(item, file));
+      }
+    }
+    paintFiles();
+    paintSendState();
+    return started;
+  }
+
+  async function upload(item, file) {
+    const key = chat.key, gen = chat.gen;
+    const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+    item.ctrl = ctrl;
+    let status = 0, data = null;
+    try {
+      const resp = await fetch(`${sessionPath(key, "attachments")}?name=${encodeURIComponent(item.name)}`, {
+        method: "POST", credentials: "same-origin",
+        headers: authHeaders({ "Content-Type": file.type || "application/octet-stream" }),
+        body: file, signal: ctrl ? ctrl.signal : undefined,
+      });
+      status = resp.status;
+      try { data = await resp.json(); } catch { /* empty body */ }
+    } catch {
+      status = 0;
+    }
+    // Removed, or another chat opened, while it was in flight.
+    if (gen !== chat.gen || !uploads.items.includes(item)) return;
+    item.ctrl = null;
+    // A satellite session answers 202: the hub queued the bytes for it.
+    if ((status === 200 || status === 202) && data && typeof data.ref === "string" && data.ref) {
+      item.state = "ready";
+      item.ref = data.ref;
+      if (typeof data.size === "number") item.size = data.size;
+    } else {
+      item.state = "failed";
+      item.error = uploadError(status, data);
+      noteRefusal(data);
+    }
+    paintFiles();
+    paintSendState();
+  }
+
+  function removeUpload(id) {
+    const item = uploads.items.find((it) => it.id === id);
+    if (!item) return;
+    if (item.ctrl) item.ctrl.abort();
+    uploads.items = uploads.items.filter((it) => it !== item);
+    uploads.note = "";
+    paintFiles();
+    paintSendState();
+  }
+
+  function paintFiles() {
+    const box = $("chat-files");
+    if (!box) return;
+    box.classList.toggle("hidden", !uploads.items.length && !uploads.note);
+    box.innerHTML = uploads.items.map((it) => {
+      const meta = it.state === "uploading" ? "Uploading…" : it.state === "failed" ? it.error : formatBytes(it.size);
+      return `<span class="att-chip ${it.state}" data-id="${it.id}">` +
+        `<span class="att-name" title="${esc(it.name)}">${esc(it.name)}</span>` +
+        `<span class="att-meta">${esc(meta)}</span>` +
+        `<button type="button" class="att-x" data-id="${it.id}" aria-label="Remove ${esc(it.name)}">` +
+        `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button></span>`;
+    }).join("") + (uploads.note ? `<div class="att-note">${esc(uploads.note)}</div>` : "");
+  }
+
+  /* Send waits while any file is still uploading. */
+  function paintSendState() {
+    const btn = $("chat-send");
+    const input = $("chat-text");
+    if (!btn || !input) return;
+    const busy = uploading();
+    btn.disabled = !chat.rowKnown || input.disabled || busy;
+    btn.title = busy ? "Waiting for files to upload" : "";
+  }
+
+  function bindAttachments(form, input) {
+    const picker = $("chat-file");
+    picker.accept = ATTACH.exts.join(",");
+    $("chat-clip").onclick = () => { if (!input.disabled) picker.click(); };
+    picker.onchange = () => {
+      addFiles(picker.files);
+      picker.value = "";
+    };
+    $("chat-files").addEventListener("click", (e) => {
+      const x = e.target.closest(".att-x");
+      if (x) removeUpload(Number(x.dataset.id));
+    });
+    // Dropped files: only a drag that carries files lights the box.
+    const carriesFiles = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+    form.addEventListener("dragover", (e) => {
+      if (!carriesFiles(e) || input.disabled) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      form.classList.add("dropping");
+    });
+    form.addEventListener("dragleave", (e) => {
+      if (!form.contains(e.relatedTarget)) form.classList.remove("dropping");
+    });
+    form.addEventListener("drop", (e) => {
+      form.classList.remove("dropping");
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      addFiles(e.dataTransfer.files);
+    });
+    // A pasted screenshot attaches; a paste that also carries text (a
+    // copy from a document) stays a text paste.
+    input.addEventListener("paste", (e) => {
+      const data = e.clipboardData;
+      if (!data || !data.files || !data.files.length) return;
+      if (Array.from(data.types || []).includes("text/plain")) return;
+      e.preventDefault();
+      addFiles(data.files);
+    });
+  }
+
+  /* A send the hub refused gives its files back to the composer, ahead
+   * of any added since, so the next try needn't upload them again. Not
+   * after a lost connection (the hub may have taken it), a refused ref
+   * (`bad_attachment`: the file is gone) or a detach. */
+  function restoreUploads(sent, status, data) {
+    const input = $("chat-text");
+    const code = data && data.error && data.error.code;
+    if (!sent.length || !status || code === "bad_attachment" || !input || input.disabled) return;
+    const held = new Set(uploads.items.map((it) => it.ref).filter(Boolean));
+    uploads.items = sent.filter((it) => !held.has(it.ref)).concat(uploads.items);
+    paintFiles();
+    paintSendState();
+  }
+
+  /* The message body: the refs of every uploaded file ride along. */
+  function messageBody(text, mode, clientId, items) {
+    const body = { text, mode, client_id: clientId };
+    const refs = items.filter((it) => it.state === "ready").map((it) => it.ref);
+    if (refs.length) body.attachments = refs;
+    return body;
+  }
+
+  function appendOptimistic(text, clientId, names = []) {
     const loading = $("chat-loading");
     if (loading) loading.remove();
     const div = document.createElement("div");
@@ -2877,7 +3170,9 @@ const SessionChat = (() => {
     div.dataset.clientId = clientId;
     div.dataset.text = text;
     div.dataset.sentAt = String(Math.floor(Date.now() / 1000));
-    div.innerHTML = `<div class="text">${md(text)}</div><div class="send-note">Sending…</div>`;
+    div.innerHTML = `<div class="text">${md(text)}</div>` +
+      (names.length ? `<div class="msg-files">${names.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : "") +
+      `<div class="send-note">Sending…</div>`;
     $("chat-log").appendChild(div);
     scrollBottom();
     return div;
@@ -2895,35 +3190,60 @@ const SessionChat = (() => {
   async function send() {
     const input = $("chat-text");
     const text = input.value.trim();
-    if (!text || !chat.key || input.disabled) return;
+    if (!chat.key || input.disabled) return;
+    if (chat.tray.editingId) { if (text) saveEdit(); return; }
+    const sent = uploads.items.filter((it) => it.state === "ready");
+    // Enter submits even with Send disabled; the files go with this
+    // message, so it waits for them.
+    if (uploading() || (!text && sent.length)) {
+      uploads.note = uploading() ? "Waiting for files to upload" : "Add a message to send with the files";
+      paintFiles();
+      return;
+    }
+    if (!text) return;
     input.value = "";
     growComposer();
     // An open / menu's token is gone with the text.
     trackMenus();
-    const mode = $("chat-mode").value;
+    chat.tray.editNote = "";
+    chat.tray.note = "";
+    paintTray();
+    sendText(text, $("chat-mode").value, sent);
+  }
+
+  /* A Queue-mode send while the agent works shows in the tray, anything
+   * else as a bubble in the transcript; the hub's answer can move it
+   * (posted). */
+  async function sendText(text, mode, sent = []) {
     const clientId = newClientId();
-    const bubble = appendOptimistic(text, clientId);
     const gen = chat.gen, key = chat.key;
-    chat.awaitingReply = true;
-    updateWorking();
-    const { status, data } = await post(sessionPath(key, "message"), { text, mode, client_id: clientId });
-    // A fast command.result may already have settled this bubble: .pending
-    // is gone then, and the response must not clobber it.
-    if (!bubble.classList.contains("pending")) return;
-    if (status === 202) {
-      // The send itself resolves later as command.result; the note says
-      // where it stands until then.
-      const note = bubble.querySelector(".send-note");
-      if (note) note.textContent = data && data.waiting ? "Queued until the agent is idle" : "Sent";
-      return;
-    }
-    // Another chat may be open by now; its dots aren't ours to clear.
-    if (gen === chat.gen) {
-      chat.awaitingReply = false;
+    const names = sent.map((it) => it.name);
+    const body = messageBody(text, mode, clientId, sent);
+    // Sent files leave the composer; failed ones were never part of it.
+    if (sent.length) { resetUploads(); paintSendState(); }
+    let bubble = null;
+    if (sendsToTray(mode, chat.row)) {
+      chat.tray.queued.push({ cid: clientId, text, files: names, phase: "posting", note: "", since: ++chat.tray.clock });
+      paintTray();
+    } else {
+      bubble = appendOptimistic(text, clientId, names);
+      chat.awaitingReply = true;
       updateWorking();
-      noteRefusal(data);
     }
-    failBubble(bubble, errorText(data) || (status ? `Send failed (${status})` : "Request failed: connection lost"));
+    const { status, data } = await post(sessionPath(key, "message"), body);
+    // Another chat may be open by now; its tray and dots aren't ours.
+    if (gen !== chat.gen) return;
+    // A fast command.result may already have settled the send (its row
+    // left the tray, or its bubble lost .pending): posted() leaves it.
+    if (status === 202) { posted(clientId, bubble, !!(data && data.waiting)); return; }
+    const why = errorText(data) || (status ? `Send failed (${status})` : "Request failed: connection lost");
+    noteRefusal(data);
+    restoreUploads(sent, status, data);
+    if (trayPostFailed(clientId, why)) return;
+    if (!bubble || !bubble.classList.contains("pending")) return;
+    chat.awaitingReply = false;
+    updateWorking();
+    failBubble(bubble, why);
   }
 
   async function interrupt() {
@@ -2970,6 +3290,516 @@ const SessionChat = (() => {
     }
     updateOwnership();
     scrollBottom();
+  }
+
+  /* --------------------------------------------------------- queued tray
+     The iPhone's Queued tray (ChatModel's queue half, ChatView's
+     QueuedTray): a Queue-mode send made while the agent works waits
+     above the composer instead of in the transcript, until the hub
+     sends it on idle. Each row can be edited (its text goes into the
+     box, Send becomes Save), removed, or sent now (written into the
+     running turn as a steer); the header removes them all. The hub
+     holds the sends, so the tray is read again from GET .../queue when
+     the chat opens. Rows are {cid, text, phase, note}: phase is posting
+     (the POST is out), waiting, sendingNow, removing (hidden while the
+     hub confirms) or left (the hub says it already went). */
+
+  function freshTray() {
+    return {
+      queued: [],
+      // Sends that left the hub's queue while the chat was closed; kept
+      // so a replayed echo or result still lands in the transcript.
+      departed: [],
+      // Client ids that left the tray: a queue list fetched before that
+      // can't bring them back.
+      settled: new Set(),
+      // Live echoes that matched no row while a queue list was on its way
+      // (`listing`).
+      unmatched: [], listing: false,
+      // The edit whose older-hub fallback (remove, then queue again) is
+      // out: its own removal doesn't end the edit.
+      requeueing: null,
+      // Ticks when a queue read starts and when a row is staged: a row
+      // newer than the read (`since` above its mark) isn't in its answer
+      // yet, so the answer can't move it out.
+      clock: 0,
+      editingId: null, draftBeforeEdit: "", savingEdit: false,
+      editNote: "", note: "", confirmAll: null,
+    };
+  }
+  chat.tray = freshTray();
+
+  /* An echoed user message is the stored text, which attachments prefix
+   * with "@path ", hence the endsWith. */
+  function echoes(stored, sent) {
+    if (!sent) return false;
+    return stored === sent || (stored || "").endsWith(sent);
+  }
+
+  /* Where a send shows before the hub answers: the tray for Queue mode
+   * while the agent works on a session this hub holds sends for, else
+   * the transcript. A satellite's sends wait on the satellite, so they
+   * never join the tray (the iPhone's holdsQueuedSends). */
+  function sendsToTray(mode, row) {
+    return mode === "queue" && !!row && row.status === "active" && !row.remote;
+  }
+
+  /* The hub's list wins: what it holds shows in its order (keeping what
+   * this page knows about each, but the hub's text, which another device
+   * may have edited), and what it no longer holds leaves for `departed`,
+   * except a send whose POST hasn't been answered yet. `known` are sends
+   * shown elsewhere or gone, which a list can't bring back; a send whose
+   * echo arrived while the list was on its way (`unmatched`) is gone too,
+   * and a row staged after the read began (`since` above `mark`) stays.
+   * Pure: answers {queued, departed, gone} for the caller to apply. */
+  function mergeQueue(local, departedBefore, sends, known, unmatched, mark = Infinity) {
+    const queued = [], gone = [];
+    const echoed = unmatched.slice();
+    for (const send of sends) {
+      const cid = send.client_id;
+      if (!cid || known.has(cid) || queued.some((q) => q.cid === cid)) continue;
+      const mine = local.find((q) => q.cid === cid);
+      if (!mine) {
+        const i = echoed.findIndex((t) => echoes(t, send.text));
+        if (i >= 0) { echoed.splice(i, 1); gone.push(cid); continue; }
+      }
+      // An edit saved here after the read began is newer than its text.
+      const text = send.text == null || (mine && (mine.editedAt || 0) > mark)
+        ? (mine ? mine.text : "") : send.text;
+      if (mine) queued.push({ ...mine, text, phase: mine.phase === "posting" ? "waiting" : mine.phase });
+      else queued.push({ cid, text, phase: "waiting", note: "" });
+    }
+    const departed = departedBefore.slice();
+    for (const mine of local) {
+      if (queued.some((q) => q.cid === mine.cid)) continue;
+      if (mine.phase === "posting" || (mine.since || 0) > mark) queued.push(mine);
+      else if (!known.has(mine.cid) && !departed.some((d) => d.cid === mine.cid)) departed.push(mine);
+    }
+    return { queued, departed, gone };
+  }
+
+  /* The short note a tray row shows when the hub refuses Send now or
+   * Remove (the iPhone's queueNote). */
+  function queueNote(status, data) {
+    const e = (data && data.error) || {};
+    switch (e.code || (status ? "" : "network")) {
+      case "not_waiting": {
+        const why = String(e.message || "").toLowerCase();
+        if (why.includes("removed")) return "Already removed";
+        if (why.includes("failed")) return "Already failed";
+        return "Already sent";
+      }
+      case "not_attached": return "Attach to send now";
+      case "queue_unsupported": return "Not available on this machine";
+      case "backlog_full": return "Too many waiting. Try again shortly";
+      case "unknown_send": return "The hub lost this message";
+      case "network": return "Can't reach the hub";
+      default: return e.message || "Something went wrong";
+    }
+  }
+
+  async function loadQueue(gen) {
+    const t = chat.tray;
+    // Only echoes that arrive while this list is on its way can be
+    // missing from it.
+    t.unmatched = [];
+    t.listing = true;
+    const mark = ++t.clock;
+    const { status, data } = await api(sessionPath(chat.key, "queue"));
+    if (gen !== chat.gen) return;
+    t.listing = false;
+    // An older hub has no queue route: the tray shows this page's sends.
+    if (status === 200 && data) {
+      const known = new Set(t.settled);
+      for (const b of $("chat-log").querySelectorAll(".msg.user[data-client-id]")) known.add(b.dataset.clientId);
+      const merged = mergeQueue(t.queued, t.departed, data.sends || [], known, t.unmatched, mark);
+      t.queued = merged.queued;
+      t.departed = merged.departed;
+      for (const cid of merged.gone) t.settled.add(cid);
+      if (t.editingId && !t.queued.some((q) => q.cid === t.editingId && q.phase === "waiting")) cancelEdit();
+      paintTray();
+    }
+    t.unmatched = [];
+  }
+
+  function resetTray() {
+    const t = chat.tray;
+    clearTimeout(t.confirmAll);
+    chat.tray = freshTray();
+  }
+
+  /* A send that left the hub's queue: out of the tray (or the hidden
+   * departed list), remembered as settled. An edit of it ends, its text
+   * left in the box to send as a new message. */
+  function takeQueued(cid, gone = "That message already went out") {
+    const t = chat.tray;
+    for (const list of ["queued", "departed"]) {
+      const entry = t[list].find((q) => q.cid === cid);
+      if (!entry) continue;
+      t[list] = t[list].filter((q) => q !== entry);
+      t.settled.add(cid);
+      if (t.editingId === cid && t.requeueing !== cid) {
+        t.editingId = null;
+        t.draftBeforeEdit = "";
+        t.editNote = gone;
+      }
+      paintTray();
+      return entry;
+    }
+    return null;
+  }
+
+  /* A live user message: a queued send went out, so it leaves the tray
+   * and the echo lands in the transcript where it really is. */
+  function echoLeavesTray(text) {
+    const t = chat.tray;
+    for (const list of ["departed", "queued"]) {
+      // Two rows can hold the same text: the one sent now is the one that
+      // went out first, else the oldest, as the hub sends them in order.
+      const hits = t[list].filter((q) => echoes(text, q.text));
+      const entry = hits.find((q) => q.phase === "sendingNow") || hits[0];
+      if (entry) { takeQueued(entry.cid); return; }
+    }
+    if (t.listing) t.unmatched.push(text);
+  }
+
+  /* The hub took the send; `waiting` says whether it holds it for idle.
+   * Where it shows follows the hub, not the status the page last saw. */
+  function posted(cid, bubble, waiting) {
+    const t = chat.tray;
+    const entry = t.queued.find((q) => q.cid === cid);
+    if (entry) {
+      if (entry.phase !== "posting") return;
+      if (waiting) {
+        entry.phase = "waiting";
+      } else {
+        // The agent was idle after all: it goes out now.
+        t.queued = t.queued.filter((q) => q !== entry);
+        const b = appendOptimistic(entry.text, cid, entry.files || []);
+        b.querySelector(".send-note").textContent = "Sent";
+        chat.awaitingReply = true;
+        updateWorking();
+      }
+      paintTray();
+      return;
+    }
+    if (!bubble || !bubble.classList.contains("pending")) return;
+    if (waiting && !t.settled.has(cid)) {
+      // The agent was busy after all: it waits in the tray.
+      bubble.remove();
+      t.queued.push({ cid, text: bubble.dataset.text, phase: "waiting", note: "", since: ++t.clock });
+      chat.awaitingReply = false;
+      updateWorking();
+      paintTray();
+      return;
+    }
+    const note = bubble.querySelector(".send-note");
+    if (note) note.textContent = "Sent";
+  }
+
+  /* The POST failed for a send staged in the tray: a failed bubble in
+   * the transcript instead. False when the tray doesn't hold it. */
+  function trayPostFailed(cid, why) {
+    const t = chat.tray;
+    const entry = t.queued.find((q) => q.cid === cid);
+    if (!entry) return false;
+    t.queued = t.queued.filter((q) => q !== entry);
+    t.settled.add(cid);
+    paintTray();
+    failBubble(appendOptimistic(entry.text, cid, entry.files || []), why);
+    return true;
+  }
+
+  /* The tray's row for `cid` now: a queue read replaces the row objects,
+   * so an action re-finds its row after its request. */
+  const trayRow = (cid) => chat.tray.queued.find((q) => q.cid === cid) || null;
+
+  async function queueAction(cid, op, text) {
+    const body = text === undefined ? { client_id: cid, op } : { client_id: cid, op, text };
+    const { status, data } = await post(sessionPath(chat.key, "queue"), body);
+    return status === 200 ? null : { status, data, code: (data && data.error && data.error.code) || "" };
+  }
+
+  /* Send now: the hub stops holding it and writes it into the running
+   * turn. It reads "Sending now" until its result or echo arrives. */
+  async function sendNow(cid) {
+    const t = chat.tray;
+    const entry = t.queued.find((q) => q.cid === cid);
+    if (!entry || entry.phase !== "waiting") return;
+    const gen = chat.gen;
+    if (t.editingId === cid) cancelEdit();
+    entry.phase = "sendingNow";
+    entry.note = "";
+    t.note = "";
+    paintTray();
+    const err = await queueAction(cid, "steer");
+    if (!err || gen !== chat.gen) return;
+    if (err.status === 401) return renderGate();
+    noteRefusal(err.data);
+    const row = trayRow(cid);
+    if (!row || row.phase !== "sendingNow") return;
+    row.phase = err.code === "not_waiting" ? "left" : "waiting";
+    row.note = queueNote(err.status, err.data);
+    paintTray();
+  }
+
+  /* Remove: gone from the tray at once, back with a note if the hub
+   * refuses. Its command.result says cancelled, never a failure. */
+  async function removeQueued(cid) {
+    const t = chat.tray;
+    const entry = t.queued.find((q) => q.cid === cid);
+    if (!entry) return;
+    if (entry.phase === "left") { dropQueued(cid); return; } // nothing to ask
+    if (entry.phase !== "waiting") return;
+    const gen = chat.gen;
+    if (t.editingId === cid) cancelEdit();
+    entry.phase = "removing";
+    entry.note = "";
+    t.note = "";
+    paintTray();
+    const err = await queueAction(cid, "cancel");
+    if (gen !== chat.gen) return;
+    if (!err) { dropQueued(cid); return; }
+    if (err.status === 401) return renderGate();
+    const row = trayRow(cid);
+    if (!row || row.phase !== "removing") return;
+    // The hub never held it, or forgot it: there's nothing to remove.
+    if (err.code === "unknown_send") { dropQueued(cid); return; }
+    row.phase = err.code === "not_waiting" ? "left" : "waiting";
+    row.note = queueNote(err.status, err.data);
+    paintTray();
+  }
+
+  function dropQueued(cid) {
+    const t = chat.tray;
+    t.settled.add(cid);
+    t.queued = t.queued.filter((q) => q.cid !== cid);
+    paintTray();
+  }
+
+  /* Remove all: the first click arms it for a few seconds and asks; the
+   * second removes every row the hub still holds, each on its own. */
+  function removeAllQueued() {
+    const t = chat.tray;
+    if (t.confirmAll === null) {
+      t.confirmAll = setTimeout(() => { chat.tray.confirmAll = null; paintTray(); }, 3000);
+      paintTray();
+      return;
+    }
+    clearTimeout(t.confirmAll);
+    t.confirmAll = null;
+    for (const q of [...t.queued]) {
+      if (q.phase === "waiting" || q.phase === "left") removeQueued(q.cid);
+    }
+    paintTray();
+  }
+
+  /* Edit: the message's text goes into the box, and Send saves it back.
+   * Only a send the hub still holds can be edited. */
+  function beginEdit(cid) {
+    const t = chat.tray;
+    const entry = t.queued.find((q) => q.cid === cid);
+    const input = $("chat-text");
+    if (!entry || entry.phase !== "waiting" || !input) return;
+    if (!t.editingId) t.draftBeforeEdit = input.value;
+    t.editingId = cid;
+    t.editNote = "";
+    input.value = entry.text;
+    growComposer();
+    trackMenus();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    paintTray();
+  }
+
+  function cancelEdit() {
+    const t = chat.tray;
+    // Not while a save is out: its answer decides what the box holds.
+    if (!t.editingId || t.savingEdit) return;
+    t.editingId = null;
+    const input = $("chat-text");
+    if (input) { input.value = t.draftBeforeEdit; growComposer(); }
+    t.draftBeforeEdit = "";
+    t.editNote = "";
+    paintTray();
+  }
+
+  async function saveEdit() {
+    const t = chat.tray;
+    const cid = t.editingId;
+    const input = $("chat-text");
+    const text = input.value.trim();
+    if (!cid || t.savingEdit || !text) return;
+    const entry = t.queued.find((q) => q.cid === cid);
+    if (!entry || entry.phase !== "waiting") { editWentOut(cid, text); return; }
+    const gen = chat.gen;
+    t.savingEdit = true;
+    paintTray();
+    const err = await queueAction(cid, "edit", text);
+    if (gen !== chat.gen) return;
+    if (!err || !(err.status === 400 || err.status === 422)) t.savingEdit = false;
+    if (!err) {
+      // The row keeps its place with the new text.
+      const row = trayRow(cid);
+      if (row) { row.text = text; row.note = ""; row.editedAt = ++t.clock; }
+      if (t.editingId === cid) cancelEdit();
+      paintTray();
+      return;
+    }
+    if (err.status === 401) return renderGate();
+    if (err.code === "not_waiting") { editWentOut(cid, text); return; }
+    // An older hub can't edit in place: remove the message, then queue
+    // the new text, which lands at the end. It stays saving meanwhile.
+    if (err.status === 400 || err.status === 422) { requeueEdit(cid, text, gen); return; }
+    t.editNote = queueNote(err.status, err.data);
+    paintTray();
+  }
+
+  /* Too late to edit: the new text stays in the box to send as a new
+   * message. */
+  function editWentOut(cid, text) {
+    const t = chat.tray;
+    const entry = t.queued.find((q) => q.cid === cid);
+    if (entry && entry.phase === "waiting") {
+      entry.phase = "left";
+      entry.note = "Already sent";
+    }
+    t.editingId = null;
+    t.draftBeforeEdit = "";
+    const input = $("chat-text");
+    if (input) { input.value = text; growComposer(); }
+    t.editNote = "That message already went out";
+    paintTray();
+  }
+
+  /* Runs with savingEdit set, so the edit can't be cancelled under it,
+   * and `requeueing` keeps the cancel's own command.result (which can
+   * land before the request answers) from ending the edit. */
+  async function requeueEdit(cid, text, gen) {
+    const t = chat.tray;
+    t.requeueing = cid;
+    const err = await queueAction(cid, "cancel");
+    if (gen !== chat.gen) return;
+    t.requeueing = null;
+    t.savingEdit = false;
+    if (err) {
+      if (err.code === "not_waiting") { editWentOut(cid, text); return; }
+      t.editNote = queueNote(err.status, err.data);
+      paintTray();
+      return;
+    }
+    dropQueued(cid);
+    if (t.editingId === cid) {
+      t.editingId = null;
+      const input = $("chat-text");
+      if (input) { input.value = t.draftBeforeEdit; growComposer(); }
+      t.draftBeforeEdit = "";
+      t.editNote = "";
+    }
+    t.note = "Edited. It moved to the end of the queue";
+    sendText(text, "queue");
+  }
+
+  const TRAY_ICON = {
+    edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+    remove: '<path d="M6 6l12 12M18 6 6 18"/>',
+    sendNow: '<path d="M20 5v7a3 3 0 0 1-3 3H5"/><path d="m9 11-4 4 4 4"/>',
+  };
+  const trayIcon = (name) =>
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TRAY_ICON[name]}</svg>`;
+
+  /* The tray and the edit bar, from chat.tray. Pure: the HTML of both. */
+  function trayHtml(t) {
+    const shown = t.queued.filter((q) => q.phase !== "removing");
+    const n = shown.length;
+    const btn = (act, label, icon, off = "") =>
+      `<button type="button" class="tray-btn" data-act="${act}" aria-label="${label}" title="${label}"${off}>${trayIcon(icon)}</button>`;
+    let tray = "";
+    if (n) {
+      const arming = t.confirmAll !== null;
+      tray = `<div class="tray-head"><span class="caption">${n === 1 ? "1 message queued" : `${n} messages queued`}</span>
+        <button type="button" class="tray-all${arming ? " arming" : ""}" data-act="remove-all">${
+          arming ? (n === 1 ? "Remove it?" : `Remove all ${n}?`) : "Remove all"}</button></div>`
+        + (t.note ? `<div class="tray-note">${esc(t.note)}</div>` : "")
+        + `<div class="tray-rows">${shown.map((q) => {
+          const editing = q.cid === t.editingId;
+          const actions = (off) => btn("edit", "Edit", "edit", off) + btn("remove", "Remove", "remove", off)
+            + btn("send-now", "Send now", "sendNow", off);
+          // A refused action can be tried again: the buttons stay, the
+          // note goes under the text.
+          const retry = !!q.note && q.phase === "waiting";
+          const right = retry ? actions("")
+            : q.note ? `<span class="tray-row-note${q.phase === "left" ? " left" : ""}">${esc(q.note)}</span>${
+              q.phase === "left" ? btn("remove", "Remove", "remove") : ""}`
+              : q.phase === "sendingNow" ? '<span class="tray-row-note left">Sending now</span>'
+                : actions(q.phase === "posting" ? " disabled" : "");
+          return `<div class="tray-row${editing ? " editing" : ""}${q.phase === "posting" ? " posting" : ""}" data-cid="${esc(q.cid)}">
+            <span class="tray-mark${q.phase === "sendingNow" ? " spin" : ""}" aria-hidden="true">${editing ? trayIcon("edit") : ""}</span>
+            <span class="tray-col"><span class="tray-text">${esc(q.text.replace(/\s*\n\s*/g, " "))}</span>${
+              retry ? `<span class="tray-row-note sub">${esc(q.note)}</span>` : ""}</span>${right}</div>`;
+        }).join("")}</div>`;
+    }
+    const edit = t.editingId
+      ? `<span class="caption">Editing a queued message${t.editNote ? ` · <span class="edit-note">${esc(t.editNote)}</span>` : ""}</span>
+        <button type="button" class="link" data-act="cancel-edit"${t.savingEdit ? " disabled" : ""}>Cancel</button>`
+      : t.editNote ? `<span class="caption edit-note">${esc(t.editNote)}</span>` : "";
+    return { tray, edit };
+  }
+
+  /* The browser re-serialises innerHTML, so the markup last drawn into
+   * an element is kept here to compare against. */
+  const drawnHtml = new WeakMap();
+  function drawOnce(el, html) {
+    if (drawnHtml.get(el) === html) return;
+    el.innerHTML = html;
+    drawnHtml.set(el, html);
+  }
+
+  function paintTray() {
+    const t = chat.tray;
+    const tray = $("chat-tray"), bar = $("chat-editbar");
+    if (!tray || !bar) return;
+    if (!t.queued.some((q) => q.phase !== "removing") && t.confirmAll !== null) {
+      clearTimeout(t.confirmAll);
+      t.confirmAll = null;
+    }
+    const html = trayHtml(t);
+    // Unchanged markup stays put: an ownership or status repaint calls
+    // this too, and must not take the focus off a tray button.
+    drawOnce(tray, html.tray);
+    tray.classList.toggle("hidden", !html.tray);
+    drawOnce(bar, html.edit);
+    bar.classList.toggle("hidden", !html.edit);
+    const input = $("chat-text"), sendBtn = $("chat-send");
+    if (input && !input.disabled) input.placeholder = t.editingId ? "Edit the queued message" : "Message the session";
+    if (sendBtn) {
+      sendBtn.textContent = t.editingId ? (t.savingEdit ? "Saving…" : "Save") : "Send";
+      if (t.savingEdit) sendBtn.disabled = true;
+      // Send still waits for uploads in flight; an edit takes no files.
+      else if (chat.rowKnown && chat.row && chat.row.ownership === "attached") sendBtn.disabled = !t.editingId && uploading();
+    }
+  }
+
+  function bindTray() {
+    const tray = $("chat-tray"), bar = $("chat-editbar");
+    if (tray) {
+      tray.onclick = (e) => {
+        const b = e.target.closest("button[data-act]");
+        if (!b || b.disabled) return;
+        const cid = (b.closest(".tray-row") || { dataset: {} }).dataset.cid;
+        const act = b.dataset.act;
+        if (act === "remove-all") removeAllQueued();
+        else if (act === "remove") removeQueued(cid);
+        else if (act === "send-now") sendNow(cid);
+        else if (act === "edit") beginEdit(cid);
+      };
+    }
+    if (bar) {
+      bar.onclick = (e) => {
+        const b = e.target.closest("button[data-act=cancel-edit]");
+        if (b && !b.disabled) cancelEdit();
+      };
+    }
   }
 
   /* -------------------------------------------------------- command menu
@@ -3461,8 +4291,10 @@ const SessionChat = (() => {
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && chat.key && chat.opened) {
-      // Back on the tab: a model switched elsewhere meanwhile shows now.
+      // Back on the tab: a model switched elsewhere meanwhile shows now,
+      // and so do sends another device queued, edited or removed.
       refreshModel();
+      if (chat.rowKnown) loadQueue(chat.gen);
       if (!chat.stream) {
         chat.retries = 0;
         openStream(chat.gen, resumeSeq());
@@ -3471,7 +4303,7 @@ const SessionChat = (() => {
   });
 
   return {
-    open, close, keyFromHash,
+    open, close, keyFromHash, applyMeta,
     get key() { return chat.key; },
     // Pure helpers, for tests.
     _test: { md, mdBlocks, cells, separatorAlignments, listItem, heading, imageLine,
@@ -3482,7 +4314,11 @@ const SessionChat = (() => {
       pageDocument, previewDocument, previewFrameAttrs, previewMessage, PREVIEW_CSP, linkUrls, linkHost, linkPath, linkCardsHtml,
       barSub, refreshModel, railDay, railGroups, slashToken, commandInsert, sourceLabel, filterCommands, insertCommand, menuKey,
       cmds, cmdLists, warmCommands, loadCommands, resetMenus, chat,
-      mentionToken, insertMention, splitPath, filesError, files, FILES, searchFiles, trackMenus, menu },
+      ATTACH, fileExt, attachProblem, formatBytes, uploadError, uploads, addFiles, removeUpload,
+      messageBody, send, updateOwnership, restoreUploads,
+      mentionToken, insertMention, splitPath, filesError, files, FILES, searchFiles, trackMenus, menu,
+      echoes, sendsToTray, mergeQueue, queueNote, trayHtml, posted, takeQueued, echoLeavesTray, sendText,
+      sendNow, removeQueued, removeAllQueued, beginEdit, cancelEdit, saveEdit, loadQueue, commandResult, appendMessage },
   };
 })();
 

@@ -499,7 +499,6 @@ public struct PricingCatalog: Sendable {
 
 public enum PricingError: Error, Equatable {
     case notACatalog
-    case tooFewModels(Int)
     case missingResource
     case httpStatus(Int)
 }

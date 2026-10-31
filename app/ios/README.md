@@ -5,7 +5,7 @@ The native SwiftUI client for remote control. It talks to the hub that
 one SSE stream per open chat for live events. The protocol is in
 [docs/remote-control.md](../../docs/remote-control.md); the plan for
 every page is in [ROADMAP.md](ROADMAP.md). The web app the hub serves
-at `/app/` is the client for browsers and other devices.
+at `/` is the client for browsers and other devices.
 
 ## Layout
 
@@ -20,7 +20,9 @@ at `/app/` is the client for browsers and other devices.
 The look follows the Mac app (`app/mac/Sources/QuiverApp/Theme/Theme.swift`):
 dark and light from the same tokens, sentence case, green only for
 "active" and "on", amber for "needs you", red for errors. Type runs one
-point larger than the Mac's so captions stay readable on a phone. Every
+point larger than the Mac's so captions stay readable on a phone, and
+every font comes through `Theme.font(size:weight:design:)`, which follows
+the phone's text size (Dynamic Type) from that size at the default. Every
 list scrolls vertically only and is pinned to the screen width.
 Harnesses show as their logos, not their names: `script/import-harness-icons.py`
 copies the Mac app's `harness-*.svg` into `Assets.xcassets/Harnesses`.

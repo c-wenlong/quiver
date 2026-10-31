@@ -313,21 +313,21 @@ public struct WidgetSnapshot: Codable, Sendable, Equatable {
 
     /// Tokens per day for the last `days` days, oldest first, quiet days as 0.
     public func sparkline(days count: Int, now: Date, calendar: Calendar) -> [Int] {
-        let today = calendar.startOfDay(for: now)
-        var byDay: [Date: Int] = [:]
-        for row in summary.days { byDay[calendar.startOfDay(for: row.day), default: 0] += row.tokens }
-        return (0..<count).reversed().map { back in
-            calendar.date(byAdding: .day, value: -back, to: today).map { byDay[$0] ?? 0 } ?? 0
-        }
+        Self.perDay(summary.days.map { ($0.day, $0.tokens) }, days: count, now: now, calendar: calendar)
     }
 
     /// One series' tokens per day for the last `days` days, like
     /// `sparkline(days:now:calendar:)` for the aggregate.
     public func sparkline(_ series: HarnessSeries, days count: Int, now: Date,
                           calendar: Calendar) -> [Int] {
+        Self.perDay(series.days.map { ($0.day, $0.tokens) }, days: count, now: now, calendar: calendar)
+    }
+
+    private static func perDay(_ rows: [(day: Date, tokens: Int)], days count: Int, now: Date,
+                               calendar: Calendar) -> [Int] {
         let today = calendar.startOfDay(for: now)
         var byDay: [Date: Int] = [:]
-        for row in series.days { byDay[calendar.startOfDay(for: row.day), default: 0] += row.tokens }
+        for row in rows { byDay[calendar.startOfDay(for: row.day), default: 0] += row.tokens }
         return (0..<count).reversed().map { back in
             calendar.date(byAdding: .day, value: -back, to: today).map { byDay[$0] ?? 0 } ?? 0
         }

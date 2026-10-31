@@ -3,8 +3,10 @@
 ``ActivityBlocks``, ``ProjectResolver``, ``CalendarFormat``).
 
 When each harness was actually working, read from the ledger's response
-timestamps. One session's responses form a block until more than
-``GAP_S`` of silence passes; blocks of one harness, account and project
+timestamps, and for Pi, Factory Droid, Freebuff and the Cursor app from
+their own session files and database (``_activity``), as the Mac reads
+them. One session's responses form a block until more than ``GAP_S`` of
+silence passes; blocks of one harness, account and project
 then merge under the same gap, so parallel sessions in a repository read
 as one stretch of work. Every Grok Bot session shares one project, "Grok
 Bot", since its Bots pass one task between them.
@@ -23,6 +25,7 @@ from __future__ import annotations
 import base64
 import calendar as stdcal
 import json
+import math
 import os
 from datetime import date, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -32,7 +35,7 @@ from quiver.paths import quiver_dir_for
 from quiver.remote import catalog as catalog_mod
 from quiver.sessions.parsers import codex_thread_id
 from quiver.webapp import sessions as sessions_mod
-from quiver.webapp.pages import tilde
+from quiver.webapp.pages import _activity, tilde
 
 # A project's responses read as one block until this much silence.
 GAP_S = 30 * 60
@@ -50,7 +53,8 @@ MONTHS = ("January", "February", "March", "April", "May", "June", "July",
 # HarnessMark.names for the harnesses the calendar draws, and the account
 # name rule (a Claude account is "Claude").
 NAMES = {"claude": "Claude Code", "codex": "Codex", "devin": "Devin",
-         "grok-bot": "Grok Bot", "opencode": "OpenCode", "cursor": "Cursor"}
+         "grok-bot": "Grok Bot", "opencode": "OpenCode", "cursor": "Cursor",
+         "droid": "Factory Droid"}
 GROK_SUBAGENT = "sand-subagent-"
 
 
@@ -255,6 +259,47 @@ def session_pieces(rows: list[tuple], priced: Priced, gap: float = GAP_S) -> lis
     return pieces
 
 
+def file_pieces(sessions: list[tuple[str, dict]], lo: float, hi: float, tz: tzinfo,
+                gap: float = GAP_S) -> list[dict]:
+    """``ActivityBlocks.make`` over each file source session's response
+    times (``_activity.read``): a block until more than ``gap`` of
+    silence, kept when it touches ``[lo, hi)`` with its real start and
+    end. The whole history is read, so a block straddling an edge is
+    never cut. File sources carry no tokens or spend, so those counts are
+    zero and the page shows time and responses only, as the Mac does."""
+    pieces: list[dict] = []
+    day_of: dict[int, str] = {}
+
+    def close(harness: str, session: dict, run: list[float]) -> None:
+        if not run or run[-1] < lo or run[0] >= hi:
+            return
+        days: dict[str, dict] = {}
+        for ts in run:
+            bucket = int(ts // 900)
+            if bucket not in day_of:
+                day_of[bucket] = datetime.fromtimestamp(bucket * 900, tz).date().isoformat()
+            _add_counts(days.setdefault(day_of[bucket], {}), _ONE_RESPONSE)
+        pieces.append({"harness": harness, "account": session["account"],
+                       "session": session["session"], "cwd": session["cwd"],
+                       "start": run[0], "end": run[-1], "responses": len(run),
+                       "tokens": 0, "cost_usd": 0.0, "unpriced_tokens": 0, "days": days})
+
+    for harness, session in sessions:
+        run: list[float] = []
+        # A time past any calendar (an "infinite" stamp) never touches a
+        # range on the Mac either.
+        for ts in (t for t in session["timestamps"] if math.isfinite(t)):
+            if run and ts - run[-1] > gap:
+                close(harness, session, run)
+                run = []
+            run.append(ts)
+        close(harness, session, run)
+    return pieces
+
+
+_ONE_RESPONSE = {"responses": 1, "tokens": 0, "cost_usd": 0.0, "unpriced_tokens": 0}
+
+
 def _ref(piece: dict) -> dict:
     return {"id": piece["session"], "cwd": piece["cwd"], "start": piece["start"],
             "end": piece["end"], "responses": piece["responses"], "tokens": piece["tokens"],
@@ -381,29 +426,40 @@ def _profiles(home: Path | None) -> list[dict]:
 
 class Accounts:
     """``AccountDirectory``: what to call an account home, and the homes
-    each harness can have, so a quiet account still lists in the legend."""
+    each harness can have, so a quiet account still lists in the legend.
+    Cursor activity is keyed on the app's user-data dir (the app's own,
+    or an extra profile's ``desktop`` folder), so those are Cursor's
+    homes and carry its profiles' names; its CLI home never is one."""
 
-    def __init__(self, home: Path | None):
+    def __init__(self, home: Path | None, profiles: list[dict] | None = None):
         user = Path(home) if home is not None else Path.home()
         root = quiver_dir_for(home) / "accounts"
+        cursor_app = str(user / "Library/Application Support/Cursor")
         self.user = str(user)
         self.names: dict[str, str] = {}
         self.homes: dict[str, list[str]] = {
             "claude": [str(user / ".claude")],
             "codex": [str(user / ".codex")],
             "devin": [str(user / ".local/share/devin/cli")],
+            "cursor": [cursor_app],
         }
-        for p in _profiles(home):
+        for p in _profiles(home) if profiles is None else profiles:
             vendor = p["vendor"]
+            label = f"{_account_name(vendor)}: {p.get('name') or p['id']}"
+            if vendor == "cursor":
+                desktop = cursor_app if p.get("isDefault") else str(root / vendor / p["id"] / "desktop")
+                self.names[os.path.normpath(desktop)] = label
+                if not p.get("isDefault"):
+                    self.homes["cursor"].append(desktop)
             if p.get("isDefault"):
                 if vendor not in ("claude", "codex"):
                     continue
                 path = str(user / (".codex" if vendor == "codex" else ".claude"))
             else:
                 path = str(root / vendor / p["id"] / "home")
-                if vendor in self.homes:
-                    self.homes[vendor].append(path)
-            self.names[os.path.normpath(path)] = f"{_account_name(vendor)}: {p.get('name') or p['id']}"
+                if vendor != "cursor":
+                    self.homes.setdefault(vendor, []).append(path)
+            self.names[os.path.normpath(path)] = label
         self.owner = {os.path.normpath(h): harness
                       for harness, homes in self.homes.items() for h in reversed(homes)}
 
@@ -521,13 +577,18 @@ def get(ctx, args: dict) -> dict:
         rows = store.activity_events(render_start - LOOKOUT_S, render_end + LOOKOUT_S,
                                      list(CALENDAR_HARNESSES))
         usage = ctx.state.webapp.session_usage()
+        file_stats = ctx.state.webapp.activity_session_stats(_activity.TRIVIAL_FILTERED)
         scanned_at = store.meta("scanned_at")
     pieces = [p for p in session_pieces(rows, priced)
               if is_real(p["harness"], usage.get((p["harness"], p["session"])))]
+    profiles = _profiles(ctx.home)
+    pieces += file_pieces(_activity.read(ctx.home, file_stats, sessions_mod.is_trivial,
+                                         profiles, rescan),
+                          render_start - LOOKOUT_S, render_end + LOOKOUT_S, tz)
     blocks = [b for b in group_by_project(pieces, Projects())
               if b["end"] >= render_start and b["start"] < render_end]
 
-    accounts = Accounts(ctx.home)
+    accounts = Accounts(ctx.home, profiles)
     window = [b for b in blocks if b["start"] < end
               and (b["end"] > start or (b["start"] == b["end"] and b["start"] >= start))]
     lo, hi = totals_range

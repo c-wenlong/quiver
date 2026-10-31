@@ -20,14 +20,20 @@ actor CancellableGatedSource: SessionListing {
     let list: SessionList
     private var gate: CheckedContinuation<Void, Never>?
     private(set) var calls = 0
+    /// Bumped once a listing is parked, so a test waits for it without
+    /// spinning.
+    let parks = CountGate()
     init(_ list: SessionList) { self.list = list }
     func sessions(days: Int?, limit: Int) async throws -> SessionList {
         calls += 1
-        await withCheckedContinuation { gate = $0 }
+        let parks = self.parks
+        await withCheckedContinuation {
+            gate = $0
+            Task { await parks.bump() }
+        }
         try Task.checkCancellation()
         return list
     }
-    var waiting: Bool { gate != nil }
     func release() { gate?.resume(); gate = nil }
 }
 
@@ -129,7 +135,7 @@ struct StubbornSource: SessionListing {
                           clock: TestClock(start))
         // The page opens, then closes while swe is still listing.
         let first = Task { await model.loadIfStale(for: "/bin/swe") }
-        while await !source.waiting { await Task.yield() }
+        try #require(await source.parks.reach(1))
         first.cancel()
         // Reopened before swe answers: it joins the listing in flight.
         let reopened = Task { await model.loadIfStale(for: "/bin/swe") }
