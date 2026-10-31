@@ -81,18 +81,6 @@ Every `uses:` in `.github/workflows/` points at a full 40-character commit SHA w
 
 A tag is a movable pointer, so a tag reference is not reproducible. Resolve a new SHA with `gh api repos/OWNER/REPO/git/ref/tags/TAG` (if the ref object type is `tag`, dereference it with `gh api repos/OWNER/REPO/git/tags/SHA`). Dependabot rewrites both the SHA and the comment on its weekly grouped pull request, so you rarely have to do this by hand.
 
-## Docs site
-
-The docs site at <https://c-wenlong.github.io/quiver/> is built with [Zensical](https://zensical.org) from the Markdown already in this repo. `scripts/docs_site.py` stages it into `build/docs-site/` (rewriting links so repo-relative references resolve inside the site), then `zensical` builds `site/`. The front page is the hand-written [app/landing-page/index.html](app/landing-page/index.html), copied to the site root as is; the README renders at `/overview/`. To preview locally:
-
-```bash
-python3 -m venv .venv-docs && source .venv-docs/bin/activate
-pip install -r docs/requirements.txt
-python3 scripts/docs_site.py && zensical serve
-```
-
-`zensical` is a docs-only dependency pinned in `docs/requirements.txt`; the core package stays stdlib-only, so it never goes in `pyproject.toml`.
-
 ## Code of Conduct
 
 Taking part in this project means agreeing to the [Code of Conduct](CODE_OF_CONDUCT.md).
