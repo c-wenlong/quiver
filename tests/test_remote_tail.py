@@ -414,6 +414,51 @@ class TestThinkingDuration(unittest.TestCase):
         self.assertTrue(src2.restore(state))
         self.assertEqual(self._thinking(src2.poll())[0]["duration_s"], 65.0)
 
+    def test_untimed_shown_record_clears_the_mark(self):
+        self._write([
+            _at(_claude_assistant([{"type": "text", "text": "hi"}]),
+                "2026-10-30T13:00:00Z"),
+            {"type": "agent-name", "name": "x"},  # bookkeeping: kept
+            _claude_user("an untimed prompt"),
+            _at(_claude_assistant([{"type": "thinking", "thinking": "a"}]),
+                "2026-10-30T15:00:00Z"),
+        ])
+        out = tail.JsonlTailSource(self.path, "claude").poll()
+        self.assertNotIn("duration_s", self._thinking(out)[0])
+        path = self.tmp / "b.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in [
+            _at(_claude_user("go"), "2026-10-30T13:00:00Z"),
+            {"type": "custom-title", "customTitle": "t"},
+            _at(_claude_assistant([{"type": "thinking", "thinking": "a"}]),
+                "2026-10-30T13:00:03Z"),
+        ]))
+        out = tail.JsonlTailSource(path, "claude").poll()
+        self.assertEqual(self._thinking(out)[0]["duration_s"], 3.0)
+
+    def test_mark_from_a_replaced_file_is_dropped(self):
+        self._write([_at(_claude_user("go"), "2026-10-30T13:00:00Z")])
+        src = tail.JsonlTailSource(self.path, "claude")
+        src.poll()
+        state = src.state()
+        self.path.write_text(json.dumps(
+            _at(_claude_user("other file"), "2026-10-30T09:00:00Z")) + "\n")
+        reused = tail.JsonlTailSource(self.path, "claude")
+        self.assertFalse(reused.restore(state))
+        reused.skip_to_end()
+        self._write([
+            _at(_claude_assistant([{"type": "thinking", "thinking": "a"}]),
+                "2026-10-30T13:01:05Z"),
+        ])
+        self.assertNotIn("duration_s", self._thinking(reused.poll())[0])
+        # A rotation found mid-poll restarts the stream with no mark.
+        src2 = tail.JsonlTailSource(self.path, "claude")
+        src2.poll()
+        self.assertIsNotNone(src2.state()["since"])
+        self.path.write_text(json.dumps(
+            _at(_claude_assistant([{"type": "thinking", "thinking": "b"}]),
+                "2026-10-30T13:02:00Z")) + "\n")
+        self.assertNotIn("duration_s", self._thinking(src2.poll())[0])
+
     def test_opencode_spans(self):
         self.assertEqual(tail._span_ms({"start": 1000, "end": 13_250}), 12.2)
         self.assertEqual(

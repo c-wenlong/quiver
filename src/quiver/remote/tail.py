@@ -542,11 +542,17 @@ def stamp_thinking(
     thinking with text was written when the whole reply ended, so its
     gap would count the reply too. An empty thinking record leaves the
     mark where it was, so the full one after it is timed from the start.
+    An untimed record that shows something (a prompt, a tool result)
+    clears it: the thinking after it started at an unknown time. Untimed
+    bookkeeping records that show nothing (Claude's titles, agent names,
+    request blobs) leave it.
     """
     if tool_name not in _BLOCK_RECORD_TOOLS:
         return since
     ts = _rec_ts(rec)
-    if ts is None or _thinking_companion(tool_name, rec) \
+    if ts is None:
+        return None if messages else since
+    if _thinking_companion(tool_name, rec) \
             or (not messages and _empty_thinking(tool_name, rec)):
         return since
     if since is not None and messages \
@@ -664,7 +670,9 @@ class JsonlTailSource:
         except (TypeError, ValueError):
             offset = 0
         since = state.get("since")
-        self._since = float(since) if isinstance(since, (int, float)) \
+        # Taken only once the cursor proves to be this file's: a mark
+        # from a replaced file would time a thinking block from it.
+        since = float(since) if isinstance(since, (int, float)) \
             and not isinstance(since, bool) else None
         stored = state.get("head")
         if isinstance(stored, str) and stored:
@@ -680,7 +688,7 @@ class JsonlTailSource:
                     return False
                 # Verified — possibly a prefix shorter than the sample,
                 # when the file was truncated while down.
-                self.offset, self._head = offset, head
+                self.offset, self._head, self._since = offset, head, since
                 return True
         # A cursor written before the bytes were stored verifies only a
         # file that still reaches the sampled length.
@@ -691,15 +699,16 @@ class JsonlTailSource:
         head_sha = str(state.get("head_sha") or "")
         if not (head_len and head_sha):
             # A cursor from before the check: nothing to verify.
-            self.offset = offset
+            self.offset, self._since = offset, since
             return True
         head = self._file_head(head_len)
         if len(head) != head_len or hashlib.sha256(head).hexdigest() != head_sha:
             return False
-        self.offset, self._head = offset, head
+        self.offset, self._head, self._since = offset, head, since
         return True
 
     def skip_to_end(self) -> None:
+        self._since = None
         try:
             self.offset = self.path.stat().st_size
         except OSError:
@@ -709,6 +718,7 @@ class JsonlTailSource:
     def start_near_end(self, max_bytes: int | None = None) -> None:
         """Backfill only the last ``max_bytes`` (default BACKFILL_BYTES)."""
         max_bytes = BACKFILL_BYTES if max_bytes is None else max_bytes
+        self._since = None
         try:
             size = self.path.stat().st_size
         except OSError:
@@ -803,6 +813,7 @@ class JsonlTailSource:
             return False
         self.offset = 0
         self._head = b""
+        self._since = None  # a new stream: its first record has no start
         return True
 
     def poll(self) -> list[dict]:
