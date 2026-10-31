@@ -16,7 +16,6 @@ from pathlib import Path
 from quiver.find.highlight import STYLE, highlight, language_for
 from tests._tempdir import temp_dir
 
-ESC = "\x1b["
 NESTED = re.compile(r"\x1b\[[0-9;]*\x1b")
 
 
@@ -71,11 +70,12 @@ class NoCorruptionTest(unittest.TestCase):
     def test_every_escape_is_closed(self):
         for lang, line in self.SAMPLES:
             out = highlight(line, lang)
-            self.assertEqual(out.count(ESC) and out.endswith("\x1b[0m") or True,
-                             True)
-            opens = len(re.findall(r"\x1b\[[0-9;]+m", out))
-            resets = out.count("\x1b[0m")
-            self.assertGreaterEqual(resets, 1 if opens else 0, lang)
+            # A style may stack several codes before its one reset, so
+            # walk them: whatever is open at the end of the line leaks.
+            still_open = False
+            for code in re.findall(r"\x1b\[[0-9;]*m", out):
+                still_open = code != "\x1b[0m"
+            self.assertFalse(still_open, f"{lang}: {out!r}")
 
 
 class GrammarTest(unittest.TestCase):
@@ -89,9 +89,7 @@ class GrammarTest(unittest.TestCase):
     def test_markdown_colours_only_the_bullet_marker(self):
         """Painting the whole item turns a bulleted page into one block."""
         out = highlight("- an item", "markdown")
-        self.assertTrue(out.startswith(STYLE["bullet"]))
-        self.assertIn("an item\x1b[0m", out.replace(STYLE["bullet"], "")
-                      .replace("\x1b[0m-", "-") + "\x1b[0m")
+        self.assertEqual(out, STYLE["bullet"] + "-\x1b[0m an item")
 
     def test_json_keys_differ_from_values(self):
         out = highlight('{"a": "b"}', "json")

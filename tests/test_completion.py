@@ -473,6 +473,8 @@ class AutocompleteCommandTest(unittest.TestCase):
                 cmd_autocomplete(["zsh"])
                 content_after_second = zshrc.read_text()
 
+            expected = f'source "{completion_dir / "swe.zsh"}"  # swe autocomplete (zsh)'
+            self.assertEqual(content_after_first.count(expected), 1)
             self.assertEqual(content_after_first, content_after_second)
 
     def test_unsupported_shell_returns_error(self):
