@@ -178,6 +178,7 @@ class TestRun(_TempHome, unittest.TestCase):
             drop = next(r for r in finding["remedies"]
                         if r.get("action") == "undeclare")
             self.assertEqual(drop["script"], "gone.py")
+            self.assertEqual(drop["targets"], ["gone.py"])
             reply = doctor_page.post(self.ctx, "run", {
                 "check": finding["check"], "message": finding["message"],
                 "action": "undeclare"})

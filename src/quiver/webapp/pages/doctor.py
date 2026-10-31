@@ -91,12 +91,14 @@ def post(ctx, action: str, body: dict) -> dict:
             run = partial(run, name=finding["harness"],
                           via=(remedy or finding).get("via"))
         elif action_name == "undeclare":
-            script, settings = remedy.get("script"), remedy.get("settings")
-            if not script or not isinstance(settings, list) or not settings:
+            settings = remedy.get("settings")
+            targets = remedy.get("targets")
+            if (not isinstance(settings, list) or not settings
+                    or not isinstance(targets, list) or not targets):
                 raise PageError(404, "unknown_remedy",
                                 "That fix isn't in the report any more. Refresh to see the current one.")
             run = partial(run, name=finding["harness"],
-                          script=script, settings=settings)
+                          targets=targets, settings=settings)
         elif action_name == "marketplace-drop":
             in_file = remedy.get("settings_entries") or []
             cli = remedy.get("cli_entries") or []
@@ -227,30 +229,44 @@ def _run_install(home: Path, name: str, via: str) -> str | None:
 
 
 def _run_undeclare(
-    home: Path, name: str, script: str, settings: list
+    home: Path, name: str, targets: list, settings: list
 ) -> str | None:
-    """Drop the hook entries naming ``script`` from each settings file.
+    """Drop the hook entries invoking a ``targets`` token, per file.
 
     ``drop_script_declarations`` refuses a managed file itself; the
     guard here only joins the per-file errors into the row's message.
     """
-    from quiver.harness.registry import load_registry
-    from quiver.hooks.settings import drop_script_declarations
+    from quiver.webapp.pages import plugins
 
-    registry = load_registry()
-    errors = []
-    for raw in settings:
-        try:
-            drop_script_declarations(Path(raw), script, registry, name, home)
-        except Exception as exc:  # noqa: BLE001 - per-file errors all show
-            errors.append(str(exc) or type(exc).__name__)
-    return "; ".join(errors) or None
+    if not plugins._WRITE_LOCK.acquire(blocking=False):
+        return "A plugin change is still running. Wait for it, then try again."
+    try:
+        from quiver.harness.registry import load_registry
+        from quiver.hooks.settings import drop_script_declarations
+
+        registry = load_registry()
+        errors = []
+        for raw in settings:
+            try:
+                drop_script_declarations(Path(raw), targets, registry, name, home)
+            except Exception as exc:  # noqa: BLE001 - per-file errors all show
+                errors.append(str(exc) or type(exc).__name__)
+        return "; ".join(errors) or None
+    finally:
+        plugins._WRITE_LOCK.release()
 
 
 def _run_marketplace_drop(home: Path, in_file: list, cli: list) -> str | None:
-    from quiver.harness.doctor import drop_marketplace_entries
+    from quiver.webapp.pages import plugins
 
-    return drop_marketplace_entries(home, in_file, cli)
+    if not plugins._WRITE_LOCK.acquire(blocking=False):
+        return "A plugin change is still running. Wait for it, then try again."
+    try:
+        from quiver.harness.doctor import drop_marketplace_entries
+
+        return drop_marketplace_entries(home, in_file, cli)
+    finally:
+        plugins._WRITE_LOCK.release()
 
 
 def install_problem(result, name: str) -> str | None:

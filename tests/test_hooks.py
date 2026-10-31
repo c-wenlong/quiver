@@ -543,7 +543,8 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                     {"type": "command", "command": "keep.py"}]}],
                 "SessionStart": [{"hooks": [{"command": "bash gone.py"}]}],
             })
-            removed = drop_script_declarations(path, "gone.py", {}, "claude", home)
+            removed = drop_script_declarations(
+                path, ["gone.py"], {}, "claude", home)
             self.assertEqual(removed, 2)
             data = json.loads(path.read_text())
             self.assertEqual(list(data["hooks"]), ["Stop"])
@@ -553,6 +554,27 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             backups = list((home / ".quiver/backups").iterdir())
             self.assertEqual(len(backups), 1)
             self.assertIn("gone.py", backups[0].read_text())
+
+    def test_a_working_command_with_the_same_basename_survives(self):
+        from quiver.hooks.settings import drop_script_declarations
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            live = home / "tools" / "guard.py"
+            live.parent.mkdir(parents=True)
+            live.write_text("x")
+            path = _settings(home, ".claude/settings.json", {
+                "Stop": [{"hooks": [
+                    {"command": f"python3 {home}/old/guard.py"},
+                    {"command": f"python3 {live}"}]}],
+            })
+            # The finding names only the missing token: the entry pointing
+            # at a real file keeps working.
+            removed = drop_script_declarations(
+                path, [f"{home}/old/guard.py"], {}, "claude", home)
+            self.assertEqual(removed, 1)
+            hooks = json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"]
+            self.assertEqual(hooks, [{"command": f"python3 {live}"}])
 
     def test_a_flat_schema_drops_the_entry(self):
         from quiver.hooks.settings import drop_script_declarations
@@ -565,7 +587,8 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                 "version": 1,
                 "hooks": {"sessionStart": [
                     {"command": "gone.py"}, {"command": "keep.py"}]}}))
-            removed = drop_script_declarations(path, "gone.py", {}, "cursor", home)
+            removed = drop_script_declarations(
+                path, ["gone.py"], {}, "cursor", home)
             self.assertEqual(removed, 1)
             data = json.loads(path.read_text())
             self.assertEqual(data["hooks"]["sessionStart"], [{"command": "keep.py"}])
@@ -580,12 +603,31 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             link = home / ".claude" / "settings.json"
             link.symlink_to(real)
             with self.assertRaises(ValueError):
-                drop_script_declarations(link, "gone.py", {}, "claude", home)
+                drop_script_declarations(link, ["gone.py"], {}, "claude", home)
             # A harness whose settings file only points at a generated one
             # is refused before the file is even opened.
             with self.assertRaises(ValueError):
                 drop_script_declarations(home / ".muse" / "settings.json",
-                                         "gone.py", {}, "muse", home)
+                                         ["gone.py"], {}, "muse", home)
+
+    def test_a_file_changed_under_the_read_is_refused(self):
+        from quiver.hooks.settings import drop_script_declarations
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            path = _settings(home, ".claude/settings.json", {
+                "Stop": [{"hooks": [{"command": "gone.py"}]}]})
+            real_read = json.loads(path.read_text())
+
+            def write_under_read(p):
+                p.write_text(json.dumps({"hooks": {"Stop": [
+                    {"hooks": [{"command": "plugin-toggle"}]}]}}))
+                return real_read
+
+            with mock.patch("quiver.hooks.settings._read_json",
+                            side_effect=write_under_read), \
+                    self.assertRaises(ValueError):
+                drop_script_declarations(path, ["gone.py"], {}, "claude", home)
 
     def test_nothing_matching_is_an_error_not_a_write(self):
         from quiver.hooks.settings import drop_script_declarations
@@ -596,7 +638,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                 "Stop": [{"hooks": [{"command": "keep.py"}]}]})
             before = path.read_text()
             with self.assertRaises(ValueError):
-                drop_script_declarations(path, "gone.py", {}, "claude", home)
+                drop_script_declarations(path, ["gone.py"], {}, "claude", home)
             self.assertEqual(path.read_text(), before)
 
 
@@ -630,6 +672,7 @@ class DoctorWiringTest(unittest.TestCase):
                         if r.get("action") == "undeclare")
             self.assertEqual(drop["script"], "gone.py")
             self.assertEqual(drop["settings"], [str(settings)])
+            self.assertEqual(drop["targets"], ["gone.py"])
 
     def test_a_managed_settings_file_offers_no_drop(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -637,6 +680,28 @@ class DoctorWiringTest(unittest.TestCase):
             real = _settings(home, "real-settings.json", {
                 "Stop": [{"hooks": [{"command": "gone.py"}]}]})
             (home / ".claude" / "settings.json").symlink_to(real)
+            findings = drift.check_hook_drift(home)
+            f = next(f for f in findings if "gone.py" in f.message)
+            self.assertNotIn(
+                "undeclare",
+                [r.get("action") for r in f.remedies])
+
+    def test_a_custom_muse_contract_offers_no_drop(self):
+        # capabilities.hooks.contract re-bases to muse's indirection: its
+        # file only points at the generated one, so no Run.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            _registry(home, {"muse-like": {
+                "command": "muse",
+                "capabilities": {"hooks": {
+                    "contract": "muse",
+                    "settings": "~/.muse/settings.json"}}}})
+            muse = home / ".muse"
+            muse.mkdir()
+            (muse / "settings.json").write_text(json.dumps(
+                {"managed_hooks_path": "~/.muse/hooks.json"}))
+            (muse / "hooks.json").write_text(json.dumps(
+                {"hooks": {"Stop": [{"hooks": [{"command": "gone.py"}]}]}}))
             findings = drift.check_hook_drift(home)
             f = next(f for f in findings if "gone.py" in f.message)
             self.assertNotIn(

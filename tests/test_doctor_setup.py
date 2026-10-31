@@ -135,6 +135,41 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertEqual((drop["settings_entries"], drop["cli_entries"]),
                          ([], ["added"]))
 
+    def test_an_entry_in_both_files_is_dropped_from_both(self):
+        # A marketplace registered in settings AND through the CLI needs
+        # two deletes: removing only the settings copy leaves the known
+        # copy, and the warning survives the Run.
+        self._declare(["nus"])
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "known_marketplaces.json").write_text(json.dumps({
+            "nus": {"source": {"source": "directory",
+                               "path": str(self.home / "gone" / "nus")}}}))
+        got = [f for f in self.findings({"claude": {"command": "claude"}})
+               if f.check == "setup.marketplace-missing"]
+        drop = next(r for r in got[0].remedies
+                    if r.get("action") == "marketplace-drop")
+        self.assertEqual((drop["settings_entries"], drop["cli_entries"]),
+                         (["nus"], ["nus"]))
+
+    def test_a_managed_settings_file_leaves_only_the_cli_targets(self):
+        settings = self._declare(["nus"])
+        real = self.home / "real-settings.json"
+        settings.rename(real)
+        settings.symlink_to(real)
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "known_marketplaces.json").write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}}}))
+        got = [f for f in self.findings({"claude": {"command": "claude"}})
+               if f.check == "setup.marketplace-missing"]
+        drop = next(r for r in got[0].remedies
+                    if r.get("action") == "marketplace-drop")
+        self.assertEqual((drop["settings_entries"], drop["cli_entries"]),
+                         ([], ["added"]))
+        self.assertIn("managed elsewhere", got[0].fix)
+
     def test_another_harness_gets_no_drop_action(self):
         from quiver.harness.doctor import _marketplace_remedies
         remedies = _marketplace_remedies("codex", ["x"], ["x"], [], False)

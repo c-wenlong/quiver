@@ -292,7 +292,7 @@ _MARKETPLACE_CONFIG = {"claude": ".claude/settings.json", "codex": ".codex/confi
 
 
 def _declared_in_settings(home: Path, harness: str) -> set[str]:
-    """Names Claude's settings.json declares; the rest came from the CLI."""
+    """Names Claude's settings.json declares."""
     if harness != "claude":
         return set()
     try:
@@ -301,6 +301,15 @@ def _declared_in_settings(home: Path, harness: str) -> set[str]:
         return set()
     extra = data.get("extraKnownMarketplaces") if isinstance(data, dict) else None
     return set(extra) if isinstance(extra, dict) else set()
+
+
+def _cli_registered(home: Path) -> set[str]:
+    """Names in claude's known_marketplaces.json, the CLI's register."""
+    try:
+        data = json.loads((home / _KNOWN_MARKETPLACES).read_text())
+    except (OSError, ValueError):
+        return set()
+    return set(data) if isinstance(data, dict) else set()
 
 
 def marketplace_findings(home: Path, registry: dict | None = None) -> list[DoctorFinding]:
@@ -338,14 +347,33 @@ def marketplace_findings(home: Path, registry: dict | None = None) -> list[Docto
             continue
         listed = ", ".join(missing)
         declared = _declared_in_settings(home, name) if name == "claude" else set(missing)
-        in_file = [m for m in missing if m in declared]
-        by_cli = [m for m in missing if m not in declared]
+        known = _cli_registered(home) if name == "claude" else set()
+        # The two registers are independent: a name in both files is in
+        # both drop lists, or Run removes half of it and the warning
+        # stays. A claude name in neither still defaults to the settings
+        # blame, matching the source line's story.
+        in_file = [m for m in missing
+                   if m in declared or (name == "claude" and m not in known)]
+        by_cli = [m for m in missing if m in known]
         config = home / _MARKETPLACE_CONFIG.get(name, "")
         nix = name in _MARKETPLACE_CONFIG and in_file and \
             os.path.realpath(config).startswith("/nix/store/")
+        from quiver.hooks.settings import declaration_managed_elsewhere
+        # A managed file (symlinked into the Nix store, read-only, a
+        # dotfiles checkout) is skipped at emit, not just refused at run.
+        managed = name in _MARKETPLACE_CONFIG and in_file and \
+            declaration_managed_elsewhere(config)
+        managed_known = name == "claude" and by_cli and \
+            declaration_managed_elsewhere(home / _KNOWN_MARKETPLACES)
+        settings_entries = [] if (nix or managed) else in_file
+        cli_entries = [] if managed_known else by_cli
         if nix:
             fix = (f"~/{_MARKETPLACE_CONFIG[name]} is managed by Nix: copy the folders "
                    "onto this machine or drop them from your Nix config")
+        elif managed:
+            fix = (f"~/{_MARKETPLACE_CONFIG[name]} is managed elsewhere: "
+                   "copy the folders onto this machine, or drop the entries "
+                   "where that file is managed")
         elif name in _MARKETPLACE_CONFIG:
             ways = []
             if in_file:
@@ -361,7 +389,8 @@ def marketplace_findings(home: Path, registry: dict | None = None) -> list[Docto
             fix, harness=name,
             source=_marketplace_source(name, in_file, by_cli),
             remedies=_marketplace_remedies(
-                name, missing, in_file, by_cli, nix)))
+                name, missing, in_file, by_cli, nix,
+                settings_entries, cli_entries, managed)))
     return findings
 
 
@@ -384,7 +413,7 @@ def drop_marketplace_entries(
     Nix store, unwritable) is skipped with a note rather than failed, so
     the CLI-registered drops still land. Returns what went wrong.
     """
-    from quiver.hooks.settings import declaration_managed_elsewhere
+    from quiver.hooks.settings import _unchanged, declaration_managed_elsewhere
     from quiver.paths import atomic_write_text, backup_tree
 
     errors: list[str] = []
@@ -401,6 +430,10 @@ def drop_marketplace_entries(
             errors.append(f"{tilde_path} is managed elsewhere; edit it there")
             continue
         try:
+            before = path.stat()
+        except OSError:
+            before = None
+        try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             errors.append(f"could not read {tilde_path}")
@@ -414,6 +447,11 @@ def drop_marketplace_entries(
             continue
         removed = [n for n in names if table.pop(n, _MISSING) is not _MISSING]
         if not removed:
+            continue
+        try:
+            _unchanged(path, before)
+        except ValueError as exc:
+            errors.append(str(exc))
             continue
         backup_tree(path, home)
         atomic_write_text(path, json.dumps(data, indent=2) + "\n")
@@ -437,6 +475,9 @@ def _marketplace_source(
 def _marketplace_remedies(
     name: str, missing: list[str], in_file: list[str],
     by_cli: list[str], nix: bool,
+    settings_entries: list[str] | None = None,
+    cli_entries: list[str] | None = None,
+    managed: bool = False,
 ) -> tuple:
     """Ways out of a missing-marketplace finding, best first.
 
@@ -455,10 +496,12 @@ def _marketplace_remedies(
     }]
     # CLI-registered entries live in known_marketplaces.json, which Nix
     # does not manage: they come out through the harness's own remove
-    # command under either management style. Under Nix a Run can only
-    # drop those; settings entries belong in the generating config.
+    # command under either management style. The caller has already
+    # emptied each entry list whose file is managed, so a Run only ever
+    # names files it can actually edit.
     if name == "claude":
-        settings_entries, cli_entries = ([], by_cli) if nix else (in_file, by_cli)
+        settings_entries = settings_entries or []
+        cli_entries = cli_entries or []
         n_entries = len(settings_entries) + len(cli_entries)
         if n_entries:
             files = []
@@ -477,33 +520,31 @@ def _marketplace_remedies(
                 "cli_entries": cli_entries,
             })
     cli_steps = [f"{name} plugin marketplace remove {m}" for m in by_cli]
+    drop_steps = []
     if nix:
-        drop_steps = []
         if in_file:
             drop_steps.append(
                 f"drop {', '.join(in_file)} from your Nix config "
                 f"(~/{_MARKETPLACE_CONFIG[name]} is generated)")
-        drop_steps += cli_steps
+    elif managed:
+        if in_file:
+            drop_steps.append(
+                f"drop {', '.join(in_file)} where "
+                f"~/{_MARKETPLACE_CONFIG[name]} is managed "
+                "(the file is read-only or generated)")
+    else:
+        if in_file:
+            drop_steps.append(
+                f"drop {', '.join(in_file)} from "
+                f"~/{_MARKETPLACE_CONFIG.get(name, 'settings')}")
+    drop_steps += cli_steps
+    if drop_steps:
         remedies.append({
             "kind": "steps",
             "title": f"Or drop the {len(missing)} entr"
                      f"{'y' if len(missing) == 1 else 'ies'}",
             "steps": drop_steps,
         })
-    else:
-        drop_steps = []
-        if in_file:
-            drop_steps.append(
-                f"drop {', '.join(in_file)} from "
-                f"~/{_MARKETPLACE_CONFIG.get(name, 'settings')}")
-        drop_steps += cli_steps
-        if drop_steps:
-            remedies.append({
-                "kind": "steps",
-                "title": f"Or drop the {len(missing)} entr"
-                         f"{'y' if len(missing) == 1 else 'ies'}",
-                "steps": drop_steps,
-            })
     if name in _MARKETPLACE_CONFIG:
         config = f"~/{_MARKETPLACE_CONFIG[name]}"
         places = [config] + ([f"~/{_KNOWN_MARKETPLACES}"]
@@ -523,6 +564,19 @@ def _marketplace_remedies(
                          "marketplace remove <name>` per entry, which "
                          f"edits ~/{_KNOWN_MARKETPLACES}, or remove "
                          "them there by hand. " if by_cli else "")
+                      + "Restore a folder instead when it should exist "
+                      "here. Verify with `swe doctor`: the "
+                      "setup.marketplace-missing finding should be gone.")
+        elif managed:
+            prompt = (f"{config} registers {len(missing)} marketplace "
+                      f"folder{'s' if len(missing) != 1 else ''} missing "
+                      f"on this machine ({listed}), but the file is "
+                      "managed elsewhere: it is read-only or generated. "
+                      "Do NOT edit it directly. Find what manages it "
+                      "(a dotfiles repo, a Nix or home-manager config) "
+                      f"and drop {', '.join(in_file)} there. "
+                      + (f"For {', '.join(by_cli)}: run `{name} plugin "
+                         "marketplace remove <name>` per entry. " if by_cli else "")
                       + "Restore a folder instead when it should exist "
                       "here. Verify with `swe doctor`: the "
                       "setup.marketplace-missing finding should be gone.")

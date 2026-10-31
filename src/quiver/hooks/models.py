@@ -61,11 +61,16 @@ class HookDrift:
 
     ``script`` is the basename at issue when there is one, ``settings``
     the files the finding is about: the ones declaring a missing script,
-    or the file that should declare a linked one. Doctor turns them into
-    the finding's ``source`` and a remedy's undo target."""
+    or the file that should declare a linked one. ``targets`` are the
+    missing script tokens themselves (the resolved path when one could
+    be computed, else the token as written): two commands can name the
+    same basename while only one of them points at nothing, so a
+    declared-missing drop matches tokens, never basenames. Doctor turns
+    them into the finding's ``source`` and a remedy's undo target."""
 
     kind: str               # declared-missing | undeclared | unlinked | managed
     harness: str
     message: str
     script: str = ""
     settings: tuple = ()
+    targets: tuple = ()
