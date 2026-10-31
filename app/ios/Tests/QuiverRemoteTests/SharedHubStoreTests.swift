@@ -183,6 +183,36 @@ final class SharedHubStoreTests: XCTestCase {
         XCTAssertNil(own.object(forKey: "quiver.hubs"))
     }
 
+    func testAReplacementSavedWithoutTheGroupIsReadOnReturn() {
+        // Pair on a shared-capable build: the credential is in the group.
+        let items = MemoryKeychain.Items()
+        let own = freshDefaults(), group = freshDefaults()
+        let entitled = MemoryKeychain(items: items)
+        let app = newApp(entitled, group: group, own: own)
+        var list = app.load()
+        list.adopt(hub("mac", "v1"))
+        XCTAssertTrue(app.saveCredential(list.hubs[0]))
+        app.saveIndex(list)
+
+        // A build without the entitlement pairs the same hub again. Its
+        // "App Group" defaults resolve to its own suite, and the shared
+        // write fails, so the copy lands in the app's own group.
+        let unentitled = MemoryKeychain(items: items, entitled: [MemoryKeychain.appGroup])
+        let downgraded = KeychainHubStore(keychain: unentitled, sharedGroup: MemoryKeychain.sharedGroup,
+                                        defaults: own, legacyDefaults: nil)
+        XCTAssertTrue(downgraded.saveCredential(hub("mac", "v2")))
+        XCTAssertEqual(entitled.groups(holding: account(hub("mac"))),
+                       [MemoryKeychain.appGroup, MemoryKeychain.sharedGroup])
+
+        // Back on a shared-capable build the newer copy is read and
+        // moved into the group, not ignored behind the stale one.
+        XCTAssertEqual(newApp(entitled, group: group, own: own).load()
+                        .hubs.map(\.credential.credential), ["v2"])
+        XCTAssertEqual(entitled.groups(holding: account(hub("mac"))), [MemoryKeychain.sharedGroup])
+        XCTAssertEqual(newApp(entitled, group: group, own: own).load()
+                        .hubs.map(\.credential.credential), ["v2"], "the next load reads the moved copy")
+    }
+
     func testUnpairDeletesTheCredentialFromEveryGroup() {
         let items = MemoryKeychain.Items()
         let own = freshDefaults(), group = freshDefaults()

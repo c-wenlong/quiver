@@ -92,7 +92,15 @@ struct KeychainHubStore: HubStore {
     /// The WKWebView shell kept the `/v1/pair` JSON here; read once so a
     /// phone paired under the old shell stays paired.
     private static let legacyCredentialKey = "quiver.credentialJSON"
+    /// Accounts whose latest credential write landed in the app's own
+    /// group because the shared one was unreachable. A shared-capable
+    /// load prefers and promotes that newer copy instead of returning
+    /// the shared item it replaced.
+    private static let fallbackAccountsKey = "quiver.fallbackCredentialAccounts"
     /// Every defaults key the store owns, moved together into the group.
+    /// Not `fallbackAccountsKey`: a drop-without-copy migration would
+    /// erase the marker before `stored` can read it, and it is read
+    /// from every suite anyway.
     private static let indexKeys = [hubsKey, activeKey, lastHostKey, legacyHubKey, legacyCredentialKey]
 
     /// Tests pass their own Keychain, group and defaults suites.
@@ -152,10 +160,22 @@ struct KeychainHubStore: HubStore {
 
     /// Reads the shared group first, then any group: an item from before
     /// the shared group is copied there and dropped where it was. If the
-    /// copy fails, the old item stays and is read again next time.
+    /// copy fails, the old item stays and is read again next time. A
+    /// recorded fallback write beats the shared item: it is the copy a
+    /// build without the group last reported saving.
     private func stored(account: String) -> Credential? {
         if let group = sharedGroup, let item = keychain.read(account: account, group: group) {
-            return try? Hub.decoder.decode(Credential.self, from: item.data)
+            guard fallbackRecorded(account),
+                  let newer = keychain.read(account: account, group: nil),
+                  let cred = try? Hub.decoder.decode(Credential.self, from: newer.data) else {
+                return try? Hub.decoder.decode(Credential.self, from: item.data)
+            }
+            if keychain.write(newer.data, account: account, group: group),
+               let oldGroup = newer.group, oldGroup != group {
+                keychain.delete(account: account, group: oldGroup)
+            }
+            clearFallback(account)
+            return cred
         }
         guard let item = keychain.read(account: account, group: nil),
               let cred = try? Hub.decoder.decode(Credential.self, from: item.data) else { return nil }
@@ -163,8 +183,44 @@ struct KeychainHubStore: HubStore {
         if let group = sharedGroup, let oldGroup = item.group, oldGroup != group,
            keychain.write(item.data, account: account, group: group) {
             keychain.delete(account: account, group: oldGroup)
+            clearFallback(account)
         }
         return cred
+    }
+
+    /// The defaults suites a marker can live in. A build without the App
+    /// Group writes to `.standard` (`legacyDefaults`), so the record has
+    /// to cover both places a later entitled build reads.
+    private func eachSuite(_ body: (UserDefaults) -> Void) {
+        var seen = Set<ObjectIdentifier>()
+        for suite in [defaults, legacyDefaults] {
+            guard let suite, seen.insert(ObjectIdentifier(suite)).inserted else { continue }
+            body(suite)
+        }
+    }
+
+    private func fallbackRecorded(_ account: String) -> Bool {
+        var found = false
+        eachSuite { found = found || (($0.stringArray(forKey: Self.fallbackAccountsKey) ?? []).contains(account)) }
+        return found
+    }
+
+    private func recordFallback(_ account: String) {
+        eachSuite { suite in
+            var set = Set(suite.stringArray(forKey: Self.fallbackAccountsKey) ?? [])
+            if set.insert(account).inserted {
+                suite.set(Array(set), forKey: Self.fallbackAccountsKey)
+            }
+        }
+    }
+
+    private func clearFallback(_ account: String) {
+        eachSuite { suite in
+            var set = Set(suite.stringArray(forKey: Self.fallbackAccountsKey) ?? [])
+            if set.remove(account) != nil {
+                suite.set(Array(set), forKey: Self.fallbackAccountsKey)
+            }
+        }
     }
 
     func saveIndex(_ list: HubList) {
@@ -182,12 +238,19 @@ struct KeychainHubStore: HubStore {
         encoder.keyEncodingStrategy = .convertToSnakeCase
         guard let data = try? encoder.encode(hub.credential) else { return false }
         let account = Self.account(for: hub.id)
-        if let group = sharedGroup, keychain.write(data, account: account, group: group) { return true }
-        return keychain.write(data, account: account, group: nil)
+        if let group = sharedGroup, keychain.write(data, account: account, group: group) {
+            clearFallback(account)
+            return true
+        }
+        let wrote = keychain.write(data, account: account, group: nil)
+        if wrote { recordFallback(account) }
+        return wrote
     }
 
     func deleteCredential(_ id: String) {
-        keychain.delete(account: Self.account(for: id), group: nil)
+        let account = Self.account(for: id)
+        keychain.delete(account: account, group: nil)
+        clearFallback(account)
     }
 
     /// Last hub address paired, kept after an unpair so pairing again
@@ -261,7 +324,7 @@ struct KeychainHubStore: HubStore {
             deleteCredential(entry.url)
         }
         keychain.delete(account: Self.legacyAccount, group: nil)
-        for key in Self.indexKeys {
+        for key in Self.indexKeys + [Self.fallbackAccountsKey] {
             defaults.removeObject(forKey: key)
             legacyDefaults?.removeObject(forKey: key)
         }
