@@ -588,20 +588,39 @@ def _hook_finding(d, home: Path) -> Finding:
                       f"Touch nothing else in the file.")
             fix = f"remove the declaration from {joined}, or restore {d.script}"
             steps_title = f"Remove the declaration from {joined}"
+        from quiver.hooks.contracts import contract_for
+        from quiver.hooks.settings import declaration_managed_elsewhere
+        # No Run on a file owned by a generator (symlinked, read-only) or
+        # on a harness like muse whose file only points at the real one.
+        managed = (contract_for({}, d.harness, home).managed_hooks_key
+                   or any(declaration_managed_elsewhere(p)
+                          for p in d.settings))
+        remedies: list = []
+        if not nix and not managed and d.settings:
+            remedies.append({
+                "kind": "action", "action": "undeclare",
+                "title": "Drop the declaration",
+                "detail": "Removes the hook entries naming it from "
+                          f"{joined}, with each file backed up to "
+                          "~/.quiver/backups first.",
+                "script": d.script,
+                "settings": [str(p) for p in d.settings],
+            })
+        remedies += [
+            _agent(prompt,
+                   "Restores the script or removes the hook, then "
+                   "verifies with swe doctor."),
+            {"kind": "steps",
+             "title": steps_title,
+             "detail": "Delete its hook entry under each event that "
+                       "declares it."},
+        ]
         return Finding(
             "warn", "hooks", d.message,
             fix=fix,
             harness=d.harness,
             source=f"declared in {joined}" if files else None,
-            remedies=(
-                _agent(prompt,
-                       "Restores the script or removes the hook, then "
-                       "verifies with swe doctor."),
-                {"kind": "steps",
-                 "title": steps_title,
-                 "detail": "Delete its hook entry under each event that "
-                           "declares it."},
-            ))
+            remedies=tuple(remedies))
     if d.kind == "undeclared":
         file = files[0] if files else ""
         nix = file and any(os.path.realpath(p).startswith("/nix/store/")

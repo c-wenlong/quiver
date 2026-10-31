@@ -85,6 +85,16 @@ report again, finds that finding, and runs the fix in process:
 | `init` | `init.commands.run_init(home, quiet=True, ask=False)` | `swe init` with no terminal |
 | `discover` | `discover_harnesses()` then `apply_findings(min_confidence="high")` | `swe harness discover --apply --json` |
 | `install` | `harness.commands.install_harness(name, via)`, output captured | `swe install <name> --via=<via>` |
+| `undeclare` | `hooks.settings.drop_script_declarations(path, script, ...)` on each of the remedy's `settings` files | deleting the hook entries naming the remedy's `script` |
+| `marketplace-drop` | `harness.doctor.drop_marketplace_entries(home, ...)` on the remedy's `settings_entries` (out of `~/.claude/settings.json`'s `extraKnownMarketplaces`) and `cli_entries` (out of `~/.claude/plugins/known_marketplaces.json`) | `claude plugin marketplace remove <name>` plus the settings edit, claude only |
+
+The two delete actions write a harness's own files, which swe otherwise
+only reads. Each file is copied to `~/.quiver/backups` first, and a file
+`declaration_managed_elsewhere` calls managed (a symlink, as a Nix store
+path, or unwritable) is refused: the edit belongs in whatever generates
+it. Under a Nix-managed settings file `marketplace-drop` still drops the
+`cli_entries`, since `known_marketplaces.json` is not generated; an
+`undeclare` on one is never offered.
 
 `swe doctor` itself gives an off-PATH harness `action: "install"`, `via`
 and the fix `swe install <name> --via=<via>` when swe knows an installer

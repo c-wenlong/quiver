@@ -90,6 +90,20 @@ def post(ctx, action: str, body: dict) -> dict:
         if action_name == "install":
             run = partial(run, name=finding["harness"],
                           via=(remedy or finding).get("via"))
+        elif action_name == "undeclare":
+            script, settings = remedy.get("script"), remedy.get("settings")
+            if not script or not isinstance(settings, list) or not settings:
+                raise PageError(404, "unknown_remedy",
+                                "That fix isn't in the report any more. Refresh to see the current one.")
+            run = partial(run, name=finding["harness"],
+                          script=script, settings=settings)
+        elif action_name == "marketplace-drop":
+            in_file = remedy.get("settings_entries") or []
+            cli = remedy.get("cli_entries") or []
+            if not in_file and not cli:
+                raise PageError(404, "unknown_remedy",
+                                "That fix isn't in the report any more. Refresh to see the current one.")
+            run = partial(run, in_file=in_file, cli=cli)
         home = home_path(ctx)
         error = _guarded(run, home)
         # Setup and init link files, and leave a real one in the way alone.
@@ -212,6 +226,33 @@ def _run_install(home: Path, name: str, via: str) -> str | None:
     return install_problem(install_harness(name, via), name)
 
 
+def _run_undeclare(
+    home: Path, name: str, script: str, settings: list
+) -> str | None:
+    """Drop the hook entries naming ``script`` from each settings file.
+
+    ``drop_script_declarations`` refuses a managed file itself; the
+    guard here only joins the per-file errors into the row's message.
+    """
+    from quiver.harness.registry import load_registry
+    from quiver.hooks.settings import drop_script_declarations
+
+    registry = load_registry()
+    errors = []
+    for raw in settings:
+        try:
+            drop_script_declarations(Path(raw), script, registry, name, home)
+        except Exception as exc:  # noqa: BLE001 - per-file errors all show
+            errors.append(str(exc) or type(exc).__name__)
+    return "; ".join(errors) or None
+
+
+def _run_marketplace_drop(home: Path, in_file: list, cli: list) -> str | None:
+    from quiver.harness.doctor import drop_marketplace_entries
+
+    return drop_marketplace_entries(home, in_file, cli)
+
+
 def install_problem(result, name: str) -> str | None:
     """What a captured install says went wrong, with the end of its output,
     or None once the command is on PATH."""
@@ -221,4 +262,6 @@ def install_problem(result, name: str) -> str | None:
     return result.error + ("\n" + tail if tail else "")
 
 
-RUNNERS = {"setup": _run_setup, "init": _run_init, "discover": _run_discover, "install": _run_install}
+RUNNERS = {"setup": _run_setup, "init": _run_init, "discover": _run_discover,
+           "install": _run_install, "undeclare": _run_undeclare,
+           "marketplace-drop": _run_marketplace_drop}

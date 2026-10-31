@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from quiver.console import tilde
 from quiver.harness.models import DoctorFinding
 from quiver.harness.path_health import is_dir_on_path
 
@@ -367,6 +368,56 @@ def marketplace_findings(home: Path, registry: dict | None = None) -> list[Docto
 # Claude keeps CLI-added marketplaces beside its settings file, in
 # plugins/known_marketplaces.json.
 _KNOWN_MARKETPLACES = ".claude/plugins/known_marketplaces.json"
+_MISSING = object()
+
+
+def drop_marketplace_entries(
+    home: Path, in_file: list[str], by_cli: list[str]
+) -> str | None:
+    """The deterministic half of a missing-marketplace fix: delete the
+    named entries, each file backed up to ~/.quiver/backups first.
+
+    Claude only — codex declares marketplaces in TOML, which nothing
+    here writes. ``in_file`` names come out of settings.json's
+    ``extraKnownMarketplaces`` map, ``by_cli`` out of
+    known_marketplaces.json. A managed settings file (symlinked into the
+    Nix store, unwritable) is skipped with a note rather than failed, so
+    the CLI-registered drops still land. Returns what went wrong.
+    """
+    from quiver.hooks.settings import declaration_managed_elsewhere
+    from quiver.paths import atomic_write_text, backup_tree
+
+    errors: list[str] = []
+    jobs = (
+        (home / _MARKETPLACE_CONFIG["claude"], "extraKnownMarketplaces",
+         in_file),
+        (home / _KNOWN_MARKETPLACES, None, by_cli),
+    )
+    for path, key, names in jobs:
+        if not names:
+            continue
+        tilde_path = tilde(path, home)
+        if declaration_managed_elsewhere(path):
+            errors.append(f"{tilde_path} is managed elsewhere; edit it there")
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            errors.append(f"could not read {tilde_path}")
+            continue
+        if not isinstance(data, dict):
+            errors.append(f"{tilde_path} is not a JSON object")
+            continue
+        table = data.get(key) if key else data
+        if not isinstance(table, dict):
+            errors.append(f"{tilde_path} has no {key} map")
+            continue
+        removed = [n for n in names if table.pop(n, _MISSING) is not _MISSING]
+        if not removed:
+            continue
+        backup_tree(path, home)
+        atomic_write_text(path, json.dumps(data, indent=2) + "\n")
+    return "; ".join(errors) or None
 
 
 def _marketplace_source(
@@ -404,7 +455,27 @@ def _marketplace_remedies(
     }]
     # CLI-registered entries live in known_marketplaces.json, which Nix
     # does not manage: they come out through the harness's own remove
-    # command under either management style.
+    # command under either management style. Under Nix a Run can only
+    # drop those; settings entries belong in the generating config.
+    if name == "claude":
+        settings_entries, cli_entries = ([], by_cli) if nix else (in_file, by_cli)
+        n_entries = len(settings_entries) + len(cli_entries)
+        if n_entries:
+            files = []
+            if settings_entries:
+                files.append(f"~/{_MARKETPLACE_CONFIG[name]}")
+            if cli_entries:
+                files.append(f"~/{_KNOWN_MARKETPLACES}")
+            remedies.append({
+                "kind": "action", "action": "marketplace-drop",
+                "title": f"Drop the {n_entries} entr"
+                         f"{'y' if n_entries == 1 else 'ies'}",
+                "detail": f"Deletes them from {' and '.join(files)}, "
+                          "with each file backed up to ~/.quiver/backups "
+                          "first.",
+                "settings_entries": settings_entries,
+                "cli_entries": cli_entries,
+            })
     cli_steps = [f"{name} plugin marketplace remove {m}" for m in by_cli]
     if nix:
         drop_steps = []

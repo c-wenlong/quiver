@@ -21,8 +21,13 @@ a harness that declared only ``capabilities.hooks.root``.
 
 Everything here tolerates: a missing file, unparseable JSON, and schema
 drift (``hooks`` that is not a dict, groups that are not lists, entries
-that are not objects) each read as no declarations, never an error. These
-files are only ever read; quiver never writes one.
+that are not objects) each read as no declarations, never an error.
+
+The one write is ``drop_script_declarations``: Doctor's "Drop the
+declaration" runs it, and only after ``declaration_managed_elsewhere``
+clears the file (a symlinked or unwritable file is owned by whatever
+manages it) and a backup lands in ~/.quiver/backups. Everything else is
+read-only.
 """
 
 from __future__ import annotations
@@ -264,6 +269,79 @@ def declaration_managed_elsewhere(path: Path) -> bool:
         return path.is_file() and not os.access(path, os.W_OK)
     except OSError:
         return False
+
+
+def drop_script_declarations(
+    path: Path,
+    basename: str,
+    registry: dict,
+    harness: str,
+    home: Path,
+) -> int:
+    """Remove the hook entries whose commands name ``basename``.
+
+    Doctor's deterministic half of a declared-missing fix. Raises rather
+    than reports: the caller shows the exception's text, as every doctor
+    runner does. Refuses a file managed elsewhere (symlinked, unwritable)
+    and a harness whose settings file only points at a generated one,
+    since the edit belongs in whatever generates it. Backs the file up
+    before writing. Returns how many entries came out.
+    """
+    from quiver.paths import atomic_write_text, backup_tree
+
+    contract = contract_for(registry, harness, home)
+    if contract.managed_hooks_key:
+        raise ValueError(
+            f"{path} only points at a generated file; edit what generates it")
+    if declaration_managed_elsewhere(path):
+        raise ValueError(f"{path} is managed elsewhere; edit it there")
+    data = _read_json(path)
+    if data is None:
+        raise ValueError(f"{path} is not a JSON object")
+    hooks_map = data.get("hooks")
+    if not isinstance(hooks_map, dict):
+        raise ValueError(f"{path} declares no hooks")
+
+    def names_script(command) -> bool:
+        return isinstance(command, str) and basename in basenames_in(command)
+
+    removed = 0
+    if contract.schema == "flat":
+        for event, entries in list(hooks_map.items()):
+            if not isinstance(entries, list):
+                continue
+            kept = [e for e in entries if not (
+                    isinstance(e, dict) and names_script(e.get("command")))]
+            removed += len(entries) - len(kept)
+            if kept:
+                hooks_map[event] = kept
+            else:
+                del hooks_map[event]
+    else:
+        for event, groups in list(hooks_map.items()):
+            if not isinstance(groups, list):
+                continue
+            kept_groups = []
+            for group in groups:
+                hooks = group.get("hooks") if isinstance(group, dict) else None
+                if not isinstance(hooks, list):
+                    kept_groups.append(group)
+                    continue
+                kept = [h for h in hooks if not (
+                        isinstance(h, dict) and names_script(h.get("command")))]
+                removed += len(hooks) - len(kept)
+                if kept:
+                    group["hooks"] = kept
+                    kept_groups.append(group)
+            if kept_groups:
+                hooks_map[event] = kept_groups
+            else:
+                del hooks_map[event]
+    if not removed:
+        raise ValueError(f"{path} declares no hook naming {basename}")
+    backup_tree(path, home)
+    atomic_write_text(path, json.dumps(data, indent=2) + "\n")
+    return removed
 
 
 def split_command(command: str) -> list[str]:
