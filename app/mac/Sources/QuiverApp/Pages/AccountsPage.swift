@@ -859,13 +859,14 @@ private struct IssueFixSheet: View {
 
 /// "Shared content": one switch per piece swe links into every extra Claude
 /// and Codex account's folder (`accounts.sync.*`, the keys `swe config`
-/// writes). Turning one off removes only the links swe made.
+/// writes), plus the hub's MCP servers merged into each account's config.
+/// Turning one off removes only what swe added.
 private struct SharedContentCard: View {
     let sync: AccountSyncModel
 
     var body: some View {
         Card(title: "Shared content",
-             subtitle: "Links the shared AGENTS.md, skills and hooks into every extra Claude and Codex account's folder. Turning one off removes only those links.") {
+             subtitle: "Links the shared AGENTS.md, skills and hooks into every extra Claude and Codex account's folder, and merges in the hub's MCP servers. Turning one off removes only what swe added.") {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(AccountSyncPiece.allCases) { piece in
                     HStack(alignment: .firstTextBaseline) {
@@ -888,7 +889,14 @@ private struct SharedContentCard: View {
                 let conflicts = sync.report?.conflicts ?? []
                 if !conflicts.isEmpty {
                     Text("Left alone, the account already has its own: "
-                         + conflicts.map { "\($0.account) \(($0.path as NSString).lastPathComponent)" }
+                         + conflicts.map { "\($0.account) \($0.target)" }
+                            .joined(separator: ", "))
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                }
+                let blocked = sync.report?.blocked ?? []
+                if !blocked.isEmpty {
+                    Text("Not changed, could not edit safely: "
+                         + blocked.map { "\($0.account) \(($0.path as NSString).lastPathComponent) (\($0.detail))" }
                             .joined(separator: ", "))
                         .font(Theme.caption).foregroundStyle(Theme.textMuted)
                 }

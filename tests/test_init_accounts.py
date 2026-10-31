@@ -421,7 +421,7 @@ class InitIntegrationTest(unittest.TestCase):
         run = init_commands.run_init(home, check_only=True, quiet=True)
         doc = init_commands.check_document(home, run)
         self.assertEqual(doc["account_sync"],
-                         {"instructions": False, "skills": True, "hooks": False})
+                         {"instructions": False, "skills": True, "hooks": False, "mcp": False})
         self.assertEqual(doc["accounts"], [{
             "account": "claude/claude-work", "primitive": "skills",
             "path": str(_acct(home) / "skills"), "state": "would-create", "detail": "",
