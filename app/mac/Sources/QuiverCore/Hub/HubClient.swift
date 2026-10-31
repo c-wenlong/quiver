@@ -101,7 +101,13 @@ public struct HubClient: Sendable {
     // MARK: Routes
 
     public func sessions() async throws -> [HubSessionRow] {
-        try await send(request("GET", "/v1/sessions"), as: HubSessionsResponse.self).sessions
+        try await sessionsAndMachines().sessions
+    }
+
+    /// `GET /v1/sessions` with the machine list it carries alongside.
+    public func sessionsAndMachines() async throws -> (sessions: [HubSessionRow], machines: [HubMachine]) {
+        let reply = try await send(request("GET", "/v1/sessions"), as: HubSessionsResponse.self)
+        return (reply.sessions, reply.machines ?? [])
     }
 
     /// The request id of the approval the hub still waits on for `key`.

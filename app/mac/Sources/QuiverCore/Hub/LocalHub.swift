@@ -108,6 +108,11 @@ public final class LocalHub {
     /// (`SessionHubMeta.swift`). Empty while the hub is down, unknown or
     /// unpaired: the Sessions rows then offer no pin, rename or fork.
     public internal(set) var overlay = HubSessionOverlay()
+    /// Every row and machine the same read returned, satellites' too: the
+    /// Sessions page's "Other machines" group (`OtherMachines`). Empty
+    /// while the hub is down, unknown or unpaired, which hides the group.
+    public private(set) var hubRows: [HubSessionRow] = []
+    public private(set) var hubMachines: [HubMachine] = []
     /// Pins chosen here that a list read started too early must not undo.
     var pins = SessionPinLedger()
     /// Meta applied from `session.meta` events and answered calls, in
@@ -250,7 +255,9 @@ public final class LocalHub {
         let mark = pins.mark
         let metaMark = metaClock
         do {
-            let rows = try await client.sessions()
+            let (rows, machines) = try await client.sessionsAndMachines()
+            hubRows = rows
+            hubMachines = machines
             keys = .known(Set(rows.map(\.key)))
             models = Dictionary(rows.compactMap { row in row.model.map { (row.key, $0) } },
                                 uniquingKeysWith: { _, newest in newest })
@@ -294,6 +301,8 @@ public final class LocalHub {
     private func forgetRows() {
         models = [:]
         overlay = HubSessionOverlay()
+        hubRows = []
+        hubMachines = []
     }
 
     /// The model of session `key`'s newest reply, as the hub reported it

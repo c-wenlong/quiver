@@ -53,6 +53,9 @@ enum Theme {
     /// own emerald, kept — Devin's green is a status hue, this is identity.
     static let accent = Color(light: "#059669", dark: "#059669")
     static let accentFill = Color(light: "#10b981", dark: "#10b981")
+    /// A faint wash of `accent` behind a group header (Sessions' Other
+    /// machines).
+    static let accentTint = Color(light: "#05966914", dark: "#0596691f")
 
     /// `bg.accent-primary` — interactive blue, only for links, focus rings
     /// and selected controls (the switch, the unread dot, the checkmark).
