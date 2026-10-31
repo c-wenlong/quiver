@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe remote agent --install` keeps a satellite running.** Like
+  `swe remote serve --install`, it runs `swe remote agent` as a
+  LaunchAgent on macOS (`com.cwenlong.quiver.remote-agent`) or a systemd
+  user unit on Linux (`quiver-remote-agent.service`), separate from the
+  hub's, so it starts at login or boot and restarts if it exits. It logs
+  to `~/.quiver/data/remote/agent.log`, turns on lingering or says how,
+  and refuses on a machine whose own hub is installed (and the hub's
+  install refuses next to an installed agent), since the two would share
+  `data/remote/cursors/`. Only one agent runs per `~/.quiver`: a second
+  one exits at start, and `--install` refuses while a shell-started
+  agent runs. `--uninstall` removes it and
+  `--status [--json]` shows it. `install-app.sh` now restarts the agent
+  on a new bundle as it does the hub
+  ([#1438](https://github.com/c-wenlong/quiver/issues/1438)).
+
 - **`swe init`: the hub's MCP servers in extra accounts.** A fourth
   switch, `accounts.sync.mcp`, off by default (`swe config set
   accounts.sync.mcp true`, or the new "MCP servers" switch on the Mac

@@ -19,6 +19,11 @@ import urllib.request
 from urllib.parse import quote
 from pathlib import Path
 
+try:
+    import fcntl
+except ImportError:  # Windows: no flock, and no agent service to guard
+    fcntl = None
+
 from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
 from quiver.remote import inject, journal, protocol, sendq, supervise, tail
@@ -48,6 +53,43 @@ PULL_WAIT_MAX_S = 300
 # The in-memory uplink buffer keeps no more than the outbox journal's
 # ring does across a restart; while the hub is down the oldest go first.
 OUTBOX_MAX = journal.RING_MAX
+
+
+LOCK_FILE = "agent.lock"           # held by the one running agent
+
+
+def take_lock(home: Path | None = None):
+    """``(handle, holder)``: while ``handle`` stays open this process is
+    the only ``swe remote agent`` on this ~/.quiver. When another agent
+    holds the lock, ``handle`` is None and ``holder`` is its pid (0 when
+    unreadable). Without ``fcntl`` (Windows) there is no lock to take.
+    """
+    path = remote_dir_for(home) / LOCK_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(path, "a+", encoding="utf-8")
+    if fcntl is None:
+        return fh, None
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.seek(0)
+        text = fh.read().strip()
+        fh.close()
+        return None, int(text) if text.isdigit() else 0
+    fh.seek(0)
+    fh.truncate()
+    fh.write(str(os.getpid()))
+    fh.flush()
+    return fh, None
+
+
+def lock_holder(home: Path | None = None) -> int | None:
+    """The pid of the agent running on this ~/.quiver (0 when it can't
+    be read), or None when none runs."""
+    fh, holder = take_lock(home)
+    if fh is not None:
+        fh.close()
+    return holder
 
 
 def agent_file_for(home: Path | None) -> Path:

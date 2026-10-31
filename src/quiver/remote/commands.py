@@ -10,6 +10,7 @@ devices.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import os
@@ -19,6 +20,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -53,7 +55,7 @@ _VALUE_FLAGS = {
 }
 _BOOL_FLAGS = {"--on", "--off", "--app", "--requests", "--install",
                "--uninstall", "--tailnet", "--apply", "--recheck",
-               "--unsafe-bind-any"}
+               "--unsafe-bind-any", "--status"}
 
 _USAGE = f"""\
   {c('cyan', 'swe remote serve [--host=H] [--port=N]')}   Run the hub (REST + SSE)
@@ -63,6 +65,8 @@ _USAGE = f"""\
   {c('cyan', 'swe remote setup [--apply] [--recheck] [--json]')}
                                   Check every step to a paired phone; --apply does Quiver's part
   {c('cyan', 'swe remote agent --hub=URL [--token=T]')}   Satellite: dial out to the hub
+  {c('cyan', 'swe remote agent --install | --uninstall | --status [--json]')}
+                                  Keep the satellite running (macOS LaunchAgent, Linux systemd unit)
   {c('cyan', 'swe remote pair [--name=N] [--host=H] [--port=N] [--app] [--json]')}
                                   Print a pairing URL + token for a phone
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
@@ -278,30 +282,61 @@ def _cmd_serve(flags: dict) -> int:
     return rc
 
 
-def hub_program(host: str, port: int | None, public_url: str,
-                unsafe_any: bool = False) -> tuple[list[str], str | None]:
-    """The background service's command line, or an error saying why it
+@dataclass(frozen=True)
+class Service:
+    """One background service ``--install`` manages: the hub or the
+    satellite. Each has its own launchd label and systemd unit, so
+    installing one never reloads or stops the other."""
+
+    name: str         # "hub" or "agent", for messages
+    command: str      # the ``swe remote`` subcommand it runs
+    label: str        # launchd
+    unit: str         # systemd
+    description: str  # systemd Description=
+    log_name: str     # under ~/.quiver/data/remote/
+
+
+HUB = Service("hub", "serve", launchd.LABEL, systemd.UNIT,
+              systemd.HUB_DESCRIPTION, "serve.log")
+AGENT = Service("agent", "agent", launchd.AGENT_LABEL, systemd.AGENT_UNIT,
+                "Quiver remote agent (swe remote agent)", "agent.log")
+
+
+def _service_swe(service: Service) -> tuple[str, str | None]:
+    """The ``swe`` a background service runs, or an error saying why it
     can't run.
 
     On a Mac it runs Quiver.app's bundled swe when the app is installed,
     else this swe, unless that sits where macOS keeps launchd agents out.
-    ``port`` is left off the command line when None (the default port);
-    ``unsafe_any`` keeps a deliberate off-tailnet bind working once the
-    program runs.
     """
     darwin = sys.platform == "darwin"
     bundled = launchd.bundled_swe() if darwin else None
     swe = str(bundled) if bundled else os.path.abspath(sys.argv[0])
     if not bundled:
         if not os.access(swe, os.X_OK):
-            return [], (f"cannot find the swe executable ({sys.argv[0]}); "
-                        "run this as `swe remote serve --install`")
+            return "", (f"cannot find the swe executable ({sys.argv[0]}); "
+                        f"run this as `swe remote {service.command} --install`")
         folder = launchd.protected_dir(swe) if darwin else None
         if folder:
-            return [], (f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent "
-                        "from reading, so the hub would fail at every start. Install "
-                        "Quiver.app (app/mac/script/install-app.sh) and run --install "
-                        "again: the agent then runs the app's bundled swe.")
+            return "", (f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent "
+                        f"from reading, so the {service.name} would fail at every start. "
+                        "Install Quiver.app (app/mac/script/install-app.sh) and run "
+                        "--install again: the agent then runs the app's bundled swe.")
+    return swe, None
+
+
+def hub_program(host: str, port: int | None, public_url: str,
+                unsafe_any: bool = False) -> tuple[list[str], str | None]:
+    """The hub service's command line, or an error saying why it can't
+    run.
+
+    ``port`` is left off the command line when None (the default port);
+    ``unsafe_any`` keeps a deliberate off-tailnet bind working once the
+    program runs.
+    """
+    swe, err = _service_swe(HUB)
+    if err:
+        return [], err
     program = [swe, "remote", "serve"]
     program += [f"--host={host}"] if host else ["--tailnet"]
     if port is not None and port != DEFAULT_PORT:
@@ -313,58 +348,126 @@ def hub_program(host: str, port: int | None, public_url: str,
     return program, None
 
 
-def _service_problem() -> str | None:
-    """Why ``--install`` can't keep a hub running here, or None."""
+def _service_problem(service: Service = HUB) -> str | None:
+    """Why ``--install`` can't keep ``service`` running here, or None."""
     if sys.platform == "darwin":
         return None
     if sys.platform.startswith("linux"):
         if systemd.available():
             return None
-        return ("no systemd user manager here; run `swe remote serve` under "
-                "this machine's init system instead")
-    return "--install keeps the hub running on macOS (launchd) and Linux (systemd) only"
+        return (f"no systemd user manager here; run `swe remote {service.command}` "
+                "under this machine's init system instead")
+    return (f"--install keeps the {service.name} running on macOS (launchd) "
+            "and Linux (systemd) only")
+
+
+def service_file(service: Service = HUB, home: Path | None = None) -> Path:
+    """Where ``service``'s LaunchAgent plist or systemd unit lives."""
+    if sys.platform == "darwin":
+        return launchd.plist_path(home, service.label)
+    return systemd.unit_path(home, service.unit)
+
+
+def service_status(service: Service = HUB, home: Path | None = None,
+                   run=subprocess.run) -> tuple[list[str] | None, bool]:
+    """(installed command line or None, running) for ``service``."""
+    if sys.platform == "darwin":
+        return launchd.status(home, run=run, label=service.label)
+    return systemd.status(home, run=run, unit=service.unit)
+
+
+def service_conflict(service: Service, home: Path | None = None) -> str | None:
+    """Why ``service`` must not be installed here, or None: the other
+    remote service (hub for the agent, agent for the hub) is installed.
+
+    Both run as this user, so they read the same ~/.quiver and share the
+    tail cursors under ``data/remote/cursors/``: each would skip
+    transcript lines the other already sent, to a different hub, and a
+    satellite would send its own hub's sessions back to it.
+    """
+    other = AGENT if service is HUB else HUB
+    path = service_file(other, home)
+    if not path.exists():
+        return None
+    if service is AGENT:
+        what = "this machine's hub is installed"
+        fix = ("Run the agent on another machine, or remove the hub first with "
+               "`swe remote serve --uninstall`.")
+    else:
+        what = "this machine's satellite agent is installed"
+        fix = ("Host the hub on another machine, or remove the agent first with "
+               "`swe remote agent --uninstall`.")
+    return (f"{what} ({path}) and keeps its state in the same {remote_dir_for(home)}, "
+            f"so the two would share its transcript cursors and each skip what the "
+            f"other already sent. {fix}")
 
 
 def install_service(program: list[str], log_path: Path, home: Path | None = None,
-                    run=subprocess.run) -> tuple[Path, str]:
-    """Install and (re)start the hub as this platform's background service.
+                    run=subprocess.run, service: Service = HUB) -> tuple[Path, str]:
+    """Install and (re)start ``service`` as this platform's background
+    service.
 
     Returns its file and a note to print ("" when none); raises
-    RuntimeError with the service manager's message.
+    RuntimeError with the service manager's message, or when the other
+    remote service is installed (``service_conflict``), so every install
+    path (``serve --install``, ``agent --install``, ``setup --apply``)
+    refuses both orders.
     """
+    conflict = service_conflict(service, home)
+    if conflict:
+        raise RuntimeError(conflict)
     path_env = os.environ.get("PATH", "")
     if sys.platform == "darwin":
         try:
-            return launchd.install(program, log_path, path_env, home=home, run=run), ""
+            return launchd.install(program, log_path, path_env, home=home, run=run,
+                                   label=service.label), ""
         except RuntimeError as exc:
-            raise RuntimeError(f"launchctl could not load the hub: {exc}") from exc
+            raise RuntimeError(f"launchctl could not load the {service.name}: {exc}") from exc
     try:
-        path, linger = systemd.install(program, log_path, path_env, home=home, run=run)
+        path, linger = systemd.install(program, log_path, path_env, home=home, run=run,
+                                       unit=service.unit, description=service.description)
     except RuntimeError as exc:
-        raise RuntimeError(f"systemctl could not start the hub: {exc}") from exc
+        raise RuntimeError(f"systemctl could not start the {service.name}: {exc}") from exc
     note = (f"it runs only while you're logged in; to keep it after logout, run `{linger}`"
             if linger else "")
     return path, note
 
 
+def _cmd_uninstall_service(service: Service) -> int:
+    darwin = sys.platform == "darwin"
+    try:
+        removed = (launchd.uninstall(label=service.label) if darwin
+                   else systemd.uninstall(unit=service.unit))
+    except RuntimeError as exc:
+        print(c("red", f"could not stop the {service.name}: {exc}"), file=sys.stderr)
+        return 1
+    if removed:
+        print(f"stopped the {service.name} and removed {service_file(service)}")
+    else:
+        print(c("dim", f"no {service.name} {'LaunchAgent' if darwin else 'systemd unit'} "
+                       "was installed"))
+    return 0
+
+
+def _print_installed(path: Path, program: list[str], log_path: Path, note: str) -> None:
+    darwin = sys.platform == "darwin"
+    print(f"installed {path}")
+    print(f"  runs  {' '.join(program)}")
+    print(f"  log   {log_path}")
+    print(c("dim", f"  starts at {'login' if darwin else 'boot'} and restarts if it exits; "
+                   "run --install again to restart it, --uninstall to stop it"))
+    if note:
+        print(c("yellow", f"  {note}"), file=sys.stderr)
+
+
 def _cmd_serve_launchd(flags: dict) -> int:
-    problem = _service_problem()
+    problem = _service_problem(HUB)
     if problem:
         print(c("red", problem), file=sys.stderr)
         return 1
     darwin = sys.platform == "darwin"
     if flags.get("--uninstall"):
-        try:
-            removed = launchd.uninstall() if darwin else systemd.uninstall()
-        except RuntimeError as exc:
-            print(c("red", f"could not stop the hub: {exc}"), file=sys.stderr)
-            return 1
-        if removed:
-            where = launchd.plist_path() if darwin else systemd.unit_path()
-            print(f"stopped the hub and removed {where}")
-        else:
-            print(c("dim", f"no hub {'LaunchAgent' if darwin else 'systemd unit'} was installed"))
-        return 0
+        return _cmd_uninstall_service(HUB)
     try:
         host, port, public_url = _serve_bind(flags)
     except ValueError as exc:
@@ -384,19 +487,13 @@ def _cmd_serve_launchd(flags: dict) -> int:
     probe_host = host or _tailscale_ip() or "127.0.0.1"
     loaded = launchd.loaded_pid()[0] if darwin else systemd.status()[1]
     stray = not loaded and _probe(probe_host, port, timeout=1.0) is not None
-    log_path = remote_dir_for() / "serve.log"
+    log_path = remote_dir_for() / HUB.log_name
     try:
         path, note = install_service(program, log_path)
     except RuntimeError as exc:
         print(c("red", str(exc)), file=sys.stderr)
         return 1
-    print(f"installed {path}")
-    print(f"  runs  {' '.join(program)}")
-    print(f"  log   {log_path}")
-    print(c("dim", f"  starts at {'login' if darwin else 'boot'} and restarts if it exits; "
-                   "run --install again to restart it, --uninstall to stop it"))
-    if note:
-        print(c("yellow", f"  {note}"), file=sys.stderr)
+    _print_installed(path, program, log_path, note)
     if not stray:
         # A hub that can't start exits and launchd only retries, so wait
         # for it to answer rather than leave the phone offline unsaid.
@@ -769,8 +866,10 @@ def _cmd_attach(flags: dict, rest: list[str]) -> int:
     return 0
 
 
-def _cmd_agent(flags: dict) -> int:
-    """Satellite: pair on first run (``--token``), then dial the hub."""
+def _agent_conf(flags: dict) -> dict | None:
+    """The satellite's hub and credential: paired now when ``--token``
+    is given, else the saved ones (``--hub`` overrides the URL). Prints
+    why and returns None when there is none."""
     hub = (flags.get("--hub") or "").rstrip("/")
     token = flags.get("--token") or ""
     conf = agent_mod.load_agent()
@@ -778,14 +877,14 @@ def _cmd_agent(flags: dict) -> int:
         if not hub:
             print(c("red", "--token needs --hub=http://<host>:<port>"),
                   file=sys.stderr)
-            return 1
+            return None
         conf = agent_mod.pair_agent(
             hub, token, flags.get("--name") or ""
         )
         if conf is None:
             print(c("red", "pairing failed — check the token and hub"),
                   file=sys.stderr)
-            return 1
+            return None
         print(c("green", f"paired with {conf['hub']}"))
     elif hub:
         conf = dict(conf or {}, hub=hub)
@@ -794,6 +893,124 @@ def _cmd_agent(flags: dict) -> int:
                 "no hub credential — run: "
                 "swe remote agent --hub=http://<host>:<port> --token=T"),
               file=sys.stderr)
+        return None
+    return conf
+
+
+def agent_service_report(home: Path | None = None, run=subprocess.run) -> dict:
+    """``swe remote agent --status --json``: is this machine a paired
+    satellite, and is its background service installed and running."""
+    conf = agent_mod.load_agent(home) or {}
+    problem = _service_problem(AGENT)
+    path = service_file(AGENT, home)
+    args, running = service_status(AGENT, home, run) if problem is None else (None, False)
+    return {
+        "configured": bool(conf.get("hub") and conf.get("credential")),
+        "hub": conf.get("hub") or None,
+        "supported": problem is None,
+        "problem": problem,
+        "installed": path.exists(),
+        "running": running,
+        "service": str(path),
+        "program": args,
+        "log": str(remote_dir_for(home) / AGENT.log_name),
+        "hub_installed": service_file(HUB, home).exists(),
+    }
+
+
+def _cmd_agent_status(json_view: bool) -> int:
+    report = agent_service_report()
+    if json_view:
+        return emit(report)
+    if report["running"]:
+        state = c("green", "running")
+    elif report["installed"]:
+        state = c("yellow", "installed, not running")
+    else:
+        state = c("dim", "not installed")
+    print(f"remote agent {state}")
+    print(f"  hub      {report['hub'] or c('dim', 'not paired (swe remote agent --hub=URL --token=T)')}")
+    print(f"  service  {report['service']}")
+    if report["program"]:
+        print(f"  runs     {' '.join(report['program'])}")
+    print(f"  log      {report['log']}")
+    if report["problem"]:
+        print(c("yellow", f"  {report['problem']}"))
+    elif report["hub_installed"]:
+        print(c("yellow", "  this machine's hub is installed here, so --install refuses the agent"))
+    return 0
+
+
+def _cmd_agent_service(flags: dict) -> int:
+    """``agent --install`` / ``--uninstall``: the satellite as a
+    LaunchAgent or systemd user unit, apart from the hub's."""
+    problem = _service_problem(AGENT)
+    if problem:
+        print(c("red", problem), file=sys.stderr)
+        return 1
+    if flags.get("--uninstall"):
+        return _cmd_uninstall_service(AGENT)
+    # Checked before pairing, so a refused install spends no token.
+    refusal = service_conflict(AGENT)
+    if refusal:
+        print(c("red", refusal), file=sys.stderr)
+        return 1
+    # A shell-started agent would run every command a second time beside
+    # the service's; the service's own agent is the one a reinstall
+    # restarts.
+    holder = agent_mod.lock_holder()
+    if holder is not None and not service_status(AGENT)[1]:
+        pid = f" (pid {holder})" if holder else ""
+        print(c("red", f"a swe remote agent started outside the service already runs "
+                       f"here{pid}; stop it, then run --install again"), file=sys.stderr)
+        return 1
+    if _agent_conf(flags) is None:
+        return 1
+    swe, err = _service_swe(AGENT)
+    if err:
+        print(c("red", err), file=sys.stderr)
+        return 1
+    # The service reads the credential from agent.json, so no secret
+    # lands in the plist or unit. A --hub without --token overrides the
+    # saved URL for this run only, so the service has to carry it.
+    program = [swe, "remote", "agent"]
+    if flags.get("--hub") and not flags.get("--token"):
+        program.append(f"--hub={flags['--hub'].rstrip('/')}")
+    log_path = remote_dir_for() / AGENT.log_name
+    try:
+        path, note = install_service(program, log_path, service=AGENT)
+    except RuntimeError as exc:
+        print(c("red", str(exc)), file=sys.stderr)
+        return 1
+    _print_installed(path, program, log_path, note)
+    print(c("dim", "  check it with `swe remote agent --status`"))
+    return 0
+
+
+def _cmd_agent(flags: dict, json_view: bool = False) -> int:
+    """Satellite: pair on first run (``--token``), then dial the hub."""
+    if flags.get("--status"):
+        return _cmd_agent_status(json_view)
+    if flags.get("--install") or flags.get("--uninstall"):
+        if not json_view:
+            return _cmd_agent_service(flags)
+        # The app reads the status afterwards from stdout, so the prose
+        # (and any refusal) goes to stderr.
+        with contextlib.redirect_stdout(sys.stderr):
+            rc = _cmd_agent_service(flags)
+        return emit(agent_service_report()) if rc == 0 else rc
+    # One agent per ~/.quiver: two would each run every command the hub
+    # queues. Under launchd or systemd this exits and the service retries.
+    # Taken before pairing, so a refused start leaves agent.json alone.
+    lock, holder = agent_mod.take_lock()
+    if lock is None:
+        pid = f" (pid {holder})" if holder else ""
+        print(c("red", f"{_stamp()}  another swe remote agent already runs here{pid}; "
+                       "stop it first"), file=sys.stderr, flush=True)
+        return 1
+    conf = _agent_conf(flags)
+    if conf is None:
+        lock.close()
         return 1
     machine = catalog_mod.local_machine()
     print(
@@ -999,7 +1216,7 @@ def _dispatch(sub: str, flags: dict, rest: list[str], json_view: bool) -> int:
             print(c("red", f"unexpected args: {' '.join(rest)}"),
                   file=sys.stderr)
             return 1
-        return _cmd_agent(flags)
+        return _cmd_agent(flags, json_view)
     if sub == "setup":
         if rest:
             print(c("red", f"unexpected args: {' '.join(rest)}"), file=sys.stderr)

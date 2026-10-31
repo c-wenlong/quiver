@@ -769,6 +769,12 @@ to use their own login state and environment."""
                                             commands it queues. Pair once with
                                             a token, then keep it running —
                                             outbound only, nothing listens.
+  {c('cyan', 'swe remote agent --install')}             Keep the satellite running: its
+                                            own LaunchAgent or systemd user
+                                            unit, apart from the hub's.
+                                            Refused on a machine whose hub is
+                                            installed. --uninstall removes it;
+                                            --status [--json] shows it.
 
   The phone only ever talks to the hub, over Tailscale. Sessions list as
   {c('bold', 'observed')} (a human terminal owns them: read-only) until they run
