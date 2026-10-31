@@ -37,10 +37,9 @@ const HK_TIER_TITLE = { shared: "Shared", harness: "Harness", foreign: "Foreign"
 /* HookFinding.kindTitle */
 const HK_FINDING_TITLE = { "declared-missing": "Declared, missing", undeclared: "Undeclared", unlinked: "Unlinked", managed: "Managed elsewhere" };
 
-/* `~/…` for a path under the hub's home. */
+/* `~/…` for a path under the hub's home (the list's, when not given). */
 function hkPath(path, home) {
-  const h = home || (hooksPage.data && hooksPage.data.home) || "";
-  return h && path.startsWith(h + "/") ? "~" + path.slice(h.length) : path;
+  return Fmt.tilde(path, home || (hooksPage.data && hooksPage.data.home));
 }
 
 /* HookFinding.displayMessage: home paths as `~/…`, and a managed note cut
@@ -56,22 +55,8 @@ function hkFindingMessage(f, home) {
   return text.replace(new RegExp(`(?<![^\\s("'])${escaped}`, "g"), "~/");
 }
 
-/* HarnessMarkView: the logo, a word after it when the logo is shared,
- * or the name alone when there is no logo. */
-function hkMark(h) {
-  const name = Fmt.harnessName(h);
-  const has = (id) => Fmt.logo(id).startsWith("<img");
-  let inner;
-  if (h === "claude") inner = `${Fmt.logo("claude")}<span>CLI</span>`;
-  else if (h === "claude-desktop") inner = `${Fmt.logo("claude")}<span>Desktop</span>`;
-  else if (has(h)) inner = Fmt.logo(h);
-  else {
-    const dash = h.lastIndexOf("-");
-    const base = dash > 0 ? h.slice(0, dash) : "", suffix = dash > 0 ? h.slice(dash + 1) : "";
-    inner = base && suffix && has(base) ? `${Fmt.logo(base)}<span>${esc(suffix)}</span>` : `<span>${esc(name)}</span>`;
-  }
-  return `<span class="hk-mark" title="${esc(name)}" aria-label="${esc(name)}">${inner}</span>`;
-}
+/* HarnessMarkView (Fmt.markView). */
+const hkMark = (h) => Fmt.markView(h, "hk-mark");
 
 /* HookDeclaration.label: PreToolUse:Bash, or Stop with no matcher. */
 const hkDeclLabel = (d) => (d.matcher ? `${d.event}:${d.matcher}` : d.event);

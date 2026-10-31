@@ -101,13 +101,18 @@ public struct FanHelperStatus: Codable, Equatable, Sendable {
     public var requested: Double?
     public var owner: Int32?
     public var at: Double
+    /// The `FanHelper.version` of the helper that wrote it; nil from a
+    /// helper older than 4, which didn't say.
+    public var version: Int?
 
-    public init(state: State, reason: String? = nil, request: FanControlFile? = nil, at: Date = .now) {
+    public init(state: State, reason: String? = nil, request: FanControlFile? = nil, at: Date = .now,
+                version: Int? = FanHelper.version) {
         self.state = state
         self.reason = reason
         requested = request?.requested
         owner = request?.owner
         self.at = at.timeIntervalSince1970
+        self.version = version
     }
 
     /// Whether this answers `request`.
@@ -191,7 +196,8 @@ public struct FanHold {
     public var smc: any SMCAccess
     /// The current request, or nil for automatic.
     public var request: () -> FanControlFile?
-    /// Whether the Quiver that made the request still runs.
+    /// Whether the Quiver that made the request still runs, signed the
+    /// way the one that installed the helper was (`FanOwnerCheck`).
     public var ownerAlive: (Int32) -> Bool
     /// Whether macOS reports serious or critical thermal pressure. The
     /// fans then run flat out whatever level was asked for, so a low
@@ -270,7 +276,8 @@ public struct FanHold {
                     if holding { holding = !release() }
                     // Not marked failed, as before: the request is left
                     // for its owner to withdraw, and the app hears why once.
-                    note(request, .refused, "The fan helper doesn't see a running Quiver with pid \(owner).")
+                    note(request, .refused, "The fan helper doesn't see a running Quiver with pid \(owner) "
+                         + "signed like the one that installed it.")
                 }
             } else if holding {
                 holding = !release()
@@ -396,7 +403,9 @@ public enum FanHelper {
     /// speed reinstalls it once instead of steering an old or broken one.
     /// 2: its own executable, after copies of Quiver's crashed in dyld.
     /// 3: the watchdog, so a pass wedged on an SMC call relaunches it.
-    public static let version = 3
+    /// 4: the owner is checked by code signature, pinned in the job at
+    /// install (`FanOwnerPin`), instead of by its executable's name.
+    public static let version = 4
 
     /// How often the watchdog checks the heartbeat, and how long may
     /// pass without a beat before the daemon counts itself wedged and
@@ -444,9 +453,18 @@ public enum FanHelper {
         return nil
     }
 
-    /// What launchd runs, which `helperReady` also compares against.
-    public static func programArguments(control: URL) -> [String] {
-        [installedExecutable, flag, "--control", control.path, versionFlag, String(version)]
+    /// What launchd runs, which `helperState` also compares against.
+    /// `owner` pins whose requests the helper takes.
+    public static func programArguments(control: URL, owner: FanOwnerPin) -> [String] {
+        [installedExecutable, flag, "--control", control.path] + owner.arguments + [versionFlag, String(version)]
+    }
+
+    /// The version an installed job names, 0 for a job from before jobs
+    /// carried one, or nil when the arguments aren't a fan helper's.
+    public static func version(in arguments: [String]) -> Int? {
+        guard arguments.dropFirst().first == flag else { return nil }
+        guard let at = arguments.firstIndex(of: versionFlag) else { return 0 }
+        return arguments.indices.contains(at + 1) ? Int(arguments[at + 1]) : nil
     }
 
     /// The helper to install: QuiverFanHelper next to Quiver's executable,
@@ -460,10 +478,10 @@ public enum FanHelper {
 
     /// The launchd job: run as root from boot, restarted if it exits,
     /// steered by the user's control file.
-    public static func plist(control: URL) -> Data {
+    public static func plist(control: URL, owner: FanOwnerPin) -> Data {
         let job: [String: Any] = [
             "Label": label,
-            "ProgramArguments": programArguments(control: control),
+            "ProgramArguments": programArguments(control: control, owner: owner),
             "RunAtLoad": true,
             "KeepAlive": true,
             "ProcessType": "Background",
@@ -476,21 +494,11 @@ public enum FanHelper {
     /// running as the user while the password prompt is up. Whitespace
     /// between tags means nothing to a plist; no value holds a line break
     /// (`parse` and the installer only take absolute paths without one).
-    public static func plistLine(control: URL) -> String {
-        String(decoding: plist(control: control), as: UTF8.self)
+    public static func plistLine(control: URL, owner: FanOwnerPin) -> String {
+        String(decoding: plist(control: control, owner: owner), as: UTF8.self)
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .joined()
-    }
-
-    /// Whether `pid` is a running Quiver: a reused pid that now belongs
-    /// to something else must not keep the fans held.
-    public static func isQuiver(_ pid: Int32) -> Bool {
-        guard kill(pid, 0) == 0 || errno == EPERM else { return false }
-        var buffer = [CChar](repeating: 0, count: 4096)
-        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return false }
-        let path = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        return (path as NSString).lastPathComponent == "Quiver"
     }
 
     /// Runs the helper when the arguments ask for it and answers its exit
@@ -506,6 +514,13 @@ public enum FanHelper {
         }
         guard arguments.dropFirst().first == flag else { return nil }
         guard let control = parse(arguments) else { return 2 }
+        // No pin, or one that doesn't compile, means a job written by
+        // something other than this version's install: take no one's
+        // requests rather than anyone's.
+        guard let pin = FanOwnerPin.parse(arguments), let owner = FanOwnerCheck(pin: pin) else {
+            FileHandle.standardError.write(Data("fan helper: no valid owner signature in the arguments\n".utf8))
+            return 2
+        }
         guard getuid() == 0 else {
             FileHandle.standardError.write(Data("fan helper: needs root\n".utf8))
             return 2
@@ -513,7 +528,7 @@ public enum FanHelper {
         func report(_ status: FanHelperStatus) {
             do { try status.write() } catch { log("couldn't write \(statusFile): \(error.localizedDescription)") }
         }
-        log("started (pid \(getpid())), control \(control.path)")
+        log("started (pid \(getpid()), version \(version)), control \(control.path), owner \(pin.requirement)")
         // A pass runs on the one thread with no timeout around the SMC
         // calls, and one that hangs leaves the daemon deaf to every
         // request while looking alive to launchd. The watchdog exits so
@@ -551,7 +566,7 @@ public enum FanHelper {
         var hold = FanHold(
             smc: smc,
             request: { FanControlFile.request(at: control) },
-            ownerAlive: isQuiver,
+            ownerAlive: owner.isOwner,
             underPressure: {
                 let state = ProcessInfo.processInfo.thermalState
                 return state == .serious || state == .critical

@@ -19,10 +19,9 @@ import Testing
     }
 
     @Test func bashReadsTheFirstLoginFileThatExists() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appending(path: "bashrc-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
         let write = { (name: String) throws -> URL in
             let url = root.appending(path: name)
             try "x".write(to: url, atomically: true, encoding: .utf8)
@@ -46,9 +45,9 @@ import Testing
     }
 
     @Test func sourcesRecognisesItsOwnLineForAnAwkwardPath() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appending(path: "awkward-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
         for name in ["My Keys/.api_keys", "a$b \"c\"/k\\eys", "Keys#1/.api_keys"] {
             let keys = root.appending(path: name)
             try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
@@ -64,9 +63,9 @@ import Testing
     }
 
     @Test func subshellsAndLiteralDollarsDoNotCount() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appending(path: "literal-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
         let keys = root.appending(path: ".quiver/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
@@ -94,13 +93,13 @@ import Testing
 
     @Test func sourcesDetectsEveryForm() throws {
         // A real temp home: resolution only counts paths that exist.
-        let root = FileManager.default.temporaryDirectory
-            .appending(path: "sources-\(UUID().uuidString)")
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
         let keys = root.appending(path: ".quiver/secrets/providers/.api_keys")
         try FileManager.default.createDirectory(at: keys.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
         try "K=1".write(to: keys, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: root) }
         // The legacy ~/.api_keys symlinked to the migrated file counts.
         try FileManager.default.createSymbolicLink(
             atPath: root.appending(path: ".api_keys").path,
@@ -142,9 +141,13 @@ import Testing
 }
 
 @Suite struct ShellStartupWriterTests {
+    /// Swift Testing makes a new suite value per test, so each test gets
+    /// its own folder, kept for as long as the test runs.
+    private let temp: TempDir
+    init() throws { temp = try TempDir() }
+
     private func home() throws -> (URL, URL, URL, URL) {
-        let root = FileManager.default.temporaryDirectory
-            .appending(path: "ShellStartupWriterTests-\(UUID().uuidString)")
+        let root = temp.url
         let home = root.appending(path: "home")
         let backups = root.appending(path: "backups")
         let keys = home.appending(path: ".quiver/secrets/providers/.api_keys")
@@ -157,7 +160,6 @@ import Testing
 
     @Test func createsAMissingRcWithoutABackup() throws {
         let (home, backups, keys, rc) = try home()
-        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
         let (file, backup) = try ShellStartupWriter(home: home, backupDirectory: backups)
             .addSource(keysFile: keys, shell: "/bin/zsh")
         #expect(file == rc)
@@ -168,7 +170,6 @@ import Testing
 
     @Test func anExistingRcIsBackedUpFirst() throws {
         let (home, backups, keys, rc) = try home()
-        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
         try "export A=1".write(to: rc, atomically: true, encoding: .utf8)
         let (file, backup) = try ShellStartupWriter(home: home, backupDirectory: backups, now: {
             Date(timeIntervalSince1970: 1_700_000_000)
@@ -187,7 +188,6 @@ import Testing
 
     @Test func writesThroughASymlinkedRc() throws {
         let (home, backups, keys, rc) = try home()
-        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
         let real = home.appending(path: "dotfiles/.zshrc")
         try FileManager.default.createDirectory(at: real.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
@@ -201,7 +201,6 @@ import Testing
 
     @Test func alreadySourcedIsANoOp() throws {
         let (home, backups, keys, rc) = try home()
-        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
         let line = ShellStartup.sourceLine(for: keys, home: home)
         try "\(line)\n".write(to: rc, atomically: true, encoding: .utf8)
         _ = try ShellStartupWriter(home: home, backupDirectory: backups)
@@ -212,7 +211,6 @@ import Testing
 
     @Test func aNonUtf8RcThrowsAndStaysUntouched() throws {
         let (home, backups, keys, rc) = try home()
-        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
         let bad = Data([0xff, 0xfe, 0x61])
         try bad.write(to: rc)
         #expect(throws: ShellStartupWriter.Error.self) {
@@ -224,7 +222,6 @@ import Testing
 
     @Test func aFailedBackupLeavesTheRcAlone() throws {
         let (home, backups, keys, rc) = try home()
-        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
         try "x\n".write(to: rc, atomically: true, encoding: .utf8)
         // A file where the backups folder should be can't hold one.
         let blocker = home.appending(path: "blocker")
@@ -236,10 +233,8 @@ import Testing
         #expect(try String(contentsOf: rc, encoding: .utf8) == "x\n")
     }
 
-    @Test func anUnreadableRcThrowsAndStaysUntouched() throws {
-        guard geteuid() != 0 else { return }  // root reads mode-000 anyway
+    @Test(skippedAsRoot) func anUnreadableRcThrowsAndStaysUntouched() throws {
         let (home, backups, keys, rc) = try home()
-        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
         try "x\n".write(to: rc, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: rc.path)
         #expect(throws: ShellStartupWriter.Error.self) {
@@ -252,7 +247,6 @@ import Testing
 
     @Test func aConcurrentEditAbortsTheWrite() throws {
         let (home, backups, keys, rc) = try home()
-        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
         try "x\n".write(to: rc, atomically: true, encoding: .utf8)
         var writer = ShellStartupWriter(home: home, backupDirectory: backups)
         writer.beforeReplace = {
@@ -266,7 +260,6 @@ import Testing
 
     @Test func anUnsupportedShellThrows() throws {
         let (home, backups, keys, _) = try home()
-        defer { try? FileManager.default.removeItem(at: home.deletingLastPathComponent()) }
         #expect(throws: ShellStartupWriter.Error.unsupportedShell("/bin/fish")) {
             try ShellStartupWriter(home: home, backupDirectory: backups)
                 .addSource(keysFile: keys, shell: "/bin/fish")

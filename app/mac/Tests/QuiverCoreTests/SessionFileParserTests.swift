@@ -188,6 +188,22 @@ import Testing
         #expect(event.timestamp == utc("2026-10-03T11:00:00Z"))
     }
 
+    @Test func theTranscriptsCwdAndLastTimestampSpanChunksAndAnOpenLastLine() throws {
+        // Many lines across the reader's chunks, then a last line still
+        // being written (no newline): swe counts it, so this does too.
+        let temp = try TempDir()
+        var text = #"{"type":"session_start","cwd":"/repo/d","timestamp":"2026-10-03T10:00:00Z"}"# + "\n"
+        let filler = #"{"type":"message","text":"\#(String(repeating: "x", count: 200))"}"# + "\n"
+        text += String(repeating: filler, count: 10_000)
+        text += #"{"type":"message","timestamp":"2026-10-03T12:30:00Z"}"#
+        try Data(text.utf8).write(to: try dir(temp).appendingPathComponent("s1.jsonl"))
+        let file = try settings(temp, #"{"tokenUsage":{"inputTokens":7,"outputTokens":3}}"#)
+        let record = try #require(unwrap(try SessionTotalsFile.droid(
+            settings: file, accountHome: "/h")))
+        #expect(record.event.cwd == "/repo/d")
+        #expect(record.event.timestamp == utc("2026-10-03T12:30:00Z"))
+    }
+
     @Test func tokenUsageIsTheFallbackWhenInclusiveIsMissing() throws {
         let temp = try TempDir()
         let file = try settings(temp, #"{"tokenUsage":{"inputTokens":7,"outputTokens":3}}"#)

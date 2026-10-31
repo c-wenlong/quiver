@@ -68,6 +68,8 @@ struct QueuedSend: Identifiable, Equatable {
     var phase: Phase
     /// Why the last action on it didn't go through, shown under the text.
     var note: String?
+    /// Refs of the files it carries; the hub keeps them through an edit.
+    var attachments: [String] = []
 
     var id: String { clientId }
 }
@@ -188,6 +190,11 @@ final class ChatModel {
     let mentions = MentionSearch()
     /// The prompt box's `/` menu.
     let commands = CommandMenu()
+    /// Files picked for the next message, uploading or uploaded.
+    let attachments = ComposerAttachments()
+    /// Refs each send carried, by client id: a retry sends them again and
+    /// the bubble names them until the transcript's echo replaces it.
+    private(set) var sentFiles: [String: [String]] = [:]
 
     init(key: String, app: AppModel) {
         self.key = key
@@ -206,6 +213,16 @@ final class ChatModel {
             guard let self, let client = self.hubClient else { throw HubError.network(CancellationError()) }
             return try await client.commands(self.key)
         }
+        attachments.upload = { [weak self] name, data, progress in
+            guard let self, let client = self.hubClient else { throw HubError.network(CancellationError()) }
+            return try await client.uploadAttachment(self.key, name: name, data: data, progress: progress)
+        }
+    }
+
+    /// The names of the files a send bubble carries (`send-<client id>`).
+    func fileNames(for itemId: String) -> [String] {
+        guard itemId.hasPrefix("send-") else { return [] }
+        return (sentFiles[String(itemId.dropFirst(5))] ?? []).map(AttachmentRules.displayName(ref:))
     }
 
     var row: SessionRow? { app?.session(key) }
@@ -306,12 +323,20 @@ final class ChatModel {
 
     enum ComposerAction { case send, stop, disabled }
 
-    /// What the button beside the prompt box does: send whatever is typed,
-    /// stop the agent when nothing is typed and it's working, else nothing.
-    static func composerAction(draft: String, agentWorking: Bool, editing: Bool = false) -> ComposerAction {
-        if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .send }
-        // An emptied edit has nothing to save; stop stays out of the way.
-        if editing { return .disabled }
+    /// What the button beside the prompt box does: send whatever is typed
+    /// (with the files above the box), stop the agent when nothing is
+    /// typed and it's working, else nothing. `files` is how many chips sit
+    /// above the box: with any, there's something to send once text is
+    /// typed (the hub needs text), so stop stays out of the way; while
+    /// `filesBusy` (one still uploading or failed) Send waits. An edit
+    /// saves text only, so the chips don't count while editing, and an
+    /// emptied edit has nothing to save.
+    static func composerAction(draft: String, agentWorking: Bool, editing: Bool = false,
+                               files: Int = 0, filesBusy: Bool = false) -> ComposerAction {
+        let typed = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if editing { return typed ? .send : .disabled }
+        if files > 0 { return typed && !filesBusy ? .send : .disabled }
+        if typed { return .send }
         return agentWorking ? .stop : .disabled
     }
 
@@ -624,6 +649,10 @@ final class ChatModel {
     /// device's "please run tests" isn't taken for a waiting "run tests".
     static func echoes(_ echo: String, _ sent: String) -> Bool {
         if echo == sent { return true }
+        // Staged files the hub prefixed, read whole: their home folder can
+        // hold a space, which the word split below would break on.
+        let staged = AttachmentRules.splitEcho(echo)
+        if !staged.names.isEmpty, staged.text == sent { return true }
         guard echo.hasSuffix(" " + sent) else { return false }
         let prefix = echo.dropLast(sent.count)
         return prefix.split(separator: " ", omittingEmptySubsequences: false).dropLast().allSatisfy {
@@ -669,6 +698,9 @@ final class ChatModel {
         settledSends.insert(cid)
         // Removed before it went out: gone, and not a failure.
         if r.cancelled == true { return }
+        // A send restored from the hub's list carries its refs only here:
+        // keep them for the bubble and a retry.
+        if !entry.attachments.isEmpty, sentFiles[cid] == nil { sentFiles[cid] = entry.attachments }
         // It went out (or failed): show it in the transcript as any send,
         // settled by the existing rules.
         let next = SendState.settled(r, current: .sending, agentActive: row?.sessionStatus == .active)
@@ -736,12 +768,16 @@ final class ChatModel {
 
     func send() async {
         if editingId != nil { return await saveEdit() }
+        guard !attachments.blocksSend else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The hub refuses a message with no text, files or not.
         guard !text.isEmpty else { return }
+        let files = attachments.refs
         draft = ""
+        attachments.clear()
         editNote = nil
         trayNote = nil
-        await send(text)
+        await send(text, files: files)
     }
 
     /// Where a send goes and in which mode.
@@ -759,13 +795,14 @@ final class ChatModel {
         return holdsSends ? SendRoute(toTray: true, mode: "queue") : SendRoute(toTray: false, mode: "steer")
     }
 
-    private func send(_ text: String) async {
+    private func send(_ text: String, files: [String] = []) async {
         guard let client = hubClient else { return }
         let cid = UUID().uuidString
         let route = Self.route(agentActive: row?.sessionStatus == .active, holdsSends: row?.holdsQueuedSends ?? true)
-        stage(text, clientId: cid, toTray: route.toTray)
+        stage(text, clientId: cid, toTray: route.toTray, files: files)
         do {
-            let accepted = try await client.sendMessage(key, text: text, mode: route.mode, clientId: cid)
+            let accepted = try await client.sendMessage(key, text: text, mode: route.mode, clientId: cid,
+                                                        attachments: files)
             posted(cid, waiting: accepted.waiting == true)
         } catch {
             postFailed(cid, error)
@@ -774,10 +811,11 @@ final class ChatModel {
 
     /// Shows a send before the hub answers: in the tray while the agent
     /// works, else as a bubble in the transcript.
-    func stage(_ text: String, clientId cid: String, toTray: Bool) {
+    func stage(_ text: String, clientId cid: String, toTray: Bool, files: [String] = []) {
+        if !files.isEmpty { sentFiles[cid] = files }
         withAnimation(.easeOut(duration: 0.25)) {
             if toTray {
-                queued.append(QueuedSend(clientId: cid, text: text, phase: .posting))
+                queued.append(QueuedSend(clientId: cid, text: text, phase: .posting, attachments: files))
             } else {
                 items.append(ChatItem(id: "send-\(cid)", kind: .user(text: text, send: .sending)))
             }
@@ -805,7 +843,7 @@ final class ChatModel {
             // The agent was busy after all: it waits in the tray.
             withAnimation(.easeOut(duration: 0.25)) {
                 items.remove(at: i)
-                queued.append(QueuedSend(clientId: cid, text: text, phase: .waiting))
+                queued.append(QueuedSend(clientId: cid, text: text, phase: .waiting, attachments: sentFiles[cid] ?? []))
             }
             awaitingReply = false
         }
@@ -851,9 +889,15 @@ final class ChatModel {
         var out: [QueuedSend] = []
         for send in hub where !settled.contains(send.clientId) && !out.contains(where: { $0.clientId == send.clientId }) {
             if let mine = local.first(where: { $0.clientId == send.clientId }) {
-                out.append(mine.phase == .posting ? QueuedSend(clientId: mine.clientId, text: mine.text, phase: .waiting) : mine)
+                var kept = mine
+                if kept.phase == .posting {
+                    kept.phase = .waiting
+                    kept.note = nil
+                }
+                out.append(kept)
             } else {
-                out.append(QueuedSend(clientId: send.clientId, text: send.text ?? "", phase: .waiting))
+                out.append(QueuedSend(clientId: send.clientId, text: send.text ?? "", phase: .waiting,
+                                      attachments: send.attachmentRefs))
             }
         }
         var departed: [QueuedSend] = []
@@ -1060,6 +1104,8 @@ final class ChatModel {
     /// new text, which lands at the end.
     private func requeueEdit(_ cid: String, text: String) async {
         guard let client = hubClient else { return }
+        // The replacement carries the same files: still staged on the hub.
+        let files = queued.first { $0.clientId == cid }?.attachments ?? sentFiles[cid] ?? []
         do {
             try await client.queueAction(key, clientId: cid, op: "cancel")
         } catch {
@@ -1069,7 +1115,7 @@ final class ChatModel {
         }
         dropQueued(cid)
         requeued(cid)
-        await send(text)
+        await send(text, files: files)
     }
 
     /// The old message is gone; its replacement goes to the end.
@@ -1086,10 +1132,13 @@ final class ChatModel {
         items.firstIndex { if case .user(_, let s?) = $0.kind, s.inFlight { $0.id == id } else { false } }
     }
 
+    /// Sends a failed bubble again, with the files it carried: they stay
+    /// staged on the hub, so nothing uploads twice.
     func retry(_ item: ChatItem) async {
         guard case .user(let text, .failed) = item.kind else { return }
         items.removeAll { $0.id == item.id }
-        await send(text)
+        let files = item.id.hasPrefix("send-") ? sentFiles.removeValue(forKey: String(item.id.dropFirst(5))) : nil
+        await send(text, files: files ?? [])
     }
 
     func decide(_ requestId: String, decision: String) async {

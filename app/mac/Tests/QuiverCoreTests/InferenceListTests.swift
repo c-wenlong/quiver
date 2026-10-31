@@ -2,14 +2,10 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
-private func key(_ name: String, _ value: String = "sk-1234567890", provider: String = "OpenAI") -> APIKeysModel.Row {
+/// A saved key row as the inference lists see it; shared with
+/// InferenceCatalogueTests.
+func inferenceKey(_ name: String, _ value: String = "sk-1234567890", provider: String = "OpenAI") -> APIKeysModel.Row {
     APIKeysModel.Row(provider: provider, name: name, value: value, status: .loaded)
-}
-
-private final class InferenceOrderStore: KeyValueStoring, @unchecked Sendable {
-    var values: [String: [String]] = [:]
-    func strings(forKey key: String) -> [String]? { values[key] }
-    func set(_ strings: [String], forKey key: String) { values[key] = strings }
 }
 
 @Suite struct InferenceCatalogTests {
@@ -80,7 +76,7 @@ private final class InferenceOrderStore: KeyValueStoring, @unchecked Sendable {
 
 @Suite struct InferenceListTests {
     @Test func keysInFileOrderThenPlansWithNoKey() {
-        let items = InferenceList.items(keys: [key("OPENAI_API_KEY"), key("KIMI_CODE_KEY", provider: "Kimi Code")])
+        let items = InferenceList.items(keys: [inferenceKey("OPENAI_API_KEY"), inferenceKey("KIMI_CODE_KEY", provider: "Kimi Code")])
         #expect(items[0].id == "OPENAI_API_KEY")
         #expect(items[0].kind == .apiKey)
         #expect(items[1].id == "KIMI_CODE_KEY")
@@ -102,7 +98,7 @@ private final class InferenceOrderStore: KeyValueStoring, @unchecked Sendable {
     }
 
     @Test func filtersByStateKindAndQuery() {
-        let items = InferenceList.items(keys: [key("OPENAI_API_KEY")])
+        let items = InferenceList.items(keys: [inferenceKey("OPENAI_API_KEY")])
         let open = items[0]
         let glm = items.first { $0.id == "GLM_CODING_PLAN_KEY" }!
         let state: (InferenceItem) -> InferenceKeyState = { $0.hasKey ? .valid : .noKey }
@@ -114,20 +110,20 @@ private final class InferenceOrderStore: KeyValueStoring, @unchecked Sendable {
         #expect(InferenceList.matches(glm, state: nil, kind: nil, query: "glm_coding", stateOf: state))
         #expect(!InferenceList.matches(open, state: nil, kind: nil, query: "glm", stateOf: state))
         // A plan key filed under a heading of your own is found by it.
-        let filed = InferenceList.items(keys: [key("GLM_CODING_PLAN_KEY", provider: "Work")])[0]
+        let filed = InferenceList.items(keys: [inferenceKey("GLM_CODING_PLAN_KEY", provider: "Work")])[0]
         #expect(filed.title == "GLM Coding Plan")
         #expect(InferenceList.matches(filed, state: nil, kind: nil, query: "work", stateOf: state))
     }
 
     @MainActor @Test func dragOrderPersistsAndNewRowsGoLast() {
-        let store = InferenceOrderStore()
+        let store = MemoryStore()
         let order = InferenceOrder(store: store)
-        let items = InferenceList.items(keys: [key("A_KEY"), key("B_KEY")], plans: [])
+        let items = InferenceList.items(keys: [inferenceKey("A_KEY"), inferenceKey("B_KEY")], plans: [])
         order.move("B_KEY", before: "A_KEY", in: items)
         #expect(order.sorted(items).map(\.id) == ["B_KEY", "A_KEY"])
         #expect(store.values["inferenceOrder"] == ["B_KEY", "A_KEY"])
         // A new key lands at the end; a fresh model reads the same order.
-        let more = InferenceList.items(keys: [key("A_KEY"), key("B_KEY"), key("C_KEY")], plans: [])
+        let more = InferenceList.items(keys: [inferenceKey("A_KEY"), inferenceKey("B_KEY"), inferenceKey("C_KEY")], plans: [])
         #expect(InferenceOrder(store: store).sorted(more).map(\.id) == ["B_KEY", "A_KEY", "C_KEY"])
         order.move("B_KEY", before: nil, in: more)
         #expect(order.sorted(more).map(\.id) == ["A_KEY", "C_KEY", "B_KEY"])

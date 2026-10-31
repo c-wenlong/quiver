@@ -252,11 +252,7 @@ def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
         # Plugin caches and vendored repos ship their own instruction files.
         # You never see them while coding, so name the count even when hiding
         # them: an unexpected jump here is worth a look.
-        note = f"{vendored} more inside harness directories"
-        tail = "(plugin caches, vendored repos), see --scope=all"
-        if len(note) + len(tail) + 3 > terminal_width():
-            tail = "see --scope=all"
-        print(f"  {c('yellow', note)} {c('dim', tail)}")
+        print(f"  {_vendored_note(vendored)}")
     print()
 
 
@@ -644,9 +640,7 @@ def cmd_find_skills(args=None, root_flag: bool = False, scope: str = "global",
                f"{len(other)} left alone")
     print(f"\n  {c('dim', elide(summary, terminal_width() - 4))}")
     if vendored:
-        note = f"{vendored} more inside harness directories"
-        tail = "(plugin caches, vendored repos), see --scope=all"
-        print(f"  {c('yellow', note)} {c('dim', tail)}")
+        print(f"  {_vendored_note(vendored)}")
     if hidden:
         print(f"  {c('dim', harness_footer_text(len(hidden)))}")
     print()
@@ -791,7 +785,7 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global",
     # The registered config paths above say how far a sync got. The disk
     # scan is where a config nobody registered hides.
     configs = scan_configs(home, scope=scope)
-    stray = unmanaged(home, hub.servers, scope=scope)
+    stray = unmanaged(home, hub.servers, scope=scope, configs=configs)
     # Compare resolved paths, not harness names: ~/.factory/mcp.json is read
     # under the name "droid", and ~/.gemini has four config files of which
     # quiver reads exactly one.

@@ -39,8 +39,9 @@ final class HubStub: URLProtocol, @unchecked Sendable {
         return URLSession(configuration: config)
     }
 
-    /// The body a POST carried: URLSession hands a protocol the stream.
-    static func body(_ request: URLRequest) -> [String: String] {
+    /// The bytes a request carried: URLSession hands a protocol the body
+    /// as a stream, not as `httpBody`.
+    static func bodyData(_ request: URLRequest) -> Data {
         var data = request.httpBody ?? Data()
         if data.isEmpty, let stream = request.httpBodyStream {
             stream.open()
@@ -52,7 +53,18 @@ final class HubStub: URLProtocol, @unchecked Sendable {
             }
             stream.close()
         }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: String] ?? [:]
+        return data
+    }
+
+    /// The body a POST carried, as flat string fields.
+    static func body(_ request: URLRequest) -> [String: String] {
+        (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: String] ?? [:]
+    }
+
+    /// A request's query as a name → value dict.
+    static func query(_ request: URLRequest) -> [String: String] {
+        let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return Dictionary(items.map { ($0.name, $0.value ?? "") }) { _, b in b }
     }
 }
 
@@ -1099,10 +1111,11 @@ extension HubStubbed {
 
 /// Never answers: a request sits in flight until its task is cancelled.
 final class SilentHubStub: URLProtocol, @unchecked Sendable {
-    static let started = Mutex(0)
+    /// Counts requests that reached the stub, so a test waits for one.
+    static let started = CountGate()
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() { Self.started.withLock { $0 += 1 } }
+    override func startLoading() { Task { await Self.started.bump() } }
     override func stopLoading() {}
 }
 
@@ -1114,11 +1127,9 @@ final class SilentHubStub: URLProtocol, @unchecked Sendable {
         config.protocolClasses = [SilentHubStub.self]
         let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!, credential: "c",
                                session: URLSession(configuration: config))
-        let before = SilentHubStub.started.withLock { $0 }
+        let before = await SilentHubStub.started.count
         let task = Task { try await client.sessions() }
-        while SilentHubStub.started.withLock({ $0 }) == before {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        #expect(await SilentHubStub.started.reach(before + 1))
         task.cancel()
         do {
             _ = try await task.value

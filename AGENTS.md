@@ -50,8 +50,10 @@ The web app stays inside the Python package because pipx installs and the `swe` 
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]"
 
-# Full test suite (unittest is the canonical runner; CI uses exactly this)
-python3 -m unittest discover -s tests -p 'test_*.py'
+# Full test suite (unittest is the canonical runner), against a throwaway HOME.
+# In a git worktree add PYTHONPATH=src, or the editable install imports the
+# main checkout's code.
+HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'
 
 # One file / one test method
 python3 -m unittest tests.test_table
@@ -65,10 +67,10 @@ HOME="$test_home" python3 -m coverage run -m unittest discover -s tests -p 'test
 python3 -m coverage combine && python3 -m coverage report
 
 # Run the CLI from source without reinstalling
-PYTHONPATH=src python -m quiver.cli list
+PYTHONPATH=src python3 -m quiver.cli list
 
 # Run the MCP sync subsystem directly
-python -m quiver.mcp list
+python3 -m quiver.mcp list
 
 # Docs site: stage into build/docs-site/, then build or preview
 python3 scripts/docs_site.py && zensical build --clean  # or: zensical serve
@@ -92,7 +94,7 @@ The `swe` command is a pip-installed console entry point (declared in `[project.
 
 Required steps for any feature that adds files or changes `cmd_*` handlers:
 
-1. **Write tests** and run `python -m unittest discover -s tests -p 'test_*.py'`.
+1. **Write tests** and run `HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'`.
 2. **Reinstall the package** with `pip install -e .` (or `pipx install --force git+...` for pipx installs). With an editable install new files are picked up automatically, but a stale non-editable install won't see them until you reinstall.
 3. **Verify e2e** by running the actual `swe <command>` against a temp HOME, not just `PYTHONPATH=src python -m quiver.cli <command>`. CI does the same on every PR (the editable install on Linux), and `release.yml` repeats it on a tag for a built wheel in a clean venv on Linux and macOS, the Nix derivation's output and the bundled app, each against a `mktemp -d` home. The native-only checks that used to sit on the PR path — the macOS install smoke test, the app unit tests and the Nix build — run nightly, on merge_group and on demand in `native.yml`. Read `.github/workflows/ci.yml` and `release.yml` for the exact commands rather than assuming; that list gets trimmed from time to time.
 4. **Open a PR**, one concern per PR, with a clear description of what changed and why.
@@ -101,7 +103,7 @@ Common pitfall: if a feature works with `PYTHONPATH=src python -m quiver.cli` bu
 
 ## Architecture in one screen
 
-`src/quiver/cli.py` is dispatch only: a `COMMANDS` dict mapping the first argv token to a `cmd_*` function. Top-level entries are shortcuts for the most-used harness verbs. Everything else lives under a domain command (`harness`, `mcp`, `find`, `plugins`, `providers`, `report`, `skills`, `session`, `config`, `setup`, `init`), each of which owns its own sub-dispatch.
+`src/quiver/cli.py` is dispatch only: a `COMMANDS` dict mapping the first argv token to a `cmd_*` function. Top-level entries are shortcuts for the most-used harness verbs. Everything else lives under a domain command (`harness`, `mcp`, `find`, `plugins`, `providers`, `report`, `skills`, `session`, `config`, `setup`, `init`, `hooks`, `gh`, `remote`), each of which owns its own sub-dispatch.
 
 Domain packages under `src/quiver/`:
 
@@ -120,7 +122,10 @@ Domain packages under `src/quiver/`:
 | `setup/` | interactive onboarding wizard (the one logic module allowed to print) |
 | `history/` | backward-compatible re-exports; prefer `quiver.sessions` |
 | `ledger/` | the web app's usage ledger: a Python port of the Mac app's `QuiverCore/Ledger` (log parsers, dedup store, LiteLLM pricing, Overview figures). Keep its rules in step with the Swift ones |
-| `webapp/` | the web app the hub serves at `/app/` (`static/`) and its page data at `/v1/app/*` (`api.py`); see [docs/web-app.md](docs/web-app.md) |
+| `webapp/` | the web app the hub serves at `/` (`static/`; old `/app/` links redirect there) and its page data at `/v1/app/*` (`api.py`, `pages/`); see [docs/web-app.md](docs/web-app.md) |
+| `remote/` | `swe remote`: the hub (`hub.py`, every `/v1/*` route), the satellite agent, pairing, devices and the session tailers; see [docs/remote-control.md](docs/remote-control.md) |
+| `github/` | `swe gh` and the hub's GitHub routes; within the package only `gh.py` spawns `gh` (the Copilot rate-limit fetcher in `harness/rate_limits.py` runs `gh auth token` itself) |
+| `status/` | service status pages for the web app, a port of the Mac app's `QuiverCore/Status` |
 
 Six modules form the bottom layer and never import a domain package: `paths.py` (every path under `~/.quiver`, use `*_for(home)` helpers in tests), `console.py`, `table.py`, `configuration.py`, `keys.py` (the shared terminal key reader), `flags.py` (the shared `--name=value` argv normaliser). They are ordered among themselves — `console.py`, `keys.py` and `flags.py` import nothing from the project at all, `paths.py` takes only the constants in `quiver/__init__.py`, `table.py` imports `console`, `configuration.py` imports `paths`. Command modules own presentation; logic modules should not print. One intentional cycle, `harness <-> sessions`, uses function-local imports.
 
@@ -174,7 +179,8 @@ The `swe autocomplete` feature relies on hardcoded tables in `src/quiver/complet
 - Engine tests use `expand_path()` which only expands `~` prefixes (mock-safe).
 - Completion tests mock `load_registry` for tool/tag completions and `SHELL_CONFIGS` for script generation.
 - Class-level JSON fixtures like `_SAMPLE_RESPONSE` are shallow-copied by default. Tests that **mutate nested keys** (e.g. `body["rate_limit"]["primary_window"]["reset_at"]`) MUST use `copy.deepcopy` to avoid leaking the mutation into later tests that read the same class fixture. Tests that only **replace top-level keys** are safe with shallow copies.
-- Run all tests: `python3 -m unittest discover -s tests -p 'test_*.py'`
+- A test's temp folder comes from `temp_dir(self)` in `tests/_tempdir.py` (or `self.enterContext(tempfile.TemporaryDirectory())`), never a bare `tempfile.mkdtemp()`, which leaves the folder behind on every run.
+- Run all tests: `HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'`
 - The full testing guide (Swift suite and coverage, fixture capture, gates and clocks, no busy-waits) is [docs/testing.md](docs/testing.md).
 
 ## Gotchas log

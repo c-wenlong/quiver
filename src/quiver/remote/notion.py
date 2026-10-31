@@ -429,11 +429,12 @@ class NotionTasks:
     # -------------------------------------------------------------- list
 
     def list(self) -> dict:
-        """``{status, tasks, databases?, error?, fetched_at}`` — each
-        configured database's rows owned by the user, minus the ones
-        whose status reads done. A database that fails keeps its
-        ``{id, name, status, error}`` in ``databases`` and the others
-        still answer rows."""
+        """``{status, tasks, truncated?, databases?, error?,
+        fetched_at}`` — each configured database's rows owned by the
+        user, minus the ones whose status reads done. A database that
+        fails keeps its ``{id, name, status, error}`` in ``databases``
+        and the others still answer rows; ``truncated`` says a database
+        had more rows than the caps read."""
         value, at = self._cached(("notion-pages",), self._list)
         return {**value, "fetched_at": at}
 
@@ -451,14 +452,18 @@ class NotionTasks:
             return {"status": "bad-config", "tasks": [], "error": error}
         tasks: list[dict] = []
         failed: list[dict] = []
+        truncated = False
         for db in databases:
             reply = self._database_rows(token, db, env.user_id)
             tasks.extend(reply["tasks"])
+            truncated = truncated or bool(reply.get("truncated"))
             if reply["status"] != "ok":
                 failed.append({"id": db.id or None, "name": db.name,
                                "status": reply["status"],
                                "error": reply["error"]})
         out: dict = {"status": "ok", "tasks": tasks}
+        if truncated:
+            out["truncated"] = True
         if failed:
             out["databases"] = failed
             out["status"] = failed[0]["status"]
@@ -508,6 +513,7 @@ class NotionTasks:
                 {"property": mapping["status"],
                  "checkbox": {"equals": False}}]}
         tasks: list[dict] = []
+        more = False
         for _page in range(MAX_PAGES):
             result = _request(token, "POST", f"/databases/{db.id}/query",
                               body)
@@ -522,12 +528,19 @@ class NotionTasks:
                     continue
                 tasks.append(row)
                 if len(tasks) >= LIST_LIMIT:
-                    return {"status": "ok", "tasks": tasks}
+                    # Rows past the cap may still be open ones.
+                    return {"status": "ok", "tasks": tasks,
+                            "truncated": True}
             cursor = result.data.get("next_cursor")
-            if not result.data.get("has_more") or not cursor:
+            more = bool(result.data.get("has_more") and cursor)
+            if not more:
                 break
             body = {**body, "start_cursor": cursor}
-        return {"status": "ok", "tasks": tasks}
+        out = {"status": "ok", "tasks": tasks}
+        if more:
+            # The page cap stopped the read with rows still unread.
+            out["truncated"] = True
+        return out
 
     # -------------------------------------------------------------- get
 
@@ -642,6 +655,7 @@ def _resolve_user(token: str, user: str) -> NotionResult:
     wanted = user.lower()
     cursor = None
     saw_email = False
+    more = False
     for _page in range(MAX_USER_PAGES):
         query = "?page_size=100" + (
             f"&start_cursor={urllib.parse.quote(cursor)}" if cursor else "")
@@ -665,8 +679,16 @@ def _resolve_user(token: str, user: str) -> NotionResult:
                         str(person.get("id") or ""),
                         str(person.get("name") or "")))
         cursor = got.data.get("next_cursor")
-        if not got.data.get("has_more") or not cursor:
+        more = bool(got.data.get("has_more") and cursor)
+        if not more:
             break
+    if more:
+        # The workspace has more people than the lookup reads: don't
+        # claim the email is unknown when it may just be further on.
+        return NotionResult("bad-config", error=(
+            f"notion.user: {user} isn't among the first "
+            f"{MAX_USER_PAGES * 100} people in the workspace, so the "
+            "lookup stopped; set notion.user to your Notion user id"))
     if not saw_email:
         return NotionResult("bad-config", error=(
             "notion.user is an email, but Notion sent no emails: give the "

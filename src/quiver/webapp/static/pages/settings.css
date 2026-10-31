@@ -127,8 +127,7 @@
 .set-key-header + .set-key-row { border-top: 0; }
 .set-key-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .set-key-name .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.set-key-name a { color: var(--link); text-decoration: none; }
-.set-key-value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
+.set-key-value { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
 .set-key-value code { word-break: break-all; }
 .set-masked { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-primary); word-break: break-all; }
 .set-key-status.ok { color: var(--success); }
@@ -180,8 +179,6 @@ dialog.set-pair-sheet { width: min(520px, calc(100vw - 32px)); }
 .set-keys-actions { display: flex; gap: 8px; }
 .set-key-open { cursor: pointer; }
 .set-key-open:focus-visible { outline: 1px solid var(--interactive); outline-offset: -2px; }
-.set-key-value { align-items: center; }
-.set-masked.revealed { word-break: break-all; }
 .set-key-tools { display: inline-flex; gap: 2px; }
 .icon-button.set-key-icon { width: 24px; height: 24px; }
 .icon-button.set-key-icon svg { width: 14px; height: 14px; }

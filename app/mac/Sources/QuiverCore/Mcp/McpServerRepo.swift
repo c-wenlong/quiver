@@ -301,6 +301,11 @@ public enum McpServerRepo {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", url.path, "status", "--porcelain=v1", "--branch"]
+        // Optional locks off, as swe's `read_git` does: a plain status
+        // refreshes stale stat data by rewriting the index under
+        // index.lock, which can fail a commit the user runs meanwhile.
+        process.environment = ProcessInfo.processInfo.environment
+            .merging(["GIT_OPTIONAL_LOCKS": "0"]) { $1 }
         let output = Pipe()
         let errors = Pipe()
         process.standardOutput = output

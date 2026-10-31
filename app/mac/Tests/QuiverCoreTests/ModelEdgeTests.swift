@@ -42,14 +42,6 @@ struct SkillRootEdgeTests {
 
 @Suite("Primitive tree")
 struct PrimitiveTreeEdgeTests {
-    private func withTempDir(_ body: (URL) throws -> Void) throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appending(path: "tree-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try body(dir)
-    }
-
     @Test func kindTitles() {
         #expect(PrimitiveTree.Kind.allCases.map(\.title) == [
             "Skills", "Commands", "Agents", "Hooks", "Other files",
@@ -57,50 +49,53 @@ struct PrimitiveTreeEdgeTests {
     }
 
     @Test func sectionsGroupKnownFolders() throws {
-        try withTempDir { root in
-            let fm = FileManager.default
-            let skills = root.appending(path: "skills/tdd")
-            try fm.createDirectory(at: skills, withIntermediateDirectories: true)
-            try "skill".write(to: skills.appending(path: "SKILL.md"), atomically: true, encoding: .utf8)
-            try "x".write(to: skills.appending(path: "ref.md"), atomically: true, encoding: .utf8)
-            try fm.createDirectory(at: root.appending(path: "commands"), withIntermediateDirectories: true)
-            try "c".write(to: root.appending(path: "commands/run.md"), atomically: true, encoding: .utf8)
-            try "o".write(to: root.appending(path: "loose.md"), atomically: true, encoding: .utf8)
-            try ".hidden".write(to: root.appending(path: "commands/.hidden"), atomically: true, encoding: .utf8)
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
+        let fm = FileManager.default
+        let skills = root.appending(path: "skills/tdd")
+        try fm.createDirectory(at: skills, withIntermediateDirectories: true)
+        try "skill".write(to: skills.appending(path: "SKILL.md"), atomically: true, encoding: .utf8)
+        try "x".write(to: skills.appending(path: "ref.md"), atomically: true, encoding: .utf8)
+        try fm.createDirectory(at: root.appending(path: "commands"), withIntermediateDirectories: true)
+        try "c".write(to: root.appending(path: "commands/run.md"), atomically: true, encoding: .utf8)
+        try "o".write(to: root.appending(path: "loose.md"), atomically: true, encoding: .utf8)
+        try ".hidden".write(to: root.appending(path: "commands/.hidden"), atomically: true, encoding: .utf8)
 
-            let tree = PrimitiveTree(root: root)
-            let byKind = Dictionary(tree.sections.map { ($0.kind, $0.entries) }, uniquingKeysWith: { a, _ in a })
-            let skillEntry = try #require(byKind[.skills]?.first)
-            #expect(skillEntry.isFolder)
-            #expect(skillEntry.previewPath.hasSuffix("SKILL.md"))
-            #expect(skillEntry.children.map(\.name).contains("ref.md"))
-            #expect(byKind[.commands]?.map(\.name) == ["run.md"])
-            #expect(byKind[.other]?.map(\.name) == ["loose.md"])
-        }
+        let tree = PrimitiveTree(root: root)
+        let byKind = Dictionary(tree.sections.map { ($0.kind, $0.entries) }, uniquingKeysWith: { a, _ in a })
+        let skillEntry = try #require(byKind[.skills]?.first)
+        #expect(skillEntry.isFolder)
+        #expect(skillEntry.previewPath.hasSuffix("SKILL.md"))
+        #expect(skillEntry.children.map(\.name).contains("ref.md"))
+        #expect(byKind[.commands]?.map(\.name) == ["run.md"])
+        #expect(byKind[.other]?.map(\.name) == ["loose.md"])
     }
 
     @Test func nestedFolderInsideCommandsListsInnerFiles() throws {
-        try withTempDir { root in
-            let nested = root.appending(path: "commands/group")
-            try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
-            try "i".write(to: nested.appending(path: "inner.md"), atomically: true, encoding: .utf8)
-            let tree = PrimitiveTree(root: root)
-            let names = tree.sections.first(where: { $0.kind == .commands })?.entries.map(\.name) ?? []
-            #expect(names == ["group/inner.md"])
-        }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let root = temp.url
+        let nested = root.appending(path: "commands/group")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try "i".write(to: nested.appending(path: "inner.md"), atomically: true, encoding: .utf8)
+        let tree = PrimitiveTree(root: root)
+        let names = tree.sections.first(where: { $0.kind == .commands })?.entries.map(\.name) ?? []
+        #expect(names == ["group/inner.md"])
     }
 
     @Test func isTextFile() throws {
-        try withTempDir { dir in
-            let text = dir.appending(path: "a.md")
-            try "hello".write(to: text, atomically: true, encoding: .utf8)
-            let binary = dir.appending(path: "b.bin")
-            try Data([0, 1, 2]).write(to: binary)
-            let missing = dir.appending(path: "nope.txt")
-            #expect(PrimitiveTree.isTextFile(text))
-            #expect(!PrimitiveTree.isTextFile(binary))
-            #expect(!PrimitiveTree.isTextFile(missing))
-        }
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let dir = temp.url
+        let text = dir.appending(path: "a.md")
+        try "hello".write(to: text, atomically: true, encoding: .utf8)
+        let binary = dir.appending(path: "b.bin")
+        try Data([0, 1, 2]).write(to: binary)
+        let missing = dir.appending(path: "nope.txt")
+        #expect(PrimitiveTree.isTextFile(text))
+        #expect(!PrimitiveTree.isTextFile(binary))
+        #expect(!PrimitiveTree.isTextFile(missing))
     }
 }
 

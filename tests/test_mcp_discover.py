@@ -241,6 +241,24 @@ class ThreeWayMergeTest(unittest.TestCase):
         self.assertEqual(res.pruned, ["no_longer_anywhere"])
         self.assertNotIn("no_longer_anywhere", hub)
 
+    def test_gateway_settings_in_a_serverless_hub_are_not_a_server(self):
+        import contextlib
+        import json
+
+        with contextlib.ExitStack() as stack:
+            D, path = self._sandbox(stack)
+            # What `swe mcp gateway install` leaves in a hub with no servers.
+            path.write_text(json.dumps({
+                "gateway": {"enabled": True, "port": 8478},
+                "updated": "2020-01-01T00:00:00"}))
+            findings = D.discover_mcp_servers(include_in_source=True)
+            D.apply_mcp_findings(findings)
+            hub = json.loads(path.read_text())
+
+        self.assertNotIn("gateway", {f.name for f in findings})
+        self.assertNotIn("gateway", hub["mcpServers"])
+        self.assertEqual(hub["gateway"], {"enabled": True, "port": 8478})
+
     def test_updated_timestamp_is_refreshed_not_only_seeded(self):
         import contextlib
         import json

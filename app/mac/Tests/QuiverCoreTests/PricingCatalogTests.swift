@@ -137,6 +137,18 @@ struct Offline: Error {}
         #expect(PricingCatalog.baseName(for: "groq/openai/gpt-oss-120b") == "gpt-oss-120b")
     }
 
+    @Test func thresholdsCoverTodaysEntriesAndEarlierPrices() throws {
+        let catalog = try PricingCatalog(liteLLM: liteLLM)
+        #expect(catalog.thresholds == [200_000, 272_000])
+        // An earlier price of a key with no threshold today still counts.
+        let earlier = CatalogDatabase.PriceSpan(from: 0, to: 1_000, entry: [
+            "input_cost_per_token": 1e-06, "output_cost_per_token": 1e-05,
+            "input_cost_per_token_above_128k_tokens": 2e-06, "litellm_provider": "openai"])
+        let withHistory = catalog.withHistory(["gpt-5.6-luna": [earlier]])
+        #expect(withHistory.thresholds == [128_000, 200_000, 272_000])
+        #expect(withHistory.withHistory([:]).thresholds == [200_000, 272_000])
+    }
+
     @Test func longContextAndPriorityRatesApplyPerRequest() throws {
         let rates = try #require(try catalog().rates(for: "gpt-6.1-sol"))
         #expect(rates.longContext?.threshold == 272_000)
@@ -290,11 +302,11 @@ struct Offline: Error {}
         let (ledger, keepAlive) = try await ledger(with:
             claudeLine(message: "m1", request: "r1", output: 100, input: 1_000, model: "claude-opus-5-5")
             + claudeLine(message: "m2", request: "r2", output: 100, input: 1_000, model: "claude-opus-5-5-high-fast"))
+        defer { withExtendedLifetime(keepAlive) {} }
         let expected = 2 * (1_000 * 4e-06 + 100 * 2e-05) + (1_000 * 4e-06 + 100 * 2e-05)
         let totals = await ledger.totals(in: allTime)
         #expect(abs(totals.costUSD - expected) < 1e-9)
         #expect(totals.unpricedTokens == 0)
-        _ = keepAlive
     }
 
     @Test func aCatalogNameEndingInFastPricesAtItsOwnRates() async throws {
@@ -302,16 +314,17 @@ struct Offline: Error {}
         // tried before the `-fast` suffix is split, or it goes unpriced.
         let (ledger, keepAlive) = try await ledger(with:
             claudeLine(message: "m1", output: 100, input: 1_000, model: "grok-code-fast"))
+        defer { withExtendedLifetime(keepAlive) {} }
         let expected = 1_000 * 1e-06 + 100 * 2e-06
         let totals = await ledger.totals(in: allTime)
         #expect(abs(totals.costUSD - expected) < 1e-9)
         #expect(totals.unpricedTokens == 0)
-        _ = keepAlive
     }
 
     @Test func aFreeModelCostsZeroAndIsNotUnpriced() async throws {
         let (ledger, keepAlive) = try await ledger(with:
             claudeLine(message: "m1", output: 100, input: 1_000, model: "deepseek-v4-flash-free"))
+        defer { withExtendedLifetime(keepAlive) {} }
         let totals = await ledger.totals(in: allTime)
         #expect(totals.costUSD == 0)
         #expect(totals.unpricedTokens == 0)

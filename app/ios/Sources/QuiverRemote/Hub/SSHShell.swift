@@ -221,7 +221,9 @@ private final class ShellHandler: ChannelInboundHandler, @unchecked Sendable {
         self.cols = cols
         self.rows = rows
         self.onEvent = onEvent
-        // Any loop will do until handlerAdded swaps in the channel's own.
+        // The handler is made before its channel exists, so the promise
+        // takes any loop of the shared group; a promise completes from
+        // any thread, the channel's included.
         self.ready = MultiThreadedEventLoopGroup.singleton.next().makePromise()
     }
 

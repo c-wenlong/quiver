@@ -460,6 +460,22 @@ class TestEnv(_Home):
         self.assertEqual(env.status, "bad-config")
         self.assertIn("who@example.com", env.error)
 
+    def test_email_past_the_lookup_cap_says_so(self):
+        _config(self.home, _section(user="late@example.com"))
+        _secret(self.home)
+        routes = _routes()
+        routes[("GET", "/users?")] = ok({"results": [
+            {"id": ME, "type": "person",
+             "person": {"email": "kai@example.com"}}],
+            "has_more": True, "next_cursor": "more"})
+        env, router = self._run(routes, lambda s: s.probe())
+        self.assertEqual(env.status, "bad-config")
+        self.assertIn("lookup stopped", env.error)
+        self.assertIn("user id", env.error)
+        self.assertEqual(len([c for c in router.calls
+                              if c[1].startswith("/users?")]),
+                         notion.MAX_USER_PAGES)
+
     def test_unknown_user_id(self):
         _config(self.home, _section())
         _secret(self.home)
@@ -539,6 +555,7 @@ class TestList(_Home):
         self.assertNotIn("start_cursor", posts[0][2])
         self.assertEqual(posts[1][2]["start_cursor"], "c0")
         self.assertEqual(len(out["tasks"]), 150)
+        self.assertTrue(out["truncated"])
 
     def test_page_cap_bounds_a_database_of_done_rows(self):
         done = ok({"results": [_page(status=("o3", "Shipped"))],
@@ -549,6 +566,11 @@ class TestList(_Home):
         posts = [c for c in router.calls if c[0] == "POST"]
         self.assertEqual(len(posts), notion.MAX_PAGES)
         self.assertEqual(out["tasks"], [])
+        self.assertTrue(out["truncated"])
+
+    def test_a_complete_read_is_not_truncated(self):
+        out, _r = self._run(_routes(), lambda s: s.list())
+        self.assertNotIn("truncated", out)
 
     def test_name_defaults_to_the_database_title(self):
         out, _r = self._run(_routes(), lambda s: s.list())
@@ -871,6 +893,7 @@ class TestTasksRoute(unittest.TestCase):
             _page(status=("o2", "Building"))]))
         self.assertEqual(status, 200, body)
         self.assertEqual(body["notion"]["status"], "ok")
+        self.assertNotIn("truncated", body["notion"])
         self.assertEqual(body["notion"]["login"], "Kai")
         row = {t["id"]: t for t in body["tasks"]}[
             f"notion:page:roadmap:{PAGE_A}"]

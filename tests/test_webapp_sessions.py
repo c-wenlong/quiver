@@ -866,6 +866,41 @@ return div.innerHTML;
         self.assertIsNone(out["junk"])
         self.assertEqual(out["lines"], {"ctxTop": ["a"], "del": ["b"], "add": ["B"], "ctxBot": ["c"]})
 
+    def test_tool_args_that_are_not_strings_render_no_diff(self):
+        """args_full is the transcript's tool input as the agent sent it,
+        so a field can be an array or an object: no diff, no throw."""
+        out = self.run_js("""
+          const call = (name, args) => T.toolDiff({ name, args_full: JSON.stringify(args) });
+          return [call("Write", { file_path: "a.txt", content: ["x"] }),
+                  call("Write", { file_path: ["a.txt"], content: "hi" }) !== null,
+                  call("Edit", { file_path: "a.py", old_string: { a: 1 }, new_string: 2 }),
+                  call("MultiEdit", { file_path: "a.py", edits: [{ old_string: ["x"], new_string: ["y"] }] }),
+                  call("NotebookEdit", { notebook_path: "n.ipynb", new_source: ["print(1)"] }),
+                  call("apply_patch", { patch: ["-a", "+b"] }) !== null];""")
+        self.assertEqual(out, [None, True, None, None, None, True])
+
+    def test_an_event_that_throws_is_skipped_not_fatal(self):
+        """One event the view can't draw is logged and skipped: the
+        backfill still draws the rest and resolves, and a live event
+        doesn't throw into the stream (whose reconnect would replay it)."""
+        out = self.run_js(r"""
+          const errors = [];
+          console.error = (...a) => errors.push(String(a[0]));
+          globalThis.nearBottom = () => true;
+          const log = { scrollTop: 0, scrollHeight: 0, clientHeight: 0, querySelectorAll: () => [] };
+          document.getElementById = (id) => (id === "chat-log" ? log : null);
+          globalThis.patchMeta = () => { throw new Error("boom"); };
+          globalThis.api = async () => ({ status: 200, data: { messages: [
+            { type: "session.meta", session: "k", seq: 1, data: {} },
+            { type: "session.status", session: "k", seq: 2, data: { status: "done" } }] } });
+          Object.assign(T.chat, { key: "k", gen: 1, seq: 0, row: { status: "active", ownership: "observed" } });
+          const status = await T.backfill(1);
+          const afterBackfill = { status, seq: T.chat.seq, row: T.chat.row.status };
+          T.showLive({ type: "session.meta", session: "k", seq: 3, data: {} });
+          return { afterBackfill, liveSeq: T.chat.seq, errors: errors.length };""")
+        self.assertEqual(out, {"afterBackfill": {"status": 200, "seq": 2, "row": "done"},
+                               "liveSeq": 3, "errors": 2})
+
     def test_page_preview_targets(self):
         """Which tool calls get Preview and the route path each asks for:
         the cases PagePreviewTests.swift pins for the phone."""
@@ -1008,7 +1043,7 @@ return div.innerHTML;
         most three, none from code; the card opens a new tab with no
         opener or referrer."""
         out = self.run_js(r"""
-          const urls = (t) => T.linkUrls(t).map((u) => u.href);
+          const urls = (t) => T.linkUrls(T.md(t)).map((u) => u.href);
           return {
             mixed: urls("See [the page](https://www.claude.ai/code/artifact/abc?x=1&y=2) and "
               + "https://example.com, again https://example.com, mailto:a@b.c, `https://code.test/x`\n"
@@ -1017,8 +1052,8 @@ return div.innerHTML;
             none: urls("no links here"),
             host: [T.linkHost(new URL("https://www.claude.ai/x")), T.linkHost(new URL("http://example.com"))],
             path: [T.linkPath(new URL("https://claude.ai/code/x?y=1")), T.linkPath(new URL("https://claude.ai/"))],
-            html: T.linkCardsHtml('Go to https://example.com/a?q="x"'),
-            empty: T.linkCardsHtml("plain"),
+            html: T.linkCardsHtml(T.md('Go to https://example.com/a?q="x"')),
+            empty: T.linkCardsHtml(T.md("plain")),
           };""")
         self.assertEqual(out["mixed"], ["https://www.claude.ai/code/artifact/abc?x=1&y=2", "https://example.com/"])
         self.assertEqual(out["many"], ["https://a.test/1", "https://b.test/2", "https://c.test/3"])

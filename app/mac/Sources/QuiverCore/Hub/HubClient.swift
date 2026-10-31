@@ -40,6 +40,9 @@ public struct HubClient: Sendable {
         parts.percentEncodedPath = path
         if !query.isEmpty {
             parts.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+            // URLComponents leaves `+` bare, and the hub's `parse_qs` reads
+            // a bare `+` as a space: `~/C++ tools` would ask for `~/C   tools`.
+            parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         }
         return parts.url!
     }

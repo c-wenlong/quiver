@@ -2,10 +2,6 @@ import Foundation
 import Testing
 @testable import QuiverCore
 
-private func key(_ name: String, _ value: String = "sk-1234567890", provider: String = "OpenAI") -> APIKeysModel.Row {
-    APIKeysModel.Row(provider: provider, name: name, value: value, status: .loaded)
-}
-
 @Suite struct InferenceCatalogueTests {
     @Test func plansThenProvidersInTheirOwnOrders() {
         let entries = InferenceCatalogue.entries(keys: [])
@@ -21,7 +17,7 @@ private func key(_ name: String, _ value: String = "sk-1234567890", provider: St
 
     @Test func aSavedKeyMarksItsEntry() {
         let entries = InferenceCatalogue.entries(
-            keys: [key("GLM_CODING_PLAN_KEY"), key("TOGETHER_API_KEY"), key("OPENAI_API_KEY", "")])
+            keys: [inferenceKey("GLM_CODING_PLAN_KEY"), inferenceKey("TOGETHER_API_KEY"), inferenceKey("OPENAI_API_KEY", "")])
         #expect(entries.first { $0.id == "plan:glm-coding-plan" }?.hasKey == true)
         // Any of a provider's variables marks it, not only the first.
         #expect(entries.first { $0.id == "provider:together_ai" }?.hasKey == true)

@@ -49,7 +49,7 @@ struct PluginsPage: View {
                         .primaryButton()
                         // Also while an Explore action runs: one change at a time.
                         .disabled(model.work.isBusy)
-                        .help("Run every fix swe can run, one at a time")
+                        .hoverTip("Run every fix swe can run, one at a time", replacesLabel: false)
                 }
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.load(swe: app.swe, for: app.swePath) } }
                     .iconButton()

@@ -251,11 +251,16 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe skills catalog .` | | Add the current directory as a catalog |
 | `swe skills catalog list` | | List configured skill catalogs |
 | `swe skills help [topic]` | | Per-topic help (catalog, discover, tree, link, …) |
+| `swe plugins [catalog\|install\|uninstall\|enable\|disable\|marketplace] …` | | Every plugin in every marketplace, and install it per harness |
+| `swe hooks [list\|info\|new\|edit\|enable\|disable\|delete\|check\|sync] …` | | Manage the hook scripts under `~/.quiver/hooks` |
 | `swe tags` | | List tags and associated tools |
 | `swe aliases` | | List alias → tool mappings |
 | `swe mcp <subcommand> …` | | MCP server management (see below) |
 | `swe providers [<subcommand>] …` | `pv` | Provider API key + metadata management |
 | `swe remote <subcommand> …` | | Watch and steer sessions from a phone: `serve` (hub), `agent` (satellite), `setup`, `pair`, `status`, `devices`, `attach`, `notify`, `ssh` |
+| `swe gh <subcommand> …` | | GitHub surfaces over `gh`: `pr`, `issue`, `run`, `inbox`, `repo`, `board`, `sync`, … |
+| `swe bug` | | Open a bug report on GitHub with your versions filled in |
+| `swe version` | `-v`, `--version` | Print the swe version |
 | `swe help [command]` | `-h` | Full or per-command help |
 
 Run `swe <command> --help` for detailed help on any command.
@@ -502,11 +507,11 @@ Session parsers currently cover **15 tools**: opencode, Claude Code, Gemini, Cod
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]"
-python -m unittest discover -s tests -p 'test_*.py'
 test_home="$(mktemp -d)"
-HOME="$test_home" python -m coverage run -m unittest discover -s tests -p 'test_*.py'
-python -m coverage combine
-python -m coverage report
+HOME="$test_home" python3 -m unittest discover -s tests -p 'test_*.py'
+HOME="$test_home" python3 -m coverage run -m unittest discover -s tests -p 'test_*.py'
+python3 -m coverage combine
+python3 -m coverage report
 ```
 
 CI runs the suite against a throwaway `$HOME`, so it never touches real config or
@@ -536,7 +541,7 @@ pipx install --force git+https://github.com/c-wenlong/quiver.git
 
 Every feature that adds files or modifies `cmd_*` handlers must pass this checklist before opening a PR:
 
-1. ✅ Unit tests pass: `python -m unittest discover -s tests -p 'test_*.py'`
+1. ✅ Unit tests pass: `HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'`
 2. ✅ Package reinstalled: `pip install -e .`
 3. ✅ Verified with real `swe` command (not just `PYTHONPATH=src python -m quiver.cli`)
 4. ✅ PR opened with clear description

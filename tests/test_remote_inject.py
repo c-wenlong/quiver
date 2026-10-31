@@ -2,7 +2,7 @@
 
 import json
 import os
-import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -11,6 +11,7 @@ from unittest.mock import patch
 from quiver.remote import attachments, inject, protocol, supervise
 from quiver.sessions.models import Session
 
+from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server
 
 
@@ -21,7 +22,7 @@ def _session(tool="claude", sid="abc-123", path="/tmp/proj"):
 
 class TestSuperviseRegistry(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:abc-123"
 
     def test_mark_read_unmark(self):
@@ -50,7 +51,7 @@ class TestSuperviseRegistry(unittest.TestCase):
 
 class TestAttach(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:abc-123"
         self.session = _session()
 
@@ -116,7 +117,7 @@ class TestAttach(unittest.TestCase):
 
 class TestTmuxInjector(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:abc-123"
         self.session = _session()
         inject.TmuxInjector._answered.clear()  # class-level replay state
@@ -304,7 +305,7 @@ class TestTmuxInjector(unittest.TestCase):
 class TestHeadless(unittest.TestCase):
     def setUp(self):
         self.session = _session()
-        self.inj = inject.ClaudeHeadlessInjector(Path(tempfile.mkdtemp()), "claude:x")
+        self.inj = inject.ClaudeHeadlessInjector(temp_dir(self), "claude:x")
 
     def test_argv_shape(self):
         argv = self.inj.argv(self.session, "hello")
@@ -364,7 +365,7 @@ class TestHeadlessRun(unittest.TestCase):
     def setUp(self):
         self.session = _session()
         self.inj = inject.ClaudeHeadlessInjector(
-            Path(tempfile.mkdtemp()), "claude:x"
+            temp_dir(self), "claude:x"
         )
 
     def _send(self, lines, rc=0):
@@ -468,8 +469,9 @@ class TestHeadlessRun(unittest.TestCase):
                 return self
 
             def __next__(self):
-                while not self.proc.killed:
-                    time.sleep(0.005)
+                # Bounded, so a broken watchdog fails the test below
+                # instead of hanging the suite.
+                self.proc.kill_event.wait(5)
                 raise StopIteration
 
             def close(self):
@@ -478,6 +480,7 @@ class TestHeadlessRun(unittest.TestCase):
         class _SilentProc:
             def __init__(self):
                 self.killed = False
+                self.kill_event = threading.Event()
                 self.stdout = _BlockingStdout(self)
 
             def wait(self, timeout=None):
@@ -485,6 +488,7 @@ class TestHeadlessRun(unittest.TestCase):
 
             def kill(self):
                 self.killed = True
+                self.kill_event.set()
 
         proc = _SilentProc()
         supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
@@ -530,7 +534,7 @@ class TestHeadlessRun(unittest.TestCase):
 
 class TestAttachments(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:s1"
 
     def test_stage_resolve_roundtrip(self):

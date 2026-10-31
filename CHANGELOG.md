@@ -24,6 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt. Read-only. Part of
   [#847](https://github.com/c-wenlong/quiver/issues/847).
 
+
+- **Remote iPhone app: photo and file attachments in the chat
+  composer.** A paperclip left of the prompt box offers Photos and
+  Files. Each pick uploads at once to the hub's
+  `POST /v1/sessions/{key}/attachments` and shows as a chip above the
+  box with its name and size, or its upload progress, and an x to drop
+  it; a failed upload stays red until you tap it to retry or remove it.
+  The hub's caps (20 MB, images, PDFs and text files) are checked on the
+  phone first, so a refused file gets a plain note instead of an upload.
+  Photos, and HEIC or TIFF files from Files, go up as JPEG with the long
+  edge at most 2048 px, since models can't read HEIC. Send waits while
+  any upload is in flight and needs typed text (the hub refuses a
+  message without it); the message carries the refs, the bubble names
+  the files, and the hub's `@path` echo shows as the same names. A send
+  held in the queued tray keeps its files (the row shows a paperclip
+  count), and a retry or an edit on an older hub resends the same refs.
+  Detaching clears the chips, since the hub drops the staged files.
+  Part of [#516](https://github.com/c-wenlong/quiver/issues/516).
 - **Web app: Setup can start from your hub repo.** While `~/.quiver` on
   the hub machine has no hub yet, step 2 shows "Start from your hub
   repo": a URL field, the note "Fork a hub repo first (or use it as a
@@ -277,6 +295,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `POST /v1/app/compute/settings` route writes them, and the background
   sampler starts at hub boot while the switch is on, so cleanup runs
   with no browser open. A signalled orphan shows a "Quitting" badge.
+
+- **Mac app: the setup sheet can start from your hub repo.** While
+  `~/.quiver` has no hub yet (no `AGENTS.md`, no `.git`; the app's own
+  ledger and caches there don't count), the links step shows "Start
+  from your hub repo": a URL field, the note "Fork a hub repo first (or
+  use it as a template for a private copy), then paste your fork's
+  URL.", the demo hub link once it exists, and Clone. Clone runs `swe
+  setup --hub=<url> --json --non-interactive` and takes the preview it
+  answers with, so the step then shows the cloned hub's AGENTS.md and
+  Set up sends no adopt. While it runs the sheet's other buttons wait;
+  swe's refusal (a hub already there, a URL git can't reach, a timeout)
+  shows under the field, and the card names any plugin marketplace
+  that couldn't be registered
+  ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
 - **Remote iPhone app: switch a session's model from the chat.** On a
   session attached through tmux whose harness takes `/model <id>`
@@ -950,6 +982,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   otherwise. Ad-hoc builds have no signature to check against and keep
   the hash check alone. Installed helpers are not reinstalled, so nobody
   is asked for their password again
+  ([#967](https://github.com/c-wenlong/quiver/issues/967)).
+
+- **Mac app: the fan helper only takes requests from Quiver itself,
+  checked by its code signature.** The running root helper held the fans
+  for any request whose owner was a live process named `Quiver`, so a
+  program called `/tmp/Quiver` qualified. The install now pins the
+  installing app's signature in the launchd job (`--owner-team <team>
+  --owner-identifier <id>` for a team-signed build, since the team also
+  signs the Python bundled for swe; `--owner-cdhash <hash>` for an
+  ad-hoc one), and the helper checks each request's owner against it through its
+  audit token and `SecCodeCheckValidity`, keeping the answer per process
+  (pid and pid version) so a reused pid is checked afresh. A job without
+  a valid pin starts nothing. The helper is now version 4 and writes its
+  `version` into `/var/run/com.cwenlong.quiver.fan.json`. On launch,
+  Quiver finds a helper older than that, says why it needs replacing,
+  and offers "Update helper" (one administrator password prompt) or "Not
+  now". Not now is remembered for this version: the old helper is left
+  unused, the fans stay with macOS, and both fan popovers show the
+  reason with an "Update fan helper" button; Set speed or the
+  temperature rule's switch also updates it
   ([#967](https://github.com/c-wenlong/quiver/issues/967)).
 
 - **Remote: a local process can no longer claim the owner's tailnet

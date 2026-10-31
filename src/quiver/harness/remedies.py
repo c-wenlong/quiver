@@ -13,6 +13,8 @@ specific entry", with ``_DEFAULT`` covering every other harness.
 
 from __future__ import annotations
 
+import shlex
+
 # The status vocabulary the JSON boundary and the app's IssueStore share.
 # ``ok`` never produces an issue; the rest always carry a remedy.
 OK = "ok"
@@ -254,6 +256,10 @@ def remedy_for_account(name: str, status: str, account_dir: str) -> dict | None:
     at the account's data dir so the offered fix reaches the account
     that failed. Only a login fix is retargeted: an outage or a
     permission grant has the same fix for every account.
+
+    The commands are offered to copy or run in a terminal, so the account
+    dir is shell-quoted: a ``"``, ``$`` or backtick in it must stay part
+    of the path rather than end the string or run something.
     """
     remedy = remedy_for(name, status)
     if remedy is None:
@@ -266,7 +272,7 @@ def remedy_for_account(name: str, status: str, account_dir: str) -> dict | None:
             "summary": ("This account isn't signed in to Devin"
                         if status == SIGNED_OUT
                         else "This account's Devin API key was rejected"),
-            "command": f'XDG_DATA_HOME="{account_dir}" devin auth login',
+            "command": f"XDG_DATA_HOME={shlex.quote(account_dir)} devin auth login",
             "steps": [
                 "Run `devin auth login` with XDG_DATA_HOME pointed at "
                 "this account's data dir so its credentials file gets "
@@ -280,7 +286,7 @@ def remedy_for_account(name: str, status: str, account_dir: str) -> dict | None:
                         if status == SIGNED_OUT
                         else "This account's Cursor login is stale"),
             "command": ('open -na "/Applications/Cursor.app" --args '
-                        f'--user-data-dir="{account_dir}"'),
+                        f"--user-data-dir={shlex.quote(account_dir)}"),
             "steps": [
                 "Open Cursor with this account's own data dir and sign "
                 "in again — the shared `cursor-agent` login never "

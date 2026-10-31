@@ -739,8 +739,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
     @Test func aWindowSlidesWithTheClockDespiteTheCache() async {
         // a is 7 days less 30 seconds old: inside the week, until the
         // clock moves on two minutes.
-        final class Clock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_791_700_000) }
-        let clock = Clock()
+        let clock = TestClock(Date(timeIntervalSince1970: 1_791_700_000))
         let model = SessionsModel(
             source: FakeSessionSource(list: SessionList(sessions: [
                 session("a", "claude", cwd: nil, at: 1_791_700_000 - 7 * 86_400 + 30)], failures: [])),
@@ -748,7 +747,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         await model.load()
         model.filter.window = .week
         #expect(model.visible.map(\.id) == ["a"])
-        clock.now.addTimeInterval(120)
+        clock.advance(120)
         #expect(model.visible.isEmpty)
         #expect(model.summary.sessions == 0)
     }
@@ -798,8 +797,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
     }
 
     @Test func allTimeStaysPutAsTheClockMoves() async {
-        final class Clock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_791_700_000) }
-        let clock = Clock()
+        let clock = TestClock(Date(timeIntervalSince1970: 1_791_700_000))
         let model = SessionsModel(
             source: FakeSessionSource(list: SessionList(sessions: [
                 session("a", "claude", cwd: nil, at: 1_000)], failures: [])),
@@ -807,7 +805,7 @@ final class CountingSessionSource: SessionListing, @unchecked Sendable {
         await model.load()
         model.filter.window = .all
         let first = model.visible
-        clock.now.addTimeInterval(3600)
+        clock.advance(3600)
         #expect(model.visible.map(\.id) == first.map(\.id))
         #expect(model.summary.sessions == 1)
     }

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -67,13 +68,13 @@ struct BuildInfoTests {
 
 @Suite("Update preferences")
 struct UpdatePreferencesTests {
-    private func freshDefaults() throws -> UserDefaults {
+    private func freshDefaults() -> UserDefaults {
         TestDefaults("UpdatePreferencesTests")
     }
 
     @Test func storedChannelWins() {
         let build = BuildInfo(channel: .dev)
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         #expect(prefs.channel(build: build) == .dev)
         prefs.channelOverride = "prod"
         #expect(prefs.channel(build: build) == .prod)
@@ -83,7 +84,7 @@ struct UpdatePreferencesTests {
 
     @Test func aProdBuildIgnoresAStoredDevOverride() {
         let build = BuildInfo(channel: .prod)
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         prefs.channelOverride = "dev"
         #expect(prefs.channel(build: build) == .prod)
         prefs.channelOverride = "prod"
@@ -94,17 +95,16 @@ struct UpdatePreferencesTests {
 
     @Test func storedCheckoutWinsAndExpandsTilde() {
         let build = BuildInfo(sourcePath: "/nonexistent/path")
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         prefs.checkoutOverride = "~/quiver"
         #expect(prefs.checkout(build: build) == (NSHomeDirectory() + "/quiver"))
     }
 
     @Test func stampedPathIsUsedWhenItExists() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let dir = temp.url
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         #expect(prefs.checkout(build: BuildInfo(sourcePath: dir.path)) == dir.path)
         #expect(prefs.checkout(build: BuildInfo(sourcePath: nil)) == nil)
         #expect(prefs.checkout(build: BuildInfo(sourcePath: "/definitely/not/here")) == nil)
@@ -235,10 +235,7 @@ struct ReleaseCheckTests {
 
     private struct FakeTransport: HTTPTransport {
         var answer: Result<(Data, Int), Error> = .failure(URLError(.notConnectedToInternet))
-        var calls = 0
         func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-            var copy = self
-            copy.calls += 1
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: try answer.get().1, httpVersion: nil,
                 headerFields: nil)!
@@ -332,35 +329,27 @@ private final class RecordingRunner: CommandRunning, @unchecked Sendable {
     }
 }
 
-/// Blocks inside run until finishCall or failCall, so a test can change
-/// the checkout while a build is in flight.
-private final class GateRunner: CommandRunning, @unchecked Sendable {
-    private(set) var calls: [[String]] = []
-    private var finish: CheckedContinuation<CommandResult, any Error>?
-    private var waiter: CheckedContinuation<Void, Never>?
-    private var called = false
+/// Holds run at a gate until finishCall or failCall, so a test can change
+/// the checkout while a build is in flight. The test waits with
+/// `gate.arrived()`, which gives up after `gateTimeout` instead of hanging.
+private final class GateRunner: CommandRunning, Sendable {
+    let gate = HoldGate()
+    private let outcome = Mutex<Result<CommandResult, any Error>?>(nil)
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        calls.append(arguments)
-        called = true
-        waiter?.resume()
-        waiter = nil
-        return try await withCheckedThrowingContinuation { finish = $0 }
-    }
-
-    func waitUntilCalled() async {
-        if called { return }
-        await withCheckedContinuation { waiter = $0 }
+        try await gate.pass()
+        guard let outcome = outcome.withLock({ $0 }) else { throw CancellationError() }
+        return try outcome.get()
     }
 
     func finishCall(_ result: CommandResult) {
-        finish?.resume(returning: result)
-        finish = nil
+        outcome.withLock { $0 = .success(result) }
+        gate.open()
     }
 
     func failCall(_ error: any Error) {
-        finish?.resume(throwing: error)
-        finish = nil
+        outcome.withLock { $0 = .failure(error) }
+        gate.open()
     }
 }
 
@@ -481,13 +470,13 @@ struct UpdatesModelTests {
 
     @Test func aBuildThatOutlivesItsCheckoutIsDiscarded() async throws {
         let dir = tempDir()
-        let gate = GateRunner()
+        let runner = GateRunner()
         let model = makeModel(
-            checkout: dir.path, rebuildRunner: gate, rebuildDir: tempDir())
+            checkout: dir.path, rebuildRunner: runner, rebuildDir: tempDir())
         async let build: Void = model.rebuild()
-        await gate.waitUntilCalled()
+        #expect(await runner.gate.arrived())
         model.setCheckout("")
-        gate.finishCall(gitOk(""))
+        runner.finishCall(gitOk(""))
         await build
         #expect(model.rebuildState == .idle)
     }
@@ -496,13 +485,13 @@ struct UpdatesModelTests {
         // Same race on the error path: a timed-out or failed build from
         // the old checkout must not paint .failed on the new row.
         let dir = tempDir()
-        let gate = GateRunner()
+        let runner = GateRunner()
         let model = makeModel(
-            checkout: dir.path, rebuildRunner: gate, rebuildDir: tempDir())
+            checkout: dir.path, rebuildRunner: runner, rebuildDir: tempDir())
         async let build: Void = model.rebuild()
-        await gate.waitUntilCalled()
+        #expect(await runner.gate.arrived())
         model.setCheckout("")
-        gate.failCall(SweError.timedOut)
+        runner.failCall(SweError.timedOut)
         await build
         #expect(model.rebuildState == .idle)
     }
