@@ -110,6 +110,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Hub: switch the model of a Codex session attached through the
+app-server.</strong> The <code>model</code> control op on an <code>appserver</code> session
+records the pick on the session's supervised row, and the next
+<code>turn/start</code> carries it as its model override, so the switch applies
+from the next turn. Codex rows now list <code>appserver</code> in <code>model_modes</code>,
+so the iPhone's Model menu shows on them with no app change
+(<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>).</p>
+</li>
 <li><p><strong>Mac: Sessions lists other machines' sessions.</strong> Below this Mac's
 Pinned and day groups, an &quot;Other machines&quot; group shows the hub's rows
 for each satellite: a subheader per machine with a green or grey dot

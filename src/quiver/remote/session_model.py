@@ -302,13 +302,21 @@ def session_models(sessions: list[Session]) -> list[str]:
     return out
 
 
+# harness -> the API channel whose injector takes the ``model`` op
+# (``inject.switch_model``: the pick rides the channel's next turn).
+_API_MODEL_MODES = {
+    "codex": "appserver",
+}
+
+
 def model_modes(harness: str) -> list[str]:
     """The supervised modes in which the ``model`` control op switches
     ``harness``'s model: ``tmux`` when its TUI takes ``/model <name>``
-    (``slash_builtins.launch_op_ok``). The other channels (headless
-    Claude, the Codex app-server, opencode serve) answer
-    ``unsupported_control`` today; each joins this list when it learns
-    the op."""
+    (``slash_builtins.launch_op_ok``), plus the API channel that takes
+    it on its next turn (``_API_MODEL_MODES``)."""
     from quiver.remote import slash_builtins
 
-    return ["tmux"] if slash_builtins.launch_op_ok(harness, "model") else []
+    modes = ["tmux"] if slash_builtins.launch_op_ok(harness, "model") else []
+    if harness in _API_MODEL_MODES:
+        modes.append(_API_MODEL_MODES[harness])
+    return modes
