@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "data": {
+    "account_sync": {
+      "instructions": true,
+      "skills": true,
+      "hooks": false
+    },
+    "accounts": [
+      {
+        "account": "claude/claude-work",
+        "primitive": "instructions",
+        "path": "/tmp/quiver-fixture-home/.quiver/accounts/claude/claude-work/home/CLAUDE.md",
+        "state": "conflict",
+        "detail": "the account's own file, left alone"
+      },
+      {
+        "account": "claude/claude-work",
+        "primitive": "skills",
+        "path": "/tmp/quiver-fixture-home/.quiver/accounts/claude/claude-work/home/skills",
+        "state": "linked",
+        "detail": ""
+      }
+    ],
+    "notes": []
+  }
+}

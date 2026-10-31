@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now runs under `caffeinate -i`, so the Mac can't idle to sleep during a
   build driven over SSH ([#1214](https://github.com/c-wenlong/quiver/issues/1214)).
 
+- **Mac app: Shared content switches on Accounts.** Once you have an
+  extra Claude or Codex account, the Accounts page shows Instructions,
+  Skills and Hooks switches. Each one saves `accounts.sync.<piece>` and
+  runs `swe init --accounts`, which links that piece into every extra
+  account's folder, or removes the links swe made when it is switched
+  off. Anything an account already has in that place is named under the
+  switches and left alone. A newly added account is synced at once when
+  any switch is on. Part of
+  [#888](https://github.com/c-wenlong/quiver/issues/888).
+
 - **Mac app: pin, rename and fork sessions.** The Sessions list still
   comes from `swe session --json` (tokens, cost, filters); when this
   Mac's hub is running, each row the hub also lists picks up the hub's
