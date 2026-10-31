@@ -940,6 +940,14 @@ public final class CalendarModel {
         persist()
     }
 
+    /// Shows the account and the given windows again. A lone window has
+    /// no row of its own, so the account toggle is its only way back.
+    public func showUsage(_ account: String, windows: [String] = []) {
+        hiddenUsage.remove(account)
+        for window in windows { hiddenUsageWindows.remove("\(account)|\(window)") }
+        persist()
+    }
+
     /// The window rows behave like the harness account rows: listed
     /// once the account has more than one window, collapsed on demand.
     /// The view passes the count; the model holds no usage data.

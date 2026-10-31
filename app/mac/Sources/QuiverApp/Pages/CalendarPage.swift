@@ -1371,7 +1371,13 @@ private struct UsageLegend: View {
     var card: AccountsModel.Card
 
     private var color: Color { Color(hex: card.profile.color) }
-    private var hidden: Bool { model.isUsageHidden(card.id) }
+    /// Off the grid: the account was hidden, or its lone window was —
+    /// folded into this row, a solo window's hidden state shows here so
+    /// the row stays its way back on.
+    private var hidden: Bool {
+        model.isUsageHidden(card.id)
+            || (solo.map { model.isUsageHidden(card.id, window: $0.label) } ?? false)
+    }
     private var usage: AccountUsage? { card.usage }
     private var windows: [UsageWindow] { usage?.windows ?? [] }
     private var expanded: Bool {
@@ -1383,6 +1389,14 @@ private struct UsageLegend: View {
     /// A single window has no row of its own; its figure folds into the
     /// account's instead.
     private var solo: UsageWindow? { windows.count == 1 ? windows[0] : nil }
+
+    private func toggle() {
+        if hidden {
+            model.showUsage(card.id, windows: solo.map { [$0.label] } ?? [])
+        } else {
+            model.toggleUsage(card.id)
+        }
+    }
 
     /// The right-hand figure, like a harness row's range total: the
     /// least anyone has left in any window.
@@ -1426,12 +1440,12 @@ private struct UsageLegend: View {
             } else {
                 Spacer().frame(width: 10)
             }
-            LegendToggle(action: { model.toggleUsage(card.id) }) {
+            LegendToggle(action: toggle) {
                 HStack(spacing: 6) {
                     LegendCheckbox(shown: !hidden, color: color)
                     HarnessIcon(harness: card.profile.vendor.rawValue, size: 13)
                     Text(card.usageTitle).font(Theme.font(size: 11))
-                        .foregroundStyle(solo != nil && failed ? Theme.dangerText
+                        .foregroundStyle(failed ? Theme.dangerText
                                          : (hidden ? .secondary : .primary))
                         .lineLimit(1)
                     Spacer()
@@ -1445,7 +1459,7 @@ private struct UsageLegend: View {
             .accessibilityValue(hidden ? "0" : "1")
         }
         .frame(height: 22)
-        .opacity(solo != nil && !failed && ((usage?.isStale ?? false) || pastSolo) ? 0.55 : 1)
+        .opacity(!failed && ((usage?.isStale ?? false) || pastSolo) ? 0.55 : 1)
     }
 
     /// The account row's figure: one window's own countdown when it
