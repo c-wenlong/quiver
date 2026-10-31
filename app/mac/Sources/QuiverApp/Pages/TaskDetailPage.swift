@@ -58,7 +58,7 @@ struct TaskDetailPage: View {
                     Image(systemName: "arrow.up.right.square")
                 }
                 .iconButton()
-                .hoverTip(task?.source == "linear" ? "Open in Linear" : "Open on GitHub")
+                .hoverTip(task?.openLabel ?? "Open on GitHub")
             }
         } content: {
             if let error = model.actionError {

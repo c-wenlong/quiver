@@ -820,7 +820,9 @@ struct RepoSurfaces: View {
             case .loaded(let pages):
                 if let pages {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(pages.cname ?? pages.url ?? "GitHub Pages")
+                    // The URL is the link below; a heading repeating it
+                    // printed it twice.
+                    Text(pages.cname ?? "GitHub Pages")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                     if let url = pages.url, let link = URL(string: url), link.isWebURL {
                         Button { openURL(link) } label: {

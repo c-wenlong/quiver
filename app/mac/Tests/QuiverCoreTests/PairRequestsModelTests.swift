@@ -202,6 +202,46 @@ import Testing
         #expect(model.errors["r1"] == nil)
     }
 
+    @Test func refreshReadsTheAutoApproveSetting() async {
+        let (model, runner) = model([(["remote", "devices", "--requests"], Self.ok(#"""
+        {"schema": 1, "data": {"requests": [], "auto_approve_owner": true}}
+        """#))])
+        await model.refresh()
+        #expect(model.autoApproveOwner == true)
+        // A swe older than the setting leaves it unknown, and the view
+        // then shows no switch.
+        runner.rules = [(["remote"], Self.noRequests)]
+        await model.refresh()
+        #expect(model.autoApproveOwner == nil)
+    }
+
+    @Test func togglingSavesThroughSwe() async {
+        let (model, runner) = model([
+            (["remote", "devices", "--auto-approve=on"],
+             Self.ok(#"{"schema": 1, "data": {"auto_approve_owner": true}}"#)),
+            (["remote", "devices", "--auto-approve=off"],
+             Self.ok(#"{"schema": 1, "data": {"auto_approve_owner": false}}"#)),
+        ])
+        await model.setAutoApproveOwner(true)
+        #expect(runner.calls.last == ["remote", "devices", "--auto-approve=on", "--json"])
+        #expect(model.autoApproveOwner == true)
+        await model.setAutoApproveOwner(false)
+        #expect(runner.calls.last == ["remote", "devices", "--auto-approve=off", "--json"])
+        #expect(model.autoApproveOwner == false)
+        #expect(model.savingAutoApprove == false)
+    }
+
+    @Test func aFailedToggleKeepsTheOldValue() async {
+        let (model, runner) = model([(["remote", "devices", "--requests"], Self.ok(#"""
+        {"schema": 1, "data": {"requests": [], "auto_approve_owner": false}}
+        """#))])
+        await model.refresh()
+        runner.rules = [(["remote"], CommandResult(status: 1, stdout: Data(), stderr: "read-only"))]
+        await model.setAutoApproveOwner(true)
+        #expect(model.autoApproveOwner == false)
+        #expect(model.autoApproveError?.contains("read-only") == true)
+    }
+
     @Test func ageReadsLikeAClock() {
         let created = Date(timeIntervalSince1970: 1760000000)
         let request = PairRequest(requestId: "r", createdAt: created)

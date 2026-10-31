@@ -13,6 +13,7 @@ from unittest.mock import patch
 from quiver.github import catalog, cli as ghcli
 from quiver.github import gh, repos
 from quiver import paths
+from tests._tempdir import temp_dir
 
 
 class _Proc:
@@ -2163,7 +2164,7 @@ class TestSharedLayer(unittest.TestCase):
     def test_pinned_name_errors(self):
         from quiver.github import shared
         from quiver.webapp.pages import PageError, _github as W
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         with patch.object(shared, "pinned",
                           return_value=[{"name": "Acme/Tool"}]):
             self.assertEqual(shared.pinned_name(home, "acme/tool"), "Acme/Tool")

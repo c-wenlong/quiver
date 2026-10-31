@@ -472,6 +472,75 @@ does for GitHub), `bad-config` (a malformed setting, like a non-list
 a Linear issue's workflow state — states are per-team there, so
 `issueUpdate` write-back is a later step.
 
+The Notion source (`remote/notion.py`) is opt-in the same way, through
+a `notion` section. Notion databases have whatever columns the
+workspace gave them, so the section names each database and which of
+its properties play which role:
+
+```json
+"notion": {
+  "token_ref": "${NOTION_TOKEN}",
+  "user": "you@example.com",
+  "databases": [
+    {"id": "https://www.notion.so/acme/Roadmap-0123456789abcdef0123456789abcdef",
+     "name": "Roadmap",
+     "properties": {"status": "Status", "owner": "Owner",
+                    "title": "Name", "url": "Link"}}
+  ]
+}
+```
+
+- `token_ref` names an internal integration token (`ntn_…`) in the
+  secrets store, as Linear's `key_ref` does; it defaults to
+  `${NOTION_TOKEN}` (`printf %s "$TOKEN" | swe mcp secret set
+  NOTION_TOKEN`). Create the integration at notion.so/profile/integrations
+  with "Read content", then share each database with it (the
+  database's ••• menu → Connections).
+- `user` is whose rows list: a Notion user id, or the email you sign in
+  with. An email is looked up in `/v1/users`, which needs the
+  integration's "Read user information including email addresses"
+  capability.
+- `databases[].id` takes a database id, dashed or not, or the URL
+  copied from the browser. `name` is the task's `project` (the
+  database's own title when left out; set it to keep task ids stable
+  if the database gets renamed).
+- `properties.status` (a status, select or checkbox property) and
+  `properties.owner` (a person, created-by or last-edited-by property)
+  are required. `title` defaults to the database's title property and
+  `url` (a url or text property) to the page's own Notion link. A
+  `properties` object beside `databases` sets defaults each database
+  can override.
+
+Each database is read with `POST /v1/databases/<id>/query`, filtered to
+rows whose owner holds the user, newest edits first, 100 rows a page,
+at most 5 pages and 50 open rows per database; a database that had more
+rows than those caps read sets `truncated: true` on the `notion` block.
+Rows whose status reads done are left off the open list. Each row becomes `{source: "notion",
+kind: "page", project: <name>, ref: <page id>, title, url}`; its
+`status` is the status or select option's own name (a ticked checkbox
+reads as the property's name), and `state` is a best guess: a status
+property's group (To-do → `open`, In progress → `in_progress`,
+Complete → `closed`), a select option's words ("Done", "Shipped",
+"Won't do" → `closed`; "In progress", "Review" → `in_progress`;
+anything else → `open`), a ticked checkbox → `closed`. An archived page
+reads `closed`. A stored page refreshes through `GET /v1/pages/<id>`;
+`NotionTasks.detail` adds the page body, read with `GET
+/v1/blocks/<id>/children` (nested blocks to three levels, at most 12
+calls) and rendered to markdown for a resolve prompt.
+
+The answer's `notion` block reads like `linear`'s: `disabled`, `ok`
+(`login` is the user's name), `auth-required` (the token won't resolve
+or was refused), `bad-config` or `upstream-error`. `bad-config` names
+the fault: a missing `user` or `databases`, an email Notion doesn't
+know, a property the config needs but doesn't name, or one the
+database doesn't have (`Notion database "Roadmap" has no property
+"State" for status (it has: …)`). A database that fails says so in
+`error` while the other databases' rows still list. Every call sends
+`Notion-Version: 2022-06-28` (`notion.NOTION_VERSION`), and a 429 waits
+out its `Retry-After` (at most 5 seconds, twice) before the source
+reports `upstream-error`. Reads only: nothing writes the status
+property back yet.
+
 The phone shows queue-mode sends that are still waiting in a tray above
 the prompt box. `GET /v1/sessions/{id}/queue` lists them, oldest first:
 `{sends: [{client_id, text, attachments, queued_at}]}` (attachment refs
@@ -1120,6 +1189,19 @@ harness supports it, an inlined path otherwise. Caps: 20 MB per file,
 image/pdf/text only, swept after 7 days or at session end, whichever
 comes first.
 
+Which form a harness gets is its harness.json
+`capabilities.attachments.at_refs`, over `attachments.ATTACH_FALLBACK`
+for a harness that declares nothing (`supported: false` turns `@` refs
+off). The fallback says yes for Claude Code (its TUI and `claude -p`
+expand `@/abs/path` on submit), Gemini CLI and Qwen Code (their `@`
+command processor reads the file). Every other harness gets the path in
+plain text, `[Attached file: /abs/path] <message>`, and reads the file
+with its own tools: Codex's and OpenCode's `@` is a TUI picker that never
+runs on typed or API-sent text. Either form stays on one line, since a
+newline typed into a tmux pane would submit early. A channel tied to one
+harness (headless Claude, OpenCode serve, Codex app-server) uses that
+harness's answer; a tmux pane uses the session's harness.
+
 `GET /v1/devices` answers `{devices, requests, signins}` for the phone's
 pair-requests-and-devices screen: every `devices.json` row as
 `pairing.device_view` serves it (everything but the credential, plus
@@ -1235,7 +1317,8 @@ Screens:
   `GET /v1/sessions/{id}/queue` on open, and the send button turns into
   a red stop while the box is empty and the agent works. The composer
   also carries `/` shortcuts, `@` file-complete proxied through the
-  hub, and photo/file attach landing as `@`-refs on the machine.
+  hub, and photo/file attach landing on the machine as `@`-refs, or
+  as plain paths for harnesses whose prompt doesn't expand `@`.
 - **Inbox** — the control-plane screen: every pending decision across
   both machines (approvals, `needs_followup` hits, errors, finished).
   The phone's job is unblocking agents, not being a terminal. The hub
@@ -1309,6 +1392,22 @@ usage/limits dashboard (`swe list` data); transcript FTS across machines
   swaps in the `quiver://` deep link) stays as the fallback for devices
   `whois` can't identify. Either way, only a tailnet device can reach
   the pairing routes at all.
+- Owner auto-approve (off by default; `swe remote devices
+  --auto-approve=on|off`, or the switch in the Mac app's Pending
+  requests): when on, a `POST /v1/pair/request` is approved at once,
+  with no code, only if every one of these holds. The setting reads
+  literally `true` in `data/remote/pairing.json`; the hub knows its
+  owner's login (from `whois` of its own node at startup, so never on a
+  plain loopback bind or a tagged node); the requesting node's `whois`
+  says `tagged: false` and its login is exactly that owner login; it has
+  a node id other than the hub machine's own (any local user's process
+  reaches the hub as that node); the owner hasn't revoked that node (its tailnet sign-in,
+  or the newest device paired from it; a later code approval lifts the
+  second); the request has a JSON body and no foreign `Origin` (a
+  cross-site form can't send either). Anything unknown leaves the
+  request pending for a code. Both approval paths mint the same device
+  row, marked `approved_via: code` or `owner_auto`, and the hub writes
+  one `pair: ...` line per approval to its stderr (`serve.log`).
 - Device identity: both pair paths record `kind` (iphone/ipad/android/
   mac/windows/linux/browser), `model`, `client` and `os` — explicit
   `device` fields the client posts, else whatever the User-Agent lets

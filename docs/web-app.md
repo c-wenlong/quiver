@@ -21,9 +21,9 @@ client sees it.
 | Piece | Where | What |
 |---|---|---|
 | Pages | `src/quiver/webapp/static/` | Plain HTML, CSS and JS. No build step, no framework, no CDN. Same Devin-derived look as the Mac app (`Theme.swift`); the CSS variables in `styles.css` carry the same names. |
-| Page data | `src/quiver/webapp/api.py` | Builds each page's JSON from the domain services, in process, the way `/v1/usage` does. |
+| Page data | `src/quiver/webapp/api.py`, `src/quiver/webapp/pages/` | Builds each page's JSON from the domain services, in process, the way `/v1/usage` does. |
 | Ledger | `src/quiver/ledger/` | The Python port of `QuiverCore/Ledger`: scans harness logs into its own SQLite store and prices tokens. |
-| Routes | `src/quiver/remote/hub.py` | `/app/` serves the pages; `/v1/app/*` serves their data. |
+| Routes | `src/quiver/remote/hub.py` | `/` serves the app and its assets as flat names beside it (`_serve_static`, names checked by `webapp/static.py`); `/v1/app/*` serves their data. Old `/app/…` paths redirect to the same name at the root. |
 
 The hub already runs on the always-on machine, binds 127.0.0.1 and is
 published by Tailscale Serve, so the web app needs no new port, process or
@@ -100,9 +100,11 @@ already do, through satellites; that is a later step.
    (docs/web-app/harness.md). Quiver's own Claude and Codex account
    profiles, history, and Open app / Terminal are Mac-only.
 4. Skills, AGENTS.md, MCP servers, Plugins, Doctor: read-only first, from the
-   `swe … --json` builders.
-5. Writes for the Manage pages.
-6. Calendar, Compute, Models, Pricing, Service status.
+   `swe … --json` builders. Shipped.
+5. Writes for the Manage pages. Shipped; [FEATURES.md](../FEATURES.md)
+   names what each page still lacks next to the Mac app.
+6. Calendar, Compute, Models, Pricing, Service status. Shipped, with the
+   same per-page notes in FEATURES.md.
 
 The GitHub pages shipped alongside that list: Repositories and Inbox
 (docs/web-app/repositories.md) and Tasks (docs/web-app/tasks.md) — the
@@ -144,5 +146,6 @@ own stores.
 
 Nothing in `app/mac/` changes. To drop the web app, delete `src/quiver/webapp/`,
 `docs/web-app/`,
-`src/quiver/ledger/`, the `/app/` and `/v1/app/` branches in `hub.py`, and
+`src/quiver/ledger/`, the root static handler (`_serve_static`) and the
+`/v1/app/` branches in `hub.py`, and
 `~/.quiver/data/web-ledger/`.

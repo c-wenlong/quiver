@@ -134,7 +134,7 @@ private struct ServiceEditorSheet: View {
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     }
                 case .failure(let problem):
-                    Text(problem).font(Theme.caption).foregroundStyle(Theme.danger)
+                    Text(problem).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 case nil:
                     EmptyView()
                 }
@@ -145,7 +145,7 @@ private struct ServiceEditorSheet: View {
             Tabs(options: StatusService.Group.allCases.map { ($0, $0.shortTitle) },
                  selection: $group, columns: 4)
             Text("Model providers and agent platforms also show in the menu bar when they have an incident.")
-                .font(Theme.font(size: 10)).foregroundStyle(.secondary)
+                .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
             HStack {
                 if let browse {
                     Button("Browse", action: browse)

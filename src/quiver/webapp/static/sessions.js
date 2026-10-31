@@ -560,14 +560,10 @@ function detachClick(r) {
   if (!sheet.open) sheet.showModal();
 }
 
+/* A route sheet: a navigation closes it, so it never sits over the next
+ * page. Its choices act only on a click, so closing needs no cleanup. */
 function detachSheetEl() {
-  let sheet = document.getElementById("detach-sheet");
-  if (sheet) return sheet;
-  sheet = document.createElement("dialog");
-  sheet.id = "detach-sheet";
-  sheet.className = "sheet";
-  document.body.appendChild(sheet);
-  return sheet;
+  return bodySheet("detach-sheet", "sheet", "Detach session");
 }
 
 function bindSessionControls() {
@@ -1108,15 +1104,12 @@ const ns = {
   phase: "idle", message: "", seq: 0,  // idle|starting|waiting|started|failed|unconfirmed
 };
 
+/* A route sheet, so a navigation closes it. However it closes (Close,
+ * Esc, Back, a link), a launch still out stops trusting its replies:
+ * its poll must not open the new chat over wherever the user went. */
 function nsSheetEl() {
-  let sheet = document.getElementById("new-session-sheet");
-  if (sheet) return sheet;
-  sheet = document.createElement("dialog");
-  sheet.id = "new-session-sheet";
-  sheet.className = "sheet";
-  // Esc counts as Close: a poll in flight stops trusting its replies.
-  sheet.oncancel = () => { ns.seq++; ns.phase = "idle"; ns.message = ""; };
-  document.body.appendChild(sheet);
+  const sheet = bodySheet("new-session-sheet", "sheet", "New session");
+  sheet.onclose = () => { ns.seq++; ns.phase = "idle"; ns.message = ""; };
   return sheet;
 }
 
@@ -1318,11 +1311,8 @@ function nsPaint() {
   if (browseBtn) browseBtn.onclick = () => nsBrowse(ns.folder.trim());
   const use = sheet.querySelector("#ns-browse-use");
   if (use) use.onclick = () => { ns.browse = null; nsPickFolder(use.dataset.path || ""); };
-  sheet.querySelector("#ns-cancel").onclick = () => {
-    ns.seq++;              // in-flight polls drop their replies
-    ns.phase = "idle"; ns.message = "";
-    sheet.close();
-  };
+  // Closing drops any launch still out (nsSheetEl's onclose).
+  sheet.querySelector("#ns-cancel").onclick = () => sheet.close();
   sheet.querySelector("#ns-start").onclick = nsStart;
 }
 
@@ -1447,6 +1437,9 @@ async function openNewSession() {
 async function nsStart() {
   if (!nsReady()) return;
   const mine = ++ns.seq;
+  // The sheet's close event (which bumps ns.seq) runs a task later, so
+  // a reply landing in between checks the sheet itself too.
+  const live = () => mine === ns.seq && nsSheetEl().open;
   ns.phase = "starting";
   ns.message = "";
   nsPaint();
@@ -1455,7 +1448,7 @@ async function nsStart() {
   const model = ModelMenu.value(ns.model);
   if (nsModelOk(nsMachine()) && model) body.model = model;
   const { status, data } = await apiPost("/v1/sessions", body);
-  if (mine !== ns.seq) return;
+  if (!live()) return;
   if (status === 401) {
     nsSheetEl().close();
     return renderGate();
@@ -1467,7 +1460,7 @@ async function nsStart() {
   }
   ns.phase = "waiting";
   nsPaint();
-  const launch = await followLaunch(data, () => mine === ns.seq);
+  const launch = await followLaunch(data, live);
   if (!launch) return;
   if (launch.state === "started") {
     ns.phase = "started";

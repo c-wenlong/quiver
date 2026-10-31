@@ -6,11 +6,8 @@ import SwiftUI
 /// secrets file, the config gets `${NAME}`). The hub is always written;
 /// "Add to" picks which harnesses get it too.
 struct McpAddServerSheet: View {
-    var harnesses: [String]
-    /// The harnesses the grid compares: the "Add to" defaults.
-    var active: [String]
-    /// The servers already listed, for the Replace gate.
-    var existing: [McpServer] = []
+    /// The harnesses the page's chips leave out of the grid.
+    var hidden: Set<String> = []
     var reload: () async -> Void
 
     @Environment(AppModel.self) private var app
@@ -41,19 +38,31 @@ struct McpAddServerSheet: View {
     @State private var token = ""
     @State private var showToken = false
     @State private var variables: [Variable] = [Variable()]
-    @State private var targets: Set<String>
+    @State private var targets: Set<String> = []
+    /// "Add to" took its defaults: once, when an inventory is first there.
+    @State private var seeded = false
+    /// The last inventory the model loaded, kept through a refresh that
+    /// fails: the Replace gate must not lose the existing servers.
+    @State private var known: McpInventory?
     @State private var force = false
     @State private var working = false
     @State private var error: String?
 
-    init(harnesses: [String], active: [String], existing: [McpServer] = [],
-         reload: @escaping () async -> Void) {
-        self.harnesses = harnesses
-        self.active = active
-        self.existing = existing
-        self.reload = reload
-        _targets = State(initialValue: Set(active))
+    /// Read live from the MCP model, not handed in when the sheet opens: a
+    /// card's body doesn't follow its presenter's later state, so a sheet
+    /// opened while the page was still loading kept "0 of 0 harnesses".
+    private var live: McpInventory? {
+        if case .loaded(let inventory) = app.mcp.state { return inventory }
+        return nil
     }
+    private var inventory: McpInventory? { live ?? known }
+    private var harnesses: [String] { inventory?.harnesses ?? [] }
+    /// The harnesses the grid compares: the "Add to" defaults.
+    private var active: [String] {
+        inventory?.activeHarnesses.filter { !hidden.contains($0) } ?? []
+    }
+    /// The servers already listed, for the Replace gate.
+    private var existing: [McpServer] { inventory?.servers ?? [] }
 
     private static let namePattern = /^[A-Za-z0-9][A-Za-z0-9_.@-]*$/
 
@@ -110,6 +119,15 @@ struct McpAddServerSheet: View {
         }
         .sheetScaffold(width: 640)
         .background(Theme.panel)
+        .onChange(of: live, initial: true) { _, live in
+            guard let live else { return }
+            known = live
+            // Defaults once, from the first inventory there, even one with
+            // nothing active; never over a choice already made.
+            guard !seeded else { return }
+            seeded = true
+            if targets.isEmpty { targets = Set(active) }
+        }
     }
 
     /// Local or Remote in the grid's words, the name, then what runs it.

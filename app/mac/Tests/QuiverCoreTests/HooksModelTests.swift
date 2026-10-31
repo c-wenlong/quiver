@@ -137,6 +137,17 @@ import Testing
         #expect(inventory.checkError != nil)
     }
 
+    @Test(.timeLimit(.minutes(1))) func aFailedListCancelsTheCheck() async throws {
+        let runner = CancelRecordingCheckRunner(
+            list: CommandResult(status: 1, stdout: Data(), stderr: "list broke"))
+        let model = HooksModel(checkTimeout: .seconds(3600))
+        await model.load(swe: SweClient(runner: runner), for: "/bin/swe")
+        guard case .failed = model.state else { Issue.record("\(model.state)"); return }
+        // The check sleeps until cancelled; the failed list must cancel it.
+        var cancels = runner.cancelled.makeAsyncIterator()
+        #expect(await cancels.next() != nil)
+    }
+
     @Test func aFindingSaysEachFactOnceWithHomePaths() {
         let managed = HookFinding(kind: "managed", harness: "claude",
                                   message: "/Users/k/.claude/settings.json — declaration managed elsewhere")
@@ -330,6 +341,19 @@ import Testing
 
 /// Answers the list at once; a check sleeps until the run is cancelled,
 /// standing in for a wedged `swe hooks check`.
+/// `check` sleeps until cancelled and reports the cancel on `cancelled`.
+final class CancelRecordingCheckRunner: CommandRunning, Sendable {
+    let list: CommandResult
+    let (cancelled, signal) = AsyncStream<Void>.makeStream()
+    init(list: CommandResult) { self.list = list }
+
+    func run(_ arguments: [String]) async throws -> CommandResult {
+        guard arguments.contains("check") else { return list }
+        do { try await Task.sleep(for: .seconds(3600)) } catch { signal.yield() }
+        return CommandResult(status: 1, stdout: Data(), stderr: "cancelled")
+    }
+}
+
 struct SleepingCheckRunner: CommandRunning {
     let list: CommandResult
 

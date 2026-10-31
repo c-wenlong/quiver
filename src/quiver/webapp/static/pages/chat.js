@@ -1338,13 +1338,14 @@ const SessionChat = (() => {
      host, path and Open (a new tab). Port of the phone's LinkCards.swift.
      The links come from md()'s own anchors, so code spans and fences,
      which md() never links, are skipped the same way, and only http and
-     https count (md() links mailto: and tel: too). */
+     https count (md() links mailto: and tel: too). Both take the reply's
+     md() HTML, the markup its bubble shows, so it is rendered once. */
 
   const LINK_CARDS_MAX = 3;
 
-  function linkUrls(text) {
+  function linkUrls(html) {
     const out = [], seen = new Set();
-    for (const m of md(text).matchAll(/<a href="([^"]*)"/g)) {
+    for (const m of html.matchAll(/<a href="([^"]*)"/g)) {
       const href = m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">").replace(/&amp;/g, "&");
       let url;
@@ -1363,8 +1364,8 @@ const SessionChat = (() => {
   /* "/code/artifact/abc?x=1", or "" for a bare host. */
   const linkPath = (url) => (url.pathname === "/" && !url.search ? "" : url.pathname + url.search);
 
-  function linkCardsHtml(text) {
-    const urls = linkUrls(text);
+  function linkCardsHtml(html) {
+    const urls = linkUrls(html);
     if (!urls.length) return "";
     return `<div class="link-cards">${urls.map((u) => `<a class="link-card" href="${safeHref(u.href)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${esc(linkHost(u))}">
       <span class="link-card-ic">${iconSvg("link")}</span>
@@ -2134,12 +2135,7 @@ const SessionChat = (() => {
       // the optimistic one already drawn (attachments prefix the stored text
       // with "@path ", hence the endsWith). Backfill never dedupes: history
       // replay must not erase a queued bubble.
-      const hit = [...log.querySelectorAll(".msg.user[data-client-id]:not(.failed)")].find((b) => {
-        const t = b.dataset.text;
-        if (!t || (msg.text !== t && !(msg.text || "").endsWith(t))) return false;
-        const sentAt = Number(b.dataset.sentAt || 0);
-        return !msg.ts || !sentAt || msg.ts >= sentAt - 5;
-      });
+      const hit = [...log.querySelectorAll(".msg.user[data-client-id]:not(.failed)")].find((b) => echoesBubble(msg, b));
       if (hit && hit === log.lastElementChild) {
         // Still the newest entry: settle the bubble where it is, so it doesn't
         // leave and come back in. Dropping .pending also tells a late POST
@@ -2183,8 +2179,11 @@ const SessionChat = (() => {
     } else if (kind === "error") {
       div.innerHTML = `<div class="role"><span class="tool-ic">${iconSvg("warn")}</span>Error</div><div class="text">${md(msg.text)}</div>`;
     } else if (kind === "user" || kind === "assistant") {
-      div.innerHTML = `<div class="text">${md(msg.text)}</div>`;
-      if (kind === "assistant") div.insertAdjacentHTML("beforeend", linkCardsHtml(msg.text));
+      const html = md(msg.text);
+      div.innerHTML = `<div class="text">${html}</div>`;
+      // The text as stored, so a resync can tell this message is shown.
+      if (kind === "user") div.dataset.text = msg.text || "";
+      if (kind === "assistant") div.insertAdjacentHTML("beforeend", linkCardsHtml(html));
       if (carried) {
         div.classList.add("degraded");
         div.insertAdjacentHTML("beforeend", `<div class="send-note">${esc(carried)}</div>`);
@@ -2511,11 +2510,34 @@ const SessionChat = (() => {
       // Unanswered approval cards stay, buttons and all: the transcript
       // has no approvals, and their asks are behind the cursor.
       const open = [...log.querySelectorAll(".msg.approval:not(.resolved)")];
+      // So do sends the transcript doesn't show yet (still sending, sent
+      // and waiting for their echo, or failed): their result, or a
+      // failed POST, still lands on the bubble.
+      const sends = [...log.querySelectorAll(".msg.user[data-client-id]")];
+      // User messages the log already showed as delivered (drawn from
+      // the transcript, or a settled bubble) each claim their own echo
+      // first, so a send repeated within seconds isn't taken for the one
+      // before it.
+      const shown = [...log.querySelectorAll(".msg.user[data-text]")]
+        .filter((b) => !b.dataset.clientId).map((b) => b.dataset.text);
       log.innerHTML = "";
       chat.toolCards.clear();
       const messages = data.messages || [];
       for (const ev of messages) appendSafely(ev, false);
       if (messages.length) remember(messages[messages.length - 1].seq);
+      // A send the redraw already shows is settled, as a live echo
+      // would; each echo answers one bubble. A failed one never landed.
+      const echoed = messages.filter((ev) => ev.type === "message.appended" && ev.data && ev.data.kind === "user")
+        .map((ev) => ev.data);
+      for (const t of shown) {
+        const i = echoed.findIndex((m) => echoes(m.text, t));
+        if (i >= 0) echoed.splice(i, 1);
+      }
+      for (const b of sends) {
+        const i = b.classList.contains("failed") ? -1 : echoed.findIndex((m) => echoesBubble(m, b));
+        if (i >= 0) echoed.splice(i, 1);
+        else log.appendChild(b);
+      }
       for (const card of open) log.appendChild(card);
       scrollBottom();
     }
@@ -3360,6 +3382,15 @@ const SessionChat = (() => {
   function echoes(stored, sent) {
     if (!sent) return false;
     return stored === sent || (stored || "").endsWith(sent);
+  }
+
+  /* A transcript message is an optimistic bubble's echo when its text
+   * matches and it was stored no earlier than the send (give or take
+   * clock skew), so an older identical message isn't taken for it. */
+  function echoesBubble(msg, bubble) {
+    if (!echoes(msg.text, bubble.dataset.text)) return false;
+    const sentAt = Number(bubble.dataset.sentAt || 0);
+    return !msg.ts || !sentAt || msg.ts >= sentAt - 5;
   }
 
   /* Where a send shows before the hub answers: the tray for Queue mode

@@ -1549,7 +1549,40 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(429, "busy",
                              "too many pending pair requests")
             return
+        if self._owner_auto_approve(peer, result["request_id"]):
+            result["auto_approved"] = True
         self._send_json(201, result)
+
+    def _owner_auto_approve(self, peer: dict, request_id: str) -> bool:
+        """Approve a fresh request without a code when the owner turned
+        that on and the peer is the owner's own untagged device.
+
+        On top of ``pairing.owner_auto_approve_refusal``, the request
+        must be one a cross-site page can't send: a JSON body (which a
+        form can't post without a preflight the hub never answers) and
+        no foreign ``Origin``. The native app and the web app both send
+        JSON. Any doubt leaves the request pending for a code."""
+        try:
+            enabled = pairing.auto_approve_owner(self._state.home)
+            owner = self._state.owner()
+        except Exception:
+            return False
+        if pairing.owner_auto_approve_refusal(
+            peer, owner, enabled, self._state.own_node_id
+        ):
+            return False
+        ct = self.headers.get("Content-Type") or ""
+        if not ct.startswith("application/json") or self._bad_origin():
+            return False
+        try:
+            res = pairing.auto_approve_request(
+                self._state.home, request_id, peer)
+        except Exception:
+            return False
+        if res is None:
+            return False
+        _log_pair_approval(res, "auto-approved (owner device)")
+        return True
 
     def _pair_decide(self, approve: bool) -> None:
         ct = self.headers.get("Content-Type") or ""
@@ -1588,6 +1621,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_error(404, "no_match",
                                  "no pending request matches that code")
                 return
+            _log_pair_approval(result, "approved with code")
             self._send_json(200, {
                 "ok": True, "device_id": result["device_id"],
                 "name": result["name"],
@@ -3870,6 +3904,32 @@ def save_hub_config(home: Path | None, host: str, port: int,
 def load_hub_config(home: Path | None = None) -> dict:
     """``{"host", "port", "public_url"}`` from the last ``serve``, or {}."""
     return read_json_dict(_hub_file(home))
+
+
+def _log_pair_approval(res: dict, how: str) -> None:
+    """One line per pair approval on the hub's stderr (``serve.log``
+    under the LaunchAgent), so a code approval and an owner
+    auto-approval leave the same trail."""
+    def field(key: str, missing: str) -> str:
+        # The name comes from the requester: escape anything unprintable
+        # (newlines, terminal escapes) so it can't forge or hide lines.
+        text = str(res.get(key) or missing)
+        return "".join(
+            ch if ch.isprintable() else f"\\x{ord(ch):02x}"
+            for ch in text
+        )
+
+    try:
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(
+            f"{stamp} pair: {how} {field('name', 'device')} "
+            f"(node {field('node_name', '?')}, "
+            f"login {field('login', '?')}) "
+            f"-> device {field('device_id', '?')}",
+            file=sys.stderr, flush=True,
+        )
+    except Exception:
+        pass
 
 
 def configure(state: HubState, host: str, port: int,

@@ -14,6 +14,7 @@ from unittest import mock
 from quiver.console import strip_ansi
 from quiver.find.mcps import ToolView, _kind, _signature, hub_view, prefix_of
 from quiver.harness import registry
+from tests._tempdir import temp_dir
 
 LOCAL = {"command": "npx", "args": ["thing"]}
 REMOTE = {"url": "https://example.test/mcp"}
@@ -205,10 +206,9 @@ class ScanTest(unittest.TestCase):
 
     def setUp(self):
         import json
-        import tempfile
         from pathlib import Path
 
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.json = json
 
     def _write(self, rel, payload, raw=None):

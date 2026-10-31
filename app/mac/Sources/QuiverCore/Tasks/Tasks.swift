@@ -235,8 +235,20 @@ public struct HubTaskRow: Codable, Sendable, Equatable, Hashable, Identifiable {
             return "GitHub \(what)\(repo.map { " · \($0)" } ?? "")"
         case "linear":
             return "Linear\(project.map { " · \($0)" } ?? "")"
+        case "notion":
+            return "Notion\(project.map { " · \($0)" } ?? "")"
         default:
             return [source, kind].compactMap { $0 }.joined(separator: " ").capitalized
+        }
+    }
+
+    /// The link-out's words: "Open on GitHub", "Open in Linear",
+    /// "Open in Notion".
+    public var openLabel: String {
+        switch source {
+        case "linear": "Open in Linear"
+        case "notion": "Open in Notion"
+        default: "Open on GitHub"
         }
     }
 
@@ -293,6 +305,9 @@ public struct HubTasksResponse: Decodable, Sendable {
     /// `linear` section is configured, a blocking word with `error`
     /// when the source can't be reached.
     public var linear: HubSourceEnv?
+    /// Notion's env block, the same shape: `disabled` when no `notion`
+    /// section is configured.
+    public var notion: HubSourceEnv?
     /// Set when `gh` is missing or signed out on the hub. Stored GitHub
     /// tasks still list, marked stale.
     public var envBlocked: String?
@@ -617,6 +632,8 @@ public final class TasksModel {
     /// Linear's blocking state with its reason (`auth-required`,
     /// `bad-config`, `upstream-error`), nil when ok, disabled or absent.
     public private(set) var linearBlocked: String?
+    /// Notion's, the same way.
+    public private(set) var notionBlocked: String?
     public private(set) var error: String?
     /// The last load found this Mac's hub not answering: stopped, or
     /// still starting after a restart (see `hubNotAnswering`).
@@ -664,11 +681,8 @@ public final class TasksModel {
                 : nil
             error = nil
             hubDown = false
-            let status = body.linear?.status
-            linearBlocked = switch status {
-            case nil, "ok", "disabled": nil
-            default: body.linear?.error ?? status ?? "Linear is unreachable"
-            }
+            linearBlocked = Self.blocked(body.linear, source: "Linear")
+            notionBlocked = Self.blocked(body.notion, source: "Notion")
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message
@@ -721,7 +735,19 @@ public final class TasksModel {
             envBlocked != nil || githubFailed != nil
                 || (task.repo.map { repo in failedRepos.contains { $0.name == repo } } ?? false)
         case "linear": linearBlocked != nil
+        case "notion": notionBlocked != nil
         default: false
+        }
+    }
+
+    /// A keyed source's blocking reason from its env block: nil when the
+    /// block is absent (an older hub), `ok` or `disabled` (off, not
+    /// broken); otherwise the hub's `error`, else the status word.
+    public nonisolated static func blocked(_ env: HubSourceEnv?, source: String) -> String? {
+        let status = env?.status
+        return switch status {
+        case nil, "ok", "disabled": nil
+        default: env?.error ?? status ?? "\(source) is unreachable"
         }
     }
 

@@ -18,6 +18,8 @@ struct RollingTextTests {
                               styleMask: [.titled], backing: .buffered, defer: false)
         let view = RollingTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 90))
         view.schedule = timers.timer
+        // These count the rolls' timers, which Reduce Motion turns off.
+        view.reduceMotion = { false }
         window.contentView?.addSubview(view)
         return (window, view)
     }
@@ -47,8 +49,6 @@ struct RollingTextTests {
     }
 
     @Test func aChangeMidRollWinsAndTheOlderCleanupLeavesItAlone() {
-        // Reduce Motion turns rolls off, and these count the rolls' timers.
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         let (window, view) = hosted()
         view.show("35.3B", style: style, perCharacter: true, up: false)
         view.show("22.8B", style: style, perCharacter: true, up: false)
@@ -77,8 +77,6 @@ struct RollingTextTests {
     }
 
     @Test func theSameTextAgainChangesNothing() {
-        // Reduce Motion turns rolls off, and these count the rolls' timers.
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         let (window, view) = hosted()
         view.show("35.3B", style: style, perCharacter: true, up: true)
         view.show("7.0B", style: style, perCharacter: true, up: true)

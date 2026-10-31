@@ -8,18 +8,39 @@ that it never writes: a diagnostic that mutates state is worse than none.
 import io
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from quiver.find import commands as find_commands
 from quiver.find.tree import agents_tree, flat_skills, plugin_tree, skills_tree
+from quiver.harness import registry
 
 
 def _skill(root: Path, name: str) -> None:
     d = root / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(f"---\nname: {name}\n---\nbody\n")
+
+
+@contextmanager
+def _in_home(home: Path):
+    """Run ``swe find`` as if ``home`` were both the home and the cwd.
+
+    Without the cwd patch, every call without ``--root`` scans whatever
+    directory the suite runs from (the repo itself, usually). Both registry
+    files (current and legacy) and the MCP hub are stubbed too, so neither
+    this machine's harnesses nor its servers decide which rows show, and
+    no registry migration is ever attempted.
+    """
+    with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
+            mock.patch.object(Path, "cwd", staticmethod(lambda: home)), \
+            mock.patch.object(registry, "HARNESS_FILE",
+                              Path("/nonexistent/harness.json")), \
+            mock.patch.object(registry, "TOOLS_FILE",
+                              Path("/nonexistent/tools.json")), \
+            mock.patch("quiver.mcp.cli.get_hub_servers", return_value={}):
+        yield
 
 
 def _home(tmp: str) -> Path:
@@ -121,7 +142,7 @@ class PluginTreeTest(unittest.TestCase):
 
 class CmdFindTest(unittest.TestCase):
     def _run(self, home, args):
-        with mock.patch.object(Path, "home", staticmethod(lambda: home)):
+        with _in_home(home):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = find_commands.cmd_find(args)
@@ -297,7 +318,7 @@ class ScopeTest(unittest.TestCase):
     def test_root_flag_is_stripped_before_topic_parsing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
-            with mock.patch.object(Path, "home", staticmethod(lambda: home)):
+            with _in_home(home):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     code = find_commands.cmd_find(["--root", "amd"])
@@ -307,7 +328,7 @@ class ScopeTest(unittest.TestCase):
     def test_short_flag_works_too(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = self._tree(tmp)
-            with mock.patch.object(Path, "home", staticmethod(lambda: home)):
+            with _in_home(home):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     code = find_commands.cmd_find(["amd", "-r"])
@@ -400,7 +421,7 @@ class ScopeClassificationTest(unittest.TestCase):
 
 class ScopeFlagTest(unittest.TestCase):
     def _run(self, home, args):
-        with mock.patch.object(Path, "home", staticmethod(lambda: home)):
+        with _in_home(home):
             buf = io.StringIO()
             with redirect_stdout(buf):
                 code = find_commands.cmd_find(args)
