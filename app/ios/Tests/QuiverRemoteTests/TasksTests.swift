@@ -181,6 +181,117 @@ final class TaskRowTests: XCTestCase {
                        ["Linear", "GitHub", "Jira", "Other", "QUI"])
     }
 
+    private func failure(_ name: String, error: String? = "boom") -> TaskRepoFailure {
+        TaskRepoFailure(name: name, status: "upstream-error", error: error)
+    }
+
+    /// The scope menu groups as the Mac and web rails do: owners first,
+    /// then Linear, Notion and other sources by name; rows by name; every
+    /// scope listed even at 0 on the chip, failed repos included.
+    func testRailGroupsByOwnerThenSourceSortedByName() {
+        let tasks = [
+            row("a", repo: "zed/app", state: "in_progress", running: true),
+            row("b", repo: "acme/web"),
+            row("c", repo: "acme/api", state: "merged"),
+            row("d", source: "linear", ref: "QUI-1", repo: nil, project: "QUI"),
+            row("e", source: "notion", kind: "page", ref: "x", repo: nil, project: "Roadmap"),
+            row("f", source: "linear", ref: "QUI-2", repo: nil, project: nil),
+        ]
+        let rail = TaskGrouping.rail(of: tasks, failed: [failure("acme/docs")], filter: .running)
+        XCTAssertEqual(rail.map(\.title), ["acme", "zed", "Linear", "Notion"])
+        XCTAssertEqual(rail[0].scopes.map(\.label), ["api", "docs", "web"])
+        XCTAssertEqual(rail[0].scopes.map(\.name), ["acme/api", "acme/docs", "acme/web"])
+        // Counts are under the chip; the running mark is regardless of it.
+        XCTAssertEqual(rail[1].scopes, [TaskRailScope(name: "zed/app", label: "app", count: 1, running: true)])
+        // A project-less Linear row lists under "Linear" in the Linear group.
+        XCTAssertEqual(rail[2].scopes.map(\.name), ["Linear", "QUI"])
+        XCTAssertEqual(rail[3].scopes.map(\.name), ["Roadmap"])
+        XCTAssertEqual(rail[0].scopes.map(\.count), [0, 0, 0])
+    }
+
+    func testQuietScopesFoldButThePickStays() {
+        let group = TaskRailGroup(title: "acme", scopes: [
+            TaskRailScope(name: "acme/api", label: "api", count: 2, running: false),
+            TaskRailScope(name: "acme/web", label: "web", count: 0, running: false),
+            TaskRailScope(name: "acme/docs", label: "docs", count: 0, running: false),
+        ])
+        let open = TaskGrouping.split(group, shown: nil)
+        XCTAssertEqual(open.active.map(\.name), ["acme/api"])
+        XCTAssertEqual(open.quiet.map(\.name), ["acme/web", "acme/docs"])
+        let picked = TaskGrouping.split(group, shown: "acme/web")
+        XCTAssertEqual(picked.active.map(\.name), ["acme/api", "acme/web"])
+        XCTAssertEqual(picked.quiet.map(\.name), ["acme/docs"])
+    }
+
+    func testScopeNarrowsSectionsAndChipCounts() {
+        let tasks = [
+            row("a", repo: "o/r", running: true),
+            row("b", repo: "o/s"),
+            row("c", repo: "o/r", state: "merged"),
+            row("d", source: "linear", ref: "QUI-1", repo: nil, project: "QUI"),
+        ]
+        let narrowed = TaskGrouping.sections(of: tasks, failed: [], filter: .all, scope: "o/r")
+        XCTAssertEqual(narrowed.map(\.name), ["o/r"])
+        XCTAssertEqual(narrowed[0].rows?.map(\.id), ["a", "c"])
+        XCTAssertEqual(TaskGrouping.sections(of: tasks, failed: [], filter: .all, scope: "QUI").map(\.name), ["QUI"])
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .all, scope: "o/r"), 2)
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .done, scope: "o/r"), 1)
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .done, scope: "o/s"), 0)
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .all), 4)
+    }
+
+    /// A failed repo's error sits on its own section: one header per
+    /// repo, a section of its own when it has no rows, and only under a
+    /// scope that names it.
+    func testFailedReposJoinTheirSection() {
+        let tasks = [row("a", repo: "o/r"), row("b", repo: "o/s")]
+        let failed = [failure("o/r"), failure("o/gone", error: nil)]
+        let sections = TaskGrouping.sections(of: tasks, failed: failed, filter: .all)
+        XCTAssertEqual(sections.map(\.name), ["o/r", "o/s", "o/gone"])
+        XCTAssertEqual(sections[0].error, "boom")
+        XCTAssertEqual(sections[0].rows?.map(\.id), ["a"])
+        XCTAssertNil(sections[1].error)
+        XCTAssertEqual(sections[2].error, "upstream-error")
+        XCTAssertEqual(sections[2].rows?.count, 0)
+        XCTAssertEqual(TaskGrouping.sections(of: tasks, failed: failed, filter: .all, scope: "o/s").map(\.name), ["o/s"])
+        XCTAssertEqual(TaskGrouping.sections(of: tasks, failed: failed, filter: .all, scope: "o/gone").map(\.name), ["o/gone"])
+    }
+
+    func testAPickThatLeavesTheReplyFallsBackToAll() {
+        let tasks = [row("a", repo: "o/r")]
+        XCTAssertEqual(TaskGrouping.shownScope("o/r", tasks: tasks, failed: []), "o/r")
+        XCTAssertEqual(TaskGrouping.shownScope("o/gone", tasks: tasks, failed: [failure("o/gone")]), "o/gone")
+        XCTAssertNil(TaskGrouping.shownScope("o/old", tasks: tasks, failed: []))
+        XCTAssertNil(TaskGrouping.shownScope(nil, tasks: tasks, failed: []))
+    }
+
+    func testGroupsFoldPastFiveRowsUnlessNarrowed() {
+        let rows = (1...7).map { row("\($0)") }
+        let folded = TaskGrouping.fold(rows, expanded: false, narrowed: false)
+        XCTAssertEqual(folded.visible.map(\.id), ["1", "2", "3", "4", "5"])
+        XCTAssertEqual(folded.hidden, 2)
+        let open = TaskGrouping.fold(rows, expanded: true, narrowed: false)
+        XCTAssertEqual(open.visible.count, 7)
+        XCTAssertEqual(open.hidden, 2)
+        let narrowed = TaskGrouping.fold(rows, expanded: false, narrowed: true)
+        XCTAssertEqual(narrowed.visible.count, 7)
+        XCTAssertEqual(narrowed.hidden, 0)
+        let five = TaskGrouping.fold(Array(rows.prefix(5)), expanded: false, narrowed: false)
+        XCTAssertEqual(five.visible.count, 5)
+        XCTAssertEqual(five.hidden, 0)
+        // The unfold is kept per group and per filter.
+        let section = TaskSection(name: "o/r", rows: rows, error: nil)
+        XCTAssertNotEqual(TaskGrouping.foldKey(section, filter: .all), TaskGrouping.foldKey(section, filter: .done))
+    }
+
+    func testEmptyTextNamesThePickedScope() {
+        XCTAssertEqual(TaskGrouping.emptyText(.running, scope: nil), "Nothing is running right now.")
+        XCTAssertEqual(TaskGrouping.emptyText(.running, scope: "o/r"), "Nothing is running in o/r.")
+        XCTAssertEqual(TaskGrouping.emptyText(.prOpen, scope: "QUI"), "No task in QUI has a pull request open.")
+        XCTAssertEqual(TaskGrouping.emptyText(.done, scope: "o/r"), "Nothing in o/r is merged or closed yet.")
+        XCTAssertEqual(TaskGrouping.emptyText(.all, scope: "o/r"), "No tasks in o/r.")
+    }
+
     func testSourceLineAndLabels() {
         XCTAssertEqual(row("a", kind: "issue").sourceLine, "GitHub issue · o/r")
         XCTAssertEqual(row("a", kind: "pull").sourceLine, "GitHub pull request · o/r")
