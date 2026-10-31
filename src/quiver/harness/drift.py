@@ -563,6 +563,15 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
     except OSError:
         help_text = ""
     findings += check_prose_mentions(help_text, "mcp", mcp_commands)
+    from quiver.instructions.commands import SUBCOMMANDS as instruction_commands
+    from quiver.completion import _SUBCOMMANDS
+
+    instruction_keys = set(instruction_commands)
+    instruction_completions = {name for name, _ in _SUBCOMMANDS["instructions"]}
+    findings += check_subcommand_help(
+        instruction_completions, instruction_keys, "instructions",
+    )
+    findings += check_prose_mentions(help_text, "instructions", instruction_keys)
     primary, flag_keys, sub_tables, nested_subs = _real_completion_tables()
     findings += check_completion_drift(
         primary, flag_keys, sub_tables, nested_subs, _real_commands()

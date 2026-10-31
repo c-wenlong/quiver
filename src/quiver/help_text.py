@@ -548,6 +548,20 @@ to use their own login state and environment."""
   {c('dim', 'skipped')}   no hooks root, or harness not installed
   {c('dim', 'ignored')}   .linkignore, archived in harness.json, or disabled
   {c('yellow', 'foreign')}   not managed by swe — list-only"""),
+    "instructions": (
+        "Compile shared instruction chapters into ~/.quiver/AGENTS.md",
+        f"""\
+  {c('cyan', 'swe instructions build')}    Build the complete shared instruction file
+  {c('cyan', 'swe instructions check')}    Exit 1 if the generated file is missing or stale
+  {c('cyan', 'swe instructions watch')}    Build now, then rebuild on source changes
+
+  Edit chapters under {c('bold', '~/.quiver/AGENTS_MD/')} and list their relative .md
+  paths in {c('bold', 'index.txt')}, in order. Blank lines and # comments are ignored.
+  Build writes {c('bold', '~/.quiver/AGENTS.md')} atomically, only when its SHA256 changes.
+  Check writes nothing. Watch reports source errors and keeps waiting; Ctrl-C stops it.
+  Harness symlinks keep pointing at the generated AGENTS.md. Edit the chapters,
+  not the generated file. A running chat may need a new chat to read the update."""
+    ),
     "init": (
         "Create ~/.quiver and symlink every harness to it",
         f"""\
@@ -805,6 +819,7 @@ to use their own login state and environment."""
 COMMAND_CATEGORIES = [
     ("Setup", [
         ("init",    None),
+        ("instructions", None),
         ("setup",   None),
         ("config",  None),
         ("doctor",  None),

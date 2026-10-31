@@ -771,6 +771,12 @@ edited one reset — from the same one-click list, and the Check probe
 also tries <code>/api/compat/summary.json</code>, the path Cursor's new host
 serves.</p>
 </li>
+<li><p><strong>Instruction chapters:</strong> <code>swe instructions build</code>, <code>check</code> and <code>watch</code>
+compile the ordered Markdown paths in <code>~/.quiver/AGENTS_MD/index.txt</code>
+into the complete shared <code>~/.quiver/AGENTS.md</code>. Builds replace the file
+atomically and skip unchanged content; check reports drift without
+writing; watch rebuilds after edits and keeps running after source errors.</p>
+</li>
 <li><p><strong>Mac app: the <code>@</code> file menu in the session chat.</strong> Typing <code>@</code> in the
 chat's prompt box lists files under the session's folder, as the web
 app and the iPhone app do: the arrows move the highlight, Return or

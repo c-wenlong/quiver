@@ -17,6 +17,7 @@ This file is the overview; each topic below has a deeper document in `docs/`:
 | [docs/data-model.md](docs/data-model.md) | Every persistent store, the ledger schema and migrations, JSON file formats, UserDefaults keys, the caching map |
 | [docs/app-architecture.md](docs/app-architecture.md) | The macOS app: folder layout, AppModel and the page models, Theme, the component catalogue, navigation |
 | [docs/backend-architecture.md](docs/backend-architecture.md) | The controller / service / model split per domain, the bottom layer, where each `--json` payload lives, how to extend |
+| [docs/instructions.md](docs/instructions.md) | Ordered instruction chapters, atomic generation, validation and watching |
 | [docs/json-contracts.md](docs/json-contracts.md) | Every `swe --json` command the app calls, its shape, and the Swift type that decodes it |
 | [docs/testing.md](docs/testing.md) | Running both suites, the throwaway-HOME rule, fixture capture, coverage and floors |
 | [docs/COVERAGE.md](docs/COVERAGE.md) | The dated coverage audit and current risk areas |
@@ -50,6 +51,7 @@ half never mix:
 ```
 ~/.quiver/
   AGENTS.md          canonical instructions, symlinked into every harness
+  AGENTS_MD/         optional authored chapters and their ordered index.txt
   .linkignore        paths `swe init` must leave alone
   skills/            the shared skill tree, symlinked into every skills root
   hooks/<harness>/   hook scripts, each file symlinked into that harness only
@@ -121,6 +123,12 @@ to the old path.
 Every harness wants its own instruction filename (`CLAUDE.md`, `AGENTS.md`,
 `CRUSH.md`) in its own directory. Quiver writes one file and symlinks it under
 each name, so editing one changes all of them.
+
+With chapter mode, `swe instructions build` generates that complete shared
+file from `~/.quiver/AGENTS_MD/index.txt`. `check` detects stale output and
+`watch` keeps rebuilding after edits. Edit chapters in this mode: direct
+changes to the generated file are overwritten. See
+[docs/instructions.md](docs/instructions.md).
 
 The same trick covers skills: one tree at `~/.quiver/skills`, symlinked into
 every harness's `skills/` directory.
