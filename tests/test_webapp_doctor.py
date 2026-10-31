@@ -79,8 +79,13 @@ class TestReport(_TempHome, unittest.TestCase):
 
         report = doctor_page.get(self.ctx, {})
         self.assertEqual(report["machine"], "hub-box")
+        # The page adds what the launch picker needs: the home the
+        # findings are about, and the harnesses the hub can start.
+        self.assertEqual(report["home"], str(self.home))
+        self.assertIsInstance(report["launchable"], list)
         want = doctor_report(self.home).to_json()
-        self.assertEqual({k: v for k, v in report.items() if k != "machine"}, want)
+        self.assertEqual({k: v for k, v in report.items()
+                          if k not in ("machine", "home", "launchable")}, want)
         self.assertEqual(report["findings"][0]["check"], "setup.hub")
         self.assertEqual(report["findings"][0]["action"], "setup")
         self.assertTrue(report["ok"])
@@ -134,6 +139,28 @@ class TestRun(_TempHome, unittest.TestCase):
         backups = list((self.home / ".quiver" / "backups").iterdir())
         self.assertEqual([b.read_text() for b in backups], ["mine\n"])
         self.assertIn("report", reply)
+
+    def test_a_remedy_names_its_own_action(self):
+        """``setup.unlinked``'s action remedy is ``init``: the body names it."""
+        self.seed({"claude": {"command": "claude"}})
+        (self.home / ".claude").mkdir()
+        finding = self.finding("setup.unlinked")
+        self.assertEqual(finding["remedies"][0]["action"], "init")
+        reply = doctor_page.post(self.ctx, "run", {
+            "check": finding["check"], "message": finding["message"],
+            "action": "init"})
+        self.assertEqual((reply["ran"], reply["error"]), ("init", None))
+
+    def test_a_remedy_that_left_the_report_is_refused(self):
+        self.seed({"claude": {"command": "claude"}})
+        (self.home / ".claude").mkdir()
+        finding = self.finding("setup.unlinked")
+        with self.assertRaises(PageError) as caught:
+            doctor_page.post(self.ctx, "run", {
+                "check": finding["check"], "message": finding["message"],
+                "action": "bogus"})
+        self.assertEqual((caught.exception.status, caught.exception.code),
+                         (404, "unknown_remedy"))
 
     def test_discover_lists_nothing_blocked(self):
         self.seed()

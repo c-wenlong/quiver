@@ -40,9 +40,53 @@ def collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> lis
             # report — compare the raw strings instead.
             differs = preferred != which_npm
         if differs:
+            which_dir = str(Path(which_npm).parent)
+            preferred_dir = str(Path(preferred).parent)
+            # Removing the PATH's npm is only safe when the preferred one
+            # is already reachable; otherwise it is the only npm there is.
+            preferred_on_path = is_dir_on_path(Path(preferred_dir))
+            # A shell-init edit does not reach the process already
+            # serving the web app: the check clears on the next hub start.
+            note = " A shell edit only counts from a new shell or a hub restart."
+            if preferred_on_path:
+                fix = (f"reorder PATH so {preferred_dir} wins, or remove "
+                       f"the npm at {which_npm}")
+                steps = ("Put {0} ahead of {1}, or remove npm from {1}."
+                         .format(preferred_dir, which_dir) + note)
+                prompt = (f"`which npm` resolves to {which_npm} but swe "
+                          f"prefers {preferred}. Inspect the shell init "
+                          f"files and reorder PATH so the preferred npm "
+                          f"wins, or remove npm from {which_dir}. Verify "
+                          f"with `swe doctor` from a new shell: the "
+                          f"npm.preferred finding should be gone.")
+            else:
+                fix = f"add {preferred_dir} to PATH ahead of {which_dir}"
+                steps = (f"{preferred_dir} is not on PATH, so removing "
+                         f"{which_dir}'s npm would leave none. Add "
+                         f"{preferred_dir} to PATH in your shell init."
+                         + note)
+                prompt = (f"`which npm` resolves to {which_npm} but swe "
+                          f"prefers {preferred}, and {preferred_dir} is "
+                          f"not on PATH at all. Inspect the shell init "
+                          f"files and add {preferred_dir} to PATH. Do "
+                          f"NOT remove {which_dir}'s npm: it is the only "
+                          f"one on PATH. Verify with `swe doctor` from a "
+                          f"new shell: the npm.preferred finding should "
+                          f"be gone.")
             findings.append(DoctorFinding(
                 "npm.preferred", "info",
-                f"which npm is {which_npm}; swe prefers {preferred}"))
+                f"which npm is {which_npm}; swe prefers {preferred}",
+                fix,
+                source=f"PATH order: {which_dir} precedes {preferred_dir}",
+                remedies=(
+                    {"kind": "steps",
+                     "title": "Reorder PATH in your shell init",
+                     "detail": steps},
+                    {"kind": "agent", "title": "Fix with agent",
+                     "detail": "An agent inspects your shell init files "
+                              "and makes the edit itself.",
+                     "prompt": prompt},
+                )))
     if nvm_dirs and not any(is_dir_on_path(d) for d in nvm_dirs):
         findings.append(DoctorFinding(
             "nvm", "warning",
@@ -52,16 +96,29 @@ def collect_findings(env, preferred, which_npm, nvm_dirs, orphans, drift) -> lis
             "Prefer: swe install <name>"))
     for name, command, hit in orphans:
         via = install_method(name)
+        fix = (f"swe install {name} --via={via}" if via
+               else f"swe install {name}")
         findings.append(DoctorFinding(
             "off-path", "error",
             f"{name} ({command}) is at {hit.path} [{hit.source}], not on PATH",
-            f"swe install {name} --via={via}" if via else f"swe install {name}",
-            harness=name, action="install" if via else None, via=via))
+            fix,
+            harness=name, action="install" if via else None, via=via,
+            source=f"found at {hit.path} [{hit.source}]",
+            remedies=({"kind": "action", "action": "install", "via": via,
+                       "title": "Reinstall with swe",
+                       "command": fix,
+                       "detail": f"{fix}: reinstalls the way the stray "
+                                f"copy was installed, so it lands on PATH."},)
+            if via else
+            ({"kind": "steps", "title": "Put it on PATH yourself",
+              "detail": fix},)))
     for finding in drift:
         findings.append(DoctorFinding(
             f"drift.{finding.area}",
             "error" if finding.severity == "error" else "warning",
-            finding.message))
+            finding.message, finding.fix,
+            harness=finding.harness, action=finding.action,
+            source=finding.source, remedies=finding.remedies))
     return findings
 
 
@@ -173,19 +230,33 @@ def setup_findings(home: Path | None = None) -> list[DoctorFinding]:
         return [DoctorFinding(
             "setup.hub", "warning",
             "~/.quiver doesn't exist yet, so nothing is shared between harnesses",
-            "swe setup --apply", action="setup")]
+            "swe setup --apply", action="setup", source="~/.quiver",
+            remedies=({"kind": "action", "action": "setup",
+                       "title": "swe setup --apply",
+                       "detail": "Registers the harnesses it finds, imports "
+                                "their MCP servers, and links the shared "
+                                "AGENTS.md and skills into each."},))]
     if not (paths.quiver_dir_for(home) / "AGENTS.md").is_file():
         return [DoctorFinding(
             "setup.agents-md", "warning",
             "No shared AGENTS.md in ~/.quiver",
-            "swe setup --apply", action="setup")]
+            "swe setup --apply", action="setup", source="~/.quiver",
+            remedies=({"kind": "action", "action": "setup",
+                       "title": "swe setup --apply",
+                       "detail": "Registers the harnesses it finds, imports "
+                                "their MCP servers, and links the shared "
+                                "AGENTS.md and skills into each."},))]
 
     registry = load_registry_readonly()
     if not registry:
         return [DoctorFinding(
             "setup.registry", "warning",
             "No harnesses registered",
-            "swe harness discover --apply", action="discover")]
+            "swe harness discover --apply", action="discover",
+            remedies=({"kind": "action", "action": "discover",
+                       "title": "swe harness discover --apply",
+                       "detail": "Adds the high-confidence matches it finds "
+                                "to harness.json."},))]
 
     findings: list[DoctorFinding] = []
     states = link_states(home)
@@ -204,7 +275,11 @@ def setup_findings(home: Path | None = None) -> list[DoctorFinding]:
             findings.append(DoctorFinding(
                 "setup.unlinked", "warning",
                 f"{title} doesn't read {' or '.join(wanted)} yet",
-                "swe init", harness=name, action="init"))
+                "swe init", harness=name, action="init",
+                remedies=({"kind": "action", "action": "init",
+                           "title": "Link it with swe init",
+                           "detail": "A real file in the way is left alone "
+                                    "and listed for Replace and back up."},)))
     findings.extend(marketplace_findings(home, registry))
     return findings
 
@@ -265,8 +340,9 @@ def marketplace_findings(home: Path, registry: dict | None = None) -> list[Docto
         in_file = [m for m in missing if m in declared]
         by_cli = [m for m in missing if m not in declared]
         config = home / _MARKETPLACE_CONFIG.get(name, "")
-        if name in _MARKETPLACE_CONFIG and in_file and \
-                os.path.realpath(config).startswith("/nix/store/"):
+        nix = name in _MARKETPLACE_CONFIG and in_file and \
+            os.path.realpath(config).startswith("/nix/store/")
+        if nix:
             fix = (f"~/{_MARKETPLACE_CONFIG[name]} is managed by Nix: copy the folders "
                    "onto this machine or drop them from your Nix config")
         elif name in _MARKETPLACE_CONFIG:
@@ -281,5 +357,117 @@ def marketplace_findings(home: Path, registry: dict | None = None) -> list[Docto
             "setup.marketplace-missing", "warning",
             f"{title(name)} registers {len(missing)} marketplace folder"
             f"{'s' if len(missing) != 1 else ''} missing on this machine: {listed}",
-            fix, harness=name))
+            fix, harness=name,
+            source=_marketplace_source(name, in_file, by_cli),
+            remedies=_marketplace_remedies(
+                name, missing, in_file, by_cli, nix)))
     return findings
+
+
+# Claude keeps CLI-added marketplaces beside its settings file, in
+# plugins/known_marketplaces.json.
+_KNOWN_MARKETPLACES = ".claude/plugins/known_marketplaces.json"
+
+
+def _marketplace_source(
+    name: str, in_file: list[str], by_cli: list[str]
+) -> str | None:
+    """The file(s) registering the missing folders, for the source line."""
+    files = []
+    if name in _MARKETPLACE_CONFIG and in_file:
+        files.append(f"~/{_MARKETPLACE_CONFIG[name]}")
+    if name == "claude" and by_cli:
+        files.append(f"~/{_KNOWN_MARKETPLACES}")
+    if not files:
+        return None
+    return "registered in " + " · ".join(files)
+
+
+def _marketplace_remedies(
+    name: str, missing: list[str], in_file: list[str],
+    by_cli: list[str], nix: bool,
+) -> tuple:
+    """Ways out of a missing-marketplace finding, best first.
+
+    Restoring the folders beats dropping the entries, since a synced
+    settings file usually means the folders live on the user's other
+    machine. An agent stays the escape for mixed keep/repoint/remove
+    calls; a Nix-managed settings file narrows the manual side to the
+    Nix config itself.
+    """
+    listed = ", ".join(missing)
+    remedies: list[dict] = [{
+        "kind": "steps",
+        "title": "Copy the folders onto this machine",
+        "detail": "The settings came from a machine that has them; "
+                  "bring them over and the entries work again.",
+    }]
+    # CLI-registered entries live in known_marketplaces.json, which Nix
+    # does not manage: they come out through the harness's own remove
+    # command under either management style.
+    cli_steps = [f"{name} plugin marketplace remove {m}" for m in by_cli]
+    if nix:
+        drop_steps = []
+        if in_file:
+            drop_steps.append(
+                f"drop {', '.join(in_file)} from your Nix config "
+                f"(~/{_MARKETPLACE_CONFIG[name]} is generated)")
+        drop_steps += cli_steps
+        remedies.append({
+            "kind": "steps",
+            "title": f"Or drop the {len(missing)} entr"
+                     f"{'y' if len(missing) == 1 else 'ies'}",
+            "steps": drop_steps,
+        })
+    else:
+        drop_steps = []
+        if in_file:
+            drop_steps.append(
+                f"drop {', '.join(in_file)} from "
+                f"~/{_MARKETPLACE_CONFIG.get(name, 'settings')}")
+        drop_steps += cli_steps
+        if drop_steps:
+            remedies.append({
+                "kind": "steps",
+                "title": f"Or drop the {len(missing)} entr"
+                         f"{'y' if len(missing) == 1 else 'ies'}",
+                "steps": drop_steps,
+            })
+    if name in _MARKETPLACE_CONFIG:
+        config = f"~/{_MARKETPLACE_CONFIG[name]}"
+        places = [config] + ([f"~/{_KNOWN_MARKETPLACES}"]
+                             if name == "claude" and by_cli else [])
+        if nix:
+            # The settings file resolves into the store: its entries go
+            # in the Nix config that generates it; CLI-registered ones
+            # still leave through the harness's own remove command.
+            prompt = (f"{config} is a symlink into /nix/store and "
+                      f"registers {len(missing)} marketplace "
+                      f"folder{'s' if len(missing) != 1 else ''} missing "
+                      f"on this machine ({listed}). Do NOT edit {config}. "
+                      + (f"For {', '.join(in_file)}: find the Nix or "
+                         "home-manager config that generates the file "
+                         "and drop the entries there. " if in_file else "")
+                      + (f"For {', '.join(by_cli)}: run `{name} plugin "
+                         "marketplace remove <name>` per entry, which "
+                         f"edits ~/{_KNOWN_MARKETPLACES}, or remove "
+                         "them there by hand. " if by_cli else "")
+                      + "Restore a folder instead when it should exist "
+                      "here. Verify with `swe doctor`: the "
+                      "setup.marketplace-missing finding should be gone.")
+        else:
+            prompt = (f"{config} registers {len(missing)} marketplace "
+                      f"folder{'s' if len(missing) != 1 else ''} that do "
+                      f"not exist on this machine ({listed}). Decide per "
+                      f"entry: restore the folder if it should exist here, "
+                      f"repoint the entry at the real location, or remove "
+                      f"it from {' and '.join(places)}, backing up each "
+                      f"file first. Verify with `swe doctor`: the "
+                      f"setup.marketplace-missing finding should be gone.")
+        remedies.append({
+            "kind": "agent",
+            "title": "Fix with agent",
+            "detail": "An agent decides per entry: keep, repoint, or remove.",
+            "prompt": prompt,
+        })
+    return tuple(remedies)

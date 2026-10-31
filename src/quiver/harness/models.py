@@ -131,7 +131,16 @@ class DoctorFinding:
     out of rows that are about the machine rather than one harness.
     ``action``, when set, is the swe command the app may offer to run:
     "setup", "init", "discover", or "install" (``swe install <harness>
-    --via=<via>``, reinstalling an off-PATH harness the way it got there)."""
+    --via=<via>``, reinstalling an off-PATH harness the way it got there).
+
+    ``source`` names the file or place the finding comes from
+    ("~/.claude/settings.json", "PATH order"), and ``remedies`` the ways
+    out, best first: each is a dict ``{kind, title, detail?, ...}`` where
+    ``kind`` is "action" (a fix swe can run itself, with ``action``/``via``
+    fields like the finding's own), "agent" (a ``prompt`` to hand a coding
+    agent), "command" (a ``command`` to copy) or "steps" (manual work,
+    ``steps`` listed). ``fix`` stays the one-line summary readers without
+    remedy support show."""
 
     check: str
     severity: str
@@ -140,6 +149,8 @@ class DoctorFinding:
     harness: str | None = None
     action: str | None = None
     via: str | None = None
+    source: str | None = None
+    remedies: tuple | None = None
 
     def to_json(self) -> dict:
         finding = {
@@ -154,6 +165,10 @@ class DoctorFinding:
             finding["action"] = self.action
         if self.via:
             finding["via"] = self.via
+        if self.source:
+            finding["source"] = self.source
+        if self.remedies:
+            finding["remedies"] = [dict(r) for r in self.remedies]
         return finding
 
 

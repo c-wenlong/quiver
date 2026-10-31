@@ -64,3 +64,49 @@
 .doctor-blocked-text { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .doctor-button.primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .doctor-pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }
+
+/* The source line and the remedies box (pages/doctor.js doctorRemedies):
+ * one row per way out of a finding. */
+.doctor-source {
+  display: flex; align-items: center; gap: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px;
+  color: var(--text-secondary);
+}
+.doctor-source svg { width: 12px; height: 12px; flex: none; opacity: .8; }
+.doctor-remedies {
+  display: flex; flex-direction: column; margin-top: 6px;
+  background: var(--subtle); border: 1px solid var(--border); border-radius: 8px;
+}
+.doctor-remedy { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; }
+.doctor-remedy + .doctor-remedy { border-top: 1px solid var(--border); }
+.doctor-remedy-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.doctor-remedy-title { font-size: 13px; color: var(--text-primary); }
+.doctor-remedy-detail, .doctor-remedy-step {
+  font-size: 12px; color: var(--text-secondary); line-height: 1.45; overflow-wrap: anywhere;
+}
+.doctor-remedy-step {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.doctor-remedy .doctor-command { flex: none; font-size: 12px; line-height: 1.45; }
+.doctor-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.doctor-chip {
+  display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px;
+  border: 1px solid var(--border); border-radius: 7px; background: var(--card);
+  color: var(--text-secondary); font-size: 12px; cursor: pointer;
+}
+.doctor-chip:hover:not(:disabled) { background: var(--hover); }
+.doctor-chip.selected { background: var(--hover); color: var(--text-primary); border-color: var(--border-strong); }
+.doctor-chip:disabled { opacity: .45; cursor: default; }
+.doctor-chip:focus-visible { outline: 1px solid var(--interactive); outline-offset: 2px; }
+.doctor-chip .logo { width: 14px; height: 14px; }
+.doctor-prompt {
+  margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.5; color: var(--text-secondary);
+  background: var(--subtle); border-radius: 7px; padding: 8px 10px;
+  max-height: 120px; overflow: auto; white-space: pre-wrap;
+}
+.doctor-agent-note { margin: 4px 0 0; padding-left: 12px; }
+@media (max-width: 720px) {
+  .doctor-remedy { flex-wrap: wrap; }
+  .doctor-remedy-text { flex: 1 1 160px; }
+}

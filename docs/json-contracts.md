@@ -214,8 +214,15 @@ The CLI side of remote also speaks `--json`:
   `header_keys`, `health` (a string, not an object), `name`, `transport`,
   `url`, `variants`.
 - `DoctorReport`: `ok` plus `findings` (`check`, `severity`, `message`,
-  `fix`, optional `harness`). The command may exit nonzero with valid
-  JSON, so the client is called with `allowFailure`.
+  `fix`, optional `harness`, `action`, `via`). A finding may also carry
+  `source` (the file or place behind it, e.g. `~/.claude/settings.json`)
+  and `remedies`: the ways out, best first, each `{kind, title, detail?}`.
+  `kind` is `action` (swe can run the fix; `action`/`via` name it),
+  `agent` (a `prompt` to hand a coding agent), `command` (a `command` to
+  copy) or `steps` (manual work, `steps` listed). `fix` stays the
+  one-line summary for clients without remedy support. The command may
+  exit nonzero with valid JSON, so the client is called with
+  `allowFailure`.
 - `SessionListPayload`: `sessions` (`id`, `harness`, `agent`, `cwd`,
   `title`, `title_source`, `last_active_at`, `status`, `resume`) plus
   `failures` for parsers that crashed.

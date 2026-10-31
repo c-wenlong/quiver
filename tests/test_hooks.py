@@ -459,6 +459,54 @@ class CheckCommandTest(unittest.TestCase):
             kinds = {f.kind for f in hook_findings(home)}
             self.assertNotIn("undeclared", kinds)
 
+    def test_drift_names_the_script_and_the_declaring_file(self):
+        """Doctor's source line and remedies read HookDrift's metadata."""
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            settings = _settings(home, ".claude/settings.json", {
+                "Stop": [{"hooks": [{"command": "gone.py"}]}],
+            })
+            [found] = [f for f in hook_findings(home)
+                       if f.kind == "declared-missing"]
+            self.assertEqual(found.script, "gone.py")
+            self.assertEqual(found.settings, (settings,))
+
+            [f] = drift.check_hook_drift(home)
+            self.assertEqual(f.area, "hooks")
+            self.assertEqual(f.source, "declared in ~/.claude/settings.json")
+            self.assertIn("gone.py", f.fix)
+            self.assertEqual([r["kind"] for r in f.remedies],
+                             ["agent", "steps"])
+            self.assertIn("swe doctor", f.remedies[0]["prompt"])
+
+    def test_an_undeclared_link_names_where_it_would_be_declared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            _hook(home, "claude", "guard.py")
+            _link(home, "claude", "guard.py")
+            settings = _settings(home, ".claude/settings.json", {})
+            [found] = [f for f in hook_findings(home)
+                       if f.kind == "undeclared"]
+            self.assertEqual(found.script, "guard.py")
+            self.assertEqual(found.settings, (settings,))
+
+            [f] = [f for f in drift.check_hook_drift(home)
+                   if f.message.startswith("guard.py")]
+            self.assertEqual(f.source,
+                             "would be declared in ~/.claude/settings.json")
+            self.assertEqual([r["kind"] for r in f.remedies],
+                             ["agent", "steps"])
+
+    def test_an_unlinked_hook_runs_init_as_its_remedy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            _hook(home, "claude", "guard.py")          # create -> unlinked
+            [f] = [f for f in drift.check_hook_drift(home)
+                   if f.message.startswith("guard.py")]
+            self.assertEqual(f.action, "init")
+            self.assertEqual(f.remedies[0]["kind"], "action")
+            self.assertEqual(f.remedies[0]["action"], "init")
+
     def test_unlinked_and_skipped_states(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)

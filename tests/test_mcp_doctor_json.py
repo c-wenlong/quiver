@@ -9,6 +9,7 @@ MCP configs carry API keys in ``env`` and ``headers``, and the hub keeps
 Nothing here may ever put a secret value on stdout.
 """
 
+import dataclasses
 import io
 import json
 import sys
@@ -585,8 +586,15 @@ class DoctorJsonTest(unittest.TestCase):
         self.assertIsInstance(doc["data"]["ok"], bool)
         self.assertEqual(doc["data"]["ok"], result.returncode == 0)
         for finding in doc["data"]["findings"]:
-            # "harness" appears only on a finding about one harness.
-            self.assertEqual(set(finding) - {"harness", "action"}, self.FINDING_KEYS)
+            # "harness" appears only on a finding about one harness;
+            # "action"/"via", "source" and "remedies" only on one with a
+            # fix or a named file behind it.
+            self.assertEqual(
+                set(finding) - {"harness", "action", "via", "source", "remedies"},
+                self.FINDING_KEYS)
+            for remedy in finding.get("remedies") or []:
+                self.assertIn(remedy["kind"], {"action", "agent", "command", "steps"})
+                self.assertIsInstance(remedy["title"], str)
             self.assertIn(finding["severity"], {"error", "warning", "info"})
             self.assertTrue(finding["fix"] is None or isinstance(finding["fix"], str))
 
@@ -744,6 +752,10 @@ class DoctorJsonChecksTest(unittest.TestCase):
                        "not on PATH",
             "fix": "swe install claude",
             "harness": "claude",
+            "source": "found at /tmp/npm/bin/claude [nvm]",
+            "remedies": [{"kind": "steps",
+                          "title": "Put it on PATH yourself",
+                          "detail": "swe install claude"}],
         }])
 
     def test_off_path_with_an_installer_on_path_offers_install(self):
@@ -779,13 +791,49 @@ class DoctorJsonChecksTest(unittest.TestCase):
             preferred="/opt/homebrew/bin/npm", which="/usr/bin/npm")
         self.assertEqual(code, 0)
         self.assertTrue(doc["data"]["ok"])
-        self.assertEqual(doc["data"]["findings"], [{
-            "check": "npm.preferred",
-            "severity": "info",
-            "message": "which npm is /usr/bin/npm; swe prefers "
-                       "/opt/homebrew/bin/npm",
-            "fix": None,
-        }])
+        finding = doc["data"]["findings"][0]
+        self.assertEqual(
+            {k: finding[k] for k in ("check", "severity", "message", "source")},
+            {"check": "npm.preferred",
+             "severity": "info",
+             "message": "which npm is /usr/bin/npm; swe prefers "
+                        "/opt/homebrew/bin/npm",
+             "source": "PATH order: /usr/bin precedes /opt/homebrew/bin"})
+        self.assertIn("/opt/homebrew/bin", finding["fix"])
+        self.assertEqual([r["kind"] for r in finding["remedies"]],
+                         ["steps", "agent"])
+        self.assertIn("swe doctor", finding["remedies"][1]["prompt"])
+
+    def test_a_preferred_npm_off_path_never_offers_removal(self):
+        # Removing the only npm on PATH would leave none, so when the
+        # preferred directory is not on PATH the remedy adds it instead.
+        env = dataclasses.replace(HEALTHY, npm="/usr/bin/npm")
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ", {"NVM_DIR": str(Path(tmp) / "missing-nvm")}
+        ), patch("quiver.harness.commands.load_registry", return_value={}), patch(
+            "quiver.harness.path_health.probe_node_env", return_value=env
+        ), patch(
+            "quiver.harness.path_health.preferred_npm_bin",
+            return_value="/opt/homebrew/bin/npm"
+        ), patch(
+            "quiver.harness.path_health.nvm_bin_dirs", return_value=[]
+        ), patch(
+            "quiver.harness.path_health.find_off_path_tools", return_value=[]
+        ), patch(
+            "quiver.harness.commands.shutil.which", return_value="/usr/bin/npm"
+        ), patch(
+            "quiver.harness.doctor.is_dir_on_path", return_value=False
+        ), patch("quiver.harness.drift.run_drift_checks", return_value=[]
+        ), patch("quiver.harness.doctor.setup_findings", return_value=[]):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = cmd_doctor(["--json"])
+        self.assertEqual(code, 0)
+        finding = json.loads(out.getvalue())["data"]["findings"][0]
+        self.assertEqual(finding["check"], "npm.preferred")
+        self.assertNotIn("remove", finding["fix"])
+        agent = finding["remedies"][1]
+        self.assertIn("NOT remove", agent["prompt"])
 
     def test_drift_findings_keep_their_area_and_severity(self):
         code, doc = self.run_doctor(drift=[

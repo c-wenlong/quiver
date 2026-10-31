@@ -72,7 +72,7 @@ Status words:
 | Notifications | yes | - | - | Mac: limit resets and 90% crossings, and GitHub notification banners. iOS: the app has no notification code; the hub posts to ntfy (`remote/notify.py`) and the ntfy app delivers it. APNs planned |
 | Service status | yes | yes | - | |
 | Settings | yes | yes | part | iOS: the hub chip menu holds switch hub, devices, Console, Refresh and Unpair; no notification settings |
-| Doctor | yes | yes | - | Mac: a Settings section; web: `#/doctor`, no sidebar entry |
+| Doctor | yes | yes | - | Mac: a Settings section; web: `#/doctor`, no sidebar entry. Findings carry `source` + `remedies`; only the web page renders them (source line, remedy rows, Fix-with-agent picker through `/v1/sessions`). Mac reads `fix`/`action` as before |
 | First-run setup | yes | yes | - | Web: `#/setup`. Hub URL step on all three: `swe setup --hub`, web step 2 (clones on the hub's thread, page polls), Mac links step (runs `swe setup --hub --json`) |
 | API keys | yes | part | - | Settings › Providers on both. Web: no key check, rename, move, custom providers or coding plans |
 | Fan control, Clean up, updates, Report a bug | yes | - | - | Mac-only by design |

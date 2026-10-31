@@ -7,6 +7,11 @@
  * and init link files into the harnesses' own folders. When one leaves a
  * real file in the way (the reply's blocked), a card offers Replace and
  * back up: POST /v1/app/doctor/replace, swe init --force, after a confirm.
+ *
+ * A finding can carry ``source`` (the file it comes from) and
+ * ``remedies``: action rows run like the finding's own Run, agent rows
+ * open a picker that launches a session through POST /v1/sessions with
+ * the remedy's prompt, command rows copy, steps rows only describe.
  */
 "use strict";
 
@@ -18,6 +23,9 @@ const doctorPage = {
   // Paths the last setup or init left alone, and Replace and back up's
   // own confirm and failure.
   blocked: [], confirmingReplace: false, replaceError: null,
+  // The open Fix-with-agent picker {id, idx, harness, harnessName, phase,
+  // error}, a launch being followed, and each row's last launch outcome.
+  agent: null, agentBusy: false, agentNote: {},
 };
 const DOCTOR_FOLD = 8;
 
@@ -26,15 +34,19 @@ const DOCTOR_RUNS = {
   setup: (m) => `This runs swe setup --apply on ${m}: it registers the harnesses it finds, imports their MCP servers into ~/.quiver/mcp.json, and links the shared AGENTS.md and skills into each harness. Real files in the way are left alone, and your stars stay as they are.`,
   init: (m) => `This runs swe init on ${m}: it links the shared AGENTS.md and skills into each harness that doesn't read them yet. Real files in the way are left alone, and new skills folders wait for a run in a terminal.`,
   discover: (m) => `This runs swe harness discover --apply on ${m}: it adds the high-confidence matches it finds to harness.json.`,
-  install: (m, f) => `This runs ${f.fix} on ${m}: it installs ${Fmt.harnessName(f.harness)} again with ${f.via}, which puts it on PATH, and registers it. A cask or install script that asks for a password can't finish here; copy the command into a terminal instead.`,
+  install: (m, f, r) => `This runs ${(r && r.command) || f.fix} on ${m}: it installs ${Fmt.harnessName(f.harness)} again with ${(r && r.via) || f.via}, which puts it on PATH, and registers it. A cask or install script that asks for a password can't finish here; copy the command into a terminal instead.`,
 };
 
 const DOCTOR_ICONS = {
   seal: '<path d="m12 2.5 2.2 1.6 2.7-.1.8 2.6 2.2 1.6-.9 2.6.9 2.6-2.2 1.6-.8 2.6-2.7-.1L12 21.5l-2.2-1.6-2.7.1-.8-2.6-2.2-1.6.9-2.6-.9-2.6 2.2-1.6.8-2.6 2.7.1z"/><path d="m8.8 12 2.2 2.2 4.2-4.4"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+  terminal: '<path d="M4 17l6-5-6-5"/><path d="M12 19h8"/>',
 };
 const doctorIcon = (name) =>
   `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DOCTOR_ICONS[name]}</svg>`;
+const doctorSourceIcon = (source) =>
+  doctorIcon(source && source.startsWith("PATH") ? "terminal" : "file");
 
 /* DoctorReport.Finding.id, with a separator: check "a" with message
  * "bc" and check "ab" with message "c" are two findings, not one. */
@@ -147,33 +159,123 @@ function doctorRow(f, index) {
   // A finding about one harness leads with its logo, when there is one.
   const mark = f.harness ? Fmt.logo(f.harness) : "";
   const logo = mark.startsWith("<img") ? `<span class="doctor-logo" title="${esc(Fmt.harnessName(f.harness))}">${mark}</span>` : "";
-  let fix = "";
-  if (f.fix) {
-    const running = p.running === id;
-    const run = !f.action ? ""
-      : running ? `<span class="doctor-running" role="status"><span class="doctor-spinner" aria-hidden="true"></span>Running…</span>`
-      : `<button class="doctor-button primary" data-doctor="run" aria-expanded="${p.confirming === id}"${p.running ? " disabled" : ""}>Run</button>`;
-    fix = `<div class="doctor-fix"><code class="doctor-command">${esc(f.fix)}</code>${run}
-      <button class="icon-button doctor-copy" data-doctor="copy" aria-label="Copy the command" title="Copy the command">${doctorIcon("copy")}</button></div>`;
-    if (p.confirming === id && !running && DOCTOR_RUNS[f.action]) fix += doctorConfirm(f);
-    if (p.runErrors[id]) fix += `<p class="error doctor-run-error doctor-pre" role="alert">${esc(p.runErrors[id])}</p>`;
-  }
+  const source = f.source
+    ? `<div class="doctor-source">${doctorSourceIcon(f.source)}<span>${esc(f.source)}</span></div>` : "";
+  const fix = (f.remedies || []).length ? doctorRemedies(f, id) : doctorLegacyFix(f, id);
   return `<div class="doctor-row" data-index="${index}">
     <span class="doctor-dot ${sev}" aria-label="${esc(f.severity)}"></span>
     <div class="doctor-main">
       <div class="doctor-message">${logo}<span>${esc(f.message)}</span></div>
       <code class="doctor-check">${esc(f.check)}</code>
-      ${fix}
+      ${source}${fix}
     </div></div>`;
 }
 
-function doctorConfirm(f) {
+/* The one-strip fix findings without remedies keep: the command (or
+ * prose), the finding's own Run, and copy. */
+function doctorLegacyFix(f, id) {
+  const p = doctorPage;
+  if (!f.fix) return "";
+  const running = p.running === id;
+  const run = !f.action ? ""
+    : running ? `<span class="doctor-running" role="status"><span class="doctor-spinner" aria-hidden="true"></span>Running…</span>`
+    : `<button class="doctor-button primary" data-doctor="run" aria-expanded="${p.confirming === id}"${p.running ? " disabled" : ""}>Run</button>`;
+  let fix = `<div class="doctor-fix"><code class="doctor-command">${esc(f.fix)}</code>${run}
+    <button class="icon-button doctor-copy" data-doctor="copy" aria-label="Copy the command" title="Copy the command">${doctorIcon("copy")}</button></div>`;
+  if (p.confirming === id && !running && DOCTOR_RUNS[f.action]) fix += doctorConfirm(f, f.action);
+  if (p.runErrors[id]) fix += `<p class="error doctor-run-error doctor-pre" role="alert">${esc(p.runErrors[id])}</p>`;
+  return fix;
+}
+
+/* A confirming key joins the finding id and the remedy index with a
+ * separator neither check nor message can hold. remedyIdx reads the
+ * index back: undefined for a legacy finding's own Run. */
+const remedyKey = (id, i) => `${id}\u0001${i}`;
+const remedyIdx = (key) =>
+  key && key.includes("\u0001") ? Number(key.split("\u0001")[1]) : undefined;
+
+/* The remedies box: one row per way out, best first. */
+function doctorRemedies(f, id) {
+  const p = doctorPage;
+  const rows = f.remedies.map((r, i) => doctorRemedy(f, id, r, i)).join("");
+  let extra = "";
+  if (p.confirming && p.confirming.startsWith(id + "\u0001")) {
+    const idx = Number(p.confirming.split("\u0001")[1]);
+    const r = f.remedies[idx];
+    if (r && r.kind === "action" && DOCTOR_RUNS[r.action]) extra = doctorConfirm(f, r.action, r, idx);
+  }
+  const agent = doctorPage.agent;
+  if (agent && agent.id === id) {
+    const r = f.remedies[agent.idx];
+    if (r && r.kind === "agent") extra += doctorAgentPanel(f, r);
+  }
+  if (doctorPage.agentNote[id]) {
+    extra += `<p class="caption doctor-agent-note" role="status">${esc(doctorPage.agentNote[id])}</p>`;
+  }
+  if (doctorPage.runErrors[id]) {
+    extra += `<p class="error doctor-run-error doctor-pre" role="alert">${esc(doctorPage.runErrors[id])}</p>`;
+  }
+  return `<div class="doctor-remedies">${rows}</div>${extra}`;
+}
+
+function doctorRemedy(f, id, r, i) {
+  const p = doctorPage, key = remedyKey(id, i);
+  let affordance = "";
+  if (r.kind === "action") {
+    // A copyable command beside Run keeps the terminal path the confirm
+    // text offers when the runner needs a password.
+    const copy = r.command
+      ? `<button class="icon-button doctor-copy" data-doctor="copy" data-idx="${i}" aria-label="Copy the command" title="Copy the command">${doctorIcon("copy")}</button>` : "";
+    affordance = p.running === key
+      ? `<span class="doctor-running" role="status"><span class="doctor-spinner" aria-hidden="true"></span>Running…</span>`
+      : `${copy}<button class="doctor-button primary" data-doctor="run" data-idx="${i}" aria-expanded="${p.confirming === key}"${p.running ? " disabled" : ""}>Run</button>`;
+  } else if (r.kind === "agent") {
+    affordance = `<button class="doctor-button" data-doctor="agent" data-idx="${i}" aria-expanded="${p.agent && p.agent.id === id && p.agent.idx === i}"${p.agentBusy ? " disabled" : ""}>${esc(r.title)}</button>`;
+  } else if (r.kind === "command" && r.command) {
+    affordance = `<button class="icon-button doctor-copy" data-doctor="copy" data-idx="${i}" aria-label="Copy the command" title="Copy the command">${doctorIcon("copy")}</button>`;
+  }
+  const detail = r.command
+    ? `<code class="doctor-command">${esc(r.command)}</code>${r.detail ? `<div class="doctor-remedy-detail">${esc(r.detail)}</div>` : ""}`
+    : r.detail ? `<div class="doctor-remedy-detail">${esc(r.detail)}</div>` : "";
+  const steps = (r.steps || []).map((s) => `<div class="doctor-remedy-step">${esc(s)}</div>`).join("");
+  return `<div class="doctor-remedy">
+    <div class="doctor-remedy-text">
+      <div class="doctor-remedy-title">${esc(r.title)}</div>
+      ${detail}${steps}
+    </div>${affordance}</div>`;
+}
+
+function doctorConfirm(f, action, r, idx) {
   const machine = (doctorPage.data && doctorPage.data.machine) || "the hub";
-  return `<div class="doctor-confirm" role="group" aria-label="Run ${esc(f.fix)}?">
-    <p class="caption">${esc(DOCTOR_RUNS[f.action](machine, f))}</p>
+  const label = (r && r.title) || f.fix;
+  return `<div class="doctor-confirm" role="group" aria-label="Run ${esc(label)}?">
+    <p class="caption">${esc(DOCTOR_RUNS[action](machine, f, r))}</p>
     <div class="doctor-confirm-buttons">
       <button class="doctor-button" data-doctor="cancel">Cancel</button>
-      <button class="doctor-button primary" data-doctor="go">Run ${esc(f.fix)}</button>
+      <button class="doctor-button primary" data-doctor="go" data-action="${esc(action)}"${idx === undefined ? "" : ` data-idx="${idx}"`}>Run ${esc(label)}</button>
+    </div></div>`;
+}
+
+/* The Fix-with-agent picker: prompt preview, harness chips from the
+ * report's launchable list, Launch through POST /v1/sessions. */
+function doctorAgentPanel(f, r) {
+  const p = doctorPage, agent = p.agent;
+  const machine = (p.data && p.data.machine) || "the hub";
+  const launchable = (p.data && p.data.launchable) || [];
+  const chips = launchable.map((h) =>
+    `<button class="doctor-chip${agent.harness === h.name ? " selected" : ""}" data-doctor="agent-chip" data-harness="${esc(h.name)}"${agent.phase ? " disabled" : ""}>${Fmt.logo(h.name)}${esc(h.display_name || h.name)}</button>`).join("");
+  const pick = launchable.length ? chips
+    : `<span class="caption">No harness can start on ${esc(machine)}: install one there, or turn it on in Settings › Providers.</span>`;
+  const phase = agent.phase
+    ? `<span class="doctor-running" role="status"><span class="doctor-spinner" aria-hidden="true"></span>${esc(agent.phase)}</span>` : "";
+  return `<div class="doctor-confirm" role="group" aria-label="Fix with agent">
+    <p class="caption">Launch an agent on ${esc(machine)}. It gets this prompt:</p>
+    <pre class="doctor-prompt">${esc(r.prompt || "")}</pre>
+    <div class="doctor-chips">${pick}</div>
+    ${agent.error ? `<p class="error" role="alert">${esc(agent.error)}</p>` : ""}
+    <div class="doctor-confirm-buttons">${phase}
+      <button class="doctor-button" data-doctor="agent-cancel"${agent.phase ? " disabled" : ""}>Cancel</button>
+      <button class="doctor-button primary" data-doctor="agent-go"${agent.phase || !agent.harness || !r.prompt ? " disabled" : ""}>Launch ${esc(agent.harnessName || "")}</button>
     </div></div>`;
 }
 
@@ -183,9 +285,14 @@ function bindDoctor() {
     const row = btn.closest(".doctor-row");
     const finding = row && p.data ? doctorVisible()[Number(row.dataset.index)] : null;
     /* The copy button's tick feedback comes from Fmt.copyTick; on a copy
-     * that can't land, select the command for a manual copy. */
+     * that can't land, select the command for a manual copy. A remedy's
+     * copies its own command, a legacy finding's its fix line. */
     if (btn.dataset.doctor === "copy" && finding) {
-      Fmt.copyTick(btn, () => finding.fix, () => {
+      const idx = btn.dataset.idx;
+      const text = () => idx === undefined
+        ? finding.fix
+        : ((finding.remedies || [])[Number(idx)] || {}).command;
+      Fmt.copyTick(btn, text, () => {
         const code = btn.parentElement.querySelector(".doctor-command");
         if (code) window.getSelection().selectAllChildren(code);
       });
@@ -201,26 +308,67 @@ function bindDoctor() {
       } else if (act === "replace-go") doctorReplace();
       else if (act === "fold") { p.showsAll = !p.showsAll; paintDoctor(); }
       else if (act === "run" && finding) {
-        p.confirming = p.confirming === doctorId(finding) ? null : doctorId(finding);
+        const idx = btn.dataset.idx;
+        const key = idx === undefined
+          ? doctorId(finding) : remedyKey(doctorId(finding), Number(idx));
+        p.confirming = p.confirming === key ? null : key;
         paintDoctor();
         const go = document.querySelector('[data-doctor="go"]');
         if (go) go.focus();
       } else if (act === "cancel" && finding) {
+        const idx = remedyIdx(p.confirming);
         p.confirming = null;
         paintDoctor();
-        doctorFocus(finding, "run");
-      } else if (act === "go" && finding) doctorRun(finding);
+        doctorFocus(finding, "run", idx);
+      } else if (act === "go" && finding) {
+        doctorRun(finding, btn.dataset.action, btn.dataset.idx);
+      } else if (act === "agent" && finding) {
+        const idx = Number(btn.dataset.idx);
+        const id = doctorId(finding);
+        if (p.agent && p.agent.id === id && p.agent.idx === idx) {
+          p.agent = null;
+        } else {
+          const first = ((p.data && p.data.launchable) || [])[0];
+          p.agent = { id, idx,
+                      harness: first ? first.name : "",
+                      harnessName: first ? (first.display_name || first.name) : "" };
+        }
+        paintDoctor();
+        doctorAgentFocus(finding, idx);
+      } else if (act === "agent-chip" && p.agent) {
+        p.agent.harness = btn.dataset.harness;
+        p.agent.harnessName = btn.textContent.trim();
+        paintDoctor();
+        const go = document.querySelector('[data-doctor="agent-go"]');
+        if (go) go.focus();
+      } else if (act === "agent-cancel" && finding) {
+        const idx = p.agent ? p.agent.idx : undefined;
+        p.agent = null;
+        paintDoctor();
+        doctorFocus(finding, "agent", idx);
+      } else if (act === "agent-go" && finding && p.agent) {
+        doctorAgentLaunch(finding, p.agent.idx);
+      }
     };
   }
-  const confirm = document.querySelector(".doctor-row .doctor-confirm");
-  if (confirm) {
+  for (const confirm of document.querySelectorAll(".doctor-row .doctor-confirm")) {
     confirm.onkeydown = (event) => {
       if (event.key !== "Escape") return;
       const row = confirm.closest(".doctor-row");
       const finding = doctorVisible()[Number(row.dataset.index)];
-      p.confirming = null;
-      paintDoctor();
-      doctorFocus(finding, "run");
+      if (confirm.querySelector('[data-doctor="agent-go"]')) {
+        // Escape leaves a launch in flight alone: it only drops the wait.
+        if (p.agent && p.agent.phase) return;
+        const idx = p.agent ? p.agent.idx : undefined;
+        p.agent = null;
+        paintDoctor();
+        doctorFocus(finding, "agent", idx);
+      } else {
+        const idx = remedyIdx(p.confirming);
+        p.confirming = null;
+        paintDoctor();
+        doctorFocus(finding, "run", idx);
+      }
     };
   }
   const replace = document.querySelector(".doctor-blocked .doctor-confirm");
@@ -240,23 +388,45 @@ function doctorVisible() {
   return all.length > DOCTOR_FOLD && !doctorPage.showsAll ? all.slice(0, DOCTOR_FOLD) : all;
 }
 
-function doctorFocus(finding, act) {
+function doctorFocus(finding, act, idx) {
   const at = doctorVisible().findIndex((f) => doctorId(f) === doctorId(finding));
-  const el = at >= 0 && document.querySelector(`.doctor-row[data-index="${at}"] [data-doctor="${act}"]`);
+  const pick = idx === undefined
+    ? `[data-doctor="${act}"]` : `[data-doctor="${act}"][data-idx="${idx}"]`;
+  const el = at >= 0 && document.querySelector(`.doctor-row[data-index="${at}"] ${pick}`);
+  if (el && !el.disabled) el.focus();
+}
+
+/* Focus into a picker that just opened (its first chip), or back on the
+ * row's Fix-with-agent button when it closed. */
+function doctorAgentFocus(finding, idx) {
+  const p = doctorPage;
+  if (!p.agent) {
+    doctorFocus(finding, "agent", idx);
+    return;
+  }
+  const at = doctorVisible().findIndex((f) => doctorId(f) === doctorId(finding));
+  const el = at >= 0 && document.querySelector(
+    `.doctor-row[data-index="${at}"] [data-doctor="agent-chip"], ` +
+    `.doctor-row[data-index="${at}"] [data-doctor="agent-cancel"]`);
   if (el && !el.disabled) el.focus();
 }
 
 /* DoctorModel.run: one at a time; the report is read again after, from
- * the hub's answer, whether the fix worked or not. */
-async function doctorRun(finding) {
+ * the hub's answer, whether the fix worked or not. A remedy's Run names
+ * its own ``action`` so the hub runs that fix, not the finding's. */
+async function doctorRun(finding, action, idx) {
   const p = doctorPage, id = doctorId(finding);
   if (p.running) return;
-  p.running = id;
+  p.running = idx === undefined ? id : remedyKey(id, Number(idx));
   p.confirming = null;
   delete p.runErrors[id];
   p.lostError = null;
   if (onDoctorPage()) paintDoctor();
-  const { status, data } = await apiPost("/v1/app/doctor/run", { check: finding.check, message: finding.message });
+  const body = { check: finding.check, message: finding.message };
+  // Only a remedy's Run names an action: a finding's own Run leaves the
+  // body's out, and the hub runs the finding's top-level action as ever.
+  if (action && idx !== undefined) body.action = action;
+  const { status, data } = await apiPost("/v1/app/doctor/run", body);
   p.running = null;
   if (status === 401) {
     if (onDoctorPage()) renderGate();
@@ -282,11 +452,62 @@ async function doctorRun(finding) {
   }
   if (!onDoctorPage()) return;
   paintDoctor();
-  doctorFocus(finding, "run");
+  doctorFocus(finding, "run", idx === undefined ? undefined : Number(idx));
 }
 
-/* Replace and back up: swe init --force on the hub. The answer carries the
- * report and whatever is still in the way. */
+/* Fix with agent: POST /v1/sessions with the remedy's prompt, the way
+ * the new-session sheet launches, then followLaunch watches it settle.
+ * Closing the picker drops the wait, not the session: it keeps running
+ * and shows up under Sessions. */
+async function doctorAgentLaunch(finding, idx) {
+  const p = doctorPage, id = doctorId(finding), agent = p.agent;
+  const r = (finding.remedies || [])[idx];
+  if (!agent || agent.id !== id || p.agentBusy || !r || !r.prompt || !agent.harness) return;
+  const live = () => p.agent === agent;
+  agent.phase = "Starting…";
+  agent.error = null;
+  p.agentBusy = true;
+  if (onDoctorPage()) paintDoctor();
+  const body = { harness: agent.harness, cwd: (p.data || {}).home || "", prompt: r.prompt };
+  const pick = ((p.data || {}).launchable || []).find((h) => h.name === agent.harness);
+  if (pick && pick.launch_yolo) body.yolo = true;
+  const { status, data } = await apiPost("/v1/sessions", body);
+  if (status === 401) {
+    p.agent = null;
+    p.agentBusy = false;
+    if (onDoctorPage()) renderGate();
+    return;
+  }
+  if (!live()) { p.agentBusy = false; return; }
+  if (!((status === 200 || status === 202) && data && data.launch_id)) {
+    agent.phase = null;
+    agent.error = controlErrorText(status, data,
+      "Couldn't reach the hub. Check the connection, then try again.");
+    p.agentBusy = false;
+    if (onDoctorPage()) paintDoctor();
+    return;
+  }
+  agent.phase = "Waiting for the session…";
+  if (onDoctorPage()) paintDoctor();
+  const launch = await followLaunch(data, live);
+  p.agentBusy = false;
+  if (!launch) return;
+  if (launch.state === "started") {
+    p.agent = null;
+    p.agentNote[id] = "The agent is on it: the session runs under Sessions, on the hub. Run the checks again when it finishes.";
+  } else {
+    const [message, failed] = launchNote(launch, data.queued === true);
+    if (failed) {
+      agent.phase = null;
+      agent.error = message;
+    } else {
+      p.agent = null;
+      p.agentNote[id] = message;
+    }
+  }
+  if (!onDoctorPage()) return;
+  paintDoctor();
+}
 async function doctorReplace() {
   const p = doctorPage;
   if (p.running) return;
