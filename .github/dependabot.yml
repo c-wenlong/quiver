@@ -4,8 +4,7 @@
 # The `swe` CLI is stdlib-only: it declares no runtime dependencies at all.
 # Every declared requirement in pyproject.toml is an open floor (`>=`), so a
 # `pip` entry for the repo root would have nothing to raise a pull request
-# about.  The one exact pin is the docs site's `zensical==` in
-# docs/requirements.txt, which gets its own `pip` block below.
+# about.
 #
 # The workflows pin actions to full commit SHAs.  Dependabot understands that
 # form and rewrites both the SHA and the trailing `# vN` version comment.
@@ -27,19 +26,3 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "ci"
-
-  - package-ecosystem: "pip"
-    # Only the docs site generator; see the note at the top.
-    directory: "/docs"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    # docs/requirements.txt pins a release at least 7 days old; Dependabot
-    # waits the same before proposing a newer one.
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 2
-    labels:
-      - "dependencies"
-    commit-message:
-      prefix: "docs"
