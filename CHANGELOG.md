@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Other harnesses, and records with no usable timestamps, leave it out
   ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
 
+- **Mac: Settings › Remote can keep this Mac's agent running.** On a Mac
+  paired as a satellite of another machine's hub, a "Keep this Mac's
+  agent running" switch installs or removes the agent's LaunchAgent
+  through `swe remote agent --install` / `--uninstall`, and says whether
+  it is running. The switch is hidden on the Mac that hosts the hub and
+  on a Mac that was never paired
+  ([#1438](https://github.com/c-wenlong/quiver/issues/1438)).
+
 - **`swe remote agent --install` keeps a satellite running.** Like
   `swe remote serve --install`, it runs `swe remote agent` as a
   LaunchAgent on macOS (`com.cwenlong.quiver.remote-agent`) or a systemd

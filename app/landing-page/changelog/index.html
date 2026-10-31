@@ -118,6 +118,14 @@ the thinking record; opencode from its own reasoning <code>time</code> span.
 Other harnesses, and records with no usable timestamps, leave it out
 (<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
 </li>
+<li><p><strong>Mac: Settings › Remote can keep this Mac's agent running.</strong> On a Mac
+paired as a satellite of another machine's hub, a &quot;Keep this Mac's
+agent running&quot; switch installs or removes the agent's LaunchAgent
+through <code>swe remote agent --install</code> / <code>--uninstall</code>, and says whether
+it is running. The switch is hidden on the Mac that hosts the hub and
+on a Mac that was never paired
+(<a href="https://github.com/c-wenlong/quiver/issues/1438">#1438</a>).</p>
+</li>
 <li><p><strong><code>swe remote agent --install</code> keeps a satellite running.</strong> Like
 <code>swe remote serve --install</code>, it runs <code>swe remote agent</code> as a
 LaunchAgent on macOS (<code>com.cwenlong.quiver.remote-agent</code>) or a systemd
