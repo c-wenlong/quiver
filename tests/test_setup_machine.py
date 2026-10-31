@@ -224,6 +224,11 @@ class SetupMachineCheckoutTests(unittest.TestCase):
 
 
 class InstallAppCaffeinateTests(unittest.TestCase):
+    def test_scripts_are_executable(self):
+        # The README runs both directly, not through bash.
+        for script in (SCRIPT, INSTALL):
+            self.assertTrue(os.access(script, os.X_OK), f"{script.name} is not executable")
+
     def test_scripts_parse(self):
         for script in (SCRIPT, INSTALL):
             r = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)

@@ -38,7 +38,9 @@ never builds the checkout's current branch, so sessions working on other
 branches can't leave a half-finished app installed. A failed build changes
 nothing. `QUIVER_INSTALL_REF` builds another ref and `QUIVER_INSTALL_DIR`
 installs somewhere else. It holds a `caffeinate -i` power assertion while
-it runs, so a build started over SSH survives the session ending.
+it runs, so the Mac doesn't idle to sleep mid-build. That covers sleep
+only: to keep a build going after an SSH disconnect, start it under
+`nohup` or in `tmux`.
 
 ## Set up a new Mac
 

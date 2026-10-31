@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installs the remote hub with `swe remote serve --install`, and quits this
   checkout's dev build for the installed app. Every step can run again, and
   `--dry-run` prints the plan without changing anything. `install-app.sh`
-  now runs under `caffeinate -i`, so a build driven over SSH can't be put
-  to sleep ([#1214](https://github.com/c-wenlong/quiver/issues/1214)).
+  now runs under `caffeinate -i`, so the Mac can't idle to sleep during a
+  build driven over SSH ([#1214](https://github.com/c-wenlong/quiver/issues/1214)).
 
 - **Mac app: pin, rename and fork sessions.** The Sessions list still
   comes from `swe session --json` (tokens, cost, filters); when this
