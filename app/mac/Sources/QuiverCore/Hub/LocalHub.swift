@@ -110,6 +110,12 @@ public final class LocalHub {
     public internal(set) var overlay = HubSessionOverlay()
     /// Pins chosen here that a list read started too early must not undo.
     var pins = SessionPinLedger()
+    /// Meta applied from `session.meta` events and answered calls, in
+    /// order. A list read that left before one reached us would put back
+    /// what it replaced, so `refreshKeys` lays the newer ones over its
+    /// answer the way `pins` does for unconfirmed pin choices.
+    var metaLog: [(at: Int, key: String, reply: HubMetaReply)] = []
+    var metaClock = 0
 
     /// The hub's base once a client exists — scopes kept command lists,
     /// so a repointed hub never shows the last hub's answers.
@@ -242,6 +248,7 @@ public final class LocalHub {
         }
         // Pins chosen after this read leaves are newer than its answer.
         let mark = pins.mark
+        let metaMark = metaClock
         do {
             let rows = try await client.sessions()
             keys = .known(Set(rows.map(\.key)))
@@ -249,6 +256,19 @@ public final class LocalHub {
                                 uniquingKeysWith: { _, newest in newest })
             var read = HubSessionOverlay(rows)
             pins.overlay(&read, fetchedFrom: mark)
+            // A meta applied after this read left (a `session.meta` or an
+            // answered rename or pin) is newer than its answer too.
+            for entry in metaLog where entry.at > metaMark {
+                let held = pins.held(entry.key)
+                read.update(entry.key) { meta in
+                    meta.apply(entry.reply)
+                    if let held {
+                        meta.pinned = held.pinned
+                        meta.pinnedAt = held.pinnedAt
+                    }
+                }
+            }
+            metaLog.removeAll { $0.at <= metaMark }
             overlay = read
         } catch let error as HubError where error.isUnauthorized {
             // Only this client's credential: another call may have paired

@@ -114,10 +114,13 @@ public struct HubSessionOverlay: Equatable, Sendable {
         meta(for: row).map { $0.title(over: row.session.title) } ?? row.session.title
     }
 
-    /// Adds a row a later read of the hub found (an open chat's), unless
-    /// this read already holds it.
+    /// Adds a row a later read of the hub found (an open chat's), or
+    /// refreshes one already held: the chat's read can carry a pin or
+    /// rename another device landed after this read ran, and the stream
+    /// the chat joins will not send its `session.meta` again. A pin
+    /// chosen here unanswered wins back in `noteRow` just after.
     mutating func adopt(_ row: HubSessionRow) {
-        if byKey[row.key] == nil { byKey[row.key] = HubSessionMeta(row) }
+        byKey[row.key] = HubSessionMeta(row)
     }
 
     /// Changes `key`'s meta in place; a key the hub didn't list stays out.
@@ -182,6 +185,7 @@ public struct SessionPinLedger: Sendable {
             return false
         }
         clock += 1
+        choice.pin = reply
         choice.answeredAt = clock
         choices[key] = choice
         return true
@@ -346,6 +350,8 @@ extension LocalHub {
     /// a rename from another device shows here), with the pin a choice
     /// still out holds.
     public func noteMeta(_ key: String, _ reply: HubMetaReply) {
+        metaClock += 1
+        metaLog.append((metaClock, key, reply))
         let held = pins.held(key)
         overlay.update(key) { meta in
             meta.apply(reply)

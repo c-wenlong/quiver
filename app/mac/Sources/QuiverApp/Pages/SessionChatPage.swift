@@ -18,6 +18,8 @@ struct SessionChatPage: View {
     var onMissing: () -> Void
     /// Pin, Rename or Fork from the header's More menu, run by the page.
     var act: (SessionMenuAction) -> Void
+    /// A refused pin's message, shared with the list so it shows here too.
+    var note: String? = nil
     @State private var model: SessionChatModel?
 
     private var key: String { HubSessionRow.key(harness: row.session.harness, id: row.session.id) }
@@ -45,7 +47,7 @@ struct SessionChatPage: View {
                            action: onDetails)
         } content: {
             if let model {
-                ChatTranscript(model: model)
+                ChatTranscript(model: model, note: note)
             } else {
                 Spacer()
             }
@@ -112,9 +114,16 @@ private struct ChatBadges: View {
 
 private struct ChatTranscript: View {
     var model: SessionChatModel
+    var note: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if let note {
+                Card {
+                    Label(note, systemImage: "exclamationmark.triangle")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
+                }
+            }
             if let error = model.loadError {
                 ErrorCard(message: error, actionTitle: "Try again") {
                     Task { await model.start() }

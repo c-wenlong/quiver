@@ -116,6 +116,29 @@ import Testing
         #expect(later["claude:a"]?.pinned == false, "an unpin from another device shows")
     }
 
+    @Test func anOldReadArrivingAfterTheAnswerKeepsTheConfirmedPin() {
+        var ledger = SessionPinLedger()
+        let mark = ledger.mark
+        let version = ledger.choose("claude:a", pinned: true, now: 50, base: .init(pinned: false, pinnedAt: nil))
+        let took = ledger.answered("claude:a", version: version, reply: .init(pinned: true, pinnedAt: 51))
+        #expect(took)
+        // A read that left before the answer lands now: it keeps the
+        // choice, but at the hub's confirmed time, not the estimate, so
+        // closely timed pins sort the way the hub has them.
+        var stale = overlay(pinned: false)
+        ledger.overlay(&stale, fetchedFrom: mark)
+        #expect(stale["claude:a"]?.pinned == true)
+        #expect(stale["claude:a"]?.pinnedAt == 51)
+    }
+
+    @Test func anOpenChatsReadRefreshesAStaleEntry() {
+        var overlay = HubSessionOverlay([HubSessionRow(key: "claude:a", title: "old", harnessTitle: "old")])
+        overlay.adopt(HubSessionRow(key: "claude:a", title: "new", harnessTitle: "old",
+                                    pinned: true, pinnedAt: 7))
+        #expect(overlay["claude:a"]?.title == "new")
+        #expect(overlay["claude:a"]?.pinnedAt == 7)
+    }
+
     @Test func onlyTheLatestChoicesAnswerLands() {
         var ledger = SessionPinLedger()
         let pin = ledger.choose("claude:a", pinned: true, now: 1, base: .init(pinned: false, pinnedAt: nil))

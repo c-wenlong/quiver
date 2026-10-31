@@ -65,7 +65,7 @@ private struct SessionsContent: View {
                                         self.chat = nil
                                         detail = chat
                                     },
-                                    act: { run($0, on: chat) })
+                                    act: { run($0, on: chat) }, note: pinNote)
                         .frame(maxWidth: .infinity)
                         .onChange(of: app.navReselects) { self.chat = nil }
                     SessionRail(model: model, current: chat, select: { self.chat = $0 })
@@ -147,9 +147,12 @@ private struct SessionsContent: View {
                 .hoverTip("Start a session on this Mac's hub (⌘N)")
             Button("Refresh", systemImage: "arrow.clockwise") {
                 Task {
+                    // Pins and renames from other devices ride this read.
+                    async let hubKeys: Void = app.hub.refreshKeys()
                     await model.load(for: app.swePath)
                     // A scan reloads the figures through completedScans below.
                     await app.overview?.load(scan: true)
+                    await hubKeys
                 }
             }
                 .iconButton()

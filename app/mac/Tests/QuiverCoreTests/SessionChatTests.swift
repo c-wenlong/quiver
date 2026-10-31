@@ -325,6 +325,32 @@ extension HubStubbed {
         #expect(local.models.isEmpty, "a hub that stops answering shows no stale model")
     }
 
+    /// A rename the stream announced while a list read was still out
+    /// survives the read's answer: the rows were fetched first, but the
+    /// meta is newer.
+    @Test func aRefreshKeepsTheMetaThatLandedWhileItRead() async throws {
+        try store.save(HubCredential(deviceId: "d1", credential: "secret"), for: "127.0.0.1:8477")
+        let local = hub(FakeLocator(address: "127.0.0.1:8477"))
+        let rows = Data(#"{"sessions":[{"key":"claude:a","title":"old","harness_title":"old"}]}"#.utf8)
+        HubStub.handler = { _ in (200, rows) }
+        await local.refreshKeys()
+        #expect(local.overlay["claude:a"]?.title == "old")
+
+        let reading = CountGate()
+        let release = DispatchSemaphore(value: 0)
+        HubStub.handler = { _ in
+            Task { await reading.bump() }
+            release.wait()
+            return (200, rows)
+        }
+        async let refresh: Void = local.refreshKeys()
+        #expect(await reading.reach(1))
+        local.noteMeta("claude:a", HubMetaReply(title: "new", harnessTitle: "old"))
+        release.signal()
+        await refresh
+        #expect(local.overlay["claude:a"]?.title == "new")
+    }
+
     @Test func aSessionRowDecodesAnOptionalModel() throws {
         let with = try HubWire.decoder.decode(HubSessionRow.self,
             from: Data(#"{"key": "claude:a", "model": "anthropic/claude-opus-4-5"}"#.utf8))
