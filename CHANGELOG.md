@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iPhone: the paired hubs move to an App Group and a shared Keychain
+  group.** The hub list now lives in `group.com.quiver.remote` and each
+  hub's credential in the `<team>.com.quiver.remote.shared` Keychain
+  group, so an app extension can read them. Groundwork for the share
+  sheet ([#1441](https://github.com/c-wenlong/quiver/issues/1441)) and
+  the widget ([#1442](https://github.com/c-wenlong/quiver/issues/1442)).
+  Existing pairings move on first launch: each credential is copied
+  into the shared group and the old item dropped only after the copy
+  is stored, and a copy that fails keeps reading the old item.
 - **Hub: per-device unread state for sessions.** `POST
   /v1/sessions/<key>/read` moves the calling device's last-read cursor
   (body `{at?}`, default now), and every row from `GET /v1/sessions` and

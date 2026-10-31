@@ -110,6 +110,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>iPhone: the paired hubs move to an App Group and a shared Keychain
+group.</strong> The hub list now lives in <code>group.com.quiver.remote</code> and each
+hub's credential in the <code>&lt;team&gt;.com.quiver.remote.shared</code> Keychain
+group, so an app extension can read them. Groundwork for the share
+sheet (<a href="https://github.com/c-wenlong/quiver/issues/1441">#1441</a>) and
+the widget (<a href="https://github.com/c-wenlong/quiver/issues/1442">#1442</a>).
+Existing pairings move on first launch: each credential is copied
+into the shared group and the old item dropped only after the copy
+is stored, and a copy that fails keeps reading the old item.</p>
+</li>
 <li><p><strong>Hub: per-device unread state for sessions.</strong> <code>POST /v1/sessions/&lt;key&gt;/read</code> moves the calling device's last-read cursor
 (body <code>{at?}</code>, default now), and every row from <code>GET /v1/sessions</code> and
 <code>GET /v1/app/sessions</code> carries <code>unread: true</code> when the session moved
