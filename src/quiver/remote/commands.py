@@ -376,14 +376,46 @@ def service_status(service: Service = HUB, home: Path | None = None,
     return systemd.status(home, run=run, unit=service.unit)
 
 
+def service_conflict(service: Service, home: Path | None = None) -> str | None:
+    """Why ``service`` must not be installed here, or None: the other
+    remote service (hub for the agent, agent for the hub) is installed.
+
+    Both run as this user, so they read the same ~/.quiver and share the
+    tail cursors under ``data/remote/cursors/``: each would skip
+    transcript lines the other already sent, to a different hub, and a
+    satellite would send its own hub's sessions back to it.
+    """
+    other = AGENT if service is HUB else HUB
+    path = service_file(other, home)
+    if not path.exists():
+        return None
+    if service is AGENT:
+        what = "this machine's hub is installed"
+        fix = ("Run the agent on another machine, or remove the hub first with "
+               "`swe remote serve --uninstall`.")
+    else:
+        what = "this machine's satellite agent is installed"
+        fix = ("Host the hub on another machine, or remove the agent first with "
+               "`swe remote agent --uninstall`.")
+    return (f"{what} ({path}) and keeps its state in the same {remote_dir_for(home)}, "
+            f"so the two would share its transcript cursors and each skip what the "
+            f"other already sent. {fix}")
+
+
 def install_service(program: list[str], log_path: Path, home: Path | None = None,
                     run=subprocess.run, service: Service = HUB) -> tuple[Path, str]:
     """Install and (re)start ``service`` as this platform's background
     service.
 
     Returns its file and a note to print ("" when none); raises
-    RuntimeError with the service manager's message.
+    RuntimeError with the service manager's message, or when the other
+    remote service is installed (``service_conflict``), so every install
+    path (``serve --install``, ``agent --install``, ``setup --apply``)
+    refuses both orders.
     """
+    conflict = service_conflict(service, home)
+    if conflict:
+        raise RuntimeError(conflict)
     path_env = os.environ.get("PATH", "")
     if sys.platform == "darwin":
         try:
@@ -865,24 +897,6 @@ def _agent_conf(flags: dict) -> dict | None:
     return conf
 
 
-def agent_install_refusal(home: Path | None = None) -> str | None:
-    """Why the satellite must not be installed here, or None.
-
-    The hub's service and the agent's both run as this user, so they
-    read the same ~/.quiver: the agent would share the hub's tail
-    cursors under ``data/remote/cursors/`` (each would skip what the
-    other already read) and send the hub's own sessions back to it as
-    a second machine.
-    """
-    hub = service_file(HUB, home)
-    if not hub.exists():
-        return None
-    return (f"this machine's hub is installed ({hub}) and keeps its state in the same "
-            f"{remote_dir_for(home)}, so an agent here would share its cursors and send "
-            "the hub's own sessions back to it twice. Run the agent on another machine, "
-            "or remove the hub first with `swe remote serve --uninstall`.")
-
-
 def agent_service_report(home: Path | None = None, run=subprocess.run) -> dict:
     """``swe remote agent --status --json``: is this machine a paired
     satellite, and is its background service installed and running."""
@@ -936,9 +950,19 @@ def _cmd_agent_service(flags: dict) -> int:
         return 1
     if flags.get("--uninstall"):
         return _cmd_uninstall_service(AGENT)
-    refusal = agent_install_refusal()
+    # Checked before pairing, so a refused install spends no token.
+    refusal = service_conflict(AGENT)
     if refusal:
         print(c("red", refusal), file=sys.stderr)
+        return 1
+    # A shell-started agent would run every command a second time beside
+    # the service's; the service's own agent is the one a reinstall
+    # restarts.
+    holder = agent_mod.lock_holder()
+    if holder is not None and not service_status(AGENT)[1]:
+        pid = f" (pid {holder})" if holder else ""
+        print(c("red", f"a swe remote agent started outside the service already runs "
+                       f"here{pid}; stop it, then run --install again"), file=sys.stderr)
         return 1
     if _agent_conf(flags) is None:
         return 1
@@ -977,6 +1001,14 @@ def _cmd_agent(flags: dict, json_view: bool = False) -> int:
         return emit(agent_service_report()) if rc == 0 else rc
     conf = _agent_conf(flags)
     if conf is None:
+        return 1
+    # One agent per ~/.quiver: two would each run every command the hub
+    # queues. Under launchd or systemd this exits and the service retries.
+    lock, holder = agent_mod.take_lock()
+    if lock is None:
+        pid = f" (pid {holder})" if holder else ""
+        print(c("red", f"{_stamp()}  another swe remote agent already runs here{pid}; "
+                       "stop it first"), file=sys.stderr, flush=True)
         return 1
     machine = catalog_mod.local_machine()
     print(

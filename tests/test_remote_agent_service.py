@@ -130,6 +130,66 @@ class AgentServiceTest(unittest.TestCase):
         self.assertEqual(ctl.calls, [])
         self.assertFalse(launchd.plist_path(self.home, launchd.AGENT_LABEL).exists())
 
+    def test_the_hub_install_is_refused_next_to_an_installed_agent(self):
+        self._pair()
+        ctl = FakeLaunchctl()
+        self._with(self._mac(ctl), ["agent", "--install"])
+        before = list(ctl.calls)
+        patches = self._mac(ctl) + [
+            patch.object(commands, "_probe", return_value=None),
+            patch.object(commands.launchd, "loaded_pid", return_value=(False, None)),
+            patch("quiver.remote.commands._tailscale_ip", return_value="100.1.2.3"),
+        ]
+        rc, _, err = self._with(patches, ["serve", "--install"])
+        self.assertEqual(rc, 1)
+        self.assertIn("this machine's satellite agent is installed", err)
+        self.assertIn("swe remote agent --uninstall", err)
+        self.assertEqual(ctl.calls, before, "the refused hub never reached launchctl")
+        self.assertFalse(launchd.plist_path(self.home).exists())
+        # setup --apply installs through the same path.
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands.launchd, "bundled_swe", return_value=SWE):
+            from quiver.remote import setup
+            err = setup.default_actions(self.home, run=ctl).install_hub("https://m.ts.net", 8477)
+        self.assertIn("satellite agent is installed", err)
+
+    def test_install_is_refused_while_a_shell_agent_runs(self):
+        self._pair()
+        lock, _ = agent_mod.take_lock(self.home)
+        self.addCleanup(lock.close)
+        ctl = FakeLaunchctl()
+        rc, _, err = self._with(self._mac(ctl), ["agent", "--install"])
+        self.assertEqual(rc, 1)
+        self.assertIn(f"already runs here (pid {os.getpid()})", err)
+        self.assertEqual([c[0] for c in ctl.calls], [], "no plist: nothing to ask launchd")
+
+    def test_reinstall_restarts_the_services_own_agent(self):
+        self._pair()
+        ctl = FakeLaunchctl()
+        self._with(self._mac(ctl), ["agent", "--install"])
+        lock, _ = agent_mod.take_lock(self.home)  # the service's agent
+        self.addCleanup(lock.close)
+        rc, _, err = self._with(self._mac(ctl), ["agent", "--install"])
+        self.assertEqual(rc, 0, err)
+
+    def test_a_second_foreground_agent_exits(self):
+        self._pair()
+        lock, _ = agent_mod.take_lock(self.home)
+        self.addCleanup(lock.close)
+        with patch.object(commands.agent_mod, "serve") as serve:
+            rc, _, err = self._run(["agent"])
+        self.assertEqual(rc, 1)
+        self.assertIn("another swe remote agent already runs here", err)
+        serve.assert_not_called()
+        lock.close()
+        self.assertIsNone(agent_mod.lock_holder(self.home))
+        with patch.object(commands.agent_mod, "serve", return_value=0) as serve, \
+             patch.object(commands.catalog_mod, "local_machine",
+                          return_value={"name": "m", "id": "i"}):
+            rc, _, _ = self._run(["agent"])
+        self.assertEqual(rc, 0)
+        serve.assert_called_once()
+
     def test_install_needs_a_paired_agent(self):
         ctl = FakeLaunchctl()
         rc, _, err = self._with(self._mac(ctl), ["agent", "--install"])

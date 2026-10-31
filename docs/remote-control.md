@@ -1332,11 +1332,21 @@ and `--status [--json]` shows whether this machine is paired, whether
 the service is installed and running, and whether the hub is installed.
 
 `--install` refuses on a machine whose own hub service is installed
-(the hub's plist or unit exists). Both services run as the same user,
-so they share `~/.quiver/data/remote/`: the agent would read and move
-the hub's tail cursors in `cursors/`, and send the hub's own sessions
-back to it as a second machine. The refusal names the hub's file and
-says to run the agent elsewhere or `swe remote serve --uninstall` first.
+(the hub's plist or unit exists), and the hub's install (`serve
+--install`, `setup --apply`) refuses the other way round: the check sits
+in `install_service`, which every install path goes through. Both
+services run as the same user, so they share `~/.quiver/data/remote/`:
+each would read and move the other's tail cursors in `cursors/`, and a
+satellite would send its own hub's sessions back to it. The refusal
+names the other service's file and says which `--uninstall` to run.
+
+Only one `swe remote agent` runs per `~/.quiver`: it holds an `flock`
+on `data/remote/agent.lock` (its pid inside) for its lifetime, and a
+second one exits at start, so the hub's commands never run twice. Under
+launchd or systemd that exit is retried, so the service takes over once
+a shell-started agent stops. `--install` refuses while an agent started
+outside the service holds the lock; the service's own agent is the one
+a reinstall restarts.
 `install-app.sh` restarts either agent when it runs the app's bundle.
 
 ## Satellite — `agent.py`

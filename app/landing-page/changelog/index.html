@@ -116,8 +116,11 @@ LaunchAgent on macOS (<code>com.cwenlong.quiver.remote-agent</code>) or a system
 user unit on Linux (<code>quiver-remote-agent.service</code>), separate from the
 hub's, so it starts at login or boot and restarts if it exits. It logs
 to <code>~/.quiver/data/remote/agent.log</code>, turns on lingering or says how,
-and refuses on a machine whose own hub is installed, since the two
-would share <code>data/remote/cursors/</code>. <code>--uninstall</code> removes it and
+and refuses on a machine whose own hub is installed (and the hub's
+install refuses next to an installed agent), since the two would share
+<code>data/remote/cursors/</code>. Only one agent runs per <code>~/.quiver</code>: a second
+one exits at start, and <code>--install</code> refuses while a shell-started
+agent runs. <code>--uninstall</code> removes it and
 <code>--status [--json]</code> shows it. <code>install-app.sh</code> now restarts the agent
 on a new bundle as it does the hub
 (<a href="https://github.com/c-wenlong/quiver/issues/1438">#1438</a>).</p>
