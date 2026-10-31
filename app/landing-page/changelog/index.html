@@ -110,6 +110,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Hub: switch the model of a headless Claude Code session.</strong> The
+<code>model</code> control op on a <code>headless</code> session records the pick on the
+session's supervised row, and the next <code>claude -p --resume</code> run takes
+it as <code>--model</code>, so the switch applies from the next turn. Claude Code
+rows now list <code>headless</code> in <code>model_modes</code>, so the iPhone's Model menu
+shows on them with no app change
+(<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>).</p>
+</li>
 <li><p><strong>Hub: switch the model of a Codex session attached through the
 app-server.</strong> The <code>model</code> control op on an <code>appserver</code> session
 records the pick on the session's supervised row, and the next

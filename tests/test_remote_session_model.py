@@ -264,7 +264,7 @@ class TestRows(unittest.TestCase):
         _key, row = catalog_mod.session_to_row(s, "done", "m", {}, None,
                                                "claude-opus-4-5")
         self.assertEqual(row["model"], "claude-opus-4-5")
-        self.assertEqual(row["model_modes"], ["tmux"])
+        self.assertEqual(row["model_modes"], ["tmux", "headless"])
 
     def test_unknown_model_is_left_out(self):
         _key, row = catalog_mod.session_to_row(

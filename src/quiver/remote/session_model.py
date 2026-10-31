@@ -305,6 +305,7 @@ def session_models(sessions: list[Session]) -> list[str]:
 # harness -> the API channel whose injector takes the ``model`` op
 # (``inject.switch_model``: the pick rides the channel's next turn).
 _API_MODEL_MODES = {
+    "claude": "headless",
     "codex": "appserver",
 }
 
