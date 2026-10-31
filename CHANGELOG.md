@@ -32,6 +32,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every row while the hub is down, keep the list as it was
   ([#970](https://github.com/c-wenlong/quiver/issues/970)).
 
+- **`swe init`: shared instructions, skills and hooks in extra accounts.**
+  Three switches in config.json, all off by default:
+  `accounts.sync.instructions`, `accounts.sync.skills` and
+  `accounts.sync.hooks` (`swe config set accounts.sync.skills true`).
+  With one on, `swe init` links that piece into every extra Claude and
+  Codex account home under `~/.quiver/accounts/<vendor>/<id>/home`, under
+  the same name the default home uses (`CLAUDE.md` or `AGENTS.md`,
+  `skills`, `hooks/<script>`). It only creates or repoints links there: a
+  file, folder or link the account already has in that place is reported
+  as a conflict and left alone, even with `--force`. Each link swe makes
+  is recorded in `data/account-links.json`, and switching a piece off
+  then running `swe init` removes only those links. `swe init --check`
+  previews both directions and `--json` adds `account_sync` and
+  `accounts`. `swe init --accounts` runs only this pass (with `--check`
+  and `--json`), never touching the default harness homes. Part of
+  [#888](https://github.com/c-wenlong/quiver/issues/888).
+
 - **Remote hub: optional owner auto-approve for pair requests.** Off by
   default. `swe remote devices --auto-approve=on|off` (or the new switch
   in the Mac app's Settings › Remote › Pending requests) saves it in

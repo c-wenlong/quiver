@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from quiver.console import c
@@ -14,6 +14,12 @@ from quiver.json_output import emit, take_json_flag
 from quiver.multiselect import Choice, _supported, multiselect
 from quiver.paths import backup_tree, hub_dirs_for
 from quiver.prompt import read_line
+from quiver.init.accounts import (
+    AccountRow,
+    AccountSyncUnavailable,
+    sync_accounts,
+    sync_flags,
+)
 from quiver.init.hooks import load_registry, plan_hooks
 from quiver.init.manage import (
     _valid_filename,
@@ -53,6 +59,8 @@ STATE_COLOR = {
     "blocked": "red",
     "skipped": "dim",
     "ignored": "dim",
+    "unlink": "yellow",
+    "unlinked": "yellow",
 }
 
 
@@ -118,7 +126,7 @@ _LINKED_RESULTS = frozenset({"linked", "would-create", "would-relink", "would-ab
 # Order the per-section tallies read in: settled first, then work to do.
 _TALLY_ORDER = (
     "linked", "create", "relink", "absorb", "keep", "protected",
-    "conflict", "blocked", "skipped", "ignored",
+    "conflict", "blocked", "unlink", "unlinked", "skipped", "ignored",
 )
 
 
@@ -319,6 +327,12 @@ class InitRun:
     inst_rows: list[tuple[LinkStatus, str]]
     skill_rows: list[tuple[LinkStatus, str]]
     hook_rows: list[tuple[LinkStatus, str]]
+    # Targets in Quiver's extra account homes (accounts.sync.*), kept apart
+    # from the rows above: --force never applies to them, so nothing that
+    # offers "replace the blocked paths" may count them.
+    account_rows: list[AccountRow] = field(default_factory=list)
+    # Why the account pass did not run (an unreadable file), if it didn't.
+    account_notes: list[str] = field(default_factory=list)
 
     def rows_json(self) -> list[dict]:
         """Every path with its result, for `swe setup --apply --json`."""
@@ -449,7 +463,11 @@ def run_init(home: Path, *, check_only: bool = False, force: bool = False,
         ]
         skill_rows = [(s, _apply(s, skills_dir(home), home, force)) for s in skills]
         hook_rows = [(s, _apply(s, s.source, home, force)) for s in hooks]
-    return InitRun(scaffold, instructions, skills, inst_rows, skill_rows, hook_rows)
+    account_rows, account_notes = sync_accounts(
+        home, patterns, registry, check_only=check_only)
+    scaffold.extend(account_notes)
+    return InitRun(scaffold, instructions, skills, inst_rows, skill_rows, hook_rows,
+                   account_rows, account_notes)
 
 
 def check_document(home: Path, run: InitRun | None = None) -> dict:
@@ -459,10 +477,17 @@ def check_document(home: Path, run: InitRun | None = None) -> dict:
     LinkIgnoreError when ~/.quiver/.linkignore can't be read."""
     if run is None:
         run = run_init(home, check_only=True, quiet=True)
+    try:
+        flags = sync_flags(home)
+    except AccountSyncUnavailable:
+        flags = None
     return {
         "agents_file": str(agents_file(home)),
         "agents_file_exists": agents_file(home).exists(),
         "harnesses": _link_json(run.instructions, run.skills),
+        "account_sync": flags,
+        "accounts": [row.to_json() for row in run.account_rows],
+        "account_notes": run.account_notes,
     }
 
 
@@ -531,6 +556,37 @@ def _register_hub_marketplaces(home: Path) -> None:
     print()
 
 
+def _cmd_init_accounts(home: Path, check_only: bool, json_view: bool) -> int:
+    """`swe init --accounts`: only the account-home pass, nothing else.
+
+    What the app runs when a sync switch flips: it never touches the
+    default harness homes, never prompts, and --json works for a real run
+    too since there is nothing to ask. Exits 1 when the pass could not run.
+    """
+    out = sys.stderr if json_view else sys.stdout
+    try:
+        patterns = load_linkignore(home)
+        registry = load_registry(home)
+        flags = sync_flags(home)
+    except (LinkIgnoreError, AccountSyncUnavailable, ValueError) as exc:
+        print(str(exc), file=out)
+        return 1
+    rows, notes = sync_accounts(home, patterns, registry, check_only=check_only)
+    if json_view:
+        emit({"account_sync": flags, "accounts": [row.to_json() for row in rows],
+              "notes": notes})
+        return 1 if notes else 0
+    for note in notes:
+        print(c("red", f"  {note}"))
+    pairs = [(row.status, row.result) for row in rows]
+    if pairs:
+        _print_section("Accounts", pairs, home)
+        print()
+    elif not notes:
+        print(c("dim", "  No account sync switched on, nothing to do."))
+    return 1 if notes else 0
+
+
 def cmd_init(args) -> int:
     args = list(args or [])
     if args and args[0] in ("-h", "--help", "help"):
@@ -553,8 +609,9 @@ def cmd_init(args) -> int:
     migrate = "--migrate" in args
     full = "--full" in args
     yes = "--yes" in args
+    accounts_only = "--accounts" in args
 
-    known = ("--check", "-n", "--force", "--migrate", "--full", "--yes")
+    known = ("--check", "-n", "--force", "--migrate", "--full", "--yes", "--accounts")
     unknown = [a for a in args if a not in known]
     if unknown:
         if json_view:
@@ -563,6 +620,12 @@ def cmd_init(args) -> int:
         print(f"Unknown option: {unknown[0]}")
         print_init_help()
         return 1
+    if accounts_only:
+        if hub_url is not None or force or migrate or yes:
+            print("--accounts only takes --check and --json",
+                  file=sys.stderr if json_view else sys.stdout)
+            return 1
+        return _cmd_init_accounts(Path.home(), check_only, json_view)
     if json_view and not check_only:
         # A run that links things also prompts and prints progress. --json
         # promises one document and no writes, which only the preview keeps.
@@ -603,6 +666,7 @@ def cmd_init(args) -> int:
     scaffold = result.scaffold
     instructions, skills = result.instructions, result.skills
     inst_rows, skill_rows, hook_rows = result.inst_rows, result.skill_rows, result.hook_rows
+    acct_rows = [(row.status, row.result) for row in result.account_rows]
 
     if json_view:
         # Link state is data here, not a verdict: exit 0 even when a path
@@ -619,10 +683,13 @@ def cmd_init(args) -> int:
         _print_section("Instructions", inst_rows, home)
         _print_section("Skills", skill_rows, home)
         _print_section("Hooks", hook_rows, home)
+        if acct_rows:
+            _print_section("Accounts", acct_rows, home)
     else:
-        _print_summary(
-            [("Instructions", inst_rows), ("Skills", skill_rows), ("Hooks", hook_rows)]
-        )
+        sections = [("Instructions", inst_rows), ("Skills", skill_rows), ("Hooks", hook_rows)]
+        if acct_rows:
+            sections.append(("Accounts", acct_rows))
+        _print_summary(sections)
 
     everything = inst_rows + skill_rows + hook_rows
     blocked = [(s_, r) for s_, r in everything if r in ("blocked", "would-conflict")]
@@ -645,6 +712,10 @@ def cmd_init(args) -> int:
     if blocked and not full:
         _print_paths("Blocked, a real file or directory is in the way:", blocked, home)
         print()
+    acct_conflicts = [(s_, r) for s_, r in acct_rows if r == "conflict"]
+    if acct_conflicts:
+        _print_paths("Not synced, the account already has its own:", acct_conflicts, home)
+        print(f"  {c('dim', 'Move it aside, then run swe init again. --force never replaces these.')}\n")
     if not full:
         print(f"  {c('dim', 'swe init --full lists every path.')}\n")
     if hub_url is not None:
@@ -666,6 +737,7 @@ def print_init_help() -> None:
   {c('cyan', 'swe init --force')}    Replace real files too (backed up first)
   {c('cyan', 'swe init --migrate')}  Move a pre-0.2.7 ~/.config/swe into ~/.quiver
   {c('cyan', 'swe init --yes')}      Register every new skills folder without asking
+  {c('cyan', 'swe init --accounts')} Only sync the extra account homes (see Accounts)
 
   {c('bold', 'New harnesses')}
     Known harnesses are linked from their own footprint — a config dir
@@ -690,6 +762,17 @@ def print_init_help() -> None:
     ~/.quiver/.linkignore  paths to leave alone, one gitignore-style pattern
                            per line (.agents/skills, .agents, .config/*/AGENTS.md)
     ~/.quiver/backups/     anything replaced, timestamped
+
+  {c('bold', 'Accounts')}
+    Extra Claude and Codex accounts (~/.quiver/accounts/<vendor>/<id>/home)
+    get none of this until you switch it on, one switch per kind:
+      swe config set accounts.sync.instructions true
+      swe config set accounts.sync.skills true
+      swe config set accounts.sync.hooks true
+    then run swe init (or swe init --accounts, which does only this).
+    Set one back to false and run it again to remove only the links swe
+    made there. Anything the account already has in
+    that place is reported and left alone, even with --force.
 
   {c('bold', 'States')}
     {c('green', 'linked')}      already points at the canonical file

@@ -417,6 +417,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--migrate", "Move a pre-0.2.7 ~/.config/swe into ~/.quiver"),
         ("--hub=", "Clone your hub repo as ~/.quiver first"),
         ("--yes", "Register every new harness without asking"),
+        ("--accounts", "Only sync the extra account homes (accounts.sync.*)"),
     ],
     "setup": [
         ("--quick", "Only missing or actionable stages"),

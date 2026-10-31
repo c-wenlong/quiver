@@ -560,6 +560,8 @@ to use their own login state and environment."""
                                (also the non-terminal default)
   {c('cyan', 'swe init --hub=<git url>')}     Clone your hub repo as ~/.quiver first, then link
                                (only while ~/.quiver has no hub: no AGENTS.md, no .git)
+  {c('cyan', 'swe init --accounts')}         Only sync the extra account homes the
+                               accounts.sync.* switches name (takes --check, --json)
 
   {c('dim', 'Collision: -n means dry-run here and on swe install, but fetch-fresh-data on swe list.')}
 
