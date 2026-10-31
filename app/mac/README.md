@@ -37,7 +37,38 @@ quits the installed Quiver, swaps the new bundle in and relaunches it. It
 never builds the checkout's current branch, so sessions working on other
 branches can't leave a half-finished app installed. A failed build changes
 nothing. `QUIVER_INSTALL_REF` builds another ref and `QUIVER_INSTALL_DIR`
-installs somewhere else.
+installs somewhere else. It holds a `caffeinate -i` power assertion while
+it runs, so the Mac doesn't idle to sleep mid-build. That covers sleep
+only: to keep a build going after an SSH disconnect, start it under
+`nohup` or in `tmux`.
+
+## Set up a new Mac
+
+```bash
+app/mac/script/setup-machine.sh --dry-run   # print the plan, change nothing
+app/mac/script/setup-machine.sh             # run it
+```
+
+Run it from the checkout you want to work in. Each step can run again
+safely and says what it did; `--only=xcode,checkout` runs a subset.
+
+1. **xcode**: checks that `xcode-select` points into an Xcode.app with
+   SwiftUI's macro plugin. Command Line Tools alone fail the build minutes
+   in, so it stops early and prints the `sudo xcode-select -s` line to run.
+2. **checkout**: fetches and puts the checkout on `main` at `origin/main`.
+   It never deletes a branch or discards work. A local `main` that has
+   commits `origin/main` lacks is renamed to `main-stale-<date>`, a current
+   branch with no history in common with `origin/main` gets the same kind
+   of name, and a branch that shares history keeps its name. With
+   uncommitted or untracked files, or a merge or rebase in progress, it
+   stops and changes nothing.
+3. **install**: runs `install-app.sh`, unless the installed app is already
+   `origin/main`.
+4. **hub**: runs `swe remote serve --install` (with the app's bundled
+   `swe`), unless the hub's LaunchAgent is already loaded.
+5. **app**: reports which Quiver is running. It quits this checkout's own
+   `app/mac/build` dev copy, leaves other builds alone, and opens the
+   installed app.
 
 ## Package a DMG
 
@@ -68,6 +99,7 @@ BOOTSTRAP.md lists where the credentials live.
 | `Sources/QuiverWidgets` | The WidgetKit extension: usage limits, usage summary, activity heatmap, top models |
 | `Tests/QuiverCoreTests` | Swift Testing suites; `Fixtures/` holds real `swe --json` output |
 | `script/install-app.sh` | Builds `origin/main` and installs it as `~/Applications/Quiver.app` |
+| `script/setup-machine.sh` | Sets up a new dev Mac: Xcode check, checkout onto `origin/main`, install, hub, running app |
 | `script/bundle-swe.sh` | Puts `swe` and its own Python into the bundle; `build-app.sh` runs it and signs the Python binaries |
 | `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both (Developer ID on `QUIVER_CHANNEL=prod`, Apple Development otherwise, else ad-hoc) |
 | `script/make-dmg.sh` | Packages a built Quiver.app into a DMG with a laid-out install window (app, arrow, /Applications link), signing, notarizing and stapling when `QUIVER_NOTARY_PROFILE` or the `NOTARY_*` key are set |
