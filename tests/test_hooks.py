@@ -641,6 +641,58 @@ class DropScriptDeclarationsTest(unittest.TestCase):
                 drop_script_declarations(path, ["gone.py"], {}, "claude", home)
             self.assertEqual(path.read_text(), before)
 
+    def test_unusable_calls_are_errors_not_writes(self):
+        from quiver.hooks.settings import drop_script_declarations
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            path = _settings(home, ".claude/settings.json", {
+                "Stop": [{"hooks": [{"command": "gone.py"}]}]})
+            with self.assertRaises(ValueError):
+                drop_script_declarations(path, [], {}, "claude", home)
+            (home / ".claude" / "settings.json").unlink()
+            with self.assertRaises(ValueError):
+                drop_script_declarations(path, ["gone.py"], {}, "claude", home)
+            path.write_text(json.dumps({"other": 1}))
+            with self.assertRaises(ValueError):
+                drop_script_declarations(path, ["gone.py"], {}, "claude", home)
+
+    def test_malformed_events_and_entries_are_left_alone(self):
+        from quiver.hooks.settings import drop_script_declarations
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            path = _settings(home, ".claude/settings.json", {
+                "Stop": "not-a-list",
+                "SessionStart": [{"matcher": "x"},
+                                 {"hooks": [{"type": "command"},
+                                            {"command": "gone.py"}]}],
+            })
+            removed = drop_script_declarations(
+                path, ["gone.py"], {}, "claude", home)
+            self.assertEqual(removed, 1)
+            hooks = json.loads(path.read_text())["hooks"]
+            self.assertEqual(hooks["Stop"], "not-a-list")
+            self.assertEqual(hooks["SessionStart"], [
+                {"matcher": "x"}, {"hooks": [{"type": "command"}]}])
+
+    def test_a_flat_schema_drops_the_emptied_event(self):
+        from quiver.hooks.settings import drop_script_declarations
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = _home(tmp)
+            path = home / ".cursor" / "hooks.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps({
+                "version": 1,
+                "hooks": {"sessionStart": "junk",
+                          "stop": [{"command": "gone.py"}]}}))
+            removed = drop_script_declarations(
+                path, ["gone.py"], {}, "cursor", home)
+            self.assertEqual(removed, 1)
+            self.assertEqual(json.loads(path.read_text())["hooks"],
+                             {"sessionStart": "junk"})
+
 
 class DoctorWiringTest(unittest.TestCase):
     def test_findings_arrive_as_doctor_findings(self):

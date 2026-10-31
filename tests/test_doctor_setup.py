@@ -212,6 +212,57 @@ class SetupFindingsTest(unittest.TestCase):
         self.assertIn("nus", json.loads(real.read_text())["extraKnownMarketplaces"])
         self.assertEqual(json.loads(known.read_text()), {})
 
+    def test_an_unreadable_file_is_reported_and_the_other_still_drops(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+
+        settings = self._declare(["nus"])
+        settings.write_text("{corrupt")
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        known = plugins / "known_marketplaces.json"
+        known.write_text(json.dumps({
+            "added": {"source": {"source": "directory",
+                                 "path": str(self.home / "gone" / "added")}}}))
+        error = drop_marketplace_entries(self.home, ["nus"], ["added"])
+        self.assertIn("could not read", error)
+        self.assertEqual(json.loads(known.read_text()), {})
+
+    def test_a_non_object_and_a_missing_map_are_reported(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+
+        settings = self._declare(["nus"])
+        settings.write_text(json.dumps(["nus"]))
+        error = drop_marketplace_entries(self.home, ["nus"], [])
+        self.assertIn("not a JSON object", error)
+        settings.write_text(json.dumps({"other": {}}))
+        error = drop_marketplace_entries(self.home, ["nus"], [])
+        self.assertIn("has no extraKnownMarketplaces map", error)
+
+    def test_a_missing_name_is_silent_a_missing_file_reports(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+
+        self._declare(["nus"])
+        plugins = self.home / ".claude" / "plugins"
+        plugins.mkdir()
+        (plugins / "known_marketplaces.json").write_text(json.dumps({}))
+        self.assertIsNone(
+            drop_marketplace_entries(self.home, ["ghost"], ["ghost"]))
+        (self.home / ".claude" / "settings.json").unlink()
+        error = drop_marketplace_entries(self.home, ["nus"], [])
+        self.assertIn("could not read", error)
+
+    def test_a_file_changed_under_the_read_is_reported(self):
+        from quiver.harness.doctor import drop_marketplace_entries
+
+        self._declare(["nus"])
+        with mock.patch("quiver.hooks.settings._unchanged",
+                        side_effect=ValueError("changed")):
+            error = drop_marketplace_entries(self.home, ["nus"], [])
+        self.assertIn("changed", error)
+        self.assertIn("nus", json.loads(
+            (self.home / ".claude" / "settings.json")
+            .read_text())["extraKnownMarketplaces"])
+
     def test_a_nix_managed_settings_file_says_so(self):
         settings = self._declare(["nus"])
         registry = {"claude": {"command": "claude"}}

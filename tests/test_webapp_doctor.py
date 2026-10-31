@@ -220,6 +220,33 @@ class TestRun(_TempHome, unittest.TestCase):
         self.assertNotIn("setup.marketplace-missing",
                          self.checks(reply["report"]))
 
+    def test_a_busy_plugin_write_defers_the_drop(self):
+        self.seed({"claude": {"command": "claude"}})
+        from quiver.webapp.pages import plugins
+        plugins._WRITE_LOCK.acquire()
+        try:
+            busy = doctor_page._run_undeclare(
+                self.home, "claude", ["gone.py"], ["/x"])
+            self.assertIn("still running", busy)
+            busy = doctor_page._run_marketplace_drop(
+                self.home, ["x"], ["y"])
+            self.assertIn("still running", busy)
+        finally:
+            plugins._WRITE_LOCK.release()
+
+    def test_undeclare_joins_per_file_errors(self):
+        self.seed({"claude": {"command": "claude"}})
+        claude = self.home / ".claude"
+        claude.mkdir()
+        real = self.home / "real-settings.json"
+        real.write_text(json.dumps({"hooks": {"Stop": [
+            {"hooks": [{"command": "gone.py"}]}]}}))
+        link = claude / "settings.json"
+        link.symlink_to(real)
+        error = doctor_page._run_undeclare(
+            self.home, "claude", ["gone.py"], [str(link)])
+        self.assertIn("managed elsewhere", error)
+
     def test_a_remedy_without_its_fields_is_refused(self):
         report = DoctorReport([DoctorFinding(
             "x", "warning", "m", "fix it",
