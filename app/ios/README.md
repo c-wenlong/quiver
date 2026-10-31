@@ -48,8 +48,13 @@ server: pairing another hub (Pair another hub in the hub menu, or a
 scanned code) adds it instead of replacing the first, and the hub menu
 at the top right of Sessions switches between them. Unpair drops only
 the hub on screen, and asks that hub to sign this phone out (its
-device row and console key go too) when it can be reached. Each hub's credential is its own Keychain item; the
-addresses, names and the hub on screen are in UserDefaults. A phone
+device row and console key go too) when it can be reached. Each hub's credential is its own Keychain item, in the
+shared access group `<team>.com.quiver.remote.shared`; the addresses,
+names and the hub on screen are in the App Group
+`group.com.quiver.remote`'s defaults. Extensions (the share sheet, the
+widget) read the paired hubs from there. A phone paired before the
+groups keeps its hubs: the first launch copies each into the groups
+and drops the old copy only once the new one is stored. A phone
 paired before this keeps its hub: the app moves the old single pairing
 into the list on first launch, and a phone paired under the old webview
 shell keeps its pairing the same way.
@@ -117,7 +122,13 @@ the scoped ATS exceptions for a plain-HTTP hub on the tailnet
 what covers Tailscale CGNAT addresses — plus an `NSExceptionDomains`
 entry for `*.ts.net` MagicDNS names; arbitrary domains still get full
 ATS),
-the camera prompt for the QR scanner, iOS 17+, and `DEVELOPMENT_TEAM`.
+the camera prompt for the QR scanner, iOS 17+, `DEVELOPMENT_TEAM`, and
+the entitlements for the App Group and the shared Keychain group. The
+Keychain group is written as `$(AppIdentifierPrefix)com.quiver.remote.shared`
+(in the entitlements and in Info.plist's `QuiverKeychainGroup`), so the
+signing team fills it in. Automatic signing registers both groups on
+the team's App ID the first time a device build runs with
+`-allowProvisioningUpdates`.
 The icon is the Mac app's dark icon (`app/mac/Icons/AppIcon-dark.png`) at 1024.
 
 On-device launch needs Developer Mode (Settings, Privacy and Security,
