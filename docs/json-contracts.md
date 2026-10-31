@@ -113,6 +113,28 @@ replays the journal.
 | `GET /v1/app/tasks` | the web app's Tasks: the `GET /v1/tasks` answer verbatim — `{tasks: [TaskRow], repos?, github, linear, notion, env_blocked?, machine, machine_id, fetched_at?}` — plus two joins on each `TaskRow`: `session_rows`, its linked session keys joined to catalog rows trimmed to `{key, id?, harness, agent, title, status, cwd, machine, machine_id, remote, ownership, attachable, last_active_at, trivial}` (`{"key", "gone": true}` for a key the catalog lost; a remote row's `machine` is its name from `machines.json`), and `launch_rows`, its linked launch ids joined to live launch views `{id, state: pending\|started\|failed\|untracked, harness, note, key, cwd, machine}` (a launch the hub forgot is left off). `?refresh=1` bypasses the cache as on `/v1/tasks`; `?harnesses=1` answers only `{harnesses: [{name, display_name, tracked, launch_model, launch_effort, launch_yolo, last_model, recent_models}], machine}` (`launch_model`/`launch_effort`/`launch_yolo`: the launch takes that pick or switch; `recent_models`: the harness's recently used models, newest first, at most 5; `last_model`: its head, "" when none) — `catalog.launchable_harnesses`. Built by `webapp/pages/tasks.py`; see docs/web-app/tasks.md |
 | `GET /v1/app/<page>` · `POST /v1/app/<page>/<action>` | a web app page plugin (`quiver/webapp/pages/<page>.py`); each payload is documented in `docs/web-app/<page>.md`. `404` for an unknown page or action, `403 bad_origin` on a cross-site POST, `503 page_unavailable` when the page can't read its source |
 
+`message.delta` is live text for a reply still being written (Codex
+app-server, opencode serve and headless Claude sessions only; a tmux
+session never streams). The envelope has no `seq` and its SSE frame no
+`id:` line: deltas are never journaled, never replayed, and must not
+move a client's resume cursor. `data` is `{id, kind, text, seq, done}`:
+
+| Field | Meaning |
+|---|---|
+| `id` | the channel's id for the streamed message (Codex item id, opencode part id, `<Claude API message id>:<block index>`); one bubble per id |
+| `kind` | the RemoteMessage kind it will become; `assistant` for now |
+| `text` | the cleaned, redacted text appended since this id's last delta (concatenate in `seq` order) |
+| `seq` | this id's delta count, from 1; a gap means one was dropped, so stop drawing that bubble and wait for the final message |
+| `done` | true on the id's last delta |
+
+The source machine coalesces: at most one delta per id every 100 ms,
+plus the `done` one. The final `message.appended` stays the record and
+replaces the bubble. The transcript does not carry the channel's id, so
+a client matches by order: the next `message.appended` of the same
+`kind` in the session replaces the oldest open bubble of that kind, and
+later deltas for a replaced id are dropped. A client that does not know
+`message.delta` ignores it and sees no change.
+
 `message.appended.data` is a RemoteMessage: `{kind: user|assistant|
 thinking|tool_use|tool_result|compaction|system|approval|error, text,
 ts, tool: {name, call_id, args_summary, args_full}?, result_ref?,
