@@ -314,7 +314,27 @@ RemoteMessage:
   text                          # markdown for user/assistant
   tool:  {name, call_id, args_summary, args_full}
   result_ref                    # tool_result → tool_use call_id
+  duration_s                    # thinking only, when known
 ```
+
+`duration_s` ("Thought for 12s") is measured, not guessed. Claude Code
+and Codex write each content block as its own timestamped record the
+moment the block finishes, so a thinking record's timestamp is when the
+thinking ended and the record before it (the prompt, a tool result,
+Claude's `api-request`) is when it began. `JsonlTailSource` keeps that
+previous timestamp (`since`, saved in the cursor so a hub restart
+between the two still times it) and `stamp_thinking` sets the gap on a
+record that decodes to thinking alone. Records that belong to the
+thinking are not a start: Claude Code's empty thinking record written
+just before the full one, and Codex's `agent_reasoning` and
+`item_completed` Reasoning events. The gap to the *next* record would
+time the reply after the thinking, not the thinking. Because the start
+is always read before the thinking record, the value goes out on the
+first `message.appended` and nothing is patched later. A record mixing
+thinking with text (one record per reply) and the first record after a
+backfill start carry no duration. opencode parts and 2.x content blocks
+carry their own `time` span, which is used as is. Every other harness
+writes a whole reply as one record, so it sends none.
 
 `_redact_secrets` runs before anything leaves the process — prompt text
 is user-originated, transcript text is not.

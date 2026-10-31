@@ -110,6 +110,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Hub: thinking messages carry how long the model thought.</strong>
+<code>kind: &quot;thinking&quot;</code> messages from Claude Code, Codex and opencode now
+carry <code>duration_s</code>, so the clients can show &quot;Thought for 12s&quot;. Claude
+Code and Codex time it from the record before the thinking record to
+the thinking record; opencode from its own reasoning <code>time</code> span.
+Other harnesses, and records with no usable timestamps, leave it out
+(<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
+</li>
 <li><p><strong>Hub: switch the model of an opencode session attached through
 <code>opencode serve</code>.</strong> The <code>model</code> control op on a <code>serve</code> session
 records a <code>provider/model</code> pick on the session's supervised row, and
