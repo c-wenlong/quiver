@@ -16,9 +16,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from quiver import paths
+from quiver.paths import home_relative as _short
 from quiver.console import sanitize
 from quiver.find.entries import Entry
 from quiver.find.plugins import Plugin, discover_plugins, filter_plugins
+from quiver.find.summary import plural as _plural
 from quiver.find.tree import (
     SCOPE_GLOBAL,
     SCOPE_LOCAL,
@@ -212,14 +214,6 @@ def _normalise(scope: str) -> str:
     return scope if scope in SCOPES else SCOPE_DEFAULT
 
 
-def _short(path: Path, home: Path) -> str:
-    """The ~/ form of a path, which is how every other view names one."""
-    try:
-        return "~/" + str(path.relative_to(home))
-    except ValueError:
-        return str(path)
-
-
 def _is_dir(path: Path | None) -> bool:
     if path is None:
         return False
@@ -243,11 +237,6 @@ def _in_scope(path: Path, scope: str, home: Path) -> bool:
     if scope == SCOPE_ALL:
         return True
     return scope_of(path, home) == scope
-
-
-def _plural(n: int, word: str) -> str:
-    suffix = "" if n == 1 else "s"
-    return f"{n} {word}{suffix}"
 
 
 def _by_path(node: Node) -> tuple:

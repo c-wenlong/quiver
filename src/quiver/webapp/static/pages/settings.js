@@ -161,6 +161,15 @@ function onSettingsPage() {
   return currentRoute() === "settings";
 }
 
+/* Masks every key value the eye revealed; bumping revealGen drops a
+ * reveal still on its way. A visit, a reload of the keys, and leaving
+ * the Providers keys view for another section or tab all do this, so a
+ * value never comes back in plain text on the way back. */
+function settingsForgetRevealed() {
+  settingsPage.revealed = new Map();
+  settingsPage.revealGen++;
+}
+
 async function renderSettings() {
   const gen = routeGen;
   const p = settingsPage;
@@ -170,8 +179,7 @@ async function renderSettings() {
   p.ticket = null;
   p.confirming = null;
   p.setupStale = true;
-  p.revealed = new Map();
-  p.revealGen++;
+  settingsForgetRevealed();
   p.keyEditor = null;
   if (p.data) paintSettings();
   else {
@@ -443,7 +451,7 @@ function settingsCatalogSheet() {
   const cell = (c) => {
     const file = PROVIDER_LOGOS[c.id];
     const logo = file
-      ? `<img class="set-cat-logo${file.endsWith("-color.svg") ? "" : " mono"}" src="/app/${file}" alt="">`
+      ? `<img class="set-cat-logo${file.endsWith("-color.svg") ? "" : " mono"}" src="/${file}" alt="">`
       : `<span class="set-cat-logo set-cat-mono" aria-hidden="true">${esc(c.name.slice(0, 1))}</span>`;
     return `<button class="set-cat-cell" data-cat-pick="${esc(c.id)}" title="Add ${esc(c.name)}'s key">
       ${logo}<span class="set-cat-name">${esc(c.name)}${c.has_key ? ' <span class="badge">Set</span>' : ""}</span>
@@ -608,9 +616,9 @@ function remoteCards() {
       ${p.pairError ? `<span class="caption set-danger">${esc(p.pairError)}</span>` : ""}
     </div>`;
   // The hub owner's own tailnet device gets in without pairing, so it
-  // has no row here and nothing of its own to revoke.
+  // has no row here: it is listed under "Signed in through Tailscale".
   const viaTailnet = r.caller && r.caller.kind === "tailnet"
-    ? `<p class="caption set-caller">This browser is signed in through Tailscale as the hub's owner, so it isn't a paired device: it isn't listed here and has nothing to revoke.</p>`
+    ? `<p class="caption set-caller">This browser is signed in through Tailscale as the hub's owner, so it isn't a paired device. It's listed under Signed in through Tailscale.</p>`
     : "";
   // The Mac folds the list after two rows; the Pair row sits under it.
   const shown = p.showsAllDevices ? live : live.slice(0, 2);
@@ -624,7 +632,12 @@ function remoteCards() {
   // show: the old /#approve page's rows, now inline here.
   const requests = (r.requests || []).length ? setCard(
     r.requests.map(requestRow), "Waiting for approval") : "";
-  return `<div class="set-stack">${setupCard()}${hub}${devices}${requests}</div>${pairSheet()}`;
+  // The owner's own tailnet devices, let in without pairing: revoking a
+  // lost one here is the only way to stop it short of the Tailscale
+  // admin console.
+  const signins = (r.signins || []).filter((x) => !x.revoked);
+  const tailnet = signins.length ? setCard(signins.map(signinRow), "Signed in through Tailscale") : "";
+  return `<div class="set-stack">${setupCard()}${hub}${devices}${tailnet}${requests}</div>${pairSheet()}`;
 }
 
 /* `swe remote setup`'s steps, while any is left: each with its state and
@@ -743,6 +756,31 @@ function deviceRow(dev) {
   return setRow(name, bits.join(" · "),
     `<button class="set-button" data-act="revoke" title="Sign this device out of the hub"${busy ? " disabled" : ""}>Revoke</button>`,
     { titleHtml: title, warning: p.revokeErrors[dev.id] || null, danger: true, attrs });
+}
+
+function signinRow(s) {
+  const p = settingsPage;
+  const name = s.node_name || "Tailscale device";
+  const bits = ["your Tailscale login"];
+  if (s.last_seen_at) bits.push(`seen ${Fmt.relative(s.last_seen_at)}`);
+  bits.push(s.id);
+  const title = `${esc(name)}${s.this_device ? ' <span class="badge set-this">This device</span>' : ""}`;
+  const busy = p.revoking.has(s.id);
+  const attrs = ` data-device="${esc(s.id)}"`;
+  if (p.confirming === s.id) {
+    const what = s.this_device
+      ? "This is the browser you're using. Revoking stops this device getting in through Tailscale, so every page here stops working until you pair it with a new code."
+      : `Sign ${name} out of the hub? It stops getting in through Tailscale at once, and any device paired from it is signed out too. Pairing it again brings it back.`;
+    return `<div class="set-row set-confirm"${attrs}>
+      <div class="set-text"><div class="set-title">${title}</div><div class="set-detail">${esc(what)}</div></div>
+      <div class="set-control">
+        <button class="set-button" data-act="cancel"${busy ? " disabled" : ""}>Cancel</button>
+        <button class="set-button danger" data-act="revoke-confirm"${busy ? " disabled" : ""}>${busy ? "Revoking…" : s.this_device ? "Revoke this browser" : "Revoke"}</button>
+      </div></div>`;
+  }
+  return setRow(name, bits.join(" · "),
+    `<button class="set-button" data-act="revoke" title="Stop this device getting in through Tailscale"${busy ? " disabled" : ""}>Revoke</button>`,
+    { titleHtml: title, warning: p.revokeErrors[s.id] || null, danger: true, attrs });
 }
 
 function pairSheet() {
@@ -933,6 +971,7 @@ function bindSettings(section) {
   for (const btn of panel.querySelectorAll("[data-section]")) {
     btn.onclick = () => {
       settingsWrite(SETTINGS_KEYS.section, btn.dataset.section);
+      settingsForgetRevealed();
       // A ?section= link picked the first one; a click wins from here on.
       if (location.hash.includes("?")) history.replaceState(null, "", "#/settings");
       paintSettings();
@@ -986,19 +1025,22 @@ function bindSettings(section) {
     };
   }
   for (const btn of panel.querySelectorAll("[data-providers-tab]")) {
-    btn.onclick = () => { settingsWrite(SETTINGS_KEYS.providersTab, btn.dataset.providersTab); paintSettings(); };
+    btn.onclick = () => {
+      settingsWrite(SETTINGS_KEYS.providersTab, btn.dataset.providersTab);
+      settingsForgetRevealed();
+      paintSettings();
+    };
   }
   const status = document.getElementById("set-key-status");
   if (status) status.onchange = () => { settingsPage.status = status.value; paintSettings(); };
   const search = document.getElementById("set-key-search");
   if (search) {
-    search.oninput = () => {
-      settingsPage.query = search.value;
+    bindSearch(search, (text) => { settingsPage.query = text; }, () => {
       const caret = search.selectionStart;
       paintSettings();
       const again = document.getElementById("set-key-search");
       if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch { /* not text */ } }
-    };
+    });
   }
   if (section === "integrations") bindRemote();
   bindKeys();
@@ -1022,13 +1064,12 @@ function bindKeys() {
     if (!catSheet.open) catSheet.showModal();
     catSheet.oncancel = (ev) => { ev.preventDefault(); p.catalog = false; settingsKeyRepaint("#set-key-catalog"); };
     const catSearch = document.getElementById("set-cat-search");
-    catSearch.oninput = () => {
-      p.catalogQuery = catSearch.value;
+    bindSearch(catSearch, (text) => { p.catalogQuery = text; }, () => {
       const caret = catSearch.selectionStart;
       settingsKeyRepaint("#set-cat-search");
       const again = document.getElementById("set-cat-search");
       if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch { /* not text */ } }
-    };
+    });
     for (const btn of catSheet.querySelectorAll("[data-cat-pick]")) {
       btn.onclick = () => {
         p.catalog = false;
@@ -1102,10 +1143,6 @@ function settingsCloseKey() {
   settingsKeyRepaint(name ? `[data-key-open="${CSS.escape(name)}"]` : "#set-key-add");
 }
 
-function settingsFailure(status, data) {
-  return failText(status, data);
-}
-
 function settingsSignedOut(status) {
   if (status !== 401) return false;
   if (onSettingsPage()) renderGate();
@@ -1118,14 +1155,13 @@ async function settingsReloadKeys(focus) {
   const gen = routeGen;
   const mine = ++p.gen;
   p.keysBusy = true;
-  p.revealed = new Map();
-  p.revealGen++;
+  settingsForgetRevealed();
   settingsKeyRepaint(focus);
   const { status, data } = await api("/v1/app/settings");
   p.keysBusy = false;
   if (gen !== routeGen || mine !== p.gen) return;
   if (settingsSignedOut(status)) return;
-  if (status === 200 && data) { p.data = data; p.keyError = null; } else p.keyError = settingsFailure(status, data);
+  if (status === 200 && data) { p.data = data; p.keyError = null; } else p.keyError = failText(status, data);
   settingsKeyRepaint(focus);
 }
 
@@ -1133,7 +1169,7 @@ async function settingsReloadKeys(focus) {
 async function settingsKeyValue(name) {
   const { status, data } = await apiPost("/v1/app/settings/key_value", { name });
   if (status === 200 && data && typeof data.value === "string") return data.value;
-  if (!settingsSignedOut(status)) settingsPage.keyError = settingsFailure(status, data);
+  if (!settingsSignedOut(status)) settingsPage.keyError = failText(status, data);
   return null;
 }
 
@@ -1190,7 +1226,7 @@ function settingsKeyDone(e, name, status, data, focus) {
     else settingsKeyRepaint();
     return;
   }
-  e.error = settingsFailure(status, data);
+  e.error = failText(status, data);
   e.confirmingDelete = false;
   if (p.keyEditor !== e) return;
   // The file moved under the page: read it again so a retry carries the
@@ -1411,6 +1447,8 @@ function remoteSig(remote) {
   return JSON.stringify([
     (r.requests || []).map((q) => q.request_id),
     (r.devices || []).map((d) => d.id),
+    // A node seen or revoked from another browser or the CLI.
+    (r.signins || []).map((x) => `${x.id}:${x.revoked ? 1 : 0}`),
   ]);
 }
 
@@ -1450,7 +1488,8 @@ function settingsStopPoll() {
 
 async function settingsRevoke(id) {
   const p = settingsPage;
-  const dev = p.data && p.data.remote.devices.find((d) => d.id === id);
+  const r = p.data && p.data.remote;
+  const dev = r && (r.devices.find((d) => d.id === id) || (r.signins || []).find((d) => d.id === id));
   if (!dev || p.revoking.has(id)) return;
   p.revoking.add(id);
   delete p.revokeErrors[id];
@@ -1476,6 +1515,7 @@ async function settingsRevoke(id) {
   if (status === 200 && data) {
     p.confirming = null;
     p.data.remote.devices = data.devices;
+    if (data.signins) p.data.remote.signins = data.signins;
     settingsRepaintRemote("#set-pair");
     // Revoking the last phone undoes "Pair a phone".
     if (!p.setupBusy) settingsLoadSetup();

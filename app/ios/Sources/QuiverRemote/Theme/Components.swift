@@ -44,7 +44,7 @@ struct GroupLabel: View {
 
     var body: some View {
         HStack {
-            Text(text).font(Theme.groupLabel).foregroundStyle(color).lineLimit(1)
+            Text(text).font(Theme.groupLabel).foregroundStyle(color).lineLimit(1, larger: 2)
             Spacer(minLength: 8)
             if let trailing { Text(trailing).font(Theme.caption).foregroundStyle(Theme.textMuted) }
         }
@@ -92,7 +92,7 @@ struct Badge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12, weight: .medium))
+            .font(Theme.badge)
             .foregroundStyle(tint)
             .lineLimit(1)
             .padding(.horizontal, 8)
@@ -122,45 +122,11 @@ struct FilterChip: View {
             .font(Theme.control)
             .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
             .padding(.horizontal, 12)
-            .frame(height: Theme.controlHeight)
+            .scaledMinHeight(Theme.controlHeight)
             .background(selected ? Theme.selected : Theme.card, in: .rect(cornerRadius: Theme.controlRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(selected ? Theme.borderStrong : Theme.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
-    }
-}
-
-/// The Mac app's segmented control: a hairline track with the picked
-/// segment raised, full width.
-struct SegmentPicker<Option: Hashable & Identifiable>: View {
-    var options: [Option]
-    var title: (Option) -> String
-    @Binding var selection: Option
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(options) { option in
-                let selected = option == selection
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) { selection = option }
-                } label: {
-                    Text(title(option))
-                        .font(Theme.control)
-                        .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: Theme.controlHeight - 4)
-                        .background(selected ? Theme.segmentSelected : .clear, in: .rect(cornerRadius: Theme.controlRadius - 2))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius - 2)
-                            .strokeBorder(selected ? Theme.border : .clear, lineWidth: 1))
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        .padding(2)
-        .background(Theme.segmentTrack, in: .rect(cornerRadius: Theme.controlRadius))
-        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
 }
 
@@ -173,11 +139,12 @@ struct PrimaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(compact ? Theme.control : .system(size: 15, weight: .medium))
+            .font(compact ? Theme.control : Theme.button)
             .foregroundStyle(Theme.primaryForeground)
+            .centredWhenWrapped()
             .padding(.horizontal, compact ? 12 : 16)
             .frame(maxWidth: compact ? nil : .infinity)
-            .frame(height: compact ? Theme.controlHeight : Theme.buttonHeight)
+            .scaledMinHeight(compact ? Theme.controlHeight : Theme.buttonHeight)
             .background(Theme.primaryBackground, in: .rect(cornerRadius: compact ? Theme.controlRadius : Theme.blockRadius))
             .opacity(configuration.isPressed ? 0.85 : enabled ? 1 : 0.45)
     }
@@ -190,11 +157,12 @@ struct SecondaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(compact ? Theme.control : .system(size: 15, weight: .medium))
+            .font(compact ? Theme.control : Theme.button)
             .foregroundStyle(destructive ? Theme.dangerText : Theme.textPrimary)
+            .centredWhenWrapped()
             .padding(.horizontal, compact ? 12 : 16)
             .frame(maxWidth: compact ? nil : .infinity)
-            .frame(height: compact ? Theme.controlHeight : Theme.buttonHeight)
+            .scaledMinHeight(compact ? Theme.controlHeight : Theme.buttonHeight)
             .background(configuration.isPressed ? Theme.selected : Theme.card,
                         in: .rect(cornerRadius: compact ? Theme.controlRadius : Theme.blockRadius))
             .overlay(RoundedRectangle(cornerRadius: compact ? Theme.controlRadius : Theme.blockRadius)
@@ -215,7 +183,7 @@ extension View {
             .font(monospaced ? Theme.monoBody : Theme.body)
             .foregroundStyle(Theme.textPrimary)
             .padding(.horizontal, 12)
-            .frame(height: Theme.fieldHeight)
+            .scaledMinHeight(Theme.fieldHeight)
             .background(Theme.field, in: .rect(cornerRadius: Theme.blockRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.blockRadius).strokeBorder(Theme.border, lineWidth: 1))
     }
@@ -240,7 +208,7 @@ struct StateCard: View {
                     .font(Theme.rowTitle)
                     .foregroundStyle(tone == .error ? Theme.dangerText : Theme.textPrimary)
                 if let message {
-                    Text(message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                    Text(inlineCode: message).font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let actionTitle, let action {
@@ -249,6 +217,26 @@ struct StateCard: View {
             }
         }
     }
+}
+
+/// Over what a failed refresh left on screen: the rows stay, and this
+/// says why they may be out of date, in the hub's words. Two lines at
+/// the default text size; more as the text grows, so the advice at the
+/// end ("Check that Tailscale is on") isn't the part cut off.
+struct StaleNotice: View {
+    let error: String
+
+    var body: some View {
+        Label { Text(inlineCode: "Couldn't refresh: \(error)") } icon: { Image(systemName: "exclamationmark.triangle") }
+            .font(Theme.caption).foregroundStyle(Theme.warningText)
+            .lineLimit(2, larger: 6)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+extension Text {
+    /// A hub or app message, its backtick spans drawn as inline code.
+    init(inlineCode message: String) { self.init(Markdown.inlineCode(message)) }
 }
 
 struct LoadingRow: View {
@@ -382,7 +370,7 @@ struct WorkingClock: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             Text(Self.format(context.date.timeIntervalSince(since)))
         }
-        .font(.system(size: 11))
+        .font(Theme.small)
         .monospacedDigit()
         .foregroundStyle(Theme.textSecondary)
     }
@@ -404,6 +392,14 @@ struct HarnessIcon: View {
     var harness: String?
     var name: String
     var size: CGFloat = 14
+    /// `size` is the logo at the default text size; it grows with the text beside it.
+    @ScaledMetric(relativeTo: .footnote) private var scale: CGFloat = 1
+
+    init(harness: String?, name: String, size: CGFloat = 14) {
+        self.harness = harness
+        self.name = name
+        self.size = size
+    }
 
     /// Other names the same harness goes by (as in QuiverCore's HarnessIcons).
     static let aliases = ["claude-code": "claude", "claude-desktop": "claude", "github-copilot": "copilot",
@@ -422,11 +418,126 @@ struct HarnessIcon: View {
             Image(asset)
                 .resizable()
                 .scaledToFit()
-                .frame(width: size, height: size)
+                .frame(width: size * scale, height: size * scale)
                 .foregroundStyle(Theme.textPrimary)
                 .accessibilityLabel(name)
         } else {
             Text(name).foregroundStyle(Theme.harness(harness))
         }
+    }
+}
+
+extension StateCard {
+    /// A page whose first load failed, with a way to try again.
+    static func unreachable(_ error: String, retry: @escaping () -> Void) -> StateCard {
+        StateCard(icon: "wifi.exclamationmark", title: "Can't reach the hub",
+                  message: HubError.detail(underUnreachableTitle: error), tone: .error,
+                  actionTitle: "Try again", action: retry)
+    }
+}
+
+// MARK: - Larger text sizes
+
+/// Views in a row that wraps onto more lines when it runs out of width,
+/// like words in a paragraph; each line is centred vertically, as an
+/// HStack's is. A view wider than a whole line gets the line's width.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let lines = arrange(proposal.width ?? .infinity, subviews)
+        let height = lines.reduce(0) { $0 + $1.height } + lineSpacing * CGFloat(max(0, lines.count - 1))
+        return CGSize(width: lines.map(\.width).max() ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for line in arrange(bounds.width, subviews) {
+            var x = bounds.minX
+            for item in line.items {
+                subviews[item.index].place(at: CGPoint(x: x, y: y + (line.height - item.size.height) / 2),
+                                           proposal: ProposedViewSize(item.size))
+                x += item.size.width + spacing
+            }
+            y += line.height + lineSpacing
+        }
+    }
+
+    private struct Line {
+        var items: [(index: Int, size: CGSize)] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func arrange(_ maxWidth: CGFloat, _ subviews: Subviews) -> [Line] {
+        var lines: [Line] = []
+        var line = Line()
+        for (index, subview) in subviews.enumerated() {
+            var size = subview.sizeThatFits(.unspecified)
+            if size.width > maxWidth { size = subview.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil)) }
+            if !line.items.isEmpty && line.width + spacing + size.width > maxWidth {
+                lines.append(line)
+                line = Line()
+            }
+            line.width += (line.items.isEmpty ? 0 : spacing) + size.width
+            line.height = max(line.height, size.height)
+            line.items.append((index, size))
+        }
+        if !line.items.isEmpty { lines.append(line) }
+        return lines
+    }
+}
+
+/// An HStack at the default text size; above it, a `FlowLayout`, so
+/// filter chips and a row's "·" details wrap onto another line instead
+/// of squeezing their words letter by letter or cutting off.
+struct WrappingHStack<Content: View>: View {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 4
+    @ViewBuilder var content: Content
+    @Environment(\.dynamicTypeSize) private var size
+
+    var body: some View {
+        let layout = size > .large
+            ? AnyLayout(FlowLayout(spacing: spacing, lineSpacing: lineSpacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        layout { content }
+    }
+}
+
+/// Views side by side, or one under the other at accessibility sizes,
+/// where two full-size buttons or three figures no longer fit beside
+/// each other and their words broke mid-word.
+struct StackingRow<Content: View>: View {
+    var spacing: CGFloat = 8
+    @ViewBuilder var content: Content
+    @Environment(\.dynamicTypeSize) private var size
+
+    var body: some View {
+        let layout = size.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: spacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        layout { content }
+    }
+}
+
+/// See `View.lineLimit(_:larger:)`.
+struct GrowingLineLimit: ViewModifier {
+    var lines: Int
+    var larger: Int
+    @Environment(\.dynamicTypeSize) private var size
+
+    func body(content: Content) -> some View {
+        content.lineLimit(size > .large ? max(lines, larger) : lines)
+    }
+}
+
+extension View {
+    /// `lines` at the default text size and `larger` above it, so a title
+    /// that fit one line at the default keeps about as many words on
+    /// screen when its text grows.
+    func lineLimit(_ lines: Int, larger: Int) -> some View {
+        modifier(GrowingLineLimit(lines: lines, larger: larger))
     }
 }

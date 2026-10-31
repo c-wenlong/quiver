@@ -32,12 +32,17 @@ struct AccountsPage: View {
                 showHistory.toggle()
             }
             .secondaryButton()
-            .help("Weekly or monthly tokens on every account")
+            .hoverTip("Weekly or monthly tokens on every account", replacesLabel: false)
             Button("Add account", systemImage: "plus") { adding = true }
                 .primaryButton()
         } content: {
             if let error = model.error ?? actionError {
                 ErrorCard(message: error)
+            }
+            // Only Claude and Codex extra accounts have a CLI home swe can
+            // link into; with none, the switches would do nothing.
+            if model.cards.contains(where: { !$0.profile.isDefault && $0.profile.vendor.hasDefaultProfile }) {
+                SharedContentCard(sync: app.accountSync)
             }
             // One grid for every account: Quiver's own profiles first, vendors
             // in a fixed order, then the starred harnesses in swe's order.
@@ -83,6 +88,8 @@ struct AccountsPage: View {
                 Task {
                     do {
                         let profile = try await model.add(vendor: vendor, name: name, color: color)
+                        // Born linked: the switches that are on reach it now.
+                        if vendor.hasDefaultProfile { await app.accountSync.syncIfOn() }
                         perform { try await model.signIn(profile) }
                         // Extra Devin/Cursor accounts are harness cards, built by `others`.
                         if !vendor.hasDefaultProfile { await app.others.load() }
@@ -463,8 +470,9 @@ func planTitle(_ plan: String) -> String {
 /// swe has answered, Terminal is offered rather than hidden.
 private struct LaunchButtons: View {
     var target: LaunchTarget
-    /// Overrides the Terminal button's help when the CLI cannot run as
-    /// this account (cursor-agent keeps the default sign-in).
+    /// Replaces the Terminal button's name tooltip with a hover tip when
+    /// the CLI cannot run as this account (cursor-agent keeps the default
+    /// sign-in): the note matters before the click.
     var terminalHelp: String? = nil
     var perform: (@escaping () async throws -> Void) -> Void
 
@@ -482,13 +490,17 @@ private struct LaunchButtons: View {
                 .accessibilityLabel("Open \(appName)")
             }
             if target.cliInstalled != false {
-                Button("Terminal", systemImage: "terminal") {
+                let terminal = Button("Terminal", systemImage: "terminal") {
                     perform { try await target.openTerminal() }
                 }
                 .iconButton()
                 .labelStyle(.iconOnly)
-                .help(terminalHelp ?? "Open \(target.title) in Terminal")
                 .accessibilityLabel("Open \(target.title) in Terminal")
+                if let terminalHelp {
+                    terminal.hoverTip(terminalHelp, replacesLabel: false)
+                } else {
+                    terminal.help("Open \(target.title) in Terminal")
+                }
             }
             if !target.canLaunch {
                 Text("Not installed").font(Theme.caption).foregroundStyle(Theme.textMuted)
@@ -842,5 +854,46 @@ private struct IssueFixSheet: View {
         }
         .padding(20)
         .frame(width: 420)
+    }
+}
+
+/// "Shared content": one switch per piece swe links into every extra Claude
+/// and Codex account's folder (`accounts.sync.*`, the keys `swe config`
+/// writes). Turning one off removes only the links swe made.
+private struct SharedContentCard: View {
+    let sync: AccountSyncModel
+
+    var body: some View {
+        Card(title: "Shared content",
+             subtitle: "Links the shared AGENTS.md, skills and hooks into every extra Claude and Codex account's folder. Turning one off removes only those links.") {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(AccountSyncPiece.allCases) { piece in
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(piece.title).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                            Text(piece.caption).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        }
+                        Spacer(minLength: 8)
+                        Toggle(piece.title, isOn: Binding(
+                            get: { sync.isOn(piece) },
+                            set: { on in Task { await sync.set(piece, on: on) } }))
+                            .labelsHidden()
+                            .toggleStyle(AccentSwitchStyle())
+                            .disabled(sync.busy || sync.report?.accountSync == nil)
+                    }
+                }
+                if let error = sync.error {
+                    ErrorCard(message: error, framed: false)
+                }
+                let conflicts = sync.report?.conflicts ?? []
+                if !conflicts.isEmpty {
+                    Text("Left alone, the account already has its own: "
+                         + conflicts.map { "\($0.account) \(($0.path as NSString).lastPathComponent)" }
+                            .joined(separator: ", "))
+                        .font(Theme.caption).foregroundStyle(Theme.textMuted)
+                }
+            }
+        }
+        .task { await sync.load() }
     }
 }

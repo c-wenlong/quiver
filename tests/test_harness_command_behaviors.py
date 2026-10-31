@@ -1,5 +1,6 @@
 import io
 import json
+import shlex
 import os
 import subprocess
 import tempfile
@@ -13,6 +14,16 @@ from quiver.harness.path_health import NodeEnv, OffPathHit
 
 
 class HarnessProcessCommandTest(unittest.TestCase):
+    def setUp(self):
+        # installed_app and installed_cask look in ~/Applications,
+        # /Applications and the real Homebrew Caskroom, so an unpatched
+        # install listing would change with what this machine has
+        # installed. Tests that need a bundle patch them again inside.
+        for name in ("installed_app", "installed_cask"):
+            p = patch(f"quiver.harness.installers.{name}", return_value=None)
+            p.start()
+            self.addCleanup(p.stop)
+
     def test_use_preserves_extra_argument_boundaries(self):
         tools = {"claude": {"command": "claude", "aliases": ["cc"]}}
         with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
@@ -662,7 +673,7 @@ class HarnessUsageCommandTest(unittest.TestCase):
         # account's data dir, not the default credentials file.
         self.assertEqual(
             data["remedy"]["command"],
-            f'XDG_DATA_HOME="{tmp}" devin auth login')
+            f"XDG_DATA_HOME={shlex.quote(tmp)} devin auth login")
 
     def test_human_output_prints_the_remedy_steps(self):
         with tempfile.TemporaryDirectory() as tmp:

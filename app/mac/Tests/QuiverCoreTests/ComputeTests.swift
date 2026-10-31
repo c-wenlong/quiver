@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -365,9 +366,7 @@ import Testing
     // MARK: Limits persistence
 
     @Test func limitsRoundTripThroughDefaults() {
-        let suite = "compute-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         var limits = ComputeLimits(defaults: defaults)
         #expect(limits.orphanAge == 24 * 3600)
         #expect(limits.memoryBytes == UInt64(2) << 30)
@@ -391,6 +390,23 @@ import Testing
         func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
     }
 
+    /// Answers each sample with the next table, then keeps answering with
+    /// the last, so a test can change the process table between calls.
+    private final class Flip: ProcessSampling, ProcessSignaller, @unchecked Sendable {
+        let tables: [[ProcessSample]]
+        private var calls = 0
+        private let lock = NSLock()
+        var signalled: [(Int32, Int32)] = []
+        init(_ tables: [[ProcessSample]]) { self.tables = tables }
+        func sample() -> [ProcessSample] {
+            lock.withLock {
+                calls += 1
+                return tables[min(calls, tables.count) - 1]
+            }
+        }
+        func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
+    }
+
     /// A mutable `now` for the model's clock, the trend tests' shape.
     private final class Clock: @unchecked Sendable {
         var now: Date
@@ -401,11 +417,10 @@ import Testing
     private func autoCleanModel(_ fake: Fake,
                                 clock: @escaping @Sendable () -> Date = { .now },
                                 defaults: UserDefaults? = nil) async -> ComputeModel {
-        let suite = "compute-test-\(UUID().uuidString)"
         let model = ComputeModel(sampler: fake, matchers: { [] },
                                  signaller: fake,
                                  clock: clock,
-                                 defaults: defaults ?? UserDefaults(suiteName: suite)!,
+                                 defaults: defaults ?? TestDefaults("compute-test"),
                                  selfPID: 99)
         await model.loadMatchers()
         return model
@@ -540,13 +555,6 @@ import Testing
     // MARK: The model
 
     @MainActor @Test func theModelSortsRowsAndListsCleanup() async {
-        final class Fake: ProcessSampling, ProcessSignaller, @unchecked Sendable {
-            var table: [ProcessSample]
-            var signalled: [(Int32, Int32)] = []
-            init(_ table: [ProcessSample]) { self.table = table }
-            func sample() -> [ProcessSample] { table }
-            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
-        }
         let fake = Fake([
             Self.proc(10, 1, path: "/opt/homebrew/bin/claude", mem: 100),
             Self.proc(11, 10, path: "/x/helper", mem: UInt64(3) << 30),
@@ -555,9 +563,7 @@ import Testing
             Self.proc(20, 1, path: "/opt/homebrew/bin/npm", args: ["npm", "run", "studio"],
                       cwd: "/Users/test/proj", started: .now.addingTimeInterval(-30 * 3600)),
         ])
-        let suite = "compute-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         let model = await ComputeModel(sampler: fake, matchers: { [Self.claude] },
                                        signaller: fake, defaults: defaults, selfPID: 99)
         await model.loadMatchers()
@@ -599,12 +605,12 @@ import Testing
         let second = [Self.proc(11, 1, path: "/opt/homebrew/bin/claude")]
         let gated = Gated([first, second])
         let model = ComputeModel(sampler: gated, matchers: { [Self.claude] },
-                                 signaller: SystemSignaller(), selfPID: 99)
+                                 signaller: SystemSignaller(), defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         let slow = Task { await model.refresh() }
         // Wait off the main actor and off the cooperative pool, so the
         // refresh can reach its sample call.
-        await runOffPool { gated.waitForEntry() }
+        await offMain { gated.waitForEntry() }
         await model.refresh()
         gated.release.signal()
         await slow.value
@@ -614,63 +620,38 @@ import Testing
     @MainActor @Test func aQuitPlansOnItsOwnSampleNotThePublishedTable() async {
         // Table A is what the page showed; when quit() samples, pid 10 has
         // been reused by a different process, so nothing may be signalled.
-        final class Flip: ProcessSampling, @unchecked Sendable {
-            let tables: [[ProcessSample]]
-            private var calls = 0
-            private let lock = NSLock()
-            init(_ tables: [[ProcessSample]]) { self.tables = tables }
-            func sample() -> [ProcessSample] {
-                lock.lock()
-                defer { lock.unlock() }
-                calls += 1
-                return tables[min(calls, tables.count) - 1]
-            }
-        }
-        final class Signals: ProcessSignaller, @unchecked Sendable {
-            var signalled: [(Int32, Int32)] = []
-            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
-        }
         let shown = Self.proc(10, 1, path: "/x/worker", cwd: "/Users/test/proj")
         let reused = Self.proc(10, 1, path: "/x/reused", started: Self.youngStart)
         let sampler = Flip([[shown], [reused]])
-        let signaller = Signals()
         let model = ComputeModel(sampler: sampler, matchers: { [Self.claude] },
-                                 signaller: signaller, selfPID: 99)
+                                 signaller: sampler, defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.refresh()
         await model.quit(.process(shown, harness: "claude"))
-        #expect(signaller.signalled.isEmpty)
+        #expect(sampler.signalled.isEmpty)
     }
 
     @MainActor @Test func aRecycledPidIsNotMarkedStillRunning() async {
         // SIGTERM went to the process that was pid 10. The pid is then
         // recycled onto a different process, which was never signalled
         // and must not inherit the still-running mark.
-        final class Flip: ProcessSampling, ProcessSignaller, @unchecked Sendable {
-            let tables: [[ProcessSample]]
-            private var calls = 0
-            private let lock = NSLock()
-            var signalled: [(Int32, Int32)] = []
-            init(_ tables: [[ProcessSample]]) { self.tables = tables }
-            func sample() -> [ProcessSample] {
-                lock.lock()
-                defer { lock.unlock() }
-                calls += 1
-                return tables[min(calls, tables.count) - 1]
-            }
-            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
-        }
         let signalled = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.youngStart)
         let recycled = Self.proc(10, 1, path: "/opt/homebrew/bin/claude", started: Self.now)
         let kept = Self.proc(11, 1, path: "/opt/homebrew/bin/claude", started: Self.youngStart)
         // refresh sees the originals; quit samples them again and
         // signals; the refresh quit ends with shows pid 10 recycled.
         let fake = Flip([[signalled, kept], [signalled, kept], [recycled, kept]])
-        // The clock runs a minute ahead so the five-second mark has
-        // passed: a matching process reports still running, the
-        // recycled pid does not.
+        // Every read of the clock moves it ten seconds, so by the
+        // sample after the signal the five-second mark has passed: a
+        // matching process reports still running, the recycled pid does
+        // not. The mark is stamped by the same clock it is read against.
+        let ticks = Mutex(0)
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude] }, signaller: fake,
-                                 clock: { .now.addingTimeInterval(60) }, selfPID: 99)
+                                 clock: {
+                                     Self.now.addingTimeInterval(
+                                         Double(ticks.withLock { $0 += 1; return $0 }) * 10)
+                                 },
+                                 defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.refresh()
         await model.quit([.process(signalled, harness: "claude"),
@@ -681,13 +662,6 @@ import Testing
     }
 
     @MainActor @Test func quitHarnessSignalsTheWholeHarnessHelpersFirst() async {
-        final class Fake: ProcessSampling, ProcessSignaller, @unchecked Sendable {
-            var table: [ProcessSample]
-            var signalled: [(Int32, Int32)] = []
-            init(_ table: [ProcessSample]) { self.table = table }
-            func sample() -> [ProcessSample] { table }
-            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
-        }
         let fake = Fake([
             Self.proc(10, 1, path: "/opt/homebrew/bin/claude"),
             Self.proc(11, 10, path: "/x/helper"),
@@ -698,7 +672,7 @@ import Testing
             Self.proc(21, 20, path: "/x/codex-helper"),
         ])
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude, Self.codex] },
-                                 signaller: fake, selfPID: 99)
+                                 signaller: fake, defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.refresh()
         await model.quitHarness("claude")
@@ -708,26 +682,12 @@ import Testing
     }
 
     @MainActor @Test func quitHarnessCatchesAProcessSpawnedAfterTheRefresh() async {
-        final class Flip: ProcessSampling, ProcessSignaller, @unchecked Sendable {
-            let tables: [[ProcessSample]]
-            private var calls = 0
-            private let lock = NSLock()
-            var signalled: [(Int32, Int32)] = []
-            init(_ tables: [[ProcessSample]]) { self.tables = tables }
-            func sample() -> [ProcessSample] {
-                lock.lock()
-                defer { lock.unlock() }
-                calls += 1
-                return tables[min(calls, tables.count) - 1]
-            }
-            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
-        }
         let root = Self.proc(10, 1, path: "/opt/homebrew/bin/claude")
         let helper = Self.proc(11, 10, path: "/x/helper")
         // The page's last sample predates the helper; quit's own has it.
         let fake = Flip([[root], [root, helper]])
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude] },
-                                 signaller: fake, selfPID: 99)
+                                 signaller: fake, defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.refresh()
         await model.quitHarness("claude")
@@ -735,16 +695,9 @@ import Testing
     }
 
     @MainActor @Test func quitHarnessForceKillsAndAnIdleHarnessSignalsNothing() async {
-        final class Fake: ProcessSampling, ProcessSignaller, @unchecked Sendable {
-            var table: [ProcessSample]
-            var signalled: [(Int32, Int32)] = []
-            init(_ table: [ProcessSample]) { self.table = table }
-            func sample() -> [ProcessSample] { table }
-            func signal(_ pid: Int32, _ sig: Int32) -> Bool { signalled.append((pid, sig)); return true }
-        }
         let fake = Fake([Self.proc(10, 1, path: "/opt/homebrew/bin/claude")])
         let model = ComputeModel(sampler: fake, matchers: { [Self.claude, Self.codex] },
-                                 signaller: fake, selfPID: 99)
+                                 signaller: fake, defaults: TestDefaults("compute-test"), selfPID: 99)
         await model.loadMatchers()
         await model.quitHarness("codex")
         #expect(fake.signalled.isEmpty)
@@ -996,9 +949,7 @@ import Testing
         let sharedChild = Self.proc(11, 10, path: "/opt/homebrew/bin/node")
         let other = Self.proc(12, 1, path: "/x/worker")
         let fake = Counting([root, sharedChild, other])
-        let suite = "compute-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         let model = await ComputeModel(sampler: fake, matchers: { [Self.claude] },
                                        signaller: fake, defaults: defaults, selfPID: 99)
         await model.loadMatchers()
@@ -1035,29 +986,21 @@ import Testing
         #expect(OrphanAgeUnit.resolve(value: 400, unit: .day) == ComputeLimits.orphanAgeRange.upperBound)
     }
 
-    private static func defaultsSuite() -> (UserDefaults, String) {
-        let suite = "compute-test-\(UUID().uuidString)"
-        return (UserDefaults(suiteName: suite)!, suite)
-    }
-
     @Test func theLegacyHoursKeyStillLoads() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
         #expect(ComputeLimits(defaults: defaults).orphanAge == 6 * 3600)
     }
 
     @Test func theMinutesKeyWinsOverTheLegacyHoursKey() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         defaults.set(90, forKey: ComputeLimits.orphanAgeKey)
         defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
         #expect(ComputeLimits(defaults: defaults).orphanAge == 5400)
     }
 
     @Test func savingRemovesTheLegacyHoursKey() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         defaults.set(6, forKey: ComputeLimits.legacyOrphanAgeKey)
         ComputeLimits(defaults: defaults).save(to: defaults)
         #expect(defaults.object(forKey: ComputeLimits.legacyOrphanAgeKey) == nil)
@@ -1065,8 +1008,7 @@ import Testing
     }
 
     @Test func theOrphanAgeClampsToAMinuteAndAYear() {
-        let (defaults, suite) = Self.defaultsSuite()
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults("compute-test")
         var limits = ComputeLimits()
         limits.orphanAge = 5
         limits.save(to: defaults)
@@ -1074,6 +1016,27 @@ import Testing
         limits.orphanAge = 800 * 86400
         limits.save(to: defaults)
         #expect(defaults.integer(forKey: ComputeLimits.orphanAgeKey) == 365 * 24 * 60)
+    }
+
+    // MARK: Figures
+
+    @Test func noMemoryReadsAsZeroKB() {
+        #expect(ComputeSummary.bytes(0) == "0 KB")
+        #expect(ComputeSummary.bytes(5 << 20) != "0 KB")
+    }
+
+    /// The figures follow the Mac's locale; only the words are pinned.
+    @Test func oneThreadIsSingular() {
+        #expect(ComputeSummary.threads(1) == "1 thread")
+        #expect(ComputeSummary.threads(28) == "28 threads")
+    }
+
+    @Test func theTotalsLineCountsProcessesInWords() {
+        let zero = ComputeSummary.percent(0)
+        #expect(ComputeSummary.totalsLine(.init()) == "0 KB across 0 processes · CPU \(zero)% · 0 threads")
+        let one = ComputeModel.Totals(memoryBytes: 5 << 20, cpuPercent: 12.4, threads: 9, processCount: 1)
+        #expect(ComputeSummary.totalsLine(one)
+                == "\(ComputeSummary.bytes(5 << 20)) across 1 process · CPU \(ComputeSummary.percent(12.4))% · 9 threads")
     }
 
     // MARK: Sampler smoke test

@@ -275,6 +275,12 @@ import Testing
         #expect(row("a", kind: "issue").sourceLine == "GitHub issue · o/r")
         #expect(row("a", kind: "pull").sourceLine == "GitHub pull request · o/r")
         #expect(row("a", source: "linear", repo: nil, project: "QUI").sourceLine == "Linear · QUI")
+        #expect(row("a", source: "notion", kind: "page", repo: nil, project: "Roadmap").sourceLine
+            == "Notion · Roadmap")
+        #expect(row("a", source: "notion", kind: "page", repo: nil).sourceLine == "Notion")
+        #expect(row("a").openLabel == "Open on GitHub")
+        #expect(row("a", source: "linear", repo: nil, project: "QUI").openLabel == "Open in Linear")
+        #expect(row("a", source: "notion", kind: "page", repo: nil).openLabel == "Open in Notion")
         // The ladder is never the text (#875): an issue whose agent has
         // finished reads Open, a running one Agent running.
         #expect(row("a", state: "in_progress").stateLabel == "Open")
@@ -391,6 +397,20 @@ import Testing
         #expect(NewSessionOptions.folders(on: "m1", sessions: rows) == ["/p/old", "/p/new"])
         #expect(NewSessionOptions.folders(on: "m2", sessions: rows) == ["/p/other"])
         #expect(NewSessionOptions.folders(on: "m3", sessions: rows).isEmpty)
+    }
+
+    /// A hub that answers `launchable: []` is current: updating swe would
+    /// change nothing, so the sheet says to install or turn one on. Only
+    /// a row without the field, or no rows, means swe is too old.
+    @Test func theNoMachineMessageFollowsWhatTheHubReported() {
+        let hub = HubMachine(id: "m1", harnesses: ["claude"], launchable: [])
+        #expect(NewSessionOptions.noMachineMessage([hub])
+                == "No harness can start on the hub: install one there, or turn it on in Settings › Providers.")
+        let satellite = HubMachine(id: "s1", harnesses: [], launchable: [])
+        #expect(NewSessionOptions.noMachineMessage([hub, satellite]).hasPrefix("No harness can start on any machine"))
+        let old = HubMachine(id: "m1", harnesses: [])
+        #expect(NewSessionOptions.noMachineMessage([old]).hasSuffix("Update swe on the hub."))
+        #expect(NewSessionOptions.noMachineMessage([]).hasSuffix("Update swe on the hub."))
     }
 
     @Test func harnessesPreferLaunchable() {
@@ -679,27 +699,10 @@ extension HubStubbed {
                   credential: "secret", session: HubStub.session())
     }
 
-    /// A request's query as a name → value dict.
-    private func query(_ request: URLRequest) -> [String: String] {
-        let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        return Dictionary(items.map { ($0.name, $0.value ?? "") }) { _, b in b }
-    }
-
     /// A request's JSON body with nested objects, where
     /// `HubStub.body(_:)` flattens to strings.
     private func body(_ request: URLRequest) throws -> [String: Any] {
-        var data = request.httpBody ?? Data()
-        if data.isEmpty, let stream = request.httpBodyStream {
-            stream.open()
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            while stream.hasBytesAvailable {
-                let n = stream.read(&buffer, maxLength: buffer.count)
-                guard n > 0 else { break }
-                data.append(buffer, count: n)
-            }
-            stream.close()
-        }
-        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        try #require(JSONSerialization.jsonObject(with: HubStub.bodyData(request)) as? [String: Any])
     }
 
     @Test func appTasksReadsThePagePayload() async throws {
@@ -713,7 +716,7 @@ extension HubStubbed {
         #expect(reply.machineId == "m1")
         let req = try #require(HubStub.requests.first)
         #expect(req.httpMethod == "GET")
-        #expect(query(req) == ["refresh": "1"])
+        #expect(HubStub.query(req) == ["refresh": "1"])
     }
 
     @Test func taskHarnessesAskTheSameRoute() async throws {
@@ -735,7 +738,7 @@ extension HubStubbed {
         #expect(harnesses[1].launchModel == false)
         #expect(harnesses[1].recentModels == nil)
         #expect(machine == "kai")
-        #expect(HubStub.requests.first.map(query) == ["harnesses": "1"])
+        #expect(HubStub.requests.first.map(HubStub.query) == ["harnesses": "1"])
     }
 
     @Test func linkAndUnlinkPostTheTaskRef() async throws {
@@ -768,11 +771,6 @@ extension HubStubbed {
     private func client() -> HubClient {
         HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!,
                   credential: "secret", session: HubStub.session())
-    }
-
-    private func query(_ request: URLRequest) -> [String: String] {
-        let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        return Dictionary(items.map { ($0.name, $0.value ?? "") }) { _, b in b }
     }
 
     @Test func launchBodyCarriesTheHarnessCwdAndPrompt() {
@@ -845,10 +843,10 @@ extension HubStubbed {
         #expect(listing.path == "/Users/k")
         #expect(listing.parent == "/Users")
         #expect(listing.folders.first?.name == "quiver")
-        #expect(HubStub.requests.first.map(query) == ["path": "/Users/k"])
+        #expect(HubStub.requests.first.map(HubStub.query) == ["path": "/Users/k"])
         // The default is the hub user's home: no query.
         _ = try await client().folders()
-        #expect(HubStub.requests.last.map(query) == [:])
+        #expect(HubStub.requests.last.map(HubStub.query) == [:])
     }
 }
 
@@ -856,7 +854,10 @@ extension HubStubbed {
 /// keeping the rows it had, and link/unlink writing the store.
 @MainActor
 @Suite struct TasksModelTests {
-    let dir = FileManager.default.temporaryDirectory.appending(path: "hub-\(UUID().uuidString)")
+    /// Each test gets its own instance, so its folder goes when the test ends.
+    private let scratch: TempDir
+    private var dir: URL { scratch.url }
+    init() throws { scratch = try TempDir() }
 
     /// The page payload the stub answers — `nonisolated` so the
     /// Sendable request handler can read it.
@@ -871,7 +872,8 @@ extension HubStubbed {
      "repos": [{"name": "o/s", "status": "upstream-error", "error": "down"}],
      "machine": "kai", "machine_id": "m-1",
      "github": {"status": "ok", "login": "u"},
-     "linear": {"status": "auth-required", "error": "no key"}}
+     "linear": {"status": "auth-required", "error": "no key"},
+     "notion": {"status": "bad-config", "error": "no status property"}}
     """
 
     private func hub() throws -> LocalHub {
@@ -895,6 +897,7 @@ extension HubStubbed {
         #expect(model.github?.login == "u")
         #expect(model.envBlocked == nil)
         #expect(model.linearBlocked == "no key")
+        #expect(model.notionBlocked == "no status property")
         #expect(model.error == nil)
         // The failed repo's rows are last-known; a healthy one's aren't.
         #expect(model.stale(model.tasks[0]) == false)
@@ -970,6 +973,33 @@ extension HubStubbed {
         let model = TasksModel()
         await model.load(hub: try hub())
         #expect(model.githubFailed == nil)
+        #expect(model.stale(model.tasks[0]) == false)
+    }
+
+    /// The page reply with one Notion row and the given `notion` block.
+    nonisolated private static func notionReply(_ notion: String) -> Data {
+        Data(#"{"tasks": [{"id": "notion:page:roadmap:p1", "source": "notion", "kind": "page", "project": "Roadmap", "ref": "p1", "title": "Plan Q3", "state": "open"}], "machine": "kai", "machine_id": "m-1", "github": {"status": "ok"}, "notion": "#.utf8)
+            + Data(notion.utf8) + Data("}".utf8)
+    }
+
+    @Test func aNotionRowIsStaleWhileNotionFailsAndFreshOnceItRecovers() async throws {
+        HubStub.handler = { req in
+            req.url?.path == "/v1/app/tasks"
+                ? (200, Self.notionReply(#"{"status": "upstream-error", "error": "Notion answered HTTP 502"}"#))
+                : (404, Data())
+        }
+        let model = TasksModel()
+        let hub = try hub()
+        await model.load(hub: hub)
+        #expect(model.notionBlocked == "Notion answered HTTP 502")
+        #expect(model.stale(model.tasks[0]))
+        HubStub.handler = { req in
+            req.url?.path == "/v1/app/tasks"
+                ? (200, Self.notionReply(#"{"status": "ok", "login": "Kai"}"#))
+                : (404, Data())
+        }
+        await model.load(hub: hub, refresh: true)
+        #expect(model.notionBlocked == nil)
         #expect(model.stale(model.tasks[0]) == false)
     }
 

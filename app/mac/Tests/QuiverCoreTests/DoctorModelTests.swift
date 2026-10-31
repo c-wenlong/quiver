@@ -78,17 +78,15 @@ import Testing
     }
 }
 
-/// Replies to each call in turn, after that call's delay.
+/// Replies to each call in turn.
 final class SequencedRunner: CommandRunning, @unchecked Sendable {
     private let lock = NSLock()
-    private var replies: [(Duration, CommandResult)]
+    private var replies: [CommandResult]
 
-    init(_ replies: [(Duration, CommandResult)]) { self.replies = replies }
+    init(_ replies: [CommandResult]) { self.replies = replies }
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        let (delay, reply) = lock.withLock { replies.removeFirst() }
-        try await Task.sleep(for: delay)
-        return reply
+        lock.withLock { replies.removeFirst() }
     }
 }
 
@@ -98,13 +96,18 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         .init(status: 1, stdout: Data(#"{"schema":1,"data":{"ok":false,"findings":[{"check":"\#(check)","severity":"warning","message":"m","fix":null}]}}"#.utf8), stderr: "")
     }
 
-    @Test func aSlowerEarlierRefreshCannotOverwriteANewerOne() async {
-        let runner = SequencedRunner([(.milliseconds(400), report("old")), (.milliseconds(10), report("new"))])
+    @Test(.timeLimit(.minutes(1))) func aSlowerEarlierRefreshCannotOverwriteANewerOne() async {
+        let runner = GatedReplies([report("old"), report("new")])
         let model = DoctorModel(swe: SweClient(runner: runner))
-        async let first: Void = model.load()
-        try? await Task.sleep(for: .milliseconds(50))
-        async let second: Void = model.load()
-        _ = await (first, second)
+        let first = Task { await model.load() }
+        #expect(await runner.gates[0].arrived())
+        let second = Task { await model.load() }
+        #expect(await runner.gates[1].arrived())
+        // The newer refresh answers first; the older one lands after it.
+        runner.gates[1].open()
+        await second.value
+        runner.gates[0].open()
+        await first.value
         guard case .loaded(let report) = model.state else {
             Issue.record("expected loaded, got \(model.state)")
             return
@@ -114,11 +117,12 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
 
     /// A load cancelled with its page puts the previous state back: left
     /// at .loading, the spinner and isBusy stayed on for good.
-    @Test func aCancelledLoadDoesNotSpinForever() async throws {
-        let runner = StuckRunner()
+    @Test(.timeLimit(.minutes(1))) func aCancelledLoadDoesNotSpinForever() async throws {
+        // No replies: the one call hangs until the load is cancelled.
+        let runner = GatedReplies([])
         let model = DoctorModel(swe: SweClient(runner: runner))
         let task = Task { await model.load() }
-        while runner.started == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(await runner.hanging())
         task.cancel()
         await task.value
         #expect(model.state == .idle)
@@ -149,7 +153,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
     }
 
     @Test func runCallsTheActionsSweCommand() async throws {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
             (["init"], .init(status: 0, stdout: Data(), stderr: "")),
         ])
@@ -165,7 +169,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
     }
 
     @Test func discoverActionRunsDiscoverApply() async throws {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
             (["harness", "discover"], .init(status: 0, stdout: Data("ok".utf8), stderr: "")),
         ])
@@ -177,7 +181,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
     }
 
     @Test func setupActionLeavesTheStarsAlone() async throws {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
             (["setup"], .init(status: 0, stdout: Data(#"{"schema": 1, "data": {"applied": {}}}"#.utf8), stderr: "")),
         ])
@@ -189,8 +193,32 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         #expect(runner.calls.contains(["setup", "--apply", "--json"]))
     }
 
+    @Test func setupAndDiscoverWaitForTheRegistryGate() async throws {
+        for action in [DoctorReport.Finding.Action.setup, .discover] {
+            let runner = ScriptedRunner([
+                (["doctor"], .init(status: 0, stdout: findings, stderr: "")),
+                (["setup"], .init(status: 0, stdout: Data(#"{"schema": 1, "data": {"applied": {}}}"#.utf8), stderr: "")),
+                (["harness", "discover"], .init(status: 0, stdout: Data("ok".utf8), stderr: "")),
+            ])
+            let model = DoctorModel(swe: SweClient(runner: runner))
+            // A Harnesses page edit holds the gate.
+            await HarnessesModel.registryWrites.acquire()
+            let run = Task { await model.run(DoctorReport.Finding(
+                check: "setup.registry", severity: .warning, message: "none",
+                fix: nil, action: action)) }
+            // Either the run queues at the gate or, without it, reaches swe.
+            while HarnessesModel.registryWrites.waiters == 0, runner.calls.isEmpty {
+                await Task.yield()
+            }
+            #expect(runner.calls.isEmpty, "\(action) ran while the gate was held")
+            HarnessesModel.registryWrites.release()
+            await run.value
+            #expect(!runner.calls.isEmpty)
+        }
+    }
+
     @Test func aFailureRecordsTheErrorAndClearsRunning() async throws {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["init"], .init(status: 1, stdout: Data(), stderr: "link would overwrite")),
         ])
         let model = DoctorModel(swe: SweClient(runner: runner))
@@ -227,7 +255,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
     }
 
     @Test func runInstallsInTheAppAndKeepsWhatItPrinted() async {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["install"], .init(status: 0, stdout: Data("added 1 package\nRegistered codex".utf8), stderr: "")),
             (["doctor"], .init(status: 0, stdout: clean, stderr: "")),
         ])
@@ -244,7 +272,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
     }
 
     @Test func aFailedInstallKeepsItsOutputOnTheRow() async {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["install"], .init(status: 1, stdout: Data("==> Downloading".utf8), stderr: "sudo: a password is required")),
             (["doctor"], .init(status: 1, stdout: offPath, stderr: "")),
         ])
@@ -258,7 +286,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
 
     @Test func onlyTheEndOfALongLogIsKept() async {
         let log = (1...500).map { "line \($0)" }.joined(separator: "\n")
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["install"], .init(status: 1, stdout: Data(log.utf8), stderr: "")),
             (["doctor"], .init(status: 1, stdout: offPath, stderr: "")),
         ])
@@ -285,7 +313,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
     @Test func aSecondRunWaitsWhileOneIsInFlight() async throws {
         // Not directly observable without a suspendable runner; the guard
         // is `running.isEmpty`, so a finding queued mid-run returns at once.
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["init"], .init(status: 0, stdout: Data(), stderr: "")),
             (["doctor"], .init(status: 0, stdout: doctorData(), stderr: "")),
         ])
@@ -298,7 +326,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
     }
 
     @Test func aFailedRunStillReloadsAndKeepsTheError() async throws {
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["init"], .init(status: 1, stdout: Data(), stderr: "boom")),
             (["doctor"], .init(status: 0, stdout: doctorData(), stderr: "")),
         ])
@@ -316,7 +344,7 @@ final class SequencedRunner: CommandRunning, @unchecked Sendable {
         {"schema": 1, "data": {"applied": {"harness": [], "mcp": [],
          "links": {"adopted": null, "error": "codex AGENTS.md is a real file", "rows": []}}}}
         """#.utf8)
-        let runner = RoutingRunner([
+        let runner = ScriptedRunner([
             (["setup"], .init(status: 1, stdout: setupData, stderr: "")),
             (["doctor"], .init(status: 0, stdout: doctorData(), stderr: "")),
         ])

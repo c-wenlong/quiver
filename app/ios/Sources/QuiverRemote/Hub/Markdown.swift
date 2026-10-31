@@ -308,3 +308,56 @@ enum Markdown {
         return out
     }
 }
+
+extension Markdown {
+    /// A hub or app message with its backtick spans as inline code
+    /// ("run `gh auth login`"). Nothing else is parsed: these are plain
+    /// sentences, so a `*` or `_` in a path or error stays as written.
+    /// A run of backticks closes only on a run of the same length, as in
+    /// CommonMark; one with no partner shows as typed.
+    static func inlineCode(_ text: String) -> AttributedString {
+        guard text.contains("`") else { return AttributedString(text) }
+        let chars = Array(text)
+        var out = AttributedString()
+        var plain = ""
+        var i = 0
+        func runLength(at j: Int) -> Int {
+            var k = j
+            while k < chars.count && chars[k] == "`" { k += 1 }
+            return k - j
+        }
+        while i < chars.count {
+            guard chars[i] == "`" else { plain.append(chars[i]); i += 1; continue }
+            let open = runLength(at: i)
+            var j = i + open
+            var close: Int?
+            while j < chars.count {
+                if chars[j] == "`" {
+                    let n = runLength(at: j)
+                    if n == open { close = j; break }
+                    j += n
+                } else {
+                    j += 1
+                }
+            }
+            guard let end = close else {
+                plain.append(String(chars[i..<(i + open)]))
+                i += open
+                continue
+            }
+            var code = String(chars[(i + open)..<end])
+            // CommonMark trims one space each side, so "`` `x` ``" reads `x`.
+            if code.count >= 2, code.first == " ", code.last == " ", code.contains(where: { $0 != " " }) {
+                code = String(code.dropFirst().dropLast())
+            }
+            out += AttributedString(plain)
+            plain = ""
+            var span = AttributedString(code)
+            span.inlinePresentationIntent = .code
+            out += span
+            i = end + open
+        }
+        out += AttributedString(plain)
+        return out
+    }
+}

@@ -8,61 +8,13 @@ import Testing
 // needing a real tailnet: fresh (no Tailscale), todo (certificate not
 // fetched), pair (everything up, no phone) and ready.
 
-/// A reply the test lets go of by hand, so a newer answer can land first.
-final class HeldReply: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<CommandResult, Never>?
-    private var released: CommandResult?
-    private var arrived = false
-    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
-
-    func wait() async -> CommandResult {
-        await withCheckedContinuation { c in
-            lock.lock()
-            arrived = true
-            let waiters = arrivalWaiters
-            arrivalWaiters = []
-            if let released {
-                lock.unlock()
-                c.resume(returning: released)
-            } else {
-                continuation = c
-                lock.unlock()
-            }
-            waiters.forEach { $0.resume() }
-        }
-    }
-
-    /// Returns once the command has been asked for.
-    func untilArrived() async {
-        await withCheckedContinuation { c in
-            lock.lock()
-            if arrived {
-                lock.unlock()
-                c.resume()
-            } else {
-                arrivalWaiters.append(c)
-                lock.unlock()
-            }
-        }
-    }
-
-    func release(_ result: CommandResult) {
-        lock.lock()
-        let c = continuation
-        continuation = nil
-        if c == nil { released = result }
-        lock.unlock()
-        c?.resume(returning: result)
-    }
-}
-
 /// Answers each call with the next scripted reply; past the script, the
 /// last immediate reply again. Records arguments and deadlines.
 final class SetupScriptRunner: CommandRunning, @unchecked Sendable {
     enum Reply {
         case now(CommandResult)
-        case held(HeldReply)
+        /// Parks at the gate until the test opens it, then answers.
+        case held(HoldGate, CommandResult)
     }
 
     private let lock = NSLock()
@@ -95,7 +47,9 @@ final class SetupScriptRunner: CommandRunning, @unchecked Sendable {
         }
         switch reply {
         case .now(let result): return result
-        case .held(let held): return await held.wait()
+        case .held(let gate, let result):
+            try await gate.pass()
+            return result
         case nil: return CommandResult(status: 1, stdout: Data(), stderr: "no reply scripted")
         }
     }
@@ -107,7 +61,7 @@ final class Ticker: @unchecked Sendable {
     private let lock = NSLock()
     private var sleeper: CheckedContinuation<Void, any Error>?
     private var started = 0
-    private var waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    private let starts = CountGate()
 
     var sleeps: Int { lock.withLock { started } }
 
@@ -122,10 +76,10 @@ final class Ticker: @unchecked Sendable {
                 }
                 started += 1
                 sleeper = c
-                let due = waiters.filter { $0.count <= started }
-                waiters.removeAll { $0.count <= started }
                 lock.unlock()
-                due.forEach { $0.continuation.resume() }
+                // Counted once the sleeper is stored, so a `tick()` after
+                // `untilSleeping` always finds it.
+                Task { await starts.bump() }
             }
         } onCancel: {
             lock.lock()
@@ -136,19 +90,8 @@ final class Ticker: @unchecked Sendable {
         }
     }
 
-    /// Returns once `count` sleeps have started.
-    func untilSleeping(_ count: Int) async {
-        await withCheckedContinuation { c in
-            lock.lock()
-            if started >= count {
-                lock.unlock()
-                c.resume()
-            } else {
-                waiters.append((count, c))
-                lock.unlock()
-            }
-        }
-    }
+    /// True once `count` sleeps have started, false after `gateTimeout`.
+    func untilSleeping(_ count: Int) async -> Bool { await starts.reach(count) }
 
     func tick() {
         lock.lock()
@@ -326,15 +269,17 @@ final class Ticker: @unchecked Sendable {
     }
 
     @Test func applyRunsOneAtATime() async throws {
-        let held = HeldReply()
-        let runner = SetupScriptRunner([.held(held)])
+        let held = HoldGate()
+        let runner = SetupScriptRunner([.held(held, try reply("swe-remote-setup-ready"))])
         let setup = model(runner)
         let first = Task { await setup.apply() }
-        await held.untilArrived()
+        // A failed wait below ends the test early: don't leave this parked.
+        defer { first.cancel() }
+        try #require(await held.arrived())
         #expect(setup.applying)
         await setup.apply()
         #expect(runner.calls.count == 1)
-        held.release(try reply("swe-remote-setup-ready"))
+        held.open()
         await first.value
         #expect(setup.applying == false)
         #expect(setup.isReady)
@@ -357,11 +302,12 @@ final class Ticker: @unchecked Sendable {
                                      .now(try reply("swe-remote-setup-ready"))])
         let setup = model(runner, ticker: ticker)
         let watching = Task { await setup.watch() }
-        await ticker.untilSleeping(1)
+        defer { watching.cancel() }
+        try #require(await ticker.untilSleeping(1))
         #expect(runner.calls.count == 1)
         #expect(setup.report?.current?.id == "tailscale.cert")
         ticker.tick()
-        await ticker.untilSleeping(2)
+        try #require(await ticker.untilSleeping(2))
         #expect(runner.calls.count == 2)
         #expect(setup.report?.current?.id == "phone.paired")
         ticker.tick()
@@ -376,7 +322,8 @@ final class Ticker: @unchecked Sendable {
         let runner = SetupScriptRunner([.now(try reply("swe-remote-setup-todo"))])
         let setup = model(runner, ticker: ticker)
         let watching = Task { await setup.watch() }
-        await ticker.untilSleeping(1)
+        defer { watching.cancel() }
+        try #require(await ticker.untilSleeping(1))
         watching.cancel()
         await watching.value
         #expect(runner.calls.count == 1)
@@ -385,18 +332,21 @@ final class Ticker: @unchecked Sendable {
 
     @Test func thePollWaitsWhileApplyRuns() async throws {
         let ticker = Ticker()
-        let applying = HeldReply()
-        let runner = SetupScriptRunner([.now(try reply("swe-remote-setup-todo")), .held(applying)])
+        let applying = HoldGate()
+        let runner = SetupScriptRunner([.now(try reply("swe-remote-setup-todo")),
+                                        .held(applying, try reply("swe-remote-setup-ready"))])
         let setup = model(runner, ticker: ticker)
         let watching = Task { await setup.watch() }
-        await ticker.untilSleeping(1)
+        defer { watching.cancel() }
+        try #require(await ticker.untilSleeping(1))
         let apply = Task { await setup.apply() }
-        await applying.untilArrived()
+        defer { apply.cancel() }
+        try #require(await applying.arrived())
         // This tick falls while --apply runs: no look of its own.
         ticker.tick()
-        await ticker.untilSleeping(2)
+        try #require(await ticker.untilSleeping(2))
         #expect(runner.calls == [["remote", "setup", "--json"], ["remote", "setup", "--apply", "--json"]])
-        applying.release(try reply("swe-remote-setup-ready"))
+        applying.open()
         await apply.value
         #expect(setup.isReady)
         ticker.tick()
@@ -407,44 +357,51 @@ final class Ticker: @unchecked Sendable {
     // MARK: stale answers
 
     @Test func aSlowOlderLookNeverReplacesANewerOne() async throws {
-        let slow = HeldReply()
-        let runner = SetupScriptRunner([.held(slow), .now(try reply("swe-remote-setup-ready"))])
+        let slow = HoldGate()
+        let runner = SetupScriptRunner([.held(slow, try reply("swe-remote-setup-fresh")),
+                                        .now(try reply("swe-remote-setup-ready"))])
         let setup = model(runner)
         let older = Task { await setup.load() }
-        await slow.untilArrived()
+        defer { older.cancel() }
+        try #require(await slow.arrived())
         await setup.load()
         #expect(setup.isReady)
-        slow.release(try reply("swe-remote-setup-fresh"))
+        slow.open()
         await older.value
         #expect(setup.isReady)
         #expect(setup.loading == false)
     }
 
     @Test func aLookInFlightNeverReplacesAnApply() async throws {
-        let look = HeldReply()
-        let apply = HeldReply()
-        let runner = SetupScriptRunner([.held(look), .held(apply)])
+        let look = HoldGate()
+        let apply = HoldGate()
+        let runner = SetupScriptRunner([.held(look, try reply("swe-remote-setup-todo")),
+                                        .held(apply, try reply("swe-remote-setup-ready"))])
         let setup = model(runner)
         let looking = Task { await setup.load() }
-        await look.untilArrived()
+        defer { looking.cancel() }
+        try #require(await look.arrived())
         let applying = Task { await setup.apply() }
-        await apply.untilArrived()
+        defer { applying.cancel() }
+        try #require(await apply.arrived())
         #expect(setup.loading == false)
-        apply.release(try reply("swe-remote-setup-ready"))
+        apply.open()
         await applying.value
-        look.release(try reply("swe-remote-setup-todo"))
+        look.open()
         await looking.value
         #expect(setup.isReady)
     }
 
     @Test func aFailureFromAnOlderLookIsDroppedToo() async throws {
-        let slow = HeldReply()
-        let runner = SetupScriptRunner([.held(slow), .now(try reply("swe-remote-setup-pair"))])
+        let slow = HoldGate()
+        let runner = SetupScriptRunner([.held(slow, .init(status: 1, stdout: Data(), stderr: "timed out")),
+                                        .now(try reply("swe-remote-setup-pair"))])
         let setup = model(runner)
         let older = Task { await setup.load() }
-        await slow.untilArrived()
+        defer { older.cancel() }
+        try #require(await slow.arrived())
         await setup.load()
-        slow.release(.init(status: 1, stdout: Data(), stderr: "timed out"))
+        slow.open()
         await older.value
         #expect(setup.loadError == nil)
         #expect(setup.report?.current?.id == "phone.paired")

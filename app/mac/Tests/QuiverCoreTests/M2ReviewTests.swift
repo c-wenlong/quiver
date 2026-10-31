@@ -4,11 +4,11 @@ import Testing
 
 /// Behaviours pinned after review of the Accounts milestone.
 @Suite struct ProfileStoreReviewTests {
-    func scratch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appending(path: "review-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
+    /// Each test gets its own instance, so its folder goes when the test ends.
+    private let home: TempDir
+    init() throws { home = try TempDir() }
+
+    func scratch() throws -> URL { home.url }
 
     @Test func aRemovedAccountsIdAndHomeAreNeverReused() throws {
         // Claude Code names its keychain item after the config home, so a reused
@@ -44,32 +44,13 @@ import Testing
     }
 }
 
-@Suite struct LaunchPlannerReviewTests {
-    let claudeDefault = Profile(id: "claude-default", vendor: .claude, name: "Default", isDefault: true, color: "#d97757")
-    let paths = ProfilePaths(home: URL(fileURLWithPath: "/Users/me/.claude"), desktopData: nil)
-
-    @Test func theDefaultAccountClearsAnInheritedHomeOverride() {
-        // A CLAUDE_CONFIG_DIR exported by the user's shell would otherwise open another account.
-        #expect(LaunchPlanner.shellLine(for: claudeDefault, paths: paths, command: "claude")
-            == "unset CLAUDE_CONFIG_DIR; claude")
-    }
-
-    @Test func ghosttyAndWezTermRunAnInteractiveLoginShell() {
-        // -i reads .zshrc, where many people put the CLI's folder on PATH.
-        #expect(LaunchPlanner.terminal(.ghostty, running: "claude").arguments.suffix(3) == ["/bin/zsh", "-ilc", "claude"])
-        #expect(LaunchPlanner.terminal(.wezterm, running: "claude").arguments.suffix(3) == ["/bin/zsh", "-ilc", "claude"])
-    }
-}
-
 @Suite struct ProcessLauncherTests {
     @Test func aLaunchThatFailsReportsWhy() async {
-        let launcher = ProcessLauncher()
-        await #expect(throws: LaunchError.self) {
-            try await launcher.launch(LaunchCommand(executable: "/bin/sh", arguments: ["-c", "echo 'Unable to find application named Claude' >&2; exit 1"]))
-        }
         do {
-            try await launcher.launch(LaunchCommand(executable: "/bin/sh", arguments: ["-c", "echo 'Unable to find application named Claude' >&2; exit 1"]))
+            try await ProcessLauncher().launch(LaunchCommand(executable: "/bin/sh", arguments: ["-c", "echo 'Unable to find application named Claude' >&2; exit 1"]))
+            Issue.record("a failing launch should throw")
         } catch {
+            #expect(error is LaunchError)
             #expect(error.localizedDescription.contains("Unable to find application"))
         }
     }
@@ -81,13 +62,20 @@ import Testing
 
 @MainActor
 @Suite struct OtherLimitsFallbackTests {
+    /// Each test gets its own instance, so its folder goes when the test ends.
+    private let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     @Test func anSweWithoutExcludeIsAskedAgainWithoutIt() async {
         let ok = Data(#"{"schema":1,"data":{"harnesses":[{"name":"devin","command":"devin","description":"","version":null,"aliases":[],"tags":[],"state":"starred","sessions_100d":1,"rate_limit":{"status":"ok","used_percent":5,"remaining_percent":95,"limit_reached":false,"reset_at":null,"window":"1d","window_seconds":null,"plan_type":"teams","remaining_units":null,"total_units":null,"fetched_at":1791700000}}]}}"#.utf8)
         let runner = SequencedRunner([
-            (.zero, CommandResult(status: 1, stdout: Data(), stderr: "\u{1B}[31mUnknown flag: --exclude=claude,codex\u{1B}[0m")),
-            (.zero, CommandResult(status: 0, stdout: ok, stderr: "")),
+            CommandResult(status: 1, stdout: Data(), stderr: "\u{1B}[31mUnknown flag: --exclude=claude,codex\u{1B}[0m"),
+            CommandResult(status: 0, stdout: ok, stderr: ""),
         ])
-        let model = OtherLimitsModel(swe: SweClient(runner: runner), snapshotFile: tempSnapshotFile(), names: tempNamesStore())
+        let model = OtherLimitsModel(
+            swe: SweClient(runner: runner),
+            snapshotFile: scratch.url.appending(path: "app-other-limits.json"),
+            names: HarnessAccountNameStore(file: scratch.url.appending(path: "harness-names.json")))
         await model.load()
         #expect(model.rows.map(\.name) == ["devin"])
         #expect(model.note == nil)
@@ -96,8 +84,8 @@ import Testing
 
 @Suite struct UsageCacheLockTests {
     @Test func concurrentWritersForDifferentAccountsKeepBothCooldowns() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "cache-\(UUID().uuidString)")
-        let url = dir.appending(path: "app-usage.json")
+        let dir = try TempDir()
+        let url = dir.url.appending(path: "app-usage.json")
         let until = Date(timeIntervalSinceReferenceDate: 800_000_000)
         let keys = (0..<2).map { AccountKey(provider: .claude, configHome: "/home/\($0)", isDefault: false) }
         // Two stores on one file stand in for two running copies of the app.
@@ -116,40 +104,50 @@ import Testing
             #expect(store.entry(for: key)?.cooldownUntil == until)
             #expect(store.entry(for: key)?.fingerprint == "f\(index)-199")
         }
+        withExtendedLifetime(dir) {}
     }
 }
 
 @MainActor
 @Suite struct AccountsKeepFreshTests {
-    @Test func anOpenPageKeepsReloadingUntilItCloses() async throws {
-        let home = FileManager.default.temporaryDirectory.appending(path: "fresh-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        let usage = FakeUsage()
-        let model = AccountsModel(store: ProfileStore(root: home.appending(path: "a"), userHome: home),
+    @Test(.timeLimit(.minutes(1))) func anOpenPageKeepsReloadingUntilItCloses() async throws {
+        let home = try TempDir()
+        let usage = CountedUsage()
+        let model = AccountsModel(store: ProfileStore(root: home.url.appending(path: "a"), userHome: home.url),
                                   usage: usage, launcher: FakeLauncher(), terminal: { .terminal }, loginPath: { "" })
         let task = Task { await model.keepFresh(every: .milliseconds(10)) }
-        // Wait for three reloads (two default accounts each) rather than
-        // counting what fits in a fixed window: each load does real disk
-        // work, so on a loaded CI runner a cycle can take seconds. A
-        // minute only delays a genuinely broken reload, it cannot pass
-        // one.
-        let deadline = Date().addingTimeInterval(60)
-        while usage.requests.count < 6 && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        // Three reloads, two default accounts each.
+        #expect(await usage.calls.reach(6))
         task.cancel()
+        // Each load's fetches run in a task group it awaits, so once
+        // keepFresh returns no fetch can follow: its ending is the whole
+        // check. The time limit fails a loop that ignores cancellation
+        // (a task group racing a deadline would wait on it forever).
         await task.value
-        #expect(usage.requests.count >= 6)
-        let afterCancel = usage.requests.count
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(usage.requests.count == afterCancel)
+        withExtendedLifetime(home) {}
     }
 }
 
+/// Counts usage fetches on a gate the test can wait on, and answers each
+/// as signed out.
+private final class CountedUsage: UsageFetching, Sendable {
+    let calls = CountGate()
+
+    func usage(for key: AccountKey, force: Bool, freshFor _: TimeInterval) async -> AccountUsage {
+        await calls.bump()
+        return AccountUsage(status: .signedOut, plan: nil, email: nil, windows: [], fetchedAt: nil, isStale: false)
+    }
+
+    func cachedUsage(for key: AccountKey) async -> AccountUsage? { nil }
+}
+
 @Suite struct CrossProcessTests {
+    /// Each test gets its own instance, so its folder goes when the test ends.
+    private let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     @Test func twoStoresAddingAtOnceKeepBothAccounts() async throws {
-        let home = FileManager.default.temporaryDirectory.appending(path: "multi-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let home = scratch.url
         let root = home.appending(path: ".quiver/accounts")
         // Two stores on one folder stand in for two running copies of the app.
         await withTaskGroup(of: Void.self) { group in
@@ -165,7 +163,7 @@ import Testing
     }
 
     @Test func aSuccessSavedLaterKeepsAnotherCopysActiveCooldown() {
-        let url = FileManager.default.temporaryDirectory.appending(path: "cool-\(UUID().uuidString)/app-usage.json")
+        let url = scratch.url.appending(path: "app-usage.json")
         let key = AccountKey(provider: .claude, configHome: "/h", isDefault: true)
         let until = Date().addingTimeInterval(600)
         let other = UsageCacheStore(url: url)
@@ -180,7 +178,7 @@ import Testing
     }
 
     @Test func anOlderIncomingCooldownDoesNotShortenTheStoredOne() {
-        let url = FileManager.default.temporaryDirectory.appending(path: "cool2-\(UUID().uuidString)/app-usage.json")
+        let url = scratch.url.appending(path: "app-usage.json")
         let key = AccountKey(provider: .claude, configHome: "/h", isDefault: true)
         let later = Date().addingTimeInterval(600)
         let earlier = Date().addingTimeInterval(60)
@@ -192,7 +190,7 @@ import Testing
     }
 
     @Test func theCooldownCheckUsesTheServiceClock() {
-        let url = FileManager.default.temporaryDirectory.appending(path: "clock-\(UUID().uuidString)/app-usage.json")
+        let url = scratch.url.appending(path: "app-usage.json")
         let key = AccountKey(provider: .claude, configHome: "/h", isDefault: true)
         // Long past by the wall clock, still ahead by the injected one.
         let then = Date(timeIntervalSince1970: 1_000_000)

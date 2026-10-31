@@ -1,5 +1,6 @@
 import AppKit
 import QuiverCore
+import SystemConfiguration
 import SwiftUI
 
 /// The caption column a server sheet aligns its labelled rows on.
@@ -46,7 +47,7 @@ struct McpServersPage: View {
             }
             .secondaryButton()
             .disabled(model.checkingHealth)
-            .help("Run each server's command check and reach each URL")
+            .hoverTip("Run each server's command check and reach each URL", replacesLabel: false)
             Button("Add server", systemImage: "plus") { adding = true }
                 .primaryButton()
                 .hoverTip("Add a server to the Quiver hub, and optionally to harnesses")
@@ -115,16 +116,7 @@ struct McpServersPage: View {
             }
         }
         .quiverSheet(isPresented: $adding) {
-            let (harnesses, active, servers): ([String], [String], [McpServer]) = {
-                if case .loaded(let inventory) = model.state {
-                    return (inventory.harnesses,
-                            inventory.activeHarnesses.filter { !hidden.contains($0) },
-                            inventory.servers)
-                }
-                return ([], [], [])
-            }()
-            McpAddServerSheet(harnesses: harnesses, active: active,
-                              existing: servers) {
+            McpAddServerSheet(hidden: hidden) {
                 await model.load(swe: app.swe, for: app.swePath, health: model.hasHealth)
             }
         }
@@ -189,6 +181,9 @@ private struct ServerGrid: View {
     /// The name column takes whatever the cells leave, but never less than this.
     static let nameMinWidth: CGFloat = 180
     static let cellWidth: CGFloat = 88
+    /// The gap between a Local row's folder buttons and the first harness
+    /// cell, the same on a server's row and an unused folder's.
+    static let actionsGap: CGFloat = 8
     /// Rows a section shows before folding behind a Show more row.
     private static let foldLimit = 10
     /// Section titles the user has unfolded.
@@ -328,7 +323,7 @@ private struct ServerRow: View {
         .overlay(alignment: .trailing) {
             if !folders.isEmpty {
                 FolderActions(folders: folders, editor: editor)
-                    .padding(.trailing, cellsWidth + 8)
+                    .padding(.trailing, cellsWidth + ServerGrid.actionsGap)
             }
         }
     }
@@ -777,6 +772,8 @@ private struct FolderRow: View {
     var body: some View {
         HStack(spacing: 0) {
             RepoFolderRow(folder: folder, usedBy: hubKnown ? [] : nil, editor: editor)
+                // Its buttons end where a server row's do, not 8pt further right.
+                .padding(.trailing, ServerGrid.actionsGap)
                 .frame(minWidth: ServerGrid.nameMinWidth, maxWidth: .infinity, alignment: .leading)
             ForEach(harnesses, id: \.self) { harness in
                 Spacer().frame(width: ServerGrid.columnWidth(harness))
@@ -934,6 +931,9 @@ private struct RepoFolderRow: View {
 
 /// The Local group's title: the machine whose harnesses launch a command
 /// server. The Mac app manages this Mac's harnesses.
-var mcpLocalTitle: String {
-    "Local: runs on \(Host.current().localizedName ?? "this Mac")"
-}
+/// Read once: `Host.current()` can stall for seconds on a misconfigured
+/// network, and this is read in view bodies on the main thread.
+let mcpLocalTitle: String = {
+    let name = SCDynamicStoreCopyComputerName(nil, nil) as String?
+    return "Local: runs on \(name ?? "this Mac")"
+}()

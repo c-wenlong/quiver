@@ -38,7 +38,12 @@ dependencies = []
 # mcp 2.x removed mcp.server.fastmcp, which mcp/server.py imports.
 # 1.30.0 is the first 1.x release patched for GHSA-84m7-p3x7-pcfv.
 server = ["mcp>=1.30.0,<2"]
-test = ["coverage[toml]>=7.10"]
+# mistune renders the generated docs pages under app/landing-page/; the
+# freshness test in tests/test_docs_site.py imports it through
+# scripts/docs_site.py. Docs-only, never a runtime dep. Pinned to the
+# same release as docs/requirements.txt: the freshness check compares
+# rendered HTML byte for byte, so generator and test must agree.
+test = ["coverage[toml]>=7.10", "mistune==3.3.4"]
 
 [project.scripts]
 swe = "quiver.cli:main"

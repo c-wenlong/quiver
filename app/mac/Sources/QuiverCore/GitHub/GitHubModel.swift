@@ -104,6 +104,13 @@ public final class GitHubModel {
     /// The focus page's tab; the dashboard's `tab` is left alone so a
     /// trip through a repo never moves it.
     public var focusTab: RepoTab = .pulls
+    /// The dashboard's pull request filter (All, Mine, Review
+    /// requested). `activePullFilter` falls back to All while the flags
+    /// it needs are unknown.
+    public var pullFilter: PullFilter = .all
+    /// Per repo, the open PRs `gh pr status` says ask for the login's
+    /// review (`loadReviewRequests`). A repo missing here is unknown.
+    public internal(set) var reviewRequests: [String: PrReviewRequests] = [:]
     /// The page's filter text: repo names, PR titles, branch names and
     /// the rest of the row text. Lives on the model so a banner's
     /// click-through can clear it and land on its repo's section.
@@ -170,6 +177,20 @@ public final class GitHubModel {
     private var storeOwnsBoards = false
 
     public private(set) var inbox: Loadable<[GhNotification]> = .idle
+    /// An inbox read is in flight; a second caller waits for it rather
+    /// than racing it.
+    private var inboxReading = false
+    /// Callers waiting for the read in flight to land.
+    private var inboxWaiters: [CheckedContinuation<Void, Never>] = []
+    /// How many callers are waiting on the read in flight, so a test can
+    /// wait for an overlapping caller to queue instead of yielding.
+    var inboxWaiterCount: Int { inboxWaiters.count }
+    /// How many reads have started, so a forced caller can tell a read
+    /// begun after it asked (which answers it) from an older one.
+    private var inboxReadsStarted = 0
+    /// Bumped by each read and by marking threads read: only the newest
+    /// read's reply, from after the last mark, lands.
+    private var inboxGeneration = 0
     /// Unread lines in the loaded inbox — the sidebar badge and the
     /// Dock tile both read this. 0 until the first fetch lands and
     /// through `.idle`/`.failed`, which read as "nothing known" rather
@@ -245,6 +266,20 @@ public final class GitHubModel {
         restore()
     }
 
+    /// Takes a reply's `gh` probe. Only `swe gh`'s overview runs `gh auth
+    /// status` when the reads all came back ok; a surface reply (board,
+    /// pulls, issues…) then says ok with no login. Taking that as is
+    /// dropped the login, and with it the Mine filter, a second after
+    /// the dashboard showed it. While gh still answers ok, the login the
+    /// overview found stays.
+    private func adopt(_ new: GhEnv) {
+        if new.status == .ok, new.login == nil, let old = env, old.status == .ok, let login = old.login {
+            env = GhEnv(status: .ok, login: login, error: new.error)
+        } else {
+            env = new
+        }
+    }
+
     /// The blocking env state the pages' setup card covers — gh missing
     /// or signed out. nil while probing, ok, or upstream-error (the
     /// probe failed, not the login — pages stay up).
@@ -276,7 +311,7 @@ public final class GitHubModel {
         let syncGen = syncGeneration
         do {
             let overview = try await swe.ghOverview()
-            env = overview.github
+            adopt(overview.github)
             // A reply older than the last sync's write would paint over
             // the fresher count the sync just reported.
             if syncGeneration == syncGen { catalog = overview.catalog }
@@ -327,16 +362,20 @@ public final class GitHubModel {
 
     /// A new notification names a repo whose rows may have moved: drop
     /// its fetch times so the next look refetches, and refresh it now
-    /// when it is the repo on screen.
-    public func invalidate(repo: String, swe: SweClient) {
+    /// when it is the repo on screen. Returns the refreshes it started
+    /// (none when the repo is off screen), so a caller can wait for them.
+    @discardableResult
+    public func invalidate(repo: String, swe: SweClient) -> [Task<Void, Never>] {
         for key in fetched.keys where key.repo == repo { fetched[key] = nil }
         for key in focusFetched.keys where key.repo == repo { focusFetched[key] = nil }
+        var refreshes: [Task<Void, Never>] = []
         if selected == repo {
-            Task { await loadTab(tab, repo: repo, swe: swe) }
+            refreshes.append(Task { await loadTab(tab, repo: repo, swe: swe) })
         }
         if focused == repo {
-            Task { await loadFocusTab(focusTab, repo: repo, swe: swe) }
+            refreshes.append(Task { await loadFocusTab(focusTab, repo: repo, swe: swe) })
         }
+        return refreshes
     }
 
     /// Manual refresh always fetches, even inside the stale window.
@@ -380,7 +419,7 @@ public final class GitHubModel {
         }
         do {
             let reply = try await swe.ghBoard(repos: pending)
-            env = reply.github
+            adopt(reply.github)
             probed = true
             let stamp = now()
             for repo in pending {
@@ -803,15 +842,36 @@ public final class GitHubModel {
 
     /// The GitHub notifications inbox; refetches when stale or forced.
     public func loadInbox(swe: SweClient, force: Bool = false) async {
-        if case .loading = inbox { return }
+        // One read at a time, polls included: two in flight could land out
+        // of order and an older list overwrite a newer one. A caller that
+        // finds a read running waits for it, so it returns with fresh rows
+        // (the notifier reads them right after). A forced caller then reads
+        // again with its own client, unless a read begun after it asked
+        // already answered.
+        let askedAt = inboxReadsStarted
+        while inboxReading {
+            let running = inboxReadsStarted
+            await withCheckedContinuation { inboxWaiters.append($0) }
+            if !force || running > askedAt { return }
+        }
         if !force, case .loaded = inbox,
            let at = inboxFetchedAt, now().timeIntervalSince(at) < staleAfter { return }
+        inboxReading = true
+        inboxReadsStarted += 1
+        inboxGeneration += 1
+        let mine = inboxGeneration
+        defer {
+            inboxReading = false
+            let waiting = inboxWaiters
+            inboxWaiters = []
+            waiting.forEach { $0.resume() }
+        }
         // First read shows the spinner; later polls keep the rows.
         if case .idle = inbox { inbox = .loading }
         let next: Loadable<[GhNotification]>
         do {
             let reply = try await swe.ghInbox()
-            env = reply.github
+            adopt(reply.github)
             probed = true
             next = reply.status == "ok"
                 ? .loaded(reply.notifications)
@@ -824,6 +884,9 @@ public final class GitHubModel {
         } catch {
             next = .failed(error.localizedDescription)
         }
+        // Marking threads read while this ran: the reply predates it and
+        // would bring the read threads back as unread.
+        guard mine == inboxGeneration else { return }
         inbox = next
         if case .loaded(let notes) = next {
             inboxFetchedAt = now()
@@ -997,7 +1060,7 @@ public final class GitHubModel {
         if prDetails[key] == nil { prDetails[key] = .loading }
         do {
             let reply = try await swe.ghPrView(repo: repo, ref: "\(number)")
-            env = reply.github
+            adopt(reply.github)
             probed = true
             prDetails[key] = reply.pr.map { .loaded($0) }
                 ?? .failed(reply.error ?? "GitHub returned \(reply.status)")
@@ -1050,7 +1113,7 @@ public final class GitHubModel {
             let reply = try await swe.ghIssueView(repo: repo, number: number)
             guard issueGenerations[key] == generation else { return }
             if let github = reply.github {
-                env = github
+                adopt(github)
                 probed = true
             }
             next = reply.issue.map { .loaded($0) }
@@ -1079,7 +1142,7 @@ public final class GitHubModel {
         defer { actionBusy.remove(key) }
         do {
             let reply = try await swe.ghIssueComment(repo: repo, number: number, body: text)
-            if let github = reply.github { env = github }
+            if let github = reply.github { adopt(github) }
             if let error = reply.error { return error }
             guard reply.comment != nil else {
                 return "GitHub returned \(reply.status ?? "no comment")."
@@ -1110,7 +1173,7 @@ public final class GitHubModel {
         do {
             let reply = try await swe.ghPrMerge(repo: repo, ref: ref,
                                                 method: method, auto: auto)
-            env = reply.github
+            adopt(reply.github)
             if let error = reply.error { actionError = error; return error }
             actionError = nil
             for k in fetched.keys where k.repo == repo { fetched[k] = nil }
@@ -1143,7 +1206,7 @@ public final class GitHubModel {
         do {
             let reply = try await swe.ghRunRerun(repo: repo, run: run,
                                                  failedOnly: failedOnly)
-            env = reply.github
+            adopt(reply.github)
             if let error = reply.error { actionError = error; return error }
             actionError = nil
             fetched[BoardKey(repo: repo, tab: .actions)] = nil
@@ -1169,7 +1232,7 @@ public final class GitHubModel {
         defer { actionBusy.remove(key) }
         do {
             let reply = try await swe.ghInboxRead(ids: ids, all: all)
-            env = reply.github
+            adopt(reply.github)
             if let error = reply.error { actionError = error; return error }
             let missed = (reply.failed ?? []).map { "\($0.id): \($0.error)" }
             if !missed.isEmpty {
@@ -1190,6 +1253,8 @@ public final class GitHubModel {
                 if case .loaded(let now) = inbox {
                     snapshotInbox = now
                 }
+                // A poll in flight answers from before this mark.
+                inboxGeneration += 1
                 scheduleSave()
             }
             return nil
@@ -1312,7 +1377,7 @@ public final class GitHubModel {
         persist: (@Sendable (Row) -> Void)? = nil,
         rows: (Entry) -> Row
     ) {
-        env = reply.github
+        adopt(reply.github)
         probed = true
         let value: Loadable<Row>
         if let entry = reply.results.first(where: { $0.repo == key.repo }) {

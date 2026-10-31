@@ -3,7 +3,7 @@
 A port of the Mac app's first-run setup sheet (`FirstRunSetupSheet`,
 `QuiverCore/Onboarding/FirstRunSetup.swift`) for the machine the hub runs
 on. Page id `setup`, at `#/setup`; it is not in the sidebar. While the hub
-machine has no shared `~/.quiver/AGENTS.md`, opening a bare `/app/` goes
+machine has no shared `~/.quiver/AGENTS.md`, opening a bare `/` goes
 here once per browser (remembered under `quiver.setup.offered`), and
 Overview shows a **Set up** card linking here. Settings links it too. Files:
 `quiver/webapp/pages/setup.py`, `static/pages/setup.js` and `setup.css`,
@@ -54,6 +54,21 @@ subtitle, and a footer with Skip setup, Back and Continue.
    Going Back and changing the ticks runs setup again (without adopting a
    second time), as the sheet does.
 
+   Above them, while `~/.quiver` has no hub yet (`hub.can_clone`: no
+   `AGENTS.md`, no `.git`; the hub's own state there doesn't count),
+   **Start from your hub repo** offers `swe setup --hub`: a URL field,
+   the note "Fork a hub repo first (or use it as a template for a private
+   copy), then paste your fork's URL.", the demo hub link once
+   `DEMO_HUB_URL` is set, and **Clone**. The clone runs on the hub's own
+   thread; the card reads "Cloning <url>… This can take a few minutes."
+   and Continue waits while the page polls `GET /v1/app/setup?hub=1`.
+   A refusal or failure (an existing hub, a URL git can't reach, a
+   timeout, a path on both sides) shows under the field. Once it's done
+   the page reads the machine again, so the step shows the cloned hub's
+   AGENTS.md, and the card says what was cloned and any plugin
+   marketplace that couldn't be registered. Coming back to the page
+   while a clone runs picks the polling up again.
+
 3. **Pick a look.** System, Light and Dark, each drawn as a small Quiver
    window, with the Mac app's blurbs ("Matches this browser" for System).
    A click applies it at once and saves it in this browser under
@@ -86,7 +101,9 @@ refresh button reads everything again and starts the steps over.
     "starred": ["claude"],
     "error": null
   },
-  "preview": {"harness": [], "mcp": [], "skills": [], "instructions": {}}
+  "preview": {"harness": [], "mcp": [], "skills": [], "instructions": {}, "hub": {}},
+  "hub": {"can_clone": true, "demo_url": null,
+          "job": {"state": "idle", "url": null, "error": null, "cloned": null}}
 }
 ```
 
@@ -107,6 +124,13 @@ refresh button reads everything again and starts the steps over.
   again, as the sheet does when the preview call fails.
 - `first_run` is the Mac app's `FirstRun.shouldOffer` check: no shared
   `AGENTS.md`.
+- `hub` is `hub_status`: `can_clone` (whether `~/.quiver` can take a
+  clone now), `demo_url` (null until the demo hub exists) and `job`, this
+  hub process's last clone: `state` is `idle`, `cloning`, `done` or
+  `failed`, `url` is the URL with any credentials removed, `error` is
+  why it failed, and `cloned` is `swe setup --hub`'s
+  `{url, path, marketplaces}`. `GET /v1/app/setup?hub=1` answers
+  `{"hub"}` alone, with no discovery, for the page to poll.
 
 `POST /v1/app/setup/apply` with `{"starred": ["claude", "gemini"],
 "adopt": "/home/dev/.claude/CLAUDE.md" | null}` is `swe setup --apply
@@ -126,7 +150,8 @@ Harnesses page and Doctor's fixes hold.
 | 404 | `unknown_file` | `adopt` is not one of the preview's `adopt_candidates` right now (no other path is opened) |
 | 503 | `setup_failed` | discovery itself failed, before anything was written |
 | 409 | `not_adoptable` | `adopt` sent once `AGENTS.md` already holds your own text |
-| 404 | `unknown_action` | any action but `apply` and `install` |
+| 404 | `unknown_action` | any action but `apply`, `install` and `hub` |
+| 409 | `busy` | a hub clone is running |
 | 403 | `bad_origin` | the hub's Origin check, for a cross-site POST |
 
 `POST /v1/app/setup/install` with `{"id": "gemini", "via": "brew"}` is
@@ -143,6 +168,23 @@ registers the harness as `swe install` does. The reply is `{"error",
 (`null` once the command is on PATH), and this page's `GET` data read
 again. 404 `unknown_harness` for an id the page doesn't list, 422
 `bad_via` for a method that agent has no command for.
+
+`POST /v1/app/setup/hub` with `{"url": "https://github.com/me/hub.git"}`
+is `swe setup --hub=<url>`'s clone (`init.hub.clone_and_register`:
+`git ls-remote`, a clone into a staging folder moved into `~/.quiver`
+around what is there, then the hub's plugin marketplaces registered).
+It answers at once with `{"hub"}` and runs on its own thread, holding
+the page's setup lock, so apply answers 409 `busy` until it ends. The
+URL is kept and answered only with its credentials removed.
+
+| Status | Code | When |
+|---|---|---|
+| 422 | `bad_url` | `url` is not a one-line string of at most 2,048 characters, or starts with `-` |
+| 409 | `has_hub` | `~/.quiver` already holds a hub (`AGENTS.md` or `.git`), or is a file or a symlink; the message is swe's |
+| 409 | `busy` | a clone or a setup run is going |
+
+Failures after it starts (a URL git can't reach, a timeout, a path on
+both sides) come back in `hub.job.error` with `state: "failed"`.
 
 Part-way failures are not refusals: as with `swe setup --apply --json`
 they come back in `applied.errors` or `applied.links.error`, and the

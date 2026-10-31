@@ -108,6 +108,7 @@ class BareFlagRejectionTest(unittest.TestCase):
 
     def test_add_too_few_args(self):
         code, out = _run(cmd_add, ["demo"])
+        self.assertEqual(code, 1)
         self.assertIn("Usage: swe add", out)
 
     def test_install_package(self):

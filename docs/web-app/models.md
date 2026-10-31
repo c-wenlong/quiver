@@ -20,7 +20,10 @@ store, and this port adds no key flow, so these stay in the Mac app:
 - the benchmark columns: Intelligence index, Terminal-Bench 4.0 (coding),
   Humanity's Last Exam (reasoning), output speed, time to first token;
 - the Chart view and its metric picker;
-- Artificial Analysis's blended price and its cost-rank bar;
+- Artificial Analysis's blended price and its cost-rank bar (a Free key
+  gets no blended price from AA's V2 API, so the app blends input and
+  output 3:1 itself; Terminal-Bench 4.0 and Humanity's Last Exam are
+  Pro-only and stay empty on a Free key);
 - the scopes "Your models + top 10" and "Top 25" (the leaderboard);
 - matching logged names to Artificial Analysis models, which merges
   `grok-4.7` and `grok-4.7-high-fast` into one row, the unmatched-model

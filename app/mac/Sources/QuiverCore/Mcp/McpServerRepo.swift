@@ -288,7 +288,7 @@ public enum McpServerRepo {
     /// stall the pipe, with five seconds before the process is let go.
     /// Anything off (not a repo, git missing, a timeout) is `isRepo: false`.
     public static func gitState(of url: URL) async -> GitState {
-        await runOffPool { Self.gitStateSync(of: url) }
+        await offMain { Self.gitStateSync(of: url) }
     }
 
     private static func gitStateSync(of url: URL) -> GitState {
@@ -301,6 +301,11 @@ public enum McpServerRepo {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", url.path, "status", "--porcelain=v1", "--branch"]
+        // Optional locks off, as swe's `read_git` does: a plain status
+        // refreshes stale stat data by rewriting the index under
+        // index.lock, which can fail a commit the user runs meanwhile.
+        process.environment = ProcessInfo.processInfo.environment
+            .merging(["GIT_OPTIONAL_LOCKS": "0"]) { $1 }
         let output = Pipe()
         let errors = Pipe()
         process.standardOutput = output
@@ -352,7 +357,7 @@ public final class McpServerRepoModel {
         isLoading = true
         error = nil
         let root = self.root
-        let outcome = await runOffPool { Result { try McpServerRepo.scan(root: root) } }
+        let outcome = await offMain { Result { try McpServerRepo.scan(root: root) } }
         let found: [McpRepoServer]
         do {
             found = try outcome.get()

@@ -105,9 +105,14 @@ extension Ledger {
     /// over the ledger's per-session stats, under the same setting.
     /// A session the ledger has no rows for stays: absent rows prove
     /// nothing about a file's responses.
-    public func filterTrivialActivitySessions(
+    ///
+    /// The whole-history read takes seconds on a large ledger, so it runs
+    /// on the pooled readers off the actor, like the other figure queries:
+    /// on the actor it waited between scanned files and held up the scan.
+    @concurrent
+    public nonisolated func filterTrivialActivitySessions(
         _ sessions: [ActivityFileIndex.IndexedSession], harness: String
-    ) -> [ActivityFileIndex.IndexedSession] {
+    ) async -> [ActivityFileIndex.IndexedSession] {
         guard !sessions.isEmpty, trivialGate.withLock({ $0 }) else { return sessions }
         struct Key: Hashable { var account, session: String }
         var usage: [Key: SessionUsage] = [:]

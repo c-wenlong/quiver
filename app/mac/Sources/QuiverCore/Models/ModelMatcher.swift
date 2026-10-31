@@ -354,16 +354,3 @@ public struct ModelMatcher: Sendable {
         return name
     }
 }
-
-/// Where a model's blended price lands on AA's whole price scale:
-/// `(cheaper + 0.5 × same-priced others) / (count − 1)`, clamped to 0…1.
-/// Equal-priced models share a spot, which is how pickers rank them.
-public enum CostPercentile {
-    public static func rank(of model: AALanguageModel, in models: [AALanguageModel]) -> Double? {
-        let priced = models.compactMap(\.priceBlended).filter { $0 > 0 }
-        guard let price = model.priceBlended, price > 0, priced.count > 1 else { return nil }
-        let lower = priced.filter { $0 < price }.count
-        let equal = priced.filter { $0 == price }.count - 1 // itself excluded
-        return min(max((Double(lower) + 0.5 * Double(equal)) / Double(priced.count - 1), 0), 1)
-    }
-}

@@ -38,6 +38,8 @@ final class TasksDecodingTests: XCTestCase {
       "github": {"status": "ok", "login": "octocat", "error": null},
       "linear": {"status": "auth-required", "login": null,
                  "error": "linear.key_ref is unset"},
+      "notion": {"status": "bad-config", "login": null,
+                 "error": "notion.databases[0].properties.status is required"},
       "fetched_at": 1767323045.0
     }
     """
@@ -48,6 +50,7 @@ final class TasksDecodingTests: XCTestCase {
         XCTAssertEqual(body.machineId, "m-1")
         XCTAssertNil(body.envBlocked)
         XCTAssertEqual(body.linear?.status, "auth-required")
+        XCTAssertEqual(body.notion?.status, "bad-config")
         XCTAssertEqual(body.fetchedAt, 1767323045.0)
 
         let issue = body.tasks[0]
@@ -107,6 +110,17 @@ final class TaskRowTests: XCTestCase {
                 updatedAt: nil, pr: nil)
     }
 
+    func testAnEmptyPageSaysGitHubIsOutOnce() {
+        let signedOut = "gh is not authenticated: run `gh auth login`"
+        // Rows on screen: the banner says they're last-known, and why.
+        XCTAssertEqual(TaskGrouping.githubBanner(envBlocked: signedOut, githubFailed: nil, hasRows: true), signedOut)
+        XCTAssertEqual(TaskGrouping.githubBanner(envBlocked: nil, githubFailed: "timed out", hasRows: true), "timed out")
+        // No rows: the empty card says it; a banner would repeat it.
+        XCTAssertNil(TaskGrouping.githubBanner(envBlocked: signedOut, githubFailed: nil, hasRows: false))
+        XCTAssertNil(TaskGrouping.githubBanner(envBlocked: nil, githubFailed: "timed out", hasRows: false))
+        XCTAssertNil(TaskGrouping.githubBanner(envBlocked: nil, githubFailed: nil, hasRows: true))
+    }
+
     func testFiltersPickByStateAndAgent() {
         let running = row("a", state: "in_progress", running: true)
         let prOpen = row("b", state: "pr_open")
@@ -141,7 +155,8 @@ final class TaskRowTests: XCTestCase {
             row("e", source: "notion", kind: "page", ref: "x", repo: nil),
         ]
         let sections = TaskGrouping.sections(of: tasks, filter: .all)
-        XCTAssertEqual(sections.map(\.name), ["o/s", "o/r", "QUI", "Other"])
+        // A row with no repo or project lists under its source's name.
+        XCTAssertEqual(sections.map(\.name), ["o/s", "o/r", "QUI", "Notion"])
         XCTAssertEqual(sections[1].rows?.map(\.id), ["a", "c"])
         XCTAssertEqual(TaskGrouping.count(tasks, filter: .all), 5)
 
@@ -151,10 +166,165 @@ final class TaskRowTests: XCTestCase {
         XCTAssertTrue(none.isEmpty)
     }
 
+    /// Scope-less rows group as the web and the Mac group them: GitHub
+    /// spelled GitHub, Linear under "Linear", and "Other" only for a row
+    /// that names no source at all. An empty repo counts as none.
+    func testScopelessRowsGroupUnderTheirSourceName() {
+        let tasks = [
+            row("a", source: "linear", ref: "QUI-1", repo: nil, project: nil),
+            row("b", repo: nil),
+            row("c", source: "jira", ref: "J-1", repo: "", project: nil),
+            row("d", source: nil, kind: "page", ref: "x", repo: nil),
+            row("e", source: "linear", ref: "QUI-2", repo: "", project: "QUI"),
+        ]
+        XCTAssertEqual(TaskGrouping.sections(of: tasks, filter: .all).map(\.name),
+                       ["Linear", "GitHub", "Jira", "Other", "QUI"])
+    }
+
+    private func failure(_ name: String, error: String? = "boom") -> TaskRepoFailure {
+        TaskRepoFailure(name: name, status: "upstream-error", error: error)
+    }
+
+    /// The scope menu groups as the Mac and web rails do: owners first,
+    /// then Linear, Notion and other sources by name; rows by name; every
+    /// scope listed even at 0 on the chip, failed repos included.
+    func testRailGroupsByOwnerThenSourceSortedByName() {
+        let tasks = [
+            row("a", repo: "zed/app", state: "in_progress", running: true),
+            row("b", repo: "acme/web"),
+            row("c", repo: "acme/api", state: "merged"),
+            row("d", source: "linear", ref: "QUI-1", repo: nil, project: "QUI"),
+            row("e", source: "notion", kind: "page", ref: "x", repo: nil, project: "Roadmap"),
+            row("f", source: "linear", ref: "QUI-2", repo: nil, project: nil),
+        ]
+        let rail = TaskGrouping.rail(of: tasks, failed: [failure("acme/docs")], filter: .running)
+        XCTAssertEqual(rail.map(\.title), ["acme", "zed", "Linear", "Notion"])
+        XCTAssertEqual(rail[0].scopes.map(\.label), ["api", "docs", "web"])
+        XCTAssertEqual(rail[0].scopes.map(\.name), ["acme/api", "acme/docs", "acme/web"])
+        // Counts are under the chip; the running mark is regardless of it.
+        XCTAssertEqual(rail[1].scopes, [TaskRailScope(name: "zed/app", label: "app", count: 1, running: true)])
+        // A project-less Linear row lists under "Linear" in the Linear group.
+        XCTAssertEqual(rail[2].scopes.map(\.name), ["Linear", "QUI"])
+        XCTAssertEqual(rail[3].scopes.map(\.name), ["Roadmap"])
+        XCTAssertEqual(rail[0].scopes.map(\.count), [0, 0, 0])
+    }
+
+    /// A name two sources share is one list group, so both menu rows
+    /// count that group; an owner named like a source keeps its own id.
+    func testSharedScopeNamesCountTheSharedGroup() {
+        let tasks = [
+            row("a", source: "linear", ref: "QUI-1", repo: nil, project: "QUI", running: true),
+            row("b", source: "notion", kind: "page", ref: "x", repo: nil, project: "QUI"),
+            row("c", repo: "Linear/app"),
+        ]
+        let rail = TaskGrouping.rail(of: tasks, filter: .all)
+        XCTAssertEqual(rail.map(\.title), ["Linear", "Linear", "Notion"])
+        XCTAssertEqual(Set(rail.map(\.id)).count, 3)
+        let qui = rail.flatMap(\.scopes).filter { $0.name == "QUI" }
+        XCTAssertEqual(qui.map(\.count), [2, 2])
+        XCTAssertEqual(qui.map(\.running), [true, true])
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .all, scope: "QUI"), 2)
+    }
+
+    func testQuietScopesFoldButThePickStays() {
+        let group = TaskRailGroup(title: "acme", scopes: [
+            TaskRailScope(name: "acme/api", label: "api", count: 2, running: false),
+            TaskRailScope(name: "acme/web", label: "web", count: 0, running: false),
+            TaskRailScope(name: "acme/docs", label: "docs", count: 0, running: false),
+        ])
+        let open = TaskGrouping.split(group, shown: nil)
+        XCTAssertEqual(open.active.map(\.name), ["acme/api"])
+        XCTAssertEqual(open.quiet.map(\.name), ["acme/web", "acme/docs"])
+        let picked = TaskGrouping.split(group, shown: "acme/web")
+        XCTAssertEqual(picked.active.map(\.name), ["acme/api", "acme/web"])
+        XCTAssertEqual(picked.quiet.map(\.name), ["acme/docs"])
+    }
+
+    func testScopeNarrowsSectionsAndChipCounts() {
+        let tasks = [
+            row("a", repo: "o/r", running: true),
+            row("b", repo: "o/s"),
+            row("c", repo: "o/r", state: "merged"),
+            row("d", source: "linear", ref: "QUI-1", repo: nil, project: "QUI"),
+        ]
+        let narrowed = TaskGrouping.sections(of: tasks, failed: [], filter: .all, scope: "o/r")
+        XCTAssertEqual(narrowed.map(\.name), ["o/r"])
+        XCTAssertEqual(narrowed[0].rows?.map(\.id), ["a", "c"])
+        XCTAssertEqual(TaskGrouping.sections(of: tasks, failed: [], filter: .all, scope: "QUI").map(\.name), ["QUI"])
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .all, scope: "o/r"), 2)
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .done, scope: "o/r"), 1)
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .done, scope: "o/s"), 0)
+        XCTAssertEqual(TaskGrouping.count(tasks, filter: .all), 4)
+    }
+
+    /// A failed repo's error sits on its own section: one header per
+    /// repo, a section of its own when it has no rows, and only under a
+    /// scope that names it.
+    func testFailedReposJoinTheirSection() {
+        let tasks = [row("a", repo: "o/r"), row("b", repo: "o/s")]
+        let failed = [failure("o/r"), failure("o/gone", error: nil)]
+        let sections = TaskGrouping.sections(of: tasks, failed: failed, filter: .all)
+        XCTAssertEqual(sections.map(\.name), ["o/r", "o/s", "o/gone"])
+        XCTAssertEqual(sections[0].error, "boom")
+        XCTAssertEqual(sections[0].rows?.map(\.id), ["a"])
+        XCTAssertNil(sections[1].error)
+        XCTAssertEqual(sections[2].error, "upstream-error")
+        XCTAssertEqual(sections[2].rows?.count, 0)
+        XCTAssertEqual(TaskGrouping.sections(of: tasks, failed: failed, filter: .all, scope: "o/s").map(\.name), ["o/s"])
+        XCTAssertEqual(TaskGrouping.sections(of: tasks, failed: failed, filter: .all, scope: "o/gone").map(\.name), ["o/gone"])
+    }
+
+    func testAPickThatLeavesTheReplyFallsBackToAll() {
+        let tasks = [row("a", repo: "o/r")]
+        XCTAssertEqual(TaskGrouping.shownScope("o/r", tasks: tasks, failed: []), "o/r")
+        XCTAssertEqual(TaskGrouping.shownScope("o/gone", tasks: tasks, failed: [failure("o/gone")]), "o/gone")
+        XCTAssertNil(TaskGrouping.shownScope("o/old", tasks: tasks, failed: []))
+        XCTAssertNil(TaskGrouping.shownScope(nil, tasks: tasks, failed: []))
+    }
+
+    func testGroupsFoldPastFiveRowsUnlessNarrowed() {
+        let rows = (1...7).map { row("\($0)") }
+        let folded = TaskGrouping.fold(rows, expanded: false, narrowed: false)
+        XCTAssertEqual(folded.visible.map(\.id), ["1", "2", "3", "4", "5"])
+        XCTAssertEqual(folded.hidden, 2)
+        let open = TaskGrouping.fold(rows, expanded: true, narrowed: false)
+        XCTAssertEqual(open.visible.count, 7)
+        XCTAssertEqual(open.hidden, 2)
+        let narrowed = TaskGrouping.fold(rows, expanded: false, narrowed: true)
+        XCTAssertEqual(narrowed.visible.count, 7)
+        XCTAssertEqual(narrowed.hidden, 0)
+        let five = TaskGrouping.fold(Array(rows.prefix(5)), expanded: false, narrowed: false)
+        XCTAssertEqual(five.visible.count, 5)
+        XCTAssertEqual(five.hidden, 0)
+        // The unfold is kept per group and per filter.
+        let section = TaskSection(name: "o/r", rows: rows, error: nil)
+        XCTAssertNotEqual(TaskGrouping.foldKey(section, filter: .all), TaskGrouping.foldKey(section, filter: .done))
+    }
+
+    func testEmptyTextNamesThePickedScope() {
+        XCTAssertEqual(TaskGrouping.emptyText(.running, scope: nil), "Nothing is running right now.")
+        XCTAssertEqual(TaskGrouping.emptyText(.running, scope: "o/r"), "Nothing is running in o/r.")
+        XCTAssertEqual(TaskGrouping.emptyText(.prOpen, scope: "QUI"), "No task in QUI has a pull request open.")
+        XCTAssertEqual(TaskGrouping.emptyText(.done, scope: "o/r"), "Nothing in o/r is merged or closed yet.")
+        XCTAssertEqual(TaskGrouping.emptyText(.all, scope: "o/r"), "No tasks in o/r.")
+    }
+
     func testSourceLineAndLabels() {
         XCTAssertEqual(row("a", kind: "issue").sourceLine, "GitHub issue · o/r")
         XCTAssertEqual(row("a", kind: "pull").sourceLine, "GitHub pull request · o/r")
         XCTAssertEqual(row("a", source: "linear", repo: nil, project: "QUI").sourceLine, "Linear · QUI")
+        XCTAssertEqual(row("a", source: "notion", kind: "page", repo: nil, project: "Roadmap").sourceLine,
+                       "Notion · Roadmap")
+        XCTAssertEqual(row("a", source: "notion", kind: "page", repo: nil, project: nil).sourceLine, "Notion")
+        XCTAssertEqual(row("a").openLabel, "Open on GitHub")
+        XCTAssertEqual(row("a", source: "linear", repo: nil, project: "QUI").openLabel, "Open in Linear")
+        XCTAssertEqual(row("a", source: "notion", kind: "page", repo: nil, project: "Roadmap").openLabel,
+                       "Open in Notion")
+        // A Notion Status property's own words pass through.
+        var page = row("a", source: "notion", kind: "page", repo: nil, project: "Roadmap",
+                       state: "in_progress")
+        page.status = "Doing"
+        XCTAssertEqual(page.stateLabel, "Doing")
         // The ladder is never the text (#875): an issue whose agent has
         // finished reads Open, a running one Agent running.
         XCTAssertEqual(row("a", state: "in_progress", running: false).stateLabel, "Open")
@@ -170,6 +340,38 @@ final class TaskRowTests: XCTestCase {
         XCTAssertEqual(linear.stateLabel, "Started")
         // A ref under a repo reads "o/r#5"; a bare ref stays itself.
         XCTAssertEqual(row("a", ref: "QUI-1", repo: nil, project: "QUI").refLabel, "QUI-1")
+    }
+
+    @MainActor
+    func testNotionRowsAreStaleWhileNotionFailsAndFreshOnceItRecovers() throws {
+        func reply(_ notion: String) throws -> TasksResponse {
+            let json = #"{"tasks": [{"id": "notion:page:roadmap:p1", "source": "notion", "kind": "page", "project": "Roadmap", "ref": "p1", "title": "Plan Q3", "state": "open", "sessions": [], "launches": [], "agent_running": false, "linked": false, "last_active_at": 1.0}], "machine": "kai", "machine_id": "m-1", "github": {"status": "ok"}, "notion": "#
+                + notion + "}"
+            return try Hub.decoder.decode(TasksResponse.self, from: Data(json.utf8))
+        }
+        let model = TasksModel()
+        model.apply(try reply(#"{"status": "upstream-error", "error": "Notion answered HTTP 502"}"#))
+        XCTAssertEqual(model.notionBlocked, "Notion answered HTTP 502")
+        XCTAssertTrue(model.stale(model.tasks[0]))
+        model.apply(try reply(#"{"status": "ok", "login": "Kai"}"#))
+        XCTAssertNil(model.notionBlocked)
+        XCTAssertFalse(model.stale(model.tasks[0]))
+    }
+
+    func testKeyedSourceBlockedReason() throws {
+        func env(_ json: String) throws -> GhEnv {
+            try Hub.decoder.decode(GhEnv.self, from: Data(json.utf8))
+        }
+        // Off, fine or absent (an older hub) is no banner.
+        XCTAssertNil(TasksModel.blocked(nil, source: "Notion"))
+        XCTAssertNil(TasksModel.blocked(try env(#"{"status": "ok"}"#), source: "Notion"))
+        XCTAssertNil(TasksModel.blocked(try env(#"{"status": "disabled"}"#), source: "Notion"))
+        // Configured but failing: the hub's reason, else the status word.
+        XCTAssertEqual(TasksModel.blocked(
+            try env(#"{"status": "bad-config", "error": "no status property"}"#), source: "Notion"),
+            "no status property")
+        XCTAssertEqual(TasksModel.blocked(try env(#"{"status": "upstream-error"}"#), source: "Notion"),
+                       "upstream-error")
     }
 
     func testCopyLinkPrefersTheDeepLinkForIssues() {

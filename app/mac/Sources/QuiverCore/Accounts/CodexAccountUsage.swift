@@ -313,6 +313,10 @@ public final class CodexAccountUsage {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
+        // Read the date in the calendar's own zone: a formatter on the
+        // system zone put each day on the previous one for a calendar
+        // ahead of it.
+        formatter.timeZone = calendar.timeZone
         var days: [Date: Int] = [:]
         for day in report.days {
             guard let date = formatter.date(from: day.date) else { continue }
@@ -352,9 +356,7 @@ public final class CodexAccountUsage {
         for (day, tokens) in accountDays where day <= lastAccountDay {
             shared[day] = (tokens, macDays[day] ?? 0)
         }
-        var monday = calendar
-        monday.firstWeekday = 2
-        let weeks = periods(over: shared, now: now, calendar: monday,
+        let weeks = periods(over: shared, now: now, calendar: calendar,
                             component: .weekOfYear, count: 6)
         let months = periods(over: shared, now: now, calendar: calendar,
                              component: .month, count: 6)
@@ -369,19 +371,18 @@ public final class CodexAccountUsage {
         return (weeks, months, chips)
     }
 
-    /// `count` calendar periods ending at the current one, each summing
-    /// the shared days that fall in it.
+    /// `count` calendar periods ending at the current one (Monday-start
+    /// weeks, as on the Accounts history), each summing the shared days
+    /// that fall in it.
     private static func periods(over days: [Date: (account: Int, mac: Int)],
                                 now: Date, calendar: Calendar,
                                 component: Calendar.Component, count: Int)
         -> [CodexComparePeriod] {
-        guard let current = calendar.dateInterval(of: component, for: now) else { return [] }
-        return (0..<count).reversed().map { back in
-            let start = calendar.date(byAdding: component, value: -back, to: current.start)!
-            var period = CodexComparePeriod(start: start, account: 0, mac: 0,
-                                            inProgress: back == 0)
-            for (day, totals) in days where day >= start
-                && day < calendar.date(byAdding: component, value: 1, to: start)! {
+        AccountHistory.periodBounds(now: now, calendar: calendar, component: component,
+                                    count: count).map { bounds in
+            var period = CodexComparePeriod(start: bounds.start, account: 0, mac: 0,
+                                            inProgress: bounds.inProgress)
+            for (day, totals) in days where bounds.contains(day) {
                 period.account += totals.account
                 period.mac += totals.mac
             }

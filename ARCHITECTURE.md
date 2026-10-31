@@ -21,6 +21,8 @@ This file is the overview; each topic below has a deeper document in `docs/`:
 | [docs/json-contracts.md](docs/json-contracts.md) | Every `swe --json` command the app calls, its shape, and the Swift type that decodes it |
 | [docs/testing.md](docs/testing.md) | Running both suites, the throwaway-HOME rule, fixture capture, coverage and floors |
 | [docs/COVERAGE.md](docs/COVERAGE.md) | The dated coverage audit and current risk areas |
+| [docs/remote-control.md](docs/remote-control.md) | The hub (`swe remote serve`), satellites, pairing, devices, every `/v1/*` route and the threat model |
+| [docs/web-app.md](docs/web-app.md) | The web app the hub serves at `/`: its pages, their `/v1/app/*` data and how to add one |
 
 ## The shape
 
@@ -228,12 +230,15 @@ Hardcoded tables predate the registry knowing about capabilities:
 `skills/layout.py`'s `HARNESS_ROOTS` (which harness's skills root lives
 where), `find/plugins.py`'s `PLUGIN_FALLBACK` (which harnesses support
 plugins, and where their install record lives), `init/hooks.py`'s
-`HOOK_FALLBACK` (where hook scripts go) and `remote/launch_model.py`'s
+`HOOK_FALLBACK` (where hook scripts go), `remote/launch_model.py`'s
 `MODEL_FALLBACK` (how a remote launch puts a picked model on the
-harness's command line). All are fallbacks, not sources of
+harness's command line) and `remote/attachments.py`'s `ATTACH_FALLBACK`
+(whether a harness's prompt expands `@/abs/path` for an attached file).
+All are fallbacks, not sources of
 truth. A harness entry's own `capabilities.skills.{supported,root}`,
-`capabilities.plugins.{...}`, `capabilities.hooks.{...}` or
+`capabilities.plugins.{...}`, `capabilities.hooks.{...}`,
 `capabilities.model.{supported,flag,subcommand,settings_flag,settings_key,provider}`
+or `capabilities.attachments.{supported,at_refs}`
 wins whenever the registry has one; the table only fires for a harness the
 registry has never heard of, or for a machine with no registry data at
 all.
@@ -257,6 +262,8 @@ A file is **global** when it sits directly in a harness root (`~/.<tool>/` or
 **vendored** (plugin caches, editor extensions). Everything else is **local**.
 
 This rule drives `--scope=[all,global,local]` across `swe find`.
+
+For `swe init`, `archived` also means unmanaged: a path of an archived harness that would change is reported `ignored` ("archived in harness.json"), while an already-`linked` path stays linked — init never unlinks. Known harnesses are declared in `init/layout.py`'s `HARNESS_SIGNATURES`: skills and instruction targets plus `evidence`, an any-of list of home-relative paths that mean "installed" (the targets' own parents count implicitly). Evidence exists because it can live away from the targets — kilo proves itself with `~/.config/kilo` while its skills root is `~/.kilo/skills`. Registry `capabilities.instructions.file` / `capabilities.skills.root` entries always override or extend signatures. A discovered skills root that no registry entry, alias or signature claims triggers the init picker (`--yes` registers all without asking): ticked harnesses are registered and linked, unticked ones are archived and left alone.
 
 ## Discovery
 
@@ -378,6 +385,29 @@ server hides. The walk covers JSON and TOML, files sitting directly in
 `$HOME` (`~/.claude.json` belongs to no harness directory), and follows
 the same vendored rule as the rest of `find`.
 
+### The gateway
+
+Each harness session starts its own copy of every stdio server it is
+configured with. With 17 servers that was 26 processes and about 1.3 GB
+per Claude Code session. A hub entry marked `"shared": true` (`swe mcp
+gateway share`) runs once instead, in `swe mcp gateway serve`, a
+LaunchAgent (`com.cwenlong.quiver.mcp-gateway`) that serves it as MCP
+streamable HTTP at `http://127.0.0.1:8478/mcp/<name>`. While mcp.json's
+`gateway.enabled` is set (by `install`), `swe mcp sync quiver ...` writes
+that URL for a shared server instead of its command; Claude Desktop takes
+no URL server, so it keeps the command.
+
+One stdio process is one MCP session, so the gateway multiplexes
+(`mcp/gateway_server.py`): it runs the handshake once and answers each
+client's `initialize` from it, renumbers request ids, forwards only the
+spec's client requests (Claude Code probes HTTP servers with
+`server/discover`, which crashes older Python SDK servers), refuses the
+server's own requests to a client, and drops notifications. That is only
+right for servers without per-session state, so `share` refuses a
+browser or REPL server without `--force`. `discover` and `list` read a
+synced gateway URL as the hub's own server (`gateway.matches_hub`), so the
+URL never flows back into the hub.
+
 ## Drift
 
 `swe doctor` used to check one thing: Node/PATH mismatches hiding a
@@ -435,24 +465,30 @@ credential-shaped parts of URLs and arguments are masked
 ## Command tree
 
 Two layers, on purpose. The top level is shortcuts for the harness verbs
-run most often; everything else lives under the domain command that owns
-it.
+run most often, plus a few one-shot commands that belong to no domain;
+everything else lives under the domain command that owns it.
 
 ```
-swe <verb>                          top level: shortcuts only
-  list · info · add · edit · remove · use · check · doctor · install
+swe <verb>                          top level: shortcuts and one-shot commands
+  init · list · info · add · edit · remove · use · check · doctor · install
   discover                          alias for `swe harness discover`
+  tags · aliases · models · autocomplete · bug · version · help
 
 swe <domain> <verb>                 domains: everything else
-  harness    star · archive · discover · list · edit
+  harness    star · archive · discover · list · edit · usage · usage-events · usage-daily
   mcp        discover · list · status · sync · diff · edit · validate · doctor
+             add · remove · secret · gateway
   find       amd · skills · plugins · mcps
-  plugins    catalog · install · uninstall · enable · disable
+  plugins    catalog · marketplace · install · uninstall · enable · disable
   providers  list · info · add · remove
-  report     daily · weekly · followups · warnings
-  skills     list · tree · link · unlink · move · discover · catalog · scope
-  session    use
+  report     daily · weekly · followups · followup · warnings
+  skills     list · tree · link · unlink · move · new · discover · hub · catalog · scope
+  session    use · index
+  setup      harnesses · providers · mcp · skills · report · check
   config     get · set · unset · edit · check · setup
+  hooks      list · info · new · edit · enable · disable · delete · check · sync
+  gh         pr · issue · run · inbox · repo · board · sync · pages · releases · tags · branches
+  remote     serve · agent · setup · pair · status · devices · attach · notify · ssh
 ```
 
 `swe harness star` and `swe harness archive` live under the harness domain

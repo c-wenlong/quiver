@@ -1,4 +1,5 @@
-"""Tests for scripts/docs_site.py (the Zensical staging script)."""
+"""Tests for scripts/docs_site.py, the generator behind the
+app/landing-page/{overview,cli,changelog,contributing} pages."""
 
 import importlib.util
 import shutil
@@ -18,6 +19,13 @@ if SCRIPT.exists():
 
 SCRIPT_MISSING = "scripts/ is not part of this source tree (Nix package build)"
 
+try:
+    import mistune  # noqa: F401
+    HAVE_MISTUNE = True
+except ImportError:
+    HAVE_MISTUNE = False
+MISTUNE_MISSING = "mistune is not installed (pip install -r docs/requirements.txt)"
+
 
 def _repo(test: unittest.TestCase, files: dict) -> Path:
     """Write ``files`` (repo-relative path -> text) into a fake repo root."""
@@ -33,155 +41,117 @@ def _repo(test: unittest.TestCase, files: dict) -> Path:
 @unittest.skipUnless(SCRIPT.exists(), SCRIPT_MISSING)
 class RewriteLinksTests(unittest.TestCase):
     def setUp(self):
-        self.staged = {"README.md": "index.md", "docs/data-model.md": "architecture/data-model.md"}
         self.missing = []
-        self.assets = set()
 
     def rewrite(self, text, src="README.md", root=None):
-        root = root or Path("/nonexistent-repo")
-        return docs_site.rewrite_links(
-            text, src, dict(self.staged), root, self.missing, self.assets)
+        return docs_site.rewrite_links(text, src, root or Path("/nonexistent"),
+                                       self.missing)
 
-    def test_staged_page_from_repo_root(self):
-        out = self.rewrite("See the [data model](docs/data-model.md#files).")
-        self.assertIn("[data model](architecture/data-model.md#files)", out)
-        self.assertEqual(self.missing, [])
+    def test_a_link_to_another_staged_page_becomes_relative(self):
+        out = self.rewrite("see [changelog](CHANGELOG.md)")
+        self.assertEqual(out, "see [changelog](../changelog/)")
 
-    def test_staged_page_relative_up(self):
-        # docs/page.md linking ../ARCHITECTURE.md resolves to a staged page.
-        staged = dict(self.staged, **{
-            "ARCHITECTURE.md": "architecture/index.md",
-            "docs/backend-architecture.md": "architecture/backend-architecture.md"})
-        missing, assets = [], set()
-        out = docs_site.rewrite_links(
-            "See [arch](../ARCHITECTURE.md#layers).",
-            "docs/backend-architecture.md", staged, Path("/nope"), missing, assets)
-        self.assertIn("[arch](index.md#layers)", out)
-        self.assertEqual(missing, [])
+    def test_a_repo_file_links_to_github(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "LICENSE").write_text("MIT")
+            out = self.rewrite("[license](LICENSE)", root=root)
+        self.assertEqual(
+            out,
+            "[license](https://github.com/c-wenlong/quiver/blob/main/LICENSE)")
 
-    def test_repo_file_links_to_github_blob(self):
-        root = _repo(self, {"src/quiver/cli.py": "x"})
-        out = self.rewrite("See [the CLI](src/quiver/cli.py).", root=root)
-        self.assertIn(
-            "(https://github.com/c-wenlong/quiver/blob/main/src/quiver/cli.py)", out)
-        self.assertEqual(self.missing, [])
+    def test_a_repo_directory_links_to_github_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "docs").mkdir()
+            out = self.rewrite("[docs](docs)", root=root)
+        self.assertEqual(
+            out,
+            "[docs](https://github.com/c-wenlong/quiver/tree/main/docs)")
 
-    def test_repo_directory_links_to_github_tree(self):
-        root = _repo(self, {"src/quiver/cli.py": "x"})
-        out = self.rewrite("Browse [src](src/quiver).", root=root)
-        self.assertIn(
-            "(https://github.com/c-wenlong/quiver/tree/main/src/quiver)", out)
+    def test_an_image_links_to_raw_github(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "docs" / "img").mkdir(parents=True)
+            (root / "docs" / "img" / "shot.png").write_bytes(b"\x89PNG")
+            out = self.rewrite(
+                "![shot](../docs/img/shot.png)", src="docs/guide.md", root=root)
+        self.assertEqual(
+            out,
+            "![shot](https://raw.githubusercontent.com/c-wenlong/quiver/main/"
+            "docs/img/shot.png)")
 
-    def test_local_asset_is_copied_and_rewritten(self):
-        root = _repo(self, {"assets/banner.png": "png-bytes"})
-        out = self.rewrite("![mascot](assets/banner.png)", root=root)
-        self.assertIn("![mascot](assets/banner.png)", out)
-        self.assertIn("assets/banner.png", self.assets)
-
-    def test_external_and_special_links_untouched(self):
-        text = ("[site](https://example.com/x.md) [mail](mailto:a@b.c) "
-                "[here](#anchor) [rel](//cdn.example.com/x)")
+    def test_absolute_and_anchor_links_pass_through(self):
+        text = ("[x](https://example.com/a) [y](#frag) "
+                "[z](mailto:a@b.c) [w](//cdn.example.com/x)")
         self.assertEqual(self.rewrite(text), text)
         self.assertEqual(self.missing, [])
 
-    def test_fenced_code_and_inline_code_untouched(self):
-        text = ("```\n[bad](docs/missing.md)\n```\n"
-                "inline `[also bad](docs/missing.md)` code\n"
-                "but [good](docs/data-model.md) is rewritten")
-        out = self.rewrite(text)
-        self.assertIn("[bad](docs/missing.md)", out)
-        self.assertIn("`[also bad](docs/missing.md)`", out)
-        self.assertIn("[good](architecture/data-model.md)", out)
-        self.assertEqual(self.missing, [])
+    def test_links_inside_code_are_left_alone(self):
+        text = "`[x](README.md)`\n\n```\n[y](CHANGELOG.md)\n```"
+        self.assertEqual(self.rewrite(text), text)
 
-    def test_missing_target_is_an_error(self):
-        out = self.rewrite("[gone](docs/nope.md)")
-        self.assertIn("[gone](docs/nope.md)", out)  # left as-is
-        self.assertEqual(self.missing, ["README.md: docs/nope.md"])
+    def test_a_missing_target_is_reported_and_left_alone(self):
+        out = self.rewrite("[gone](no/such/file.md)", root=Path("/nonexistent"))
+        self.assertEqual(out, "[gone](no/such/file.md)")
+        self.assertEqual(self.missing, ["README.md: no/such/file.md"])
 
-    def test_reference_style_definitions_rewrite(self):
-        out = self.rewrite("text [x][m]\n\n[m]: docs/data-model.md\n")
-        self.assertIn("[m]: architecture/data-model.md", out)
-
-
-@unittest.skipUnless(SCRIPT.exists(), SCRIPT_MISSING)
-class StageTests(unittest.TestCase):
-    def test_stage_copies_pages_assets_and_rewrites(self):
-        root = _repo(self, {
-            "README.md": "hi [arch](ARCHITECTURE.md) ![b](assets/b.png)",
-            "ARCHITECTURE.md": "# arch\nlink to [cli](src/x.py)",
-            "src/x.py": "x",
-            "assets/b.png": "png",
-            "app/landing-page/index.html": "<h1>landing</h1>",
-            "app/landing-page/mascot.jpg": "jpg",
-            "app/landing-page/media/sessions.mp4": "mp4",
-        })
-        pages = [("README.md", "index.md"), ("ARCHITECTURE.md", "architecture/index.md")]
-        stage_dir = root / "build" / "docs-site"
-        orig = (docs_site.PAGES, docs_site.ASSETS, docs_site.cli_page)
-        try:
-            docs_site.PAGES = pages
-            docs_site.ASSETS = []
-            docs_site.cli_page = lambda _root: "# CLI reference\n"
-            code = docs_site.stage(root=root, stage_dir=stage_dir)
-        finally:
-            docs_site.PAGES, docs_site.ASSETS, docs_site.cli_page = orig
-        self.assertEqual(code, 0)
-        index = (stage_dir / "index.md").read_text()
-        self.assertIn("[arch](architecture/index.md)", index)
-        self.assertTrue((stage_dir / "assets/b.png").is_file())
-        arch = (stage_dir / "architecture/index.md").read_text()
-        self.assertIn("(https://github.com/c-wenlong/quiver/blob/main/src/x.py)", arch)
-        self.assertEqual((stage_dir / "index.html").read_text(), "<h1>landing</h1>")
-        self.assertTrue((stage_dir / "mascot.jpg").is_file())
-        self.assertTrue((stage_dir / "media/sessions.mp4").is_file())
-
-    def test_stage_fails_without_landing_page(self):
-        root = _repo(self, {"README.md": "hi"})
-        orig = (docs_site.PAGES, docs_site.ASSETS, docs_site.cli_page)
-        try:
-            docs_site.PAGES = [("README.md", "overview.md")]
-            docs_site.ASSETS = []
-            docs_site.cli_page = lambda _root: "# CLI reference\n"
-            code = docs_site.stage(root=root, stage_dir=root / "out")
-        finally:
-            docs_site.PAGES, docs_site.ASSETS, docs_site.cli_page = orig
-        self.assertEqual(code, 1)
-
-    def test_stage_fails_on_missing_target(self):
-        root = _repo(self, {"README.md": "[gone](NOPE.md)", "ARCHITECTURE.md": "x"})
-        orig = (docs_site.PAGES, docs_site.ASSETS, docs_site.cli_page)
-        try:
-            docs_site.PAGES = [("README.md", "index.md"),
-                               ("ARCHITECTURE.md", "architecture/index.md")]
-            docs_site.ASSETS = []
-            docs_site.cli_page = lambda _root: "# CLI reference\n"
-            code = docs_site.stage(root=root, stage_dir=root / "out")
-        finally:
-            docs_site.PAGES, docs_site.ASSETS, docs_site.cli_page = orig
-        self.assertEqual(code, 1)
+    def test_inline_html_targets_are_rewritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "LICENSE").write_text("MIT")
+            out = self.rewrite('<a href="LICENSE">x</a>', root=root)
+        self.assertEqual(
+            out,
+            '<a href="https://github.com/c-wenlong/quiver/blob/main/LICENSE">'
+            "x</a>")
 
 
 @unittest.skipUnless(SCRIPT.exists(), SCRIPT_MISSING)
-class CliPageTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.page = docs_site.cli_page(ROOT)
+@unittest.skipUnless(HAVE_MISTUNE, MISTUNE_MISSING)
+class RenderTests(unittest.TestCase):
+    def test_headings_get_github_style_anchors(self):
+        render = docs_site._renderer()
+        html = render("## Nix\n\n### `swe list` (ls)\n\n## Nix")
+        self.assertIn('id="nix"', html)
+        self.assertIn('id="swe-list-ls"', html)
+        self.assertIn('id="nix-1"', html)  # second heading dedupes
 
-    def test_every_help_topic_appears(self):
-        sys.path.insert(0, str(ROOT / "src"))
-        import quiver.help_text as ht
-        for _category, commands in ht.COMMAND_CATEGORIES:
-            for primary, _alias in commands:
-                self.assertIn(f"swe {primary}", self.page, primary)
-        for topic in ht.HELP:
-            self.assertIn(f"swe {topic}", self.page, topic)
+    def test_anchor_slugs_match_github_for_punctuation(self):
+        # GitHub drops punctuation rather than hyphenating it, so a
+        # fragment copied from a repo page resolves here too.
+        self.assertEqual(docs_site.github_slug("1.1.1 - 2026-10-26"),
+                         "111---2026-10-26")
+        self.assertEqual(docs_site.github_slug("`swe report` (report!)"),
+                         "swe-report-report")
 
-    def test_no_ansi_escapes(self):
-        self.assertNotIn("\x1b[", self.page)
+    def test_slug_counters_are_per_page(self):
+        # One document's heading names never shift another page's anchors.
+        pages = {}
+        for _ in range(2):
+            render = docs_site._renderer()
+            pages[render("## Install")] = True
+        self.assertEqual(len(pages), 1)
 
-    def test_generated_notice(self):
-        self.assertIn("do not edit", self.page)
+    def test_pages_render_the_site_chrome(self):
+        render = docs_site._renderer()
+        page = docs_site.render_page("changelog", render("# Hi\n\nbody"))
+        for needle in ('<nav>', "../icon.png", "../overview/",
+                       "quiver is MIT licensed", 'id="hi"'):
+            self.assertIn(needle, page)
+
+    def test_committed_output_is_fresh(self):
+        """The generated pages under app/landing-page/ match the sources —
+        fails when a Markdown source or `swe help` changed without regen."""
+        pages, missing = docs_site.build_pages(ROOT)
+        self.assertEqual(missing, [])
+        for slug, html in pages.items():
+            committed = ROOT / "app" / "landing-page" / slug / "index.html"
+            self.assertTrue(committed.is_file(),
+                            f"{committed} missing; run scripts/docs_site.py")
+            self.assertEqual(
+                committed.read_text(encoding="utf-8"), html,
+                f"{committed} is stale; run scripts/docs_site.py")
 
 
 if __name__ == "__main__":

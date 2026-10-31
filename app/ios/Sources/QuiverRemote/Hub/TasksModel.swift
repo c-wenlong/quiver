@@ -22,6 +22,8 @@ final class TasksModel {
     /// Linear's blocking state with its reason (`auth-required`,
     /// `bad-config`, `upstream-error`), nil when ok, disabled or absent.
     private(set) var linearBlocked: String?
+    /// Notion's, the same way.
+    private(set) var notionBlocked: String?
     private(set) var fetchedAt: Double?
     private(set) var error: String?
     private(set) var loaded = false
@@ -36,20 +38,10 @@ final class TasksModel {
         do {
             let body = try await client.tasks(refresh: refresh)
             guard gen == generation else { return }
-            tasks = body.tasks
-            failedRepos = body.repos ?? []
-            machine = body.machine
-            machineId = body.machineId
-            envBlocked = body.envBlocked
-            githubFailed = body.github?.status == "upstream-error"
-                ? (body.github?.error ?? "gh failed on the hub") : nil
-            fetchedAt = body.fetchedAt
-            error = nil
-            let status = body.linear?.status
-            linearBlocked = switch status {
-            case nil, "ok", "disabled": nil
-            default: body.linear?.error ?? status ?? "Linear is unreachable"
-            }
+            apply(body)
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message
@@ -58,6 +50,29 @@ final class TasksModel {
             self.error = error.localizedDescription
         }
         loaded = true
+    }
+
+    /// Why GitHub's rows are last-known, for the amber banner over the
+    /// list; nil when there's no banner to draw.
+    var githubBanner: String? {
+        TaskGrouping.githubBanner(envBlocked: envBlocked, githubFailed: githubFailed,
+                                  hasRows: !tasks.isEmpty || !failedRepos.isEmpty)
+    }
+
+    /// Takes one reply: its rows and each source's env block, so a
+    /// source that recovered stops marking its rows last-known.
+    func apply(_ body: TasksResponse) {
+        tasks = body.tasks
+        failedRepos = body.repos ?? []
+        machine = body.machine
+        machineId = body.machineId
+        envBlocked = body.envBlocked
+        githubFailed = body.github?.status == "upstream-error"
+            ? (body.github?.error ?? "gh failed on the hub") : nil
+        fetchedAt = body.fetchedAt
+        error = nil
+        linearBlocked = Self.blocked(body.linear, source: "Linear")
+        notionBlocked = Self.blocked(body.notion, source: "Notion")
     }
 
     /// The detail page's row, live as the list refreshes under it.
@@ -71,7 +86,19 @@ final class TasksModel {
             envBlocked != nil || githubFailed != nil
                 || (task.repo.map { repo in failedRepos.contains { $0.name == repo } } ?? false)
         case "linear": linearBlocked != nil
+        case "notion": notionBlocked != nil
         default: false
+        }
+    }
+
+    /// A keyed source's blocking reason from its env block: nil when the
+    /// block is absent (an older hub), `ok` or `disabled` (off, not
+    /// broken); otherwise the hub's `error`, else the status word.
+    nonisolated static func blocked(_ env: GhEnv?, source: String) -> String? {
+        let status = env?.status
+        return switch status {
+        case nil, "ok", "disabled": nil
+        default: env?.error ?? status ?? "\(source) is unreachable"
         }
     }
 }
@@ -79,34 +106,226 @@ final class TasksModel {
 /// Grouping and counting for the tasks page, pure so tests can feed it
 /// hub rows without an actor.
 enum TaskGrouping {
+    /// The GitHub banner's reason: `gh` signed out (`envBlocked`) or
+    /// failing (`githubFailed`). With no rows at all the page's empty
+    /// card already says GitHub can't be reached, in the same words, so
+    /// the banner — which says the rows under it are last-known — goes.
+    static func githubBanner(envBlocked: String?, githubFailed: String?, hasRows: Bool) -> String? {
+        hasRows ? envBlocked ?? githubFailed : nil
+    }
+
     /// The scope sections as the page draws them under `filter`: the
-    /// repo for GitHub rows, the project elsewhere, ordered by the most
+    /// repo for GitHub rows, the project elsewhere, else the source's
+    /// name (`sectionName`), ordered by the most
     /// recently active task each holds — the reply is already sorted by
     /// `last_active_at`, so first sight of a scope is its rank.
-    static func sections(of tasks: [TaskRow], filter: TaskFilter) -> [TaskSection] {
+    /// `scope` narrows to the one section the scope menu picked.
+    static func sections(of tasks: [TaskRow], filter: TaskFilter,
+                         scope only: String? = nil) -> [TaskSection] {
         var order: [String] = []
         var buckets: [String: [TaskRow]] = [:]
         for task in tasks where filter.includes(task) {
-            let scope = task.scope.isEmpty ? "Other" : task.scope
+            let scope = sectionName(task)
+            if let only, scope != only { continue }
             if buckets[scope] == nil { order.append(scope) }
             buckets[scope, default: []].append(task)
         }
         return order.map { TaskSection(name: $0, rows: buckets[$0] ?? [], error: nil) }
     }
 
-    /// `filter`'s matching count across every task — the filter chips.
-    static func count(_ tasks: [TaskRow], filter: TaskFilter) -> Int {
-        tasks.filter(filter.includes).count
+    /// The sections with each failed repo's reason on its own section;
+    /// a failed repo with no rows under the filter keeps a section for
+    /// the error. One header per repo, never a second for the failure.
+    static func sections(of tasks: [TaskRow], failed: [TaskRepoFailure],
+                         filter: TaskFilter, scope only: String? = nil) -> [TaskSection] {
+        var sections = sections(of: tasks, filter: filter, scope: only)
+        for failure in failed where only == nil || failure.name == only {
+            let reason = failure.error ?? failure.status ?? "unknown error"
+            if let at = sections.firstIndex(where: { $0.name == failure.name }) {
+                sections[at].error = reason
+            } else {
+                sections.append(TaskSection(name: failure.name, rows: [], error: reason))
+            }
+        }
+        return sections
+    }
+
+    /// The section a task lists under: its repo or project, else its
+    /// source's name ("Linear", "Notion"), as the web and the Mac group
+    /// them; "Other" only when the row names no source either.
+    static func sectionName(_ task: TaskRow) -> String {
+        if !task.scope.isEmpty { return task.scope }
+        guard let source = task.source, !source.isEmpty else { return "Other" }
+        return sourceName(source)
+    }
+
+    /// A source as the pages spell it: GitHub, Linear, Notion; anything
+    /// else capitalized.
+    static func sourceName(_ source: String) -> String {
+        ["github": "GitHub", "linear": "Linear", "notion": "Notion"][source]
+            ?? source.prefix(1).uppercased() + source.dropFirst()
+    }
+
+    /// `filter`'s matching count across every task — the filter chips;
+    /// under a scope pick, that scope's tasks only.
+    static func count(_ tasks: [TaskRow], filter: TaskFilter, scope: String? = nil) -> Int {
+        tasks.filter { filter.includes($0) && (scope == nil || sectionName($0) == scope) }.count
+    }
+
+    /// Rows a group shows before its "Show N more" row, as on the Mac
+    /// and the web.
+    static let preview = 5
+
+    /// The rows a group draws and how many past the first five its
+    /// "Show N more" row stands for (0: no such row). A group the scope
+    /// menu narrowed to shows every row: the pick is the ask to see it all.
+    static func fold(_ rows: [TaskRow], expanded: Bool, narrowed: Bool) -> (visible: [TaskRow], hidden: Int) {
+        let hidden = narrowed ? 0 : max(rows.count - preview, 0)
+        return (expanded || hidden == 0 ? rows : Array(rows.prefix(preview)), hidden)
+    }
+
+    /// The key a group's unfolded state is kept under: per group and
+    /// filter, as the Mac and the web keep it.
+    static func foldKey(_ section: TaskSection, filter: TaskFilter) -> String {
+        "\(section.name):\(filter.rawValue)"
+    }
+
+    /// The scope pick while it still names a scope or a failed repo; a
+    /// refresh that drops it falls back to every task.
+    static func shownScope(_ scope: String?, tasks: [TaskRow], failed: [TaskRepoFailure]) -> String? {
+        guard let scope,
+              tasks.contains(where: { sectionName($0) == scope })
+                || failed.contains(where: { $0.name == scope })
+        else { return nil }
+        return scope
+    }
+
+    /// What a filter with nothing in it says, naming the picked scope,
+    /// in the web's words.
+    static func emptyText(_ filter: TaskFilter, scope: String?) -> String {
+        guard let scope else {
+            return switch filter {
+            case .all: "No task matches this filter right now."
+            case .running: "Nothing is running right now."
+            case .prOpen: "No task has a pull request open."
+            case .done: "Nothing is merged or closed yet."
+            }
+        }
+        return switch filter {
+        case .all: "No tasks in \(scope)."
+        case .running: "Nothing is running in \(scope)."
+        case .prOpen: "No task in \(scope) has a pull request open."
+        case .done: "Nothing in \(scope) is merged or closed yet."
+        }
+    }
+
+    /// The scope menu (the Mac and web's rail): every scope, `filter` or
+    /// not, so one with nothing under the chip still has a row to fold
+    /// as quiet, plus each failed repo so its error can be picked. GitHub
+    /// repos group by owner as the Repositories rail does; Linear
+    /// projects under "Linear", any other source under its own name.
+    /// Owners come first, then the other sources, and groups and rows
+    /// sort by name: the list reorders by activity, the menu holds still.
+    static func rail(of tasks: [TaskRow], failed: [TaskRepoFailure] = [],
+                     filter: TaskFilter) -> [TaskRailGroup] {
+        struct Key: Hashable { var github: Bool; var title: String }
+        var groups: [Key: [String: TaskRailScope]] = [:]
+        func add(_ key: Key, _ name: String, label: String, hit: Int, running: Bool) {
+            var scope = groups[key, default: [:]][name]
+                ?? TaskRailScope(name: name, label: label, count: 0, running: false)
+            scope.count += hit
+            scope.running = scope.running || running
+            groups[key, default: [:]][name] = scope
+        }
+        for task in tasks {
+            let name = sectionName(task)
+            let github = task.source == "github" && task.repo?.contains("/") == true
+            add(Key(github: github, title: railGroupTitle(task)), name,
+                label: github ? shortName(name) : name,
+                hit: filter.includes(task) ? 1 : 0, running: task.agentRunning == true)
+        }
+        for failure in failed where failure.name.contains("/") {
+            let owner = String(failure.name.split(separator: "/", maxSplits: 1)[0])
+            add(Key(github: true, title: owner), failure.name,
+                label: shortName(failure.name), hit: 0, running: false)
+        }
+        // The list and the chips group by name across sources, so a name
+        // two sources share (a Linear team and a Notion database both
+        // "QUI") is one group: each of its menu rows counts that group.
+        var totals: [String: (count: Int, running: Bool)] = [:]
+        for group in groups.values {
+            for scope in group.values {
+                let total = totals[scope.name] ?? (0, false)
+                totals[scope.name] = (total.count + scope.count, total.running || scope.running)
+            }
+        }
+        let byName = { (a: String, b: String) in a.localizedStandardCompare(b) == .orderedAscending }
+        return groups.keys
+            .sorted { $0.github != $1.github ? $0.github : byName($0.title, $1.title) }
+            .map { key in
+                let scopes = (groups[key] ?? [:]).values.map { scope in
+                    var scope = scope
+                    scope.count = totals[scope.name]?.count ?? scope.count
+                    scope.running = totals[scope.name]?.running ?? scope.running
+                    return scope
+                }
+                return TaskRailGroup(title: key.title,
+                                     scopes: scopes.sorted { byName($0.label, $1.label) },
+                                     github: key.github)
+            }
+    }
+
+    /// A menu group's scopes split as the rail draws them: those with
+    /// something under the chip, and the quiet ones folded under "N
+    /// quiet". The picked scope never folds away.
+    static func split(_ group: TaskRailGroup, shown: String?) -> (active: [TaskRailScope], quiet: [TaskRailScope]) {
+        let quiet = { (s: TaskRailScope) in s.count == 0 && s.name != shown }
+        return (group.scopes.filter { !quiet($0) }, group.scopes.filter(quiet))
+    }
+
+    private static func shortName(_ repo: String) -> String {
+        String(repo.split(separator: "/").last ?? Substring(repo))
+    }
+
+    /// A repo's owner for GitHub; the source's own name elsewhere.
+    private static func railGroupTitle(_ task: TaskRow) -> String {
+        if task.source == "github", let repo = task.repo, repo.contains("/") {
+            return String(repo.split(separator: "/", maxSplits: 1)[0])
+        }
+        guard let source = task.source, !source.isEmpty else { return "Other" }
+        return sourceName(source)
     }
 }
 
-/// One section of the tasks page: a repo or project's matching rows, or
-/// the fetch error a failed repo reports.
+/// One section of the tasks page: a repo or project's matching rows,
+/// and the fetch error when its repo failed.
 struct TaskSection: Identifiable {
     let name: String
-    let rows: [TaskRow]?
-    let error: String?
+    var rows: [TaskRow]?
+    var error: String?
     var id: String { name }
+}
+
+/// One scope-menu row: a scope the list groups under, the short name the
+/// menu shows, and how many of its tasks the chip filter leaves.
+struct TaskRailScope: Identifiable, Equatable {
+    /// The `TaskSection` name a tap narrows the list to.
+    let name: String
+    let label: String
+    var count: Int
+    /// An agent is on one of its tasks.
+    var running: Bool
+    var id: String { name }
+}
+
+/// A scope-menu heading (a GitHub owner, "Linear") and its scopes in order.
+struct TaskRailGroup: Identifiable, Equatable {
+    let title: String
+    let scopes: [TaskRailScope]
+    /// A GitHub owner's group, kept apart from a source of the same
+    /// title (an owner named "Linear").
+    var github = false
+    var id: String { (github ? "owner:" : "source:") + title }
 }
 
 /// The tasks page's row filters: everything, what an agent is on, the
@@ -162,8 +381,20 @@ extension TaskRow {
             return "GitHub \(what)\(repo.map { " · \($0)" } ?? "")"
         case "linear":
             return "Linear\(project.map { " · \($0)" } ?? "")"
+        case "notion":
+            return "Notion\(project.map { " · \($0)" } ?? "")"
         default:
             return [source, kind].compactMap { $0 }.joined(separator: " ").capitalized
+        }
+    }
+
+    /// The link-out button's words: "Open on GitHub", "Open in Linear",
+    /// "Open in Notion".
+    var openLabel: String {
+        switch source {
+        case "linear": "Open in Linear"
+        case "notion": "Open in Notion"
+        default: "Open on GitHub"
         }
     }
 

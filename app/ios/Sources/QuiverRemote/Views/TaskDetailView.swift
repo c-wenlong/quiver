@@ -127,9 +127,10 @@ struct TaskDetailView: View {
                             .opacity(i < steps.count - 1 ? 1 : 0)
                     }
                     Text(step.title)
-                        .font(.system(size: 11))
+                        .font(Theme.small)
                         .foregroundStyle(step.current ? Theme.textPrimary : Theme.textMuted)
-                        .lineLimit(1)
+                        .lineLimit(1, larger: 2)
+                        .centredWhenWrapped()
                         .minimumScaleFactor(0.8)
                 }
                 .frame(maxWidth: .infinity)
@@ -146,8 +147,7 @@ struct TaskDetailView: View {
             .primaryButton()
             if let url = task.url.flatMap(URL.init) {
                 Button { openURL(url) } label: {
-                    Label(task.source == "linear" ? "Open in Linear" : "Open on GitHub",
-                          systemImage: "safari")
+                    Label(task.openLabel, systemImage: "safari")
                 }
                 .secondaryButton()
             }
@@ -181,7 +181,7 @@ struct TaskDetailView: View {
                     } else {
                         HStack(spacing: 12) {
                             Image(systemName: "questionmark.circle")
-                                .font(.system(size: 15)).foregroundStyle(Theme.textMuted).frame(width: 20)
+                                .font(Theme.rowIcon).foregroundStyle(Theme.textMuted).iconColumn(20)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(shortKey(slot.key)).font(Theme.rowTitle).foregroundStyle(Theme.textMuted).lineLimit(1)
                                 Text("No longer in sessions").font(Theme.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
@@ -222,7 +222,7 @@ struct TaskDetailView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                        Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
                     }
                     .padding(.vertical, Theme.rowVertical)
                     .padding(.horizontal, Theme.rowHorizontal)

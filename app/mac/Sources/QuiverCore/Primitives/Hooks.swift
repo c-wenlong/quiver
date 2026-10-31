@@ -214,8 +214,27 @@ public struct HookFinding: Codable, Sendable, Equatable, Identifiable {
         case "declared-missing": "Declared, missing"
         case "undeclared": "Undeclared"
         case "unlinked": "Unlinked"
+        case "managed": "Managed elsewhere"
         default: kind.prefix(1).uppercased() + kind.dropFirst()
         }
+    }
+
+    /// The message beside the badge: paths under `home` as `~/…`, and a
+    /// `managed` note cut to its path, since the badge already says
+    /// "Managed elsewhere". `message` stays as swe wrote it, the path
+    /// match on the detail page's lock reads that.
+    public func displayMessage(home: String) -> String {
+        var text = message
+        if kind == "managed", let cut = text.range(of: " — declaration managed elsewhere") {
+            text = String(text[..<cut.lowerBound])
+        }
+        let root = home.hasSuffix("/") ? String(home.dropLast()) : home
+        guard !root.isEmpty else { return text }
+        // Only where a path starts: `/backup/Users/k/x` is not under home.
+        let pattern = #"(?<![^\s("'])"# + NSRegularExpression.escapedPattern(for: root + "/")
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        return regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text),
+                                              withTemplate: "~/")
     }
 }
 
@@ -399,7 +418,13 @@ public final class HooksModel {
     private static func fetch(_ swe: SweClient, checkTimeout: Duration) async throws -> HookInventory {
         async let listed = swe.hooksList()
         let checked = Task { try await swe.hooksCheck() }
-        let list = try await listed
+        // A failed list ends the load: the check, an unstructured task,
+        // would otherwise run on until its own timeout.
+        let list: HookInventory
+        do { list = try await listed } catch {
+            checked.cancel()
+            throw error
+        }
         do {
             let report = try await withDeadline(checkTimeout, onTimeout: { CheckTimedOut() }) {
                 try await checked.value

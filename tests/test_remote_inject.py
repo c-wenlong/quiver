@@ -2,7 +2,7 @@
 
 import json
 import os
-import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -11,6 +11,7 @@ from unittest.mock import patch
 from quiver.remote import attachments, inject, protocol, supervise
 from quiver.sessions.models import Session
 
+from tests._tempdir import temp_dir
 from tests.test_remote_hub import _Server
 
 
@@ -21,7 +22,7 @@ def _session(tool="claude", sid="abc-123", path="/tmp/proj"):
 
 class TestSuperviseRegistry(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:abc-123"
 
     def test_mark_read_unmark(self):
@@ -50,7 +51,7 @@ class TestSuperviseRegistry(unittest.TestCase):
 
 class TestAttach(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:abc-123"
         self.session = _session()
 
@@ -116,7 +117,7 @@ class TestAttach(unittest.TestCase):
 
 class TestTmuxInjector(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:abc-123"
         self.session = _session()
         inject.TmuxInjector._answered.clear()  # class-level replay state
@@ -153,8 +154,19 @@ class TestTmuxInjector(unittest.TestCase):
             )
         self.assertTrue(out.ok)
         sent = st.call_args[0][1]
-        self.assertIn("@/tmp/a.png", sent)
-        self.assertIn("@/tmp/b.png", sent)
+        self.assertEqual(sent, "@/tmp/a.png @/tmp/b.png look")
+
+    def test_attachment_paths_inline_for_other_harness(self):
+        # A codex pane types the path plainly: its @ is a TUI picker.
+        with patch.object(supervise, "send_text", return_value=True) as st:
+            self.inj.send(
+                _session(tool="codex"),
+                {"text": "look", "mode": "queue",
+                 "attachments": ["/tmp/a.png"]},
+                "done",
+            )
+        self.assertEqual(st.call_args[0][1],
+                         "[Attached file: /tmp/a.png] look")
 
     def test_approval_digit(self):
         pane = "Do you want to proceed? 1. Yes 2. Yes, and don't ask again"
@@ -304,7 +316,7 @@ class TestTmuxInjector(unittest.TestCase):
 class TestHeadless(unittest.TestCase):
     def setUp(self):
         self.session = _session()
-        self.inj = inject.ClaudeHeadlessInjector(Path(tempfile.mkdtemp()), "claude:x")
+        self.inj = inject.ClaudeHeadlessInjector(temp_dir(self), "claude:x")
 
     def test_argv_shape(self):
         argv = self.inj.argv(self.session, "hello")
@@ -364,7 +376,7 @@ class TestHeadlessRun(unittest.TestCase):
     def setUp(self):
         self.session = _session()
         self.inj = inject.ClaudeHeadlessInjector(
-            Path(tempfile.mkdtemp()), "claude:x"
+            temp_dir(self), "claude:x"
         )
 
     def _send(self, lines, rc=0):
@@ -468,8 +480,9 @@ class TestHeadlessRun(unittest.TestCase):
                 return self
 
             def __next__(self):
-                while not self.proc.killed:
-                    time.sleep(0.005)
+                # Bounded, so a broken watchdog fails the test below
+                # instead of hanging the suite.
+                self.proc.kill_event.wait(5)
                 raise StopIteration
 
             def close(self):
@@ -478,6 +491,7 @@ class TestHeadlessRun(unittest.TestCase):
         class _SilentProc:
             def __init__(self):
                 self.killed = False
+                self.kill_event = threading.Event()
                 self.stdout = _BlockingStdout(self)
 
             def wait(self, timeout=None):
@@ -485,6 +499,7 @@ class TestHeadlessRun(unittest.TestCase):
 
             def kill(self):
                 self.killed = True
+                self.kill_event.set()
 
         proc = _SilentProc()
         supervise.mark(self.inj.home, self.inj.key, {"mode": "headless"})
@@ -530,7 +545,7 @@ class TestHeadlessRun(unittest.TestCase):
 
 class TestAttachments(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.key = "claude:s1"
 
     def test_stage_resolve_roundtrip(self):
@@ -812,3 +827,64 @@ class TestHubWrites(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAttachmentCapability(unittest.TestCase):
+    """``capabilities.attachments`` over ``ATTACH_FALLBACK``."""
+
+    def test_fallback_table(self):
+        for name in ("claude", "gemini", "qwen"):
+            self.assertTrue(attachments.at_refs(name, {}), name)
+        for name in ("codex", "opencode", "cursor", "droid", "pi", ""):
+            self.assertFalse(attachments.at_refs(name, {}), name)
+
+    def test_registry_wins(self):
+        reg = {
+            "codex": {"capabilities": {"attachments": {"at_refs": True}}},
+            "claude": {"capabilities": {"attachments": {"supported": False}}},
+            "gemini": {"capabilities": {"attachments": {"at_refs": False}}},
+            # Malformed declarations fall back to the table.
+            "qwen": {"capabilities": {"attachments": "yes"}},
+            "pi": {"capabilities": "nope"},
+        }
+        self.assertTrue(attachments.at_refs("codex", reg))
+        self.assertFalse(attachments.at_refs("claude", reg))
+        self.assertFalse(attachments.at_refs("gemini", reg))
+        self.assertTrue(attachments.at_refs("qwen", reg))
+        self.assertFalse(attachments.at_refs("pi", reg))
+
+    def test_wrong_field_types_are_ignored(self):
+        for bad in ({"at_refs": "yes"}, {"at_refs": None}, {"at_refs": 1},
+                    {"supported": None}, {"supported": 0},
+                    {"supported": "false"}):
+            reg = {"claude": {"capabilities": {"attachments": bad}},
+                   "codex": {"capabilities": {"attachments": bad}}}
+            self.assertTrue(attachments.at_refs("claude", reg), bad)
+            self.assertFalse(attachments.at_refs("codex", reg), bad)
+
+    def test_prompt_text_shapes(self):
+        paths = ["/x/a b.png", "/x/c.pdf"]
+        self.assertEqual(
+            attachments.prompt_text("hi", paths, "claude", {}),
+            "@/x/a b.png @/x/c.pdf hi")
+        self.assertEqual(
+            attachments.prompt_text("hi", paths, "codex", {}),
+            "[Attached file: /x/a b.png] [Attached file: /x/c.pdf] hi")
+        # No text: just the refs; no paths: the text untouched.
+        self.assertEqual(
+            attachments.prompt_text("", ["/x/a.png"], "codex", {}),
+            "[Attached file: /x/a.png]")
+        self.assertEqual(attachments.prompt_text("hi", [], "codex", {}), "hi")
+        # Always one line: a tmux pane would submit at a newline.
+        self.assertNotIn(
+            "\n", attachments.prompt_text("hi", paths, "codex", {}))
+
+    def test_reads_registry_when_not_given(self):
+        from quiver.harness import registry
+        reg = {"pi": {"capabilities": {"attachments": {"at_refs": True}}}}
+        with patch.object(registry, "load_registry_readonly",
+                          return_value=reg):
+            self.assertTrue(attachments.at_refs("pi"))
+        with patch.object(registry, "load_registry_readonly",
+                          side_effect=ValueError):
+            self.assertTrue(attachments.at_refs("claude"))

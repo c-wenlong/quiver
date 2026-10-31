@@ -24,9 +24,27 @@ struct RepoDetailPage: View {
     @State private var issue: IssueSelection?
     /// The row filter — this page's own, not the dashboard's.
     @State private var filter = ""
+    /// All / Mine / Review requested — this page's own too.
+    @State private var pullFilter: PullFilter = .all
 
     private var model: GitHubModel { app.github }
     private var query: String { filter.trimmingCharacters(in: .whitespaces) }
+    private var pullFilters: [PullFilter] {
+        PullFilter.available(login: model.env?.login, requests: [model.reviewRequested(repo)])
+    }
+    private var activePullFilter: PullFilter {
+        PullFilter.effective(pullFilter, available: pullFilters)
+    }
+    /// Rows under `filter` on this page's every-state list, after the search.
+    private func pullCount(_ filter: PullFilter) -> Int {
+        guard case .loaded(let prs) = model.focusBoard(for: repo).pulls else { return 0 }
+        let login = model.env?.login
+        let requested = model.reviewRequested(repo)
+        return prs.count { pr in
+            filter.keeps(pr, login: login, requested: requested)
+                && (query.isEmpty || pr.searchText.contains { $0?.localizedCaseInsensitiveContains(query) ?? false })
+        }
+    }
 
     var body: some View {
         @Bindable var model = model
@@ -39,7 +57,12 @@ struct RepoDetailPage: View {
             .keyboardShortcut("[", modifiers: .command)
             .help("Back to all repositories (⌘[)")
             Button("Refresh", systemImage: "arrow.clockwise") {
-                Task { await model.refreshFocus(repo: repo, swe: app.swe) }
+                Task {
+                    await model.refreshFocus(repo: repo, swe: app.swe)
+                    if model.focusTab == .pulls {
+                        await model.loadReviewRequests(repo: repo, swe: app.swe, force: true)
+                    }
+                }
             }
             .iconButton()
             .keyboardShortcut("r", modifiers: .command)
@@ -72,9 +95,18 @@ struct RepoDetailPage: View {
                         ProgressView().controlSize(.small)
                             .padding(.bottom, 4)
                     }
+                    // The tabs take their room first, so the field sits at
+                    // its minimum: wide enough for the whole prompt, which
+                    // at 100pt read "Filter by t".
                     SearchField(prompt: "Filter by title, branch, tag…", text: $filter)
-                        .frame(minWidth: 100, maxWidth: 280)
+                        .frame(minWidth: 220, maxWidth: 280)
                         .padding(.bottom, 4)
+                }
+                if model.focusTab == .pulls, !pullFilters.isEmpty {
+                    PullFilterPicker(options: pullFilters,
+                                     count: pullCount,
+                                     selection: Binding(get: { activePullFilter },
+                                                        set: { pullFilter = $0 }))
                 }
                 if let error = model.pinError ?? model.actionError {
                     ErrorCard(message: error)
@@ -90,6 +122,10 @@ struct RepoDetailPage: View {
                                  board: model.focusBoard(for: repo),
                                  tab: model.focusTab,
                                  query: query,
+                                 keepsPull: { [filter = activePullFilter, login = model.env?.login,
+                                               requested = model.reviewRequested(repo)] in
+                                     filter.keeps($0, login: login, requested: requested)
+                                 },
                                  scrollFetch: true,
                                  openPr: { detail = PrSelection(repo: repo, number: $0) },
                                  openIssue: { issue = $0 })
@@ -105,11 +141,20 @@ struct RepoDetailPage: View {
             // The page's reason for being: every surface fetches up
             // front, so no tab waits on its own first call.
             await model.loadFocus(repo: repo, swe: app.swe)
+            if model.focusTab == .pulls {
+                await model.loadReviewRequests(repo: repo, swe: app.swe)
+            }
             // Same poll cadence as the dashboard: the visible tab
             // refetches every minute while the page is open.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
+                // try? swallows the cancel: without this a tab switch ran
+                // one more round of fetches for the tab just left.
+                guard !Task.isCancelled else { return }
                 await model.loadFocusTab(model.focusTab, repo: repo, swe: app.swe)
+                if model.focusTab == .pulls {
+                    await model.loadReviewRequests(repo: repo, swe: app.swe)
+                }
             }
         }
         .quiverSheet(item: $detail) { selection in

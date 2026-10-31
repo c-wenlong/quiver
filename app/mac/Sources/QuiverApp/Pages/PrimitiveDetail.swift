@@ -108,7 +108,7 @@ struct ManifestCard: View {
         Card(title: "Manifest", subtitle: displayPath(url)) {
             if let document {
                 if document.changedOnDisk {
-                    PrimitiveDiskBanner(reload: { document.load(); read() },
+                    PrimitiveDiskBanner(reload: { Task { await document.load(); await read() } },
                                         overwrite: { save(overwrite: true) })
                 }
                 if case .failed(let message) = document.state {
@@ -156,24 +156,26 @@ struct ManifestCard: View {
         .task(id: url) {
             guard document?.url != url else { return }
             let doc = InstructionDocument(url: url)
-            doc.load()
+            await doc.load()
+            // A newer file took the card while this one read.
+            guard !Task.isCancelled else { return }
             document = doc
-            read()
+            await read()
         }
     }
 
     /// Pull the form's fields back out of the document's current text.
     /// Revert first: the form reads the file's text, not edits a refused
     /// save left behind, and a revert after an outside change reloads it.
-    private func read() {
+    private func read() async {
         guard let document else { return }
-        document.revert()
+        await document.revert()
         fields = PluginManifestFields(parsing: document.text)
         loaded = fields
         error = nil
     }
 
-    private func revert() { read() }
+    private func revert() { Task { await read() } }
 
     private func save(overwrite: Bool) {
         guard let document else { return }
@@ -183,10 +185,14 @@ struct ManifestCard: View {
             self.error = "Couldn't write the manifest: \(error.localizedDescription)"
             return
         }
-        switch document.save(overwrite: overwrite) {
-        case .saved: loaded = fields; error = nil; onSaved()
-        case .changedOnDisk: error = nil
-        case .failed(let message): error = message
+        // What this save writes: a field edited while it runs stays dirty.
+        let submitted = fields
+        Task {
+            switch await document.save(overwrite: overwrite) {
+            case .saved: loaded = submitted; error = nil; onSaved()
+            case .changedOnDisk: error = nil
+            case .failed(let message): error = message
+            }
         }
     }
 }
@@ -219,7 +225,7 @@ struct FrontmatterCard: View {
         Card(title: "Frontmatter", subtitle: displayPath(url)) {
             if let document {
                 if document.changedOnDisk {
-                    PrimitiveDiskBanner(reload: { document.load(); read() },
+                    PrimitiveDiskBanner(reload: { Task { await document.load(); await read() } },
                                         overwrite: { save(overwrite: true) })
                 }
                 if case .failed(let message) = document.state {
@@ -268,9 +274,11 @@ struct FrontmatterCard: View {
         .task(id: url) {
             guard document?.url != url else { return }
             let doc = InstructionDocument(url: url)
-            doc.load()
+            await doc.load()
+            // A newer file took the card while this one read.
+            guard !Task.isCancelled else { return }
             document = doc
-            read()
+            await read()
         }
     }
 
@@ -285,24 +293,28 @@ struct FrontmatterCard: View {
 
     /// Revert first: the form reads the file's text, not edits a refused
     /// save left behind, and a revert after an outside change reloads it.
-    private func read() {
+    private func read() async {
         guard let document else { return }
-        document.revert()
+        await document.revert()
         fields = MarkdownFrontmatter(text: document.text)?.fields
             .map { ($0.key, $0.value) } ?? []
         loaded = fields
         error = nil
     }
 
-    private func revert() { read() }
+    private func revert() { Task { await read() } }
 
     private func save(overwrite: Bool) {
         guard let document else { return }
         document.text = MarkdownFrontmatter.update(document.text, set: fields)
-        switch document.save(overwrite: overwrite) {
-        case .saved: loaded = fields; error = nil; onSaved()
-        case .changedOnDisk: error = nil
-        case .failed(let message): error = message
+        // What this save writes: a field edited while it runs stays dirty.
+        let submitted = fields
+        Task {
+            switch await document.save(overwrite: overwrite) {
+            case .saved: loaded = submitted; error = nil; onSaved()
+            case .changedOnDisk: error = nil
+            case .failed(let message): error = message
+            }
         }
     }
 }
@@ -360,13 +372,15 @@ struct PartsCard: View {
     @State private var newPart: PrimitiveParts.Kind?
     @State private var newName = ""
     @State private var newError: String?
+    /// The create in flight; a New opened since makes its answer stale.
+    @State private var creating: UUID?
     @State private var trashEntry: PrimitiveTree.Entry?
     @State private var error: String?
 
     var body: some View {
         Card(title: "Contents", subtitle: displayPath(root), monoSubtitle: true) {
             if editable && !kinds.isEmpty {
-                NewPartMenu(kinds: kinds) { newPart = $0 }
+                NewPartMenu(kinds: kinds) { creating = nil; newError = nil; newPart = $0 }
             }
         } content: {
             treeContent
@@ -394,7 +408,7 @@ struct PartsCard: View {
             get: { newPart != nil }, set: { if !$0 { newPart = nil } })) {
             TextField("name", text: $newName)
             Button("Create") { create() }
-            Button("Cancel", role: .cancel) { newPart = nil; newName = "" }
+            Button("Cancel", role: .cancel) { newPart = nil; newName = ""; newError = nil }
         } message: {
             Text(newError ?? "A new \(newPart?.title ?? "part") under \(displayPath(root)).")
         }
@@ -507,7 +521,11 @@ struct PartsCard: View {
     /// Open `entry` in the sheet; it runs the size, type and ownership
     /// check itself once it is up, and spins until that lands.
     private func present(_ entry: PrimitiveTree.Entry) {
-        selected = entry.previewPath
+        present(path: entry.previewPath)
+    }
+
+    private func present(path: String) {
+        selected = path
         if let window = NSApp.keyWindow ?? NSApp.mainWindow {
             sheetSize = CGSize(width: max(900, window.frame.width * 0.9),
                                height: max(640, window.frame.height * 0.9))
@@ -538,28 +556,41 @@ struct PartsCard: View {
         }
     }
 
+    /// The alert closes after any of its buttons runs, so a failed
+    /// create opens it again, name kept, with the reason as its message.
     private func create() {
         guard let kind = newPart else { return }
         guard PrimitiveParts.isValidName(newName) else {
             newError = "Use kebab-case: lowercase letters, numbers and dashes."
+            // After this close lands, not inside it.
+            Task { @MainActor in newPart = kind }
             return
         }
         // create resolves the folder with realpath, which a synced or
         // stale folder can block: off the main actor, like the walk.
         let root = root, name = newName
+        let request = UUID()
+        creating = request
         Task {
-            switch await offMain({ Result { try PrimitiveParts.create(kind, named: name, in: root) } }) {
+            let result = await offMain({ Result { try PrimitiveParts.create(kind, named: name, in: root) } })
+            // A New opened while this waited on disk owns the alert now.
+            let current = creating == request
+            if current { creating = nil }
+            switch result {
             case .success(let file):
-                newPart = nil
-                newName = ""
-                newError = nil
                 // A folded card could hide the new file, so show every row.
                 showsAll = true
-                selected = file.path
                 reload()
                 onChanged()
+                guard current else { return }
+                newName = ""
+                newError = nil
+                // Straight into the editor, as picking the file would.
+                present(path: file.path)
             case .failure(let error):
+                guard current else { return }
                 newError = error.localizedDescription
+                newPart = kind
             }
         }
     }
@@ -719,16 +750,22 @@ struct PrimitiveFileSheet: View {
     /// editor's own error or banner says why.
     private func saveAndClose() {
         guard let document else { dismiss(); return }
-        switch document.save() {
-        case .saved:
-            saveError = nil
-            onSaved()
-            dismiss()
-        case .changedOnDisk:
-            // The editor's own banner explains it.
-            saveError = nil
-        case .failed(let message):
-            saveError = "Couldn't save \(url.lastPathComponent): \(message)"
+        Task {
+            switch await document.save() {
+            case .saved where document.isDirty:
+                // Typed while the save ran: that text isn't on disk yet.
+                saveError = "New edits came in while saving. Save again to keep them."
+                onSaved()
+            case .saved:
+                saveError = nil
+                onSaved()
+                dismiss()
+            case .changedOnDisk:
+                // The editor's own banner explains it.
+                saveError = nil
+            case .failed(let message):
+                saveError = "Couldn't save \(url.lastPathComponent): \(message)"
+            }
         }
     }
 }
@@ -824,7 +861,7 @@ struct PluginDetailView: View {
             .opacity(0)
             .accessibilityHidden(true))
         .alert("Unsaved changes", isPresented: $leaving) {
-            Button("Save All") { saveAllAndLeave() }
+            Button("Save all") { saveAllAndLeave() }
             Button("Discard", role: .destructive) { onBack() }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -840,17 +877,21 @@ struct PluginDetailView: View {
     /// Save every draft, then leave; a file that will not save keeps the
     /// page open and says why.
     private func saveAllAndLeave() {
-        var failed: [String] = []
-        for (path, document) in drafts.dirty {
-            if document.save() != .saved {
-                failed.append(URL(fileURLWithPath: path).lastPathComponent)
+        Task {
+            var failed: [String] = []
+            for (path, document) in drafts.dirty {
+                // A save that leaves the file dirty (typed while it ran)
+                // hasn't kept everything either.
+                if await document.save() != .saved || document.isDirty {
+                    failed.append(URL(fileURLWithPath: path).lastPathComponent)
+                }
             }
-        }
-        if failed.isEmpty {
-            leaveError = nil
-            onBack()
-        } else {
-            leaveError = "Couldn't save \(failed.joined(separator: ", "))."
+            if failed.isEmpty {
+                leaveError = nil
+                onBack()
+            } else {
+                leaveError = "Couldn't save \(failed.joined(separator: ", "))."
+            }
         }
     }
 
@@ -1058,7 +1099,7 @@ struct SkillDetailView: View {
             .opacity(0)
             .accessibilityHidden(true))
         .alert("Unsaved changes", isPresented: $leaving) {
-            Button("Save All") { saveAllAndLeave() }
+            Button("Save all") { saveAllAndLeave() }
             Button("Discard", role: .destructive) { onBack() }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -1071,17 +1112,21 @@ struct SkillDetailView: View {
     }
 
     private func saveAllAndLeave() {
-        var failed: [String] = []
-        for (path, document) in drafts.dirty {
-            if document.save() != .saved {
-                failed.append(URL(fileURLWithPath: path).lastPathComponent)
+        Task {
+            var failed: [String] = []
+            for (path, document) in drafts.dirty {
+                // A save that leaves the file dirty (typed while it ran)
+                // hasn't kept everything either.
+                if await document.save() != .saved || document.isDirty {
+                    failed.append(URL(fileURLWithPath: path).lastPathComponent)
+                }
             }
-        }
-        if failed.isEmpty {
-            leaveError = nil
-            onBack()
-        } else {
-            leaveError = "Couldn't save \(failed.joined(separator: ", "))."
+            if failed.isEmpty {
+                leaveError = nil
+                onBack()
+            } else {
+                leaveError = "Couldn't save \(failed.joined(separator: ", "))."
+            }
         }
     }
 

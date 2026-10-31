@@ -6,8 +6,10 @@
  * (kept per browser, under the key Settings › General uses). The
  * notifications step is the Mac's own and is left out.
  * Data: GET /v1/app/setup (swe setup --json in process); the writes are
- * POST /v1/app/setup/apply (swe setup --apply --json) and, from a missing
- * agent's Install sheet, POST /v1/app/setup/install (swe install --via). */
+ * POST /v1/app/setup/apply (swe setup --apply --json), from a missing
+ * agent's Install sheet POST /v1/app/setup/install (swe install --via), and
+ * from step 2's hub field POST /v1/app/setup/hub (swe setup --hub), which
+ * clones on the hub's own thread while this page polls GET ?hub=1. */
 "use strict";
 
 const STEPS = ["agents", "links", "look"];
@@ -28,7 +30,17 @@ const page = {
   showingMore: false, installing: null, finished: false,
   // The install in flight ("<id>:<via>") and each agent's last failure.
   installRun: null, installErrors: {},
+  // Step 2's hub field: what's typed, a refusal from the hub, whether the
+  // clone request is out, and whether this page is polling a clone.
+  hubUrl: "", hubError: null, hubPosting: false, hubPolling: false,
+  // A clone finished while the page wasn't shown: read the machine again
+  // before the next paint, so no choice from the old preview is sent.
+  hubStale: false,
 };
+
+// What swe setup prints beside its hub prompt (init/hub.py FORK_NOTE).
+const FORK_NOTE = "Fork a hub repo first (or use it as a template for a private copy), then paste your fork's URL.";
+const HUB_POLL_MS = 1500;
 
 /* HarnessMark.accountName: a Claude account is "Claude". */
 function agentName(id) {
@@ -36,8 +48,7 @@ function agentName(id) {
 }
 
 function tilde(path) {
-  const home = page.data && page.data.home;
-  return home && path.startsWith(home + "/") ? "~" + path.slice(home.length) : path;
+  return Fmt.tilde(path, page.data && page.data.home);
 }
 
 function machineName() {
@@ -188,8 +199,13 @@ async function render() {
   if (!page.data) {
     paintShell(`<div class="card"><p class="empty">Looking for coding agents on this machine…</p></div>`);
     if (!(await load(gen))) return;
+  } else if (page.hubStale && !(await reloadAfterClone())) {
+    return;
   }
   paint();
+  // A clone started before the page was left is still followed when you
+  // come back.
+  if (cloning()) pollHub();
 }
 
 function header() {
@@ -325,7 +341,7 @@ function previewError() {
 }
 
 function continueDisabled() {
-  return page.applying || (STEPS[page.step] === "links" && !!previewError());
+  return page.applying || (STEPS[page.step] === "links" && (!!previewError() || cloning()));
 }
 
 function continueTitle() {
@@ -464,6 +480,7 @@ function linksStep() {
   let html = "";
   if (page.applyError) html += `<div class="card setup-error"><p class="error setup-pre" role="alert">${esc(page.applyError)}</p></div>`;
   if (page.outcome && needsReading(page.outcome)) html += doneCard(page.outcome);
+  html += hubCard();
   html += `<div class="card setup-rows">
     ${row("agents", "Shared instructions",
       "~/.quiver/AGENTS.md, linked into each agent as its own file (CLAUDE.md, AGENTS.md, GEMINI.md…).",
@@ -474,6 +491,125 @@ function linksStep() {
   </div>
   <p class="caption">Anything replaced is backed up to ~/.quiver/backups first. A real file that would be lost stays where it is.</p>`;
   return `<div class="setup-step">${html}</div>`;
+}
+
+/* ------------------------------------------------- step 2: your hub repo */
+
+function hubJob() {
+  const hub = page.data && page.data.hub;
+  return (hub && hub.job) || { state: "idle" };
+}
+
+function cloning() {
+  return hubJob().state === "cloning";
+}
+
+/* swe setup's hub step: shown while ~/.quiver has no hub yet, and after a
+ * clone this page started, to say how it went. */
+function hubCard() {
+  const hub = page.data.hub;
+  const job = hubJob();
+  if (!hub || (!hub.can_clone && job.state === "idle")) return "";
+  if (job.state === "done" && !hub.can_clone) {
+    const failed = ((job.cloned && job.cloned.marketplaces) || []).filter((m) => m.error);
+    return `<div class="card setup-hub" role="status">
+      <div class="setup-done-title">${CHECK}<span>Cloned ${esc(job.url)} into ~/.quiver.</span></div>
+      <p class="caption">Its AGENTS.md, skills, plugins and MCP servers are on ${esc(machineName())} now. Set up links them into each agent.</p>
+      ${failed.map((m) => `<p class="caption note">${esc(m.marketplace)} isn't registered in ${esc(agentName(m.harness))}: ${esc(m.error)}</p>`).join("")}
+    </div>`;
+  }
+  if (!hub.can_clone && job.state !== "cloning" && job.state !== "failed") return "";
+  const busy = job.state === "cloning";
+  const locked = busy || page.hubPosting || page.applying || !hub.can_clone;
+  const error = page.hubError || (job.state === "failed" ? job.error : null);
+  const demo = /^https?:\/\//i.test(hub.demo_url || "")
+    ? `<p class="caption">Demo hub: <a href="${safeHref(hub.demo_url)}" target="_blank" rel="noopener noreferrer">${esc(hub.demo_url)}</a></p>` : "";
+  return `<div class="card setup-hub">
+    <div class="card-title">Start from your hub repo</div>
+    <p class="setup-text">Optional. Clone your own hub repo into ~/.quiver on ${esc(machineName())}, so its AGENTS.md, skills,
+      plugins and MCP servers come with it. Leave it empty to start an empty hub.</p>
+    <p class="caption">${esc(FORK_NOTE)}</p>
+    ${demo}
+    <form class="setup-hub-form" id="setup-hub-form">
+      <input class="field" id="setup-hub-url" type="text" inputmode="url" autocomplete="off" spellcheck="false"
+        aria-label="Hub repo URL" placeholder="https://github.com/you/quiver-hub.git"
+        value="${esc(page.hubUrl)}"${locked ? " disabled" : ""}>
+      <button class="setup-button" type="submit" id="setup-hub-clone"${locked || !page.hubUrl.trim() ? " disabled" : ""}>Clone</button>
+    </form>
+    ${busy ? `<p class="setup-installing" role="status"><span class="setup-spinner" aria-hidden="true"></span>Cloning ${esc(job.url)}… This can take a few minutes.</p>` : ""}
+    ${error ? `<p class="error setup-pre" role="alert">${esc(error)}</p>` : ""}
+  </div>`;
+}
+
+async function cloneHub() {
+  const url = page.hubUrl.trim();
+  // One request at a time: Enter twice sent a second clone, whose 409
+  // said "already running" under the clone the first one started.
+  if (!url || cloning() || page.hubPosting) return;
+  page.hubError = null;
+  page.hubPosting = true;
+  paint();
+  const { status, data } = await apiPost("/v1/app/setup/hub", { url });
+  page.hubPosting = false;
+  if (status === 401) {
+    if (onPage()) renderGate("The hub doesn't know this browser's credential. It may have been revoked.");
+    return;
+  }
+  if (status === 200 && data && data.hub) {
+    page.data.hub = data.hub;
+    // A small or local repo can be cloned before the reply leaves the
+    // hub: that job is done already and needs the same reload.
+    if (hubJob().state === "done") page.hubStale = true;
+  } else {
+    page.hubError = failText(status, data);
+  }
+  // A stale preview is never painted: pollHub reloads it first.
+  if (!page.hubStale) paint();
+  pollHub();
+}
+
+/* Poll the clone until it ends, then read the machine again: from then on
+ * the preview is of the cloned hub (its AGENTS.md, nothing to adopt). */
+async function pollHub() {
+  if (page.hubPolling) return;
+  page.hubPolling = true;
+  try {
+    while (cloning() && onPage()) {
+      await new Promise((resolve) => setTimeout(resolve, HUB_POLL_MS));
+      const { status, data } = await api("/v1/app/setup?hub=1");
+      // A revoked credential stays revoked: stop polling and say so.
+      if (status === 401) {
+        if (onPage()) renderGate();
+        return;
+      }
+      if (status !== 200 || !data || !data.hub) continue;
+      page.data.hub = data.hub;
+      if (hubJob().state === "done") page.hubStale = true;
+    }
+    if (!onPage() || cloning()) return;
+    if (page.hubStale && !(await reloadAfterClone())) return;
+    paint();
+  } finally {
+    page.hubPolling = false;
+  }
+}
+
+/* Read the machine again once a clone is done: the preview is of the
+ * cloned hub from then on (its AGENTS.md, nothing to adopt), and the
+ * start choice from the old one is dropped. False when the route moved
+ * on, so the reload is still owed when the page comes back. */
+async function reloadAfterClone() {
+  const job = page.data.hub.job;
+  const gen = routeGen;
+  if (!(await load(gen))) return false;
+  page.hubStale = false;
+  if (page.data) {
+    page.start = defaultStart(page.data.preview.instructions);
+    // The reload carries the same finished job; keep it either way.
+    if (page.data.hub && page.data.hub.job.state === "idle") page.data.hub.job = job;
+  }
+  page.hubUrl = "";
+  return true;
 }
 
 function row(iconName, title, detail, extra = "") {
@@ -580,6 +716,14 @@ function bindWizard() {
     if (page.step !== before) focusTitle();
   };
   if ($("setup-more")) $("setup-more").onclick = () => { page.showingMore = !page.showingMore; paint(); $("setup-more").focus(); };
+  if ($("setup-hub-url")) {
+    $("setup-hub-url").oninput = (e) => {
+      page.hubUrl = e.target.value;
+      page.hubError = null;
+      $("setup-hub-clone").disabled = !page.hubUrl.trim();
+    };
+  }
+  if ($("setup-hub-form")) $("setup-hub-form").onsubmit = (e) => { e.preventDefault(); cloneHub(); };
   if ($("setup-start-from")) $("setup-start-from").onchange = (e) => { page.start = e.target.value; paint(); $("setup-start-from").focus(); };
   bindRetry();
   for (const card of document.querySelectorAll("[data-look]")) {

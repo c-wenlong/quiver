@@ -9,7 +9,7 @@ git clone https://github.com/c-wenlong/quiver.git
 cd quiver
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]"
-HOME="$(mktemp -d)" python -m unittest discover -s tests -p 'test_*.py'
+HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Every command reads and writes `~/.quiver`, so run the suite — and any manual
@@ -34,20 +34,28 @@ The CLI is organized by domain under `src/quiver/`:
 | `mcp/` | The `~/.quiver/mcp.json` hub, per-tool format handlers, sync/diff/validate/doctor, `${NAME}` secret refs |
 | `find/` | Read-only views of shared assets — `amd`, `skills`, `plugins`, `mcps` |
 | `init/` | Writes the shared `AGENTS.md` and skills tree, symlinks them into each harness, migrates the old root |
+| `plugins/` | `swe plugins`: every marketplace's plugins with per-harness state, and install/enable/disable through the harness CLIs (Codex enable and disable edit `~/.codex/config.toml` directly) |
+| `hooks/` | `swe hooks`: the hook scripts under `~/.quiver/hooks/<harness>/` and their drift check |
 | `reports/` | Daily and weekly session reports: transcripts, triage, batching, model runners, follow-up ledger |
 | `providers/` | LLM provider metadata and API-key file lookup |
 | `setup/` | The interactive onboarding wizard |
+| `github/` | `swe gh` and the hub's GitHub routes; within the package only `gh.py` spawns `gh` |
+| `remote/` | `swe remote`: the hub, the satellite agent, pairing and devices ([docs/remote-control.md](docs/remote-control.md)) |
+| `webapp/` | The web app the hub serves, and its page data ([docs/web-app.md](docs/web-app.md)) |
+| `ledger/`, `status/` | Python ports of the Mac app's usage ledger and service-status reader, for the web app |
 | `history/` | Backward-compatible re-exports — write new code against `sessions/` |
 | `config_commands.py` | `swe config` |
+| `bug.py` | `swe bug`: opens an issue form with this machine's versions filled in |
 | `completion.py`, `completion_scripts.py` | Completion candidates and the per-shell scripts `swe autocomplete` installs |
 | `mcp_server.py` | Optional FastMCP session server (the `server` extra) |
 | `mcp_formats.py` | Compatibility shim re-exporting `mcp/formats.py`; do not add to it |
 
 The bottom layer imports nothing above itself: `paths.py` (every path under
 `~/.quiver`), `console.py` (colour, width, truncation), `table.py` (the table
-renderer), `configuration.py` (`config/config.json`) and `keys.py` (the one
-raw-mode key reader). `prompt.py`, `multiselect.py` and `markdown.py` sit
-beside them for terminal input and rendering.
+renderer), `configuration.py` (`config/config.json`), `keys.py` (the one
+raw-mode key reader) and `flags.py` (the `--name=value` argv normaliser).
+`json_output.py` (the `--json` envelope), `prompt.py`, `multiselect.py` and
+`markdown.py` sit beside them for output, terminal input and rendering.
 
 ## What to contribute
 
@@ -75,15 +83,15 @@ A tag is a movable pointer, so a tag reference is not reproducible. Resolve a ne
 
 ## Docs site
 
-The docs site at <https://c-wenlong.github.io/quiver/> is built with [Zensical](https://zensical.org) from the Markdown already in this repo. `scripts/docs_site.py` stages it into `build/docs-site/` (rewriting links so repo-relative references resolve inside the site), then `zensical` builds `site/`. The front page is the hand-written [app/landing-page/index.html](app/landing-page/index.html), copied to the site root as is; the README renders at `/overview/`. To preview locally:
+The landing site is the static `app/landing-page/` directory, deployed by Vercel. Its `overview/`, `cli/`, `changelog/` and `contributing/` pages are generated from repo Markdown (README, CHANGELOG, CONTRIBUTING) and `swe help` by `scripts/docs_site.py`; the Markdown stays the source of truth. After changing a source or `swe help`, regenerate and commit:
 
 ```bash
 python3 -m venv .venv-docs && source .venv-docs/bin/activate
 pip install -r docs/requirements.txt
-python3 scripts/docs_site.py && zensical serve
+python3 scripts/docs_site.py        # --check reports stale output
 ```
 
-`zensical` is a docs-only dependency pinned in `docs/requirements.txt`; the core package stays stdlib-only, so it never goes in `pyproject.toml`.
+`mistune` is a docs-only dependency pinned in `docs/requirements.txt` (and a `test` extra so CI's freshness test runs); the core package stays stdlib-only, so it never goes in the runtime deps.
 
 ## Code of Conduct
 
@@ -103,7 +111,7 @@ Taking part in this project means agreeing to the [Code of Conduct](CODE_OF_COND
 
 Use the [bug report template](https://github.com/c-wenlong/quiver/issues/new?template=bug_report.yml) and include:
 
-- Your OS and Python version, plus the quiver version from `pip show quiver`
+- Your OS and Python version, plus the quiver version from `swe version`
 - The exact command that failed and its full output
 - Steps to reproduce
 

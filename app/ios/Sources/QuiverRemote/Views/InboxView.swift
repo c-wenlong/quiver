@@ -80,14 +80,14 @@ struct InboxView: View {
         HStack(spacing: 12) {
             if item.isGitHub {
                 Image(systemName: "bell.badge")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    .frame(width: Theme.statusDot + 4)
+                    .font(Theme.font(size: 12)).foregroundStyle(Theme.textSecondary)
+                    .iconColumn(Theme.statusDot + 4)
             } else {
                 StatusDot(status: item.sessionStatus)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.displayTitle).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                HStack(spacing: 6) {
+                Text(item.displayTitle).font(Theme.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1, larger: 3)
+                WrappingHStack(spacing: 6) {
                     if !item.isGitHub {
                         HarnessIcon(harness: item.harness, name: item.harnessName, size: 13)
                     }
@@ -100,10 +100,10 @@ struct InboxView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if item.sessionStatus == .approval {
                 Text("Review").font(Theme.control).foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 10).frame(height: 28)
+                    .padding(.horizontal, 10).scaledMinHeight(28)
                     .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.borderStrong, lineWidth: 1))
             } else {
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                Image(systemName: "chevron.right").font(Theme.chevron).foregroundStyle(Theme.textMuted)
             }
         }
         .padding(.vertical, Theme.rowVertical)

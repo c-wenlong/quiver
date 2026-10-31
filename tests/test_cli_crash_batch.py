@@ -401,13 +401,9 @@ class UsageEventsParseTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("Bad --since", err.getvalue())
 
-    def test_infinite_since_is_a_noop_not_a_crash(self):
-        from quiver.harness.rate_limits import fetch_cursor_usage_events
-
-        # The fetch itself needs credentials, so the reachable unit is
-        # the since-clamp math: float("inf") must not wedge the window.
-        # We assert the command-level parse accepts it (it parses fine)
-        # and the event-field mapper stays total on junk.
+    def test_cursor_timestamps_stay_total_on_junk_and_inf(self):
+        # The event-field mapper reads Cursor's millisecond timestamps;
+        # junk and infinity map to 0 rather than raising or overflowing.
         from quiver.harness.rate_limits import _cursor_ms_to_epoch
 
         self.assertEqual(_cursor_ms_to_epoch("not-a-ts"), 0.0)

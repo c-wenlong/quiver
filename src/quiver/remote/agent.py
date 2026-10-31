@@ -38,6 +38,13 @@ EVENTS_BODY_MAX = CATALOG_BODY_MAX
 # Commands that run on the session's queue, in order, off the stream.
 _SESSION_QUEUED_OPS = frozenset({"message", "attachment"})
 OUTBOX_KEY = "_outbox"             # journal key for unsent uplink events
+# Same as the hub's: a ``queue``-mode send polls a fresh status on this
+# cadence and fails honestly once a turn outlives the cap.
+QUEUE_POLL_S = 2.0
+QUEUE_WAIT_MAX_S = 1800
+# How long a queue-mode send that reached idle waits for an attachment
+# pull it names to finish downloading.
+PULL_WAIT_MAX_S = 300
 # The in-memory uplink buffer keeps no more than the outbox journal's
 # ring does across a restart; while the hub is down the oldest go first.
 OUTBOX_MAX = journal.RING_MAX
@@ -209,11 +216,17 @@ class RemoteAgent:
         self._outbox_lock = threading.Lock()
         self._stop = threading.Event()
         # Commands dispatch on the stream thread except ``message``,
-        # which can run minutes (headless claude): those go through
+        # which can run minutes (headless claude) or wait out a turn
+        # (``queue`` mode), and attachment pulls: those go through
         # ``_sendq``, one worker per session like the hub's, so a queued
         # interrupt/detach isn't stuck behind a run and one session's
         # turn doesn't hold every other session's messages.
         self._sendq = sendq.SendQueue()
+        # Attachment pulls not finished yet, by (session, ref): a
+        # queue-mode send waits on its own lane, so it can't count on
+        # the session lane's order to find its file staged.
+        self._pulls: dict[tuple[str, str], threading.Event] = {}
+        self._pulls_lock = threading.Lock()
         # ``detach`` with ``mode: when_idle``, waiting out a turn here.
         self.detaches = PendingDetaches(self._stop)
         # Fresh per-session status for those waits; tests stub it.
@@ -522,14 +535,16 @@ class RemoteAgent:
             # A permanent refusal — pre-roles satellites pair as phones
             # and the binding gate rejects them forever, so explain
             # once instead of letting the retry loop look flaky.
-            detail = ""
-            if isinstance(reply, dict):
-                detail = str(reply.get("message") or "")
+            # The hub answers {"error": {"code", "message"}}.
+            err = reply.get("error") if isinstance(reply, dict) else None
+            detail = str(err.get("message") or "") \
+                if isinstance(err, dict) else ""
             self._register_denied = detail or "forbidden"
             print(
                 "swe remote agent: the hub refused this credential "
-                f"(403 {self._register_denied}); re-pair this machine "
-                "with `swe remote pair --hub <url> --token <token>`",
+                f"(403 {self._register_denied}); re-pair this machine: "
+                "run `swe remote pair` on the hub, then "
+                "`swe remote agent --hub=<url> --token=<token>` here",
                 file=sys.stderr,
             )
         if status == 200:
@@ -606,16 +621,13 @@ class RemoteAgent:
         if op in _SESSION_QUEUED_OPS:
             # Headless sends block for the whole turn and an attachment
             # pull is a download: queue them so a later interrupt/detach
-            # isn't stuck behind them. One session's queued commands stay
-            # in order, so a message still finds its staged attachment.
+            # isn't stuck behind them. A session's pulls and steers stay
+            # in order; a queue-mode send waits for idle on its own lane
+            # and then for the pulls it names (``_submit_queued``).
             # attach stays on the stream: queued behind a turn it could
             # land after a later detach and undo it. One still queued at
             # shutdown is left undone, so the replay runs it.
-            self._sendq.submit(
-                str(ev.get("session") or ""),
-                lambda: self._dispatch_then_done(seq, ev, epoch),
-                lambda: None,
-            )
+            self._submit_queued(seq, ev, epoch)
             return None
         if op in ("fork", "launch"):
             # Booting a new session's pane can take 30 s: run it beside
@@ -636,6 +648,124 @@ class RemoteAgent:
             self._dispatch(ev)
         finally:
             self._mark_done(seq, epoch)
+
+    def _submit_queued(self, seq, ev: dict, epoch: int) -> None:
+        """Put a ``message`` or ``attachment`` command on its lane.
+
+        Attachment pulls and steer sends share the session's lane, in
+        order. A ``queue``-mode send gets a lane of its own, as on the
+        hub, and waits there until the session is idle, so it never
+        holds a steer or the pull a steer needs. It first waits for the
+        pulls it names, then for idle. A command the agent stops before
+        running is
+        never marked done, so the hub replays it after the restart.
+        """
+        data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+        key = str(ev.get("session") or "")
+        op = str(data.get("op") or "")
+        if op == "attachment":
+            pull = (key, str(data.get("ref") or ""))
+            done = threading.Event()
+            with self._pulls_lock:
+                self._pulls[pull] = done
+
+            def pull_job() -> None:
+                try:
+                    self._dispatch_then_done(seq, ev, epoch)
+                finally:
+                    with self._pulls_lock:
+                        if self._pulls.get(pull) is done:
+                            del self._pulls[pull]
+                    done.set()
+
+            self._sendq.submit(key, pull_job, lambda: None)
+            return
+        if str(data.get("mode") or "queue") != "queue":
+            self._sendq.submit(
+                key, lambda: self._dispatch_then_done(seq, ev, epoch),
+                lambda: None)
+            return
+
+        def job() -> None:
+            # Pulls first: they run on the session lane, which never
+            # waits on a turn, so they end soon. The idle check then
+            # sits right before the send; a steer that started a turn
+            # during a download is waited out, not typed into.
+            if not self._await_pulls(key, data):
+                return
+            waited = self._wait_idle(key, data)
+            if waited == "stopped":
+                return
+            if waited == "busy":
+                self._report_message(
+                    key, data, False,
+                    "session stayed busy for 30 min; message not sent")
+                self._mark_done(seq, epoch)
+                return
+            self._dispatch_then_done(seq, ev, epoch)
+
+        self._sendq.submit(f"{key}\x00queue", job, lambda: None)
+
+    def _live_status(self, key: str, data: dict) -> str:
+        """The session's status now: a fresh probe, else the tailer's.
+
+        The status in the queued command is stale: the session may have
+        gone idle or errored while we were offline.
+        """
+        fallback = (self.tail_manager.statuses.get(key)
+                    or str(data.get("status") or "done"))
+        session = self.catalog.session_for(key)
+        if session is None:
+            return fallback
+        try:
+            # The catalog's activity time can be minutes old for a turn
+            # that just started; the probe would call it "interrupted".
+            session = self.tail_manager.fresh_session(key, session)
+            got = self.status_of([session])
+        except Exception:
+            return fallback
+        return str(got[0]) if got and got[0] else fallback
+
+    def _wait_idle(self, key: str, data: dict) -> str:
+        """Wait for ``key``'s turn to end: ``idle``, ``busy`` or ``stopped``."""
+        deadline = time.monotonic() + QUEUE_WAIT_MAX_S
+        while self._live_status(key, data) == "active":
+            if self.catalog.session_for(key) is None:
+                # Gone from this machine: stop waiting, and let the
+                # dispatch report the unknown session.
+                return "idle"
+            if time.monotonic() >= deadline:
+                return "busy"
+            if self._stop.wait(QUEUE_POLL_S):
+                return "stopped"
+        return "stopped" if self._stop.is_set() else "idle"
+
+    def _await_pulls(self, key: str, data: dict) -> bool:
+        """Wait for the attachment pulls ``data`` names; False if the
+        agent stopped meanwhile. A pull that never finishes leaves the
+        send to report its attachment unknown."""
+        deadline = time.monotonic() + PULL_WAIT_MAX_S
+        for ref in data.get("attachments") or []:
+            with self._pulls_lock:
+                done = self._pulls.get((key, str(ref)))
+            while done is not None and not done.is_set():
+                if self._stop.is_set():
+                    return False
+                if time.monotonic() >= deadline:
+                    break
+                done.wait(min(QUEUE_POLL_S, 0.5))
+        return not self._stop.is_set()
+
+    def _report_message(
+        self, key: str, data: dict, ok: bool, note: str
+    ) -> None:
+        fields = {"command_id": str(data.get("command_id") or ""),
+                  "op": "message", "ok": ok, "note": note,
+                  "degraded": False}
+        if data.get("client_id"):
+            fields["client_id"] = str(data["client_id"])
+        self._buffer_result(protocol.event(
+            "command.result", key, self.machine_id, fields))
 
     def _reset_cmd_cursor(self, seq) -> str | None:
         """The hub answered ``journal.truncated``: start over if it says
@@ -788,11 +918,7 @@ class RemoteAgent:
                     if path is None:
                         return False, f"unknown attachment {ref}", False
                     paths.append(path)
-                # The status in the queued command is stale — the
-                # session may have gone idle or errored while we were
-                # offline. Our own tail manager knows the current one.
-                live = (self.tail_manager.statuses.get(key)
-                        or str(data.get("status") or "done"))
+                live = self._live_status(key, data)
                 result = injector.send(
                     session,
                     {"text": data.get("text") or "",

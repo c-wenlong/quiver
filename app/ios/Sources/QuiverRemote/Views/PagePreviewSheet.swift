@@ -26,8 +26,8 @@ struct PagePreviewSheet: View {
                 .toolbar {
                     ToolbarItem(placement: .principal) {
                         VStack(spacing: 1) {
-                            Text(target.name).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                            Text(target.path).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                            Text(target.name).font(Theme.barTitle).lineLimit(1)
+                            Text(target.path).font(Theme.small).foregroundStyle(Theme.textSecondary)
                                 .lineLimit(1).truncationMode(.middle)
                         }
                         .frame(maxWidth: 240)

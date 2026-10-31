@@ -107,6 +107,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--approve=", "Approve a pair request by its 6-digit code"),
         ("--deny=", "Deny a pair request by its 6-digit code"),
         ("--request-id=", "Hold --approve/--deny to one pending request"),
+        ("--auto-approve=", "on|off: pair your own untagged devices without a code"),
         ("--json", "Print the device list as JSON"),
     ],
     "remote attach": [
@@ -335,6 +336,18 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--from=", "Where to remove from (required)"),
         ("--json", "Machine-readable output"),
     ],
+    "mcp gateway status": [
+        ("--json", "Machine-readable output"),
+    ],
+    "mcp gateway install": [
+        ("--port=", "Listen on this port"),
+    ],
+    "mcp gateway serve": [
+        ("--port=", "Listen on this port"),
+    ],
+    "mcp gateway share": [
+        ("--force", "Share a server that looks stateful anyway"),
+    ],
     "doctor": [
         ("--json", "Machine-readable output"),
     ],
@@ -405,6 +418,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--migrate", "Move a pre-0.2.7 ~/.config/swe into ~/.quiver"),
         ("--hub=", "Clone your hub repo as ~/.quiver first"),
         ("--yes", "Register every new harness without asking"),
+        ("--accounts", "Only sync the extra account homes (accounts.sync.*)"),
     ],
     "setup": [
         ("--quick", "Only missing or actionable stages"),
@@ -488,6 +502,9 @@ _NESTED_FLAGS: dict[str, dict[str, str]] = {
         "secret": "mcp secret set", "secret set": "mcp secret set",
         "secret remove": "mcp secret remove",
         "add": "mcp add", "remove": "mcp remove",
+        "gateway": "mcp gateway status", "gateway status": "mcp gateway status",
+        "gateway install": "mcp gateway install", "gateway serve": "mcp gateway serve",
+        "gateway share": "mcp gateway share",
     },
     "gh": {
         "pr": "gh", "prs": "gh", "pulls": "gh",
@@ -634,6 +651,14 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
         ("set", "Store a ${NAME} value from stdin"),
         ("remove", "Drop a stored ${NAME} value"),
     ],
+    ("mcp", "gateway"): [
+        ("status", "Show the gateway and its shared servers"),
+        ("share", "Run hub servers once for every session"),
+        ("unshare", "Give each session its own copy again"),
+        ("install", "Run the gateway at login"),
+        ("uninstall", "Stop the gateway"),
+        ("serve", "Run it in the foreground"),
+    ],
     ("plugins", "marketplace"): [
         ("add", "Register a plugin marketplace"),
     ],
@@ -695,6 +720,7 @@ _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
         ("remove", "Remove a server"),
         ("secret", "Store a ${NAME} value"),
         ("doctor", "Deep diagnostics"),
+        ("gateway", "Run shared servers once for every session"),
         ("help", "Detailed help for one command"),
     ],
     "gh": [

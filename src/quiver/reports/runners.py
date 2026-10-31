@@ -17,7 +17,6 @@ REPORT_ENV_MARKER = "QUIVER_REPORT_GENERATED"
 REPORT_ENV_RUN_ID = "QUIVER_REPORT_RUN_ID"
 REPORT_ENV_OUTPUT_KIND = "QUIVER_REPORT_OUTPUT_KIND"
 
-_SUPPORTED_HARNESSES = {"claude", "codex"}
 _TRANSIENT_RE = re.compile(
     r"(?i)(rate.?limit|too many requests|\b429\b|temporar(?:y|ily)|timed? out|"
     r"timeout|connection (?:reset|refused)|network|service unavailable|"
@@ -39,6 +38,8 @@ _SENSITIVE_FLAGS = {
     "--token",
 }
 _UNSAFE_FLAGS = {
+    "--allow-dangerously-skip-permissions",
+    "--dangerously-bypass-approvals-and-sandbox",
     "--dangerously-skip-permissions",
     "--full-auto",
     "--permission-mode",
@@ -52,14 +53,21 @@ _MANAGED_FLAGS = {
         "--output-format",
         "--permission-mode",
         "--print",
+        "-p",
     },
     "codex": {
         "--ephemeral",
         "--json",
         "--model",
         "--sandbox",
+        "-m",
+        "-s",
     },
 }
+# Codex config keys a `-c key=value` override must not reach: they undo
+# the read-only sandbox the runner pins (`sandbox_mode`, and
+# `sandbox_workspace_write.*` with it) or the approval policy.
+_UNSAFE_CODEX_CONFIG = ("sandbox", "approval_policy")
 _SESSION_STATUSES = {"completed", "partial", "blocked", "unclear"}
 _FOLLOW_UP_ACTIONS = {"create", "suggest_resolved", "update_context"}
 
@@ -113,6 +121,7 @@ class RunnerOutputError(RunnerError):
 
 def _validate_extra_args(harness: str, args: Sequence[str]) -> None:
     value_allowed = False
+    config_value = False
     for arg in args:
         if arg in {"-", "--"}:
             raise ValueError(
@@ -124,13 +133,36 @@ def _validate_extra_args(harness: str, args: Sequence[str]) -> None:
                 raise ValueError(
                     f"Report runner positional argument is not allowed: {arg}"
                 )
-            value_allowed = False
+            if config_value:
+                _check_codex_config(arg)
+            value_allowed = config_value = False
             continue
 
-        flag = arg.split("=", 1)[0].lower()
-        if flag in _UNSAFE_FLAGS or flag in _MANAGED_FLAGS.get(harness, set()):
+        if harness == "codex" and arg[:2] == "-c" and len(arg) > 2 and arg[2] != "=":
+            # `-ckey=value`: the override glued to the short flag.
+            _check_codex_config(arg[2:])
+            value_allowed = config_value = False
+            continue
+        flag, eq, value = arg.partition("=")
+        flag = flag.lower()
+        # A short flag can carry its value glued on: codex reads `-sVALUE`
+        # as `-s VALUE`, so only the first two characters name it.
+        short = flag[:2] if not flag.startswith("--") else flag
+        managed = _MANAGED_FLAGS.get(harness, set())
+        if flag in _UNSAFE_FLAGS or flag in managed or short in managed:
             raise ValueError(f"Report runner argument is managed by Quiver: {flag}")
-        value_allowed = "=" not in arg
+        is_config = harness == "codex" and flag in {"-c", "--config"}
+        if is_config and eq:
+            _check_codex_config(value)
+        config_value = is_config and not eq
+        value_allowed = not eq
+
+
+def _check_codex_config(override: str) -> None:
+    """Refuse a codex ``-c key=value`` that would lift the sandbox."""
+    key = override.split("=", 1)[0].strip().strip("\"'").lower()
+    if key.startswith(_UNSAFE_CODEX_CONFIG):
+        raise ValueError(f"Report runner argument is managed by Quiver: -c {key}")
 
 
 def build_argv(spec: RunnerSpec) -> list[str]:

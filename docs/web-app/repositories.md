@@ -91,8 +91,51 @@ rail; the rail's CI dot is the newest run on the default branch; the
 same empty texts and row layouts (PR state, review and check icons with
 their hover words, issue comments and assignees, run conclusion badges,
 Pages facts, release, tag and branch badges and shas). A PR row opens
-the PR sheet; every other row opens GitHub. Below 960px the rail folds
+the PR sheet and an issue row the issue sheet; every other row opens
+GitHub. Below 960px the rail folds
 into a strip of repo chips under the title.
+
+**Mine / Review requested** (the iOS Pull requests page's filters). On
+the Pull requests tab the page also reads the hub's `GET /v1/pulls`,
+whose open PRs carry `mine` and `review_requested` (`gh pr status`),
+and shows All, Mine and Review requested with counts under the tabs. A
+pick narrows the list and the rail's counts, and repos with nothing left
+fold under "N quiet". A filter shows only while its flag is known for
+every PR the list and the rail show: a `null` flag (a failed `gh pr
+status`), a PR newer than that answer, `gh` blocked or a failed read
+hides it, and the list falls back to All rather than hide PRs on a guess. The focus page,
+which lists PRs in every state, has no such filter, since `/v1/pulls`
+flags only open ones.
+
+**Issue sheet** (the Mac app's IssueDetailSheet), from an issue row on
+the dashboard or the focus page. It reads the hub's
+`GET /v1/issues/<owner>/<repo>/<n>` (`remote/issues.py`: `gh issue view`
+behind the same one-minute cache) and shows the title, number, author
+and age, labels and assignees, the body and every comment as Markdown,
+each comment with a link to it on GitHub. The footer has Resolve with
+agent (off for a closed issue), Open on GitHub, Fetch again and Done.
+
+Under the thread sits the Mac's comment box: Return breaks the line,
+Cmd or Ctrl+Return or Comment posts (Comment is off while the box is
+blank). It posts `POST /v1/issues/comment {repo, number, body}`, which
+the hub sends through its own `gh` login (the caption names that login
+and the hub machine), then reads the issue again, so the thread lists
+the new comment. A refusal shows under the box and keeps the draft.
+The box hides while the Resolve panel is open.
+
+Resolve with agent opens the Mac's ResolveIssueSheet as a panel in the
+sheet: where it starts (`quiver/issue-<n>`, a worktree off the default
+branch on the hub), the harness, the shared Model menu
+(`static/model-menu.js`), Your context (optional) and the first prompt,
+prefilled with the hub's `suggested_prompt` (emptied, the hub writes
+it). Start posts `POST /v1/issues/resolve` with `{repo, number, harness,
+prompt, context?, model?}` and follows the launch as Open in session
+does: the chat opens once the session shows up. "Also post as a
+comment on #<n>", ticked by default as on the Mac, posts the context
+through `POST /v1/issues/comment` first. A refused comment shows as a
+warning ("The agent still gets it in the prompt") and the launch goes
+ahead, and a Start retried after a failed launch doesn't post the same
+context twice.
 
 **Focus page** (`repo=owner/name`, the hash route
 `#/repositories?repo=owner/name`, opened from a repo header's expand
@@ -292,6 +335,19 @@ runs at a time from the page, as in the app. Touch screens have no drag;
 the narrow layout's chip strip drags sideways.
 
 ## Inbox
+
+**Needs you** sits above the GitHub list: the iOS Inbox's session
+sections from the hub's own `GET /v1/inbox?done=1`, in its order (Waiting
+on you, Errors, Finished today; an unknown status counts as waiting). A
+row shows the status dot, title, harness logo, what it waits on and age,
+and opens the session's chat (`#/sessions?chat=<key>`); a pending approval
+says Review. Clear, on a row (on hover or focus) or a section's head,
+posts `POST /v1/inbox/dismiss` with the row's `last_active_at`, so the
+hub keeps it off this browser's inbox until the session moves again. A
+pending approval has no Clear and a section's Clear skips it. A row
+leaves at once; a refused clear says so and the next read brings it back.
+The hub's GitHub rows are left out, since the list below shows them. It
+reads again with the GitHub list: on open, Refresh and the minute poll.
 
 `GET /v1/app/inbox` is `swe gh inbox --all --limit=50 --json`: `{"github",
 "status", "notifications": [GhNotification], "error"?, "fetched_at",

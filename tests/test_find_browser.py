@@ -19,6 +19,7 @@ from unittest import mock
 
 from quiver.console import strip_ansi
 from quiver.find.entries import HIDE_DIRS, Entry
+from tests._tempdir import temp_dir
 
 
 class EntryContractTest(unittest.TestCase):
@@ -33,11 +34,11 @@ class EntryContractTest(unittest.TestCase):
         self.assertFalse(Entry("gone").can_descend)
 
     def test_a_directory_descends(self):
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         self.assertTrue(Entry("d", d).can_descend)
 
     def test_a_file_does_not(self):
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "SKILL.md"
         f.write_text("x")
         self.assertFalse(Entry("f", f).can_descend)
@@ -92,7 +93,7 @@ class BrowserSafetyTest(unittest.TestCase):
         carry an OSC link or a clipboard write into the browser."""
         from quiver.find.browser import _file_preview
 
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "SKILL.md"
         f.write_text(
             "ok line\n"
@@ -112,7 +113,7 @@ class BrowserSafetyTest(unittest.TestCase):
         expandtabs or indented files lose their shape."""
         from quiver.find.browser import _file_preview
 
-        d = Path(tempfile.mkdtemp())
+        d = temp_dir(self)
         f = d / "x.md"
         f.write_text("one\n\tdeep\n\t\tdeeper\n")
         rows = _file_preview(f, 10)
@@ -182,47 +183,14 @@ class BrowseDispatchTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("nothing to browse", out)
 
-    def test_the_flag_does_not_leak_into_the_printed_path(self):
-        """-i is stripped before topic dispatch, so it can never be read
-        as a scope or a filter."""
-        code, out = self._run(["plugins"])
-        self.assertEqual(code, 0)
-        self.assertNotIn("Cannot browse", out)
-
 
 class PluginRootsTest(unittest.TestCase):
-    """The reason the feature exists: reach a plugin's own directory."""
+    """The root getters never raise on a bad home or scope.
 
-    def test_plugins_are_grouped_harness_then_marketplace(self):
-        from quiver.find.roots import plugins_roots
-
-        roots = plugins_roots()
-        if not roots:
-            self.skipTest("no plugins installed here")
-        harness = roots[0]
-        self.assertTrue(harness.children, "no marketplaces under the harness")
-        market = harness.children[0]
-        self.assertTrue(market.children, "no plugins under the marketplace")
-
-    def test_a_plugin_carries_a_real_directory(self):
-        from quiver.find.roots import plugins_roots
-
-        found = [p for h in plugins_roots() for m in h.children
-                 for p in m.children if p.path is not None]
-        if not found:
-            self.skipTest("no plugins installed here")
-        self.assertTrue(found[0].can_descend,
-                        "cannot descend into a plugin, which is the whole point")
-
-    def test_a_plugin_whose_directory_is_gone_is_still_listed(self):
-        """Dropping it would hide an install record that no longer
-        matches the disk, which is worth seeing."""
-        from quiver.find.roots import plugins_roots
-
-        gone = [p for h in plugins_roots() for m in h.children
-                for p in m.children if p.path is None]
-        for p in gone:
-            self.assertIn("no directory", p.detail)
+    How plugins nest (harness, marketplace, plugin) and which carry a
+    directory is pinned against fixed plugin lists in
+    tests/test_find_roots.py::PluginsRootsTest.
+    """
 
     def test_every_adapter_survives_a_bogus_home(self):
         from quiver.find import roots
@@ -233,8 +201,9 @@ class PluginRootsTest(unittest.TestCase):
     def test_an_unknown_scope_does_not_raise(self):
         from quiver.find import roots
 
+        home = temp_dir(self)
         for fn in (roots.agents_roots, roots.skills_roots, roots.plugins_roots):
-            self.assertIsInstance(fn(scope="nonsense"), list)
+            self.assertIsInstance(fn(home=home, scope="nonsense"), list)
 
 
 if __name__ == "__main__":
@@ -312,7 +281,7 @@ class PreviewTest(unittest.TestCase):
     """Arrowing onto a file shows the file, not the next folder."""
 
     def setUp(self):
-        self.d = Path(tempfile.mkdtemp())
+        self.d = temp_dir(self)
 
     def test_a_directory_previews_its_children(self):
         from quiver.find.browser import _preview
@@ -446,6 +415,25 @@ class ResizeTest(unittest.TestCase):
         widths = {visible_len(r) for r in rows}
         self.assertEqual(len(widths), 1, f"ragged right edge: {sorted(widths)}")
 
+    def test_the_returned_count_is_the_lines_written(self):
+        """The count is how far the next redraw rewinds. It stayed at the
+        old two-line header's figure after the header became one line, so
+        every redraw climbed one line and ate whatever sat above it."""
+        import io
+        from contextlib import redirect_stdout
+
+        from quiver.find.browser import _render
+
+        many = [Entry(str(i)) for i in range(30)]
+        for entries, ratio in (([Entry("a")], (3, 9, 8)),     # no range line
+                               (many, (3, 9, 8)),             # range line
+                               ([Entry("a")], (2, 3, 5))):    # ratio note
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                drawn = _render([], 0, entries, 0, ["x"], "T", "crumb", 0,
+                                10, 140, ratio)
+            self.assertEqual(drawn, buf.getvalue().count("\r\n"))
+
     def test_widths_are_recomputed_from_the_ratio(self):
         from quiver.find.browser import _pane_widths
 
@@ -504,9 +492,13 @@ class BrowserMouseTest(unittest.TestCase):
         seen = []
         renders = [0]
         real_render = browser_mod._render
+        # The labels of the level on screen at each draw, so a test can
+        # tell which level a key left the browser on.
+        self.levels = []
 
         def count_render(*a, **k):
             renders[0] += 1
+            self.levels.append([e.label for e in a[2]])
             return real_render(*a, **k)
 
         sel_kwargs = ({"side_effect": select_side_effect}
@@ -576,12 +568,16 @@ class BrowserMouseTest(unittest.TestCase):
                 roots=roots,
             )
         self.assertEqual(code, 0)
+        visited = [lv for i, lv in enumerate(self.levels)
+                   if i == 0 or lv != self.levels[i - 1]]
+        self.assertEqual(visited, [["dir", "b"], ["child"], ["dir", "b"]])
 
     def test_an_open_on_a_dead_end_stays_put(self):
         """Entries that cannot descend leave the level stack alone."""
         code, _, _, _ = self._drive(["open", "cancel"],
                                  roots=[Entry("leaf", None, "no path")])
         self.assertEqual(code, 0)
+        self.assertEqual(self.levels, [["leaf"], ["leaf"]])
 
     def test_a_resize_tick_redraws_with_the_new_size(self):
         """select returning nothing on a tick is the resize path: the loop

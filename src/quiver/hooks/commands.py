@@ -26,6 +26,7 @@ from collections import Counter
 from pathlib import Path
 
 from quiver import paths as _paths
+from quiver.paths import home_relative as _short
 from quiver.console import c, sanitize, terminal_width
 from quiver.flags import expand_value_flags
 from quiver.init.hooks import apply_hook_status, plan_hooks
@@ -199,13 +200,6 @@ def _row_json(r: HookRow, summaries: dict[Path, str]) -> dict:
         # has no single file to read it from.
         "summary": summaries[r.source],
     }
-
-
-def _short(path: Path, home: Path) -> str:
-    try:
-        return "~/" + str(path.relative_to(home))
-    except ValueError:
-        return str(path)
 
 
 def _declared_cell(row: HookRow) -> str:
@@ -829,6 +823,14 @@ def _toggle(rest: list[str], json_view: bool, fail, *, off: bool) -> int:
                              f"[--harness=<h>]"))
     name = rest[0]
     home = Path.home()
+    # The re-plan below links and unlinks, so the user's protection list
+    # has to be readable first — the rule sync keeps. Unguarded, plan_hooks
+    # reloaded it and an unreadable .linkignore escaped as a traceback.
+    try:
+        patterns = load_linkignore(home)
+    except LinkIgnoreError as exc:
+        return fail(c("red", f"{exc} — fix or remove "
+                             f"~/.quiver/.linkignore, then {verb} again."))
     rows, registry = _rows(home)
     matches = find_script(name, rows)
     if harness:
@@ -859,7 +861,7 @@ def _toggle(rest: list[str], json_view: bool, fail, *, off: bool) -> int:
     # disable unlinks, enable links. Shared wrappers (re)generate too.
     if any(r.tier == "shared" for r in matches):
         _shared.apply_deploy(home, registry)
-    statuses = plan_hooks(home, registry=registry)
+    statuses = plan_hooks(home, patterns=patterns, registry=registry)
     # A shared script's link is its harness's _generated dir — apply that
     # status too so enabling relinks the wrappers it just wrote.
     interesting = set(sources) | {

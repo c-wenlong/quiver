@@ -981,6 +981,21 @@ final class ReviewFixTests: XCTestCase {
         XCTAssertEqual(ledger.overlay([item("claude:3", 5)]).map(\.key), ["claude:3"])
     }
 
+    func testDismissalLedgerNeverHidesAPendingApproval() {
+        let item = { (status: String, at: Double) in
+            InboxItem(key: "claude:1", machineId: "m1", harness: "claude", agent: nil, title: "t", cwd: "/w",
+                      status: status, lastActiveAt: at, requestId: status == "approval" ? "r1" : nil)
+        }
+        var ledger = DismissalLedger()
+        ledger.choose("claude:1", stamp: 100)
+        // The session was cleared, then asked for approval before its
+        // last_active_at moved: the hub ships the approval regardless.
+        XCTAssertEqual(ledger.overlay([item("approval", 100)]).map(\.key), ["claude:1"],
+                       "a pending approval must never be hidden by a dismiss")
+        // The same row as a plain status is still the one the dismiss cleared.
+        XCTAssertEqual(ledger.overlay([item("done", 100)]).map(\.key), [])
+    }
+
     func testPairedDeviceDecodesAndLabels() throws {
         let json = #"""
         {"devices":[
@@ -1076,11 +1091,38 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertEqual(NewSessionOptions.machines(ms).map(\.id), ["b", "z", "o"])
     }
 
+    func testNoMachineMessageFollowsWhatTheHubReported() {
+        // The hub answered `launchable` and it's empty: swe is current,
+        // nothing is installed or everything is switched off.
+        let current = NewSessionOptions.noMachineMessage([machine("m", name: "mac", launchable: [])])
+        XCTAssertFalse(current.contains("Update swe"))
+        XCTAssertEqual(current, "No harness can start on the hub: install one there, or turn it on in Quiver's Settings › Providers.")
+        // Satellites too: no single "hub" to name.
+        let fleet = NewSessionOptions.noMachineMessage([machine("m", name: "mac", launchable: []),
+                                                        machine("s", name: "box", launchable: [])])
+        XCTAssertTrue(fleet.hasPrefix("No harness can start on any machine"))
+        // A row older than `launchable`, or no rows: swe is too old.
+        XCTAssertTrue(NewSessionOptions.noMachineMessage([machine("m", name: "mac", harnesses: [])]).hasPrefix("Update swe on the hub."))
+        XCTAssertTrue(NewSessionOptions.noMachineMessage([]).hasPrefix("Update swe on the hub."))
+    }
+
     func testFolderSearchMatchesEveryWordAnyCase() {
         let folders = ["/Users/k/Projects/quiver", "/Users/k/Projects/quiver-render", "/Users/k/Indie/kopifund"]
         XCTAssertEqual(NewSessionOptions.matching(folders, query: "QUIVER rend"), ["/Users/k/Projects/quiver-render"])
         XCTAssertEqual(NewSessionOptions.matching(folders, query: "  "), folders)
         XCTAssertEqual(NewSessionOptions.matching(folders, query: "nothing"), [])
+    }
+
+    func testTheFolderListFoldsAndSearchesOnlyWhenThereAreMore() {
+        let folders = ["/p/a", "/p/b", "/p/c", "/p/d", "/p/e", "/q/api"]
+        XCTAssertEqual(RecentFolderPicker.shown(folders, query: "", showAll: false), ["/p/a", "/p/b", "/p/c", "/p/d"])
+        XCTAssertEqual(RecentFolderPicker.shown(folders, query: "", showAll: true), folders)
+        // A search reads every folder, folded or not.
+        XCTAssertEqual(RecentFolderPicker.shown(folders, query: " api ", showAll: false), ["/q/api"])
+        XCTAssertTrue(RecentFolderPicker.offersSearch(folderCount: 5, query: ""))
+        // Four or fewer all show: nothing to search, until a query is typed.
+        XCTAssertFalse(RecentFolderPicker.offersSearch(folderCount: 4, query: ""))
+        XCTAssertTrue(RecentFolderPicker.offersSearch(folderCount: 2, query: "a"))
     }
 
     func testHarnessNamesComeFromTheMachineCapitalised() {

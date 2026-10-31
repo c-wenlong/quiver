@@ -17,6 +17,16 @@ def _registry_patches(config_dir: Path, registry_file: Path):
 
 
 class HarnessDiscoverTest(unittest.TestCase):
+    def setUp(self):
+        # Without these, every test also scans the real machine's bin dirs
+        # (~/.local/bin, /opt/homebrew/bin, ...) and runs --version on each
+        # harness found there. Tests that check a version patch it inside.
+        for target, value in (("EXTRA_BIN_DIRS", ()),
+                              ("live_version", lambda cmd: None)):
+            p = patch(f"quiver.harness.discover.{target}", value)
+            p.start()
+            self.addCleanup(p.stop)
+
     def _make_fake_bin(self, bindir: Path, name: str) -> Path:
         exe = bindir / name
         exe.write_text("#!/bin/sh\necho test\n")

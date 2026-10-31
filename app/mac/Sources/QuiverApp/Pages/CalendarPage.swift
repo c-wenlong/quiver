@@ -19,6 +19,25 @@ struct CalendarPage: View {
     }
 }
 
+/// Where the hour axis's now pill sits against its hour labels.
+enum CalendarHourAxis {
+    /// The pill's reach above and below the current time at 100% zoom:
+    /// 9pt text with 2pt padding, drawn 9pt above the line.
+    static let pillAbove: CGFloat = 9
+    static let pillBelow: CGFloat = 7
+    /// An hour label's height from the top of its hour at 100% zoom.
+    static let labelHeight: CGFloat = 12
+
+    /// Whether the pill, centred on `nowOffset` points down the day,
+    /// overlaps `hour`'s label; that label hides while it does. `scale`
+    /// is View › Zoom's factor on the 9pt text: the pill and the labels
+    /// grow with it, the hours do not.
+    static func pillCovers(hour: Int, nowOffset: CGFloat, hourHeight: CGFloat, scale: CGFloat = 1) -> Bool {
+        let top = CGFloat(hour) * hourHeight
+        return top < nowOffset + pillBelow * scale && top + labelHeight * scale > nowOffset - pillAbove * scale
+    }
+}
+
 private struct CalendarContent: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -224,7 +243,7 @@ private struct CalendarContent: View {
                     }
                     if !usageCards.isEmpty {
                         Text("Usage").font(Theme.font(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.textSecondary).textCase(.uppercase)
+                            .foregroundStyle(Theme.textSecondary)
                             .padding(.top, 8).padding(.bottom, 4)
                         ForEach(usageCards) { card in
                             UsageLegend(model: model, card: card)
@@ -551,10 +570,12 @@ private struct CalendarContent: View {
     }
 
     /// The resets the grid draws: every scheduled reset of every account
-    /// the Usage legend has ticked.
+    /// and window the Usage legend has ticked.
     private var usageResets: [UsageReset] {
         usageCards.flatMap { card in
-            model.isUsageHidden(card.id) ? [] : card.usageResets
+            model.isUsageHidden(card.id) ? [] : card.usageResets.filter {
+                !model.isUsageHidden(card.id, window: $0.window)
+            }
         }
     }
 
@@ -583,25 +604,36 @@ private struct CalendarContent: View {
     /// outside the horizontal scroll so it stays pinned while the
     /// columns slide underneath it.
     private func hourAxis(now: Date) -> some View {
-        ZStack(alignment: .topLeading) {
+        // Only the visible window's "today" gets the pill, not a buffer
+        // day's.
+        let nowOffset = model.days.first(where: { $0.contains(now) })
+            .map { Self.hourHeight * CGFloat(now.timeIntervalSince($0.start) / 3600) }
+        let scale = Theme.scaled(9) / 9
+        return ZStack(alignment: .topLeading) {
             VStack(spacing: 0) {
                 ForEach(0..<24, id: \.self) { hour in
                     Text(hourLabel(hour))
                         .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
                         .frame(width: Self.axisWidth - 8, height: Self.hourHeight,
                                alignment: .topTrailing)
+                        // The pill is narrower than the gutter, so a label
+                        // it half-covers would show its tail beside it.
+                        .opacity(nowOffset.map {
+                            CalendarHourAxis.pillCovers(hour: hour, nowOffset: $0, hourHeight: Self.hourHeight,
+                                                        scale: scale)
+                        } == true ? 0 : 1)
                         .id("h\(hour)")
                 }
             }
-            // Only the visible window's "today" gets the pill, not a
-            // buffer day's.
-            if let today = model.days.first(where: { $0.contains(now) }) {
-                Text(now, format: .dateTime.hour().minute())
+            if let nowOffset {
+                // The axis's own 24-hour clock, not the locale's: a 12-hour
+                // Mac read "1:05 PM" beside a "13:00" axis.
+                Text(Self.hourLabel.string(from: now))
                     .font(Theme.font(size: 9, weight: .medium))
                     .foregroundStyle(Theme.calendarNowText)
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(Theme.calendarNow, in: Capsule())
-                    .offset(y: Self.hourHeight * CGFloat(now.timeIntervalSince(today.start) / 3600) - 9)
+                    .offset(y: nowOffset - CalendarHourAxis.pillAbove * scale)
             }
         }
         .frame(width: Self.axisWidth)
@@ -1330,59 +1362,147 @@ private struct HarnessLegend: View {
     }
 }
 
-/// One account in the Usage section: a checkbox row toggling its reset
-/// markers on the grid, then every window inline with how much of it is
-/// left. The windows always show — there is nothing to expand.
+/// One account in the Usage section: the same row the Harnesses list
+/// draws — a colour checkbox, the vendor mark and title, and the
+/// tightest window's remaining share as its figure. More than one
+/// window lists them below, expanded until the user folds them away.
 private struct UsageLegend: View {
     var model: CalendarModel
     var card: AccountsModel.Card
 
     private var color: Color { Color(hex: card.profile.color) }
-    private var hidden: Bool { model.isUsageHidden(card.id) }
+    /// Off the grid: the account was hidden, or its lone window was —
+    /// folded into this row, a solo window's hidden state shows here so
+    /// the row stays its way back on.
+    private var hidden: Bool {
+        model.isUsageHidden(card.id)
+            || (solo.map { model.isUsageHidden(card.id, window: $0.label) } ?? false)
+    }
+    private var usage: AccountUsage? { card.usage }
+    private var windows: [UsageWindow] { usage?.windows ?? [] }
+    private var expanded: Bool {
+        model.usageWindowsExpanded(card.id, windows: windows.count)
+    }
+    private var failed: Bool {
+        usage.map { $0.isStale && $0.status != .ok } ?? false
+    }
+    /// A single window has no row of its own; its figure folds into the
+    /// account's instead.
+    private var solo: UsageWindow? { windows.count == 1 ? windows[0] : nil }
+
+    private func toggle() {
+        if hidden {
+            model.showUsage(card.id, windows: solo.map { [$0.label] } ?? [])
+        } else {
+            model.toggleUsage(card.id)
+        }
+    }
+
+    /// The right-hand figure, like a harness row's range total: the
+    /// least anyone has left in any window.
+    private var tightest: Int {
+        windows.map { max(0, 100 - Int($0.usedPercent.rounded())) }.min() ?? 0
+    }
 
     var body: some View {
-        LegendToggle(action: { model.toggleUsage(card.id) }) {
-            HStack(spacing: 6) {
-                LegendCheckbox(shown: !hidden, color: color)
-                HarnessIcon(harness: card.profile.vendor.rawValue, size: 13)
-                Text(card.usageTitle).font(Theme.font(size: 11))
-                    .foregroundStyle(hidden ? .secondary : .primary)
-                    .lineLimit(1)
-                Spacer()
-            }
+        // One ticker per row, so every row stays a direct child of the
+        // panel's legend stack; a shared TimelineView would gather them
+        // into one child re-spaced at the default gap, not the legend's
+        // 2pt. The countdowns and reset-passed dimming need now, which
+        // the grid's own minute ticker can't reach in the panel.
+        TimelineView(.everyMinute) { context in
+            accountRow(now: context.date)
         }
-        .help(hidden ? "Show \(card.usageTitle) resets" : "Hide \(card.usageTitle) resets")
-        .accessibilityLabel("\(card.usageTitle), \(hidden ? "hidden" : "shown")")
-        .accessibilityAddTraits(.isToggle)
-        .accessibilityValue(hidden ? "0" : "1")
-        .frame(height: 22)
-        if let usage = card.usage {
-            // The countdown and the reset-passed dimming both depend on
-            // now; the grid's own minute ticker can't reach the panel.
-            TimelineView(.everyMinute) { context in
-                ForEach(usage.windows, id: \.label) { window in
+        if expanded, let usage {
+            ForEach(usage.windows, id: \.label) { window in
+                TimelineView(.everyMinute) { context in
                     windowRow(window, usage: usage, now: context.date)
                 }
             }
         }
     }
 
-    /// One window's row: its label, then how much of it is left. A kept
-    /// older or already-reset reading dims; a failed fetch reddens the
-    /// label — the same vocabulary the Accounts page's UsageBar speaks.
-    private func windowRow(_ window: UsageWindow, usage: AccountUsage, now: Date) -> some View {
+    @ViewBuilder
+    private func accountRow(now: Date) -> some View {
+        let pastSolo = solo?.resetsAt.map { $0 <= now } ?? false
+        HStack(spacing: 0) {
+            if windows.count > 1 {
+                Button { model.toggleUsageWindowsExpanded(card.id) } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(Theme.font(size: 8)).foregroundStyle(Theme.textSecondary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help(expanded ? "Collapse windows" : "Expand windows")
+                .accessibilityLabel(expanded ? "Collapse \(card.usageTitle) windows"
+                                           : "Expand \(card.usageTitle) windows")
+            } else {
+                Spacer().frame(width: 10)
+            }
+            LegendToggle(action: toggle) {
+                HStack(spacing: 6) {
+                    LegendCheckbox(shown: !hidden, color: color)
+                    HarnessIcon(harness: card.profile.vendor.rawValue, size: 13)
+                    Text(card.usageTitle).font(Theme.font(size: 11))
+                        .foregroundStyle(failed ? Theme.dangerText
+                                         : (hidden ? .secondary : .primary))
+                        .lineLimit(1)
+                    Spacer()
+                    Text(figure(now: now))
+                        .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .help(hidden ? "Show \(card.usageTitle) resets" : "Hide \(card.usageTitle) resets")
+            .accessibilityLabel("\(card.usageTitle), \(hidden ? "hidden" : "shown")")
+            .accessibilityAddTraits(.isToggle)
+            .accessibilityValue(hidden ? "0" : "1")
+        }
+        .frame(height: 22)
+        .opacity(!failed && ((usage?.isStale ?? false) || pastSolo) ? 0.55 : 1)
+    }
+
+    /// The account row's figure: one window's own countdown when it
+    /// stands alone, else the least anyone has left.
+    private func figure(now: Date) -> String {
+        guard let solo else { return "\(tightest)% left" }
+        return Self.remaining(solo, failed: failed, now: now)
+    }
+
+    /// One window's "57% left · in 4h" figure: the countdown drops once
+    /// the fetch fails or the moment has already passed.
+    private static func remaining(_ window: UsageWindow, failed: Bool, now: Date) -> String {
         let left = max(0, 100 - Int(window.usedPercent.rounded()))
-        let failed = usage.isStale && usage.status != .ok
         let past = window.resetsAt.map { $0 <= now } ?? false
         let reset = !failed && !past ? window.resetsAt : nil
-        return HStack(spacing: 6) {
-            Text(window.label).font(Theme.font(size: 10))
-                .foregroundStyle(failed ? Theme.dangerText : (hidden ? .secondary : .primary))
-            Spacer()
-            Text("\(left)% left" + (reset.map { " · \(UsageFormat.resetIn($0, now: now))" } ?? ""))
-                .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
+        return "\(left)% left" + (reset.map { " · \(UsageFormat.resetIn($0, now: now))" } ?? "")
+    }
+
+    /// One window's row: a checkbox toggling its reset marker, its
+    /// label, then how much of it is left. A kept older or already-reset
+    /// reading dims; a failed fetch reddens the label — the same
+    /// vocabulary the Accounts page's UsageBar speaks.
+    private func windowRow(_ window: UsageWindow, usage: AccountUsage, now: Date) -> some View {
+        let failed = usage.isStale && usage.status != .ok
+        let past = window.resetsAt.map { $0 <= now } ?? false
+        let shown = !model.isUsageHidden(card.id, window: window.label)
+        return LegendToggle(action: { model.toggleUsage(card.id, window: window.label) }) {
+            HStack(spacing: 6) {
+                LegendCheckbox(shown: shown, color: color)
+                Text(window.label).font(Theme.font(size: 10))
+                    .foregroundStyle(failed ? Theme.dangerText
+                                     : (shown && !hidden ? .primary : .secondary))
+                Spacer()
+                Text(Self.remaining(window, failed: failed, now: now))
+                    .font(Theme.font(size: 9)).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.leading, 18)
         }
-        .padding(.leading, 18)
+        .help(shown ? "Hide the \(window.label) reset marker"
+                    : "Show the \(window.label) reset marker")
+        .accessibilityLabel("\(card.usageTitle), \(window.label), \(shown ? "shown" : "hidden")")
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(shown ? "1" : "0")
         .frame(height: 20)
         .opacity(!failed && (usage.isStale || past) ? 0.55 : 1)
     }

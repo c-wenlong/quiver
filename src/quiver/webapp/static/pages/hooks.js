@@ -35,30 +35,28 @@ const hkBlocked = (s) => ["conflict", "keep"].includes(s);
 const HK_TIER_TITLE = { shared: "Shared", harness: "Harness", foreign: "Foreign" };
 
 /* HookFinding.kindTitle */
-const HK_FINDING_TITLE = { "declared-missing": "Declared, missing", undeclared: "Undeclared", unlinked: "Unlinked", managed: "Managed" };
+const HK_FINDING_TITLE = { "declared-missing": "Declared, missing", undeclared: "Undeclared", unlinked: "Unlinked", managed: "Managed elsewhere" };
 
-/* `~/…` for a path under the hub's home. */
+/* `~/…` for a path under the hub's home (the list's, when not given). */
 function hkPath(path, home) {
-  const h = home || (hooksPage.data && hooksPage.data.home) || "";
-  return h && path.startsWith(h + "/") ? "~" + path.slice(h.length) : path;
+  return Fmt.tilde(path, home || (hooksPage.data && hooksPage.data.home));
 }
 
-/* HarnessMarkView: the logo, a word after it when the logo is shared,
- * or the name alone when there is no logo. */
-function hkMark(h) {
-  const name = Fmt.harnessName(h);
-  const has = (id) => Fmt.logo(id).startsWith("<img");
-  let inner;
-  if (h === "claude") inner = `${Fmt.logo("claude")}<span>CLI</span>`;
-  else if (h === "claude-desktop") inner = `${Fmt.logo("claude")}<span>Desktop</span>`;
-  else if (has(h)) inner = Fmt.logo(h);
-  else {
-    const dash = h.lastIndexOf("-");
-    const base = dash > 0 ? h.slice(0, dash) : "", suffix = dash > 0 ? h.slice(dash + 1) : "";
-    inner = base && suffix && has(base) ? `${Fmt.logo(base)}<span>${esc(suffix)}</span>` : `<span>${esc(name)}</span>`;
-  }
-  return `<span class="hk-mark" title="${esc(name)}" aria-label="${esc(name)}">${inner}</span>`;
+/* HookFinding.displayMessage: home paths as `~/…`, and a managed note cut
+ * to its path, since the badge already says "Managed elsewhere". */
+function hkFindingMessage(f, home) {
+  let text = f.message;
+  const cut = text.indexOf(" — declaration managed elsewhere");
+  if (f.kind === "managed" && cut >= 0) text = text.slice(0, cut);
+  const h = (home || "").replace(/\/$/, "");
+  if (!h) return text;
+  // Only where a path starts: `/backup/Users/k/x` is not under home.
+  const escaped = (h + "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`(?<![^\\s("'])${escaped}`, "g"), "~/");
 }
+
+/* HarnessMarkView (Fmt.markView). */
+const hkMark = (h) => Fmt.markView(h, "hk-mark");
 
 /* HookDeclaration.label: PreToolUse:Bash, or Stop with no matcher. */
 const hkDeclLabel = (d) => (d.matcher ? `${d.event}:${d.matcher}` : d.event);
@@ -195,7 +193,7 @@ function hkFindingsCard(d) {
     <div class="hk-findings">${d.findings.map((f) => `<div class="hk-finding">
       <span class="badge${f.kind === "managed" ? " hk-dim" : ""}">${esc(HK_FINDING_TITLE[f.kind] || f.kind)}</span>
       ${f.harness ? `<span class="hk-fmark">${hkMark(f.harness)}</span>` : ""}
-      <span class="caption hk-fmsg">${esc(f.message)}</span></div>`).join("")}</div></div>`;
+      <span class="caption hk-fmsg">${esc(hkFindingMessage(f, d.home))}</span></div>`).join("")}</div></div>`;
 }
 
 /* HooksModel.groups: Shared first, Foreign last, harnesses in

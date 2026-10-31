@@ -14,6 +14,7 @@ from unittest import mock
 from quiver.console import strip_ansi
 from quiver.find.mcps import ToolView, _kind, _signature, hub_view, prefix_of
 from quiver.harness import registry
+from tests._tempdir import temp_dir
 
 LOCAL = {"command": "npx", "args": ["thing"]}
 REMOTE = {"url": "https://example.test/mcp"}
@@ -137,6 +138,20 @@ class RenderTest(unittest.TestCase):
                 code = cmd_find_mcps(full=True)
         return code, strip_ansi(buf.getvalue())
 
+    def test_the_disk_is_scanned_once(self):
+        """unmanaged() used to run its own scan_configs, so every
+        `swe find mcps` walked every dot-directory in home twice."""
+        from quiver.find import mcps
+        from quiver.find.commands import cmd_find_mcps
+
+        with mock.patch("quiver.mcp.cli.get_hub_servers", return_value={"a": LOCAL}), \
+             mock.patch("quiver.find.mcps.tool_views", return_value=[]), \
+             mock.patch("quiver.find.mcps.scan_configs", return_value=[]) as scan, \
+             mock.patch.object(registry, "HARNESS_FILE", Path("/nonexistent/harness.json")):
+            with redirect_stdout(io.StringIO()):
+                cmd_find_mcps()
+        self.assertEqual(scan.call_count, 1)
+
     def test_an_empty_hub_says_so_rather_than_printing_a_blank_tree(self):
         code, out = self._render({}, [])
         self.assertEqual(code, 0)
@@ -191,10 +206,9 @@ class ScanTest(unittest.TestCase):
 
     def setUp(self):
         import json
-        import tempfile
         from pathlib import Path
 
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.json = json
 
     def _write(self, rel, payload, raw=None):
@@ -318,6 +332,14 @@ class ScanTest(unittest.TestCase):
         self._write(".h/mcp.json", {"mcpServers": {"known": LOCAL, "stray": LOCAL}})
         out = unmanaged(self.home, {"known": LOCAL})
         self.assertEqual(sorted(out), ["stray"])
+
+    def test_unmanaged_uses_a_scan_it_is_handed(self):
+        from quiver.find import mcps
+
+        self._write(".h/mcp.json", {"mcpServers": {"stray": LOCAL}})
+        configs = self._scan(scope="global")
+        with mock.patch.object(mcps, "scan_configs", side_effect=AssertionError("rescanned")):
+            self.assertEqual(sorted(mcps.unmanaged(self.home, {}, configs=configs)), ["stray"])
 
     def test_unmanaged_records_which_config_declared_it(self):
         from quiver.find.mcps import unmanaged

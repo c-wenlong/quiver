@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 
-from quiver.console import c, cpad, fit_widths, sanitize, terminal_width, truncate, visible_len
+from quiver.console import c, cpad, fit_widths, sanitize, terminal_width, tilde, truncate, visible_len
 from quiver.flags import expand_value_flags
 from quiver.json_output import emit, error_stream, take_json_flag
 from quiver.markdown import render_markdown
@@ -35,7 +35,6 @@ from quiver.table import Table
 _codex_resume_args = codex_resume_args
 _launch_tool_name = launch_tool_name
 _RESUME_FLAGS = RESUME_FLAGS
-_LIMITED_RESUME = LIMITED_RESUME
 
 
 def _help_requested(args: list[str], value_flags: set[str]) -> bool:
@@ -373,8 +372,10 @@ def _print_parser_failures() -> None:
     print()
 
 
-def _relative_time(diff: float) -> str:
-    """A session's age as the listing's short stamp ("3m ago", "Just now")."""
+def relative_time(diff: float) -> str:
+    """A session's age as the listing's short stamp ("3m ago", "Just now").
+
+    The MCP server's recent-sessions tool prints the same stamp."""
     if diff < 60:
         return "Just now"
     if diff < 3600:
@@ -442,7 +443,7 @@ def _build_session_table(sessions, reserve: int = 0, statuses=None) -> Table:
     # grid: a 3-digit "[100]" cell is 5 columns and used to overflow the
     # hardcoded 4, shifting every column after it from row 100 on.
     now = time.time()
-    stamps = [_relative_time(now - (s.timestamp / 1000)) for s in sessions]
+    stamps = [relative_time(now - (s.timestamp / 1000)) for s in sessions]
     # Agent names come out of harness files, so they carry the same
     # escape-sequence risk titles do; the AGENT column is preformatted,
     # which means nothing downstream will clean them again.
@@ -490,11 +491,10 @@ def _build_session_table(sessions, reserve: int = 0, statuses=None) -> Table:
         kind="preformatted", trust_cell_width=True,
     )
 
-    home_str = str(Path.home())
     for idx, (session, t_str, agent, status) in enumerate(
         zip(sessions, stamps, agents, statuses), start=1
     ):
-        path = session.path.replace(home_str, "~")
+        path = tilde(session.path)
         # IDX cell: ``[BOLD<N>]`` padded to the column. ``trust_cell_width``
         # skips renderer pad so we manually pad for column-grid alignment.
         bold_idx = c("bold", str(idx))
@@ -552,8 +552,7 @@ def _session_preview(session) -> list[str]:
     transcript = read_transcript(session)
     if not transcript.readable:
         return [f"(no preview: {transcript.error})"]
-    home_str = str(Path.home())
-    sources = ", ".join(p.replace(home_str, "~") for p in transcript.source_paths)
+    sources = ", ".join(tilde(p) for p in transcript.source_paths)
     n = len(transcript.messages)
     lines = [c("dim", f"{n} message{'' if n == 1 else 's'}")]
     if sources:
@@ -735,39 +734,9 @@ def cmd_session(args):
     search_ids: set[str] | None = None
     evidence: dict[str, dict] = {}
     if search:
-        home = Path.home()
-        if search_index.available(home):
-            hits = search_index.search(
-                home,
-                search,
-                limit=max(limit, search_index.DEFAULT_LIMIT),
-                agents=search_index.tool_names_for(agent_filter),
-            )
-            if hits:
-                search_ids = {h.session_id for h in hits if h.session_id}
-                hit_by_key = {
-                    key: h
-                    for h in hits
-                    for key in search_index.match_keys(h.session_id)
-                }
-                for s in sessions:
-                    if not s.session_id:
-                        continue
-                    hit = next(
-                        (
-                            hit_by_key[k]
-                            for k in search_index.match_keys(s.session_id)
-                            if k in hit_by_key
-                        ),
-                        None,
-                    )
-                    if hit is not None:
-                        search_ids.add(s.session_id)
-                        evidence[s.session_id] = _hit_evidence(hit)
-                sessions.extend(search_index.resolve_hit_sessions(hits, sessions))
-                for h in hits:
-                    if h.session_id:
-                        evidence.setdefault(h.session_id, _hit_evidence(h))
+        search_ids, best = search_index.merge_hits(
+            Path.home(), search, sessions, limit=limit, agent_filter=agent_filter)
+        evidence = {sid: _hit_evidence(hit) for sid, hit in best.items()}
 
     if has_date_filter:
         start_ms, end_ms = calendar_range_ms(

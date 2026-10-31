@@ -54,6 +54,11 @@ class GrokTitleSourceTest(unittest.TestCase):
             )
             _write_session(
                 base,
+                "manual-int",
+                {"generated_title": "Renamed via int", "title_is_manual": 1},
+            )
+            _write_session(
+                base,
                 "manual-summary-only",
                 {"session_summary": "Renamed summary", "title_is_manual": True},
             )
@@ -62,6 +67,7 @@ class GrokTitleSourceTest(unittest.TestCase):
         self.assertEqual(got["manual-bool"].title_source, "rename")
         self.assertEqual(got["manual-str"].title_source, "rename")
         self.assertEqual(got["manual-one"].title_source, "rename")
+        self.assertEqual(got["manual-int"].title_source, "rename")
         self.assertEqual(got["manual-summary-only"].title_source, "rename")
 
     def test_title_is_manual_false_with_generated_title_is_auto(self):
@@ -81,10 +87,16 @@ class GrokTitleSourceTest(unittest.TestCase):
                 "auto-false-str",
                 {"generated_title": "Generated title", "title_is_manual": "false"},
             )
+            _write_session(
+                base,
+                "auto-zero",
+                {"generated_title": "Generated title", "title_is_manual": 0},
+            )
             got = _parse(base)
         self.assertEqual(got["auto-false"].title, "Generated title")
         self.assertEqual(got["auto-false"].title_source, "auto")
         self.assertEqual(got["auto-false-str"].title_source, "auto")
+        self.assertEqual(got["auto-zero"].title_source, "auto")
 
     def test_generated_title_without_flag_is_auto(self):
         with tempfile.TemporaryDirectory() as tmp:

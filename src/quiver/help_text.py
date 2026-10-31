@@ -368,6 +368,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe mcp edit <tool> <name>')}          Edit one server's config in one tool
   {c('cyan', 'swe mcp validate [tool...]')}          Validate MCP config shape for one/all tools
   {c('cyan', 'swe mcp doctor')}                      Deep diagnostics
+  {c('cyan', 'swe mcp gateway [share|install]')}     Run shared servers once for every session
 
 {c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for details on each — flags, examples, the exact
         model each command uses.
@@ -573,6 +574,8 @@ to use their own login state and environment."""
                                (also the non-terminal default)
   {c('cyan', 'swe init --hub=<git url>')}     Clone your hub repo as ~/.quiver first, then link
                                (only while ~/.quiver has no hub: no AGENTS.md, no .git)
+  {c('cyan', 'swe init --accounts')}         Only sync the extra account homes the
+                               accounts.sync.* switches name (takes --check, --json)
 
   {c('dim', 'Collision: -n means dry-run here and on swe install, but fetch-fresh-data on swe list.')}
 
@@ -742,6 +745,10 @@ to use their own login state and environment."""
                                             and {c('cyan', '--deny=<code>')} decide one;
                                             {c('cyan', '--request-id=<id>')} holds the
                                             code to that one request.
+                                            {c('cyan', '--auto-approve=on|off')} lets
+                                            your own untagged tailnet
+                                            devices pair without a code
+                                            (off by default).
   {c('cyan', 'swe remote attach <session>')}            Take an observed session
                                             under supervision. Default
                                             {c('cyan', '--mode=auto')} picks the

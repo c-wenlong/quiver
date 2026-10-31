@@ -208,7 +208,27 @@ struct RemoteSection: View {
         }
     }
 
+    /// Owner auto-approve: hidden until swe reports the setting, so an
+    /// older swe without it shows no switch that can't work.
+    @ViewBuilder private var autoApproveRow: some View {
+        if let requests, let on = requests.autoApproveOwner {
+            SettingRow(title: "Approve my own devices automatically",
+                       detail: "Requests from devices signed in to Tailscale as the hub's owner, on untagged nodes, pair without a code.",
+                       warning: requests.autoApproveError) {
+                HStack(spacing: 8) {
+                    if requests.savingAutoApprove { ProgressView().controlSize(.small) }
+                    SettingSwitch(title: "Approve my own devices automatically",
+                                  isOn: Binding(get: { on },
+                                                set: { value in Task { await requests.setAutoApproveOwner(value) } }))
+                        .disabled(requests.savingAutoApprove)
+                }
+            }
+            SettingsDivider()
+        }
+    }
+
     @ViewBuilder private var requestRows: some View {
+        autoApproveRow
         if let requests, requests.loaded {
             if requests.requests.isEmpty {
                 Text(requests.loadError.map { "Couldn't read pair requests: \($0)" }
@@ -216,6 +236,8 @@ struct RemoteSection: View {
                     .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // Under the switch's divider it needs room above too.
+                    .padding(.top, requests.autoApproveOwner == nil ? 0 : 14)
                     .padding(.bottom, 14)
             } else {
                 if let error = requests.loadError {
@@ -226,6 +248,7 @@ struct RemoteSection: View {
                         .font(Theme.caption).foregroundStyle(Theme.warningText)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, requests.autoApproveOwner == nil ? 0 : 14)
                         .padding(.bottom, 10)
                 }
                 ForEach(Array(requests.requests.enumerated()), id: \.element.id) { index, request in

@@ -37,11 +37,25 @@ public struct HubSessionRow: Codable, Sendable, Equatable {
     public var attachable: Bool?
     /// A satellite's session, which the hub forwards to that machine.
     public var remote: Bool?
+    /// The model of the transcript's newest reply, as the harness names it
+    /// ("claude-opus-4-5-20251101"). Nil when the hub doesn't know it, or is
+    /// older than the field; `ModelLabel.short` shortens it for display.
+    public var model: String?
+    /// The harness's own title; `title` is the name set on the hub when
+    /// there is one (`sessionmeta.py`). Nil from a hub older than names.
+    public var harnessTitle: String?
+    /// Pinned on the hub, and since when (epoch seconds; nil unpinned).
+    public var pinned: Bool?
+    public var pinnedAt: Double?
+    /// The harness's CLI can fork this session (`POST .../fork`).
+    public var canFork: Bool?
 
     public init(key: String, harness: String? = nil, agent: String? = nil, cwd: String? = nil,
                 title: String? = nil, status: String? = nil, machineId: String? = nil,
                 machine: String? = nil, lastActiveAt: Double? = nil,
-                ownership: String? = nil, attachable: Bool? = nil, remote: Bool? = nil) {
+                ownership: String? = nil, attachable: Bool? = nil, remote: Bool? = nil,
+                model: String? = nil, harnessTitle: String? = nil, pinned: Bool? = nil,
+                pinnedAt: Double? = nil, canFork: Bool? = nil) {
         self.key = key
         self.harness = harness
         self.agent = agent
@@ -54,7 +68,15 @@ public struct HubSessionRow: Codable, Sendable, Equatable {
         self.ownership = ownership
         self.attachable = attachable
         self.remote = remote
+        self.model = model
+        self.harnessTitle = harnessTitle
+        self.pinned = pinned
+        self.pinnedAt = pinnedAt
+        self.canFork = canFork
     }
+
+    /// `model` short enough for a header or a list row, or nil.
+    public var modelLabel: String? { ModelLabel.short(model) }
 
     public var isAttached: Bool { ownership == "attached" }
 

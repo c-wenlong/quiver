@@ -7,13 +7,14 @@ decided, when, and why, and takes it out of the default listing.
 
 import io
 import json
-import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from quiver.console import strip_ansi
+from quiver.harness.archive import _derive_usage as _REAL_DERIVE_USAGE
+from tests._tempdir import temp_dir
 
 
 class ArchiveStoreTest(unittest.TestCase):
@@ -23,7 +24,7 @@ class ArchiveStoreTest(unittest.TestCase):
     is under test."""
 
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
+        self.dir = temp_dir(self)
         self.file = self.dir / "harness.json"
         from quiver.harness import registry
 
@@ -87,6 +88,18 @@ class ArchiveStoreTest(unittest.TestCase):
         self.file.write_text(json.dumps(
             {"kiro": {"state": "archived", "archived": "typed by hand"}}))
         self.assertEqual(self.mod.load_archive()["kiro"]["reason"], "typed by hand")
+
+    def test_a_bare_string_survives_re_archiving_and_restoring(self):
+        """load_archive tolerated the hand-typed string, but archive() and
+        unarchive() called .get on it and raised AttributeError."""
+        self.file.write_text(json.dumps(
+            {"kiro": {"state": "archived", "archived": "typed by hand"}}))
+        self.assertEqual(self.mod.archive("kiro", usage="trial")["reason"], "typed by hand")
+        self.file.write_text(json.dumps(
+            {"kiro": {"state": "archived", "archived": "typed by hand"}}))
+        self.assertEqual(self.mod.unarchive("kiro")["reason"], "typed by hand")
+        self.file.write_text(json.dumps({"kiro": {"state": "archived", "archived": 7}}))
+        self.assertEqual(self.mod.unarchive("kiro")["reason"], "")
 
     def test_a_non_dict_file_reads_as_empty(self):
         self.file.write_text(json.dumps(["kiro"]))
@@ -302,24 +315,46 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def _drive_statepicker(key_names, count=3):
+    """Run the tri-state picker on ``count`` active rows, feeding it
+    ``key_names``. Returns (result, everything drawn, what was drawn by
+    each termios restore)."""
+    from quiver.multiselect import StateChoice, statepicker
+
+    choices = [StateChoice(key=f"h{i}", label=f"h{i}") for i in range(count)]
+    out = io.StringIO()
+    stdin = mock.Mock()
+    stdin.fileno.return_value = 0
+    seen = []
+    with mock.patch("quiver.multiselect._supported", return_value=True), \
+         mock.patch("sys.stdout", out), \
+         mock.patch("sys.stdin", stdin), \
+         mock.patch("termios.tcgetattr", return_value=["saved"]), \
+         mock.patch("termios.tcsetattr",
+                    side_effect=lambda *a: seen.append(out.getvalue())), \
+         mock.patch("tty.setraw"), \
+         mock.patch("quiver.multiselect._read_state_key",
+                    side_effect=key_names):
+        result = statepicker(choices)
+    return result, out.getvalue(), seen
+
+
 class StatePickerTest(unittest.TestCase):
     """Tri-state rows: active, starred, archived."""
 
     def test_the_three_states_cycle_and_wrap(self):
         from quiver.multiselect import STATES
 
-        s, seen = "active", []
-        for _ in range(len(STATES)):
-            seen.append(s)
-            s = STATES[(STATES.index(s) + 1) % len(STATES)]
-        self.assertEqual(seen, list(STATES))
-        self.assertEqual(s, "active", "should wrap to the start")
+        seen = []
+        for presses in range(len(STATES) + 1):
+            result, _, _ = _drive_statepicker(["next"] * presses + ["enter"], count=1)
+            seen.append(result[0].state)
+        self.assertEqual(seen[:-1], list(STATES))
+        self.assertEqual(seen[-1], "active", "should wrap to the start")
 
     def test_it_cycles_backwards_too(self):
-        from quiver.multiselect import STATES
-
-        self.assertEqual(STATES[(STATES.index("active") - 1) % len(STATES)],
-                         "archived")
+        result, _, _ = _drive_statepicker(["prev", "enter"], count=1)
+        self.assertEqual(result[0].state, "archived")
 
     def test_every_state_has_a_glyph(self):
         from quiver.multiselect import STATE_GLYPH, STATES
@@ -559,7 +594,7 @@ class UsageLevelTest(unittest.TestCase):
 
 class UsagePersistenceTest(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
+        self.dir = temp_dir(self)
         self.file = self.dir / "harness.json"
         from quiver.harness import registry
 
@@ -613,15 +648,13 @@ class UsagePersistenceTest(unittest.TestCase):
         self.assertEqual(self.mod.load_archive()["kiro"]["usage"], "unknown")
 
     def test_a_failure_to_read_history_does_not_block_archiving(self):
-        from quiver.harness import archive as mod
-
-        with mock.patch.object(mod, "_derive_usage", side_effect=None):
-            with mock.patch("quiver.sessions.usage.session_counts",
-                            side_effect=RuntimeError("boom")):
-                # _derive_usage swallows it and falls back.
-                self.assertEqual(mod._derive_usage.__wrapped__("x")
-                                 if hasattr(mod._derive_usage, "__wrapped__")
-                                 else "trial", "trial")
+        # setUp stubs _derive_usage; put the real one back for this test.
+        with mock.patch.object(self.mod, "_derive_usage", _REAL_DERIVE_USAGE), \
+             mock.patch("quiver.sessions.usage.session_counts",
+                        side_effect=RuntimeError("boom")):
+            entry = self.mod.archive("kiro", "thin wrapper")
+        self.assertEqual(entry["usage"], "unknown")
+        self.assertTrue(self.mod.is_archived("kiro"))
 
 
 class UsageColumnTest(unittest.TestCase):
@@ -889,24 +922,7 @@ class StatePickerMouseTest(unittest.TestCase):
     """
 
     def _drive(self, key_names, count=3):
-        from quiver.multiselect import StateChoice, statepicker
-
-        choices = [StateChoice(key=f"h{i}", label=f"h{i}") for i in range(count)]
-        out = io.StringIO()
-        stdin = mock.Mock()
-        stdin.fileno.return_value = 0
-        seen = []
-        with mock.patch("quiver.multiselect._supported", return_value=True), \
-             mock.patch("sys.stdout", out), \
-             mock.patch("sys.stdin", stdin), \
-             mock.patch("termios.tcgetattr", return_value=["saved"]), \
-             mock.patch("termios.tcsetattr",
-                        side_effect=lambda *a: seen.append(out.getvalue())), \
-             mock.patch("tty.setraw"), \
-             mock.patch("quiver.multiselect._read_state_key",
-                        side_effect=key_names):
-            result = statepicker(choices)
-        return result, out.getvalue(), seen
+        return _drive_statepicker(key_names, count)
 
     def test_a_wheel_report_is_a_move_rather_than_a_cancel(self):
         import os

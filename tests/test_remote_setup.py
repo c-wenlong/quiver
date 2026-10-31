@@ -5,7 +5,6 @@ import io
 import json
 import plistlib
 import subprocess
-import tempfile
 import time
 import unittest
 import urllib.error
@@ -13,6 +12,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from quiver.remote import commands, setup
+
+from tests._tempdir import temp_dir
 
 
 NAME = "mac.tail1234.ts.net"
@@ -229,6 +230,13 @@ class EvaluateTest(unittest.TestCase):
 class ApplyTest(unittest.TestCase):
     """apply drives a fake machine that changes when actions run."""
 
+    def setUp(self):
+        # A move apply records without a ``record`` of its own would go
+        # to the real ~/.quiver/remote/setup-state.json.
+        p = patch.object(setup, "record_move", lambda *_a, **_kw: None)
+        p.start()
+        self.addCleanup(p.stop)
+
     def machine(self, **over):
         self.f = facts(agent_args=["/A/swe", "remote", "serve", "--tailnet"], serve={},
                        https_ok=False, cert=(True, ""), devices=0)
@@ -295,7 +303,9 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(states(report)["hub.service"], setup.FAILED)
 
     def test_recheck_fetches_the_certificate_afresh_once(self):
-        acts = self.machine(agent_args=GOOD_ARGS, serve=SERVE, https_ok=True)
+        # Three gathers (move the hub, set up serve, pair): only the
+        # first fetches afresh.
+        acts = self.machine()
         seen = []
 
         def gather(**kw):
@@ -303,8 +313,7 @@ class ApplyTest(unittest.TestCase):
             return self.f
 
         setup.apply(actions=acts, gather_fn=gather, fresh_cert=True)
-        self.assertEqual(seen[0], True)
-        self.assertTrue(all(v is False for v in seen[1:]))
+        self.assertEqual(seen, [True, False, False])
 
     def test_linux_serve_without_an_operator_gives_the_fix(self):
         acts = self.machine(agent_args=GOOD_ARGS)
@@ -317,7 +326,7 @@ class ApplyTest(unittest.TestCase):
 
 class CertCheckTest(unittest.TestCase):
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         self.runs = []
 
     def tailscale(self, rc, err=""):
@@ -374,7 +383,7 @@ class GatherTest(unittest.TestCase):
     """gather reads tailscale, the service, the hub and devices.json."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
+        self.home = temp_dir(self)
         # Linux would ask systemctl too; these tests are about tailscale.
         pin = patch.object(setup.sys, "platform", "darwin")
         pin.start()
@@ -465,7 +474,7 @@ class DefaultActionsTest(unittest.TestCase):
             calls.append(argv)
             return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-        acts = setup.default_actions(Path(tempfile.mkdtemp()), run=run)
+        acts = setup.default_actions(temp_dir(self), run=run)
         self.assertIsNone(acts.start_serve("/ts", 8477))
         self.assertEqual(calls, [["/ts", "serve", "--bg", "--https=8477", "http://127.0.0.1:8477"]])
 
@@ -473,11 +482,11 @@ class DefaultActionsTest(unittest.TestCase):
         def run(argv, **_kw):
             return subprocess.CompletedProcess(argv, 1, stdout="", stderr="Access denied: serve config denied")
 
-        acts = setup.default_actions(Path(tempfile.mkdtemp()), run=run)
+        acts = setup.default_actions(temp_dir(self), run=run)
         self.assertIn("Access denied", acts.start_serve("/ts", 8477))
 
     def test_install_hub_builds_the_loopback_program(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         with patch.object(commands, "hub_program", return_value=(GOOD_ARGS, None)) as prog, \
              patch.object(commands, "install_service", return_value=(Path("/x"), "")) as install:
             err = setup.default_actions(home).install_hub(URL, 8477)
@@ -495,7 +504,7 @@ class DefaultActionsTest(unittest.TestCase):
         with patch.object(commands, "hub_program", return_value=(GOOD_ARGS, None)), \
              patch.object(commands, "install_service",
                           side_effect=RuntimeError("launchctl could not load the hub: EIO")):
-            err = setup.default_actions(Path(tempfile.mkdtemp())).install_hub(URL, 8477)
+            err = setup.default_actions(temp_dir(self)).install_hub(URL, 8477)
         self.assertIn("EIO", err)
 
 
@@ -522,7 +531,7 @@ class HelpersTest(unittest.TestCase):
             self.assertEqual(setup._get("http://127.0.0.1:1/v1/status", 1), (False, "connection refused"))
 
     def test_agent_reads_the_plist_and_launchd(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         self.assertEqual(setup._agent(home, run=lambda *a, **k: self.fail("no plist")), (None, False))
         path = setup.launchd.plist_path(home)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -531,7 +540,7 @@ class HelpersTest(unittest.TestCase):
             self.assertEqual(setup._agent(home, run=None), (GOOD_ARGS, True))
 
     def test_state_survives_a_bad_file(self):
-        home = Path(tempfile.mkdtemp())
+        home = temp_dir(self)
         self.assertEqual(setup.load_state(home), {})
         setup._state_file(home).parent.mkdir(parents=True, exist_ok=True)
         setup._state_file(home).write_text("[1]")
@@ -545,25 +554,25 @@ class HelpersTest(unittest.TestCase):
 class DefaultActionsMoreTest(unittest.TestCase):
     def test_a_program_that_cannot_be_built_is_reported(self):
         with patch.object(commands, "hub_program", return_value=(None, "swe isn't installed")):
-            err = setup.default_actions(Path(tempfile.mkdtemp())).install_hub(URL, 8477)
+            err = setup.default_actions(temp_dir(self)).install_hub(URL, 8477)
         self.assertEqual(err, "swe isn't installed")
 
     def test_serve_that_cannot_run_or_says_nothing(self):
         def raises(argv, **_kw):
             raise OSError("not found")
 
-        acts = setup.default_actions(Path(tempfile.mkdtemp()), run=raises)
+        acts = setup.default_actions(temp_dir(self), run=raises)
         self.assertEqual(acts.start_serve("/ts", 8477), "not found")
-        quiet = setup.default_actions(Path(tempfile.mkdtemp()),
+        quiet = setup.default_actions(temp_dir(self),
                                       run=lambda argv, **_kw: subprocess.CompletedProcess(argv, 3, "", ""))
         self.assertEqual(quiet.start_serve("/ts", 8477), "tailscale serve exited 3")
 
     def test_wait_hub_polls_until_the_hub_answers(self):
         answers = iter([(False, "down"), (True, "")])
         with patch.object(setup, "_get", lambda url, t: next(answers)), patch.object(setup.time, "sleep"):
-            self.assertTrue(setup.default_actions(Path(tempfile.mkdtemp())).wait_hub(8477))
+            self.assertTrue(setup.default_actions(temp_dir(self)).wait_hub(8477))
         with patch.object(setup, "_get", lambda url, t: (False, "down")), patch.object(setup.time, "sleep"):
-            self.assertFalse(setup.default_actions(Path(tempfile.mkdtemp())).wait_hub(8477))
+            self.assertFalse(setup.default_actions(temp_dir(self)).wait_hub(8477))
 
 
 class CommandTest(unittest.TestCase):

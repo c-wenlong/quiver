@@ -162,6 +162,7 @@ final class AppModel {
             others.cacheTTL = limits.refreshFreshSeconds
             Task { await others.load() }
             doctor = DoctorModel(swe: swe)
+            accountSync = AccountSyncModel(swe: swe)
             // The "swe too old" verdicts were about the old build.
             Task { [codexUsage, cursorFeed] in
                 await codexUsage?.swePathChanged()
@@ -338,6 +339,8 @@ final class AppModel {
     /// section, so an install keeps its row (and the one-at-a-time guard)
     /// while you look at another section.
     private(set) var doctor: DoctorModel
+    /// The Accounts page's "Shared content" switches (accounts.sync.*).
+    private(set) var accountSync: AccountSyncModel
     /// Account cards whose harness is starred in swe's registry: an
     /// unstarred Claude or Codex hides its card, and its limit with it,
     /// until it is starred again. Extra Devin/Cursor accounts are harness
@@ -548,6 +551,7 @@ final class AppModel {
         others = OtherLimitsModel(swe: client, extraAccounts: extraAccountsProvider,
                                   issues: issues)
         doctor = DoctorModel(swe: client)
+        accountSync = AccountSyncModel(swe: client)
         codexHomes = {
             var homes = [home.appending(path: ".codex").path]
             for profile in (try? store.load()) ?? []
@@ -838,7 +842,7 @@ final class AppModel {
     /// orphans (ppid 1, a script runner) but are services, not leftovers.
     /// Anything going wrong answers with an empty set.
     private nonisolated static func launchdManagedPIDs() async -> Set<Int32> {
-        await runOffPool { Self.launchdManagedPIDsSync() }
+        await offMain { Self.launchdManagedPIDsSync() }
     }
 
     /// Synchronous so it can block on the child, off the caller's actor.

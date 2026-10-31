@@ -1,6 +1,9 @@
 import Foundation
 
-/// One language model from Artificial Analysis's `/api/v2/data/llms/models`.
+/// One language model from Artificial Analysis's `/api/v2/language/models`
+/// (Pro) or `/api/v2/language/models/free`. Rows stored before the V2
+/// migration hold the legacy `/api/v2/data/llms/models` shape, so the
+/// decoder reads both.
 /// `id` is AA's stable key; names and slugs change. `evaluations` keeps
 /// every metric AA publishes — the dict grows when they add a benchmark,
 /// so the Models page reads keys rather than a fixed field list.
@@ -9,12 +12,15 @@ public struct AALanguageModel: Sendable, Equatable, Identifiable {
     public var name: String
     public var slug: String
     /// model_creator's id, name and slug (the slug drives provider colours).
+    /// The V2 API dropped the slug, so a new row's slug is its creator name
+    /// lowercased with everything but letters and digits removed.
     public var creatorID: String
     public var creatorName: String
     public var creatorSlug: String
     /// evaluation key → score; AA's nulls are dropped on decode.
     public var evaluations: [String: Double]
-    /// USD per 1M tokens, 3:1 input:output blend.
+    /// USD per 1M tokens, 3:1 input:output blend. Pro-only on the V2 API;
+    /// computed from the input and output prices when absent.
     public var priceBlended: Double?
     public var priceInput: Double?
     public var priceOutput: Double?
@@ -60,7 +66,7 @@ extension AALanguageModel {
     public var coding: Double? { evaluations[Self.codingEvaluation].map { $0 * 100 } }
     public static let codingEvaluation = "terminalbench_v4_0"
     /// The hover note where `coding` is nil.
-    public static let noCodingScore = "Artificial Analysis hasn't run Terminal-Bench 4.0 on this model"
+    public static let noCodingScore = "Artificial Analysis hasn't run Terminal-Bench 4.0 on this model, or your API key is on the Free tier, which doesn't include it"
     /// The reasoning score: AA's Humanity's Last Exam accuracy as 0–100,
     /// run on every new model. It stands in for AA's Maths Index
     /// (`artificial_analysis_math_index`, built on AIME 2025), which AA
@@ -70,20 +76,26 @@ extension AALanguageModel {
     public var reasoning: Double? { evaluations[Self.reasoningEvaluation].map { $0 * 100 } }
     public static let reasoningEvaluation = "hle"
     /// The hover note where `reasoning` is nil.
-    public static let noReasoningScore = "Artificial Analysis hasn't run Humanity's Last Exam on this model"
+    public static let noReasoningScore = "Artificial Analysis hasn't run Humanity's Last Exam on this model, or your API key is on the Free tier, which doesn't include it"
 }
 
 extension AALanguageModel: Decodable {
     private enum CodingKeys: String, CodingKey {
         case id, name, slug
         case creator = "model_creator"
-        case evaluations, pricing
+        case evaluations, pricing, performance
+        // Legacy top-level keys; V2 nests them under `performance`.
         case speed = "median_output_tokens_per_second"
         case ttft = "median_time_to_first_token_seconds"
         case ttfat = "median_time_to_first_answer_token"
     }
 
-    private enum CreatorKeys: String, CodingKey { case id, name, slug }
+    private enum PerformanceKeys: String {
+        case speed = "median_output_tokens_per_second"
+        case ttft = "median_time_to_first_token_seconds"
+        case ttfat = "median_time_to_first_answer_token_seconds"
+    }
+
     private enum PricingKeys: String, CodingKey {
         case blended = "price_1m_blended_3_to_1"
         case input = "price_1m_input_tokens"
@@ -95,10 +107,12 @@ extension AALanguageModel: Decodable {
         id = try c.decode(String.self, forKey: .id)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? id
         slug = try c.decodeIfPresent(String.self, forKey: .slug) ?? id
-        let creator = try c.decodeIfPresent([String: String].self, forKey: .creator) ?? [:]
+        // Optional values: Pro adds `country`, which may be null.
+        let creator = (try c.decodeIfPresent([String: String?].self, forKey: .creator) ?? [:])
+            .compactMapValues { $0 }
         creatorID = creator["id"] ?? ""
         creatorName = creator["name"] ?? ""
-        creatorSlug = creator["slug"] ?? ""
+        creatorSlug = creator["slug"] ?? Self.derivedSlug(creatorName)
         // [String: Double?] decodes every key AA adds; nulls drop out.
         let raw = try c.decodeIfPresent([String: Double?].self, forKey: .evaluations) ?? [:]
         evaluations = raw.compactMapValues { $0 }
@@ -108,16 +122,31 @@ extension AALanguageModel: Decodable {
         // than ranking them cheapest.
         func measured(_ value: Double?) -> Double? { value.flatMap { $0 > 0 ? $0 : nil } }
         let pricing = try c.decodeIfPresent([String: Double?].self, forKey: .pricing) ?? [:]
-        priceBlended = measured(pricing[PricingKeys.blended.rawValue] ?? nil)
         priceInput = measured(pricing[PricingKeys.input.rawValue] ?? nil)
         priceOutput = measured(pricing[PricingKeys.output.rawValue] ?? nil)
-        speed = measured(try c.decodeIfPresent(Double.self, forKey: .speed))
-        timeToFirstToken = measured(try c.decodeIfPresent(Double.self, forKey: .ttft))
-        timeToFirstAnswer = measured(try c.decodeIfPresent(Double.self, forKey: .ttfat))
+        // The Free tier has no blended price: blend 3:1 the way AA does.
+        priceBlended = measured(pricing[PricingKeys.blended.rawValue] ?? nil)
+            ?? priceInput.flatMap { input in priceOutput.map { (3 * input + $0) / 4 } }
+        let performance = try c.decodeIfPresent([String: Double?].self, forKey: .performance) ?? [:]
+        speed = measured(try (performance[PerformanceKeys.speed.rawValue] ?? nil)
+            ?? c.decodeIfPresent(Double.self, forKey: .speed))
+        timeToFirstToken = measured(try (performance[PerformanceKeys.ttft.rawValue] ?? nil)
+            ?? c.decodeIfPresent(Double.self, forKey: .ttft))
+        timeToFirstAnswer = measured(try (performance[PerformanceKeys.ttfat.rawValue] ?? nil)
+            ?? c.decodeIfPresent(Double.self, forKey: .ttfat))
+    }
+
+    /// "Moonshot AI" -> "moonshotai", "Z AI" -> "zai": keys `ModelBrands`
+    /// already matches AA's old creator slugs on.
+    static func derivedSlug(_ name: String) -> String {
+        String(String.UnicodeScalarView(name.lowercased().unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0)
+        }))
     }
 }
 
-/// The list endpoint's envelope: `{status, prompt_options, data: [...]}`.
+/// The list endpoint's envelope: V2's `{tier, intelligence_index_version,
+/// pagination, data: [...]}` or the legacy `{status, prompt_options, data}`.
 public struct AAModelsResponse: Sendable {
     public var models: [AALanguageModel]
 
@@ -143,7 +172,8 @@ public enum AAError: Error, Equatable {
 
 /// The endpoints a refresh downloads. Media feeds are stored for a later
 /// page; only `llms` is read today. `fileName` is the raw-response file
-/// older builds wrote, read only by the one-time import.
+/// older builds wrote, read only by the one-time import. Each points at
+/// the V2 Free route, which every key can read; `llms` tries Pro first.
 public enum AAEndpoint: String, CaseIterable, Sendable {
     case llms = "llms"
     case textToImage = "text-to-image"
@@ -157,16 +187,25 @@ public enum AAEndpoint: String, CaseIterable, Sendable {
     /// The path under https://artificialanalysis.ai.
     public var path: String {
         switch self {
-        case .llms: "/api/v2/data/llms/models"
-        case .textToImage: "/api/v2/data/media/text-to-image?include_categories=true"
-        case .imageEditing: "/api/v2/data/media/image-editing"
-        case .textToSpeech: "/api/v2/data/media/text-to-speech"
-        case .textToVideo: "/api/v2/data/media/text-to-video?include_categories=true"
-        case .imageToVideo: "/api/v2/data/media/image-to-video?include_categories=true"
+        case .llms: "/api/v2/language/models/free"
+        case .textToImage: "/api/v2/media/text-to-image/models/free"
+        case .imageEditing: "/api/v2/media/image-editing/models/free"
+        case .textToSpeech: "/api/v2/media/text-to-speech/models/free"
+        case .textToVideo: "/api/v2/media/text-to-video/models/free"
+        case .imageToVideo: "/api/v2/media/image-to-video/models/free"
         }
     }
 
     public var url: URL { URL(string: "https://artificialanalysis.ai\(path)")! }
+
+    /// The Pro language feed: adds per-benchmark scores (Coding, Reasoning)
+    /// and the blended price. A Free key gets 403 and the refresh falls
+    /// back to `url`. `prompt_type=medium` (1k-token prompts) matches the
+    /// legacy feed's speeds; the Pro default is `long`.
+    public static let proLLMsURL = URL(string: "https://artificialanalysis.ai/api/v2/language/models?prompt_type=medium")!
+
+    /// The language feed pages at 200 models; this caps a runaway loop.
+    static let maxPages = 25
 }
 
 /// Downloaded Artificial Analysis data, kept in the catalog database:
@@ -266,18 +305,119 @@ public struct ArtificialAnalysisStore: Sendable {
 
     /// Stores one endpoint's good response and records the fetch.
     private func save(_ endpoint: AAEndpoint, data: Data, status: Int,
-                      rateLimitHeaders: [String: String]) throws {
+                      rateLimitHeaders: [String: String], url: URL) throws {
         try database.recordAAPayload(
             endpoint, body: data, at: now(), status: status,
             rateLimitHeaders: rateLimitHeaders.isEmpty ? nil : rateLimitHeaders,
-            url: endpoint.url.absoluteString)
+            url: url.absoluteString)
     }
 
     /// A failure is only recorded; stored data is never clobbered.
     private func recordFailure(_ endpoint: AAEndpoint, error: String, status: Int?,
-                               rateLimitHeaders: [String: String]? = nil) {
-        database.recordFailure(source: CatalogDatabase.aaSource(endpoint), url: endpoint.url, at: now(),
-                               status: status, error: error, rateLimitHeaders: rateLimitHeaders)
+                               rateLimitHeaders: [String: String]? = nil, url: URL? = nil) {
+        database.recordFailure(source: CatalogDatabase.aaSource(endpoint), url: url ?? endpoint.url, at: now(),
+                               status: status, error: error,
+                               rateLimitHeaders: rateLimitHeaders?.isEmpty == true ? nil : rateLimitHeaders)
+    }
+
+    /// One endpoint's outcome: the body to store, or why there is none.
+    private enum Fetched {
+        case body(Data, status: Int, headers: [String: String], url: URL)
+        case failure(String, status: Int?, headers: [String: String], url: URL)
+    }
+
+    private static func message(forStatus status: Int) -> String {
+        status == 410 ? "HTTP 410: Artificial Analysis retired this API. Update Quiver." : "HTTP \(status)"
+    }
+
+    /// The headers worth keeping: the X-RateLimit-* quota (Reset is a Unix
+    /// time), the key's X-AA-Tier, and a 429's Retry-After.
+    private static func keptHeaders(_ response: HTTPURLResponse) -> [String: String] {
+        response.allHeaderFields.reduce(into: [String: String]()) { out, pair in
+            guard let name = pair.key as? String, let value = pair.value as? String else { return }
+            let lower = name.lowercased()
+            if lower.hasPrefix("x-ratelimit-") || lower == "x-aa-tier" || lower == "retry-after" {
+                out[name] = value
+            }
+        }
+    }
+
+    private func send(_ url: URL, key: String, transport: any HTTPTransport) async throws
+        -> (Data, HTTPURLResponse) {
+        var request = URLRequest(url: url)
+        request.setValue(key, forHTTPHeaderField: "x-api-key")
+        return try await transport.send(request)
+    }
+
+    /// One media feed: a single unpaged request.
+    private func fetchMedia(_ endpoint: AAEndpoint, key: String, transport: any HTTPTransport) async throws
+        -> Fetched {
+        let (data, response) = try await send(endpoint.url, key: key, transport: transport)
+        let headers = Self.keptHeaders(response)
+        guard (200..<300).contains(response.statusCode) else {
+            return .failure(Self.message(forStatus: response.statusCode), status: response.statusCode,
+                            headers: headers, url: endpoint.url)
+        }
+        return .body(data, status: response.statusCode, headers: headers, url: endpoint.url)
+    }
+
+    /// The language feed: the Pro route first (a Free key's 403 drops to
+    /// the Free route), then every page while `pagination.has_more`. The
+    /// pages merge into one body, so the `models` table is replaced only
+    /// by the whole feed; a failed page fails the feed.
+    private func fetchLLMs(key: String, transport: any HTTPTransport) async throws -> Fetched {
+        var base = AAEndpoint.proLLMsURL
+        var rows: [Any] = []
+        var first: [String: Any]?
+        var firstBody = Data()
+        var page = 1
+        var last: (status: Int, headers: [String: String]) = (200, [:])
+        while true {
+            let url = page == 1 ? base : Self.url(base, page: page)
+            let (data, response) = try await send(url, key: key, transport: transport)
+            let headers = Self.keptHeaders(response)
+            if page == 1, base == AAEndpoint.proLLMsURL, response.statusCode == 403 {
+                base = AAEndpoint.llms.url
+                continue
+            }
+            guard (200..<300).contains(response.statusCode) else {
+                return .failure(Self.message(forStatus: response.statusCode), status: response.statusCode,
+                                headers: headers, url: url)
+            }
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let pageRows = object["data"] as? [Any]
+            else { return .failure("Unusable response", status: response.statusCode, headers: headers, url: url) }
+            if first == nil { first = object; firstBody = data }
+            rows += pageRows
+            last = (response.statusCode, headers)
+            // Only a clear end saves: a page without `has_more`, or an
+            // empty page that claims more, would let a partial feed
+            // delete the stored models missing from it.
+            guard let hasMore = (object["pagination"] as? [String: Any])?["has_more"] as? Bool,
+                  !(hasMore && pageRows.isEmpty)
+            else { return .failure("Unusable response", status: response.statusCode, headers: headers, url: url) }
+            guard hasMore else { break }
+            guard page < AAEndpoint.maxPages else {
+                return .failure("Too many pages", status: response.statusCode, headers: headers, url: url)
+            }
+            page += 1
+        }
+        var body = firstBody
+        if page > 1, var merged = first {
+            merged["data"] = rows
+            merged["pagination"] = nil
+            body = try JSONSerialization.data(withJSONObject: merged, options: [.sortedKeys])
+        }
+        guard (try? AAModelsResponse.decode(body)) != nil else {
+            return .failure("Unusable response", status: last.status, headers: last.headers, url: base)
+        }
+        return .body(body, status: last.status, headers: last.headers, url: base)
+    }
+
+    private static func url(_ base: URL, page: Int) -> URL {
+        var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "page", value: String(page))]
+        return components.url!
     }
 
     /// Downloads all six endpoints. Each succeeds or records its own
@@ -286,30 +426,17 @@ public struct ArtificialAnalysisStore: Sendable {
     public func refresh(key: String, transport: any HTTPTransport) async -> [AAEndpoint: String] {
         var errors: [AAEndpoint: String] = [:]
         for endpoint in AAEndpoint.allCases {
-            var request = URLRequest(url: endpoint.url)
-            request.setValue(key, forHTTPHeaderField: "x-api-key")
             do {
-                let (data, response) = try await transport.send(request)
-                let headers = response.allHeaderFields.reduce(into: [String: String]()) { out, pair in
-                    if let name = pair.key as? String, name.lowercased().hasPrefix("x-ratelimit-"),
-                       let value = pair.value as? String {
-                        out[name] = value
-                    }
-                }
-                guard (200..<300).contains(response.statusCode) else {
-                    let message = "HTTP \(response.statusCode)"
-                    recordFailure(endpoint, error: message, status: response.statusCode,
-                                  rateLimitHeaders: headers.isEmpty ? nil : headers)
+                let fetched = endpoint == .llms
+                    ? try await fetchLLMs(key: key, transport: transport)
+                    : try await fetchMedia(endpoint, key: key, transport: transport)
+                switch fetched {
+                case let .body(data, status, headers, url):
+                    try save(endpoint, data: data, status: status, rateLimitHeaders: headers, url: url)
+                case let .failure(message, status, headers, url):
+                    recordFailure(endpoint, error: message, status: status, rateLimitHeaders: headers, url: url)
                     errors[endpoint] = message
-                    continue
                 }
-                if endpoint == .llms, (try? AAModelsResponse.decode(data)) == nil {
-                    recordFailure(endpoint, error: "Unusable response", status: response.statusCode)
-                    errors[endpoint] = "Unusable response"
-                    continue
-                }
-                try save(endpoint, data: data, status: response.statusCode,
-                         rateLimitHeaders: headers)
             } catch {
                 let message = error.localizedDescription
                 recordFailure(endpoint, error: message, status: nil)

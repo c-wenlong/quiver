@@ -49,7 +49,7 @@ _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
     "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
     "--approve", "--deny", "--request-id", "--public-url", "--model",
-    "--effort",
+    "--effort", "--auto-approve",
 }
 _BOOL_FLAGS = {"--on", "--off", "--app", "--requests", "--install",
                "--uninstall", "--tailnet", "--apply", "--recheck",
@@ -68,6 +68,8 @@ _USAGE = f"""\
   {c('cyan', 'swe remote status [--host=H] [--port=N]')}  Probe the hub + list machines
   {c('cyan', 'swe remote devices [--revoke=<id>] [--requests] [--approve=<code>] [--deny=<code>] [--request-id=<id>]')}
                                   List/revoke devices and approve pair requests
+  {c('cyan', 'swe remote devices --auto-approve=on|off')}
+                                  Pair your own untagged tailnet devices without a code
   {c('cyan', 'swe remote attach <session> [--mode=auto|tmux|headless|serve|appserver] [--model=<m>] [--effort=<e>]')}
                                   Move an observed session under supervision
   {c('cyan', 'swe remote notify [--ntfy=URL --topic=T] [--on|--off]')}
@@ -533,11 +535,46 @@ def _cmd_status(flags: dict, json_view: bool) -> int:
     return 0 if info is not None else 1
 
 
+_AUTO_APPROVE_NOTE = (
+    "requests from the hub owner's own untagged tailnet devices pair "
+    "without a code"
+)
+
+
 def _cmd_devices(flags: dict, json_view: bool) -> int:
+    auto = flags.get("--auto-approve")
+    if auto is not None:
+        if auto not in {"on", "off"}:
+            print(c("red", "--auto-approve takes on or off"),
+                  file=error_stream(json_view))
+            return 1
+        # One action per run: a toggle that also swallowed --revoke would
+        # report success while the device stays active.
+        others = [f for f in ("--requests", "--approve", "--deny",
+                              "--request-id", "--revoke") if f in flags]
+        if others:
+            print(c("red", f"--auto-approve can't be combined with "
+                           f"{', '.join(others)}; run them separately"),
+                  file=error_stream(json_view))
+            return 1
+        on = pairing.set_auto_approve_owner(None, auto == "on")
+        if json_view:
+            return emit({"auto_approve_owner": on})
+        if on:
+            print(f"owner auto-approve {c('green', 'on')}: "
+                  f"{_AUTO_APPROVE_NOTE}")
+        else:
+            print(f"owner auto-approve {c('dim', 'off')}: every request "
+                  "needs its code")
+        return 0
     if flags.get("--requests"):
         rows = pairing.list_requests()
+        auto_on = pairing.auto_approve_owner()
         if json_view:
-            return emit({"requests": rows})
+            return emit({"requests": rows, "auto_approve_owner": auto_on})
+        state = c("green", "on") if auto_on else c("dim", "off")
+        print(c("dim", "owner auto-approve: ") + state
+              + c("dim", "  (swe remote devices --auto-approve=on|off)"))
         if not rows:
             print(c("dim", "no pending pair requests"))
             return 0
@@ -598,7 +635,12 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
     revoke = flags.get("--revoke")
     if revoke:
         try:
-            ok = pairing.revoke_device(None, revoke)
+            if revoke.startswith("tailnet:"):
+                # One of the owner's tailnet devices, let in without
+                # pairing: it stops getting in until it pairs again.
+                ok = pairing.revoke_signin(None, revoke[len("tailnet:"):])
+            else:
+                ok = pairing.revoke_device(None, revoke)
         except sshkeys.KeysNotSynced as exc:
             print(c("red", f"revoked {revoke}, but its SSH key is still in "
                            f"~/.ssh/authorized_keys: {exc}"),
@@ -617,13 +659,18 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
               file=error_stream(json_view))
         return 1
     devices = pairing.load_devices()
+    signins = pairing.load_signins()
     if json_view:
+        from quiver.remote import devices as devices_mod
+
         return emit({
             "devices": [
                 pairing.device_view(did, row)
                 for did, row in devices.items()
-            ]
+            ],
+            "signins": devices_mod.signin_rows(None, None),
         })
+    _print_signins(signins)
     if not devices:
         print(c("dim", "no paired devices — swe remote pair"))
         return 0
@@ -641,6 +688,20 @@ def _cmd_devices(flags: dict, json_view: bool) -> int:
         detail = f"  {' · '.join(bits)}" if bits else ""
         print(f"  {did}  {label}  {mark}{detail}  last seen {seen_s}")
     return 0
+
+
+def _print_signins(signins: dict) -> None:
+    """The owner's tailnet devices the hub let in without pairing, each
+    revocable with ``--revoke=tailnet:<node>``."""
+    if not signins:
+        return
+    print(c("dim", "signed in through Tailscale (revoke with --revoke=tailnet:<node>):"))
+    for node, row in signins.items():
+        mark = c("red", "revoked") if row.get("revoked_at") else c("green", "active")
+        seen = row.get("last_seen_at")
+        seen_s = time.strftime("%Y-%m-%d %H:%M", time.localtime(seen)) if seen else "never"
+        print(f"  tailnet:{node}  {row.get('node_name') or 'device'}  {mark}  last seen {seen_s}")
+    print(c("dim", "paired devices:"))
 
 
 def _cmd_attach(flags: dict, rest: list[str]) -> int:

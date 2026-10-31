@@ -26,24 +26,31 @@ public enum AppFonts {
     /// text that AppKit draws or measures beside a SwiftUI `Theme` font.
     /// `monospacedDigits` turns on tabular figures. Falls back to the
     /// matching system font when the bundled fonts are unavailable.
+    ///
+    /// Built through Core Text rather than `NSFont(descriptor:size:)`:
+    /// that answered nil now and then while another thread converted a
+    /// font through `NSFontManager`, and a nil here meant the system font,
+    /// so a caller asking for Geist got San Francisco. Core Text always
+    /// answers, and once `isAvailable` holds the family is registered, so
+    /// its answer is Geist.
     public static func nsFont(size: CGFloat, weight: NSFont.Weight = .regular,
                               monospaced: Bool = false, monospacedDigits: Bool = false) -> NSFont {
-        guard let family = family(monospaced: monospaced),
-              let font = NSFont(descriptor: NSFontDescriptor(fontAttributes: [
-                  .family: family, .traits: [NSFontDescriptor.TraitKey.weight: weight],
-              ]), size: size)
-        else {
+        guard let family = family(monospaced: monospaced) else {
             if monospaced { return .monospacedSystemFont(ofSize: size, weight: weight) }
             return monospacedDigits
                 ? .monospacedDigitSystemFont(ofSize: size, weight: weight)
                 : .systemFont(ofSize: size, weight: weight)
         }
-        guard monospacedDigits, !monospaced else { return font }
-        let tabular = font.fontDescriptor.addingAttributes([.featureSettings: [[
+        let descriptor = NSFontDescriptor(fontAttributes: [
+            .family: family, .traits: [NSFontDescriptor.TraitKey.weight: weight],
+        ])
+        let font = CTFontCreateWithFontDescriptor(descriptor as CTFontDescriptor, size, nil)
+        guard monospacedDigits, !monospaced else { return font as NSFont }
+        let tabular = NSFontDescriptor(fontAttributes: [.featureSettings: [[
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
             NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector,
         ]]])
-        return NSFont(descriptor: tabular, size: size) ?? font
+        return CTFontCreateCopyWithAttributes(font, size, nil, tabular as CTFontDescriptor) as NSFont
     }
 
     static let files = ["Geist", "Geist-Italic", "GeistMono", "GeistMono-Italic"]

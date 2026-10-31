@@ -381,5 +381,86 @@ apiAnswers.push(["/v1/app/tasks", { status: 503, data: null }]);
         self.assertEqual(json.loads(done.stdout), {"refresh": True, "retry": "function"})
 
 
+# A failing Notion source beside a working Linear: Notion's offer card
+# with its reason, the last-known caption over the stored rows, the
+# rail's Notion section, and the detail's link out naming Notion.
+NOTION_FLOW = r"""
+const out = {};
+globalThis.pageHeader = (title, subtitle, actions = "") => `<header>${actions}</header>`;
+const page = { id: "notion:page:roadmap:8f1c-1", source: "notion", kind: "page",
+  ref: "8f1c-1", title: "Plan Q3", project: "Roadmap", state: "in_progress",
+  status: "In progress", url: "https://www.notion.so/Plan-Q3-8f1c1", sessions: [] };
+let data = { machine: "hub", github: { status: "ok" },
+  linear: { status: "ok", login: "Kai", error: null },
+  notion: { status: "bad-config", login: null,
+            error: "notion.databases[0].properties.status is required" },
+  tasks: [page] };
+apiAnswers.push(["/v1/app/tasks", { status: 200, get data() { return data; } }]);
+const html = () => panel.innerHTML;
+(async () => {
+  location.hash = "#/tasks";
+  PAGES.tasks();
+  await tick();
+  out.card = html().includes('<div class="card-title">Notion: bad config</div>');
+  out.reason = html().includes("properties.status is required");
+  out.noLinearCard = !html().includes("Linear: ");
+  out.stale = html().includes("tk-stale");
+  out.rail = html().includes('<span class="gh-muted">Notion /</span><span>Roadmap</span>');
+  // Disabled is off, not broken: no card and no last-known caption.
+  data = { ...data, notion: { status: "disabled", login: null, error: null } };
+  PAGES.tasks();
+  await tick();
+  out.disabledQuiet = !html().includes("Notion: ") && !html().includes("tk-stale");
+  location.hash = "#/tasks?task=" + encodeURIComponent(page.id);
+  PAGES.tasks();
+  await tick();
+  out.openLabel = html().includes('title="Open in Notion"');
+  out.noLaunch = !html().includes("New agent session");
+  process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestNotionSource(unittest.TestCase):
+    """tasks.js treats Notion as it treats Linear: a failure card when
+    configured but failing, nothing when disabled, a Notion link out."""
+
+    def test_notion_card_rail_and_link(self):
+        from tests.test_webapp_launch_sheets import MENU_JS, PAGES, STUB
+        script = (STUB + MENU_JS.read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "tasks.js").read_text(encoding="utf-8") + "\n" + NOTION_FLOW)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run.js"
+            path.write_text(script)
+            done = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        for key in ("card", "reason", "noLinearCard", "stale", "rail",
+                    "disabledQuiet", "openLabel", "noLaunch"):
+            self.assertTrue(out[key], key)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestTaskGroupNames(unittest.TestCase):
+    """tasks.js groups a row with no repo or project under its source's
+    name, spelled as the Mac and iOS spell it."""
+
+    def test_scopeless_rows_group_under_their_source_name(self):
+        import re
+
+        from tests.test_webapp_launch_sheets import PAGES
+        src = (PAGES / "tasks.js").read_text(encoding="utf-8")
+        helpers = "\n".join(re.search(r"^  const %s = .*?;$" % name, src, re.M | re.S).group(0)
+                            for name in ("SOURCE_NAMES", "sourceName", "groupName"))
+        rows = [{"source": "linear"}, {"source": "github", "repo": ""}, {"source": "jira"},
+                {}, {"source": "linear", "repo": "", "project": "QUI"}, {"source": "github", "repo": "o/a"}]
+        done = subprocess.run(["node", "-e", helpers + "\nprocess.stdout.write(JSON.stringify("
+                               + json.dumps(rows) + ".map(groupName)));"],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), ["Linear", "GitHub", "Jira", "Other", "QUI", "o/a"])
+
 if __name__ == "__main__":
     unittest.main()

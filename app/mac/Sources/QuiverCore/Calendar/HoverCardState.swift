@@ -44,7 +44,8 @@ import Observation
     ///     each view reports in.
     ///   - wait: the show and swap delays.
     ///   - pollWait: the poller's tick.
-    ///   - clock: now, for the quiet after a scroll.
+    ///   - clock: now, for the quiet after a scroll and the poller's
+    ///     grace across the arrow gap.
     public init(pointer: @escaping () -> CGPoint,
                 rects: @escaping (String) -> (anchor: CGRect?, card: CGRect?),
                 wait: @escaping (Duration) async -> Void = { try? await Task.sleep(for: $0) },
@@ -159,7 +160,7 @@ import Observation
             var region = HoverSafeRegion()
             while let self, !Task.isCancelled, self.key == key {
                 (region.anchor, region.card) = rects(key)
-                if region.update(point: pointer(), now: ContinuousClock.now) {
+                if region.update(point: pointer(), now: self.clock()) {
                     animate { self.set(nil) }
                     return
                 }

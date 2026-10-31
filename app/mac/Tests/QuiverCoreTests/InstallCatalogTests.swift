@@ -192,29 +192,34 @@ private let oldInstallJSON = #"""
         let runner = OrderedRunner()
         let model = InstallCatalogModel(swe: SweClient(runner: runner))
         await model.load()
-        async let first = model.register(.init(name: "one", command: "one", installed: true))
-        async let second = model.register(.init(name: "two", command: "two", installed: true))
-        _ = await (first, second)
+        let first = Task { await model.register(.init(name: "one", command: "one", installed: true)) }
+        #expect(await runner.firstAdd.arrived())
+        let second = Task { await model.register(.init(name: "two", command: "two", installed: true)) }
+        // The second registration has asked while the first is still
+        // held inside swe.
+        #expect(await observe(until: { model.registering.count == 2 }))
+        runner.firstAdd.open()
+        _ = await (first.value, second.value)
         let adds = runner.events.filter { $0 != "list" }
-        #expect(adds == ["start:one", "end:one", "start:two", "end:two"]
-                || adds == ["start:two", "end:two", "start:one", "end:one"])
+        #expect(adds == ["start:one", "end:one", "start:two", "end:two"])
     }
 
     /// A load cancelled while a second load is already in flight must not
     /// roll the generation back — rewinding it made the second run's
     /// `run == generation` check fail and left the sheet at .loading
-    /// forever. Call one parks in a sleep the cancel interrupts; call two
-    /// parks on a gate the test releases once the cancel has landed.
+    /// forever. Both calls park at their own gate: the cancel interrupts
+    /// call one, and the test opens call two once the cancel has landed.
     @Test func aCancelledFirstLoadKeepsTheInFlightResult() async throws {
-        let runner = RaceRunner()
+        let empty = ok(#"{"harnesses": []}"#)
+        let runner = GatedReplies([empty, empty])
         let model = InstallCatalogModel(swe: SweClient(runner: runner))
         let first = Task { await model.load() }
-        await runner.waitUntilStarted()
+        #expect(await runner.gates[0].arrived())
         async let second: Void = model.load()
-        await runner.waitUntilParked()
+        #expect(await runner.gates[1].arrived())
         first.cancel()
         await first.value
-        runner.releaseParked()
+        runner.gates[1].open()
         await second
         guard case .loaded = model.state else {
             Issue.record("expected loaded, got \(model.state)")
@@ -222,88 +227,26 @@ private let oldInstallJSON = #"""
         }
     }
 
-    /// First call signals it started then sleeps (a cancel interrupts it);
-    /// the second parks on a gate until `releaseParked` lets it answer.
-    private final class RaceRunner: CommandRunning, @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
-        private var parked = false
-        private var startedWaiter: CheckedContinuation<Void, Never>?
-        private var parkedWaiter: CheckedContinuation<Void, Never>?
-        private var gate: CheckedContinuation<Void, Never>?
-
-        func waitUntilStarted() async {
-            await withCheckedContinuation { continuation in
-                let done = lock.withLock { () -> Bool in
-                    if count > 0 { return true }
-                    startedWaiter = continuation
-                    return false
-                }
-                if done { continuation.resume() }
-            }
-        }
-
-        func waitUntilParked() async {
-            await withCheckedContinuation { continuation in
-                let done = lock.withLock { () -> Bool in
-                    if parked { return true }
-                    parkedWaiter = continuation
-                    return false
-                }
-                if done { continuation.resume() }
-            }
-        }
-
-        func releaseParked() {
-            lock.withLock {
-                gate?.resume()
-                gate = nil
-            }
-        }
-
-        func run(_ arguments: [String]) async throws -> CommandResult {
-            let n = lock.withLock { () -> Int in
-                count += 1
-                return count
-            }
-            if n == 1 {
-                let waiter = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-                    let w = startedWaiter
-                    startedWaiter = nil
-                    return w
-                }
-                waiter?.resume()
-                try await Task.sleep(for: .seconds(60))
-                return ok(#"{"harnesses": []}"#)
-            }
-            await withCheckedContinuation { continuation in
-                let waiter = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-                    gate = continuation
-                    parked = true
-                    let w = parkedWaiter
-                    parkedWaiter = nil
-                    return w
-                }
-                waiter?.resume()
-            }
-            return ok(#"{"harnesses": []}"#)
-        }
-    }
-
     /// Records when each `swe add` starts and ends, so a test can see the
-    /// calls never overlap; other commands answer an empty catalog.
+    /// calls never overlap, and holds the first add at `firstAdd` until the
+    /// test opens it; other commands answer an empty catalog.
     private final class OrderedRunner: CommandRunning, @unchecked Sendable {
         private let lock = NSLock()
-        private(set) var events: [String] = []
+        private var log: [String] = []
+        let firstAdd = HoldGate()
+        var events: [String] { lock.withLock { log } }
 
         func run(_ arguments: [String]) async throws -> CommandResult {
             guard arguments.first == "add" else {
-                lock.withLock { events.append("list") }
+                lock.withLock { log.append("list") }
                 return ok(#"{"harnesses":[]}"#)
             }
-            lock.withLock { events.append("start:\(arguments[1])") }
-            try? await Task.sleep(for: .milliseconds(50))
-            lock.withLock { events.append("end:\(arguments[1])") }
+            let isFirst = lock.withLock { () -> Bool in
+                defer { log.append("start:\(arguments[1])") }
+                return !log.contains { $0.hasPrefix("start:") }
+            }
+            if isFirst { try await firstAdd.pass() }
+            lock.withLock { log.append("end:\(arguments[1])") }
             return CommandResult(status: 0, stdout: Data(), stderr: "")
         }
     }

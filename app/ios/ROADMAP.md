@@ -13,7 +13,7 @@ work each one needs.
 |---|---|
 | Look | The TokenTracker style package (`systems/tokentracker` in design-systems), dark first, the same as the Mac app. Near-black page, `#171717` hairline cards, white primary buttons, green only for "active" and "on", amber for "needs you", red for errors and destructive actions, sentence case everywhere, a visible focus ring. Values come from its `tokens.json`. |
 | Icon | The Mac app's dark icon (`app/mac/Icons/AppIcon-dark.png`) |
-| Client | Native SwiftUI on iPhone (`app/ios/`), decided 2026-10-23. The hub's web app at `/app/` is the client for browsers and other devices; it took the standalone PWA's `#pair=` and `#approve` fragments and the PWA is gone. See "SwiftUI or PWA" below. |
+| Client | Native SwiftUI on iPhone (`app/ios/`), decided 2026-10-23. The hub's web app at `/` is the client for browsers and other devices; it took the standalone PWA's `#pair=` and `#approve` fragments and the PWA is gone. See "SwiftUI or PWA" below. |
 | Signing | A paid Apple Developer team, so profiles last a year and APNs, TestFlight, widgets and Live Activities are all available |
 | Push | ntfy stays the push path until the APNs work under "Features" lands |
 | Shared code | Protocol DTOs only. Decoding stays on the hub; most of QuiverCore is AppKit-bound. |
@@ -74,7 +74,7 @@ are server changes in `src/quiver/remote/`.
 - [x] Pull to refresh
 - [x] Swipe to attach or open (Open sits beside attach/detach on a half swipe and is the only right-swipe action on a row that cannot attach)
 - [x] Empty state: "No sessions on this machine yet"
-- [ ] More than one machine: a machine switcher in the hub chip
+- [x] More than one machine: the hub chip's menu switches between paired hubs, and the new-session sheet picks the machine
 - [x] New-session sheet: machine, folder, harness, first prompt
 - [x] Hub: a route to start a session (machine, cwd, harness, prompt): `POST /v1/sessions` answers a `launch_id`, and `GET /v1/launches/<id>` names the session once it is adopted
 
@@ -96,17 +96,18 @@ are server changes in `src/quiver/remote/`.
 - [x] Tool card: `Edit · app.js` with an added and removed line count, tap to expand
 - [x] Diff view inside tool cards for edit and write tools
 - [x] Runs of tool calls fold into "Used 6 tools"
-- [x] Approval card: the prompt, then Allow, Always and Deny; queued, resolved and failed states
+- [x] Approval card: the prompt, then the pane's numbered menu rows when the hub read them (the row number is the decision), else Allow, Always and Deny; queued, resolved and failed states
 - [x] Compaction divider
 - [x] Composer: Stop and a round send button. No Queue/Steer segment: a send while the agent works steers in, or waits in the queued tray when the session holds sends, and a tray row's Send now steers it
 - [x] Send states on your bubble: sending, queued (with the hub's reason), failed with retry
 - [x] `/` command shortcuts and `@` file completion
-- [ ] Photo and file attach, landing as `@` refs on the machine
+- [x] Photo and file attach, landing as `@` refs on the machine (paperclip in the composer: Photos or Files, chips with upload progress; photos go up as JPEG, long edge 2048 px)
 - [x] Hub: `@` file completion (`GET /v1/sessions/{key}/files`, hub-machine sessions only) and the `/` list (`GET /v1/sessions/{key}/commands`)
 
 ### P7. Inbox
 - [x] Groups: Waiting on you (approvals and follow-ups), Errors, unread GitHub notifications, Finished today
-- [ ] Approval rows show the prompt itself and a Review button
+- [x] Approval rows carry a Review button
+- [ ] Approval rows show the prompt itself
 - [x] Clear a row (swipe or long press) and "Clear" in the header, through `POST /v1/inbox/dismiss`
 - [x] Swipe to dismiss a row
 - [x] Tab badge counts only Waiting on you, not every row
@@ -137,17 +138,18 @@ are server changes in `src/quiver/remote/`.
 - [ ] App and hub versions
 
 ### P11. Pull requests
-- [x] Own tab, one section per pinned repo, filter chips with counts: All, Mine, Review requested
+- [x] The GitHub tab's Pull requests side (one tab with an Issues/Pull requests switch, so the tab bar stays at five), one section per pinned repo, filter chips with counts: All, Mine, Review requested
 - [x] PR row: number, title, author, branch, check rollup, review decision, mergeable state, labels, age, draft badge
 - [x] Repo section keeps its `status`/`error` when its fetch fails while the others still list
 - [x] Pull to refresh (`?refresh=1` bypasses the hub's `gh` cache); `env_blocked` shows the `gh` fix on an empty list
 - [x] Detail page: the row plus rendered body (the chat's Markdown), per-check runs, latest reviews, review requests, changed files and +/- counts, merge state
+- [x] Merge with a strategy (Squash, Rebase, merge commit) or arm auto-merge, behind a confirm that names the PR, base and strategy; a check row from an Actions run re-runs its failed or all jobs (the web app's `POST /v1/app/repositories/merge` and `…/rerun`)
 - [x] "Open in session" sheet: harness picker from `/v1/sessions`' launchable set, prompt field prefilled with `suggested_prompt`
 - [x] Hub: `GET /v1/pulls` (list + viewer flags), `GET /v1/pulls/<o>/<r>/<n>` (detail), `POST /v1/pulls/<o>/<r>/<n>/open {harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the pulls stack
 - [ ] Mine/Review-requested push notifications once APNs lands
 
 ### P12. Issues
-- [x] Own tab beside Pull requests, one section per pinned repo, filter chips with counts: All, Mine
+- [x] The GitHub tab's Issues side, one section per pinned repo, filter chips with counts: All, Mine
 - [x] Issue row: state icon, number, title, author, comments count, labels (≤3), assignees (≤2), age; an "agent running" chip when the hub sends `agent_running` (absent field draws none)
 - [x] Repo section keeps its `status`/`error` when its fetch fails while the others still list
 - [x] Pull to refresh (`?refresh=1` bypasses the hub's `gh` cache); `env_blocked` shows the `gh` fix on an empty list
@@ -156,6 +158,8 @@ are server changes in `src/quiver/remote/`.
 - [x] "Resolve with agent" sheet: "Starts in" card naming `repo · quiver/issue-<n>`, the harness icon grid, prompt field prefilled with `suggested_prompt` — a row's Resolve has no detail yet, so the sheet fetches it for the prefill and a blank field still lets the hub build the brief
 - [x] Hub: `GET /v1/issues` (list + `mine`, `?state=` picks the `gh` list state for the Closed chip), `GET /v1/issues/<o>/<r>/<n>` (detail), `POST /v1/issues/resolve {repo, number, harness, prompt?}` → `launch_id`, followed on `GET /v1/launches/<id>`; the adopted session pushes its chat onto the issues stack
 - [x] Comments on the detail page
+- [x] Comment box under the thread, posting through the hub's `gh` login (`POST /v1/issues/comment {repo, number, body}`); a refusal keeps the draft, a post reads the issue again
+- [x] Resolve sheet: "Your context (optional)" (sent as `context`) and "Also post as a comment on #<n>", on by default as on the Mac; a refused comment is a warning and the launch goes ahead, and a retried Start doesn't post the same context twice
 - [x] Closed-issue filter chip (fetches `?state=closed` on first pick)
 - [x] Issues tab: list → detail (comments) → resolve sheet on the hub-served web app, the same loop browsers and Android get
 - [ ] "Assigned to you" push notifications once APNs lands
@@ -169,7 +173,7 @@ source (open → in progress → PR open → merged, or closed), the linked
 session keys and pending launches, `agent_running`, `last_active_at`,
 and per-source env blocks so a missing token explains an empty page.
 
-- [x] Tasks tab between Inbox and Pulls: filter chips (All / Running /
+- [x] Tasks tab between Inbox and GitHub: filter chips (All / Running /
   PR open / Done) with counts, repo-or-project grouped hairline cards,
   rows with a kind glyph + `o/r#5` ref + title + state label, a `●
   Agent` mark on `agent_running`, pull to refresh, and an amber
@@ -190,28 +194,32 @@ and per-source env blocks so a missing token explains an empty page.
   adoption)
 - [x] Client: `tasks()`, `linkTask`, `unlinkTask` in `HubClient`;
   `TasksModel` filters, groups and marks stale rows
+- [x] The Mac and web's Repositories rail and five-row groups (#941,
+  #942): a scope menu over the chips (owners, then Linear and other
+  sources, quiet scopes folded), chip counts within the pick, and
+  "Show N more" past five rows a group
 - [ ] Merge the same work filed in two sources into one task (the
   hub's keying job, when a second source is in real use)
 
 ## Components
 
-- [ ] Status dot: active, needs you, error, idle, offline
-- [ ] Session row, and grouped hairline card lists
-- [ ] Filter chip with a count
-- [ ] Hub chip with a connection dot and a menu
-- [ ] Tab bar with icons and a badge
-- [ ] Primary, secondary and destructive buttons at TokenTracker sizes
-- [ ] Text field and code field
-- [ ] Attach card
-- [ ] Composer: segment, Stop, send
-- [ ] Message bubble with send states
-- [ ] Tool card and diff view
-- [ ] Approval card
-- [ ] Thinking card and compaction divider
-- [ ] Pair code display and waiting card
-- [ ] Device row
-- [ ] Empty, loading and error states for every list
-- [ ] Toast for failures that have no bubble to sit on
+- [x] Status dot: active, needs you, error, idle; the hub chip's dot for connected, connecting and offline
+- [x] Session row, and grouped hairline card lists
+- [x] Filter chip with a count
+- [x] Hub chip with a connection dot and a menu
+- [x] Tab bar with icons and a badge
+- [x] Primary, secondary and destructive buttons at TokenTracker sizes
+- [x] Text field and code field
+- [x] Attach card
+- [x] Composer: Stop and send (no Queue/Steer segment, see P6)
+- [x] Message bubble with send states
+- [x] Tool card and diff view
+- [x] Approval card
+- [x] Thinking card and compaction divider
+- [x] Pair code display and waiting card
+- [x] Device row
+- [x] Empty, loading and error states for every list
+- [x] Toast for failures that have no bubble to sit on (the Sessions list's row actions)
 
 ## Features
 
@@ -228,7 +236,7 @@ and per-source env blocks so a missing token explains an empty page.
 - [ ] Dictation in the composer
 - [x] Search sessions from Sessions: transcripts through the hub's FTS index when present, titles and folders as text always (`GET /v1/search`)
 - [ ] Search satellite transcripts (the index covers the hub machine only)
-- [x] Usage and limits view from `swe list --usage --json`. Hub: `GET /v1/usage` serves those rows for the hub machine, and the web app shows them. The app's Usage tab adds tokens and cost from `GET /v1/app/overview`
+- [x] Usage and limits view from `swe list --usage --json`. Hub: `GET /v1/usage` serves those rows for the hub machine, and the web app shows them. The app's Usage tab adds tokens and cost from `GET /v1/app/overview` over the overview's seven periods, with quick figures, top models, the activity heatmap and the daily table
 - [x] Hub: satellites report their own usage, so a MacBook's quota shows too (`POST /v1/agent/usage`, `machines` in `GET /v1/usage`)
 - [ ] Diff viewer with commit and push through `swe gh`
 - [ ] iPad layout: sessions list and chat side by side

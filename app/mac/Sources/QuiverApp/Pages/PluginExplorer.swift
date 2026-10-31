@@ -219,9 +219,11 @@ private struct SourceHeader: View {
 }
 
 /// A marketplace under its source: a card in the service status style.
-/// Folded it is the header row alone (name, source tag, installed count,
-/// a lock note for a GitHub source); the ExpandRow underneath opens the
-/// plugin rows inside the card, a hairline between each.
+/// Folded it is the header row alone (name, source tag, a lock note for a
+/// GitHub source, and the plugin and installed counts); the counts are the
+/// fold button, opening the plugin rows inside the card, a hairline
+/// between each. One line said the installed count twice, and a separate
+/// fold row left an empty band under every header.
 private struct MarketplaceCard: View {
     var market: ExploreMarketplace
     /// The display name: Quiver's overlay name or the marketplace id.
@@ -264,14 +266,6 @@ private struct MarketplaceCard: View {
                 }
                 .padding(.bottom, 8)
             }
-            if !market.plugins.isEmpty {
-                ExpandRow(isExpanded: open, hidden: 0, collapsedTitle: "Show plugins",
-                          help: (expand: "Show this marketplace's plugins",
-                                 collapse: "Show only the header"),
-                          edge: .cardBottom, note: market.countLine(searching: searching)) {
-                    withAnimation(.easeOut(duration: Theme.fadeDuration)) { toggle() }
-                }
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(hovering ? Theme.cardHover : Theme.card, in: .rect(cornerRadius: Theme.cardRadius))
@@ -305,17 +299,42 @@ private struct MarketplaceCard: View {
                     .hoverTip("Updates from GitHub would undo edits, so this marketplace is read-only.")
             }
             Spacer(minLength: 8)
-            Text(market.installed == 1 ? "1 installed" : "\(market.installed) installed")
-                .font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize()
+            if market.plugins.isEmpty {
+                count
+            } else {
+                Button {
+                    withAnimation(.easeOut(duration: Theme.fadeDuration)) { toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        count
+                        Image(systemName: open ? "chevron.up" : "chevron.down")
+                            .font(Theme.font(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .contentShape(.rect)
+                }
+                .plainButton()
+                .help(open ? "Show only the header" : "Show this marketplace's plugins")
+                .accessibilityLabel(open ? "Hide plugins" : "Show plugins")
+                .accessibilityValue(market.countLine(searching: searching))
+            }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isHeader)
         .contextMenu {
             if canRename { Button("Rename…", action: onRename) }
         }
+    }
+
+    /// "2 plugins · 2 installed", or "4 matches" while searching.
+    private var count: some View {
+        Text(market.countLine(searching: searching))
+            .font(Theme.caption).foregroundStyle(Theme.textSecondary)
+            .monospacedDigit()
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 

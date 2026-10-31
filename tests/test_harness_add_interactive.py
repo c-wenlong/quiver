@@ -116,9 +116,10 @@ class HarnessAddInteractiveTest(unittest.TestCase):
 
     def test_cmd_add_interactive_edit_loop_then_save(self):
         tools = {}
-        # first pass: confirm "e" → re-walk (Enter keeps defaults) → confirm "y"
+        # first pass: confirm "e" → re-walk, changing only the command → "y".
+        # Saving the edited command proves "e" went back instead of saving.
         inputs = iter(
-            ["mytool", "mytool-bin", "", "", "", "e", "", "", "", "", "", "y"]
+            ["mytool", "mytool-bin", "", "", "", "e", "", "other-bin", "", "", "", "y"]
         )
         with patch("quiver.harness.commands.load_registry", return_value=tools), patch(
             "quiver.harness.commands.save_registry"
@@ -133,7 +134,7 @@ class HarnessAddInteractiveTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         save.assert_called_once()
         saved = save.call_args[0][0]
-        self.assertEqual(saved["mytool"]["command"], "mytool-bin")
+        self.assertEqual(saved["mytool"]["command"], "other-bin")
 
 
 if __name__ == "__main__":

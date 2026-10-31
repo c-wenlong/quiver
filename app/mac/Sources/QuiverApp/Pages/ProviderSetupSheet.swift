@@ -156,7 +156,7 @@ struct ProviderSetupSheet: View {
             }
             .secondaryButton()
             .disabled(!model.registering.isEmpty)
-            .help("Register it with swe add, no reinstall")
+            .hoverTip("Register it with swe add, no reinstall", replacesLabel: false)
         }
         .padding(.horizontal, Theme.cardPadding)
         .padding(.vertical, 12)

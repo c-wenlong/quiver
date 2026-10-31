@@ -32,6 +32,9 @@ final class PullsModel {
             envBlocked = body.envBlocked
             login = body.github?.login
             error = nil
+        } catch is CancellationError {
+            // The page went away mid-fetch: nothing failed.
+            return
         } catch let e as HubError {
             guard gen == generation else { return }
             error = e.message
@@ -44,38 +47,21 @@ final class PullsModel {
 
 }
 
-/// Grouping and counting for the pulls page, pure so tests can feed it
-/// hub rows without an actor.
-enum PullGrouping {
-    /// The repo sections as the page draws them under `filter`: an
-    /// errored repo keeps its slot with the error to show; a quiet one
-    /// (no matching rows) drops out entirely.
-    static func sections(of repos: [PullRepo], filter: PullFilter) -> [PullSection] {
-        repos.compactMap { repo in
-            guard repo.status == "ok" else {
-                return PullSection(name: repo.name, rows: nil,
-                                   error: repo.error ?? repo.status ?? "unknown error")
-            }
-            let rows = (repo.pulls ?? []).filter(filter.includes)
-            return rows.isEmpty ? nil : PullSection(name: repo.name, rows: rows, error: nil)
-        }
-    }
-
-    /// `filter`'s matching count across every repo — the filter chips.
-    static func count(_ repos: [PullRepo], filter: PullFilter) -> Int {
-        repos.reduce(0) { sum, repo in
-            sum + (repo.pulls ?? []).filter(filter.includes).count
-        }
-    }
+extension PullRepo: RepoListing {
+    var rows: [PullRow] { pulls ?? [] }
 }
 
-/// One section of the pulls page: a pinned repo's matching rows, or
-/// the error that dimmed it.
-struct PullSection: Identifiable {
-    let name: String
-    let rows: [PullRow]?
-    let error: String?
-    var id: String { name }
+typealias PullSection = RepoSection<PullRow>
+
+/// The pulls page's sections and chip counts under its filter.
+enum PullGrouping {
+    static func sections(of repos: [PullRepo], filter: PullFilter) -> [PullSection] {
+        RepoGrouping.sections(of: repos, where: filter.includes)
+    }
+
+    static func count(_ repos: [PullRepo], filter: PullFilter) -> Int {
+        RepoGrouping.count(repos, where: filter.includes)
+    }
 }
 
 /// The pulls page's row filters: every open PR, the ones the hub's

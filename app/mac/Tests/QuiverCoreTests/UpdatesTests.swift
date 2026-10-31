@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import QuiverCore
 
@@ -67,15 +68,13 @@ struct BuildInfoTests {
 
 @Suite("Update preferences")
 struct UpdatePreferencesTests {
-    private func freshDefaults() throws -> UserDefaults {
-        let defaults = try #require(UserDefaults(suiteName: "UpdatePreferencesTests.\(UUID().uuidString)"))
-        defaults.removePersistentDomain(forName: defaults.description)
-        return defaults
+    private func freshDefaults() -> UserDefaults {
+        TestDefaults("UpdatePreferencesTests")
     }
 
     @Test func storedChannelWins() {
         let build = BuildInfo(channel: .dev)
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         #expect(prefs.channel(build: build) == .dev)
         prefs.channelOverride = "prod"
         #expect(prefs.channel(build: build) == .prod)
@@ -85,7 +84,7 @@ struct UpdatePreferencesTests {
 
     @Test func aProdBuildIgnoresAStoredDevOverride() {
         let build = BuildInfo(channel: .prod)
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         prefs.channelOverride = "dev"
         #expect(prefs.channel(build: build) == .prod)
         prefs.channelOverride = "prod"
@@ -96,17 +95,16 @@ struct UpdatePreferencesTests {
 
     @Test func storedCheckoutWinsAndExpandsTilde() {
         let build = BuildInfo(sourcePath: "/nonexistent/path")
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         prefs.checkoutOverride = "~/quiver"
         #expect(prefs.checkout(build: build) == (NSHomeDirectory() + "/quiver"))
     }
 
     @Test func stampedPathIsUsedWhenItExists() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appending(path: UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let prefs = UpdatePreferences(defaults: try! freshDefaults())
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let dir = temp.url
+        let prefs = UpdatePreferences(defaults: freshDefaults())
         #expect(prefs.checkout(build: BuildInfo(sourcePath: dir.path)) == dir.path)
         #expect(prefs.checkout(build: BuildInfo(sourcePath: nil)) == nil)
         #expect(prefs.checkout(build: BuildInfo(sourcePath: "/definitely/not/here")) == nil)
@@ -225,6 +223,10 @@ struct LocalBuildCheckTests {
 
 @Suite("Release check")
 struct ReleaseCheckTests {
+    /// Every temp folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private static let payload = """
         {"tag_name": "v1.1.0",
          "html_url": "https://github.com/c-wenlong/quiver/releases/tag/v1.1.0",
@@ -233,10 +235,7 @@ struct ReleaseCheckTests {
 
     private struct FakeTransport: HTTPTransport {
         var answer: Result<(Data, Int), Error> = .failure(URLError(.notConnectedToInternet))
-        var calls = 0
         func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-            var copy = self
-            copy.calls += 1
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: try answer.get().1, httpVersion: nil,
                 headerFields: nil)!
@@ -245,7 +244,7 @@ struct ReleaseCheckTests {
     }
 
     private func tempCache() -> URL {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appending(path: UUID().uuidString)
             .appending(path: "latest-release.json")
     }
@@ -330,35 +329,27 @@ private final class RecordingRunner: CommandRunning, @unchecked Sendable {
     }
 }
 
-/// Blocks inside run until finishCall or failCall, so a test can change
-/// the checkout while a build is in flight.
-private final class GateRunner: CommandRunning, @unchecked Sendable {
-    private(set) var calls: [[String]] = []
-    private var finish: CheckedContinuation<CommandResult, any Error>?
-    private var waiter: CheckedContinuation<Void, Never>?
-    private var called = false
+/// Holds run at a gate until finishCall or failCall, so a test can change
+/// the checkout while a build is in flight. The test waits with
+/// `gate.arrived()`, which gives up after `gateTimeout` instead of hanging.
+private final class GateRunner: CommandRunning, Sendable {
+    let gate = HoldGate()
+    private let outcome = Mutex<Result<CommandResult, any Error>?>(nil)
 
     func run(_ arguments: [String]) async throws -> CommandResult {
-        calls.append(arguments)
-        called = true
-        waiter?.resume()
-        waiter = nil
-        return try await withCheckedThrowingContinuation { finish = $0 }
-    }
-
-    func waitUntilCalled() async {
-        if called { return }
-        await withCheckedContinuation { waiter = $0 }
+        try await gate.pass()
+        guard let outcome = outcome.withLock({ $0 }) else { throw CancellationError() }
+        return try outcome.get()
     }
 
     func finishCall(_ result: CommandResult) {
-        finish?.resume(returning: result)
-        finish = nil
+        outcome.withLock { $0 = .success(result) }
+        gate.open()
     }
 
     func failCall(_ error: any Error) {
-        finish?.resume(throwing: error)
-        finish = nil
+        outcome.withLock { $0 = .failure(error) }
+        gate.open()
     }
 }
 
@@ -388,8 +379,12 @@ private struct DeadTransport: HTTPTransport {
 @Suite("Updates model")
 @MainActor
 struct UpdatesModelTests {
+    /// Every temp folder lives in here, removed when the test ends.
+    let scratch: TempDir
+    init() throws { scratch = try TempDir() }
+
     private func tempDir(_ name: String = UUID().uuidString) -> URL {
-        let url = FileManager.default.temporaryDirectory.appending(path: name)
+        let url = scratch.url.appending(path: name)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -397,7 +392,7 @@ struct UpdatesModelTests {
     private func makeModel(checkout: String,
                            rebuildRunner: any CommandRunning,
                            rebuildDir: URL) -> UpdatesModel {
-        let defaults = UserDefaults(suiteName: "UpdatesModelTests.\(UUID().uuidString)")!
+        let defaults = TestDefaults("UpdatesModelTests")
         let prefs = UpdatePreferences(defaults: defaults)
         prefs.checkoutOverride = checkout
         return UpdatesModel(
@@ -419,7 +414,7 @@ struct UpdatesModelTests {
     /// The dev controls (channel picker, Source checkout, Rebuild) are a
     /// dev build's; a prod build hides them even with a dev override saved.
     @Test func aProdBuildHasNoDevControls() {
-        let defaults = UserDefaults(suiteName: "UpdatesModelTests.\(UUID().uuidString)")!
+        let defaults = TestDefaults("UpdatesModelTests")
         let prefs = UpdatePreferences(defaults: defaults)
         prefs.channelOverride = "dev"
         let model = UpdatesModel(
@@ -436,7 +431,7 @@ struct UpdatesModelTests {
     }
 
     @Test func aDevBuildShowsDevControls() {
-        let defaults = UserDefaults(suiteName: "UpdatesModelTests.\(UUID().uuidString)")!
+        let defaults = TestDefaults("UpdatesModelTests")
         let model = UpdatesModel(
             build: BuildInfo(channel: .dev, commit: built),
             preferences: UpdatePreferences(defaults: defaults),
@@ -475,13 +470,13 @@ struct UpdatesModelTests {
 
     @Test func aBuildThatOutlivesItsCheckoutIsDiscarded() async throws {
         let dir = tempDir()
-        let gate = GateRunner()
+        let runner = GateRunner()
         let model = makeModel(
-            checkout: dir.path, rebuildRunner: gate, rebuildDir: tempDir())
+            checkout: dir.path, rebuildRunner: runner, rebuildDir: tempDir())
         async let build: Void = model.rebuild()
-        await gate.waitUntilCalled()
+        #expect(await runner.gate.arrived())
         model.setCheckout("")
-        gate.finishCall(gitOk(""))
+        runner.finishCall(gitOk(""))
         await build
         #expect(model.rebuildState == .idle)
     }
@@ -490,13 +485,13 @@ struct UpdatesModelTests {
         // Same race on the error path: a timed-out or failed build from
         // the old checkout must not paint .failed on the new row.
         let dir = tempDir()
-        let gate = GateRunner()
+        let runner = GateRunner()
         let model = makeModel(
-            checkout: dir.path, rebuildRunner: gate, rebuildDir: tempDir())
+            checkout: dir.path, rebuildRunner: runner, rebuildDir: tempDir())
         async let build: Void = model.rebuild()
-        await gate.waitUntilCalled()
+        #expect(await runner.gate.arrived())
         model.setCheckout("")
-        gate.failCall(SweError.timedOut)
+        runner.failCall(SweError.timedOut)
         await build
         #expect(model.rebuildState == .idle)
     }
@@ -648,18 +643,113 @@ struct UpdatesModelTests {
         }
     }
 
-    @Test func aFailedRebuildKeepsTheLastLines() async throws {
+    @Test func aFailedRebuildKeepsTheLastLinesAndWritesTheLog() async throws {
         let dir = tempDir()
+        let rebuildDir = tempDir()
         let runner = RecordingRunner(CommandResult(
             status: 1,
             stdout: Data("l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\n".utf8), stderr: ""))
         let model = makeModel(checkout: dir.path, rebuildRunner: runner,
-                              rebuildDir: tempDir())
+                              rebuildDir: rebuildDir)
         await model.rebuild()
         guard case .failed(let message) = model.rebuildState else {
             Issue.record("expected a failed rebuild, got \(model.rebuildState)")
             return
         }
-        #expect(message == "l3\nl4\nl5\nl6\nl7\nl8")
+        #expect(message.hasPrefix("l3\nl4\nl5\nl6\nl7\nl8\nFull log: "))
+        let log = rebuildDir.appending(path: "last-build.log")
+        let text = try String(contentsOf: log, encoding: .utf8)
+        #expect(text.contains("=== stdout ==="))
+        #expect(text.contains("l8"))
+    }
+}
+
+@Suite("Build failure summary")
+struct FailureSummaryTests {
+    private func summary(stderr: String = "", stdout: String = "",
+                         log: URL? = nil, limit: Int = 6) -> String {
+        UpdatesModel.failureSummary(stderr: stderr, stdout: Data(stdout.utf8),
+                                    log: log, limit: limit)
+    }
+
+    /// A log that names no errors keeps showing its own tail.
+    @Test func noErrorLinesKeepsTheTail() {
+        let out = (1...8).map { "l\($0)" }.joined(separator: "\n")
+        #expect(summary(stdout: out) == "l3\nl4\nl5\nl6\nl7\nl8")
+    }
+
+    /// A build's last lines are progress counters; the error named
+    /// earlier must surface instead.
+    @Test func errorLinesBeatTheProgressTail() {
+        let msg = summary(
+            stderr: "app.swift:1:5: error: cannot assign to property\n",
+            stdout: "[161/172]\n[163/172]\n[167/172]\n")
+        #expect(msg.contains("error: cannot assign to property"))
+        #expect(!msg.contains("[167/172]"))
+    }
+
+    /// More errors than the row takes: the first few, the count left
+    /// out, and the last one.
+    @Test func manyErrorsShowFirstAndLast() {
+        let errors = (1...8).map { "f\($0).swift:1:1: error: problem \($0)" }
+        let msg = summary(stderr: errors.joined(separator: "\n"))
+        #expect(msg.contains("problem 1"))
+        #expect(msg.contains("problem 5"))
+        #expect(!msg.contains("problem 6"))
+        #expect(msg.contains("… 2 more error lines"))
+        #expect(msg.contains("problem 8"))
+    }
+
+    /// The build scripts' own messages name the failure even without
+    /// an "error:" marker.
+    @Test func scriptMessagesCountAsFailures() {
+        #expect(summary(stderr: "step done\nbuild-app: Sparkle.framework missing\n")
+            == "build-app: Sparkle.framework missing")
+    }
+
+    /// Script status chatter ("downloading …") wears the same prefix
+    /// as diagnostics: a real failure line beats it.
+    @Test func aStatusLineDoesNotHideAnUnmarkedFailure() {
+        let msg = summary(
+            stderr: "bundle-swe: downloading Python 3.13.16 (aarch64-apple-darwin)\n"
+                + "tar: python.tar.zst: No space left on device\n")
+        #expect(msg.contains("No space left on device"))
+        #expect(!msg.contains("downloading Python"))
+    }
+
+    /// A killed step (OOM, timeout) names the failure too.
+    @Test func killedStepsCountAsFailures() {
+        let msg = summary(
+            stderr: "bundle-swe: downloading Python 3.13.16\n"
+                + "bash: line 40: 8123 Killed: 9               tar -xzf python.tar.zst\n")
+        #expect(msg.contains("Killed: 9"))
+    }
+
+    /// Styling and hyperlinks a log may carry must not paint literal
+    /// escapes in the row.
+    @Test func ansiStylingIsStripped() {
+        #expect(summary(stderr: "\u{1B}[1;31merror: boom\u{1B}[0m\n")
+            == "error: boom")
+    }
+
+    /// A failed command echoes every file it was given: the line is cut
+    /// rather than eating the row.
+    @Test func aGiantLineIsCut() {
+        let msg = summary(stderr: "error: " + String(repeating: "x", count: 500))
+        #expect(msg.count == 201)
+        #expect(msg.hasPrefix("error: "))
+        #expect(msg.hasSuffix("…"))
+    }
+
+    /// A build that died silently still tells the user something.
+    @Test func silenceStillSaysSomething() {
+        #expect(summary(stderr: "  \n\n") == "The build failed without saying why.")
+    }
+
+    /// The log the row points at is named in the message.
+    @Test func theLogIsNamed() {
+        let log = URL(fileURLWithPath: "/tmp/x/last-build.log")
+        #expect(summary(stderr: "error: x", log: log)
+            .hasSuffix("\nFull log: /tmp/x/last-build.log"))
     }
 }

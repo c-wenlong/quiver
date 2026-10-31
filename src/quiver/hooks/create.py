@@ -200,8 +200,10 @@ def _command_path(path: Path, home: Path) -> str:
     """A runnable spelling of ``path`` for a settings command string.
 
     ``~`` only expands unquoted, so a path under home that needs quoting
-    (spaces, say) spells ``"${HOME}/..."`` instead; a path outside home is
-    quoted whole.
+    (spaces, say) spells ``"${HOME}"/'...'`` instead; a path outside home is
+    quoted whole. The relative part is single-quoted rather than pasted
+    inside the double quotes, where a ``"``, ``$`` or backtick in a
+    directory name would end the string or run as a command.
     """
     try:
         rel = path.relative_to(home).as_posix()
@@ -209,7 +211,7 @@ def _command_path(path: Path, home: Path) -> str:
         return shlex.quote(str(path))
     if shlex.quote(rel) == rel:
         return "~/" + rel
-    return '"${HOME}/' + rel + '"'
+    return '"${HOME}"/' + shlex.quote(rel)
 
 
 def command_for(harness: str, script: str,

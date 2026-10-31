@@ -27,6 +27,8 @@ PROTOCOL_VERSION = 1
 # ``command.result`` to an optimistic bubble it already drew.
 _CLIENT_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
+# A compaction is not an event type of its own: it arrives as
+# ``message.appended`` with ``kind: "compaction"`` (see MESSAGE_KINDS).
 EVENT_TYPES = frozenset(
     {
         "message.appended",
@@ -34,7 +36,6 @@ EVENT_TYPES = frozenset(
         "session.status",
         "approval.requested",
         "approval.resolved",
-        "compaction",
         "machine.online",
         "machine.offline",
         "notify",

@@ -17,18 +17,11 @@ cannot lose each other's entries.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
-from quiver.paths import data_dir_for
-from quiver.status.catalog import StatusService
-
-try:  # flock keeps two hubs on one home from losing each other's entries
-    import fcntl
-except ImportError:  # pragma: no cover - Windows has no flock
-    fcntl = None  # type: ignore[assignment]
+from quiver.paths import atomic_write_text, data_dir_for, locked_beside
+from quiver.status.catalog import LEGACY_GROUPS, StatusService
 
 STORE_NAME = "web-status-services.json"
 
@@ -55,8 +48,25 @@ def _service(raw: Any) -> StatusService | None:
         return None
     logo = raw.get("logo")
     return StatusService(id=id_, name=name, page_url=page_url, feed_url=feed_url,
-                         group=group, logo=logo if isinstance(logo, str) else None,
+                         group=_group(id_, feed_url, group),
+                         logo=logo if isinstance(logo, str) else None,
                          custom=True)
+
+
+def _group(id: str, feed_url: str, stored: str) -> str:
+    """The group a stored record renders under.
+
+    A record still carrying a pre-split group was last saved under the
+    old layout, so a catalogue page it names follows the catalogue's
+    group and anything else maps forward. A record saved since keeps
+    its own group — a group the user picked is never rewritten on
+    load."""
+    if stored not in LEGACY_GROUPS:
+        return stored
+    from quiver.status import catalogue
+    host = feed_url.split("://", 1)[-1].split("/", 1)[0]
+    found = catalogue.entry(id) or next((e for e in catalogue.CATALOGUE if e.host == host), None)
+    return found.group if found is not None else LEGACY_GROUPS[stored]
 
 
 def _load(path: Path) -> list[StatusService]:
@@ -77,28 +87,17 @@ def load(home: Path | None = None) -> list[StatusService]:
 
 def _write(path: Path, services: list[StatusService]) -> None:
     """The whole store, atomically (callers hold the lock file)."""
-    body = json.dumps({"version": 1, "services": [_record(s) for s in services]},
-                      indent=2, sort_keys=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".web-status-services-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(body)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    atomic_write_text(path, json.dumps(
+        {"version": 1, "services": [_record(s) for s in services]},
+        indent=2, sort_keys=True))
 
 
 def _edit(path: Path, change) -> list[StatusService]:
     """Read, change, write under the lock file. ``change`` maps the current
     list to the new one; its result is both written and returned."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(str(path) + ".lock", "a+") as lock:
-        if fcntl is not None:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    # The lock keeps two hubs on one home from losing each other's entries.
+    with locked_beside(path):
         services = change(_load(path))
         _write(path, services)
         return services

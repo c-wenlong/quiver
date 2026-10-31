@@ -71,14 +71,19 @@ const Fmt = (() => {
     return PALETTE[h % PALETTE.length];
   }
 
-  /* HarnessIcons: every harness-<id>.svg shipped in /app/. Colour ones
+  /* HarnessIcons: every harness-<id>.svg shipped beside the page. Colour ones
    * are drawn as they are (harness-<id>-color.svg), mono ones inverted in
    * dark mode. Keep in step with the files beside this script. */
-  const COLOR_LOGOS = new Set(("antgroup claude cloudflare codex cohere deepseek fireworks gemini meta minimax "
-    + "mistral-vibe nvidia opencode perplexity qwen-code stepfun upstage").split(" "));
-  const MONO_LOGOS = new Set(("assemblyai baseten cerebras clerk cline convex copilot cursor datadog devin "
-    + "digitalocean docker droid elevenlabs freebuff grok groq kimi lambda linear notion npm openai pi render "
-    + "sentry supabase tailscale twilio upstash vercel xiaomimimo yi zai").split(" "));
+  const COLOR_LOGOS = new Set(("antgroup arcade browserbase cartesia claude cloudflare codex cohere deepseek "
+    + "fireworks gemini honeycomb meta minimax mistral-vibe nvidia opencode perplexity qwen-code sourcegraph "
+    + "statsig stepfun upstage workos zapier").split(" "));
+  const MONO_LOGOS = new Set(("ai21 anyscale assemblyai astronomer atlassian augment baseten bitbucket blackbox bolt braintrust buildkite "
+    + "cerebras circleci clerk cline clickhouse cockroach codecov contentful convex copilot crates cursor datadog deepgram devin "
+    + "digitalocean discord docker droid e2b elevenlabs expo figma flyio freebuff grafana grok groq hashicorp "
+    + "incidentio inngest kilo kimi lambda langfuse launchdarkly linear linode loom lovable mailgun make manus maven mongodb morph "
+    + "nebius netlify newrelic ngrok notion npm ona openai pi pinecone planetscale poe postman prefect prisma pypi render replit "
+    + "revenuecat rubygems runloop sambanova sanity semaphore sentry snowflake snyk sonatype stability supermemory supabase tailscale tavily "
+    + "temporal travisci twilio upstash v0 vercel warp windsurf writer xiaomimimo yi zai").split(" "));
   // HarnessIcons.aliases: other names the same harness goes by.
   const ALIASES = { "claude-code": "claude", "github-copilot": "copilot", factory: "droid", qwen: "qwen-code",
     mistral: "mistral-vibe", codebuff: "freebuff", "command-code": "commandcode" };
@@ -119,7 +124,28 @@ const Fmt = (() => {
     const file = m.icon && logoFile(m.icon);
     if (!file) return `<span class="${cls}" aria-hidden="true"></span>`;
     const mono = file.endsWith("-color.svg") ? "" : " mono";
-    return `<img class="${cls}${mono}" src="/app/${file}" alt="${m.name.replace(/"/g, "&quot;")}">`;
+    return `<img class="${cls}${mono}" src="/${file}" alt="${m.name.replace(/"/g, "&quot;")}">`;
+  }
+
+  // format.js loads before app.js and runs alone in node tests, so it
+  // keeps its own copy of app.js's esc().
+  const escHtml = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  /* HarnessMarkView: the logo and the mark's word after it (CLI,
+   * Desktop, a second account's suffix), or the name alone with no logo,
+   * in a span of class `wrap` that names the harness. */
+  function markView(id, wrap, cls = "logo") {
+    const m = mark(id);
+    const inner = m.icon ? logo(id, cls) + (m.word ? `<span>${escHtml(m.word)}</span>` : "")
+      : `<span>${escHtml(m.name)}</span>`;
+    return `<span class="${wrap}" title="${escHtml(m.name)}" aria-label="${escHtml(m.name)}">${inner}</span>`;
+  }
+
+  /* `~/…` for a path under the hub's home; any other path as it is. */
+  function tilde(path, home) {
+    return home && path.startsWith(home + "/") ? "~" + path.slice(home.length) : path;
   }
 
   /* MarbleScale: one marble per round amount of spend (1, 2, 5 times a
@@ -292,7 +318,7 @@ const Fmt = (() => {
     return dash > 0 && /^[0-9]{8}$/.test(name.slice(dash + 1)) ? name.slice(0, dash) : name;
   }
 
-  return { tokens, dollars, ago, relative, harnessName, modelName, harnessColor, logo, mark, marbleScale,
+  return { tokens, dollars, ago, relative, harnessName, modelName, harnessColor, logo, mark, markView, tilde, marbleScale,
     resetIn, windowLabel, planTitle, money, balance, onDemand,
     copyIcon, copy, copyTick, shellWord };
 })();

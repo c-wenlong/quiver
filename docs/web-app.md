@@ -21,13 +21,13 @@ client sees it.
 | Piece | Where | What |
 |---|---|---|
 | Pages | `src/quiver/webapp/static/` | Plain HTML, CSS and JS. No build step, no framework, no CDN. Same Devin-derived look as the Mac app (`Theme.swift`); the CSS variables in `styles.css` carry the same names. |
-| Page data | `src/quiver/webapp/api.py` | Builds each page's JSON from the domain services, in process, the way `/v1/usage` does. |
+| Page data | `src/quiver/webapp/api.py`, `src/quiver/webapp/pages/` | Builds each page's JSON from the domain services, in process, the way `/v1/usage` does. |
 | Ledger | `src/quiver/ledger/` | The Python port of `QuiverCore/Ledger`: scans harness logs into its own SQLite store and prices tokens. |
-| Routes | `src/quiver/remote/hub.py` | `/app/` serves the pages; `/v1/app/*` serves their data. |
+| Routes | `src/quiver/remote/hub.py` | `/` serves the app and its assets as flat names beside it (`_serve_static`, names checked by `webapp/static.py`); `/v1/app/*` serves their data. Old `/app/…` paths redirect to the same name at the root. |
 
 The hub already runs on the always-on machine, binds 127.0.0.1 and is
 published by Tailscale Serve, so the web app needs no new port, process or
-service: it is at `https://<host>:<hub port>/app/`.
+service: it is at `https://<host>:<hub port>/`.
 
 ## Auth
 
@@ -38,14 +38,16 @@ whose login is the hub owner's, as long as the request carries
 `X-Quiver-Pair: 1`, names a Host the hub answers to, and has no foreign
 `Origin`. That is the gate the app's tailnet-identity calls use: a page
 on another site can't send the header, so it can't borrow the owner's
-network identity. Tagged nodes and other people's logins still pair
+network identity. The hub machine's own node doesn't count (any local
+process reaches the hub as that node), so a browser on the hub machine
+pairs like anyone else. Tagged nodes and other people's logins still pair
 from the gate itself: "Pair with Tailscale" posts
 `POST /v1/pair/request` and polls for the owner's yes, the token field
 below trades a pair token through the app's own `#pair=` fragment, and
 either mints a device credential (`Authorization: Bearer`, kept in
-`localStorage` under the hub's origin); `/` redirects to `/app/` with
-the fragment intact, so an old `/#pair=` or `/#approve` link still
-lands. Satellite routes (`/v1/agent/*`) always want a bearer.
+`localStorage` under the hub's origin). The app lived under `/app/`
+until #944: that path now redirects to the same name at `/`, fragment
+intact, so a `/app/#pair=` link minted then still lands. Satellite routes (`/v1/agent/*`) always want a bearer.
 Behind `tailscale serve`, run the hub with `--public-url=https://…` so it
 reads the tailnet client from Serve's headers: "Pair with Tailscale" then
 works, and the Origin check accepts the `https://` origin Serve presents.
@@ -98,9 +100,11 @@ already do, through satellites; that is a later step.
    (docs/web-app/harness.md). Quiver's own Claude and Codex account
    profiles, history, and Open app / Terminal are Mac-only.
 4. Skills, AGENTS.md, MCP servers, Plugins, Doctor: read-only first, from the
-   `swe … --json` builders.
-5. Writes for the Manage pages.
-6. Calendar, Compute, Models, Pricing, Service status.
+   `swe … --json` builders. Shipped.
+5. Writes for the Manage pages. Shipped; [FEATURES.md](../FEATURES.md)
+   names what each page still lacks next to the Mac app.
+6. Calendar, Compute, Models, Pricing, Service status. Shipped, with the
+   same per-page notes in FEATURES.md.
 
 The GitHub pages shipped alongside that list: Repositories and Inbox
 (docs/web-app/repositories.md) and Tasks (docs/web-app/tasks.md) — the
@@ -125,7 +129,7 @@ parallel without touching a shared file. A page with the sidebar id
 
 The hub dispatches `/v1/app/<page>` to the module (device bearer as for
 every `/v1` route; POSTs also pass the Origin check) and serves every
-page script as one `/app/pages.js`, every stylesheet as `/app/pages.css`.
+page script as one `/pages.js`, every stylesheet as `/pages.css`.
 The page goes live in the sidebar as soon as its script registers. The
 sidebar's order and icons are fixed in `app.js` and already list every
 Mac app page; Menu bar and Widgets wear Settings' "Mac app only" pill and
@@ -142,5 +146,6 @@ own stores.
 
 Nothing in `app/mac/` changes. To drop the web app, delete `src/quiver/webapp/`,
 `docs/web-app/`,
-`src/quiver/ledger/`, the `/app/` and `/v1/app/` branches in `hub.py`, and
+`src/quiver/ledger/`, the root static handler (`_serve_static`) and the
+`/v1/app/` branches in `hub.py`, and
 `~/.quiver/data/web-ledger/`.

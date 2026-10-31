@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 import pathlib
 import tempfile
 import unittest
@@ -100,13 +101,17 @@ class SetupFindingsTest(unittest.TestCase):
 
     def test_a_nix_managed_settings_file_says_so(self):
         settings = self._declare(["nus"])
-        store = self.home / "nix" / "store"
-        store.mkdir(parents=True)
-        real = store / "settings.json"
-        settings.rename(real)
-        settings.symlink_to(real)
         registry = {"claude": {"command": "claude"}}
-        with mock.patch("os.path.realpath", return_value="/nix/store/abc-settings.json"):
+        real_realpath = os.path.realpath
+
+        # Only the settings file resolves into the store, so the note has to
+        # come from reading that file's own link, not any other path.
+        def realpath(path, *a, **k):
+            if pathlib.Path(path) == settings:
+                return "/nix/store/abc-settings.json"
+            return real_realpath(path, *a, **k)
+
+        with mock.patch("os.path.realpath", side_effect=realpath):
             got = [f for f in self.findings(registry)
                    if f.check == "setup.marketplace-missing"]
         self.assertEqual(len(got), 1)

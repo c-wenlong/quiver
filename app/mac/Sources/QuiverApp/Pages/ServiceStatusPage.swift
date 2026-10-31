@@ -88,7 +88,7 @@ private struct ServiceEditorSheet: View {
     @Environment(\.dismissSheet) private var dismiss
     @State private var name = ""
     @State private var address = ""
-    @State private var group = StatusService.Group.providers
+    @State private var group = StatusService.Group.modelProviders
     @State private var checking = false
     /// The last Check's answer, cleared when the address is edited.
     @State private var checked: ServiceStatusService.ProbeResult?
@@ -134,7 +134,7 @@ private struct ServiceEditorSheet: View {
                             .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     }
                 case .failure(let problem):
-                    Text(problem).font(Theme.caption).foregroundStyle(Theme.danger)
+                    Text(problem).font(Theme.caption).foregroundStyle(Theme.dangerText)
                 case nil:
                     EmptyView()
                 }
@@ -142,10 +142,10 @@ private struct ServiceEditorSheet: View {
                 Text("This service reads a fixed status feed; only its name and group can change.")
                     .font(Theme.caption).foregroundStyle(Theme.textMuted)
             }
-            Tabs(options: [(.providers, "AI providers"), (.infrastructure, "Infrastructure")],
-                 selection: $group)
-            Text("AI providers also show in the menu bar when they have an incident.")
-                .font(Theme.font(size: 10)).foregroundStyle(.secondary)
+            Tabs(options: StatusService.Group.allCases.map { ($0, $0.shortTitle) },
+                 selection: $group, columns: 4)
+            Text("Model providers and agent platforms also show in the menu bar when they have an incident.")
+                .font(Theme.font(size: 10)).foregroundStyle(Theme.textSecondary)
             HStack {
                 if let browse {
                     Button("Browse", action: browse)
@@ -237,8 +237,8 @@ private struct StatusCatalogueSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Service catalogue").font(Theme.sectionTitle).tracking(-0.5)
             SearchField(prompt: "Search status pages", text: $query)
-            Tabs(options: [(nil, "All"), (.providers, "AI providers"), (.infrastructure, "Infrastructure")],
-                 selection: $group, style: .table)
+            Tabs(options: [(nil, "All")] + StatusService.Group.allCases.map { (.some($0), $0.shortTitle) },
+                 selection: $group, style: .segmented, columns: 5)
             ScrollView {
                 if shown.isEmpty {
                     Text("Nothing matches.")
@@ -598,7 +598,7 @@ private struct IncidentView: View {
                         .plainButton(cornerRadius: Theme.smallRadius)
                         .font(Theme.font(size: 11))
                         .foregroundStyle(Theme.textSecondary)
-                        .help(url.absoluteString)
+                        .hoverTip(url.absoluteString, replacesLabel: false)
                 }
             }
             Text(meta).font(Theme.caption).foregroundStyle(Theme.textSecondary)

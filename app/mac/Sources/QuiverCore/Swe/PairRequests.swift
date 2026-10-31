@@ -42,11 +42,24 @@ public struct PairDecision: Decodable, Sendable, Equatable {
     public let name: String?
 }
 
+/// `swe remote devices --requests --json`: the pending rows plus whether
+/// owner auto-approve is on (absent from a swe older than the setting).
+public struct PairRequestList: Decodable, Sendable, Equatable {
+    public let requests: [PairRequest]
+    public let autoApproveOwner: Bool?
+}
+
 extension SweClient {
-    public func remotePairRequests() async throws -> [PairRequest] {
-        struct List: Decodable { let requests: [PairRequest] }
-        let list: List = try await call(["remote", "devices", "--requests", "--json"])
-        return list.requests
+    public func remotePairRequests() async throws -> PairRequestList {
+        try await call(["remote", "devices", "--requests", "--json"])
+    }
+
+    /// `swe remote devices --auto-approve=on|off --json`; returns the saved value.
+    public func remoteSetAutoApproveOwner(_ on: Bool) async throws -> Bool {
+        struct Saved: Decodable { let autoApproveOwner: Bool }
+        let saved: Saved = try await call(
+            ["remote", "devices", "--auto-approve=\(on ? "on" : "off")", "--json"])
+        return saved.autoApproveOwner
     }
 
     /// Approves or denies one request. `--request-id` holds the code to
@@ -88,6 +101,11 @@ public final class PairRequestsModel {
     public private(set) var deciding: Set<String> = []
     /// The last failure per request id, shown on its row.
     public private(set) var errors: [String: String] = [:]
+    /// Owner auto-approve as swe last reported it; nil before the first
+    /// answer or from a swe that has no such setting.
+    public private(set) var autoApproveOwner: Bool?
+    public private(set) var savingAutoApprove = false
+    public private(set) var autoApproveError: String?
 
     private let swe: SweClient
     private var generation = 0
@@ -103,9 +121,12 @@ public final class PairRequestsModel {
         generation += 1
         let mine = generation
         do {
-            let rows = try await swe.remotePairRequests()
+            let list = try await swe.remotePairRequests()
             guard mine == generation else { return }
+            let rows = list.requests
             requests = rows
+            // A toggle in flight wins over a poll that read the old value.
+            if !savingAutoApprove { autoApproveOwner = list.autoApproveOwner }
             loadError = nil
             let live = Set(rows.map(\.id))
             codes = codes.filter { live.contains($0.key) }
@@ -125,6 +146,23 @@ public final class PairRequestsModel {
         while !Task.isCancelled {
             await refresh()
             do { try await Task.sleep(for: interval) } catch { return }
+        }
+    }
+
+    /// Turns owner auto-approve on or off through swe. The switch shows the
+    /// value swe saved, so a failure leaves it where it was.
+    public func setAutoApproveOwner(_ on: Bool) async {
+        guard !savingAutoApprove else { return }
+        savingAutoApprove = true
+        autoApproveError = nil
+        defer { savingAutoApprove = false }
+        do {
+            autoApproveOwner = try await swe.remoteSetAutoApproveOwner(on)
+            // A poll that started before the save read the old value.
+            generation += 1
+        } catch is CancellationError {
+        } catch {
+            autoApproveError = error.localizedDescription
         }
     }
 

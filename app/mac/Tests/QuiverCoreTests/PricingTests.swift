@@ -28,9 +28,9 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
 
 @Suite("Pricing overrides") struct PricingOverridesTests {
     @Test func `an override under the base name prices the effort variants`() throws {
-        var overrides = PricingOverrides(
-            url: FileManager.default.temporaryDirectory
-                .appending(path: "pricing-\(UUID().uuidString).json"))
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        var overrides = PricingOverrides(url: temp.path("pricing.json"))
         try overrides.set("swe-2", prices: .init(input: 2, output: 4))
         let catalog = try catalog(overrides: overrides.entries)
         for model in ["swe-2", "swe-2-medium", "swe-2-high", "swe-2-max"] {
@@ -40,9 +40,9 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
     }
 
     @Test func `an override beats LiteLLM and lookup reports the source`() throws {
-        var overrides = PricingOverrides(
-            url: FileManager.default.temporaryDirectory
-                .appending(path: "pricing-\(UUID().uuidString).json"))
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        var overrides = PricingOverrides(url: temp.path("pricing.json"))
         try overrides.set("codex-mini-latest", prices: .init(input: 1, output: 1))
         let catalog = try catalog(
             supplement: ["provider/my-model": ["input_cost_per_token": 9e-6,
@@ -58,9 +58,9 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
     }
 
     @Test func `an override wins under every equivalent name`() throws {
-        var overrides = PricingOverrides(
-            url: FileManager.default.temporaryDirectory
-                .appending(path: "pricing-\(UUID().uuidString).json"))
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        var overrides = PricingOverrides(url: temp.path("pricing.json"))
         try overrides.set("gpt-4-1", prices: .init(input: 1, output: 2))
         try overrides.set("claude-opus-5-5", prices: .init(input: 9, output: 9))
         let catalog = try PricingCatalog(
@@ -84,9 +84,9 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
     }
 
     @Test func `listLookup answers the price the model would have without overrides`() throws {
-        var overrides = PricingOverrides(
-            url: FileManager.default.temporaryDirectory
-                .appending(path: "pricing-\(UUID().uuidString).json"))
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        var overrides = PricingOverrides(url: temp.path("pricing.json"))
         try overrides.set("codex-mini-latest", prices: .init(input: 1, output: 1))
         let catalog = try catalog(overrides: overrides.entries)
         // The normal lookup sees the saved price…
@@ -101,6 +101,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
 
     @Test func `a failed write leaves the in-memory prices alone`() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         // A regular file where the config directory would go blocks the
         // atomic write outright.
         try Data().write(to: temp.path("blocked"))
@@ -131,6 +132,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
 
     @Test func `one bad entry skips only itself and survives a save`() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let url = temp.path("config/pricing.json")
         try FileManager.default.createDirectory(
             at: temp.path("config"), withIntermediateDirectories: true)
@@ -155,6 +157,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
 
     @Test func `a file that isn't JSON is never overwritten`() throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let url = temp.path("config/pricing.json")
         try FileManager.default.createDirectory(
             at: temp.path("config"), withIntermediateDirectories: true)
@@ -172,8 +175,9 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
     }
 
     @Test func `save then load round-trips, missing file is empty`() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appending(path: "pricing-\(UUID().uuidString).json")
+        let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
+        let url = temp.path("pricing.json")
         let empty = PricingOverrides(url: url)
         #expect(empty.models["swe-2"] == nil)
         var overrides = PricingOverrides(url: url)
@@ -182,7 +186,6 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let prices = try #require(again.models["swe-2"])
         #expect(prices.input == 1.25 && prices.output == 5 && prices.cacheRead == 0.1
                 && prices.cacheWrite == 0.5)
-        try? FileManager.default.removeItem(at: url)
     }
 }
 
@@ -297,7 +300,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(model.groups.map { $0.id } == ["google", "openai", "anthropic"])
         #expect(model.groups[2].models.map(\.model) == ["claude-opus-5-5", "claude-sonnet-4-6"])
         #expect(model.groups[1].tokens == 200)
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `the unpriced list and the covered-by list`() async throws {
@@ -313,7 +316,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let sonnet = model.groups.flatMap(\.models).first { $0.model == "claude-sonnet-4-6" }
         #expect(sonnet?.source == .quiver)
         #expect(model.coveredBy("swe-2") == ["swe-2-max", "swe-2-medium"])
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a harness-billed model shows no rates`() async throws {
@@ -322,7 +325,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         await model.load()
         let row = try #require(model.groups.flatMap(\.models).first)
         #expect(row.harnessBilled && row.rates == nil && row.source == nil && row.unpricedTokens == 0)
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `empty events without a charge leave a model harness-billed`() async throws {
@@ -335,7 +338,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         await model.load()
         let row = try #require(model.groups.flatMap(\.models).first)
         #expect(row.harnessBilled && row.totals.costUSD == 1.2)
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a harness-billed row is billed by its biller, Grok Bot's by Cursor`() async throws {
@@ -351,7 +354,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(rows["composer-2"]?.spendSource == .billed(by: ["cursor"]))
         #expect(rows["swe-2"]?.spendSource == .billed(by: ["devin", "cursor"])
                 || rows["swe-2"]?.spendSource == .billed(by: ["cursor", "devin"]))
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a mixed row names who bills its logged part`() async throws {
@@ -368,7 +371,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         // The mark follows the price for the uncharged part, not the biller.
         if case .billed = mixed.spendSource { Issue.record("a mixed row is not billed") }
         #expect(rows["gemini-2.5-pro"]?.billedBy == [])
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a row's spend source follows its price when nothing bills it`() {
@@ -392,18 +395,19 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         ], catalog: priced)
         await model.load()
         #expect(model.groups.flatMap(\.models).first?.harnessBilled == false)
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a model with only empty uncharged events is not harness-billed`() async throws {
         let (_, model, temp) = try makeModel([event("billed-model", tokens: 0)], catalog: priced)
         await model.load()
         #expect(model.groups.flatMap(\.models).first?.harnessBilled == false)
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a price saved for a harness-billed model shows, but its logged cost stays`() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         try store.upsert(LedgerRecord(key: "t:1", event: event("grok-4.7-high (Auto)",
                                                              tokens: 1_000_000, loggedCost: 1.25)))
@@ -425,6 +429,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
 
     @Test func `saving an override reprices the ledger`() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         try store.upsert(LedgerRecord(key: "t:1", event: event("swe-2-medium", tokens: 1_000_000)))
         let ledger = try Ledger(directory: temp.path("cache"))
@@ -456,11 +461,12 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
 
     @Test func `a slow catalog build never lands over a newer save`() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         try store.upsert(LedgerRecord(key: "t:1", event: event("swe-2", tokens: 1_000_000)))
         let ledger = try Ledger(directory: temp.path("cache"))
         let file = temp.url.appending(path: "config/pricing.json")
-        let firstRead = OSAllocatedUnfairLock(initialState: false)
+        let firstRead = CountGate()
         let builds = OSAllocatedUnfairLock(initialState: 0)
         let release = DispatchSemaphore(value: 0)
         let model = PricingModel(
@@ -470,9 +476,12 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
                 // second save has applied: the older build finishes last,
                 // the order a Cancel-and-save-again can give.
                 let entries = PricingOverrides(url: file).entries
+                // The build is synchronous, so it holds on a semaphore
+                // rather than a gate; the bound only keeps a regression
+                // from hanging the suite.
                 if builds.withLock({ $0 += 1; return $0 }) == 1 {
-                    firstRead.withLock { $0 = true }
-                    _ = release.wait(timeout: .now() + 5)
+                    Task { await firstRead.bump() }
+                    _ = release.wait(timeout: .now() + .seconds(Int(gateTimeout.components.seconds)))
                 }
                 return try PricingCatalog(liteLLM: Data("{}".utf8), overrides: entries)
             },
@@ -481,7 +490,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
                 release.signal()
             })
         async let first: Void = model.save(key: "swe-2", prices: .init(input: 1, output: 1))
-        while !firstRead.withLock({ $0 }) { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await firstRead.reach(1))
         try await model.save(key: "swe-2", prices: .init(input: 5, output: 5))
         try await first
         #expect(await ledger.totals(in: allTime).costUSD == 5)
@@ -514,7 +523,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(PricingOverrides(url: file).models["swe-2-medium"]?.input == 2)
         try await model.remove(matching: "swe-2-medium")
         #expect(PricingOverrides(url: file).models.isEmpty)
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     /// A model whose save/remove round-trips through a `pricing.json`,
@@ -562,7 +571,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         // The ledger repriced back to the list price.
         let totals = await ledger.totals(in: allTime)
         #expect(totals.costUSD == 2.5)  // 1M input @ $2.50/1M
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a saved price with no list price under it offers remove`() async throws {
@@ -570,7 +579,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         try await model.save(key: "swe-2", prices: .init(input: 1, output: 1))
         let row = try #require(model.groups.flatMap(\.models).first)
         #expect(row.source == .yours && row.listPrice == nil && row.resetKind == .remove)
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `saved keys keep their effort suffix when matching`() throws {
@@ -612,7 +621,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         #expect(reset.source == .liteLLM && reset.rates?.input == 0.000002)
         let totals = await ledger.totals(in: allTime)
         #expect(totals.costUSD == 2)  // 1M input @ $2.00/1M
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `remove with no list price leaves the model unpriced`() async throws {
@@ -622,7 +631,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let row = try #require(model.groups.flatMap(\.models).first)
         #expect(row.source == nil && !row.isFree && row.unpricedTokens == 1_000)
         #expect(model.unpriced.map(\.model) == ["swe-2-medium"])
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a fast-suffixed model and a free model are both priced`() async throws {
@@ -653,7 +662,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         let totals = await ledger.totals(in: allTime)
         #expect(totals.unpricedTokens == 0)
         #expect(totals.costUSD == 0.003)  // 100 input @ $15/1M x2
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a logged dim tier shows the multiplier and prices it`() async throws {
@@ -680,7 +689,7 @@ private func catalog(supplement prices: [String: [String: Any]] = [:],
         // The ledger charges the multiplier, so the page and totals agree.
         let totals = await ledger.totals(in: allTime)
         #expect(totals.costUSD == 0.003)  // 100 input @ $15/1M x2
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 }
 
@@ -698,7 +707,7 @@ extension PricingModelTests {
         #expect(rows.map(\.model).sorted() == ["claude-opus-5-5", "gpt-5"])
         #expect(rows.allSatisfy { $0.harnesses == ["codex"] })
         #expect(model.groups.reduce(0) { $0 + $1.tokens } == 400)
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `the unpriced list follows the filter`() async throws {
@@ -713,7 +722,7 @@ extension PricingModelTests {
         model.harnessFilter = ["codex"]
         await model.load()
         #expect(model.unpriced.map(\.model) == ["kimi-k2", "gpt-5"])
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `two picked harnesses keep both their models and no others`() async throws {
@@ -732,7 +741,7 @@ extension PricingModelTests {
         // gemini's share of a shared model stays out too.
         #expect(rows.first { $0.model == "claude-opus-5-5" }?.harnesses == ["codex"])
         #expect(model.groups.reduce(0) { $0 + $1.tokens } == 450)
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a picked harness that vanished drops out and the rest stay`() async throws {
@@ -749,7 +758,7 @@ extension PricingModelTests {
         await model.load()
         #expect(model.harnessFilter == ["claude"])
         #expect(model.groups.flatMap(\.models).map(\.model) == ["claude-sonnet-4-6"])
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `a filter whose harness vanished falls back to all`() async throws {
@@ -767,35 +776,29 @@ extension PricingModelTests {
         await model.load()
         #expect(model.harnessFilter.isEmpty)
         #expect(model.harnessOptions == ["claude"])
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
-    /// Parks the first `slices` call on a continuation the test releases
-    /// by hand, so a superseded load provably sits inside its first
+    /// Parks the first `slices` call after `arm()` at a gate the test
+    /// opens by hand, so a superseded load provably sits inside its first
     /// suspension while its replacement runs to completion.
-    /// The `slices` closure runs off the main actor while the test polls
-    /// from it, so every access goes through the lock.
-    private final class Gate: @unchecked Sendable {
-        private let lock = NSLock()
-        private var _armed = false
-        private var _waiter: CheckedContinuation<Void, Never>?
+    private final class Gate: Sendable {
+        private let armed = OSAllocatedUnfairLock(initialState: false)
+        let hold = HoldGate()
 
-        func arm() { lock.withLock { _armed = true } }
+        func arm() { armed.withLock { $0 = true } }
         /// Disarms and says whether it was armed, in one step.
         func takeArmed() -> Bool {
-            lock.withLock {
-                defer { _armed = false }
-                return _armed
+            armed.withLock { isArmed in
+                defer { isArmed = false }
+                return isArmed
             }
-        }
-        var waiter: CheckedContinuation<Void, Never>? {
-            get { lock.withLock { _waiter } }
-            set { lock.withLock { _waiter = newValue } }
         }
     }
 
     @Test func `a superseded load does not clear the filter or republish`() async throws {
         let temp = try TempDir()
+        defer { withExtendedLifetime(temp) {} }
         let store = try LedgerStore(url: temp.path("cache/ledger.sqlite"))
         for (i, e) in [
             event("claude-sonnet-4-6", tokens: 50, harness: "claude"),
@@ -813,7 +816,7 @@ extension PricingModelTests {
             makeCatalog: { catalog }, apply: { _ in },
             slices: { range in
                 if gate.takeArmed() {
-                    await withCheckedContinuation { gate.waiter = $0 }
+                    try? await gate.hold.pass()
                 }
                 return await ledger.byModelHarness(in: range)
             })
@@ -828,13 +831,10 @@ extension PricingModelTests {
         model.period = .today
         gate.arm()
         let stale = Task { await model.load() }
-        for _ in 0..<500 where gate.waiter == nil {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        let waiter = try #require(gate.waiter, "the first load never parked")
+        try #require(await gate.hold.arrived(1), "the first load never parked")
         model.period = .allTime
         await model.load()
-        waiter.resume()
+        gate.hold.open()
         await stale.value
         #expect(model.harnessFilter == ["codex"])
         #expect(model.groups.flatMap(\.models).map(\.model) == ["gpt-5"])
@@ -851,7 +851,7 @@ extension PricingModelTests {
         // The sheet warns that a saved price applies to every harness, so
         // the names it lists must too.
         #expect(model.coveredBy("swe-2") == ["swe-2-max", "swe-2-medium"])
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 
     @Test func `the harness options sort by tokens`() async throws {
@@ -862,7 +862,7 @@ extension PricingModelTests {
         ], catalog: priced)
         await model.load()
         #expect(model.harnessOptions == ["codex", "devin", "claude"])
-        _ = temp
+        withExtendedLifetime(temp) {}
     }
 }
 

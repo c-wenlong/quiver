@@ -16,20 +16,38 @@ struct SessionChatPage: View {
     var onDetails: () -> Void
     /// The hub turned out not to list it (found only once paired).
     var onMissing: () -> Void
+    /// Pin, Rename or Fork from the header's More menu, run by the page.
+    var act: (SessionMenuAction) -> Void
+    /// A refused pin's message, shared with the list so it shows here too.
+    var note: String? = nil
     @State private var model: SessionChatModel?
 
     private var key: String { HubSessionRow.key(harness: row.session.harness, id: row.session.id) }
 
+    /// The hub's pin, name and fork flag: the list's read, which the
+    /// chat's own read and its `session.meta` events keep current.
+    private var meta: HubSessionMeta? { app.hub.meta(for: key) }
+
+    /// A name set on the hub wins, from here or another device; else the
+    /// title swe listed, then the hub's.
+    private var title: String {
+        let local = row.session.title ?? model?.row?.title
+        return meta?.title(over: local) ?? local ?? row.session.id
+    }
+
     var body: some View {
-        Page(title: row.session.title ?? model?.row?.title ?? row.session.id,
+        Page(title: title,
              subtitle: subtitle,
              back: ("Back to all sessions", onBack), maxWidth: 960, scrolls: false) {
             if let model { ChatBadges(model: model) }
+            if let meta {
+                EllipsisMenu { SessionHubMenuItems(meta: meta, act: act) }
+            }
             RailIconButton(symbol: "info.circle", help: "Details: folder, usage and the resume command",
                            action: onDetails)
         } content: {
             if let model {
-                ChatTranscript(model: model)
+                ChatTranscript(model: model, note: note)
             } else {
                 Spacer()
             }
@@ -46,10 +64,12 @@ struct SessionChatPage: View {
         }
     }
 
-    /// harness · folder, as the web app's chat bar has it.
+    /// harness · folder · model, as the web app's chat bar has it. The
+    /// model is the hub's row for the newest reply, left out while unknown.
     private var subtitle: String {
         let folder = (model?.row?.cwd ?? row.session.cwd).map { displayPath($0) }
-        return [HarnessMark(row.session.harness).name, folder].compactMap { $0 }.joined(separator: " · ")
+        return [HarnessMark(row.session.harness).name, folder, model?.row?.modelLabel]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -94,9 +114,16 @@ private struct ChatBadges: View {
 
 private struct ChatTranscript: View {
     var model: SessionChatModel
+    var note: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if let note {
+                Card {
+                    Label(note, systemImage: "exclamationmark.triangle")
+                        .font(Theme.bodySmall).foregroundStyle(Theme.warningText)
+                }
+            }
             if let error = model.loadError {
                 ErrorCard(message: error, actionTitle: "Try again") {
                     Task { await model.start() }
@@ -329,15 +356,24 @@ extension ChatEntry {
 /// session is observed, as in the web app. Typing `/` first opens the
 /// command menu: the hub lists what this session's harness will run,
 /// a pick puts the command's text in the box, and Send delivers it as
-/// a plain message the harness expands on arrival.
+/// a plain message the harness expands on arrival. Typing `@` opens the
+/// file menu: paths under the session's folder, a pick puts `@path` in
+/// the box (a folder stays open to pick inside it). A queue-mode send
+/// the hub holds until the turn ends waits in the Queued tray above the
+/// box, where Edit brings its text back into the box to save.
 private struct Composer: View {
     var model: SessionChatModel
-    @State private var draft = ""
+    /// The box's text, kept on the tray so Edit can swap a queued
+    /// message into it.
+    private var draft: String {
+        get { model.tray.draft }
+        nonmutating set { model.tray.draft = newValue }
+    }
     /// The caret or selection, so Shift-Return breaks the line there.
     @State private var selection: TextSelection?
     /// The `/` menu opens only while the box is being typed in.
     @FocusState private var focused: Bool
-    /// The row the arrows lit in the open `/` menu.
+    /// The row the arrows lit in the open `/` or `@` menu.
     @State private var active = 0
     /// Queue waits for the agent's turn to end; Steer writes now.
     @AppStorage("sessionChatSendMode") private var mode = "queue"
@@ -354,6 +390,19 @@ private struct Composer: View {
         focused && model.canSend ? Slash.token(in: draft, cursor: caret) : nil
     }
 
+    /// The `@path` being typed where the caret is, while the box has
+    /// focus and the `/` menu doesn't hold it.
+    private var mention: MentionToken? {
+        focused && model.canSend && slash == nil ? Mention.token(in: draft, cursor: caret) : nil
+    }
+
+    /// The `@` menu's highlighted file, while it's open with rows.
+    private var activeEntry: FileEntry? {
+        let rows = MentionMenuCard.rows(model.mentions)
+        guard !model.commands.isOpen, model.mentions.isOpen, !rows.isEmpty else { return nil }
+        return rows[min(active, rows.count - 1)]
+    }
+
     /// The menu's highlighted command, while it's open with rows.
     private var activeCommand: SlashCommand? {
         let rows = model.commands.matches
@@ -363,9 +412,26 @@ private struct Composer: View {
 
     var body: some View {
         let observed = !model.canSend
+        let tray = model.tray
+        let editing = tray.editingId != nil
         VStack(alignment: .leading, spacing: 8) {
+            if !tray.sends.isEmpty {
+                QueuedTrayCard(tray: tray,
+                               onEdit: { edit($0) },
+                               onRemove: { cid in Task { await tray.remove(cid) } },
+                               onSendNow: { cid in Task { await tray.sendNow(cid) } },
+                               onRemoveAll: { Task { await tray.removeAll() } })
+                    .transition(.opacity)
+            }
+            if editing || tray.editNote != nil {
+                QueuedEditBar(editing: editing, note: tray.editNote) { tray.cancelEdit() }
+                    .transition(.opacity)
+            }
             if model.commands.isOpen {
                 SlashCommandMenuCard(menu: model.commands, row: model.row, active: $active) { pick($0) }
+                    .transition(.opacity)
+            } else if model.mentions.isOpen {
+                MentionMenuCard(search: model.mentions, active: $active) { pick($0) }
                     .transition(.opacity)
             }
             HStack(alignment: .bottom, spacing: 8) {
@@ -374,16 +440,17 @@ private struct Composer: View {
                                selection: $mode, width: 96)
                         .hoverTip("Queue waits for the agent to finish its turn; Steer writes now.", title: "Send mode")
                 }
-                TextField(observed ? "Read-only until this session is attached" : "Message the session",
-                          text: $draft, selection: $selection, axis: .vertical)
+                TextField(observed ? "Read-only until this session is attached"
+                            : editing ? "Edit the queued message" : "Message the session",
+                          text: Bindable(tray).draft, selection: $selection, axis: .vertical)
                     .lineLimit(1...8)
                     .quiverField(multiline: true)
                     .disabled(observed)
                     .focused($focused)
                     // Shift-Return always starts a line. With the `/`
-                    // menu open Return or Tab picks, the arrows move
-                    // the highlight and Escape closes it; otherwise
-                    // Return sends.
+                    // or `@` menu open Return or Tab picks, the arrows
+                    // move the highlight and Escape closes it;
+                    // otherwise Return sends.
                     .onKeyPress(.return, phases: .down) { press in
                         if press.modifiers.contains(.shift) {
                             newline()
@@ -399,21 +466,45 @@ private struct Composer: View {
                             case .wait:
                                 break
                             }
+                        } else if model.mentions.isOpen {
+                            switch Slash.ReturnAction.action(
+                                row: activeEntry != nil,
+                                loading: model.mentions.firstLoad
+                            ) {
+                            case .pick:
+                                if let entry = activeEntry { pick(entry) }
+                            case .send:
+                                submit()
+                            case .wait:
+                                break
+                            }
                         } else {
                             submit()
                         }
                         return .handled
                     }
                     .onKeyPress(.tab, phases: .down) { _ in
-                        guard let command = activeCommand else { return .ignored }
-                        pick(command)
+                        if let command = activeCommand {
+                            pick(command)
+                        } else if let entry = activeEntry {
+                            pick(entry)
+                        } else {
+                            return .ignored
+                        }
                         return .handled
                     }
                     .onKeyPress(.upArrow, phases: .down) { _ in move(-1) }
                     .onKeyPress(.downArrow, phases: .down) { _ in move(1) }
                     .onKeyPress(.escape, phases: .down) { _ in
-                        guard model.commands.isOpen else { return .ignored }
-                        model.commands.dismiss()
+                        if model.commands.isOpen {
+                            model.commands.dismiss()
+                        } else if model.mentions.isOpen {
+                            model.mentions.dismiss()
+                        } else if editing {
+                            tray.cancelEdit()
+                        } else {
+                            return .ignored
+                        }
                         return .handled
                     }
                 Button { Task { await model.interrupt() } } label: {
@@ -423,23 +514,34 @@ private struct Composer: View {
                 .disabled(observed || model.stopping)
                 .hoverTip("Stop the agent's turn")
                 .accessibilityLabel("Stop")
-                Button("Send", action: submit)
+                Button(editing ? "Save" : "Send", action: submit)
                     .primaryButton()
-                    .disabled(observed || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(observed || tray.savingEdit
+                              || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .animation(.easeOut(duration: 0.15), value: model.commands.isOpen)
+        .animation(.easeOut(duration: 0.15), value: model.mentions.isOpen)
+        .animation(.easeOut(duration: 0.2), value: tray.sends.isEmpty)
+        .animation(.easeOut(duration: 0.2), value: editing)
         .onChange(of: slash, initial: true) { _, token in
             model.commands.track(token)
             active = 0
         }
+        .onChange(of: mention, initial: true) { _, token in
+            model.mentions.track(token)
+            active = 0
+        }
+        // New results light their first row, as the web app does.
+        .onChange(of: model.mentions.entries) { active = 0 }
     }
 
-    /// An arrow key with the `/` menu open relights its rows; with it
-    /// closed the caret moves as usual.
+    /// An arrow key with the `/` or `@` menu open relights its rows;
+    /// with both closed the caret moves as usual.
     private func move(_ delta: Int) -> KeyPress.Result {
-        let count = model.commands.matches.count
-        guard model.commands.isOpen, count > 0 else { return .ignored }
+        let count = model.commands.isOpen ? model.commands.matches.count
+            : model.mentions.isOpen ? MentionMenuCard.rows(model.mentions).count : 0
+        guard count > 0 else { return .ignored }
         active = (active + delta + count) % count
         return .handled
     }
@@ -449,6 +551,15 @@ private struct Composer: View {
     private func pick(_ command: SlashCommand) {
         guard let token = Slash.token(in: draft, cursor: caret) else { return }
         let next = Slash.insert(command, replacing: token, in: draft)
+        draft = next.text
+        selection = TextSelection(insertionPoint: Caret.index(next.cursor, in: draft))
+    }
+
+    /// The picked path replaces the `@word`: a file's caret lands after
+    /// its space, a folder's after its slash so the menu lists inside it.
+    private func pick(_ entry: FileEntry) {
+        guard let token = Mention.token(in: draft, cursor: caret) else { return }
+        let next = Mention.insert(entry.path, isDir: entry.isDir, replacing: token, in: draft)
         draft = next.text
         selection = TextSelection(insertionPoint: Caret.index(next.cursor, in: draft))
     }
@@ -465,10 +576,22 @@ private struct Composer: View {
         selection = TextSelection(insertionPoint: draft.index(draft.startIndex, offsetBy: at + 1))
     }
 
+    /// Edit: the queued message's text replaces the box's, caret at its end.
+    private func edit(_ cid: String) {
+        guard model.tray.beginEdit(cid) else { return }
+        selection = TextSelection(insertionPoint: draft.endIndex)
+        focused = true
+    }
+
     private func submit() {
         let text = draft
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, model.canSend else { return }
+        if model.tray.editingId != nil {
+            Task { await model.tray.saveEdit() }
+            return
+        }
         draft = ""
+        model.tray.clearEditNote()
         Task { await model.send(text, mode: mode) }
     }
 }

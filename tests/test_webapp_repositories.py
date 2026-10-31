@@ -960,6 +960,26 @@ class TestPrWorktree(_Base):
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFailMessage(unittest.TestCase):
+    def test_it_is_app_failtext_ending_then_refresh(self):
+        """GhUI.failMessage says what app.js's failText says. It used to
+        hand back ``data.error`` itself when that had no message, which
+        a page then showed as "[object Object]"."""
+        script = (
+            "global.esc = (s) => String(s); global.Fmt = { ago: () => '' };\n"
+            + app_js_function("failText") + (STATIC / "github.js").read_text()
+            + "\nprocess.stdout.write(JSON.stringify(["
+            "GhUI.failMessage(409, { error: { message: 'Already pinned.' } }),"
+            "GhUI.failMessage(500, { error: { code: 'internal' } }),"
+            "GhUI.failMessage(0, null)]));\nprocess.exit(0);")
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), [
+            "Already pinned.", "The hub answered 500.",
+            "Couldn't reach the hub. Check the connection, then refresh."])
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestMarkdown(unittest.TestCase):
     """GhUI.markdown, run under node with the two globals it borrows."""
 
@@ -997,6 +1017,20 @@ class TestMarkdown(unittest.TestCase):
         self.assertIn(f'<a href="{url}" target="_blank" rel="noopener">{url}</a>', html)
         self.assertIn("<strong>bold</strong>", html)
 
+    def test_bare_urls_stop_at_escaped_quotes_and_brackets(self):
+        html = self.render('say "https://example.com/a" and https://x.io/p>q, https://x.io/?a=1&b=2')
+        self.assertIn('href="https://example.com/a"', html)
+        self.assertIn('>https://x.io/p</a>&gt;q', html)
+        self.assertIn('href="https://x.io/?a=1&amp;b=2"', html)
+        self.assertNotIn("&quot;\"", html)
+
+    def test_autolinks_become_links(self):
+        html = self.render("go <https://y.io/z> or <me_x@ex.io>, not `<https://c.io>`, <https://[2001:db8::1]/a>")
+        self.assertIn('<a href="https://y.io/z" target="_blank" rel="noopener">https://y.io/z</a>', html)
+        self.assertIn('<a href="https://[2001:db8::1]/a" target="_blank" rel="noopener">https://[2001:db8::1]/a</a>', html)
+        self.assertIn('<a href="mailto:me_x@ex.io" target="_blank" rel="noopener">me_x@ex.io</a>', html)
+        self.assertIn("<code>&lt;https://c.io&gt;</code>", html)
+
     def test_fenced_code_keeps_its_blank_lines(self):
         html = self.render("<p>x</p>\n\n```\na\n\n\n\nb\n```")
         self.assertIn("a\n\n\n\nb", html)
@@ -1030,7 +1064,7 @@ class TestMarkdown(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class TestBundle(unittest.TestCase):
     def test_both_pages_register_from_the_served_bundle(self):
-        """Each script runs in its own scope in /app/pages.js: GhUI has to
+        """Each script runs in its own scope in /pages.js: GhUI has to
         reach inbox.js and repositories.js as a global."""
         from quiver.webapp import pages
         stubs = (
@@ -1130,10 +1164,194 @@ class TestRoute(HubBase):
         self.assertEqual([r["name"] for r in G.pinned(self.srv.home)], ["o/b"])
 
     def test_page_scripts_are_bundled(self):
-        _, js = self.srv.request("GET", "/app/pages.js")
+        _, js = self.srv.request("GET", "/pages.js")
         self.assertIn(b"const GhUI", js)
-        _, css = self.srv.request("GET", "/app/pages.css")
+        _, css = self.srv.request("GET", "/pages.css")
         self.assertIn(b".gh-row", css)
+
+
+
+PR_FILTER_FLOW = r"""
+const out = {};
+const lastQ = {};
+const qsa = panel.querySelectorAll.bind(panel);
+panel.querySelectorAll = (sel) => (lastQ[sel] = qsa(sel));
+document.querySelector = (sel) => null;
+const html = () => panel.innerHTML;
+const prRows = () => [...html().matchAll(/data-pr="(\d+)" data-repo="([^"]*)"/g)].map((m) => `${m[2]}#${m[1]}`);
+const chips = () => [...html().matchAll(/data-pr-filter="(\w+)">([^<]*)<span class="num">(\d+)/g)]
+  .map((m) => [m[1], m[2].trim(), Number(m[3])]);
+const selected = () => (html().match(/aria-checked="true"[^>]*\s+data-pr-filter="(\w+)"/) || [])[1] || null;
+const click = (attr, value) => lastQ[`[data-${attr}]`].find((e) => e.attrs[`data-${attr}`] === value).onclick();
+const pr = (number, author) => ({ number, title: "PR " + number, state: "open", draft: false, author,
+  branch: "b" + number, base: "main", labels: [], mergeable: "mergeable", review_decision: "none",
+  checks: "none", updated_at: null, url: "" });
+const board = (prs) => ({ surfaces: { pull_requests: { status: "ok", pull_requests: prs },
+  issues: { status: "ok", issues: [] }, runs: { status: "ok", runs: [] } } });
+apiAnswers.push(["/v1/app/repositories", { status: 200, data: { machine: "hub", github: { status: "ok" },
+  repos: [{ name: "o/a" }, { name: "o/b" }],
+  boards: { "o/a": board([pr(1, "me"), pr(2, "bob"), pr(3, "bob")]), "o/b": board([pr(4, "me")]) } } }]);
+let pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+  { name: "o/a", status: "ok", pulls: [
+    { number: 1, mine: true, review_requested: false },
+    { number: 2, mine: false, review_requested: true },
+    { number: 3, mine: false, review_requested: false }] },
+  { name: "O/B", status: "ok", pulls: [{ number: 4, mine: true, review_requested: false }] }] } };
+apiAnswers.push(["/v1/pulls", { get status() { return pulls.status; }, get data() { return pulls.data; } }]);
+(async () => {
+  location.hash = "#/repositories";
+  PAGES.repositories();
+  await tick();
+  out.chips = chips();
+  out.allRows = prRows();
+  click("pr-filter", "mine");
+  out.mineSelected = selected();
+  out.mineRows = prRows();
+  click("pr-filter", "review");
+  out.reviewRows = prRows();
+  // o/b has nothing asking for review: it goes quiet in the rail.
+  out.quiet = /1 quiet/.test(html());
+  // Another tab: no filter bar, every row of that tab.
+  click("tab", "issues");
+  out.issuesBar = /data-pr-filter/.test(html());
+  click("tab", "pulls");
+  await tick();
+  out.backSelected = selected();
+  // gh pr status failed: review_requested is null, so that filter goes
+  // and the pick falls back to All; Mine stays.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [
+      { number: 1, mine: true, review_requested: null },
+      { number: 2, mine: false, review_requested: null },
+      { number: 3, mine: false, review_requested: null }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: null }] }] } };
+  PAGES.repositories();
+  await tick();
+  out.nullChips = chips().map((c) => c[0]);
+  out.nullSelected = selected();
+  out.nullRows = prRows().length;
+  // o/b's review flags unknown, o/a's known: narrowing the list to o/a
+  // still hides Review requested, or o/b would read as quiet in the rail.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [
+      { number: 1, mine: true, review_requested: false },
+      { number: 2, mine: false, review_requested: true },
+      { number: 3, mine: false, review_requested: false }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: null }] }] } };
+  PAGES.repositories();
+  await tick();
+  click("shown", "o/a");
+  out.scopedChips = chips().map((c) => c[0]);
+  out.scopedMineCount = (chips().find((c) => c[0] === "mine") || [])[2];
+  click("shown", "");
+  // A PR the flags don't cover yet (newer than /v1/pulls' cache): no guess, no bar.
+  pulls = { status: 200, data: { github: { status: "ok" }, repos: [
+    { name: "o/a", status: "ok", pulls: [{ number: 1, mine: true, review_requested: false }] },
+    { name: "o/b", status: "ok", pulls: [{ number: 4, mine: true, review_requested: false }] }] } };
+  PAGES.repositories();
+  await tick();
+  out.partialBar = /data-pr-filter/.test(html());
+  // gh blocked on the hub, or the read failing: no bar at all.
+  pulls = { status: 200, data: { env_blocked: "gh is not signed in", repos: [] } };
+  PAGES.repositories();
+  await tick();
+  out.blockedBar = /data-pr-filter/.test(html());
+  pulls = { status: 503, data: null };
+  PAGES.repositories();
+  await tick();
+  out.failedBar = /data-pr-filter/.test(html());
+  out.failedRows = prRows().length;
+  process.stdout.write(JSON.stringify(out));
+  process.exit(0);
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestPrFilter(unittest.TestCase):
+    """The dashboard's Mine / Review requested filters under node, from
+    the flags GET /v1/pulls carries; offered only while they're known."""
+
+    def test_filters_and_null_flags(self):
+        from tests.test_webapp_launch_sheets import PAGES, STUB
+        script = (STUB + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "repositories.js").read_text(encoding="utf-8") + "\n" + PR_FILTER_FLOW)
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        out = json.loads(done.stdout)
+        self.assertEqual(out["chips"], [["all", "All", 4], ["mine", "Mine", 2], ["review", "Review requested", 1]])
+        self.assertEqual(out["allRows"], ["o/a#1", "o/a#2", "o/a#3", "o/b#4"])
+        self.assertEqual(out["mineSelected"], "mine")
+        self.assertEqual(out["mineRows"], ["o/a#1", "o/b#4"])
+        self.assertEqual(out["reviewRows"], ["o/a#2"])
+        self.assertTrue(out["quiet"])
+        self.assertFalse(out["issuesBar"])
+        self.assertEqual(out["backSelected"], "review")
+        self.assertEqual(out["nullChips"], ["all", "mine"])
+        self.assertEqual(out["nullSelected"], "all")
+        self.assertEqual(out["nullRows"], 4)
+        self.assertEqual(out["scopedChips"], ["all", "mine"])
+        self.assertEqual(out["scopedMineCount"], 1)
+        self.assertFalse(out["partialBar"])
+        self.assertFalse(out["blockedBar"])
+        self.assertFalse(out["failedBar"])
+        self.assertEqual(out["failedRows"], 4)
+
+
+# The focus page's filter under the minute poll and an IME: the poll's
+# repaint puts the focus back in the (new) filter box, and keystrokes
+# inside a composition update the filter without replacing the box.
+FOCUS_FILTER_FLOW = r"""
+let pollTick = null;
+globalThis.setInterval = (fn) => { pollTick = fn; return 1; };
+const pr = (number, title) => ({ number, title, state: "open", draft: false, author: "me",
+  branch: "b" + number, base: "main", labels: [], mergeable: "mergeable", review_decision: "none",
+  checks: "none", updated_at: null, url: "" });
+apiAnswers.push(["/v1/app/repositories", { status: 200, data: { machine: "hub", github: { status: "ok" },
+  limits: {}, surfaces: { pull_requests: { status: "ok", pull_requests: [pr(1, "alpha"), pr(2, "beta")] },
+    issues: { status: "ok", issues: [] }, runs: { status: "ok", runs: [] } } } }]);
+const out = {};
+const box = () => document.getElementById("gh-search");
+const rows = () => [...panel.innerHTML.matchAll(/>(alpha|beta)</g)].map((m) => m[1]);
+(async () => {
+  location.hash = "#/repositories?repo=o/a";
+  PAGES.repositories();
+  await tick();
+  box().focus();
+  pollTick(); // the minute poll: renderFocus paints its spinner first
+  out.focusedWhileLoading = document.activeElement === box();
+  await tick();
+  out.focusedAfter = document.activeElement === box();
+  const typing = box();
+  typing.oncompositionstart();
+  typing.value = "be";
+  typing.oninput({ isComposing: true });
+  pollTick(); // the poll starts, and its reply lands, mid-composition
+  await tick();
+  out.keptDuringComposition = box() === typing;
+  out.rowsDuringComposition = rows();
+  typing.value = "beta";
+  typing.oncompositionend();
+  out.repaintedAfter = box() !== typing && document.activeElement === box();
+  out.rowsAfter = rows();
+  process.stdout.write(JSON.stringify(out));
+  process.exit(0);
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestFocusFilter(unittest.TestCase):
+    def test_the_poll_keeps_focus_and_a_composition_is_not_cut(self):
+        from tests.test_webapp_launch_sheets import PAGES, STUB
+        script = (STUB + (PAGES / "github.js").read_text(encoding="utf-8") + "\n"
+                  + (PAGES / "repositories.js").read_text(encoding="utf-8") + "\n" + FOCUS_FILTER_FLOW)
+        done = _node(script)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {
+            "focusedWhileLoading": True, "focusedAfter": True,
+            "keptDuringComposition": True, "rowsDuringComposition": ["alpha", "beta"],
+            "repaintedAfter": True, "rowsAfter": ["beta"]})
 
 
 if __name__ == "__main__":

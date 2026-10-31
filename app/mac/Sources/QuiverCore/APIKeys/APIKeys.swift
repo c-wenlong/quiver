@@ -213,10 +213,11 @@ public struct APIKeysFile: Equatable, Sendable {
     /// The new name has to be a valid variable name not already exported.
     public mutating func rename(name: String, to newName: String) throws {
         guard Self.isValidName(newName) else { throw APIKeysError.invalidName(newName) }
-        guard newName != name else { return }
         let all = entries
         guard all.filter({ $0.name == name }).count <= 1 else { throw APIKeysError.duplicate(name) }
         guard let entry = all.first(where: { $0.name == name }) else { throw APIKeysError.notFound(name) }
+        // Renaming a key to its own name is a no-op, once it is known to exist.
+        guard newName != name else { return }
         guard !all.contains(where: { $0.name == newName }), unsafeLines[newName] == nil else {
             throw APIKeysError.nameTaken(newName)
         }
@@ -938,6 +939,10 @@ public final class APIKeysModel {
             saveChecks()
             return
         }
+        // The anchor names the key and endpoint this check is sent to.
+        // Taken after the await, it would read a base URL saved meanwhile
+        // and stamp this verdict as current for the new endpoint.
+        let anchor = checkAnchor(for: row)
         checking.insert(name)
         defer { checking.remove(name) }
         await slots.acquire()
@@ -945,7 +950,7 @@ public final class APIKeysModel {
         await slots.release()
         // A rename during the check must not publish under the old name.
         guard rows.contains(where: { $0.name == name }) else { return }
-        checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: checkAnchor(for: row),
+        checks[name] = APIKeyCheck(result: result, checkedAt: Date(), value: anchor,
                                    salt: checkSalt)
         saveChecks()
     }

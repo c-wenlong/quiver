@@ -7,7 +7,7 @@ import Foundation
 /// same links (src/quiver/bug.py).
 public enum IssueReport {
     public static let repository = URL(string: "https://github.com/c-wenlong/quiver")!
-    public static let documentation = URL(string: "https://c-wenlong.github.io/quiver/")!
+    public static let documentation = repository
 
     /// The forms' Area option for this app.
     public static let macArea = "Mac app"
@@ -93,7 +93,12 @@ public enum IssueReport {
         // "/" or "" would turn every path into a ~.
         if home.count > 1 {
             let trimmed = home.hasSuffix("/") ? String(home.dropLast()) : home
-            text = text.replacingOccurrences(of: trimmed, with: "~")
+            // Only a whole path at its start, as HookFinding.displayMessage
+            // does: a plain substring turned /Users/anabel/x into ~bel/x
+            // and /backup/Users/ana/x into /backup~/x.
+            let root = NSRegularExpression.escapedPattern(for: trimmed)
+            text = text.replacingOccurrences(of: #"(?<![^\s("'=:,\[])"# + root + #"(?=/|$|[\s"'),:;\]])"#,
+                                             with: "~", options: .regularExpression)
         }
         // Only as a whole path component: a short name like "ana" must not
         // eat "banana" or "/var/analytics".
