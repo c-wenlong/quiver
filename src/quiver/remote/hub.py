@@ -63,6 +63,7 @@ from quiver.remote import (
 from quiver.remote import fork as fork_mod
 from quiver.remote import issues as issues_mod
 from quiver.remote import pulls as pulls_mod
+from quiver.remote import stream as stream_mod
 from quiver.remote.detach import PendingDetaches
 from quiver.remote.journal import Journal
 from quiver.webapp import (
@@ -179,6 +180,22 @@ _SAT_KIND_SETS = {
 }
 
 
+def _sat_delta(mid: str, local_key: str, data) -> dict | None:
+    """A satellite's ``message.delta``, rebuilt from its known fields
+    under the hub-scoped key, or None when it is malformed. The
+    satellite coalesced it already; the hub only relays it."""
+    if not local_key or not isinstance(data, dict):
+        return None
+    msg_id, text, seq = data.get("id"), data.get("text"), data.get("seq")
+    if not isinstance(msg_id, str) or not msg_id or \
+            not isinstance(text, str) or \
+            not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
+        return None
+    return protocol.delta_event(
+        protocol.remote_key(mid, local_key), mid, msg_id[:200],
+        str(data.get("kind")), text, seq, done=data.get("done") is True)
+
+
 class EventBus:
     """Fan-out to SSE subscriber queues, keyed by session or global."""
 
@@ -196,11 +213,12 @@ class EventBus:
         with self._lock:
             self._subs = [(k, s) for k, s in self._subs if s is not q]
 
-    def publish(self, key: str, event: dict) -> None:
+    def publish(self, key: str, event: dict, *, exact: bool = False) -> None:
+        """``exact`` leaves out the whole-hub (``None``) subscribers."""
         with self._lock:
             subs = list(self._subs)
         for want, q in subs:
-            if want is None or want == key:
+            if want == key or (want is None and not exact):
                 try:
                     q.put_nowait(event)
                 except queue.Full:
@@ -216,6 +234,9 @@ class HubState:
         self.machine_id = self.machine["id"]
         self.journal = Journal(self.home)
         self.bus = EventBus()
+        # Live token deltas from this hub's own API channels, coalesced
+        # per message and published without a journal entry.
+        self.deltas = stream_mod.DeltaStream(self.publish_transient)
         self.catalog = catalog_mod.Catalog(self.home, self.machine_id)
         self.tail_manager = tail.TailManager(
             emit=self.emit,
@@ -519,6 +540,18 @@ class HubState:
             issues_mod.title_adopted(self, *adopted)
             tasks_mod.origin_adopted(self, *adopted)
         return written
+
+    def publish_transient(self, key: str, event: dict) -> None:
+        """Fan ``event`` out to ``key``'s live subscribers only.
+
+        For ``message.delta``: never journaled (the final
+        ``message.appended`` is the record), so it carries no ``seq``
+        and a reconnect never replays it. The global stream doesn't get
+        it either; only an open chat has a use for it.
+        """
+        ev = dict(event)
+        ev.pop("seq", None)
+        self.bus.publish(key, ev, exact=True)
 
     def expire_pending_approvals(self) -> None:
         """Sweep ``pending_approvals`` entries past ``APPROVAL_TTL_S``.
@@ -1722,7 +1755,8 @@ class _Handler(BaseHTTPRequestHandler):
                     continue  # already delivered by the replay pass
                 try:
                     self._sse_write(ev)
-                    replayed = max(replayed, ev["seq"])
+                    if isinstance(ev.get("seq"), int):
+                        replayed = max(replayed, ev["seq"])
                 except (
                     BrokenPipeError, ConnectionResetError,
                     TimeoutError, OSError,
@@ -1782,10 +1816,13 @@ class _Handler(BaseHTTPRequestHandler):
         ev = injected_mod.clean_event(ev)
         if ev is None:
             return
+        # A transient event (``message.delta``) has no seq and no
+        # ``id:`` line, so an EventSource's Last-Event-ID stays on the
+        # last journaled event.
         frame = (
-            f"id: {ev.get('seq', 0)}\n"
-            f"event: {ev.get('type', 'message')}\n"
-            f"data: {json.dumps(ev, ensure_ascii=False, default=str)}\n\n"
+            (f"id: {ev['seq']}\n" if "seq" in ev else "")
+            + f"event: {ev.get('type', 'message')}\n"
+            + f"data: {json.dumps(ev, ensure_ascii=False, default=str)}\n\n"
         )
         self.wfile.write(frame.encode("utf-8"))
         self.wfile.flush()
@@ -2232,7 +2269,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._state.home,
                 {**machine, "last_seen_at": time.time()},
             )
-            self._send_json(200, {"ok": True, "machine_id": mid})
+            # ``message_delta`` tells the satellite this hub publishes
+            # its deltas live instead of journaling them; an older hub
+            # would journal every chunk, so the satellite sends none.
+            self._send_json(200, {"ok": True, "machine_id": mid,
+                                  "message_delta": True})
             return
 
         if path == "/v1/agent/catalog":
@@ -2681,6 +2722,7 @@ class _Handler(BaseHTTPRequestHandler):
         return self._state.tail_manager.waking(key, inject.injector_for(
             self._state.home, key, meta,
             emit=self._state.emit, machine=self._state.machine_id,
+            deltas=self._state.deltas,
         ))
 
     def _forward(
@@ -2851,6 +2893,12 @@ class _Handler(BaseHTTPRequestHandler):
                 if not isinstance(kind, str) or kind not in kinds:
                     continue
             local_key = str(ev.get("session") or "")
+            if etype == "message.delta":
+                delta = _sat_delta(mid, local_key, ev.get("data"))
+                if delta is not None:
+                    self._state.publish_transient(delta["session"], delta)
+                    accepted += 1
+                continue
             if local_key:
                 hub_key = protocol.remote_key(mid, local_key)
                 ev = dict(ev, session=hub_key, machine=mid)

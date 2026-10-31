@@ -189,6 +189,7 @@ remote/
   commands.py    # swe remote serve|agent|pair|attach|status — argv + print
   attachments.py # phone uploads staged on the session's machine
   sendq.py       # per-key FIFO send queue: message writes off the HTTP handler
+  stream.py      # message.delta: live text coalesced per message, never journaled
   injected.py    # strip harness-injected context from chat messages
   slash.py       # the "/" menu: commands a session's harness will run
   slash_builtins.py  # curated built-in slash commands per harness
@@ -363,6 +364,34 @@ Registry keyed by `tool_name`, same shape as `PARSER_REGISTRY` /
 | A | claude | headless `claude -p --resume <id> --output-format stream-json` per message | one appended turn per call, deltas; permissions preset via `--permission-mode`/`--allowedTools` (no mid-turn prompt in print mode — flagged limitation) |
 | B | resumable TUIs (gemini, cursor, crush, cline, droid, pi…) | `supervise.py` tmux: send = `send-keys`, prompt/approval = `capture-pane` parse, display still transcript tail | universal write; approvals are buttons that send menu keys — best effort |
 | C | neither resumable nor headless | tail only | read + notify |
+
+### Live text — `stream.py`
+
+The tier-A channels read a reply as it is written and push each text
+chunk into the machine's `DeltaStream`, which sends a `message.delta`
+at most every 100 ms per message plus a last one with `done: true`
+(payload in docs/json-contracts.md). Codex streams
+`item/agentMessage/delta` (finished by `item/completed` or the turn
+ending); opencode streams `message.part.updated` with a `delta`, or a
+bare `message.part.delta`, for `text` parts (finished by the part's
+`time.end` or `session.idle`); headless Claude runs with
+`--include-partial-messages` and streams each `text_delta` content
+block, skipping a subagent's lines. The flag adds `stream_event` lines
+to stdout only: the session's JSONL transcript and `--resume` behave as
+before, and a claude that refuses the flag gets the turn rerun without
+it. Reasoning is not streamed, since its text often never reaches the
+transcript to replace the bubble.
+
+Text is redacted over the whole message so far, not per chunk; the
+unfinished word, a line that looks like a credential, and an open
+private-key block wait for more text, and a message whose sent text a
+later redaction would rewrite stops streaming. The hub publishes deltas
+to the session's SSE subscribers only (not `/v1/events`) and never
+journals them; the transcript's `message.appended` stays the record. A
+satellite coalesces its own deltas and posts them best-effort on a
+separate uplink to `/v1/agent/events`, never through its outbox, and
+only when the hub's register reply says `message_delta: true` (an older
+hub would journal them). tmux sessions stay record-by-record.
 
 ## Protocol — `protocol.py`
 

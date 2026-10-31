@@ -8,6 +8,7 @@ command SSE stream doubles as the presence signal, so a sleeping MacBook
 simply drops offline on the hub until it wakes and replays the queue.
 """
 
+import collections
 import json
 import os
 import ssl
@@ -28,6 +29,7 @@ from quiver.paths import atomic_write_text, remote_dir_for
 from quiver.remote import attachments, catalog as catalog_mod, slash
 from quiver.remote import inject, journal, protocol, sendq, supervise, tail
 from quiver.remote import fork as fork_mod, usage as usage_mod
+from quiver.remote import stream as stream_mod
 from quiver.remote.detach import PendingDetaches
 
 AGENT_FILE = "agent.json"          # satellite's stored hub credential
@@ -55,6 +57,8 @@ PULL_WAIT_MAX_S = 300
 OUTBOX_MAX = journal.RING_MAX
 
 
+# Live deltas waiting for the delta uplink; past this the oldest go.
+DELTA_QUEUE_MAX = 500
 LOCK_FILE = "agent.lock"           # held by the one running agent
 
 
@@ -256,6 +260,15 @@ class RemoteAgent:
         self._register_denied: str | None = None
         self.outbox: "list[dict]" = []
         self._outbox_lock = threading.Lock()
+        # Live ``message.delta`` events: coalesced here, sent best-effort
+        # on their own uplink and never written to the outbox journal.
+        # Only a hub whose register reply says ``message_delta`` gets
+        # them; an older hub would journal every chunk.
+        self.deltas = stream_mod.DeltaStream(self._queue_delta)
+        self._delta_out: "collections.deque[dict]" = collections.deque(
+            maxlen=DELTA_QUEUE_MAX)
+        self._delta_wake = threading.Event()
+        self._hub_deltas = False
         self._stop = threading.Event()
         # Commands dispatch on the stream thread except ``message``,
         # which can run minutes (headless claude) or wait out a turn
@@ -473,6 +486,33 @@ class RemoteAgent:
             self._save_outbox_ack()
         return True
 
+    def _queue_delta(self, key: str, event: dict) -> None:
+        """DeltaStream's sink: hand a delta to the delta uplink."""
+        if not self._hub_deltas:
+            return
+        self._delta_out.append(event)
+        self._delta_wake.set()
+
+    def _push_deltas(self) -> None:
+        """POST what is queued, once; a failed POST drops it (the
+        final ``message.appended`` still goes through the outbox)."""
+        batch: list[dict] = []
+        while self._delta_out and len(batch) < PUSH_BATCH:
+            batch.append(self._delta_out.popleft())
+        if batch:
+            _post(self.hub, "/v1/agent/events", self.cred,
+                  {"machine_id": self.machine_id, "events": batch})
+
+    def _delta_loop(self) -> None:
+        while not self._stop.is_set():
+            self._delta_wake.wait(1.0)
+            self._delta_wake.clear()
+            try:
+                while self._delta_out and not self._stop.is_set():
+                    self._push_deltas()
+            except Exception:
+                pass
+
     def _push_catalog(self) -> bool:
         # Launch adoption runs here too: `launch` marks a pending file
         # and the new session must claim its tmux pane before the push
@@ -591,6 +631,8 @@ class RemoteAgent:
             )
         if status == 200:
             self._register_denied = None
+            self._hub_deltas = isinstance(reply, dict) and \
+                reply.get("message_delta") is True
         return status == 200
 
     # -- downlink ----------------------------------------------------------
@@ -951,6 +993,7 @@ class RemoteAgent:
             injector = self.tail_manager.waking(key, inject.injector_for(
                 self.home, key, supervise.meta_for(self.home, key),
                 emit=self._capture, machine=self.machine_id,
+                deltas=self.deltas,
             ))
             if op == "message":
                 # Resolve attachment refs to the paths the attachment
@@ -1122,6 +1165,8 @@ class RemoteAgent:
         threads = [
             threading.Thread(target=self._uplink_loop, daemon=True,
                              name="agent-uplink"),
+            threading.Thread(target=self._delta_loop, daemon=True,
+                             name="agent-deltas"),
             threading.Thread(target=self._catalog_loop, daemon=True,
                              name="agent-catalog"),
             threading.Thread(target=self._usage_loop, daemon=True,

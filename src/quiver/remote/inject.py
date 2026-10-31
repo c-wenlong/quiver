@@ -4,11 +4,12 @@ Registry keyed by harness, same shape as the parser/reader registries.
 Two channels ship in R2:
 
 - ``ClaudeHeadlessInjector`` (tier A): one ``claude -p --resume <id>
-  --output-format stream-json`` invocation per prompt. The transcript
-  file gets the appended turn, so the tailer picks up the same
-  ``message.appended`` events as a TUI run. Permissions are fixed per
-  invocation (print mode has no mid-turn prompts), so approvals answer
-  ``approval_not_supported``.
+  --output-format stream-json --include-partial-messages`` invocation
+  per prompt. The transcript file gets the appended turn, so the tailer
+  picks up the same ``message.appended`` events as a TUI run; the
+  partial-message lines on stdout feed ``message.delta`` only.
+  Permissions are fixed per invocation (print mode has no mid-turn
+  prompts), so approvals answer ``approval_not_supported``.
 - ``TmuxInjector`` (tier B): ``send-keys`` for prompts, menu digits for
   approvals, Escape for interrupt — best-effort against whatever TUI is
   running under the supervisor.
@@ -29,6 +30,11 @@ keystrokes, app-server queues server-side). Headless invocations are
 atomic — steer degrades to queue and one run is in flight per session
 at a time; a degraded send reports ``degraded=True`` so the client can
 say so.
+
+Live text: the three tier-A channels push each text chunk they read
+into a ``stream.DeltaStream`` (``deltas``), which coalesces them into
+``message.delta`` events that are never journaled. The transcript's
+``message.appended`` stays the record; tmux panes never stream.
 """
 
 from __future__ import annotations
@@ -293,19 +299,33 @@ class ClaudeHeadlessInjector:
 
     _locks: dict[str, threading.Lock] = {}
     _procs: dict[str, subprocess.Popen] = {}
+    # Cleared once a claude refuses --include-partial-messages (a build
+    # from before the flag): runs go on without live text.
+    _partial = True
 
-    def __init__(self, home: Path | None, session_key: str) -> None:
+    def __init__(self, home: Path | None, session_key: str,
+                 deltas=None, machine: str = "") -> None:
         self.home = home
         self.key = session_key
+        self.deltas = deltas
+        self.machine = machine
+        # Non-JSON output of the last run (argv errors land here).
+        self._noise: list[str] = []
         self._locks.setdefault(session_key, threading.Lock())
 
     @staticmethod
-    def argv(session: Session, text: str, model: str = "") -> list[str]:
+    def argv(session: Session, text: str, model: str = "",
+             partial: bool = True) -> list[str]:
         args = [
             "claude", "-p", "--resume", session.session_id,
             "--output-format", "stream-json",
             "--verbose",
         ]
+        # Token-level ``stream_event`` lines on stdout, for live text.
+        # They change nothing on disk: the session's JSONL transcript
+        # and --resume behave as without the flag.
+        if partial:
+            args.append("--include-partial-messages")
         # A launch-time pick recorded on the session's meta rides every
         # print-mode invocation as ``--model`` — the headless channel's
         # own mechanism for the launch ``model`` field.
@@ -352,6 +372,8 @@ class ClaudeHeadlessInjector:
         watchdog = threading.Timer(HEADLESS_TIMEOUT_S, _expire)
         watchdog.daemon = True
         watchdog.start()
+        self._noise = []
+        live = _ClaudeLive(self.deltas, self.key, self.machine)
         try:
             result_text = ""
             assert proc.stdout is not None
@@ -362,6 +384,12 @@ class ClaudeHeadlessInjector:
                 try:
                     rec = json.loads(line)
                 except ValueError:
+                    self._noise = (self._noise + [line])[-5:]
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                if rec.get("type") == "stream_event":
+                    live.feed(rec)
                     continue
                 if rec.get("type") == "result":
                     result_text = str(rec.get("result") or "")
@@ -378,6 +406,7 @@ class ClaudeHeadlessInjector:
             return False, "headless run timed out"
         finally:
             watchdog.cancel()
+            live.close()
             # Reap whatever the run left: an errored or killed child
             # otherwise stays a zombie with an open pipe.
             try:
@@ -409,8 +438,18 @@ class ClaudeHeadlessInjector:
                 return InjectResult(
                     False, "session detached; refusing the write"
                 )
+            model = str(meta.get("model") or "")
+            partial = ClaudeHeadlessInjector._partial
             ok, note = self._run(session, self.argv(
-                session, text, str(meta.get("model") or "")))
+                session, text, model, partial=partial))
+            if not ok and partial and any(
+                    "include-partial-messages" in n for n in self._noise):
+                # This claude predates the flag and stopped at argv
+                # parsing, before the prompt reached the model: run the
+                # turn again without live text.
+                ClaudeHeadlessInjector._partial = False
+                ok, note = self._run(session, self.argv(
+                    session, text, model, partial=False))
             if ok and degraded:
                 note = (note or "turn complete") + \
                     " (steer queued: headless runs are atomic)"
@@ -454,6 +493,60 @@ class ClaudeHeadlessInjector:
         return InjectResult(
             False, f"unsupported_control: {op} needs a live TUI"
         )
+
+
+class _ClaudeLive:
+    """One headless run's ``stream_event`` lines into ``message.delta``.
+
+    Each text content block streams as its own message, id
+    ``<API message id>:<block index>``. A subagent's lines
+    (``parent_tool_use_id`` set) are skipped: they never reach the
+    session's own transcript, so their bubble would never be replaced.
+    """
+
+    def __init__(self, deltas, key: str, machine: str) -> None:
+        self.deltas = deltas
+        self.key = key
+        self.machine = machine
+        self.msg = ""
+        self.text_blocks: set = set()
+
+    def _id(self, index) -> str:
+        return f"{self.msg}:{index}"
+
+    def feed(self, rec: dict) -> None:
+        if self.deltas is None or rec.get("parent_tool_use_id"):
+            return
+        ev = rec.get("event")
+        if not isinstance(ev, dict):
+            return
+        etype = ev.get("type")
+        index = ev.get("index")
+        if etype == "message_start":
+            message = ev.get("message")
+            mid = message.get("id") if isinstance(message, dict) else None
+            self.msg = str(mid or f"claude-{time.time_ns()}")
+            self.text_blocks = set()
+        elif etype == "content_block_start":
+            block = ev.get("content_block")
+            if isinstance(block, dict) and block.get("type") == "text" \
+                    and self.msg:
+                self.text_blocks.add(index)
+        elif etype == "content_block_delta":
+            delta = ev.get("delta")
+            if index in self.text_blocks and isinstance(delta, dict) \
+                    and delta.get("type") == "text_delta":
+                self.deltas.push(self.key, self.machine, self._id(index),
+                                 "assistant", str(delta.get("text") or ""))
+        elif etype == "content_block_stop":
+            if index in self.text_blocks:
+                self.text_blocks.discard(index)
+                self.deltas.finish(self.key, self._id(index))
+
+    def close(self) -> None:
+        """The run ended (or died): nothing more will stream."""
+        if self.deltas is not None:
+            self.deltas.finish_all(self.key)
 
 
 # ---------------------------------------------------------------------
@@ -517,6 +610,11 @@ class _ServeProc:
         self.subs: dict[str, tuple[str, object, str]] = {}
         # permission id -> session id (for reply routing)
         self.permissions: dict[str, str] = {}
+        # opencode session id -> the subscriber's DeltaStream
+        self.deltas: dict[str, object] = {}
+        # part id -> part type ("text", "reasoning", "tool", ...), so a
+        # bare ``message.part.delta`` knows what it is growing
+        self.part_types: dict[str, str] = {}
         self.reader_started = False
         self.dead = False
 
@@ -549,8 +647,76 @@ def _serve_event_loop(serve: _ServeProc) -> None:
         pass
 
 
+# Bound on remembered part types; a long-lived serve forgets the oldest.
+_PART_TYPES_MAX = 2000
+
+
+def _serve_live(serve: _ServeProc, etype: str, props: dict) -> None:
+    """Text parts growing into ``message.delta``.
+
+    opencode streams a part two ways depending on its version:
+    ``message.part.updated`` with a ``delta`` beside the part, or a
+    bare ``message.part.delta`` (``{sessionID, messageID, partID,
+    field, delta}``) after the part was announced. Only ``text`` parts
+    stream (an assistant reply; a prompt arrives whole, without a
+    delta). The part's id is the stream id; a part with ``time.end``,
+    or the session going idle, finishes it.
+    """
+    if etype == "message.part.updated":
+        part = props.get("part")
+        if not isinstance(part, dict):
+            return
+        part_id = str(part.get("id") or "")
+        sid = str(part.get("sessionID") or props.get("sessionID") or "")
+        ptype = str(part.get("type") or "")
+        if not part_id:
+            return
+        if len(serve.part_types) >= _PART_TYPES_MAX:
+            serve.part_types.pop(next(iter(serve.part_types)))
+        serve.part_types[part_id] = ptype
+        if ptype != "text":
+            return
+        target = _serve_target(serve, sid)
+        if target is None:
+            return
+        deltas, key, machine = target
+        delta = props.get("delta")
+        if isinstance(delta, str) and delta:
+            deltas.push(key, machine, part_id, "assistant", delta)
+        timing = part.get("time")
+        if isinstance(timing, dict) and timing.get("end"):
+            deltas.finish(key, part_id)
+            serve.part_types.pop(part_id, None)
+    elif etype == "message.part.delta":
+        part_id = str(props.get("partID") or "")
+        if serve.part_types.get(part_id) != "text" or \
+                props.get("field", "text") != "text":
+            return
+        target = _serve_target(serve, str(props.get("sessionID") or ""))
+        delta = props.get("delta")
+        if target is not None and isinstance(delta, str) and delta:
+            deltas, key, machine = target
+            deltas.push(key, machine, part_id, "assistant", delta)
+    elif etype == "session.idle":
+        target = _serve_target(serve, str(props.get("sessionID") or ""))
+        if target is not None:
+            deltas, key, _machine = target
+            deltas.finish_all(key)
+
+
+def _serve_target(serve: _ServeProc, sid: str):
+    """``(deltas, key, machine)`` for an opencode session someone
+    streams, else None."""
+    deltas = serve.deltas.get(sid)
+    sub = serve.subs.get(sid)
+    if deltas is None or sub is None:
+        return None
+    return deltas, sub[0], sub[2]
+
+
 def _serve_event(serve: _ServeProc, blob: bytes) -> None:
-    """One SSE payload: route permission asks/replies to subscribers."""
+    """One SSE payload: route permission asks/replies to subscribers,
+    and text deltas to their ``DeltaStream``."""
     from quiver.remote import protocol
 
     try:
@@ -562,7 +728,12 @@ def _serve_event(serve: _ServeProc, blob: bytes) -> None:
     etype = str(ev.get("type") or "")
     props = ev.get("properties") if isinstance(
         ev.get("properties"), dict) else ev.get("payload")
-    if not isinstance(props, dict) or "permission" not in etype.lower():
+    if not isinstance(props, dict):
+        return
+    if etype.startswith("message.part.") or etype == "session.idle":
+        _serve_live(serve, etype, props)
+        return
+    if "permission" not in etype.lower():
         return
     perm_id = str(
         props.get("id") or props.get("permissionID") or "")
@@ -613,11 +784,13 @@ class OpencodeServeInjector:
         session_key: str,
         emit=None,
         machine: str = "",
+        deltas=None,
     ) -> None:
         self.home = home
         self.key = session_key
         self.emit = emit
         self.machine = machine
+        self.deltas = deltas
 
     # -- serve proc lifecycle -------------------------------------------
 
@@ -677,6 +850,8 @@ class OpencodeServeInjector:
                     if sid not in serve.subs:
                         serve.refs += 1
                     serve.subs[sid] = (self.key, self.emit, self.machine)
+                    if self.deltas is not None:
+                        serve.deltas[sid] = self.deltas
                 return serve
             time.sleep(0.25)
         # Never answered. With no other session holding it, nothing
@@ -705,6 +880,7 @@ class OpencodeServeInjector:
             # sessions subscribed to the dead one hold nothing here, and
             # dropping a ref they never took would kill the new serve
             # under the sessions using it.
+            serve.deltas.pop(session.session_id, None)
             if serve.subs.pop(session.session_id, None) is None:
                 return
             serve.refs = max(0, serve.refs - 1)
@@ -862,9 +1038,36 @@ def _rpc_line(proc: subprocess.Popen, payload: dict) -> bool:
         return False
 
 
-def _appserver_read_loop(server: _AppServer, key: str, emit, machine: str) -> None:
+def _appserver_live(method: str, params: dict, key: str, machine: str,
+                    deltas) -> None:
+    """Agent-message text into ``message.delta``.
+
+    ``item/agentMessage/delta`` (``{itemId, delta}``) grows the item's
+    text; ``item/completed`` for that item, or the turn ending,
+    finishes it. Reasoning deltas are left out: a reasoning item often
+    never reaches the rollout as text, so its bubble would never be
+    replaced.
+    """
+    if deltas is None:
+        return
+    if method == "item/agentMessage/delta":
+        item_id = str(params.get("itemId") or "")
+        delta = params.get("delta")
+        if item_id and isinstance(delta, str) and delta:
+            deltas.push(key, machine, item_id, "assistant", delta)
+    elif method == "item/completed":
+        item = params.get("item")
+        if isinstance(item, dict) and item.get("id"):
+            deltas.finish(key, str(item["id"]))
+    elif method in ("turn/completed", "turn/failed", "codex/turnCompleted"):
+        deltas.finish_all(key)
+
+
+def _appserver_read_loop(server: _AppServer, key: str, emit, machine: str,
+                         deltas=None) -> None:
     """Demux stdout: responses go to waiting calls; server-initiated
-    approval requests become protocol events."""
+    approval requests become protocol events; message text streams
+    into ``deltas``."""
     from quiver.remote import protocol
 
     proc = server.proc
@@ -880,6 +1083,9 @@ def _appserver_read_loop(server: _AppServer, key: str, emit, machine: str) -> No
             method = str(msg.get("method") or "")
             if method:
                 # Server -> client request or notification.
+                params = msg.get("params")
+                if isinstance(params, dict):
+                    _appserver_live(method, params, key, machine, deltas)
                 if "requestApproval" in method or "Approval" in method:
                     req_id = msg.get("id")
                     if req_id is not None:
@@ -914,6 +1120,8 @@ def _appserver_read_loop(server: _AppServer, key: str, emit, machine: str) -> No
     except Exception:
         pass
     server.dead = True
+    if deltas is not None:
+        deltas.finish_all(key)
 
 
 class CodexAppServerInjector:
@@ -928,11 +1136,13 @@ class CodexAppServerInjector:
         session_key: str,
         emit=None,
         machine: str = "",
+        deltas=None,
     ) -> None:
         self.home = home
         self.key = session_key
         self.emit = emit
         self.machine = machine
+        self.deltas = deltas
 
     # -- proc + rpc plumbing --------------------------------------------
 
@@ -971,7 +1181,8 @@ class CodexAppServerInjector:
                 spawned = True
                 threading.Thread(
                     target=_appserver_read_loop,
-                    args=(server, self.key, self.emit, self.machine),
+                    args=(server, self.key, self.emit, self.machine,
+                          self.deltas),
                     daemon=True, name=f"codex-rpc-{self.key}",
                 ).start()
         if not spawned:
@@ -1149,20 +1360,27 @@ def injector_for(
     meta: dict | None,
     emit=None,
     machine: str = "",
+    deltas=None,
 ) -> TmuxInjector | ClaudeHeadlessInjector | OpencodeServeInjector | CodexAppServerInjector:
-    """Pick the channel from the supervised registry row."""
+    """Pick the channel from the supervised registry row. ``deltas`` (a
+    ``stream.DeltaStream``) takes the tier-A channels' live text; tmux
+    has none."""
     meta = meta or {}
     home_path = Path(home) if home is not None else None
     mode = meta.get("mode")
     tool = meta.get("tool_name")
     if mode == "headless" and tool == "claude":
-        return ClaudeHeadlessInjector(home_path, session_key)
+        return ClaudeHeadlessInjector(
+            home_path, session_key, deltas=deltas, machine=machine
+        )
     if mode == "serve" and tool == "opencode":
         return OpencodeServeInjector(
-            home_path, session_key, emit=emit, machine=machine
+            home_path, session_key, emit=emit, machine=machine,
+            deltas=deltas,
         )
     if mode == "appserver" and tool == "codex":
         return CodexAppServerInjector(
-            home_path, session_key, emit=emit, machine=machine
+            home_path, session_key, emit=emit, machine=machine,
+            deltas=deltas,
         )
     return TmuxInjector(home_path, session_key)
