@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hub: thinking messages carry how long the model thought.**
+  `kind: "thinking"` messages from Claude Code, Codex and opencode now
+  carry `duration_s`, so the clients can show "Thought for 12s". Claude
+  Code and Codex time it from the record before the thinking record to
+  the thinking record; opencode from its own reasoning `time` span.
+  Other harnesses, and records with no usable timestamps, leave it out
+  ([#1440](https://github.com/c-wenlong/quiver/issues/1440)).
+
 - **Mac: Settings › Remote can keep this Mac's agent running.** On a Mac
   paired as a satellite of another machine's hub, a "Keep this Mac's
   agent running" switch installs or removes the agent's LaunchAgent

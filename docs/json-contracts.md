@@ -112,7 +112,14 @@ replays the journal.
 
 `message.appended.data` is a RemoteMessage: `{kind: user|assistant|
 thinking|tool_use|tool_result|compaction|system|approval|error, text,
-ts, tool: {name, call_id, args_summary, args_full}?, result_ref?}`.
+ts, tool: {name, call_id, args_summary, args_full}?, result_ref?,
+duration_s?}`. `duration_s` is on `thinking` only: how long the model
+thought, in seconds rounded to 0.1, and absent when unknown (clients
+then show plain "Thought"). For Claude Code and Codex it is the gap from
+the record before the thinking record to the thinking record, because
+both write each block as its own record when the block finishes; for
+opencode it is the part's own `time` span. It is set when the message is
+first emitted and never patched later.
 Writes (`POST /v1/sessions/{key}/message|approval|control`, `POST
 /v1/sessions`) answer `409 not_attached` while a session is `observed`.
 

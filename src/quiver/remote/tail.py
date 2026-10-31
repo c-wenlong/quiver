@@ -451,6 +451,119 @@ def decode_record(tool_name: str, record: dict) -> list[dict]:
         return []
 
 
+# ── thinking durations ───────────────────────────────────────────────────
+
+# Harnesses that write each content block as its own timestamped record
+# the moment the block finishes: a thinking record's timestamp is when
+# the thinking ended, and the record before it (the prompt, a tool
+# result, Claude's api-request) is when it began. Harnesses that write a
+# whole reply as one record (pi, droid, ...) give no such split.
+_BLOCK_RECORD_TOOLS = frozenset({"claude", "codex"})
+
+# Codex event_msg records that shadow a reasoning item and land just
+# before it: they mark the reasoning's end, not the start of anything.
+_CODEX_REASONING_EVENTS = frozenset({
+    "agent_reasoning", "agent_reasoning_raw_content",
+    "agent_reasoning_section_break", "agent_reasoning_delta",
+    "reasoning_content_delta", "reasoning_raw_content_delta",
+})
+
+
+def _duration(start: Any, end: Any) -> float | None:
+    """``end - start`` rounded to 0.1, or None when either is not a
+    number or the span runs backwards."""
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+               for v in (start, end)):
+        return None
+    span = float(end) - float(start)
+    return round(span, 1) if span >= 0 else None
+
+
+def _thinking(text: str, ts: float, duration: float | None) -> dict:
+    """A thinking message, timed when the store recorded its span."""
+    msg = protocol.message("thinking", text, ts=ts)
+    if duration is not None:
+        msg["duration_s"] = duration
+    return msg
+
+
+def _span_ms(times: Any) -> float | None:
+    """An opencode ``time`` dict's span in seconds: legacy parts carry
+    ``{start, end}``, 2.x content blocks ``{created, completed}`` (ms)."""
+    if not isinstance(times, dict):
+        return None
+    for lo, hi in (("start", "end"), ("created", "completed")):
+        if times.get(lo) is not None and times.get(hi) is not None:
+            span = _duration(times.get(lo), times.get(hi))
+            return None if span is None else round(span / 1000, 1)
+    return None
+
+
+def _empty_thinking(tool_name: str, rec: dict) -> bool:
+    """A thinking record with nothing to show: Claude Code writes an
+    empty thinking block a moment before the full one, and Codex an
+    encrypted reasoning item with no summary."""
+    if tool_name == "claude" and rec.get("type") == "assistant":
+        msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+        blocks = msg.get("content")
+        return isinstance(blocks, list) and bool(blocks) and all(
+            isinstance(b, dict)
+            and b.get("type") in {"thinking", "redacted_thinking"}
+            for b in blocks
+        )
+    if tool_name == "codex" and rec.get("type") == "response_item":
+        payload = rec.get("payload")
+        return isinstance(payload, dict) and payload.get("type") == "reasoning"
+    return False
+
+
+def _thinking_companion(tool_name: str, rec: dict) -> bool:
+    """A record that belongs to a reasoning item rather than preceding
+    it, so it must not move the thinking start mark."""
+    if tool_name != "codex" or rec.get("type") != "event_msg":
+        return False
+    payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+    ptype = str(payload.get("type") or "")
+    if ptype in _CODEX_REASONING_EVENTS:
+        return True
+    item = payload.get("item")
+    return ptype == "item_completed" and isinstance(item, dict) \
+        and str(item.get("type") or "").lower() == "reasoning"
+
+
+def stamp_thinking(
+    tool_name: str, rec: dict, messages: list[dict], since: float | None,
+) -> float | None:
+    """Set ``duration_s`` on a thinking-only record's messages and
+    return the start mark for the next record.
+
+    ``since`` is the timestamp of the last record before this one. Only
+    a record that decodes to thinking alone is stamped: a record mixing
+    thinking with text was written when the whole reply ended, so its
+    gap would count the reply too. An empty thinking record leaves the
+    mark where it was, so the full one after it is timed from the start.
+    An untimed record that shows something (a prompt, a tool result)
+    clears it: the thinking after it started at an unknown time. Untimed
+    bookkeeping records that show nothing (Claude's titles, agent names,
+    request blobs) leave it.
+    """
+    if tool_name not in _BLOCK_RECORD_TOOLS:
+        return since
+    ts = _rec_ts(rec)
+    if ts is None:
+        return None if messages else since
+    if _thinking_companion(tool_name, rec) \
+            or (not messages and _empty_thinking(tool_name, rec)):
+        return since
+    if since is not None and messages \
+            and all(m.get("kind") == "thinking" for m in messages):
+        span = _duration(since, ts)
+        if span is not None:
+            for m in messages:
+                m["duration_s"] = span
+    return ts
+
+
 # ── transcript file resolution ────────────────────────────────────────────
 
 # Roots mirror transcripts.py's reader registry; ``_find_session_file``
@@ -518,12 +631,18 @@ class JsonlTailSource:
         # copytruncate (or an in-place rewrite) keeps this head, a
         # rotated or rewritten file does not.
         self._head = b""
+        # Timestamp of the last record read: the start of a thinking
+        # record that follows it (see stamp_thinking). Kept in the
+        # cursor so a hub restart between a prompt and its thinking
+        # still times it.
+        self._since: float | None = None
 
     def state(self) -> dict:
         return {
             "source": "jsonl",
             "path": str(self.path),
             "offset": self.offset,
+            "since": self._since,
             # The head sample itself rides in the cursor: hashing alone
             # can only verify a file that still reaches head_len, but a
             # transcript may have been cut *shorter* than that while the
@@ -550,6 +669,11 @@ class JsonlTailSource:
             offset = int(state.get("offset") or 0)
         except (TypeError, ValueError):
             offset = 0
+        since = state.get("since")
+        # Taken only once the cursor proves to be this file's: a mark
+        # from a replaced file would time a thinking block from it.
+        since = float(since) if isinstance(since, (int, float)) \
+            and not isinstance(since, bool) else None
         stored = state.get("head")
         if isinstance(stored, str) and stored:
             try:
@@ -564,7 +688,7 @@ class JsonlTailSource:
                     return False
                 # Verified — possibly a prefix shorter than the sample,
                 # when the file was truncated while down.
-                self.offset, self._head = offset, head
+                self.offset, self._head, self._since = offset, head, since
                 return True
         # A cursor written before the bytes were stored verifies only a
         # file that still reaches the sampled length.
@@ -575,15 +699,16 @@ class JsonlTailSource:
         head_sha = str(state.get("head_sha") or "")
         if not (head_len and head_sha):
             # A cursor from before the check: nothing to verify.
-            self.offset = offset
+            self.offset, self._since = offset, since
             return True
         head = self._file_head(head_len)
         if len(head) != head_len or hashlib.sha256(head).hexdigest() != head_sha:
             return False
-        self.offset, self._head = offset, head
+        self.offset, self._head, self._since = offset, head, since
         return True
 
     def skip_to_end(self) -> None:
+        self._since = None
         try:
             self.offset = self.path.stat().st_size
         except OSError:
@@ -593,6 +718,7 @@ class JsonlTailSource:
     def start_near_end(self, max_bytes: int | None = None) -> None:
         """Backfill only the last ``max_bytes`` (default BACKFILL_BYTES)."""
         max_bytes = BACKFILL_BYTES if max_bytes is None else max_bytes
+        self._since = None
         try:
             size = self.path.stat().st_size
         except OSError:
@@ -644,6 +770,7 @@ class JsonlTailSource:
                 return False
             at = lo + found
         self.offset = at + len(mark)
+        self._since = old._since
         self._prime_head()
         return True
 
@@ -686,6 +813,7 @@ class JsonlTailSource:
             return False
         self.offset = 0
         self._head = b""
+        self._since = None  # a new stream: its first record has no start
         return True
 
     def poll(self) -> list[dict]:
@@ -746,7 +874,10 @@ class JsonlTailSource:
             except (ValueError, RecursionError):
                 continue
             if isinstance(rec, dict):
-                out.extend(decode_record(self.tool_name, rec))
+                got = decode_record(self.tool_name, rec)
+                self._since = stamp_thinking(
+                    self.tool_name, rec, got, self._since)
+                out.extend(got)
         return out
 
     def _skip_oversized(self) -> int:
@@ -1017,7 +1148,7 @@ class OpencodeSource:
         elif ptype in {"reasoning", "thinking"}:
             text = _tr._clean_text(part.get("text"))
             if text:
-                out.append(protocol.message("thinking", text, ts=ts))
+                out.append(_thinking(text, ts, _span_ms(part.get("time"))))
         elif ptype in {"tool", "tool-invocation", "tool_result"}:
             state = part.get("state")
             state = state if isinstance(state, dict) else {}
@@ -1078,7 +1209,8 @@ class OpencodeSource:
             elif btype in {"reasoning", "thinking"}:
                 text = _tr._clean_text(block.get("text"))
                 if text:
-                    out.append(protocol.message("thinking", text, ts=ts))
+                    out.append(
+                        _thinking(text, ts, _span_ms(block.get("time"))))
             elif btype == "tool":
                 state = block.get("state")
                 state = state if isinstance(state, dict) else {}
