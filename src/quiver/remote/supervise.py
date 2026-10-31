@@ -477,31 +477,33 @@ _CHOICE_CURSOR = re.compile(r"^\s*([❭❯›])\s+(\S.*?)\s*$")
 _CHOICE_LABEL_MAX = 80
 
 
-def _choice_row(line: str) -> tuple[str, int, bool] | None:
-    """(label, label column, has cursor) for a choice row, else None.
+def _choice_row(line: str) -> tuple[str, int, bool, bool] | None:
+    """(label, label column, has cursor, usable) for a row, else None.
 
-    A cursor-glyph row always counts — the glyph is what separates a
-    live menu's selected row from stacked output. A bare line must be
-    short, indented and plain: a question, a key-hint footer, a marker
-    line or a numbered row never joins the list.
+    A cursor-glyph row is always a usable option — the glyph is what
+    separates a live menu's selected row from stacked output. A bare
+    line must be indented and carry text. Furniture — a key-hint
+    footer, a marker row, a wrapped line — stays inside the zone but
+    is never an option, so it cannot split the list in two. A "?" or
+    ":" ending keeps a bare row usable: the cursor's label column, not
+    punctuation, separates options from the question line above. Only
+    an empty, flush-left, or numbered line is a zone boundary.
     """
     if _MENU_OPTION.match(line):
         return None
     m = _CHOICE_CURSOR.match(line)
     if m:
-        return m.group(2), m.start(2), True
+        return m.group(2), m.start(2), True, True
     text = line.strip()
     col = len(line) - len(line.lstrip())
-    if (
-        not col
-        or len(text) > _CHOICE_LABEL_MAX
-        or not any(ch.isalnum() for ch in text)
-        or text.endswith(("?", ":"))
+    if not col or not any(ch.isalnum() for ch in text):
+        return None
+    usable = not (
+        len(text) > _CHOICE_LABEL_MAX
         or "·" in text
         or any(mk in text.lower() for mk in _FOOTER_MARKERS)
-    ):
-        return None
-    return text, col, False
+    )
+    return text, col, False, usable
 
 
 def choice_block(pane: str) -> tuple[list[tuple[str, str]], int, int | None]:
@@ -517,8 +519,8 @@ def choice_block(pane: str) -> tuple[list[tuple[str, str]], int, int | None]:
     """
     if not any(mk in pane.lower() for mk in APPROVAL_MARKERS):
         return [], -1, None
-    zones: list[list[tuple[int, str, int, bool]]] = []
-    zone: list[tuple[int, str, int, bool]] = []
+    zones: list[list[tuple[int, str, int, bool, bool]]] = []
+    zone: list[tuple[int, str, int, bool, bool]] = []
     for i, ln in enumerate(pane.splitlines()):
         row = _choice_row(ln)
         if row is None:
@@ -526,16 +528,18 @@ def choice_block(pane: str) -> tuple[list[tuple[str, str]], int, int | None]:
                 zones.append(zone)
                 zone = []
             continue
-        label, col, is_cursor = row
-        zone.append((i, label, col, is_cursor))
+        label, col, is_cursor, usable = row
+        zone.append((i, label, col, is_cursor, usable))
     if zone:
         zones.append(zone)
     for zone in reversed(zones):
-        cols = [col for _i, _l, col, cur in zone if cur]
+        cols = [col for _i, _l, col, cur, _u in zone if cur]
         if not cols:
             continue
         col = cols[0]
-        rows = [(i, l, cur) for i, l, c, cur in zone if c == col]
+        rows = [
+            (i, l, cur) for i, l, c, cur, u in zone if c == col and u
+        ]
         if len(rows) < 2:
             continue
         start = rows[0][0]

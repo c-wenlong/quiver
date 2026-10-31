@@ -2012,6 +2012,23 @@ class TestApprovalPromptLine(unittest.TestCase):
             "Approval requested")
         self.assertEqual(tail._approval_prompt_line(""), "Approval requested")
 
+    def test_stale_menu_above_live_choices_keeps_live_question(self):
+        # The numbered menu scrolled up is dead; the choice list below
+        # is what the card answers, so the question must come from the
+        # zone above that live block, not above the stale one.
+        pane = (
+            " Which branch?\n"
+            " 1. main\n"
+            " 2. dev\n"
+            "\n"
+            " Which engine?\n"
+            " ❭ SQLite\n"
+            "   Postgres\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        self.assertEqual(
+            tail._approval_prompt_line(pane), "Which engine?")
+
     def test_menu_row_is_never_the_prompt(self):
         # The banner scrolled off: "2 Yes, allow `sudo` commands" is a
         # menu answer, not the question — the fallback must skip it.

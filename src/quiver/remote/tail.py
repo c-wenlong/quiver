@@ -80,10 +80,10 @@ def _approval_prompt_line(pane: str) -> str:
         return _tr._redact_secrets(ctx)[:140]
     _, menu_at = supervise.menu_block(pane)
     _, choice_at, _ = supervise.choice_block(pane)
-    if choice_at >= 0 and (menu_at < 0 or choice_at < menu_at):
-        # Either block bounds the zone the question is picked from; a
-        # row from either must never pose as the prompt itself.
-        menu_at = choice_at
+    # The answers come from the lowest block, so the question must too:
+    # zoning off a stale menu that scrolled up would pair the old
+    # question with the live options beneath it.
+    menu_at = max(menu_at, choice_at)
     lines = pane.splitlines()
     # The question nearest the menu is its question — earlier lines can
     # hold questions of their own ("Which branch?"). Without a menu the

@@ -330,6 +330,27 @@ class TestTmuxHelpers(unittest.TestCase):
         rows, _start, _c = supervise.choice_block(pane)
         self.assertEqual([l for _n, l in rows], ["SQLite", "Postgres"])
 
+    def test_choice_block_furniture_cannot_split_the_list(self):
+        # A description ending in ":" and the key-hint footer stay in
+        # the zone but never become rows — options after them still
+        # parse, and punctuation labels at the label column are real.
+        pane = (
+            " Pick?\n\n"
+            " ❭ Alpha\n"
+            "     reads: the default\n"
+            "   Beta\n"
+            "   Continue anyway?\n"
+            "   Something else:\n"
+            "   note: esc cancels\n"
+            "   Gamma\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        rows, _s, _c = supervise.choice_block(pane)
+        self.assertEqual(
+            [l for _n, l in rows],
+            ["Alpha", "Beta", "Continue anyway?",
+             "Something else:", "Gamma"])
+
     def test_choice_block_prefers_the_bottom_list(self):
         pane = (
             " ❭ Old alpha\n"
@@ -351,6 +372,23 @@ class TestTmuxHelpers(unittest.TestCase):
         rows, kind, cursor = supervise.option_menu(self.DEVIN_QUESTION)
         self.assertEqual((kind, cursor), ("choices", 0))
         self.assertEqual([n for n, _ in rows], ["1", "2", "3", "4"])
+
+    def test_option_menu_prefers_the_lowest_block(self):
+        # A numbered menu scrolled above a live choice list is stale —
+        # the card offers the rows the pane is asking on now.
+        pane = (
+            " Pick a branch?\n"
+            " 1. main\n"
+            " 2. dev\n"
+            "\n"
+            " Which engine?\n"
+            " ❭ SQLite\n"
+            "   Postgres\n"
+            " ↑↓ select · ↵ confirm · esc cancel"
+        )
+        rows, kind, _c = supervise.option_menu(pane)
+        self.assertEqual(kind, "choices")
+        self.assertEqual([l for _n, l in rows], ["SQLite", "Postgres"])
 
     def test_approval_fingerprint_binds_choice_labels(self):
         # Same question, different options — a new prompt, a new id.
