@@ -450,6 +450,62 @@ class InitIntegrationTest(unittest.TestCase):
         self.assertFalse(os.path.lexists(home / ".claude" / "skills"))
         self.assertEqual(init_commands.cmd_init(["--accounts", "--force"]), 1)
 
+    def _cmd(self, home: Path, *args: str) -> tuple[int, str]:
+        import io
+        import re
+        from contextlib import redirect_stdout
+        from unittest import mock
+
+        out = io.StringIO()
+        with mock.patch.object(Path, "home", return_value=home), redirect_stdout(out):
+            code = init_commands.cmd_init(list(args))
+        return code, re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue())
+
+    def test_init_prints_accounts_and_names_conflicts(self):
+        home = _home(self)
+        _profiles(home, WORK)
+        _flags(home, skills=True, instructions=True)
+        (_acct(home) / "CLAUDE.md").write_text("# mine\n")
+        code, text = self._cmd(home, "--yes")
+        self.assertEqual(code, 0)
+        self.assertIn("Accounts", text)
+        self.assertIn("Not synced, the account already has its own:", text)
+        _flags(home, skills=False)
+        code, text = self._cmd(home, "--full")
+        self.assertIn("unlinked", text)
+
+    def test_accounts_text_view(self):
+        home = _home(self)
+        code, text = self._cmd(home, "--accounts")
+        self.assertEqual(code, 0)
+        self.assertIn("No account sync switched on", text)
+        _profiles(home, WORK)
+        _flags(home, skills=True)
+        code, text = self._cmd(home, "--accounts", "--check")
+        self.assertIn("would-create", text)
+        (home / ".quiver" / "accounts" / "profiles.json").write_text("{nope")
+        code, text = self._cmd(home, "--accounts")
+        self.assertEqual(code, 1)
+        self.assertIn("account sync skipped", text)
+        (home / ".quiver" / "config" / "config.json").write_text("{nope")
+        code, text = self._cmd(home, "--accounts")
+        self.assertEqual(code, 1)
+
+    def test_config_set_hints_at_init(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+
+        from quiver import config_commands
+
+        home = _home(self)
+        path = home / ".quiver" / "config" / "config.json"
+        out = io.StringIO()
+        with mock.patch("quiver.configuration.CONFIG_FILE", path), redirect_stdout(out):
+            config_commands.cmd_config(["set", "accounts.sync.skills", "true"])
+            config_commands.cmd_config(["unset", "accounts.sync.skills"])
+        self.assertEqual(out.getvalue().count("Run swe init"), 2)
+
     def test_archived_vendor_is_left_alone(self):
         home = _home(self)
         _profiles(home, WORK)
