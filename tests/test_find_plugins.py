@@ -97,6 +97,19 @@ class ComponentCountTest(unittest.TestCase):
         self.assertEqual(count_components(None), {})
         self.assertEqual(count_components(Path("/nope/nothing")), {})
 
+    def test_a_rules_dir_does_not_block_the_source_fallback(self):
+        # rules/ is a devin component, not a shared one: a copied plugin
+        # with hollow skills but real rules must still fall back to the
+        # marketplace source for its skills count.
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache" / "p"
+            (cache / "skills" / "hollow").mkdir(parents=True)
+            (cache / "rules").mkdir(parents=True)
+            (cache / "rules" / "r.md").write_text("x")
+            source = Path(tmp) / "src" / "p"
+            _plugin(source, "p", skills=("real",))
+            self.assertEqual(count_components(cache, source), {"skills": 1})
+
 
 class RegistryReadTest(_NoRegistry, unittest.TestCase):
     def test_reads_claude_installs_and_enabled_state(self):
@@ -201,13 +214,49 @@ class DevinReadTest(_NoRegistry, unittest.TestCase):
             self.assertEqual(got[0].marketplace, "account-upload")
 
     def test_a_cache_key_the_identity_does_not_prefix_still_resolves(self):
-        # Key derivation is devin's own; falling back to any version match
-        # beats reporting an installed plugin as content-less.
+        # Key derivation is devin's own; the manifest's own name confirms
+        # the dir when the key's prefix does not match the identity.
         with tempfile.TemporaryDirectory() as tmp:
             home = self._home(
                 tmp, resolved=[self._entry()],
                 cached=[("renamed_dir", "0.1.0", "default", ())])
             self.assertIsNotNone(discover_plugins(home)[0].path)
+
+    def test_a_sibling_bundle_name_does_not_steal_the_prefix(self):
+        # account-upload_a- also prefixes account-upload_a-b-<hash>, which
+        # holds plugin a-b. Whole-identity matching keeps them apart.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(
+                tmp,
+                resolved=[self._entry("a"), self._entry("a-b")],
+                cached=[("account-upload_a-b-11111111", "0.1.0", "a-b", ())])
+            got = {p.name: p for p in discover_plugins(home)}
+            self.assertIsNone(got["a"].path)
+            self.assertIsNotNone(got["a-b"].path)
+
+    def test_two_manifest_flavours_stay_one_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(
+                tmp, resolved=[],
+                cached=[("account-upload_default-f95236b7", "0.1.0", "default", ())])
+            d = (home / ".local/share/devin/cli/plugins/cache"
+                 / "account-upload_default-f95236b7/0.1.0/.claude-plugin")
+            d.mkdir()
+            (d / "plugin.json").write_text(json.dumps({"name": "default"}))
+            got = discover_plugins(home)
+            self.assertEqual(len(got), 1)
+            self.assertEqual(got[0].name, "default")
+
+    def test_rules_dir_counts_for_devin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = self._home(
+                tmp, resolved=[self._entry()],
+                cached=[("account-upload_default-f95236b7", "0.1.0", "default", ())])
+            rules = (home / ".local/share/devin/cli/plugins/cache"
+                     / "account-upload_default-f95236b7/0.1.0/rules")
+            rules.mkdir()
+            (rules / "r.md").write_text("x")
+            self.assertEqual(discover_plugins(home)[0].components, {"rules": 1})
 
     def test_a_lock_with_no_resolved_key_is_empty_not_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:

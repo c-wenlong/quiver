@@ -38,7 +38,7 @@ from quiver.find.tree import count_skills
 
 # What a plugin can ship. Counting these is the point: an installed plugin is
 # not one thing, it is however many skills, hooks and agents it carries.
-COMPONENT_DIRS = ("skills", "agents", "commands", "hooks", "rules")
+COMPONENT_DIRS = ("skills", "agents", "commands", "hooks")
 
 
 @dataclass
@@ -255,25 +255,41 @@ def _from_cache_scan(harness: str, cache: Path) -> list[Plugin]:
     return found
 
 
+def _manifest_name(path: Path) -> str | None:
+    """A plugin content dir's own name, from whichever manifest it carries."""
+    for sub in (".devin-plugin", ".claude-plugin", ".codex-plugin"):
+        name = _load_object(path / sub / "plugin.json").get("name")
+        if isinstance(name, str) and name:
+            return name
+    return None
+
+
 def _devin_cache_dir(root: Path, entry: dict) -> Path | None:
     """The fetched content dir for one lock-resolved plugin.
 
     Cache keys look like ``account-upload_default-f95236b7``: the identity's
-    ``:`` turned into ``_``, plus a hash suffix. Prefix-matching the identity
-    finds the key without decoding that suffix; the manifest inside any dir
-    is a ``.devin-plugin/plugin.json`` (``.claude-plugin`` is accepted too,
-    but devin wrote both this store and its own name first).
+    ``:`` turned into ``_``, plus a hash suffix. The key must match the
+    whole identity and then exactly one dash — ``source_a-b-<hash>`` holds
+    plugin ``a-b``, not plugin ``a`` — and when no key matches at all, the
+    manifest's own name confirms the dir instead of a sort-order guess.
     """
     cache = root / "cache"
     version = str(entry.get("version_dir") or "")
     if not cache.is_dir() or not version:
         return None
     identity = str(entry.get("identity") or "")
-    keys = [d for d in cache.iterdir()
-            if d.is_dir() and d.name.startswith(identity.replace(":", "_") + "-")]
-    if not keys:
-        keys = [d for d in cache.iterdir() if d.is_dir()]
-    for key in sorted(keys):
+    prefix = identity.replace(":", "_")
+    keyed = [k for k in cache.iterdir() if k.is_dir()
+             and k.name.startswith(prefix)
+             and (r := k.name[len(prefix):]).startswith("-")
+             and "-" not in r[1:] and len(r) > 1]
+    if not keyed:
+        spec = entry.get("spec") if isinstance(entry.get("spec"), dict) else {}
+        want = entry.get("name") or spec.get("bundleId")
+        if isinstance(want, str) and want:
+            keyed = [k for k in cache.iterdir() if k.is_dir()
+                     and _manifest_name(k / version) == want]
+    for key in sorted(keyed):
         found = key / version
         if found.is_dir():
             return found
@@ -282,9 +298,17 @@ def _devin_cache_dir(root: Path, entry: dict) -> Path | None:
 
 def _devin_components(path: Path | None) -> dict:
     counts = count_components(path)
-    # devin keeps hooks in a single hooks.json file at the plugin root,
-    # where every other harness uses a hooks/ directory.
-    if path is not None and (path / "hooks.json").is_file():
+    if path is None:
+        return counts
+    # devin's extras live where COMPONENT_DIRS does not look: hooks in one
+    # hooks.json file, triggered rules in a rules/ directory. They stay
+    # devin-only counts so claude's empty-copy fallback is untouched.
+    rules = path / "rules"
+    if rules.is_dir():
+        n = sum(1 for p in rules.iterdir() if p.suffix == ".md" or p.is_file())
+        if n:
+            counts["rules"] = n
+    if (path / "hooks.json").is_file():
         counts.setdefault("hooks", 1)
     return counts
 
@@ -320,16 +344,19 @@ def _from_devin(root: Path) -> list[Plugin]:
             enabled=True, path=path, components=_devin_components(path)))
     cache = root / "cache"
     if cache.is_dir():
-        for manifest in sorted(cache.glob("*/*/.*-plugin/plugin.json")):
-            path = manifest.parent.parent
+        # One row per content dir: a plugin carrying several manifest
+        # flavours (.devin-plugin next to .claude-plugin) is still one
+        # plugin, and a dir the lock already resolved was counted above.
+        for path in sorted(p for p in cache.glob("*/*") if p.is_dir()):
             if path in covered:
                 continue
-            data = _load_object(manifest)
-            name = data.get("name")
+            name = _manifest_name(path)
+            if name is None:
+                continue    # a fetch with no manifest is not a plugin yet
             key = path.parent.name    # <source>_<bundle>-<hash>
             found.append(Plugin(
                 harness="devin",
-                name=name if isinstance(name, str) and name else key,
+                name=name if name else key,
                 marketplace=key.split("_", 1)[0],
                 version=path.name, enabled=None, path=path,
                 components=_devin_components(path)))
