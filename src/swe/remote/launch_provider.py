@@ -43,6 +43,8 @@ import re
 import sys
 from pathlib import Path
 
+from swe.remote import plan_providers as _plans
+
 # A provider slug on the wire and in harness.json.
 SLUG_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
 _NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -138,6 +140,10 @@ PROVIDER_FALLBACK: dict[str, dict[str, dict]] = {
             "https://openrouter.ai/api", "OPENROUTER_API_KEY"),
     },
 }
+
+# Coding plans (docs/coding-plans.md): one Anthropic-compatible entry per
+# plan region, each reading the plan's own key variable.
+PROVIDER_FALLBACK["claude"].update(_plans.claude_entries())
 
 LABELS: dict[str, str] = {
     "openai": "OpenAI", "anthropic": "Anthropic", "gemini": "Gemini",

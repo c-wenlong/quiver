@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Coding plans as launch providers for Claude Code.** Every plan in
+  Settings › Providers › Inference is a provider Claude Code can launch
+  on, one slug per plan region (`glm-coding-plan-china`): the launch
+  sets `ANTHROPIC_BASE_URL` to the plan's endpoint, the plan key from
+  its own variable (never the pay-as-you-go one), and `ANTHROPIC_MODEL`
+  to the plan's default model. `plan_providers.PLANS` ports the Mac
+  app's `InferenceCatalog`, and a test fails when they drift. Closes
+  [#526](https://github.com/c-wenlong/quiver/issues/526).
 - **Launch a harness on a provider from the keys file.** `POST
   /v1/sessions` takes `provider: "<slug>"` and `swe use` takes
   `--provider=<slug>`: the launching machine starts the harness with

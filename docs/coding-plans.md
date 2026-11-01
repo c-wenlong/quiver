@@ -19,8 +19,19 @@ used against the wrong endpoint. Where the plan key and endpoint are the
 vendor's ordinary ones (Ollama, Synthetic, Poe), the variable is the vendor's
 own name.
 
-SWE does not point any harness at a plan yet. How harnesses should pick
-plan keys up (some autodetect variables) is still open.
+A launch can point Claude Code at a plan (#526). Each plan region is a
+launch provider (`src/swe/remote/plan_providers.py`, a port of
+`InferenceCatalog.all` that a test keeps in step): a one-region plan's slug
+is its id (`ark-agent-plan`), a plan sold in several regions has one slug
+per region (`glm-coding-plan-china`, `glm-coding-plan-international`),
+since each region has its own accounts. Picking one in a launch sheet's
+Provider menu, or `swe use --provider=<slug> claude`, starts Claude Code
+with `ANTHROPIC_BASE_URL` set to that region's base URL below, the plan key
+from its own variable under the "Key var" column's name, the other
+Anthropic credential variable blanked, and `ANTHROPIC_MODEL` set to the
+default model (a model picked at launch still wins). Only the plan's own
+variable is read, so a pay-as-you-go key never stands in for a plan key.
+Other harnesses don't take plans yet.
 
 ## Key checks
 

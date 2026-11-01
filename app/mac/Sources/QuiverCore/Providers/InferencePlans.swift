@@ -7,7 +7,9 @@ import Foundation
 ///
 /// The defaults come from each vendor's own Claude Code setup page, as of
 /// docs/research/coding-plans.md. Quiver shows them and checks the key
-/// against them; it doesn't point any harness at a plan.
+/// against them, and a launch can point Claude Code at one: the hub's
+/// `plan_providers.PLANS` is a port of `all`, and a Python test fails
+/// when the two drift.
 public struct InferencePlan: Identifiable, Sendable, Equatable {
     /// One place the plan is served from. A plan sold in China and abroad
     /// has one per site, each with its own console and accounts.

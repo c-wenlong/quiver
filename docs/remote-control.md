@@ -838,7 +838,9 @@ provider is declared as `capabilities.provider` in harness.json over
 own key variable (`GROQ_API_KEY`), Claude Code reads `ANTHROPIC_API_KEY`
 or, for an Anthropic-compatible endpoint (DeepSeek, Kimi, MiniMax,
 OpenRouter), `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` with
-`ANTHROPIC_API_KEY` blanked.
+`ANTHROPIC_API_KEY` blanked. Claude Code also takes every coding plan in
+[coding-plans.md](coding-plans.md) as a provider, one slug per plan
+region, each reading only the plan's own key variable.
 
 How the key reaches the harness without leaking:
 
