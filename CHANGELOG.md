@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and runs `swe mcp sync quiver <tool> --only=<name> --force`, which
   replaces only that entry. Batches never run it, since it overwrites.
   Part of [#529](https://github.com/c-wenlong/quiver/issues/529).
+- **iPhone: home screen widget.** Small and medium widgets show the
+  hub's sessions waiting on you (approvals and replies), sessions still
+  working, and today's spend
+  ([#1442](https://github.com/c-wenlong/quiver/issues/1442)). The
+  widget fetches sessions, the inbox and today's overview about every
+  15 minutes, and redraws when the app's refresh changes the snapshot
+  it keeps in the App Group. When the hub can't be reached it draws
+  that snapshot with "as of <time>". A medium widget's session row
+  opens its chat through the new `quiver://session/<key>?hub=<hub>`
+  deep link; anywhere else opens the app.
 - **Doctor folds in plugin drift and broken hub links.** `swe doctor`
   now lists `swe find plugins`' drift as `plugins.<kind>` findings. An
   unregistered marketplace folder or an uninstalled plugin gets the
