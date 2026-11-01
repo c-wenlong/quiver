@@ -19,6 +19,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that snapshot with "as of <time>". A medium widget's session row
   opens its chat through the new `quiver://session/<key>?hub=<hub>`
   deep link; anywhere else opens the app.
+- **Live reply text on iPhone, web and Mac.** The chat draws a reply
+  word by word while a Codex app-server, opencode serve or headless
+  Claude session writes it: `message.delta` text grows a bubble at the
+  end of the transcript, rendered with the same Markdown as the final
+  message and repainted at most every 80 ms. The next live
+  `message.appended` of the same kind takes the oldest open bubble's
+  place; on iPhone and web it is matched as it arrives and swaps in
+  when the reveal queue shows it, without the arrival animation or
+  pause. A missed delta stops drawing that bubble until its final
+  lands, and a bubble whose final never comes goes 3 seconds after the
+  session goes idle, or when the stream reconnects. The rules live in
+  `ReplyStreams.swift` (the Mac's and iPhone's copies are identical)
+  and its port in `pages/chat.js`. Closes
+  [#1444](https://github.com/c-wenlong/quiver/issues/1444).
+- **`swe doctor --fix`.** Runs every safe local fix doctor found, in
+  order (setup, then discover, then init), reads the report again after
+  each step, and prints what it fixed and what is left.
+  `--fix=<check>` scopes it (`--fix=setup`), `--dry-run` (or `--check`)
+  previews, and `--json` prints `{dry_run, ran, fixed, still_failing,
+  skipped, not_cleared, fixable_left}`. A fix that runs cleanly but
+  leaves its finding (an empty discovery, a real file in the way) is
+  listed as needing a person and never retried, so `--fix` settles.
+  Installs and the drops that delete entries never run in a batch;
+  `--fix=<check> --message=<text> [--action=<a>]` runs one finding's
+  fix, as a Run button does. A failed fix is reported and the rest still
+  run. Plain `swe doctor` still writes nothing. The runners moved to
+  `harness/doctor_fix.py`, which the web Doctor page now calls too. Part
+  of [#529](https://github.com/c-wenlong/quiver/issues/529).
+- **Unread dots on session rows: iPhone, web and Mac.** A session row
+  shows a small dot when the agent said something since you last opened
+  that chat on this device, from the hub's per-device `unread` flag.
+  Opening a chat clears the dot at once and posts `POST
+  /v1/sessions/<key>/read`; while it stays open, new messages post again
+  at most every 3 seconds, and closing it posts once more. The next
+  list refresh reconciles the local clear with the hub. The web app
+  holds its reads while the tab is hidden. The Mac shows dots on local
+  rows the hub lists and on Other machines rows, reading as its own
+  paired device; the iPhone's app icon badge stays the Inbox count.
+  Closes [#1439](https://github.com/c-wenlong/quiver/issues/1439).
 - **iPhone: share into a session.** A share extension ("Quiver" in the
   share sheet) sends text, links, images and files from any app to a
   session ([#1441](https://github.com/c-wenlong/quiver/issues/1441)).
@@ -50,8 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaces the streamed text. Satellites coalesce their own and relay
   them only to a hub that advertises `message_delta`. tmux sessions
   stay record-by-record. Part of
-  [#1444](https://github.com/c-wenlong/quiver/issues/1444); the client
-  bubbles follow.
+  [#1444](https://github.com/c-wenlong/quiver/issues/1444).
 - **iPhone: the paired hubs move to an App Group and a shared Keychain
   group.** The hub list now lives in `group.com.quiver.remote` and each
   hub's credential in the `<team>.com.quiver.remote.shared` Keychain

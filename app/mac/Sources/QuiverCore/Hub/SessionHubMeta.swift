@@ -1,6 +1,7 @@
 import Foundation
 
-// The hub's pins, names and fork flag laid over the Sessions list.
+// The hub's pins, names, fork flag and unread flag laid over the
+// Sessions list.
 //
 // The Mac's list comes from `swe session --json` (tokens, cost, filters),
 // not from the hub. When this Mac's hub is running and the app is paired,
@@ -8,6 +9,8 @@ import Foundation
 // anyway; each listed row whose `harness:id` key the hub also lists picks
 // up the hub's pin, name and `can_fork` from that read. A row with no hub
 // match, and every row while the hub is down, simply has none of them.
+// The same read's `unread` and `last_active_at` feed the unread dots
+// (`UnreadDots.swift`), on these rows and the Other machines group alike.
 // The web app's Sessions page (#1228) and the iPhone's swipe actions call
 // the same routes: `POST /v1/sessions/{key}/pin|title|fork`.
 
@@ -43,14 +46,24 @@ public struct HubSessionMeta: Equatable, Sendable {
     public var pinnedAt: Double?
     /// The harness's CLI can fork the session.
     public var canFork: Bool
+    /// The hub's `unread` for this device as of the read. What a row
+    /// shows also depends on the chat open here and the reads this app
+    /// posted since: `LocalHub.isUnread` (`UnreadDots.swift`).
+    public var unread: Bool
+    /// The row's `last_active_at` (epoch seconds) from the same read,
+    /// which a read posted here is weighed against.
+    public var lastActiveAt: Double?
 
     public init(title: String = "", harnessTitle: String = "", pinned: Bool = false,
-                pinnedAt: Double? = nil, canFork: Bool = false) {
+                pinnedAt: Double? = nil, canFork: Bool = false, unread: Bool = false,
+                lastActiveAt: Double? = nil) {
         self.title = title
         self.harnessTitle = harnessTitle
         self.pinned = pinned
         self.pinnedAt = pinned ? pinnedAt : nil
         self.canFork = canFork
+        self.unread = unread
+        self.lastActiveAt = lastActiveAt
     }
 
     /// From a `/v1/sessions` row. A hub older than names sends no
@@ -59,7 +72,8 @@ public struct HubSessionMeta: Equatable, Sendable {
     public init(_ row: HubSessionRow) {
         let title = row.title ?? ""
         self.init(title: title, harnessTitle: row.harnessTitle ?? title, pinned: row.pinned == true,
-                  pinnedAt: row.pinnedAt, canFork: row.canFork == true)
+                  pinnedAt: row.pinnedAt, canFork: row.canFork == true, unread: row.unread == true,
+                  lastActiveAt: row.lastActiveAt)
     }
 
     /// A name set on the hub replaces the harness's title (the web app's
@@ -70,8 +84,8 @@ public struct HubSessionMeta: Equatable, Sendable {
     /// title swe listed.
     public func title(over local: String?) -> String? { isRenamed ? title : local }
 
-    /// A pin or rename the hub answered or announced. `can_fork` never
-    /// rides one, so it stays.
+    /// A pin or rename the hub answered or announced. `can_fork` and the
+    /// read state never ride one, so they stay.
     public mutating func apply(_ reply: HubMetaReply) {
         if let harness = reply.harnessTitle { harnessTitle = harness }
         // The hub's `title` is the override or the harness's own; an empty

@@ -54,7 +54,8 @@ struct SessionsView: View {
                                 SessionRowView(row: row,
                                                place: group.id == "pinned"
                                                    ? SessionGrouping.pinnedPlace(row, rows: app.sessions, machines: app.machines) : nil,
-                                               detachPending: app.isDetachPending(row.key))
+                                               detachPending: app.isDetachPending(row.key),
+                                               unread: app.isUnread(row))
                             }
                             .buttonStyle(RowButtonStyle())
                             .contentShape(.contextMenuPreview, .rect(cornerRadius: Theme.blockRadius))
@@ -167,7 +168,11 @@ struct SessionsView: View {
             GroupLabel(text: "\(search.results.count) \(search.results.count == 1 ? "match" : "matches")",
                        trailing: search.indexed ? "Transcripts and titles" : "Titles and folders")
             CardList(data: search.results) { result in
-                NavigationLink(value: Route.chat(result.key)) { SearchResultRow(result: result) }
+                // The listed row carries the unread flag; a hit from the
+                // search index may not.
+                NavigationLink(value: Route.chat(result.key)) {
+                    SearchResultRow(result: result, unread: app.isUnread(app.session(result.key) ?? result.session))
+                }
                     .buttonStyle(RowButtonStyle())
             }
         }
@@ -305,6 +310,8 @@ struct SessionRowView: View {
     var place: String?
     /// A detach is waiting for the current turn to end.
     var detachPending = false
+    /// New activity since this phone last read it (`AppModel.isUnread`).
+    var unread = false
     @Environment(\.dynamicTypeSize) private var size
 
     var body: some View {
@@ -316,9 +323,12 @@ struct SessionRowView: View {
         HStack(spacing: 12) {
             StatusDot(status: status, stale: status.needsYou && !waiting)
             VStack(alignment: .leading, spacing: 3) {
-                Text(row.displayTitle)
-                    .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1, larger: 3).truncationMode(.tail)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(row.displayTitle)
+                        .font(Theme.rowTitle).foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1, larger: 3).truncationMode(.tail)
+                    if unread { UnreadDot() }
+                }
                 WrappingHStack(spacing: 6) {
                     if markInline { attachMark }
                     HarnessIcon(harness: row.harness, name: row.harnessName, size: 13)
@@ -430,10 +440,11 @@ enum Route: Hashable {
 /// the matched words in the primary colour.
 struct SearchResultRow: View {
     var result: SearchResult
+    var unread = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SessionRowView(row: result.session)
+            SessionRowView(row: result.session, unread: unread)
             if let marked = result.markedSnippet ?? result.snippet, !marked.isEmpty {
                 Text(Self.highlighted(marked))
                     .font(Theme.caption)

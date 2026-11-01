@@ -32,6 +32,7 @@ import Testing
         #expect(group.machines.map(\.title) == ["kai-studio", "lab-box · offline"])
         let view = OtherMachinesGroup(group: group,
                                       meta: { $0 == "claude:a1@studio" ? HubSessionMeta(pinned: true, pinnedAt: 1) : nil },
+                                      unread: { $0 == "codex:b2@studio" },
                                       open: { _ in }, act: { _, _ in })
             .padding(24)
             .frame(width: 760)

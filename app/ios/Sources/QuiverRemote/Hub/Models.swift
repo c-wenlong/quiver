@@ -127,6 +127,10 @@ struct SessionRow: Codable, Identifiable, Hashable {
     /// harness's model: `["tmux"]` for Claude Code and Codex today.
     /// Nil on a hub or satellite older than the field.
     var modelModes: [String]? = nil
+    /// The hub's unread flag for this device: the row moved since this
+    /// phone last read it (`POST .../read`). Nil on a hub older than the
+    /// field, which reads as read. `UnreadTracker` decides the dot.
+    var unread: Bool? = nil
 
     var id: String { key }
     /// The chat offers its Model menu: attached through a channel whose
@@ -214,6 +218,14 @@ struct SessionMeta: Codable, Equatable {
     var harnessTitle: String?
     var pinned: Bool?
     var pinnedAt: Double?
+}
+
+/// `POST /v1/sessions/{key}/read` answers the cursor it stored.
+struct ReadAck: Codable, Equatable {
+    var ok: Bool?
+    /// This device's last-read cursor now (epoch seconds): the time
+    /// asked for, capped by the hub, and never earlier than before.
+    var at: Double?
 }
 
 struct SessionsResponse: Codable {
