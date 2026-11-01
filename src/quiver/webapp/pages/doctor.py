@@ -100,7 +100,7 @@ def post(ctx, action: str, body: dict) -> dict:
                                 "That fix isn't in the report any more. Refresh to see the current one.")
             run = partial(run, name=finding["harness"],
                           targets=targets, settings=settings)
-        elif action_name in ("plugin-fix", "plugin-reinstall", "dangling-link"):
+        elif action_name in ("plugin-fix", "plugin-reinstall", "dangling-link", "mcp-sync"):
             run = partial(run, finding=finding, remedy=remedy)
         elif action_name == "marketplace-drop":
             in_file = remedy.get("settings_entries") or []
@@ -245,6 +245,10 @@ def _run_dangling_link(home: Path, finding: dict, remedy: dict | None) -> str | 
     return doctor_fix.RUNNERS["dangling-link"](home, finding, remedy)
 
 
+def _run_mcp_sync(home: Path, finding: dict, remedy: dict | None) -> str | None:
+    return doctor_fix.RUNNERS["mcp-sync"](home, finding, remedy)
+
+
 def _with_plugin_lock(run) -> str | None:
     from quiver.webapp.pages import plugins
 
@@ -264,4 +268,4 @@ RUNNERS = {"setup": _run_setup, "init": _run_init, "discover": _run_discover,
            "install": _run_install, "undeclare": _run_undeclare,
            "marketplace-drop": _run_marketplace_drop,
            "plugin-fix": _run_plugin_fix, "plugin-reinstall": _run_plugin_fix,
-           "dangling-link": _run_dangling_link}
+           "dangling-link": _run_dangling_link, "mcp-sync": _run_mcp_sync}

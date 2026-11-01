@@ -646,3 +646,125 @@ def plugin_findings(home: Path) -> list[DoctorFinding]:
             d.fix, harness=d.harness, action=action,
             source=d.marketplace_dir or None, remedies=(remedy,)))
     return findings
+
+
+def _mcp_local_problem(cfg) -> str | None:
+    """What ``swe mcp doctor`` would flag about one server, without the
+    network: a stdio server's missing binary or empty env, an http one's
+    bad URL scheme. Reachability stays ``swe mcp doctor``'s, since doctor
+    runs on every page visit and must not wait on HEAD requests."""
+    from quiver.mcp.cli import normalize_server, probe_server_health, server_type
+
+    if not isinstance(cfg, dict):
+        return "not a server entry"
+    cfg = normalize_server(cfg)
+    kind = server_type(cfg)
+    if kind == "stdio":
+        state, detail = probe_server_health("", cfg)
+        return detail if state == "error" else None
+    if kind == "http":
+        url = cfg.get("url", "")
+        ok = isinstance(url, str) and url.lower().startswith(("http://", "https://"))
+        return None if ok else "invalid URL scheme"
+    if kind == "wrapped":
+        args = cfg.get("args", [])
+        ok = any(isinstance(a, str) and a.lower().startswith(("http://", "https://"))
+                 for a in args)
+        return None if ok else "no url found"
+    return None
+
+
+# A server name ``swe mcp sync --only=`` would read as a glob or a list.
+_GLOB_CHARS = set("*?[],")
+
+
+def mcp_findings(home: Path | None = None) -> list[DoctorFinding]:
+    """``swe mcp doctor``'s problems as warnings, from local checks only.
+
+    A broken server gets ``mcp-sync`` only when the hub (``mcp.json``)
+    holds the same name in a shape that passes the same checks and
+    differs from the broken one: then ``swe mcp sync quiver <tool>
+    --only=<name> --force`` replaces just that entry with the hub's, a
+    click per finding since it overwrites. Anything else (no hub copy,
+    a hub copy just as broken) keeps a command to look closer.
+    """
+    import sys
+    from contextlib import redirect_stdout
+
+    # The MCP readers warn about a bad file on stdout; under --json stdout
+    # is one document, so their notes go to stderr.
+    with redirect_stdout(sys.stderr):
+        return _mcp_findings(home)
+
+
+def _mcp_findings(home: Path | None) -> list[DoctorFinding]:
+    try:
+        from quiver.harness.registry import load_registry_readonly
+        from quiver.mcp.cli import get_mcp_tools, get_tool_servers_canonical, servers_for_source
+
+        tools = get_mcp_tools(load_registry_readonly())
+        try:
+            hub = servers_for_source("quiver")
+        except Exception:  # noqa: BLE001 - an unreadable hub only costs the action
+            hub = {}
+        findings: list[DoctorFinding] = []
+        for tool, desc in sorted(tools.items()):
+            if not desc["path"].exists():
+                continue
+            for name, cfg in sorted(get_tool_servers_canonical(tool).items()):
+                problem = _mcp_local_problem(cfg)
+                if problem is None:
+                    continue
+                fixable = (name in hub and not (_GLOB_CHARS & set(name))
+                           and _mcp_local_problem(hub[name]) is None)
+                command = f"swe mcp sync quiver {tool} --only={name} --force"
+                remedies = ({"kind": "action", "action": "mcp-sync",
+                             "title": "Copy the hub's entry over it",
+                             "detail": f"{command}: replaces only this entry, "
+                                       "with the file backed up to "
+                                       "~/.quiver/backups first.",
+                             "command": command, "tool": tool, "server": name},
+                            ) if fixable else (
+                    {"kind": "command", "title": "Look closer",
+                     "command": f"swe mcp status {tool}"},)
+                findings.append(DoctorFinding(
+                    "mcp.server", "warning", f"{tool}: {name}: {problem}",
+                    command if fixable else f"swe mcp status {tool}",
+                    action="mcp-sync" if fixable else None,
+                    source=tilde(desc["path"], home or Path.home()),
+                    remedies=remedies))
+        return findings
+    except Exception as exc:  # noqa: BLE001 - doctor must still report the rest
+        return [DoctorFinding("mcp.unchecked", "warning",
+                              f"MCP check could not run: {exc}")]
+
+
+def sync_mcp_server(home: Path, tool: str, server: str) -> str | None:
+    """Replace one broken server in ``tool``'s config with the hub's copy.
+
+    Checked again first: the finding must still be there and still
+    fixable, so a stale click never overwrites a server that works now.
+    The config file is backed up before the sync writes. Returns what
+    went wrong."""
+    import io
+    from contextlib import redirect_stdout
+
+    from quiver.mcp.cli import _sync, get_tool_config
+    from quiver.paths import backup_tree
+
+    current = [f for f in mcp_findings(home)
+               if f.action == "mcp-sync" and f.remedies
+               and f.remedies[0].get("tool") == tool
+               and f.remedies[0].get("server") == server]
+    if len(current) != 1:
+        return f"{tool}: {server} no longer needs the hub's copy; refresh and look again"
+    path = get_tool_config(tool)["path"]
+    backup_tree(path, home)
+    said = io.StringIO()
+    with redirect_stdout(said):
+        code = _sync(["quiver", tool, f"--only={server}", "--force",
+                      "--no-interactive"], None)
+    if code:
+        lines = [ln for ln in said.getvalue().strip().splitlines() if ln.strip()]
+        return lines[-1] if lines else f"swe mcp sync exited {code}"
+    return None

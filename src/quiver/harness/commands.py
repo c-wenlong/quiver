@@ -1712,6 +1712,7 @@ def _doctor_probe(home: Path) -> SimpleNamespace:
     from quiver.harness.doctor import (
         collect_findings,
         issue_findings,
+        mcp_findings,
         plugin_findings,
         setup_findings,
     )
@@ -1734,10 +1735,11 @@ def _doctor_probe(home: Path) -> SimpleNamespace:
     # Plugin drift needs the hub: before it exists, setup says so first.
     probe.plugins = plugin_findings(home) if not any(
         f.check in ("setup.hub", "setup.agents-md") for f in probe.setup) else []
+    probe.mcp = mcp_findings(home)
     probe.report = DoctorReport(
         collect_findings(probe.env, probe.preferred, probe.which_npm,
                          probe.nvm_dirs, probe.orphans, probe.drift)
-        + probe.setup + probe.plugins + probe.issues)
+        + probe.setup + probe.plugins + probe.mcp + probe.issues)
     return probe
 
 
@@ -1853,9 +1855,11 @@ def cmd_doctor(args):
                 print(c("dim", f"        fix: {finding.fix}"))
         print()
 
-    if probe.plugins:
-        print(c("bold", "  Plugins"))
-        for finding in probe.plugins:
+    for title, rows in (("Plugins", probe.plugins), ("MCP servers", probe.mcp)):
+        if not rows:
+            continue
+        print(c("bold", f"  {title}"))
+        for finding in rows:
             print(f"    {c('yellow', '!')} {finding.message}")
             if finding.fix:
                 print(c("dim", f"        fix: {finding.fix}"))

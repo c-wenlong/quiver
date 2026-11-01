@@ -110,6 +110,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Doctor folds in <code>swe mcp doctor</code>.</strong> <code>swe doctor</code> now warns about
+each MCP server a harness config holds that fails a local check (a
+stdio binary missing, an empty env value, a bad URL scheme) as
+<code>mcp.server</code>; reachability stays <code>swe mcp doctor</code>'s, so doctor makes
+no network calls. When the hub's <code>mcp.json</code> holds the same name in a
+shape that passes, the finding gets <code>mcp-sync</code>: a click per finding
+that checks again, backs the config file up to <code>~/.quiver/backups</code>
+and runs <code>swe mcp sync quiver &lt;tool&gt; --only=&lt;name&gt; --force</code>, which
+replaces only that entry. Batches never run it, since it overwrites.
+Part of <a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
+</li>
 <li><p><strong>Doctor folds in plugin drift and broken hub links.</strong> <code>swe doctor</code>
 now lists <code>swe find plugins</code>' drift as <code>plugins.&lt;kind&gt;</code> findings. An
 unregistered marketplace folder or an uninstalled plugin gets the

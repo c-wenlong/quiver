@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Doctor folds in `swe mcp doctor`.** `swe doctor` now warns about
+  each MCP server a harness config holds that fails a local check (a
+  stdio binary missing, an empty env value, a bad URL scheme) as
+  `mcp.server`; reachability stays `swe mcp doctor`'s, so doctor makes
+  no network calls. When the hub's `mcp.json` holds the same name in a
+  shape that passes, the finding gets `mcp-sync`: a click per finding
+  that checks again, backs the config file up to `~/.quiver/backups`
+  and runs `swe mcp sync quiver <tool> --only=<name> --force`, which
+  replaces only that entry. Batches never run it, since it overwrites.
+  Part of [#529](https://github.com/c-wenlong/quiver/issues/529).
 - **Doctor folds in plugin drift and broken hub links.** `swe doctor`
   now lists `swe find plugins`' drift as `plugins.<kind>` findings. An
   unregistered marketplace folder or an uninstalled plugin gets the

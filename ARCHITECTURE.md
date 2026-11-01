@@ -438,7 +438,8 @@ report after each step, since a missing hub hides every link check; the
 order repeats (at most three passes) while a step reveals more. Click actions
 (`install`, `plugin-reinstall`, and the drops that delete entries or
 links a synced file may still want elsewhere: `undeclare`,
-`marketplace-drop`, `dangling-link`) run only for one named finding. Plain `swe doctor`
+`marketplace-drop`, `dangling-link`; `mcp-sync`, which overwrites a
+broken MCP entry with the hub's) run only for one named finding. Plain `swe doctor`
 never writes.
 
 The principle behind all four, made explicit once capabilities-first

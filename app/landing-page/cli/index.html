@@ -225,13 +225,16 @@ to use their own login state and environment.
   Plain swe doctor only reads. --fix runs the local repairs
   in order (setup, discover, init, plugin-fix), reading the report again
   after each, and prints what it fixed and what is left. Installs, plugin
-  reinstalls and the drops that delete entries or links (undeclare,
-  marketplace-drop, dangling-link) never run in a batch: they run only
+  reinstalls, MCP entry overwrites (mcp-sync) and the drops that delete
+  entries or links (undeclare, marketplace-drop, dangling-link) never run
+  in a batch: they run only
   for one finding named with --message. With --json, --fix prints
   {dry_run, ran, fixed, still_failing, skipped, not_cleared, fixable_left}.
 
-  Doctor also reports plugin drift (swe find plugins) as plugins.* and
-  broken top-level links in ~/.quiver, each with its fix.
+  Doctor also reports plugin drift (swe find plugins) as plugins.*,
+  broken top-level links in ~/.quiver, and MCP servers failing a local
+  check (swe mcp doctor without the network) as mcp.server, each with
+  its fix.
 
   Catches the common failure mode: npm install -g under nvm while
   interactive/non-interactive shells use Homebrew Node (tool missing from PATH).

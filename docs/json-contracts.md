@@ -247,7 +247,7 @@ The CLI side of remote also speaks `--json`:
   basename survives) for `undeclare`, `settings_entries` + `cli_entries`
   for `marketplace-drop`, `id` (the `swe find plugins` drift id) for
   `plugin-fix` and `plugin-reinstall`, `path` (the broken link) for
-  `dangling-link`. `fix` stays the one-line summary for clients
+  `dangling-link`, `tool` + `server` for `mcp-sync`. `fix` stays the one-line summary for clients
   without remedy support. The command may exit nonzero with valid JSON,
   so the client is called with `allowFailure`.
 - `swe doctor --fix --json`: `{dry_run, ran, fixed, still_failing,
