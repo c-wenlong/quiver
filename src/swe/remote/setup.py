@@ -257,7 +257,7 @@ def evaluate(f: Facts) -> dict:
         elif right and f.agent_running:
             steps.append(_step(
                 "hub.service", t_hub, FAILED,
-                "The hub keeps stopping. Its log is ~/.quiver/data/remote/serve.log.",
+                "The hub keeps stopping. Its log is ~/.swe/data/remote/serve.log.",
                 _apply("Restart hub")))
         else:
             detail = move_note(f) if args else "Not installed yet"

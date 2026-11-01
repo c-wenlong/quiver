@@ -124,16 +124,16 @@ def _stage_hub(
     home: Path,
     quick: bool,
 ) -> StageOutcome:
-    """Clone the user's hub repo as ~/.quiver, or leave it to start empty.
+    """Clone the user's hub repo as ~/.swe, or leave it to start empty.
 
-    The wizard runs this first and only while ~/.quiver is missing or
+    The wizard runs this first and only while ~/.swe is missing or
     empty, so nothing else has written there yet. A failed clone asks
     again; a blank answer moves on, and the stages after it build an
     empty hub as they always have.
     """
     del quick
     _stage_header(number, total, SECTION_LABELS["hub"])
-    print(c("dim", "  ~/.quiver has no hub yet. Clone your hub repo into it, or leave"))
+    print(c("dim", "  ~/.swe has no hub yet. Clone your hub repo into it, or leave"))
     print(c("dim", "  the answer blank to start an empty hub."))
     print(f"  {hub_repo.FORK_NOTE}")
     if hub_repo.DEMO_HUB_URL:
@@ -149,11 +149,11 @@ def _stage_hub(
         except hub_repo.HubError as exc:
             print(c("red", f"  {exc}"))
             if not hub_repo.can_clone(home):
-                # Something else wrote ~/.quiver meanwhile: asking again
+                # Something else wrote ~/.swe meanwhile: asking again
                 # can't help, and the later stages repair what is there.
                 return StageOutcome("hub", label, "attention", str(exc))
             continue
-        print(c("green", f"  Cloned {cloned['url']} into ~/.quiver."))
+        print(c("green", f"  Cloned {cloned['url']} into ~/.swe."))
         for row in cloned["marketplaces"]:
             if row["error"] is None:
                 print(f"    {c('green', '+')} {row['marketplace']} registered in {row['harness']}")
@@ -287,7 +287,7 @@ def _stage_skills(
     safe = [item for item in hints if item.action in {"create_shared", "symlink"}]
     manual = [item for item in hints if item.action == "manual"]
     if not safe and not manual:
-        print(c("green", "  OK  Harness skill roots already share ~/.quiver/skills."))
+        print(c("green", "  OK  Harness skill roots already share ~/.swe/skills."))
         return StageOutcome("skills", SECTION_LABELS["skills"], "ready", "shared roots are linked")
 
     for item in safe:
@@ -466,8 +466,8 @@ def run_setup_wizard(
         keys = [section]
     else:
         keys = ["harnesses", "providers", "mcp", "skills", "report", "check"]
-        # The hub URL is asked first, before any stage writes ~/.quiver,
-        # and only while there is no ~/.quiver to clone over.
+        # The hub URL is asked first, before any stage writes ~/.swe,
+        # and only while there is no ~/.swe to clone over.
         if hub_repo.can_clone(home):
             keys.insert(0, "hub")
 

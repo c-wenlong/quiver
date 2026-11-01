@@ -16,7 +16,7 @@ class Session:
     # generated. Lets the listing mark renamed sessions apart.
     title_source: str = ""
     # The Quiver account home the transcript sits under when it is not the
-    # harness's default home (``~/.quiver/accounts/<vendor>/<id>/home``);
+    # harness's default home (``~/.swe/accounts/<vendor>/<id>/home``);
     # "" for a session in the default home. The consumer labels the row
     # with the account's name and resumes under this home, not the default.
     account_home: str = ""

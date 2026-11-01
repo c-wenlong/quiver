@@ -248,7 +248,7 @@ final class MarkdownTests: XCTestCase {
     }
 
     func testLocalFileLinksBecomeFileNames() {
-        let s = RichText.inline("Read [AGENTS.md](/Users/k/.quiver/AGENTS.md), [ai.py](finance/ai.py) and [PR](https://github.com/x/y/pull/1).")
+        let s = RichText.inline("Read [AGENTS.md](/Users/k/.swe/AGENTS.md), [ai.py](finance/ai.py) and [PR](https://github.com/x/y/pull/1).")
         let links = s.runs.compactMap(\.link)
         XCTAssertEqual(links.map(\.absoluteString), ["https://github.com/x/y/pull/1"])
         XCTAssertTrue(String(s.characters).contains("AGENTS.md"))

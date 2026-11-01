@@ -17,7 +17,7 @@ behind that launch id:
 1. read the PR (``github/pulls.py``), for the prompt and the title;
 2. ``manage.pr_worktree``: the repo's mirror (cloned on first use),
    then a detached ``refs/pull/<n>/head`` checkout under
-   ``~/.quiver/worktrees``. A second open of the same PR resumes in
+   ``~/.swe/worktrees``. A second open of the same PR resumes in
    the same checkout;
 3. ``supervise.launch_new`` in that checkout with the client's prompt,
    or ``github/pulls.build_prompt`` when none was sent.

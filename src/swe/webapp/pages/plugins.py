@@ -3,7 +3,7 @@
 Two views, as the app's two tabs:
 
 - ``?view=health`` is ``swe find plugins --json``: where Claude Code and
-  Codex no longer match ``~/.quiver/plugins``, each finding with the fix
+  Codex no longer match ``~/.swe/plugins``, each finding with the fix
   swe would run.
 - ``?view=explore`` is ``swe plugins catalog --json`` arranged the way the
   app's Explore tab shows it (``PluginExploreIndex``): sources (Local, each
@@ -350,7 +350,7 @@ def worst_drift(drift: dict | None) -> dict | None:
 
 def display_names(home: Path) -> dict:
     """The names the Mac app lets a user give marketplaces and plugins,
-    ``~/.quiver/config/plugin-display-names.json``; empty when missing or
+    ``~/.swe/config/plugin-display-names.json``; empty when missing or
     unreadable, as the app reads it. Never written here."""
     from swe.paths import config_dir_for
 
@@ -523,7 +523,7 @@ def sources(catalog: dict, plugins: dict, names: dict | None = None) -> list[dic
     out = []
     if local:
         out.append({"id": "local", "kind": "local", "harness": None, "title": "Local",
-                    "note": "Your Quiver hub, ~/.quiver/plugins", "marketplaces": local})
+                    "note": "Your Quiver hub, ~/.swe/plugins", "marketplaces": local})
     for h in order:
         if h not in by_harness:
             continue

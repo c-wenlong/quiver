@@ -178,6 +178,9 @@ def get_tool_config(tool_name: str) -> dict | None:
     """
     if not tool_name:
         return None
+    if is_hub(tool_name):
+        return {"path": MCP_SOURCE_FILE, "key": MCP_SOURCE_KEY,
+                "label": "hub", "format": "standard"}
     cfg = MCP_CONFIG_MAP.get(tool_name)
     if cfg:
         return cfg
@@ -647,7 +650,7 @@ def _filter_by_patterns(servers: dict, patterns: list[str]) -> tuple[dict, list[
 
 # ── The hub ──────────────────────────────────────────────────────────
 #
-# ~/.quiver/mcp.json is the middleman: `swe mcp discover --apply` pulls from
+# ~/.swe/mcp.json is the middleman: `swe mcp discover --apply` pulls from
 # every harness into it, `swe mcp sync quiver <targets>` pushes back out. It
 # is not a harness, so it has no config file of its own to read; it stores
 # canonical shape directly, which is why its format is "standard".
@@ -1617,7 +1620,7 @@ def cmd_add(args):
 
     if json_view:
         return emit(report)
-    print(f"{report['hub'].capitalize()} {name} in the Quiver hub (~/.quiver/mcp.json)")
+    print(f"{report['hub'].capitalize()} {name} in the Quiver hub (~/.swe/mcp.json)")
     for r in report["targets"]:
         print(f"  {r['status']} in {r['name']}")
     return 0
@@ -2023,7 +2026,7 @@ def cmd_edit(args):
     # mkstemp: unpredictable name, mode 0600, O_EXCL. The old fixed name in
     # CONFIG_DIR followed a planted symlink, inherited a world-readable
     # umask, survived a crashed editor, and sat inside the versioned
-    # ~/.quiver tree — a resolved-secret file one `git add -A` from a
+    # ~/.swe tree — a resolved-secret file one `git add -A` from a
     # commit.
     fd, tmp_name = tempfile.mkstemp(prefix="quiver-mcp-edit-", suffix=".json")
     tmp_file = Path(tmp_name)
@@ -2193,7 +2196,7 @@ def cmd_doctor(args):
 MCP_HELP = {
     "discover": f"""\
   {c('cyan', 'swe mcp discover')}              List MCP servers in tools not in mcp.json (dry-run)
-  {c('cyan', 'swe mcp discover --apply')}      Add discoveries to ~/.quiver/mcp.json
+  {c('cyan', 'swe mcp discover --apply')}      Add discoveries to ~/.swe/mcp.json
   {c('cyan', 'swe mcp discover --json')}       Machine-readable output
   {c('cyan', 'swe mcp discover --all')}        Include servers already in source-of-truth
   {c('cyan', 'swe mcp discover --prune')}      Also remove hub servers no harness configures
@@ -2244,11 +2247,11 @@ MCP_HELP = {
     "sync": f"""\
   {c('cyan', 'swe mcp sync <source> <target...>')}   Copy MCP servers source → target(s)
   {c('cyan', 'swe mcp sync <source> --all')}          Copy MCP servers source → all other MCP tools
-  {c('cyan', 'swe mcp sync quiver <target...>')}      Copy from the hub (~/.quiver/mcp.json)
+  {c('cyan', 'swe mcp sync quiver <target...>')}      Copy from the hub (~/.swe/mcp.json)
   {c('cyan', 'swe mcp sync quiver --all')}            Push the hub out to every MCP tool
 
 {c('bold', 'The hub')}
-  ~/.quiver/mcp.json is the middleman. Everything flows through it:
+  ~/.swe/mcp.json is the middleman. Everything flows through it:
 
     harness configs  --( swe mcp discover --apply )-->  mcp.json
     mcp.json         --( swe mcp sync quiver ... )  -->  harness configs
@@ -2352,7 +2355,7 @@ MCP_HELP = {
   {c('cyan', 'swe mcp add <name> -- <command> [args…]')}     Add a stdio server
   {c('cyan', 'swe mcp add <name> --url=<url>')}              Add an http server
 
-  The hub (~/.quiver/mcp.json) is always written; --to also writes the
+  The hub (~/.swe/mcp.json) is always written; --to also writes the
   given harnesses in their own format. --env goes with a command,
   --header with a URL. A ${'{'}NAME{'}'} value stays a reference in the
   hub and resolves when a harness is written — a name with no value in
@@ -2390,7 +2393,7 @@ MCP_HELP = {
   swe mcp remove github --from=all""",
 
     "secret": f"""\
-  {c('cyan', 'swe mcp secret set NAME')}       Store a ${'{'}NAME{'}'} value in ~/.quiver/secrets/mcp/.api_keys
+  {c('cyan', 'swe mcp secret set NAME')}       Store a ${'{'}NAME{'}'} value in ~/.swe/secrets/mcp/.api_keys
   {c('cyan', 'swe mcp secret remove NAME')}    Drop a stored value
 
   mcp.json keeps ${'{'}NAME{'}'} references; the values live in the secrets

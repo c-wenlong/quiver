@@ -1445,7 +1445,7 @@ const PrFilter = (() => {
   /* ---------------------------------------------------------- open in session */
 
   /* app.openPrSession, on the hub: swe gh pr worktree checks the PR's
-   * head out under ~/.quiver/worktrees, then the chosen harness starts
+   * head out under ~/.swe/worktrees, then the chosen harness starts
    * there under tmux with a first message (the hub's launch needs one;
    * the harness writes nothing until it has it), and the chat opens once
    * the session shows up, as the phone's new-session sheet does. */
@@ -1480,7 +1480,7 @@ const PrFilter = (() => {
       ${model}
       <textarea class="field gh-session-prompt" id="gh-session-prompt" rows="3" aria-label="First message"
         placeholder="Its first message"${busy || x.started ? " disabled" : ""}>${esc(x.prompt)}</textarea>
-      <div class="caption gh-muted">It runs under tmux in ~/.quiver/worktrees. The chat opens once the session shows up.</div>
+      <div class="caption gh-muted">It runs under tmux in ~/.swe/worktrees. The chat opens once the session shows up.</div>
       ${x.error ? `<div class="caption gh-danger-text" role="alert">${esc(x.error)}</div>` : ""}
       ${x.note ? `<div class="caption" role="status">${esc(x.note)}</div>` : ""}
       <div class="gh-confirm-buttons">

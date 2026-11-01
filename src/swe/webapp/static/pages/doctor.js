@@ -31,16 +31,16 @@ const DOCTOR_FOLD = 8;
 
 // What each fix does, said before it runs.
 const DOCTOR_RUNS = {
-  setup: (m) => `This runs swe setup --apply on ${m}: it registers the harnesses it finds, imports their MCP servers into ~/.quiver/mcp.json, and links the shared AGENTS.md and skills into each harness. Real files in the way are left alone, and your stars stay as they are.`,
+  setup: (m) => `This runs swe setup --apply on ${m}: it registers the harnesses it finds, imports their MCP servers into ~/.swe/mcp.json, and links the shared AGENTS.md and skills into each harness. Real files in the way are left alone, and your stars stay as they are.`,
   init: (m) => `This runs swe init on ${m}: it links the shared AGENTS.md and skills into each harness that doesn't read them yet. Real files in the way are left alone, and new skills folders wait for a run in a terminal.`,
   discover: (m) => `This runs swe harness discover --apply on ${m}: it adds the high-confidence matches it finds to harness.json.`,
   install: (m, f, r) => `This runs ${(r && r.command) || f.fix} on ${m}: it installs ${Fmt.harnessName(f.harness)} again with ${(r && r.via) || f.via}, which puts it on PATH, and registers it. A cask or install script that asks for a password can't finish here; copy the command into a terminal instead.`,
-  undeclare: (m, f, r) => `On ${m}: deletes the hook entries naming ${(r && r.script) || "the missing script"} from the settings files in the source line, after backing each one up to ~/.quiver/backups. Nothing else in the files changes.`,
+  undeclare: (m, f, r) => `On ${m}: deletes the hook entries naming ${(r && r.script) || "the missing script"} from the settings files in the source line, after backing each one up to ~/.swe/backups. Nothing else in the files changes.`,
   "plugin-fix": (m, f, r) => `On ${m}: runs ${(r && r.detail) || f.fix}, which registers the marketplace folder or installs the plugin from it. Nothing is removed.`,
-  "plugin-reinstall": (m, f, r) => `On ${m}: runs ${(r && r.detail) || f.fix}: Codex's copy of the plugin is removed, then installed again from your folder in ~/.quiver/plugins.`,
-  "dangling-link": (m, f, r) => `On ${m}: copies the broken link ${(r && r.path) || ""} to ~/.quiver/backups, then removes it. A link synced from another machine may still work there.`,
-  "mcp-sync": (m, f, r) => `On ${m}: ${(r && r.command) || f.fix} replaces this one server entry with the hub's copy from ~/.quiver/mcp.json, after backing the config file up to ~/.quiver/backups.`,
-  "marketplace-drop": (m, f, r) => `On ${m}: deletes the missing marketplace entries from the settings files, after backing each one up to ~/.quiver/backups. The folders stay gone; restore them by copying them over.`,
+  "plugin-reinstall": (m, f, r) => `On ${m}: runs ${(r && r.detail) || f.fix}: Codex's copy of the plugin is removed, then installed again from your folder in ~/.swe/plugins.`,
+  "dangling-link": (m, f, r) => `On ${m}: copies the broken link ${(r && r.path) || ""} to ~/.swe/backups, then removes it. A link synced from another machine may still work there.`,
+  "mcp-sync": (m, f, r) => `On ${m}: ${(r && r.command) || f.fix} replaces this one server entry with the hub's copy from ~/.swe/mcp.json, after backing the config file up to ~/.swe/backups.`,
+  "marketplace-drop": (m, f, r) => `On ${m}: deletes the missing marketplace entries from the settings files, after backing each one up to ~/.swe/backups. The folders stay gone; restore them by copying them over.`,
 };
 
 const DOCTOR_ICONS = {
@@ -108,7 +108,7 @@ function doctorLostError() {
 }
 
 /* What a setup or init left alone, with swe init --force behind a confirm:
- * it copies each path to ~/.quiver/backups before replacing it. */
+ * it copies each path to ~/.swe/backups before replacing it. */
 function doctorBlocked() {
   const p = doctorPage, blocked = p.blocked;
   const replacing = p.running === "replace";
@@ -119,7 +119,7 @@ function doctorBlocked() {
     ? `<span class="doctor-running" role="status"><span class="doctor-spinner" aria-hidden="true"></span>Replacing…</span>`
     : blocked.length ? `<button class="doctor-button" data-doctor="replace-ask" aria-expanded="${p.confirmingReplace}"${p.running ? " disabled" : ""}>Replace and back up…</button>` : "";
   const confirm = p.confirmingReplace && !replacing ? `<div class="doctor-confirm" role="group" aria-label="Run swe init --force?">
-      <p class="caption">This runs swe init --force on ${esc(machine)}: each of these is copied to ~/.quiver/backups, then replaced with a link to the shared copy.</p>
+      <p class="caption">This runs swe init --force on ${esc(machine)}: each of these is copied to ~/.swe/backups, then replaced with a link to the shared copy.</p>
       <div class="doctor-confirm-buttons">
         <button class="doctor-button" data-doctor="replace-cancel">Cancel</button>
         <button class="doctor-button primary danger" data-doctor="replace-go">Replace and back up</button>

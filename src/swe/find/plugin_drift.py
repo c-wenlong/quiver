@@ -1,9 +1,9 @@
-"""Whether the plugins in ``~/.quiver/plugins`` actually reached each harness.
+"""Whether the plugins in ``~/.swe/plugins`` actually reached each harness.
 
-``~/.quiver/plugins`` holds the user's own marketplaces: one directory each,
+``~/.swe/plugins`` holds the user's own marketplaces: one directory each,
 with a ``.claude-plugin/marketplace.json`` naming its plugins. Claude Code and
 Codex both register such a directory in place. Codex installs a cached copy
-and runs that, so an edit under ``~/.quiver`` changes nothing in Codex until
+and runs that, so an edit under ``~/.swe`` changes nothing in Codex until
 it reinstalls. Claude Code reads a directory-marketplace plugin from the
 folder itself (``claude plugin update`` says "read from its folder ... nothing
 to update"); the copy it leaves under ``~/.claude/plugins/cache`` is never
@@ -112,11 +112,11 @@ class SourcePlugin(NamedTuple):
 
 
 # --------------------------------------------------------------------------
-# The source side: ~/.quiver/plugins
+# The source side: ~/.swe/plugins
 
 
 def _hub_manifests(home: Path) -> list[tuple[str, Path, list]]:
-    """``(name, dir, plugins)`` per ~/.quiver/plugins marketplace whose
+    """``(name, dir, plugins)`` per ~/.swe/plugins marketplace whose
     manifest lists its plugins; the name falls back to the folder's."""
     root = plugins_dir_for(home)
     try:
@@ -136,7 +136,7 @@ def _hub_manifests(home: Path) -> list[tuple[str, Path, list]]:
 
 
 def hub_marketplaces(home: Path) -> list[tuple[str, Path]]:
-    """``(name, dir)`` for each ~/.quiver/plugins marketplace with a manifest.
+    """``(name, dir)`` for each ~/.swe/plugins marketplace with a manifest.
 
     Independent of the plugins inside: a marketplace whose plugins all come
     from GitHub or a URL has no local folder for ``swe_plugins`` to find,
@@ -146,7 +146,7 @@ def hub_marketplaces(home: Path) -> list[tuple[str, Path]]:
 
 
 def swe_plugins(home: Path) -> list[SourcePlugin]:
-    """Every locally sourced plugin in every marketplace under ~/.quiver/plugins."""
+    """Every locally sourced plugin in every marketplace under ~/.swe/plugins."""
     found: list[SourcePlugin] = []
     for mname, mdir, entries in _hub_manifests(home):
         for entry in entries:
@@ -168,7 +168,7 @@ def _local_source(source) -> PurePosixPath | None:
     """The plugin's directory relative to its marketplace, or None.
 
     Only a plain relative path string (``"./eng"``) names a directory sitting
-    in ``~/.quiver``. Anything else is fetched from elsewhere at install time:
+    in ``~/.swe``. Anything else is fetched from elsewhere at install time:
     ``{"source": "git-subdir", "url": ...}`` (composio in ``development``),
     a github or url object, or a URL string. There is no local source to
     compare such a copy against, so it is skipped rather than reported. A
@@ -345,7 +345,7 @@ def _codex(home: Path) -> _Harness | None:
             continue
         src = entry.get("source")
         # git marketplaces carry a URL in the same key; only local ones can
-        # be a directory under ~/.quiver.
+        # be a directory under ~/.swe.
         if entry.get("source_type", "local") == "local" and isinstance(src, str) and src:
             registered[_real(_expand_root(src, home))] = mname
 
@@ -509,7 +509,7 @@ def _linked_manifest(harness: str, manifest: str, sp: SourcePlugin) -> _LinkedMa
     real_link = os.path.join(plugin_dir, manifest)
     resolved = _real(link)
     market = _real(sp.marketplace_dir)
-    staged = real_link + ".quiver-tmp"
+    staged = real_link + ".swe-tmp"
     by_hand = f"replace the {manifest} symlink in {plugin_dir} with a folder holding plugin.json"
     if os.path.lexists(staged):
         # most likely a copy an earlier run of this fix left when it failed
@@ -529,7 +529,7 @@ def _linked_manifest(harness: str, manifest: str, sp: SourcePlugin) -> _LinkedMa
 
 
 def plugin_drift(home: Path, harnesses=HARNESSES) -> list[Finding]:
-    """Every way the ~/.quiver plugins have not reached the given harnesses.
+    """Every way the ~/.swe plugins have not reached the given harnesses.
 
     Findings for one plugin stop at the first gap that blocks the rest: an
     unregistered marketplace is not also reported as N uninstalled plugins,

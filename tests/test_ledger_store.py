@@ -160,7 +160,7 @@ class TestScan(unittest.TestCase):
         self.assertEqual(_inputs(self.store), {"claude:m1:r1": 5})
 
     def test_profile_homes_and_codex(self):
-        prof = self.home / ".quiver" / "accounts" / "claude" / "p1" / "home" / "projects" / "x"
+        prof = self.home / ".swe" / "accounts" / "claude" / "p1" / "home" / "projects" / "x"
         prof.mkdir(parents=True)
         (prof / "b.jsonl").write_text(_line("m9", "r9", 3))
         rollout = self.home / ".codex" / "sessions" / "2026" / "10" / "03"

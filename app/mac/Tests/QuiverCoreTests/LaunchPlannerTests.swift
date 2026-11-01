@@ -24,21 +24,21 @@ private func paths(_ home: String, desktop: String? = nil) -> ProfilePaths {
 private let claudeDefaultPaths = paths("/Users/me/.claude")
 private let codexDefaultPaths = paths("/Users/me/.codex")
 private let claudeWorkPaths = paths(
-    "/Users/me/.quiver/accounts/claude/claude-work/home",
-    desktop: "/Users/me/.quiver/accounts/claude/claude-work/desktop")
+    "/Users/me/.swe/accounts/claude/claude-work/home",
+    desktop: "/Users/me/.swe/accounts/claude/claude-work/desktop")
 private let codexSidePaths = paths(
-    "/Users/me/.quiver/accounts/codex/codex-side/home",
-    desktop: "/Users/me/.quiver/accounts/codex/codex-side/desktop")
+    "/Users/me/.swe/accounts/codex/codex-side/home",
+    desktop: "/Users/me/.swe/accounts/codex/codex-side/desktop")
 private let devinWork = Profile(
     id: "devin-work", vendor: .devin, name: "Work", isDefault: false, color: "#3b82f6")
 private let cursorSide = Profile(
     id: "cursor-side", vendor: .cursor, name: "Side", isDefault: false, color: "#a855f7")
 private let devinWorkPaths = paths(
-    "/Users/me/.quiver/accounts/devin/devin-work/home",
-    desktop: "/Users/me/.quiver/accounts/devin/devin-work/desktop")
+    "/Users/me/.swe/accounts/devin/devin-work/home",
+    desktop: "/Users/me/.swe/accounts/devin/devin-work/desktop")
 private let cursorSidePaths = paths(
-    "/Users/me/.quiver/accounts/cursor/cursor-side/home",
-    desktop: "/Users/me/.quiver/accounts/cursor/cursor-side/desktop")
+    "/Users/me/.swe/accounts/cursor/cursor-side/home",
+    desktop: "/Users/me/.swe/accounts/cursor/cursor-side/desktop")
 /// A home with a space and a single quote in it.
 private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/me/it's a dir/desktop")
 
@@ -47,9 +47,9 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
         let command = LaunchPlanner.desktopApp(for: claudeWork, paths: claudeWorkPaths)
         #expect(command == LaunchCommand(executable: "/usr/bin/open", arguments: [
             "-n",
-            "--env", "CLAUDE_CONFIG_DIR=/Users/me/.quiver/accounts/claude/claude-work/home",
+            "--env", "CLAUDE_CONFIG_DIR=/Users/me/.swe/accounts/claude/claude-work/home",
             "-a", "/Applications/Claude.app",
-            "--args", "--user-data-dir=/Users/me/.quiver/accounts/claude/claude-work/desktop",
+            "--args", "--user-data-dir=/Users/me/.swe/accounts/claude/claude-work/desktop",
         ]))
     }
 
@@ -57,9 +57,9 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
         let command = LaunchPlanner.desktopApp(for: codexSide, paths: codexSidePaths)
         #expect(command == LaunchCommand(executable: "/usr/bin/open", arguments: [
             "-n",
-            "--env", "CODEX_HOME=/Users/me/.quiver/accounts/codex/codex-side/home",
+            "--env", "CODEX_HOME=/Users/me/.swe/accounts/codex/codex-side/home",
             "-a", "/Applications/ChatGPT.app",
-            "--args", "--user-data-dir=/Users/me/.quiver/accounts/codex/codex-side/desktop",
+            "--args", "--user-data-dir=/Users/me/.swe/accounts/codex/codex-side/desktop",
         ]))
     }
 
@@ -105,9 +105,9 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
         let command = LaunchPlanner.desktopApp(for: devinWork, paths: devinWorkPaths)
         #expect(command == LaunchCommand(executable: "/usr/bin/open", arguments: [
             "-n",
-            "--env", "XDG_DATA_HOME=/Users/me/.quiver/accounts/devin/devin-work/home",
+            "--env", "XDG_DATA_HOME=/Users/me/.swe/accounts/devin/devin-work/home",
             "-a", "/Applications/Devin.app",
-            "--args", "--user-data-dir=/Users/me/.quiver/accounts/devin/devin-work/desktop",
+            "--args", "--user-data-dir=/Users/me/.swe/accounts/devin/devin-work/desktop",
         ]))
     }
 
@@ -118,7 +118,7 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
         #expect(command == LaunchCommand(executable: "/usr/bin/open", arguments: [
             "-n",
             "-a", "/Applications/Cursor.app",
-            "--args", "--user-data-dir=/Users/me/.quiver/accounts/cursor/cursor-side/desktop",
+            "--args", "--user-data-dir=/Users/me/.swe/accounts/cursor/cursor-side/desktop",
         ]))
     }
 
@@ -132,7 +132,7 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
 
 @Suite struct InstanceMatchingTests {
     private let exe = "/Applications/Claude.app/Contents/MacOS/Claude"
-    private let workDir = "/Users/me/.quiver/accounts/claude/claude-work/desktop"
+    private let workDir = "/Users/me/.swe/accounts/claude/claude-work/desktop"
 
     @Test func anInstanceWithNoUserDataDirIsTheDefaultProfile() {
         #expect(LaunchPlanner.instance([exe], belongsTo: claudeDefault, paths: claudeDefaultPaths))
@@ -151,13 +151,13 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
     @Test func theDirMatchesThroughPathStandardization() {
         #expect(LaunchPlanner.instance([exe, "--user-data-dir=\(workDir)/"],
                                        belongsTo: claudeWork, paths: claudeWorkPaths))
-        #expect(LaunchPlanner.instance([exe, "--user-data-dir=/Users/me/.quiver/./accounts/claude/claude-work/desktop"],
+        #expect(LaunchPlanner.instance([exe, "--user-data-dir=/Users/me/.swe/./accounts/claude/claude-work/desktop"],
                                        belongsTo: claudeWork, paths: claudeWorkPaths))
     }
 
     @Test func aDifferentProfilesDirDoesNotMatch() {
-        let other = paths("/Users/me/.quiver/accounts/claude/claude-other/home",
-                          desktop: "/Users/me/.quiver/accounts/claude/claude-other/desktop")
+        let other = paths("/Users/me/.swe/accounts/claude/claude-other/home",
+                          desktop: "/Users/me/.swe/accounts/claude/claude-other/desktop")
         #expect(!LaunchPlanner.instance([exe, "--user-data-dir=\(workDir)"],
                                        belongsTo: claudeWork, paths: other))
         // A different profile's instance is not the default profile's either.
@@ -178,9 +178,9 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
 @Suite struct ShellLineTests {
     @Test func aNonDefaultProfileExportsItsHomeThenRunsTheCommand() {
         #expect(LaunchPlanner.shellLine(for: claudeWork, paths: claudeWorkPaths, command: "claude")
-            == "export CLAUDE_CONFIG_DIR='/Users/me/.quiver/accounts/claude/claude-work/home'; claude")
+            == "export CLAUDE_CONFIG_DIR='/Users/me/.swe/accounts/claude/claude-work/home'; claude")
         #expect(LaunchPlanner.shellLine(for: codexSide, paths: codexSidePaths, command: "codex")
-            == "export CODEX_HOME='/Users/me/.quiver/accounts/codex/codex-side/home'; codex")
+            == "export CODEX_HOME='/Users/me/.swe/accounts/codex/codex-side/home'; codex")
     }
 
     @Test func aDefaultProfileIsJustTheCommand() {
@@ -190,7 +190,7 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
 
     @Test func theCommandIsAppendedAsGiven() {
         #expect(LaunchPlanner.shellLine(for: claudeWork, paths: claudeWorkPaths, command: "claude --resume abc")
-            == "export CLAUDE_CONFIG_DIR='/Users/me/.quiver/accounts/claude/claude-work/home'; claude --resume abc")
+            == "export CLAUDE_CONFIG_DIR='/Users/me/.swe/accounts/claude/claude-work/home'; claude --resume abc")
     }
 
     @Test func aSingleQuoteInThePathIsClosedEscapedAndReopened() {
@@ -206,18 +206,18 @@ private let awkwardPaths = paths("/Users/me/it's a dir/home", desktop: "/Users/m
 
     @Test func loginIsTheVendorsLoginSubcommandInsideTheSameLine() {
         #expect(LaunchPlanner.cliLoginCommand(for: claudeWork, paths: claudeWorkPaths)
-            == "export CLAUDE_CONFIG_DIR='/Users/me/.quiver/accounts/claude/claude-work/home'; claude auth login")
+            == "export CLAUDE_CONFIG_DIR='/Users/me/.swe/accounts/claude/claude-work/home'; claude auth login")
         #expect(LaunchPlanner.cliLoginCommand(for: codexSide, paths: codexSidePaths)
-            == "export CODEX_HOME='/Users/me/.quiver/accounts/codex/codex-side/home'; codex login")
+            == "export CODEX_HOME='/Users/me/.swe/accounts/codex/codex-side/home'; codex login")
         #expect(LaunchPlanner.cliLoginCommand(for: claudeDefault, paths: claudeDefaultPaths) == "unset CLAUDE_CONFIG_DIR; claude auth login")
         #expect(LaunchPlanner.cliLoginCommand(for: codexDefault, paths: codexDefaultPaths) == "unset CODEX_HOME; codex login")
     }
 
     @Test func aDevinProfileExportsXDGDataHomeToItsHome() {
         #expect(LaunchPlanner.shellLine(for: devinWork, paths: devinWorkPaths, command: "devin")
-            == "export XDG_DATA_HOME='/Users/me/.quiver/accounts/devin/devin-work/home'; devin")
+            == "export XDG_DATA_HOME='/Users/me/.swe/accounts/devin/devin-work/home'; devin")
         #expect(LaunchPlanner.cliLoginCommand(for: devinWork, paths: devinWorkPaths)
-            == "export XDG_DATA_HOME='/Users/me/.quiver/accounts/devin/devin-work/home'; devin auth login")
+            == "export XDG_DATA_HOME='/Users/me/.swe/accounts/devin/devin-work/home'; devin auth login")
     }
 
     @Test func aCursorProfileExportsAndUnsetsNothing() {

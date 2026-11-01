@@ -5,7 +5,7 @@ prints one ``{"schema": 1, "data": ...}`` document and nothing else. These
 run the real CLI against a throwaway HOME with fixture harness configs.
 
 MCP configs carry API keys in ``env`` and ``headers``, and the hub keeps
-``${REF}`` placeholders that resolve from ``~/.quiver/secrets/mcp/.api_keys``.
+``${REF}`` placeholders that resolve from ``~/.swe/secrets/mcp/.api_keys``.
 Nothing here may ever put a secret value on stdout.
 """
 
@@ -387,12 +387,12 @@ class McpListSecretSafetyTest(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         write_registry(self.home, REGISTRY)
-        secrets = self.home / ".quiver" / "secrets"
+        secrets = self.home / ".swe" / "secrets"
         secrets.mkdir(parents=True)
         (secrets / ".api_keys").write_text(
             f"export GITHUB_TOKEN={FAKE_KEY}\n"
             "export DOCS_KEY=short-docs-key\n")
-        write_json(self.home / ".quiver" / "mcp.json", {"mcpServers": {
+        write_json(self.home / ".swe" / "mcp.json", {"mcpServers": {
             "github": {"command": "npx", "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}},
         }})
         write_claude(self.home, {

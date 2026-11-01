@@ -4,7 +4,7 @@ A port of the Mac app's ``QuiverCore/Status/ServiceStatusService.swift``:
 each page at most every five minutes (one minute for a manual refresh),
 conditional requests so an unchanged page costs a 304, and a provider's
 ``Retry-After`` honoured. Readings are kept in
-``~/.quiver/cache/web-service-status.json`` (apart from the Mac app's own
+``~/.swe/cache/web-service-status.json`` (apart from the Mac app's own
 file) so a hub restart does not poll again, and a reading older than an
 hour is never shown as current.
 

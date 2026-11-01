@@ -68,9 +68,9 @@ class ClaudeHandoffTest(unittest.TestCase):
             def fake_expanduser(path):
                 if path.startswith("~/.claude/projects"):
                     return str(projects) + "/"
-                # Account-home scans must not read the real ~/.quiver.
-                if path.startswith("~/.quiver"):
-                    return str(Path(tmp) / ".quiver") + path[len("~/.quiver"):]
+                # Account-home scans must not read the real ~/.swe.
+                if path.startswith("~/.swe"):
+                    return str(Path(tmp) / ".swe") + path[len("~/.swe"):]
                 return REAL_EXPANDUSER(path)
 
             with patch(

@@ -44,7 +44,7 @@ class _Home:
 
     def make_home(self, home: Path):
         self.home = home
-        config = home / ".quiver" / "config"
+        config = home / ".swe" / "config"
         config.mkdir(parents=True, exist_ok=True)
         self.registry_file = config / "harness.json"
         (home / ".claude").mkdir()
@@ -73,7 +73,7 @@ class _Home:
         return json.loads(self.registry_file.read_text()) if self.registry_file.exists() else {}
 
     def agents_md(self) -> Path:
-        return self.home / ".quiver" / "AGENTS.md"
+        return self.home / ".swe" / "AGENTS.md"
 
 
 class TestGet(_Home, unittest.TestCase):
@@ -185,7 +185,7 @@ class TestApply(_Home, unittest.TestCase):
         reg = self.registry()
         self.assertEqual(reg["claude"]["state"], "starred")
         self.assertEqual(reg["gemini"]["state"], "starred")
-        self.assertTrue(list((self.home / ".quiver" / "backups").rglob("*CLAUDE.md*")))
+        self.assertTrue(list((self.home / ".swe" / "backups").rglob("*CLAUDE.md*")))
 
     def test_apply_holds_the_shared_config_lock(self):
         # Setup writes mcp.json and relinks skills: it must wait for an
@@ -262,7 +262,7 @@ class TestApply(_Home, unittest.TestCase):
 class TestRerun(_Home, unittest.TestCase):
     """A second apply must not make uninstalled harnesses look installed.
 
-    The first run creates ~/.quiver/skills; the second used to symlink it
+    The first run creates ~/.swe/skills; the second used to symlink it
     into every harness skills root quiver knows, making ~/.augment,
     ~/.pi, ~/.kiro and the rest, which swe init then registered and
     linked AGENTS.md into. Only claude and codex are installed here.
@@ -277,12 +277,12 @@ class TestRerun(_Home, unittest.TestCase):
     def outside_quiver(self) -> list[str]:
         return sorted(
             str(path.relative_to(self.home)) for path in self.home.rglob("*")
-            if path.relative_to(self.home).parts[0] != ".quiver"
+            if path.relative_to(self.home).parts[0] != ".swe"
         )
 
     def assert_rerun_is_a_no_op(self, apply):
         apply()
-        self.assertTrue((self.home / ".quiver" / "skills").is_dir())
+        self.assertTrue((self.home / ".swe" / "skills").is_dir())
         tree, registry = self.outside_quiver(), sorted(self.registry())
         for _ in range(2):
             apply()
@@ -425,7 +425,7 @@ class _HubClone(_Home):
 @unittest.skipUnless(GIT, "git not installed")
 class TestHubClone(_HubClone, unittest.TestCase):
     def test_get_says_a_hub_can_be_cloned_beside_local_state(self):
-        # make_home made ~/.quiver/config/: local state, no hub.
+        # make_home made ~/.swe/config/: local state, no hub.
         data = setup_page.get(self.ctx(), {})
         self.assertEqual(data["hub"], {"can_clone": True, "demo_url": None,
                                        "job": {"state": "idle", "url": None,
@@ -438,7 +438,7 @@ class TestHubClone(_HubClone, unittest.TestCase):
         hub = _wait_for_clone(self.home)
         self.assertEqual(hub["job"]["state"], "done", hub)
         self.assertEqual(hub["job"]["url"], str(self.src))
-        self.assertEqual(hub["job"]["cloned"]["path"], str(self.home / ".quiver"))
+        self.assertEqual(hub["job"]["cloned"]["path"], str(self.home / ".swe"))
         self.assertFalse(hub["can_clone"])
         self.assertEqual(self.agents_md().read_text(), "# from the hub\n")
         self.assertTrue(self.registry_file.parent.is_dir())  # the local state stayed
@@ -574,7 +574,7 @@ class TestRoute(_Home, HubBase):
         self.addCleanup(setup_page._JOBS.clear)
         status, _ = self.srv.request("POST", "/v1/app/setup/hub", body={"url": str(src)})
         self.assertEqual(status, 401)
-        # Pairing writes ~/.quiver/data/remote: local state the clone lands beside.
+        # Pairing writes ~/.swe/data/remote: local state the clone lands beside.
         auth = self.auth()
         with patch("swe.init.hub.register_marketplaces", return_value=[]):
             status, data = self.srv.request("POST", "/v1/app/setup/hub", body={"url": str(src)},
@@ -586,7 +586,7 @@ class TestRoute(_Home, HubBase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data)["hub"]["job"]["state"], "done")
         self.assertEqual(self.agents_md().read_text(), "# from the hub\n")
-        self.assertTrue((self.srv.home / ".quiver" / "data" / "remote").is_dir())
+        self.assertTrue((self.srv.home / ".swe" / "data" / "remote").is_dir())
 
     def test_a_cross_site_origin_is_refused(self):
         status, data = self.srv.request(

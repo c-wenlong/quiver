@@ -140,7 +140,7 @@ class TestCursor(unittest.TestCase):
                     {"id": "x1", "vendor": "claude", "isDefault": False}]
         dirs = _activity.cursor_user_data_dirs(self.dir, profiles)
         self.assertEqual(dirs, [str(self.dir / "Library/Application Support/Cursor"),
-                                str(self.dir / ".quiver/accounts/cursor/c1/desktop")])
+                                str(self.dir / ".swe/accounts/cursor/c1/desktop")])
         _cursor_db(self.dir / "a")
         files = _activity.cursor_files([str(self.dir / "a"), str(self.dir / "a")])
         self.assertEqual(list(files), [str(self.dir / "a" / _activity.CURSOR_DB)])

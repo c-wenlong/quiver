@@ -194,9 +194,9 @@ class SetupLinksTest(_SetupHarness):
         (self.home / ".claude").mkdir()
         applied = self._json(["--apply"])["applied"]
 
-        agents = self.home / ".quiver" / "AGENTS.md"
+        agents = self.home / ".swe" / "AGENTS.md"
         self.assertTrue(agents.is_file())
-        self.assertTrue((self.home / ".quiver" / ".gitignore").is_file())
+        self.assertTrue((self.home / ".swe" / ".gitignore").is_file())
         claude_md = self.home / ".claude" / "CLAUDE.md"
         self.assertTrue(claude_md.is_symlink())
         self.assertEqual(claude_md.resolve(), agents.resolve())
@@ -226,7 +226,7 @@ class SetupLinksTest(_SetupHarness):
         self.assertFalse(preview["agents_file_customised"])
         self.assertEqual(preview["adopt_candidates"],
                          [{"harness": "claude", "path": str(claude_md)}])
-        self.assertFalse((self.home / ".quiver" / "AGENTS.md").exists(),
+        self.assertFalse((self.home / ".swe" / "AGENTS.md").exists(),
                          "the preview must not write")
 
     def test_adopt_starts_agents_md_from_the_file_and_links_it(self):
@@ -235,17 +235,17 @@ class SetupLinksTest(_SetupHarness):
         claude_md.write_text("my own rules\n")
         applied = self._json(["--apply", f"--adopt={claude_md}"])["applied"]
 
-        agents = self.home / ".quiver" / "AGENTS.md"
+        agents = self.home / ".swe" / "AGENTS.md"
         self.assertEqual(agents.read_text(), "my own rules\n")
         self.assertTrue(claude_md.is_symlink())
         self.assertEqual(claude_md.read_text(), "my own rules\n")
         self.assertEqual(applied["links"]["adopted"], str(claude_md))
-        backups = list((self.home / ".quiver" / "backups").rglob("*CLAUDE.md*"))
+        backups = list((self.home / ".swe" / "backups").rglob("*CLAUDE.md*"))
         self.assertTrue(backups, "the original is backed up before it becomes a link")
 
     def test_adopt_is_refused_once_agents_md_has_your_own_text(self):
-        (self.home / ".quiver").mkdir()
-        (self.home / ".quiver" / "AGENTS.md").write_text("already mine\n")
+        (self.home / ".swe").mkdir()
+        (self.home / ".swe" / "AGENTS.md").write_text("already mine\n")
         source = self.home / "rules.md"
         source.write_text("other rules\n")
         code, out, mocks = self._run(["--apply", f"--adopt={source}"])
@@ -253,7 +253,7 @@ class SetupLinksTest(_SetupHarness):
         self.assertEqual(code, 1)
         self.assertIn("already has your own text", out)
         mocks["apply_findings"].assert_not_called()
-        self.assertEqual((self.home / ".quiver" / "AGENTS.md").read_text(), "already mine\n")
+        self.assertEqual((self.home / ".swe" / "AGENTS.md").read_text(), "already mine\n")
 
     def test_starred_sets_exactly_the_ticked_harnesses(self):
         from swe.harness import registry
@@ -275,7 +275,7 @@ class SetupLinksTest(_SetupHarness):
         self.assertNotEqual(final["droid"].get("state"), "starred")
 
     def test_a_linking_failure_exits_nonzero_and_keeps_what_was_applied(self):
-        (self.home / ".quiver" / ".linkignore").mkdir(parents=True)
+        (self.home / ".swe" / ".linkignore").mkdir(parents=True)
         code, out, mocks = self._run(["--apply", "--json"])
 
         self.assertEqual(code, 1)
@@ -330,7 +330,7 @@ class SetupLinksTest(_SetupHarness):
         # Happy path must not invent an errors key. The registry and stars
         # live under module-level paths that Path.home() cannot redirect,
         # so load/save are mocked — without this the test would rewrite
-        # the developer's real ~/.quiver/config/harness.json.
+        # the developer's real ~/.swe/config/harness.json.
         from swe.harness import registry
 
         saved = {}
@@ -481,8 +481,8 @@ class SetupLinksTest(_SetupHarness):
         self.assertEqual(code, 0)
         self.assertIn("left alone", out)
 
-        (self.home / ".quiver" / ".linkignore").unlink()
-        (self.home / ".quiver" / ".linkignore").mkdir()
+        (self.home / ".swe" / ".linkignore").unlink()
+        (self.home / ".swe" / ".linkignore").mkdir()
         code, out, _ = self._run(["--apply"])
         self.assertEqual(code, 1)
         self.assertIn("Nothing was linked", out)

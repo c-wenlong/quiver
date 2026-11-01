@@ -15,7 +15,7 @@ def print_providers_help() -> None:
       Show full details for one provider, including key status + path
 
   {c('cyan', 'swe providers add <name> [desc] [--url=URL] [--env=ENV] [--file=NAME]')}
-      Register a provider in {c('bold', '~/.quiver/config/providers.json')}.
+      Register a provider in {c('bold', '~/.swe/config/providers.json')}.
       Does not create or touch any key file.
 
   {c('cyan', 'swe providers remove <name>')}
@@ -24,7 +24,7 @@ def print_providers_help() -> None:
       of being re-added the next time defaults merge in.
 
 {c('bold', 'Key storage')}
-  By default, keys live in {c('bold', '~/.quiver/secrets/providers/.api_keys')},
+  By default, keys live in {c('bold', '~/.swe/secrets/providers/.api_keys')},
   one {c('cyan', 'export OPENAI_API_KEY=...')} line per key. {c('cyan', 'swe init')} moves
   an old {c('bold', '~/.api_keys')} there and leaves a symlink behind.
   Override per-invocation with {c('cyan', '--api-keys-dir=DIR')}: a file like that,

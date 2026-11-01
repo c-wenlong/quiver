@@ -86,7 +86,7 @@ final class PullsDecodingTests: XCTestCase {
                          "submitted_at": "2026-01-02T00:00:00Z"}],
             "review_requests": ["octocat"],
             "auto_merge": {"method": "squash", "enabled_at": "2026-01-02T00:00:00Z"},
-            "worktree": "/home/u/.quiver/worktrees/o__r-pr5",
+            "worktree": "/home/u/.swe/worktrees/o__r-pr5",
             "suggested_prompt": "Review https://github.com/o/r/pull/5\\n…"
           },
           "fetched_at": 1767323045.0
@@ -102,7 +102,7 @@ final class PullsDecodingTests: XCTestCase {
         XCTAssertEqual(pr.reviews?.first?.state, "changes_requested")
         XCTAssertEqual(pr.reviewRequests, ["octocat"])
         XCTAssertEqual(pr.autoMerge?.method, "squash")
-        XCTAssertEqual(pr.worktree, "/home/u/.quiver/worktrees/o__r-pr5")
+        XCTAssertEqual(pr.worktree, "/home/u/.swe/worktrees/o__r-pr5")
         XCTAssertTrue(pr.suggestedPrompt?.hasPrefix("Review https://") == true)
     }
 

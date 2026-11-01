@@ -1,10 +1,10 @@
-"""``swe hooks`` — manage the hook scripts under ~/.quiver/hooks.
+"""``swe hooks`` — manage the hook scripts under ~/.swe/hooks.
 
 Three tiers show up here. ``harness`` rows are the per-harness scripts
 ``swe init`` links into each hooks root. ``shared`` rows are the scripts
 under ``hooks/shared/`` that ``swe hooks sync`` deploys through generated
 wrappers (``hooks/shared.py`` documents the mechanism). ``foreign`` rows
-are hooks the inventory sees but no ``~/.quiver`` source claims — files
+are hooks the inventory sees but no ``~/.swe`` source claims — files
 in a hooks root another installer owns, or a settings-declared command
 that points outside the hub. ``list`` shows all three, ``check`` reports
 where declarations and links disagree, ``info`` and ``edit`` work on one
@@ -236,14 +236,14 @@ def _list(rest: list[str], json_view: bool, fail) -> int:
         rows = [r for r in rows if r.harness == harness]
         if not rows:
             return fail(c("red", f"No hook scripts under "
-                                 f"~/.quiver/hooks/{harness}/"))
+                                 f"~/.swe/hooks/{harness}/"))
 
     if json_view:
         summaries: dict[Path, str] = {}
         return emit({"hooks": [_row_json(r, summaries) for r in rows]})
 
     if not rows:
-        print(c("dim", "\n  No hook scripts in ~/.quiver/hooks yet."))
+        print(c("dim", "\n  No hook scripts in ~/.swe/hooks yet."))
         print(c("dim", "  swe hooks new <harness> <name> writes a skeleton.\n"))
         return 0
 
@@ -294,7 +294,7 @@ def _info(rest: list[str], json_view: bool, fail) -> int:
         matches = [r for r in matches if r.harness == harness]
     if not matches:
         return fail(c("red", f"No hook script named {rest[0]} under "
-                             "~/.quiver/hooks."))
+                             "~/.swe/hooks."))
 
     if json_view:
         return emit({
@@ -398,7 +398,7 @@ def _edit(rest: list[str], fail) -> int:
         harness = _resolve_harness(harness, registry, {r.harness for r in rows})
         matches = [r for r in matches if r.harness == harness]
     if not matches:
-        return fail(c("red", f"No hook script named {name} under ~/.quiver/hooks."))
+        return fail(c("red", f"No hook script named {name} under ~/.swe/hooks."))
     # Foreign rows are read-only everywhere; delete and toggle refuse
     # them explicitly, and edit does too — opening one would hand a file
     # swe does not own to the user's editor.
@@ -722,7 +722,7 @@ def _delete(rest: list[str], json_view: bool, fail) -> int:
         matches = [r for r in matches if r.harness == harness]
     if not matches:
         return fail(c("red", f"No hook named {name} under "
-                             "~/.quiver/hooks or its destinations."))
+                             "~/.swe/hooks or its destinations."))
     # A shared hook is one global source across every deploy target —
     # scoping the delete to one harness would still remove the file all
     # of them run. Only per-harness rows may be scoped; a shared-only
@@ -830,7 +830,7 @@ def _toggle(rest: list[str], json_view: bool, fail, *, off: bool) -> int:
         patterns = load_linkignore(home)
     except LinkIgnoreError as exc:
         return fail(c("red", f"{exc} — fix or remove "
-                             f"~/.quiver/.linkignore, then {verb} again."))
+                             f"~/.swe/.linkignore, then {verb} again."))
     rows, registry = _rows(home)
     matches = find_script(name, rows)
     if harness:
@@ -838,7 +838,7 @@ def _toggle(rest: list[str], json_view: bool, fail, *, off: bool) -> int:
             harness, registry, {r.harness for r in rows})
         matches = [r for r in matches if r.harness == harness]
     if not matches:
-        return fail(c("red", f"No hook named {name} under ~/.quiver/hooks."))
+        return fail(c("red", f"No hook named {name} under ~/.swe/hooks."))
     if any(r.tier == "foreign" for r in matches):
         return fail(c("red", f"{name} is a foreign hook — swe cannot "
                              f"{verb} what it does not own."))
@@ -904,7 +904,7 @@ def _sync(rest: list[str], json_view: bool, fail) -> int:
         patterns = load_linkignore(home)
     except LinkIgnoreError as exc:
         return fail(c("red", f"{exc} — fix or remove "
-                             "~/.quiver/.linkignore, then sync again."))
+                             "~/.swe/.linkignore, then sync again."))
     written, pruned = _shared.apply_deploy(home, registry)
     statuses = plan_hooks(home, patterns=patterns, registry=registry)
     results: Counter = Counter()

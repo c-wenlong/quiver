@@ -216,7 +216,7 @@ class TestLedgerCoverage(unittest.TestCase):
 
     def test_a_cline_row_under_an_account_home_uses_that_home(self):
         home = Path(tempfile.mkdtemp())
-        profile = home / ".quiver" / "accounts" / "cline" / "p1" / "home"
+        profile = home / ".swe" / "accounts" / "cline" / "p1" / "home"
         d = profile / "data" / "sessions" / "s3"
         d.mkdir(parents=True)
         (d / "s3.json").write_text("{}")
@@ -826,7 +826,7 @@ return div.innerHTML;
         either: its label shows as a file name (the phone's code-intent
         rule), while web links stay links."""
         out = self.run_js(
-            "return T.md('Read [AGENTS.md](/Users/k/.quiver/AGENTS.md), "
+            "return T.md('Read [AGENTS.md](/Users/k/.swe/AGENTS.md), "
             "[ai.py](finance/ai.py) and [PR](https://github.com/x/y/pull/1). "
             "Plus https://example.com/a plain.');")
         self.assertIn("<code>AGENTS.md</code>", out)

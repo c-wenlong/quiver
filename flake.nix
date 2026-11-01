@@ -47,7 +47,7 @@
 
           # The suite runs under unittest, not pytest: tests/conftest.py is a
           # pytest-only fixture and is never imported here. Every command
-          # reads ~/.quiver, so the check gets a throwaway HOME like CI does.
+          # reads ~/.swe, so the check gets a throwaway HOME like CI does.
           # One test inits a git repo to find a project root.
           nativeCheckInputs = [ pkgs.git ];
           checkPhase = ''

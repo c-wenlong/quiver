@@ -64,7 +64,7 @@ LOCK_FILE = "agent.lock"           # held by the one running agent
 
 def take_lock(home: Path | None = None):
     """``(handle, holder)``: while ``handle`` stays open this process is
-    the only ``swe remote agent`` on this ~/.quiver. When another agent
+    the only ``swe remote agent`` on this ~/.swe. When another agent
     holds the lock, ``handle`` is None and ``holder`` is its pid (0 when
     unreadable). Without ``fcntl`` (Windows) there is no lock to take.
     """
@@ -88,7 +88,7 @@ def take_lock(home: Path | None = None):
 
 
 def lock_holder(home: Path | None = None) -> int | None:
-    """The pid of the agent running on this ~/.quiver (0 when it can't
+    """The pid of the agent running on this ~/.swe (0 when it can't
     be read), or None when none runs."""
     fh, holder = take_lock(home)
     if fh is not None:

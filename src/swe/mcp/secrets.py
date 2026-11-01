@@ -1,9 +1,9 @@
 """Credential indirection for the MCP hub.
 
-``~/.quiver/mcp.json`` records which servers exist and is worth versioning.
+``~/.swe/mcp.json`` records which servers exist and is worth versioning.
 Credentials are not, so the hub stores ``${NAME}`` references and the values
-live in ``~/.quiver/secrets/mcp/.api_keys``, mode 600 and gitignored. A machine
-`swe init` has not migrated yet still reads ``~/.quiver/secrets/.api_keys``.
+live in ``~/.swe/secrets/mcp/.api_keys``, mode 600 and gitignored. A machine
+`swe init` has not migrated yet still reads ``~/.swe/secrets/.api_keys``.
 
 Resolution happens when a harness config is written, not by exporting to the
 environment: Claude and Cursor launch from the Dock and never

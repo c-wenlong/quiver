@@ -12,11 +12,11 @@ as the app groups them. Query parameters:
   minute, and never during a provider's ``Retry-After``.
 
 Without either, pages last asked five or more minutes ago are asked again;
-the rest come from ``~/.quiver/cache/web-service-status.json``.
+the rest come from ``~/.swe/cache/web-service-status.json``.
 
 ``POST /v1/app/status/track`` (``{"id"}``) is the catalogue sheet's Add:
 the entry joins the tracked set in ``tracked.py``'s store, the web app's
-own file under ``~/.quiver/data`` (the Mac's customs live in its
+own file under ``~/.swe/data`` (the Mac's customs live in its
 preferences, which this does not read). ``POST /v1/app/status/untrack``
 is the custom card's Remove: only a tracked extra goes; a built-in page
 is refused, as ``ServiceStatusModel.remove`` refuses it. Both answer

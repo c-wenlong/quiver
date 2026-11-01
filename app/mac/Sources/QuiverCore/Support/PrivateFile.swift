@@ -1,6 +1,6 @@
 import Foundation
 
-/// Files under `~/.quiver` that only this user should read: session
+/// Files under `~/.swe` that only this user should read: session
 /// titles, account names, pull request history. Their folder is 0700 and
 /// the file 0600 from the moment it exists.
 enum PrivateFile {

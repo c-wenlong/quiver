@@ -22,14 +22,14 @@ from swe.harness import stars as stars_mod
 
 
 class RegistryStateTest(unittest.TestCase):
-    """Sandbox every test against a throwaway ~/.quiver/config, never the
+    """Sandbox every test against a throwaway ~/.swe/config, never the
     real one, by patching the paths registry.py actually reads."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name)
-        self.config_dir = self.home / ".quiver" / "config"
+        self.config_dir = self.home / ".swe" / "config"
         self.harness_file = self.config_dir / "harness.json"
         self.tools_file = self.config_dir / "tools.json"
         self.stars_file = self.config_dir / "stars.json"
@@ -126,7 +126,7 @@ class RegistryStateTest(unittest.TestCase):
         import datetime
 
         stamp = datetime.datetime.now().strftime("%Y%m%d")
-        backup_dir = self.home / ".quiver" / ".backup" / f"registry-migration-{stamp}"
+        backup_dir = self.home / ".swe" / ".backup" / f"registry-migration-{stamp}"
         self.assertTrue((backup_dir / "tools.json").is_file())
         self.assertTrue((backup_dir / "stars.json").is_file())
 
@@ -136,7 +136,7 @@ class RegistryStateTest(unittest.TestCase):
         import datetime
 
         stamp = datetime.datetime.now().strftime("%Y%m%d")
-        backup_dir = self.home / ".quiver" / ".backup" / f"registry-migration-{stamp}"
+        backup_dir = self.home / ".swe" / ".backup" / f"registry-migration-{stamp}"
         moved = json.loads((backup_dir / "tools.json").read_text())
         self.assertEqual(moved["claude"]["note"], "keep me")
 
@@ -162,7 +162,7 @@ class RegistryStateTest(unittest.TestCase):
 
         A bare read must not scaffold: load_registry runs inside read-only
         commands too, and creating the file here is what made a failed or
-        version-only invocation litter a fresh machine with ~/.quiver
+        version-only invocation litter a fresh machine with ~/.swe
         (#68). save_registry is the write path; it owns the scaffolding.
         """
         reg = registry.load_registry()
@@ -189,7 +189,7 @@ class StarsWrapperTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        config_dir = Path(self.tmp.name) / ".quiver" / "config"
+        config_dir = Path(self.tmp.name) / ".swe" / "config"
         harness_file = config_dir / "harness.json"
         patches = [
             mock.patch.object(registry, "CONFIG_DIR", config_dir),
@@ -237,7 +237,7 @@ class ArchiveWrapperTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        config_dir = Path(self.tmp.name) / ".quiver" / "config"
+        config_dir = Path(self.tmp.name) / ".swe" / "config"
         harness_file = config_dir / "harness.json"
         patches = [
             mock.patch.object(registry, "CONFIG_DIR", config_dir),

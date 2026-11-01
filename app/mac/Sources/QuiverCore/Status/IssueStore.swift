@@ -151,7 +151,7 @@ public struct Issue: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// The app's durable issue list at `~/.quiver/data/issues.json` — the same
+/// The app's durable issue list at `~/.swe/data/issues.json` — the same
 /// file `swe doctor` reads, so the CLI's Issues section and the app's
 /// cards describe one truth. Read-modify-write under a flock, atomic
 /// rename on save, like `UsageCacheStore`.
@@ -164,10 +164,10 @@ public struct IssueStore: Sendable {
         self.url = url
     }
 
-    /// Under the app's own `~/.quiver`, not cache: an issue is state, not
+    /// Under the app's own `~/.swe`, not cache: an issue is state, not
     /// a snapshot a cache clear should lose.
     public static func file(home: URL) -> URL {
-        home.appending(path: ".quiver/data/issues.json")
+        home.appending(path: ".swe/data/issues.json")
     }
 
     private struct File: Codable {

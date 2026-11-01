@@ -516,7 +516,7 @@ private struct ServerSheet: View {
                     .disabled((secretDrafts[name] ?? "").isEmpty || savingSecret != nil)
                 }
             }
-            Text("Saved to ~/.quiver/secrets/mcp/.api_keys, never versioned. "
+            Text("Saved to ~/.swe/secrets/mcp/.api_keys, never versioned. "
                  + "Sync fills these in when it writes a harness config.")
                 .font(Theme.caption).foregroundStyle(Theme.textMuted)
                 .fixedSize(horizontal: false, vertical: true)

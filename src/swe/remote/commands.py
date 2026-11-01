@@ -293,7 +293,7 @@ class Service:
     label: str        # launchd
     unit: str         # systemd
     description: str  # systemd Description=
-    log_name: str     # under ~/.quiver/data/remote/
+    log_name: str     # under ~/.swe/data/remote/
 
 
 HUB = Service("hub", "serve", launchd.LABEL, systemd.UNIT,
@@ -380,7 +380,7 @@ def service_conflict(service: Service, home: Path | None = None) -> str | None:
     """Why ``service`` must not be installed here, or None: the other
     remote service (hub for the agent, agent for the hub) is installed.
 
-    Both run as this user, so they read the same ~/.quiver and share the
+    Both run as this user, so they read the same ~/.swe and share the
     tail cursors under ``data/remote/cursors/``: each would skip
     transcript lines the other already sent, to a different hub, and a
     satellite would send its own hub's sessions back to it.
@@ -999,7 +999,7 @@ def _cmd_agent(flags: dict, json_view: bool = False) -> int:
         with contextlib.redirect_stdout(sys.stderr):
             rc = _cmd_agent_service(flags)
         return emit(agent_service_report()) if rc == 0 else rc
-    # One agent per ~/.quiver: two would each run every command the hub
+    # One agent per ~/.swe: two would each run every command the hub
     # queues. Under launchd or systemd this exits and the service retries.
     # Taken before pairing, so a refused start leaves agent.json alone.
     lock, holder = agent_mod.take_lock()
@@ -1185,7 +1185,7 @@ def _remote_state_dir() -> str:
     try:
         return str(remote_dir_for())
     except Exception:
-        return "~/.quiver/data/remote"
+        return "~/.swe/data/remote"
 
 
 def _dispatch(sub: str, flags: dict, rest: list[str], json_view: bool) -> int:
@@ -1250,7 +1250,7 @@ def cmd_remote(args: list[str]) -> int:
     try:
         return _dispatch(sub, flags, rest, json_view)
     except OSError as exc:
-        # Every subcommand's write lands under ~/.quiver/data/remote
+        # Every subcommand's write lands under ~/.swe/data/remote
         # (pairing._state_lock mkdirs it, journals and registries sit in
         # it), so an unset, empty or read-only HOME surfaces here as one
         # bare OSError — but `serve --install` also writes under
@@ -1267,6 +1267,6 @@ def cmd_remote(args: list[str]) -> int:
         # keeps its traceback.
         if "home directory" not in str(exc):
             raise
-        print(c("red", f"can't write ~/.quiver/data/remote: {exc}"),
+        print(c("red", f"can't write ~/.swe/data/remote: {exc}"),
               file=error_stream(json_view))
         return 1

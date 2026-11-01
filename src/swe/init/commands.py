@@ -1,4 +1,4 @@
-"""`swe init` — build the ~/.quiver layout and link every harness to it."""
+"""`swe init` — build the ~/.swe layout and link every harness to it."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def _safe_to_replace(path: Path, home: Path) -> bool:
     """init deletes only real content inside $HOME that is not quiver's own.
 
     A registry-declared target can point anywhere — a capability of
-    ``~/.quiver/config/harness.json`` resolving into the data plane, or one
+    ``~/.swe/config/harness.json`` resolving into the data plane, or one
     slipping out of $HOME — and --force must never carry that through:
     deleting the registry mid-run or reaching outside the sandbox is a
     bug the flag was never meant to authorize.
@@ -178,21 +178,21 @@ def _print_paths(title: str, rows: list[tuple[LinkStatus, str]], home: Path) -> 
 
 
 def _ensure_scaffold(home: Path, check_only: bool) -> list[str]:
-    """Create the .quiver directory, seed files and hub folders if absent.
+    """Create the .swe directory, seed files and hub folders if absent.
 
-    Run on an existing ~/.quiver this is the repair: it adds whichever hub
+    Run on an existing ~/.swe this is the repair: it adds whichever hub
     folders are missing and never touches a file that is already there.
     """
     import os
 
     notes = []
     root, agents = swe_dir(home), agents_file(home)
-    dirs = [(root, "~/.quiver")]
+    dirs = [(root, "~/.swe")]
     dirs += [(path, f"{path.name}/") for path in hub_dirs_for(home)]
     dirs.append((backups_dir(home), "backups/"))
     # lexists, not exists: a dangling symlink is invisible to exists() but a
     # mkdir/write through it lands wherever the link points — possibly far
-    # outside ~/.quiver. A scaffold path that is any symlink is left alone.
+    # outside ~/.swe. A scaffold path that is any symlink is left alone.
     for path, label in dirs:
         if not os.path.lexists(path):
             notes.append(f"create {label}")
@@ -363,13 +363,13 @@ def run_init(home: Path, *, check_only: bool = False, force: bool = False,
     keeps it from printing, for callers that emit one JSON document.
     ``ask=False`` never opens the picker: new skills folders wait, as on a
     run without a terminal.
-    Raises LinkIgnoreError when ~/.quiver/.linkignore can't be read.
+    Raises LinkIgnoreError when ~/.swe/.linkignore can't be read.
     """
     patterns = load_linkignore(home)
 
     scaffold = _ensure_scaffold(home, check_only)
 
-    # An old ~/.quiver/ is reported whenever it exists, so a machine that
+    # An old ~/.swe/ is reported whenever it exists, so a machine that
     # has not migrated says so rather than silently running two roots.
     migration = plan_migration(home)
     if migration and not migration.empty:
@@ -474,7 +474,7 @@ def check_document(home: Path, run: InitRun | None = None) -> dict:
     """The ``swe init --check --json`` document: where the shared AGENTS.md
     is and each harness's link state. Writes nothing; ``run`` is a check
     already made, else one is made here without printing. Raises
-    LinkIgnoreError when ~/.quiver/.linkignore can't be read."""
+    LinkIgnoreError when ~/.swe/.linkignore can't be read."""
     if run is None:
         run = run_init(home, check_only=True, quiet=True)
     try:
@@ -497,7 +497,7 @@ _ADOPT_LIMIT = 1_000_000
 
 
 def agents_file_customised(home: Path) -> bool:
-    """True once ~/.quiver/AGENTS.md says something other than the seed."""
+    """True once ~/.swe/AGENTS.md says something other than the seed."""
     try:
         return agents_file(home).read_text(encoding="utf-8") != SEED_AGENTS_MD
     except FileNotFoundError:
@@ -642,7 +642,7 @@ def cmd_init(args) -> int:
             return 1
         from swe.init.hub import HubError, clone_hub, public_url
 
-        print(f"\n  Cloning {public_url(hub_url.strip())} into ~/.quiver…")
+        print(f"\n  Cloning {public_url(hub_url.strip())} into ~/.swe…")
         try:
             clone_hub(home, hub_url)
         except HubError as exc:
@@ -661,7 +661,7 @@ def cmd_init(args) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(c("red", f"  {exc}"))
-        print(c("dim", "  Fix or remove ~/.quiver/.linkignore, then run swe init again."))
+        print(c("dim", "  Fix or remove ~/.swe/.linkignore, then run swe init again."))
         return 1
     scaffold = result.scaffold
     instructions, skills = result.instructions, result.skills
@@ -705,8 +705,8 @@ def cmd_init(args) -> int:
     print(f"\n  {c('dim', summary)}\n")
     if protected:
         _print_paths("Left alone, these hold skills that exist nowhere else:", protected, home)
-        print(f"  {c('dim', 'Move what you want to keep into ~/.quiver/skills first, or --force.')}")
-        print(f"  {c('dim', 'To leave one alone for good, list it in ~/.quiver/.linkignore.')}\n")
+        print(f"  {c('dim', 'Move what you want to keep into ~/.swe/skills first, or --force.')}")
+        print(f"  {c('dim', 'To leave one alone for good, list it in ~/.swe/.linkignore.')}\n")
     # The full view already paints every blocked row red; the summary only
     # has counts, so it names the paths the user has to do something about.
     if blocked and not full:
@@ -733,14 +733,14 @@ def cmd_init(args) -> int:
 
 def print_init_help() -> None:
     print(f"""
-  {c('bold', 'swe init')} — set up ~/.quiver and link every harness to it
+  {c('bold', 'swe init')} — set up ~/.swe and link every harness to it
 
   {c('cyan', 'swe init')}            Create the layout and symlink all harnesses
   {c('cyan', 'swe init --full')}     List every path, not just the counts
   {c('cyan', 'swe init --check')}    Show what would change, write nothing
   {c('cyan', 'swe init --check --json')}  The same preview as one JSON document, nothing else
   {c('cyan', 'swe init --force')}    Replace real files too (backed up first)
-  {c('cyan', 'swe init --migrate')}  Move a pre-0.2.7 ~/.config/swe into ~/.quiver
+  {c('cyan', 'swe init --migrate')}  Move a pre-0.2.7 ~/.config/swe into ~/.swe
   {c('cyan', 'swe init --yes')}      Register every new skills folder without asking
   {c('cyan', 'swe init --accounts')} Only sync the extra account homes (see Accounts)
 
@@ -757,19 +757,19 @@ def print_init_help() -> None:
     TokenTracker, Ollama) are never offered.
 
   {c('bold', 'What it owns')}
-    ~/.quiver/AGENTS.md    one instruction file, linked in under each
+    ~/.swe/AGENTS.md    one instruction file, linked in under each
                            harness's own name (CLAUDE.md, QWEN.md, CRUSH.md...)
-    ~/.quiver/skills/      one skill tree, linked in as every harness's skills/
-    ~/.quiver/hooks/       hook scripts, one folder per harness (hooks/claude/),
+    ~/.swe/skills/      one skill tree, linked in as every harness's skills/
+    ~/.swe/hooks/       hook scripts, one folder per harness (hooks/claude/),
                            each script linked into that harness's hooks dir.
                            Only the file: declaring the hook in the harness's
                            settings stays with you.
-    ~/.quiver/.linkignore  paths to leave alone, one gitignore-style pattern
+    ~/.swe/.linkignore  paths to leave alone, one gitignore-style pattern
                            per line (.agents/skills, .agents, .config/*/AGENTS.md)
-    ~/.quiver/backups/     anything replaced, timestamped
+    ~/.swe/backups/     anything replaced, timestamped
 
   {c('bold', 'Accounts')}
-    Extra Claude and Codex accounts (~/.quiver/accounts/<vendor>/<id>/home)
+    Extra Claude and Codex accounts (~/.swe/accounts/<vendor>/<id>/home)
     get none of this until you switch it on, one switch per kind:
       swe config set accounts.sync.instructions true
       swe config set accounts.sync.skills true
@@ -779,7 +779,7 @@ def print_init_help() -> None:
     Set one back to false and run it again to remove only the links swe
     made there. Anything the account already has in
     that place is reported and left alone, even with --force.
-    mcp merges the servers in ~/.quiver/mcp.json into each account's
+    mcp merges the servers in ~/.swe/mcp.json into each account's
     .claude.json (mcpServers only) or config.toml ([mcp_servers] only),
     never any other key; a server the account names itself is left alone.
 

@@ -244,7 +244,7 @@ public final class ModelsModel {
     private let store: ArtificialAnalysisStore
     private let keyReader: @Sendable () async -> String?
     private let transport: any HTTPTransport
-    /// `~/.quiver/config/model-links.json`.
+    /// `~/.swe/config/model-links.json`.
     private let linksURL: URL
     private var links: [String: String] = [:]
     /// The models feed fetch `allModels` was decoded from. While it is

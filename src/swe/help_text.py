@@ -47,7 +47,7 @@ HELP = {
   {c('dim', 'visibility is --harness=all instead.')}
 
 {c('bold', 'Link states')}
-  {c('green', '✓')}  linked to ~/.quiver      {c('yellow', '○')}  nothing there yet, or safe to absorb
+  {c('green', '✓')}  linked to ~/.swe      {c('yellow', '○')}  nothing there yet, or safe to absorb
   {c('yellow', '↻')}  symlink points elsewhere  {c('red', '✗')}  real file in the way, needs --force
   {c('yellow', '○')}  holds files that exist nowhere else, left alone on purpose
   {c('dim', '·')}  no known convention, or harness not installed
@@ -89,7 +89,7 @@ HELP = {
   {c('cyan', 'swe add <name> -i')}                    Interactive, pre-filled name
   {c('cyan', 'swe add <name> <cmd> --no-replace --json')}  For the app: refuse existing names
 
-  The {c('dim', 'registry')} is one file, {c('bold', '~/.quiver/config/harness.json')}, listing every
+  The {c('dim', 'registry')} is one file, {c('bold', '~/.swe/config/harness.json')}, listing every
   tool quiver knows. Adding a tool here does not install it — it tells
   quiver the tool exists, so {c('cyan', 'swe list')}/{c('cyan', 'swe use')}/{c('cyan', 'swe edit')} can find it.
   If the tool already exists, it updates the entry.
@@ -174,7 +174,7 @@ HELP = {
   {{dry_run, ran, fixed, still_failing, skipped, not_cleared, fixable_left}}.
 
   Doctor also reports plugin drift (swe find plugins) as plugins.*,
-  broken top-level links in ~/.quiver, and MCP servers failing a local
+  broken top-level links in ~/.swe, and MCP servers failing a local
   check (swe mcp doctor without the network) as mcp.server, each with
   its fix.
 
@@ -308,7 +308,7 @@ back to {c('cyan', 'report.session.*')} / {c('cyan', 'report.writer.*')} in {c('
   {c('cyan', 'swe config get <key>')}           Print one resolved dotted key
   {c('cyan', 'swe config set <key> <value>')}   Save a string, number, boolean, or JSON array
   {c('cyan', 'swe config unset <key>')}         Remove a user-set value
-  {c('cyan', 'swe config edit')}                Open ~/.quiver/config/config.json in VISUAL or EDITOR
+  {c('cyan', 'swe config edit')}                Open ~/.swe/config/config.json in VISUAL or EDITOR
   {c('cyan', 'swe config check')}               Validate types, report setup, and secret safety
   {c('cyan', 'swe config setup report')}        Configure cheap summary and strong writer models
 
@@ -347,7 +347,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe skills link <harness> [target]')}   Symlink a harness root to shared/other
   {c('cyan', 'swe skills unlink <harness> [--mkdir]')} Break a harness symlink
   {c('cyan', 'swe skills move <name> --from=A --to=B')} Move a skill folder between roots
-  {c('cyan', 'swe skills hub')}               Plugins in ~/.quiver/plugins and where they are installed
+  {c('cyan', 'swe skills hub')}               Plugins in ~/.swe/plugins and where they are installed
   {c('cyan', 'swe skills discover [--apply]')} Scan Desktop/Documents for skill catalogs
   {c('cyan', 'swe skills catalog add [path] [label]')} Register a skills directory (default: .)
   {c('cyan', 'swe skills catalog .')}                Add the current directory as a catalog
@@ -356,12 +356,12 @@ to use their own login state and environment."""
   {c('cyan', '-d, --desc')}                   Show skill descriptions
 
 {c('bold', 'Scopes scanned')}
-  shared          ~/.quiver/skills (the tree every harness skills/ symlinks to)
+  shared          ~/.swe/skills (the tree every harness skills/ symlinks to)
   cursor-builtin  ~/.cursor/skills-cursor
   cursor-plugin   ~/.cursor/plugins/cache
   claude-plugin   ~/.claude/plugins/cache
   project         ./.cursor/skills (current directory)
-  <catalog>       Paths from ~/.quiver/config/skill_catalogs.json
+  <catalog>       Paths from ~/.swe/config/skill_catalogs.json
 
   {c('dim', 'Discover')} finds folders named skills under ~/Desktop and ~/Documents,
   then {c('cyan', 'swe skills discover --apply')} or {c('cyan', 'swe skills catalog add')} registers them.
@@ -393,7 +393,7 @@ to use their own login state and environment."""
 
 {c('bold', 'Help')}  {c('cyan', 'swe mcp <command> help')} for details on each — flags, examples, the exact
         model each command uses.
-{c('bold', 'Source of truth')}  ~/.quiver/mcp.json"""
+{c('bold', 'Source of truth')}  ~/.swe/mcp.json"""
     ),
     "providers": (
         "Manage AI provider API keys and metadata",
@@ -403,11 +403,11 @@ to use their own login state and environment."""
   {c('cyan', 'swe providers info <name|alias>')}
       Show details for one provider, including key status + path
   {c('cyan', 'swe providers add <name> [--url=URL] [--env=ENV] [--file=NAME]')}
-      Register a provider in ~/.quiver/config/providers.json
+      Register a provider in ~/.swe/config/providers.json
   {c('cyan', 'swe providers remove <name>')}
       Unregister a provider (does not delete your key file)
 
-  Keys live in {c('bold', '~/.quiver/secrets/providers/.api_keys')} (override
+  Keys live in {c('bold', '~/.swe/secrets/providers/.api_keys')} (override
   with --api-keys-dir=DIR). quiver stores metadata only — never the
   raw key. Run {c('cyan', 'swe providers --help')} for full key-storage and masking details."""
     ),
@@ -446,7 +446,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe find amd')}               AGENTS.md and every harness pointing at it
   {c('cyan', 'swe find skills')}            Skills, plugins, and every harness skill root
   {c('cyan', 'swe find plugins')}           Plugins across every plugin-capable harness, and
-                             where ~/.quiver/plugins drifted from claude and codex
+                             where ~/.swe/plugins drifted from claude and codex
   {c('cyan', 'swe find mcps')}              MCP servers in the hub, and which harnesses have them
   {c('cyan', 'swe find skills --full')}     List every path, not just the counts
   {c('cyan', 'swe find plugins -i')}        Browse them: arrows to move and descend, q to quit
@@ -521,10 +521,10 @@ to use their own login state and environment."""
   Cursor is read-only: it keeps no install record swe can read.
 
   {c('dim', 'Collision: swe find also has a --harness, but it means active|all there.')}
-  {c('dim', 'swe find plugins shows drift between ~/.quiver/plugins and each harness.')}"""
+  {c('dim', 'swe find plugins shows drift between ~/.swe/plugins and each harness.')}"""
     ),
     "hooks": (
-        "Manage the hook scripts under ~/.quiver/hooks",
+        "Manage the hook scripts under ~/.swe/hooks",
         f"""\
   {c('cyan', 'swe hooks')}                       Every hook, its tier, link state, declaration
   {c('cyan', 'swe hooks list [--harness=<h>]')}  One harness only
@@ -541,15 +541,15 @@ to use their own login state and environment."""
                                     --yes skips the confirmation)
 
 {c('bold', 'Tiers')}
-  {c('cyan', 'shared')}    ~/.quiver/hooks/shared/<name>.py — one script deployed
+  {c('cyan', 'shared')}    ~/.swe/hooks/shared/<name>.py — one script deployed
            into every installed shim-able harness through a generated
            wrapper (hooks/<h>/_generated/). Its # events: [PreToolUse, ...]
            header says which normalized events it wants.
   {c('dim', 'harness')}   the per-harness scripts swe links into each hooks root
-  {c('yellow', 'foreign')}  a script or declared command no ~/.quiver source claims —
+  {c('yellow', 'foreign')}  a script or declared command no ~/.swe source claims —
            another installer owns it; swe lists it, never writes it
 
-  Scripts live one folder per harness under {c('bold', '~/.quiver/hooks/')}, and
+  Scripts live one folder per harness under {c('bold', '~/.swe/hooks/')}, and
   {c('cyan', 'swe init')} links each into that harness's hooks dir (~/.claude/hooks,
   ~/.factory/hooks, or {c('dim', 'capabilities.hooks.root')} in harness.json).
   The contract registry (events, schema, settings file, quirks like
@@ -570,16 +570,16 @@ to use their own login state and environment."""
   {c('dim', 'ignored')}   .linkignore, archived in harness.json, or disabled
   {c('yellow', 'foreign')}   not managed by swe — list-only"""),
     "instructions": (
-        "Compile shared instruction chapters into ~/.quiver/AGENTS.md",
+        "Compile shared instruction chapters into ~/.swe/AGENTS.md",
         f"""\
   {c('cyan', 'swe instructions init')}     Fold the current AGENTS.md into a first chapter
   {c('cyan', 'swe instructions build')}    Build the complete shared instruction file
   {c('cyan', 'swe instructions check')}    Exit 1 if the generated file is missing or stale
   {c('cyan', 'swe instructions watch')}    Build now, then rebuild on source changes
 
-  Edit chapters under {c('bold', '~/.quiver/AGENTS_MD/')} and list their relative .md
+  Edit chapters under {c('bold', '~/.swe/AGENTS_MD/')} and list their relative .md
   paths in {c('bold', 'index.txt')}, in order. Blank lines and # comments are ignored.
-  Build writes {c('bold', '~/.quiver/AGENTS.md')} atomically, only when its SHA256 changes.
+  Build writes {c('bold', '~/.swe/AGENTS.md')} atomically, only when its SHA256 changes.
   Check writes nothing. Watch reports source errors and keeps waiting; Ctrl-C stops it.
   Harness symlinks keep pointing at the generated AGENTS.md. Edit the chapters,
   not the generated file. A running chat may need a new chat to read the update.
@@ -587,24 +587,24 @@ to use their own login state and environment."""
   build, check and init take {c('cyan', '--json')} for the app's document."""
     ),
     "init": (
-        "Create ~/.quiver and symlink every harness to it",
+        "Create ~/.swe and symlink every harness to it",
         f"""\
   {c('cyan', 'swe init')}                    Create the layout and link all harnesses
   {c('cyan', 'swe init --full')}             List every path, not just the counts
   {c('cyan', 'swe init --check')}            Show what would change, write nothing (alias: -n)
   {c('cyan', 'swe init --force')}            Replace real files too (backed up first)
-  {c('cyan', 'swe init --migrate')}          Move a pre-0.2.7 ~/.config/swe into ~/.quiver
+  {c('cyan', 'swe init --migrate')}          Move a pre-0.2.7 ~/.config/swe into ~/.swe
   {c('cyan', 'swe init --yes')}              Register every new harness without asking
                                (also the non-terminal default)
-  {c('cyan', 'swe init --hub=<git url>')}     Clone your hub repo as ~/.quiver first, then link
-                               (only while ~/.quiver has no hub: no AGENTS.md, no .git)
+  {c('cyan', 'swe init --hub=<git url>')}     Clone your hub repo as ~/.swe first, then link
+                               (only while ~/.swe has no hub: no AGENTS.md, no .git)
   {c('cyan', 'swe init --accounts')}         Only sync the extra account homes the
                                accounts.sync.* switches name (takes --check, --json)
 
   {c('dim', 'Collision: -n means dry-run here and on swe install, but fetch-fresh-data on swe list.')}
 
   A {c('dim', 'symlink')} is a shortcut file: each harness's folder points at the one
-  real copy in ~/.quiver, so editing once updates it everywhere.
+  real copy in ~/.swe, so editing once updates it everywhere.
 
 {c('bold', 'New harnesses')}
   Found via their skills folder. Ticked ones are registered and linked,
@@ -612,15 +612,15 @@ to use their own login state and environment."""
   left alone. {c('cyan', 'swe hs')} archives or stars them later.
 
 {c('bold', 'What it owns')}
-  ~/.quiver/AGENTS.md   one instruction file, linked in under each harness's
+  ~/.swe/AGENTS.md   one instruction file, linked in under each harness's
                         own name (CLAUDE.md, QWEN.md, CRUSH.md, GEMINI.md)
-  ~/.quiver/skills/     one skill tree, linked in as every harness's skills/
-  ~/.quiver/hooks/      hook scripts, one folder per harness (hooks/claude/),
+  ~/.swe/skills/     one skill tree, linked in as every harness's skills/
+  ~/.swe/hooks/      hook scripts, one folder per harness (hooks/claude/),
                         each script linked into that harness's hooks dir;
                         declaring the hook in its settings stays with you
-  ~/.quiver/.linkignore paths to leave alone, one gitignore-style pattern per
+  ~/.swe/.linkignore paths to leave alone, one gitignore-style pattern per
                         line, e.g. .agents/skills or .config/*/AGENTS.md
-  ~/.quiver/backups/    anything replaced, timestamped
+  ~/.swe/backups/    anything replaced, timestamped
 
 {c('bold', 'States')}
   {c('green', 'linked')}    already points at the canonical file
@@ -639,7 +639,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe setup harnesses')}          Discover and register coding CLIs
   {c('cyan', 'swe setup providers')}          Review provider credential coverage
   {c('cyan', 'swe setup mcp')}                Import MCP servers into mcp.json
-  {c('cyan', 'swe setup skills')}             Unify safe roots under ~/.quiver/skills
+  {c('cyan', 'swe setup skills')}             Unify safe roots under ~/.swe/skills
   {c('cyan', 'swe setup report')}             Configure summarizer and writer models
   {c('cyan', 'swe setup check')}              Verify the resulting setup
 
@@ -649,10 +649,10 @@ to use their own login state and environment."""
   {c('cyan', 'swe setup --apply')}            Apply safe discovery changes without prompts
   {c('cyan', 'swe setup --json')}             Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
-  {c('cyan', 'swe setup --hub=<git url>')}    Clone your hub repo as ~/.quiver first, then
-                               run any of the above (only while ~/.quiver has no hub yet)
+  {c('cyan', 'swe setup --hub=<git url>')}    Clone your hub repo as ~/.swe first, then
+                               run any of the above (only while ~/.swe has no hub yet)
 
-  While ~/.quiver has no hub yet (no AGENTS.md, no .git), the wizard first asks
+  While ~/.swe has no hub yet (no AGENTS.md, no .git), the wizard first asks
   for your hub repo's URL; a blank answer starts an empty hub.
 
   Provider credentials remain external. Use {c('cyan', 'swe providers info <name>')} for the
@@ -672,7 +672,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe autocomplete bash')}   Generate + inject bash completion
   {c('cyan', 'swe autocomplete fish')}   Generate + inject fish completion
 
-  Writes a completion script to {c('dim', '~/.quiver/completions/')} and adds a
+  Writes a completion script to {c('dim', '~/.swe/completions/')} and adds a
   source line to your shell profile (~/.zshrc, ~/.bashrc, or fish config).
 
   After running, restart your terminal or run:
@@ -697,7 +697,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe gh pr merge <N> [--method=M] [--auto]')}
                                             Merge a PR (default: squash)
   {c('cyan', 'swe gh pr worktree <N>')}           Checkout the PR head under
-                                            ~/.quiver/worktrees (a session's
+                                            ~/.swe/worktrees (a session's
                                             launch point)
   {c('cyan', 'swe gh issue [--repo=R]')}          Issues
   {c('cyan', 'swe gh issue view <N>')}           One issue: body, comments, and the
@@ -706,7 +706,7 @@ to use their own login state and environment."""
                                             Comment on an issue as you
   {c('cyan', 'swe gh issue worktree <N>')}       Branch quiver/issue-N off the default
                                             branch, checked out under
-                                            ~/.quiver/worktrees
+                                            ~/.swe/worktrees
   {c('cyan', 'swe gh run [--repo=R]')}            Workflow runs (alias: actions)
   {c('cyan', 'swe gh run rerun <id> [--failed]')}  Re-run a workflow run
   {c('cyan', 'swe gh pages [--repo=R]')}          GitHub Pages site + latest build
@@ -819,7 +819,7 @@ to use their own login state and environment."""
                                             line per device; revoking a device
                                             removes it), {c('cyan', '--off')} removes them.
 
-  State lives under {c('dim', '~/.quiver/data/remote/')}: device credentials in
+  State lives under {c('dim', '~/.swe/data/remote/')}: device credentials in
   devices.json (0600), per-session event journals and transcript cursors."""
     ),
     "version": (
@@ -828,7 +828,7 @@ to use their own login state and environment."""
   {c('cyan', 'swe version')}    {c('cyan', 'swe -v')}    {c('cyan', 'swe --version')}
 
   Prints the installed version and exits. Reads no config, so it works even
-  when ~/.quiver is broken. {c('cyan', '--json')} emits the standard envelope:
+  when ~/.swe is broken. {c('cyan', '--json')} emits the standard envelope:
   name, version and the Python version under `data`."""
     ),
     "bug": (

@@ -22,7 +22,7 @@ class McpDiscoverTest(unittest.TestCase):
     def test_discovers_servers_not_in_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             config_dir.mkdir(parents=True)
             registry_file = config_dir / "harness.json"
             mcp_file = config_dir / "mcp.json"
@@ -81,7 +81,7 @@ class McpDiscoverTest(unittest.TestCase):
     def test_apply_writes_to_mcp_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             config_dir.mkdir(parents=True)
             registry_file = config_dir / "harness.json"
             mcp_file = config_dir / "mcp.json"
@@ -397,7 +397,7 @@ class ShieldCredentialsTest(unittest.TestCase):
 
         tmp = stack.enter_context(tempfile.TemporaryDirectory())
         home = Path(tmp)
-        path = home / ".quiver" / "mcp.json"
+        path = home / ".swe" / "mcp.json"
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps({"mcpServers": {}}))
         stack.enter_context(patch.object(D, "MCP_SOURCE_FILE", path))

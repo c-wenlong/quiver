@@ -1,7 +1,7 @@
 """Pinned repositories and repo-name resolution for `swe gh`.
 
 The dashboard works on a list of repos the user pins, stored as authored
-state in ``~/.quiver/config/github.json``. Any command also resolves a
+state in ``~/.swe/config/github.json``. Any command also resolves a
 repo from ``--repo=owner/name`` or from the git remote of the working
 directory it runs in.
 """

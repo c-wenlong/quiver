@@ -239,7 +239,7 @@ _HUB_STATES = {
 
 
 def cmd_skills_hub(args) -> int:
-    """What the quiver hub (~/.quiver/plugins) offers, and where it landed."""
+    """What the quiver hub (~/.swe/plugins) offers, and where it landed."""
     from swe.skills.help_text import print_skills_hub_help
     from swe.skills.inventory import hub_plugins
 
@@ -257,7 +257,7 @@ def cmd_skills_hub(args) -> int:
 
     plugins = data["plugins"]
     if not plugins:
-        print(c("dim", "\n  No plugins in ~/.quiver/plugins yet.\n"))
+        print(c("dim", "\n  No plugins in ~/.swe/plugins yet.\n"))
         return 0
     print(f"\n{c('bold', 'Quiver hub')}  {c('dim', data['hub'])}\n")
     width = max(len(f"{p['name']}@{p['marketplace']}") for p in plugins) + 2

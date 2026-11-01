@@ -14,7 +14,7 @@ for the hub machine, at ``#/setup``.
   setup would add, skills hints, and what linking AGENTS.md would do.
 
 ``first_run`` is the Mac app's launch check, ``FirstRun.shouldOffer``:
-no shared ``~/.quiver/AGENTS.md`` yet. (The Mac app also remembers a
+no shared ``~/.swe/AGENTS.md`` yet. (The Mac app also remembers a
 per-Mac "finished or skipped" flag. The web app keeps its own per browser:
 a bare ``/`` opens ``#/setup`` once, and Overview shows a card linking
 here for as long as ``first_run`` holds; see ``app.js``.)
@@ -28,10 +28,10 @@ registered harness), and ``adopt`` one of the preview's
 The reply is ``{"applied", "first_run", "starred"}``.
 
 ``POST /v1/app/setup/hub`` with ``{"url"}`` clones the user's hub repo
-as ``~/.quiver``, ``swe setup --hub``'s own clone, on a thread: it
+as ``~/.swe``, ``swe setup --hub``'s own clone, on a thread: it
 answers at once with ``{"hub"}`` (``hub_status``), and the page polls
 ``GET /v1/app/setup?hub=1`` until ``hub.job.state`` leaves ``cloning``.
-409 ``has_hub`` when ~/.quiver already holds a hub (or is a file or a
+409 ``has_hub`` when ~/.swe already holds a hub (or is a file or a
 symlink), 409 ``busy`` while a clone or setup runs. The URL is only ever
 kept or answered with its credentials removed (``public_url``).
 
@@ -180,7 +180,7 @@ def post(ctx, action: str, body: dict) -> dict:
 # --------------------------------------------------------------- hub clone
 # One clone per home, on its own thread: ls-remote can take 30 s and the
 # clone 10 minutes, far past what a page request should hold a handler
-# for. The thread holds _LOCK, so setup's apply can't write ~/.quiver
+# for. The thread holds _LOCK, so setup's apply can't write ~/.swe
 # underneath it; the page polls ``GET /v1/app/setup?hub=1``.
 
 URL_MAX = 2048
@@ -197,7 +197,7 @@ def _idle() -> dict:
 
 
 def hub_status(home: Path) -> dict:
-    """``{can_clone, demo_url, job}``: whether ~/.quiver can take a clone
+    """``{can_clone, demo_url, job}``: whether ~/.swe can take a clone
     now (the page shows its hub field only then), the demo hub to fork
     (null until it exists), and this hub's last clone. ``job.state`` is
     ``idle``, ``cloning``, ``done`` or ``failed``; ``job.url`` never

@@ -33,17 +33,17 @@ We aim to acknowledge reports within 48 hours.
 Quiver's whole job is reading and rewriting other tools' config files, several
 of which hold credentials. The sensitive paths:
 
-- `~/.quiver/mcp.json` — the MCP hub. It stores credentials as `${NAME}`
+- `~/.swe/mcp.json` — the MCP hub. It stores credentials as `${NAME}`
   references rather than values, so the file itself is comparatively safe, but
   it still maps out every server you run.
-- `~/.quiver/secrets/mcp/.api_keys` — the values behind those `${NAME}`
+- `~/.swe/secrets/mcp/.api_keys` — the values behind those `${NAME}`
   references, mode 600.
-- `~/.quiver/secrets/providers/.api_keys` — plain-text provider API keys,
+- `~/.swe/secrets/providers/.api_keys` — plain-text provider API keys,
   mode 600. `~/.api_keys` is a symlink to it once `swe init` has moved it. `swe
   providers` records metadata only and never reads the raw key into the
   registry.
 - `secrets/` carries its own `.gitignore` of `*`, written by `swe init` and by
-  the app before its first save, so git skips it whatever `~/.quiver/.gitignore`
+  the app before its first save, so git skips it whatever `~/.swe/.gitignore`
   says. The root `.gitignore` that `swe init` writes lists `secrets/` too.
 - Harness MCP configs written by `swe mcp sync` contain *resolved* tokens and
   are mode 600 for that reason. Review `--dry-run` output before syncing in a
@@ -54,5 +54,5 @@ have a copy of the old files; `swe init --migrate` moves them rather than
 deleting them, so treat the leftovers as sensitive too.
 
 Quiver never commits any of this. This repository is the control plane (code);
-`~/.quiver` is the data plane (state) with its own git history, kept separate
+`~/.swe` is the data plane (state) with its own git history, kept separate
 precisely so machine credentials cannot land here by accident.

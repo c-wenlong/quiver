@@ -3,7 +3,7 @@
 A port of the Mac app's first-run setup sheet (`FirstRunSetupSheet`,
 `QuiverCore/Onboarding/FirstRunSetup.swift`) for the machine the hub runs
 on. Page id `setup`, at `#/setup`; it is not in the sidebar. While the hub
-machine has no shared `~/.quiver/AGENTS.md`, opening a bare `/` goes
+machine has no shared `~/.swe/AGENTS.md`, opening a bare `/` goes
 here once per browser (remembered under `quiver.setup.offered`), and
 Overview shows a **Set up** card linking here. Settings links it too. Files:
 `quiver/webapp/pages/setup.py`, `static/pages/setup.js` and `setup.css`,
@@ -14,7 +14,7 @@ Overview shows a **Set up** card linking here. Settings links it too. Files:
 The page opens on one card:
 
 - **Set up this machine**, when the hub machine has no shared
-  `~/.quiver/AGENTS.md` yet (`first_run`), with a Set up button.
+  `~/.swe/AGENTS.md` yet (`first_run`), with a Set up button.
 - **This machine is set up** otherwise, with Run setup again (the Mac
   app reopens the sheet from Settings › General the same way).
 
@@ -54,7 +54,7 @@ subtitle, and a footer with Skip setup, Back and Continue.
    Going Back and changing the ticks runs setup again (without adopting a
    second time), as the sheet does.
 
-   Above them, while `~/.quiver` has no hub yet (`hub.can_clone`: no
+   Above them, while `~/.swe` has no hub yet (`hub.can_clone`: no
    `AGENTS.md`, no `.git`; the hub's own state there doesn't count),
    **Start from your hub repo** offers `swe setup --hub`: a URL field,
    the note "Fork a hub repo first (or use it as a template for a private
@@ -90,7 +90,7 @@ refresh button reads everything again and starts the steps over.
 {
   "machine": "home-server",
   "home": "/home/dev",
-  "agents_file": "/home/dev/.quiver/AGENTS.md",
+  "agents_file": "/home/dev/.swe/AGENTS.md",
   "first_run": true,
   "agents": {
     "providers": [
@@ -124,7 +124,7 @@ refresh button reads everything again and starts the steps over.
   again, as the sheet does when the preview call fails.
 - `first_run` is the Mac app's `FirstRun.shouldOffer` check: no shared
   `AGENTS.md`.
-- `hub` is `hub_status`: `can_clone` (whether `~/.quiver` can take a
+- `hub` is `hub_status`: `can_clone` (whether `~/.swe` can take a
   clone now), `demo_url` (null until the demo hub exists) and `job`, this
   hub process's last clone: `state` is `idle`, `cloning`, `done` or
   `failed`, `url` is the URL with any credentials removed, `error` is
@@ -171,7 +171,7 @@ again. 404 `unknown_harness` for an id the page doesn't list, 422
 
 `POST /v1/app/setup/hub` with `{"url": "https://github.com/me/hub.git"}`
 is `swe setup --hub=<url>`'s clone (`init.hub.clone_and_register`:
-`git ls-remote`, a clone into a staging folder moved into `~/.quiver`
+`git ls-remote`, a clone into a staging folder moved into `~/.swe`
 around what is there, then the hub's plugin marketplaces registered).
 It answers at once with `{"hub"}` and runs on its own thread, holding
 the page's setup lock, so apply answers 409 `busy` until it ends. The
@@ -180,7 +180,7 @@ URL is kept and answered only with its credentials removed.
 | Status | Code | When |
 |---|---|---|
 | 422 | `bad_url` | `url` is not a one-line string of at most 2,048 characters, or starts with `-` |
-| 409 | `has_hub` | `~/.quiver` already holds a hub (`AGENTS.md` or `.git`), or is a file or a symlink; the message is swe's |
+| 409 | `has_hub` | `~/.swe` already holds a hub (`AGENTS.md` or `.git`), or is a file or a symlink; the message is swe's |
 | 409 | `busy` | a clone or a setup run is going |
 
 Failures after it starts (a URL git can't reach, a timeout, a path on

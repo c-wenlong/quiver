@@ -5,7 +5,7 @@ import SwiftUI
 /// Benchmarks from Artificial Analysis crossed with the models the ledger
 /// actually saw. Bars are provider-coloured, used models carry a light
 /// outline, and every label hovers into the shared model card. The data
-/// lands in `~/.quiver/data/artificial-analysis/`; without a key the page
+/// lands in `~/.swe/data/artificial-analysis/`; without a key the page
 /// points at Settings › Services.
 struct ModelsPage: View {
     @Environment(AppModel.self) private var app
@@ -839,7 +839,7 @@ private struct ListPriceCell: View {
     static func help(_ price: ModelsModel.ListPrice) -> String {
         let source = switch price.source {
         case .liteLLM: "LiteLLM"
-        case .quiver: "Quiver's price list"
+        case .swe: "Quiver's price list"
         case .yours: "your price"
         }
         return "\(price.key), from \(source)\nCache write \(ModelCard.price(price.cacheWrite)) / 1M"

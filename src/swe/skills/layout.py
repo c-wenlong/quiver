@@ -24,7 +24,7 @@ SHARED_LABEL = "shared"
 # The one canonical tree. ~/.agents/skills was the pre-0.2.7 root and has been
 # removed, along with the 74 per-skill symlinks that six harnesses kept pointing
 # into it; those roots now link to this path directly.
-SHARED_REL = Path(".quiver/skills")
+SHARED_REL = Path(".swe/skills")
 
 # Harness skill roots that can be symlinked to shared or each other.
 # Labels are registry names (harness.json keys), even where the directory

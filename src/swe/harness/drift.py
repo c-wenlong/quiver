@@ -7,7 +7,7 @@ have quietly drifted apart:
 
   * every ``help_text.py`` topic should have a matching command, and vice
     versa (``HELP vs DISPATCH``)
-  * every ``~/.quiver/config/harness.json`` entry should have a sane shape
+  * every ``~/.swe/config/harness.json`` entry should have a sane shape
     (``REGISTRY SCHEMA``)
   * the fallback tables hardcoded in ``skills/layout.py`` and
     ``find/plugins.py`` should still *join* with the registry
@@ -18,7 +18,7 @@ have quietly drifted apart:
     counts as drift: the same path under two different names (the join
     breaks), a table naming a harness the registry has never heard of, and
     a supported capability recorded with no root.
-  * nothing at the top level of the repo or ``~/.quiver`` should be a
+  * nothing at the top level of the repo or ``~/.swe`` should be a
     symlink pointing at a target that no longer exists (``DANGLING
     SYMLINKS``)
   * hook declarations, link states and the files on disk should agree:
@@ -482,10 +482,10 @@ def check_dangling_symlinks(
 
     Not recursive on purpose: this is meant to catch a stray dev-only
     symlink left behind at a directory's top level (the repo root, or
-    ~/.quiver), not to walk every skill/plugin tree looking for broken
+    ~/.swe), not to walk every skill/plugin tree looking for broken
     internal links.
 
-    A link directly in one of ``fixable`` (~/.quiver and its skills
+    A link directly in one of ``fixable`` (~/.swe and its skills
     folder, never the repo) gets a ``dangling-link`` Run, which backs the
     link up before removing it.
     """
@@ -537,15 +537,35 @@ def _dangling(entry: Path, fixable: bool) -> Finding:
                        "it works here too."},
             {"kind": "action", "action": "dangling-link",
              "title": "Remove the broken link",
-             "detail": "Copies the link to ~/.quiver/backups, then removes it.",
+             "detail": "Copies the link to ~/.swe/backups, then removes it.",
              "path": str(entry)},
         ))
+
+
+def check_data_root(home: Path) -> list[Finding]:
+    """The ~/.quiver -> ~/.swe move: leftovers a person has to decide.
+
+    The compat symlink (~/.quiver -> .swe) is expected and ignored."""
+    from swe import paths
+
+    new, old = home / paths.SWE_DIRNAME, home / paths.LEGACY_DIRNAME
+    if new.exists() and old.is_dir() and not old.is_symlink():
+        return [Finding(
+            "warn", "layout",
+            f"both ~/{paths.SWE_DIRNAME} and a real ~/{paths.LEGACY_DIRNAME} "
+            f"exist — merge or remove the old one")]
+    if old.is_dir() and not old.is_symlink() and not new.exists():
+        return [Finding(
+            "warn", "layout",
+            f"still on ~/{paths.LEGACY_DIRNAME} — the move to "
+            f"~/{paths.SWE_DIRNAME} could not run; move it by hand")]
+    return []
 
 
 def _real_symlink_dirs(repo_root: Path, home: Path) -> list[Path]:
     from swe.paths import skills_dir_for
 
-    return [repo_root, home / ".quiver", skills_dir_for(home)]
+    return [repo_root, home / ".swe", skills_dir_for(home)]
 
 
 def _default_repo_root() -> Path:
@@ -633,7 +653,7 @@ def _hook_finding(d, home: Path, registry: dict | None = None) -> Finding:
                 "title": "Drop the declaration",
                 "detail": "Removes the hook entries naming it from "
                           f"{joined}, with each file backed up to "
-                          "~/.quiver/backups first.",
+                          "~/.swe/backups first.",
                 "script": d.script,
                 "settings": [str(p) for p in editable],
                 "targets": list(d.targets),
@@ -749,5 +769,6 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
     )
     findings += check_dangling_symlinks(
         _real_symlink_dirs(repo_root, home), fixable=_real_symlink_dirs(repo_root, home)[1:])
+    findings += check_data_root(home)
     findings += check_hook_drift(home)
     return findings

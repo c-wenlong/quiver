@@ -15,7 +15,7 @@ class SkillsNewTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name)
-        (self.home / ".quiver" / "skills").mkdir(parents=True)
+        (self.home / ".swe" / "skills").mkdir(parents=True)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -33,7 +33,7 @@ class SkillsNewTest(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def skill(self, name):
-        return self.home / ".quiver" / "skills" / name / "SKILL.md"
+        return self.home / ".swe" / "skills" / name / "SKILL.md"
 
     def test_creates_exact_content(self):
         code, out, err = self.run_skills("new", "my-skill")
@@ -135,14 +135,14 @@ class SkillsNewTest(unittest.TestCase):
 
     def test_missing_quiver_dir_refuses(self):
         import shutil
-        shutil.rmtree(self.home / ".quiver")
+        shutil.rmtree(self.home / ".swe")
         code, out, err = self.run_skills("new", "s")
         self.assertEqual(code, 1)
         self.assertIn("swe init", out + err)
 
     def test_missing_skills_dir_is_created(self):
         import shutil
-        shutil.rmtree(self.home / ".quiver" / "skills")
+        shutil.rmtree(self.home / ".swe" / "skills")
         code, out, err = self.run_skills("new", "s")
         self.assertEqual(code, 0, out + err)
 

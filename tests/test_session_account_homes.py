@@ -1,7 +1,7 @@
 """Sessions in Quiver's extra account homes are listed too.
 
 Quiver's extra Claude and Codex accounts keep a harness-shaped config dir
-at ``~/.quiver/accounts/<vendor>/<id>/home`` — a ``projects`` or ``sessions``
+at ``~/.swe/accounts/<vendor>/<id>/home`` — a ``projects`` or ``sessions``
 tree inside parses exactly like the default home's. A session found there
 is tagged with its ``account_home`` so the listing can name the account
 and resume under it; ``resume_json`` carries the env var that points the
@@ -53,7 +53,7 @@ def _codex_user(text):
 
 class _FakeHome:
     """Redirects ``~`` wholesale to a temp dir, so both the default homes
-    and ``~/.quiver/accounts`` land inside it."""
+    and ``~/.swe/accounts`` land inside it."""
 
     def __init__(self, root):
         self.root = root
@@ -77,11 +77,11 @@ class ClaudeAccountHomesTest(unittest.TestCase):
             home = Path(tmp)
             default_projects = home / ".claude" / "projects" / PROJECT
             _write_jsonl(default_projects / "s1.jsonl", [_claude_user("Fix login")])
-            account = home / ".quiver" / "accounts" / "claude" / "claude-work" / "home"
+            account = home / ".swe" / "accounts" / "claude" / "claude-work" / "home"
             account_projects = account / "projects" / PROJECT
             _write_jsonl(account_projects / "s2.jsonl", [_claude_user("Ship the parser")])
             # A stray folder that is not an account home is ignored.
-            (home / ".quiver" / "accounts" / "claude" / "retired" / "data").mkdir(parents=True)
+            (home / ".swe" / "accounts" / "claude" / "retired" / "data").mkdir(parents=True)
 
             with patch(
                 "swe.sessions.parsers.os.path.expanduser",
@@ -117,7 +117,7 @@ class ClaudeAccountHomesTest(unittest.TestCase):
             home = Path(tmp)
             record = [_claude_user("Fix login")]
             _write_jsonl(home / ".claude" / "projects" / PROJECT / "s1.jsonl", record)
-            account = home / ".quiver" / "accounts" / "claude" / "claude-work" / "home"
+            account = home / ".swe" / "accounts" / "claude" / "claude-work" / "home"
             _write_jsonl(account / "projects" / PROJECT / "s1.jsonl", record)
 
             with patch(
@@ -135,7 +135,7 @@ class ClaudeAccountHomesTest(unittest.TestCase):
         session = Session(
             timestamp=1_000, agent="Claude Code", path="/c/quiver",
             title="Account work", session_id="s2", tool_name="claude",
-            account_home="/x/.quiver/accounts/claude/claude-work/home",
+            account_home="/x/.swe/accounts/claude/claude-work/home",
         )
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "sessions.json"
@@ -150,7 +150,7 @@ class CodexAccountHomesTest(unittest.TestCase):
         rollout = f"rollout-2026-09-09T14-52-42-{THREAD_ID}.jsonl"
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            account = home / ".quiver" / "accounts" / "codex" / "codex-nus" / "home"
+            account = home / ".swe" / "accounts" / "codex" / "codex-nus" / "home"
             day_dir = account / "sessions" / "2026" / "09" / "09"
             _write_jsonl(day_dir / rollout, [_codex_meta(), _codex_user("Fix the login bug")])
 
@@ -170,7 +170,7 @@ class CodexAccountHomesTest(unittest.TestCase):
         rollout = f"rollout-2026-09-09T14-52-42-{THREAD_ID}.jsonl"
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            account = home / ".quiver" / "accounts" / "codex" / "codex-nus" / "home"
+            account = home / ".swe" / "accounts" / "codex" / "codex-nus" / "home"
             day_dir = account / "sessions" / "2026" / "09" / "09"
             _write_jsonl(
                 day_dir / rollout,
@@ -197,7 +197,7 @@ class CodexAccountHomesTest(unittest.TestCase):
             home = Path(tmp)
             records = [_codex_meta(), _codex_user("Fix the login bug")]
             _write_jsonl(home / ".codex" / "sessions" / "2026" / "09" / "09" / rollout, records)
-            account = home / ".quiver" / "accounts" / "codex" / "codex-nus" / "home"
+            account = home / ".swe" / "accounts" / "codex" / "codex-nus" / "home"
             _write_jsonl(account / "sessions" / "2026" / "09" / "09" / rollout, records)
 
             with patch(
@@ -214,14 +214,14 @@ class AccountHomeInJsonTest(unittest.TestCase):
         session = Session(
             timestamp=1_000, agent="Claude Code", path="/c/quiver",
             title="Account work", session_id="s2", tool_name="claude",
-            account_home="/Users/k/.quiver/accounts/claude/claude-work/home",
+            account_home="/Users/k/.swe/accounts/claude/claude-work/home",
         )
         row = SessionRow.of(session, "done", resume_json(session)).to_json()
         self.assertEqual(
-            "/Users/k/.quiver/accounts/claude/claude-work/home", row["account_home"]
+            "/Users/k/.swe/accounts/claude/claude-work/home", row["account_home"]
         )
         self.assertEqual(
-            {"CLAUDE_CONFIG_DIR": "/Users/k/.quiver/accounts/claude/claude-work/home"},
+            {"CLAUDE_CONFIG_DIR": "/Users/k/.swe/accounts/claude/claude-work/home"},
             row["resume"]["env"],
         )
 

@@ -105,23 +105,23 @@ def _setup_help():
                                 skills, report, or check
   {c('cyan', 'swe setup --apply')}      Non-interactively apply safe discovery changes,
                                 then link AGENTS.md and skills into each harness
-  {c('cyan', 'swe setup --apply --adopt=<file>')}  Start ~/.quiver/AGENTS.md from one of
+  {c('cyan', 'swe setup --apply --adopt=<file>')}  Start ~/.swe/AGENTS.md from one of
                                 your instruction files (only while it is the seed)
   {c('cyan', 'swe setup --apply --starred=a,b')}  Star exactly these harnesses (registers
                                 catalog ones that aren't registered yet)
   {c('cyan', 'swe setup --json')}       Print the discovery preview as JSON
   {c('cyan', 'swe setup --non-interactive')}  Preview without prompts or writes
-  {c('cyan', 'swe setup --hub=<git url>')}  Clone your hub repo as ~/.quiver first, then
+  {c('cyan', 'swe setup --hub=<git url>')}  Clone your hub repo as ~/.swe first, then
                                 carry on with any of the above. Only while
-                                ~/.quiver has no hub yet; fork a hub repo first
+                                ~/.swe has no hub yet; fork a hub repo first
 
 {c('bold', 'Steps')}
-  First, only while ~/.quiver has no hub yet: your hub repo's URL
+  First, only while ~/.swe has no hub yet: your hub repo's URL
   (a blank answer starts an empty hub, as before)
   1. Discover and register AI coding CLI harnesses
   2. Check LLM provider credential coverage without storing secrets
   3. Import discovered MCP servers into the source-of-truth
-  4. Unify safe skills roots under ~/.quiver/skills
+  4. Unify safe skills roots under ~/.swe/skills
   5. Configure session summarizer and report writer models
   6. Verify the resulting setup and show next commands
 
@@ -153,13 +153,13 @@ def _take_hub(args: list[str]) -> tuple[list[str], str | None]:
 
 
 def _clone_hub(home: Path, url: str, *, quiet: bool) -> dict | None:
-    """``--hub``: clone the hub as ``~/.quiver`` and register its plugin
+    """``--hub``: clone the hub as ``~/.swe`` and register its plugin
     marketplaces. Returns what was cloned, or None after saying why not
     (on stderr when ``quiet``, so --json keeps stdout for its document)."""
     from swe.init.hub import HubError, clone_and_register, public_url
 
     if not quiet:
-        print(f"\n  Cloning {public_url(url.strip())} into ~/.quiver…")
+        print(f"\n  Cloning {public_url(url.strip())} into ~/.swe…")
     try:
         cloned = clone_and_register(home, url)
     except HubError as exc:
@@ -187,7 +187,7 @@ def _print_marketplaces(rows: list[dict]) -> None:
 
 def _hub_data(home: Path, cloned: dict | None) -> dict:
     """The ``hub`` key of ``swe setup --json``: whether a hub can still be
-    cloned as ``~/.quiver`` (the apps show their hub URL field only then),
+    cloned as ``~/.swe`` (the apps show their hub URL field only then),
     the demo hub to fork (null until it exists), and what this run cloned."""
     from swe.init.hub import DEMO_HUB_URL, can_clone
 
@@ -196,12 +196,12 @@ def _hub_data(home: Path, cloned: dict | None) -> dict:
 
 
 def _print_hub_hint(home: Path) -> None:
-    """The dry run's pointer to --hub, while ~/.quiver has no hub yet."""
+    """The dry run's pointer to --hub, while ~/.swe has no hub yet."""
     from swe.init.hub import DEMO_HUB_URL, FORK_NOTE, can_clone
 
     if not can_clone(home):
         return
-    print(c("dim", "  ~/.quiver has no hub yet. To start from your own hub repo:\n"))
+    print(c("dim", "  ~/.swe has no hub yet. To start from your own hub repo:\n"))
     print(f"    {c('cyan', 'swe setup --hub=<git url>')}")
     print(c("dim", f"    {FORK_NOTE}"))
     if DEMO_HUB_URL:
@@ -287,7 +287,7 @@ def cmd_setup(args):
     cloned = None
     if hub_url is not None:
         # The hub comes first, so everything after it (the wizard, the
-        # preview, the apply) runs on the cloned ~/.quiver.
+        # preview, the apply) runs on the cloned ~/.swe.
         cloned = _clone_hub(home, hub_url, quiet=json_out)
         if cloned is None:
             return 1
@@ -338,7 +338,7 @@ def cmd_setup(args):
             tools = ", ".join(f.tools)
             print(f"  {c('green', '•')} {c('bold', f.name)}  {c('dim', f'({tools})')}")
     else:
-        print(c("green", "  ✓ No new MCP servers outside ~/.quiver/mcp.json."))
+        print(c("green", "  ✓ No new MCP servers outside ~/.swe/mcp.json."))
     print()
 
     # Step 3 — skills
@@ -360,7 +360,7 @@ def cmd_setup(args):
 
     if apply:
         # Linking runs even when discovery found nothing new: a fresh
-        # ~/.quiver still needs its AGENTS.md seeded and linked.
+        # ~/.swe still needs its AGENTS.md seeded and linked.
         applied = _apply_all(new_harness, new_mcp, actionable_skills, home, adopt, starred)
         parts = []
         if applied["harness"]:

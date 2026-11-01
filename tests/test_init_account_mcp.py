@@ -1,7 +1,7 @@
 """accounts.sync.mcp: the hub's MCP servers merged into extra account homes.
 
 Every test builds a throwaway home with fake Claude and Codex account homes
-under ~/.quiver/accounts/<vendor>/<id>/home, a hub mcp.json, and an
+under ~/.swe/accounts/<vendor>/<id>/home, a hub mcp.json, and an
 account .claude.json carrying a fake login.
 """
 
@@ -60,12 +60,12 @@ trust_level = "trusted"
 
 def _home(case) -> Path:
     home = temp_dir(case).resolve()
-    (home / ".quiver" / "config").mkdir(parents=True)
+    (home / ".swe" / "config").mkdir(parents=True)
     return home
 
 
 def _profiles(home: Path, *profiles: dict) -> None:
-    root = home / ".quiver" / "accounts"
+    root = home / ".swe" / "accounts"
     root.mkdir(parents=True, exist_ok=True)
     (root / "profiles.json").write_text(json.dumps({"schema": 1, "profiles": list(profiles)}))
     for p in profiles:
@@ -73,16 +73,16 @@ def _profiles(home: Path, *profiles: dict) -> None:
 
 
 def _acct(home: Path, vendor: str = "claude", pid: str = "claude-work") -> Path:
-    return home / ".quiver" / "accounts" / vendor / pid / "home"
+    return home / ".swe" / "accounts" / vendor / pid / "home"
 
 
 def _flags(home: Path, **flags) -> None:
-    (home / ".quiver" / "config" / "config.json").write_text(
+    (home / ".swe" / "config" / "config.json").write_text(
         json.dumps({"accounts": {"sync": flags}}))
 
 
 def _hub(home: Path, servers: dict, **extra) -> None:
-    (home / ".quiver" / "mcp.json").write_text(json.dumps({"mcpServers": servers, **extra}))
+    (home / ".swe" / "mcp.json").write_text(json.dumps({"mcpServers": servers, **extra}))
 
 
 def _sync(home: Path, check_only: bool = False):
@@ -100,7 +100,7 @@ def _setup(case, *, claude_json: str | None = CLAUDE_JSON, codex: str | None = C
     home = _home(case)
     _profiles(home, WORK, CODEX)
     _hub(home, HUB)
-    secrets = home / ".quiver" / "secrets" / "mcp"
+    secrets = home / ".swe" / "secrets" / "mcp"
     secrets.mkdir(parents=True)
     (secrets / ".api_keys").write_text("export GH_TOKEN=tok-123\n")
     if claude_json is not None:
@@ -157,8 +157,8 @@ class OnTest(unittest.TestCase):
         self.assertEqual(data["projects"]["/Users/me/repo"]["mcpServers"],
                          {"inner": {"command": "keep-me"}})
         self.assertEqual(os.stat(_acct(home) / ".claude.json").st_mode & 0o777, 0o600)
-        # A backup of the old file, in ~/.quiver/backups.
-        backups = list((home / ".quiver" / "backups").glob("*claude-work_home_.claude.json.*"))
+        # A backup of the old file, in ~/.swe/backups.
+        backups = list((home / ".swe" / "backups").glob("*claude-work_home_.claude.json.*"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(encoding="utf-8"), before)
         # The record names what swe wrote, without the secret in it.
@@ -238,7 +238,7 @@ class OnTest(unittest.TestCase):
 
     def test_a_missing_secret_skips_that_server(self):
         home = _setup(self)
-        (home / ".quiver" / "secrets" / "mcp" / ".api_keys").write_text("")
+        (home / ".swe" / "secrets" / "mcp" / ".api_keys").write_text("")
         _flags(home, mcp=True)
         rows, _ = _sync(home)
         self.assertEqual(rows[("mcp", "claude/claude-work", "github")], "skipped")
@@ -339,7 +339,7 @@ class ReviewFixesTest(unittest.TestCase):
         home = _setup(self)
         _flags(home, mcp=True)
         before = (_acct(home) / ".claude.json").read_bytes()
-        rows, _ = accounts.sync_accounts(home, [".quiver/accounts/claude"], {}, check_only=False)
+        rows, _ = accounts.sync_accounts(home, [".swe/accounts/claude"], {}, check_only=False)
         got = {(r.status.label, r.name): r.result for r in rows}
         self.assertEqual(got[("claude/claude-work", None)], "ignored")
         self.assertEqual((_acct(home) / ".claude.json").read_bytes(), before)
@@ -350,7 +350,7 @@ class ReviewFixesTest(unittest.TestCase):
         os.chmod(_acct(home) / ".claude.json", 0o644)
         _flags(home, mcp=True)
         _sync(home)
-        backups = list((home / ".quiver" / "backups").iterdir())
+        backups = list((home / ".swe" / "backups").iterdir())
         self.assertTrue(backups)
         for b in backups:
             self.assertEqual(os.stat(b).st_mode & 0o777, 0o600)
@@ -358,7 +358,7 @@ class ReviewFixesTest(unittest.TestCase):
 
     def test_a_damaged_secrets_file_skips_with_a_note(self):
         home = _setup(self)
-        (home / ".quiver" / "secrets" / "mcp" / ".api_keys").write_bytes(b"\xff\xfe bad")
+        (home / ".swe" / "secrets" / "mcp" / ".api_keys").write_bytes(b"\xff\xfe bad")
         _flags(home, mcp=True)
         before = (_acct(home) / ".claude.json").read_bytes()
         _, notes = _sync(home)
@@ -395,7 +395,7 @@ class RefuseTest(unittest.TestCase):
         home = _setup(self)
         _flags(home, mcp=True)
         _sync(home)
-        (home / ".quiver" / "mcp.json").write_text("{broken")
+        (home / ".swe" / "mcp.json").write_text("{broken")
         before = (_acct(home) / ".claude.json").read_bytes()
         rows, notes = _sync(home)
         self.assertTrue(notes and "MCP account sync skipped" in notes[0])

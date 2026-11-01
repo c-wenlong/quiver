@@ -80,7 +80,7 @@ class ReadKeyTest(unittest.TestCase):
 class DefaultKeysDirTest(unittest.TestCase):
     def test_default_keys_dir_sits_under_quiver_secrets(self):
         self.assertEqual(default_keys_dir(Path("/tmp/does-not-exist-home")),
-                         Path("/tmp/does-not-exist-home/.quiver/secrets/providers/.api_keys"))
+                         Path("/tmp/does-not-exist-home/.swe/secrets/providers/.api_keys"))
 
     def test_an_unmigrated_home_keeps_reading_dot_api_keys(self):
         with TemporaryDirectory() as tmp:

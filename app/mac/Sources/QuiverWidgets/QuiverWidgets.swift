@@ -5,7 +5,7 @@ import WidgetKit
 
 /// Quiver's desktop and Notification Center widgets, after TokenTracker's.
 /// They draw the snapshot the app writes to
-/// `~/.quiver/cache/widgets/snapshot.json`; the extension is sandboxed with
+/// `~/.swe/cache/widgets/snapshot.json`; the extension is sandboxed with
 /// read access to that folder only, and never fetches anything itself.
 @main
 struct QuiverWidgets: WidgetBundle {

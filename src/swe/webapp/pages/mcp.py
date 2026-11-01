@@ -3,7 +3,7 @@
 ``GET /v1/app/mcp`` is ``swe mcp list --json`` built in process (the same
 ``server_inventory`` rows), plus the managed servers folder the Mac app
 scans beside it (``McpServerRepo``: which checkouts sit in
-``~/.quiver/mcp/servers``, which servers run from them, their git state).
+``~/.swe/mcp/servers``, which servers run from them, their git state).
 ``GET /v1/app/mcp?health=1`` adds ``swe mcp status``'s health probe per
 server, run in parallel under one deadline, and only when asked.
 

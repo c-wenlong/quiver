@@ -1,4 +1,4 @@
-"""`swe hooks`: the management surface over ~/.quiver/hooks/<harness>/.
+"""`swe hooks`: the management surface over ~/.swe/hooks/<harness>/.
 
 The link half comes from ``init.hooks.plan_hooks`` (tested in
 test_init_hooks.py); these cover what the domain adds — settings-file
@@ -32,7 +32,7 @@ from swe.init.layout import hooks_dir
 
 def _home(tmp: str) -> Path:
     home = Path(tmp)
-    (home / ".quiver").mkdir()
+    (home / ".swe").mkdir()
     (home / ".claude").mkdir()
     return home
 
@@ -45,7 +45,7 @@ def _hook(home: Path, harness: str, name: str, body: str = "print('hi')\n") -> P
 
 
 def _registry(home: Path, data: dict) -> None:
-    path = home / ".quiver" / "config" / "harness.json"
+    path = home / ".swe" / "config" / "harness.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data))
 
@@ -422,7 +422,7 @@ class CheckCommandTest(unittest.TestCase):
             home = _home(tmp)
             dest = home / ".claude/hooks/guard.py"
             dest.parent.mkdir(parents=True)
-            dest.symlink_to(home / ".quiver/hooks/claude/guard.py")  # dangling
+            dest.symlink_to(home / ".swe/hooks/claude/guard.py")  # dangling
             _settings(home, ".claude/settings.json", {
                 "Stop": [{"hooks": [{"command": str(dest)}]}],
             })
@@ -551,7 +551,7 @@ class DropScriptDeclarationsTest(unittest.TestCase):
             self.assertEqual(data["hooks"]["Stop"], [
                 {"matcher": "x", "hooks": [
                     {"type": "command", "command": "keep.py"}]}])
-            backups = list((home / ".quiver/backups").iterdir())
+            backups = list((home / ".swe/backups").iterdir())
             self.assertEqual(len(backups), 1)
             self.assertIn("gone.py", backups[0].read_text())
 
@@ -708,7 +708,7 @@ class DoctorWiringTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             _registry(home, {"claude": {}})
-            (home / ".quiver/config/harness.json").write_text("{bad json")
+            (home / ".swe/config/harness.json").write_text("{bad json")
             findings = drift.check_hook_drift(home)
             self.assertEqual(len(findings), 1)
             self.assertIn("could not run", findings[0].message)
@@ -795,7 +795,7 @@ class NewCommandTest(unittest.TestCase):
             code, out = _run(home, "new", "qwen", "gate")
             self.assertEqual(code, 0)
             self.assertTrue((hooks_dir(home) / "qwen/gate.py").is_file())
-            self.assertIn("~/.quiver/hooks/qwen/gate.py", out)
+            self.assertIn("~/.swe/hooks/qwen/gate.py", out)
 
     def test_alias_resolves_to_the_registry_key(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1039,7 +1039,7 @@ class DispatchTest(unittest.TestCase):
             home = _home(tmp)
             _hook(home, "claude", "guard.py")
             # An unreadable .linkignore raises LinkIgnoreError on load.
-            (home / ".quiver/.linkignore").mkdir()
+            (home / ".swe/.linkignore").mkdir()
             err = StringIO()
             out = StringIO()
             with mock.patch.object(Path, "home", staticmethod(lambda: home)), \
@@ -1157,7 +1157,7 @@ class CreateEdgeTest(unittest.TestCase):
         self.assertIsNotNone(mk.validate_args("ok", ".."))
         self.assertIsNone(mk.validate_args("claude", "gate-2_x"))
         with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)  # no .quiver at all
+            home = Path(tmp)  # no .swe at all
             with self.assertRaises(ValueError) as ctx:
                 mk.create("claude", "gate", home)
             self.assertIn("swe init", str(ctx.exception))

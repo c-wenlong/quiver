@@ -241,7 +241,7 @@ public struct ArtificialAnalysisStore: Sendable {
 
     /// Where older builds kept the raw files; imported once.
     public static func defaultDirectory(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        home.appending(path: ".quiver/data/artificial-analysis")
+        home.appending(path: ".swe/data/artificial-analysis")
     }
 
     /// `QUIVER_AA_DATA_DIR` wins, so a test build never touches the real data.

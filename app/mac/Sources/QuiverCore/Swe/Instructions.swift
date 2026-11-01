@@ -1,14 +1,14 @@
 import Foundation
 
 /// `swe instructions check --json`: whether the shared AGENTS.md is built
-/// from chapters under `~/.quiver/AGENTS_MD`, the chapter list in index
+/// from chapters under `~/.swe/AGENTS_MD`, the chapter list in index
 /// order, and whether the output still matches the sources.
 public struct InstructionsCheck: Decodable, Sendable, Equatable {
-    /// `~/.quiver/AGENTS_MD`.
+    /// `~/.swe/AGENTS_MD`.
     public let directory: String
     /// `index.txt`, the ordered chapter list.
     public let index: String
-    /// The generated `~/.quiver/AGENTS.md`.
+    /// The generated `~/.swe/AGENTS.md`.
     public let output: String
     /// Chapters are set up at all; without them the flat file is edited.
     public let indexExists: Bool
@@ -90,7 +90,7 @@ extension SweClient {
         try await call(["instructions", "check", "--json"], allowFailure: true)
     }
 
-    /// Compiles the chapters into `~/.quiver/AGENTS.md`. A refusal (bad
+    /// Compiles the chapters into `~/.swe/AGENTS.md`. A refusal (bad
     /// index entry, escaping source) throws with the compiler's message.
     public func instructionsBuild() async throws -> Bool {
         let reply: InstructionsBuildReply = try await call(["instructions", "build", "--json"])

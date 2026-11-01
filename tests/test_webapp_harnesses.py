@@ -96,7 +96,7 @@ class _TempRegistry:
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        config = Path(self._tmp.name) / ".quiver" / "config"
+        config = Path(self._tmp.name) / ".swe" / "config"
         config.mkdir(parents=True)
         self.file = config / "harness.json"
         self.file.write_text(json.dumps(ON_DISK, indent=2))

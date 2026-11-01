@@ -40,7 +40,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "kiro-cli")
 
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
@@ -61,7 +61,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "devin")
 
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
@@ -83,7 +83,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "my-tool-code")
 
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
@@ -104,7 +104,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "kiro-cli")
 
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
@@ -128,7 +128,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             self._make_fake_bin(bindir, "opencode")
             self._make_fake_bin(bindir, "kiro-cli")
 
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             minimal = {"claude": dict(HARNESS_CATALOG["claude"])}
 
@@ -151,7 +151,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "claude")
 
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             registry_file = config_dir / "harness.json"
 
             p1, p2, p3 = _registry_patches(config_dir, registry_file)
@@ -168,7 +168,7 @@ class HarnessDiscoverTest(unittest.TestCase):
             bindir.mkdir()
             self._make_fake_bin(bindir, "claude")
 
-            config_dir = tmp_path / ".quiver" / "config"
+            config_dir = tmp_path / ".swe" / "config"
             registry_file = config_dir / "harness.json"
 
             p1, p2, p3 = _registry_patches(config_dir, registry_file)
@@ -198,7 +198,7 @@ class HomeScanTest(unittest.TestCase):
     """
 
     def _setup(self, tmp_path: Path):
-        config_dir = tmp_path / ".quiver" / "config"
+        config_dir = tmp_path / ".swe" / "config"
         registry_file = config_dir / "harness.json"
         return (
             *_registry_patches(config_dir, registry_file),
@@ -292,7 +292,7 @@ class HomeScanTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / ".hermes" / "skills").mkdir(parents=True)
-            config_dir = home / ".quiver" / "config"
+            config_dir = home / ".swe" / "config"
             which = lambda name, **kw: "/nix/bin/hermes" if name == "hermes" else None
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
                        patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
@@ -321,7 +321,7 @@ class ConfidenceFloorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / ".fancytool" / "skills").mkdir(parents=True)
-            config_dir = home / ".quiver" / "config"
+            config_dir = home / ".swe" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
                        patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
                        patch("swe.harness.discover.live_version", lambda cmd: None))
@@ -340,7 +340,7 @@ class ConfidenceFloorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             (home / ".fancytool" / "skills").mkdir(parents=True)
-            config_dir = home / ".quiver" / "config"
+            config_dir = home / ".swe" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
                        patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
                        patch("swe.harness.discover.live_version", lambda cmd: None))
@@ -362,7 +362,7 @@ class NotHarnessTest(unittest.TestCase):
             home = Path(tmp)
             for name in ("aside", "pinokio", "tokentracker", "fancytool"):
                 (home / f".{name}" / "skills").mkdir(parents=True)
-            config_dir = home / ".quiver" / "config"
+            config_dir = home / ".swe" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
                        patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
                        patch("swe.harness.discover.live_version", lambda cmd: None))
@@ -385,7 +385,7 @@ class ApplyByNameTest(unittest.TestCase):
     def test_names_bypass_the_floor_and_add_only_those(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            config_dir = home / ".quiver" / "config"
+            config_dir = home / ".swe" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
                        patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
                        patch("swe.harness.discover.live_version", lambda cmd: None))
@@ -528,7 +528,7 @@ class OllamaIsNotAHarnessTest(unittest.TestCase):
             exe = bindir / "ollama"
             exe.write_text("#!/bin/sh\n")
             exe.chmod(0o755)
-            config_dir = home / ".quiver" / "config"
+            config_dir = home / ".swe" / "config"
             patches = (*_registry_patches(config_dir, config_dir / "harness.json"),
                        patch("swe.harness.discover.EXTRA_BIN_DIRS", ()),
                        patch("swe.harness.discover.live_version", lambda cmd: None))

@@ -117,7 +117,7 @@ class PluginFindingsTest(_FakeHome, unittest.TestCase):
 class DanglingLinkTest(unittest.TestCase):
     def setUp(self):
         self.home = temp_dir(self)
-        self.hub = self.home / ".quiver"
+        self.hub = self.home / ".swe"
         self.hub.mkdir()
         self.link = self.hub / "old"
         self.link.symlink_to(self.home / "nowhere")
@@ -169,7 +169,7 @@ class AcceptanceTest(unittest.TestCase):
 
     def test_fix_clears_every_fixable_finding(self):
         home = temp_dir(self)
-        market = home / ".quiver" / "plugins" / "mk"
+        market = home / ".swe" / "plugins" / "mk"
         (market / ".claude-plugin").mkdir(parents=True)
         (market / ".claude-plugin" / "marketplace.json").write_text(
             json.dumps({"name": "mk", "plugins": [{"name": "tool", "source": "./tool"}]}))
@@ -203,11 +203,11 @@ class AcceptanceTest(unittest.TestCase):
 
     def test_an_archived_harness_gets_no_plugin_findings(self):
         home = temp_dir(self)
-        market = home / ".quiver" / "plugins" / "mk"
+        market = home / ".swe" / "plugins" / "mk"
         (market / ".claude-plugin").mkdir(parents=True)
         (market / ".claude-plugin" / "marketplace.json").write_text(
             json.dumps({"name": "mk", "plugins": []}))
-        (home / ".quiver" / "AGENTS.md").write_text("# shared\n")
+        (home / ".swe" / "AGENTS.md").write_text("# shared\n")
         (home / ".claude").mkdir()
         write_registry(home, {"claude": {"command": "claude", "state": "archived"}})
         # Only the fake claude and the system dirs: no real harness CLI runs.

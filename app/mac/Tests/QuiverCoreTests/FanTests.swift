@@ -446,13 +446,13 @@ import Testing
     }
 
     @Test func theLaunchdJobRunsTheRootOwnedCopyAndStaysUp() throws {
-        let data = FanHelper.plist(control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"),
+        let data = FanHelper.plist(control: URL(fileURLWithPath: "/Users/me/.swe/fan/control.json"),
                                    owner: .team("ABCDE12345", identifier: "com.cwenlong.quiver"))
         let job = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
         #expect(job["Label"] as? String == "com.cwenlong.quiver.fan")
         #expect(job["ProgramArguments"] as? [String] == [
             "/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan", "--fan-daemon",
-            "--control", "/Users/me/.quiver/fan/control.json", "--owner-team", "ABCDE12345",
+            "--control", "/Users/me/.swe/fan/control.json", "--owner-team", "ABCDE12345",
             "--owner-identifier", "com.cwenlong.quiver",
             "--helper-version", String(FanHelper.version)])
         #expect(job["KeepAlive"] as? Bool == true)
@@ -462,7 +462,7 @@ import Testing
     @Test func theInstallScriptChecksTheCopyAndWritesTheJobAsRoot() throws {
         let command = AdministratorInstaller.installCommand(
             executable: "/Users/o'neil/Apps/Quiver.app/Contents/MacOS/Quiver", sha256: "abc123", owner: Self.adHoc,
-            control: URL(fileURLWithPath: "/Users/o'neil/.quiver/fan/control.json"))
+            control: URL(fileURLWithPath: "/Users/o'neil/.swe/fan/control.json"))
         #expect(command.contains(#"/usr/bin/install -m 755 -o root -g wheel '/Users/o'\''neil/Apps/Quiver.app/Contents/MacOS/Quiver' '/Library/PrivilegedHelperTools/com.cwenlong.quiver.fan.new'"#))
         // The hash is checked on the root-owned copy, before re-signing
         // changes its bytes.
@@ -472,7 +472,7 @@ import Testing
         #expect(command.contains("= 'abc123' ]"))
         // No file from the user's side becomes the job: root writes it.
         #expect(command.contains("/usr/bin/printf '%s' '<?xml"))
-        #expect(command.contains(#"<string>/Users/o'\''neil/.quiver/fan/control.json</string>"#))
+        #expect(command.contains(#"<string>/Users/o'\''neil/.swe/fan/control.json</string>"#))
         #expect(command.contains("> '/Library/LaunchDaemons/com.cwenlong.quiver.fan.plist'"))
         #expect(!command.contains("\n"))
         #expect(command.hasSuffix("/bin/launchctl bootstrap system '/Library/LaunchDaemons/com.cwenlong.quiver.fan.plist'"))
@@ -487,7 +487,7 @@ import Testing
     @Test func aSignedAppChecksTheHelpersTeamBeforeRunningItAsRoot() throws {
         let command = AdministratorInstaller.installCommand(
             executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", owner: .team("ABCDE12345", identifier: "com.cwenlong.quiver"),
-            control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"))
+            control: URL(fileURLWithPath: "/Users/me/.swe/fan/control.json"))
         let hash = try #require(command.range(of: "/usr/bin/shasum -a 256 "))
         let verify = try #require(command.range(
             of: #"/usr/bin/codesign --verify --strict -R '=identifier "QuiverFanHelper" and anchor apple generic"#
@@ -510,7 +510,7 @@ import Testing
         // An ad-hoc build has no team to check against and keeps the hash.
         let adHoc = AdministratorInstaller.installCommand(
             executable: "/Apps/Quiver.app/Contents/MacOS/QuiverFanHelper", sha256: "abc123", owner: Self.adHoc,
-            control: URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json"))
+            control: URL(fileURLWithPath: "/Users/me/.swe/fan/control.json"))
         #expect(!adHoc.contains("--verify"))
         #expect(adHoc.contains("/usr/bin/shasum -a 256 "))
         // Either way the job root writes pins whose requests the helper takes.
@@ -579,7 +579,7 @@ import Testing
     /// (a copy of Quiver's executable, which crashed in dyld) or an older
     /// helper reads as outdated and gets reinstalled.
     @Test func theJobCarriesTheHelperVersion() throws {
-        let control = URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json")
+        let control = URL(fileURLWithPath: "/Users/me/.swe/fan/control.json")
         let job = try PropertyListSerialization.propertyList(from: FanHelper.plist(control: control, owner: Self.adHoc),
                                                              format: nil) as? [String: Any]
         let arguments = try #require(job?["ProgramArguments"] as? [String])
@@ -604,7 +604,7 @@ import Testing
     }
 
     @Test func theOneLineJobIsTheSameJob() throws {
-        let control = URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json")
+        let control = URL(fileURLWithPath: "/Users/me/.swe/fan/control.json")
         let line = FanHelper.plistLine(control: control, owner: .team("ABCDE12345", identifier: "com.cwenlong.quiver"))
         #expect(!line.contains("\n"))
         let parsed = try PropertyListSerialization.propertyList(from: Data(line.utf8), format: nil) as? NSDictionary
@@ -733,7 +733,7 @@ import Testing
     // MARK: Telling an old helper from a new one
 
     @Test func theInstalledJobSaysCurrentOutdatedOrMissing() {
-        let control = URL(fileURLWithPath: "/Users/me/.quiver/fan/control.json")
+        let control = URL(fileURLWithPath: "/Users/me/.swe/fan/control.json")
         let pin = FanOwnerPin.team("ABCDE12345", identifier: "com.cwenlong.quiver")
         let current = FanHelper.programArguments(control: control, owner: pin)
         func state(_ arguments: [String], owner: FanOwnerPin? = pin, loaded: Bool = true) -> FanHelperState {
@@ -748,7 +748,7 @@ import Testing
         #expect(state(Array(v3.dropLast(2))) == .outdated(version: 0))
         // Another account's job, another build's pin, or an unreadable
         // pin of our own: not ours to offer an update for.
-        #expect(state(FanHelper.programArguments(control: URL(fileURLWithPath: "/Users/other/.quiver/fan/control.json"),
+        #expect(state(FanHelper.programArguments(control: URL(fileURLWithPath: "/Users/other/.swe/fan/control.json"),
                                                  owner: pin)) == .missing)
         #expect(state(FanHelper.programArguments(control: control, owner: Self.adHoc)) == .missing)
         #expect(state(current, owner: nil) == .missing)

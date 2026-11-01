@@ -86,8 +86,8 @@ class TestSearchCatalog(unittest.TestCase):
         home = Path(tempfile.mkdtemp())
         first = models.search_catalog(home)
         self.assertIs(models.search_catalog(home), first)
-        (home / ".quiver" / "config").mkdir(parents=True)
-        (home / ".quiver" / "config" / "pricing.json").write_text(
+        (home / ".swe" / "config").mkdir(parents=True)
+        (home / ".swe" / "config" / "pricing.json").write_text(
             json.dumps({"models": {"my-model": {"input": 1, "output": 2}}}))
         second = models.search_catalog(home)
         self.assertIsNot(second, first)

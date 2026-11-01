@@ -22,7 +22,7 @@ drag to reorder. Inbox marks notifications read.
 Every read runs the `gh` CLI in the hub process, through the same
 builders `swe gh … --json` uses (`swe.github.cli`). So the pages show
 what **the hub machine's `gh` login** can see, and the pinned repos are
-the hub machine's (`~/.quiver/config/github.json`, the same file
+the hub machine's (`~/.swe/config/github.json`, the same file
 `swe gh repo add` writes there).
 The browser's own GitHub session plays no part. If `gh` is missing or
 signed out on the hub, both pages show the app's setup card
@@ -224,9 +224,9 @@ Start then:
 1. `POST /v1/app/repositories/worktree` `{"repo", "number"}`: `swe gh
    pr worktree N --repo=R --json` in process
    (`swe.github.manage.pr_worktree`). A bare mirror per repo under
-   `~/.quiver/data/github/mirrors`, the head fetched from GitHub's
+   `~/.swe/data/github/mirrors`, the head fetched from GitHub's
    `refs/pull/N/head` (fork PRs too), a detached checkout at
-   `~/.quiver/worktrees/<owner>__<name>-prN`, reused on the next ask.
+   `~/.swe/worktrees/<owner>__<name>-prN`, reused on the next ask.
    Answers `{"repo", "number", "path", "head", "created", "machine"}`.
    It holds no lock the other writes wait on, since a first clone can
    take minutes. Checkouts of one repo run one after another: its PRs

@@ -7,7 +7,7 @@ ones, and hands back one entry per session: ``{"session", "account",
 "cwd", "timestamps"}`` with the response times as epoch seconds, sorted.
 ``calendar.file_pieces`` turns them into blocks with the same rule as the
 ledger's. The index lives in memory for the hub's lifetime; the Mac's
-on-disk copy under ``~/.quiver/cache/calendar`` is the app's own and
+on-disk copy under ``~/.swe/cache/calendar`` is the app's own and
 stays unread.
 """
 
@@ -393,7 +393,7 @@ def read(home: Path | None, stats: dict[str, dict], trivial,
     ``LedgerStore.activity_session_stats``, keyed by account and session;
     ``trivial`` is ``sessions.is_trivial``. A session the ledger has no
     rows for stays: absent rows prove nothing about a file's responses.
-    ``profiles`` are ``~/.quiver/accounts/profiles.json``'s, for the extra
+    ``profiles`` are ``~/.swe/accounts/profiles.json``'s, for the extra
     Cursor accounts. ``force`` (a rescan) lists the files again now."""
     user = Path(home) if home is not None else Path.home()
     dirs = cursor_user_data_dirs(user, list(profiles))

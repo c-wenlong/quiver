@@ -125,7 +125,7 @@ class HarnessEditTest(unittest.TestCase):
 
     def test_cmd_edit_flag_mode_persists(self):
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / ".quiver" / "config"
+            config_dir = Path(tmp) / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             config_dir.mkdir(parents=True)
             registry_file.write_text(
@@ -168,7 +168,7 @@ class HarnessEditTest(unittest.TestCase):
 
     def test_cmd_edit_primary_color_persists_and_clears(self):
         with tempfile.TemporaryDirectory() as tmp:
-            config_dir = Path(tmp) / ".quiver" / "config"
+            config_dir = Path(tmp) / ".swe" / "config"
             registry_file = config_dir / "harness.json"
             config_dir.mkdir(parents=True)
             registry_file.write_text(

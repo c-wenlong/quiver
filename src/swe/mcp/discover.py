@@ -138,7 +138,12 @@ def _scanned_servers(mcp_tools) -> dict:
                 continue
         except OSError:
             continue
-        if cfg.harness in ("quiver",):
+        try:
+            if cfg.path.resolve() == MCP_SOURCE_FILE.resolve():
+                continue
+        except OSError:
+            continue
+        if cfg.harness in ("quiver", "swe"):
             continue
         # Scanned entries are raw, so they take the same normalise and
         # redact path as registered ones. Skipping it would write literal
@@ -152,7 +157,7 @@ def _scanned_servers(mcp_tools) -> dict:
 
 
 def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]:
-    """Compare every MCP config against the hub at ~/.quiver/mcp.json.
+    """Compare every MCP config against the hub at ~/.swe/mcp.json.
 
     Reads both the config paths quiver has registered and the ones found by
     scanning the harness directories, because a server in a config nobody
@@ -267,7 +272,7 @@ def _shielded(server: dict) -> dict | None:
 
 
 def apply_mcp_findings(findings: list[McpFinding], prune: bool = False) -> MergeResult:
-    """Merge findings into the hub at ~/.quiver/mcp.json.
+    """Merge findings into the hub at ~/.swe/mcp.json.
 
     Adds servers the hub has not seen and updates ones a harness has since
     edited. Orphans are reported, and only removed when ``prune`` is set: a

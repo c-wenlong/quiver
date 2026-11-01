@@ -83,7 +83,7 @@ def _branch(i: int, total: int) -> str:
 
 
 def _scan_root(root_flag: bool) -> Path:
-    """Where to scan from: the directory holding ~/.quiver, or the cwd."""
+    """Where to scan from: the directory holding ~/.swe, or the cwd."""
     return paths.swe_dir_for().parent if root_flag else Path.cwd()
 
 
@@ -462,7 +462,7 @@ def _summarise_skill_roots(root: Path, home: Path, scope: str, shared: Path,
 def _skills_json(home: Path, registry: dict, nodes, scope: str) -> dict:
     """The ``swe find skills --json`` document.
 
-    ``skills`` is the shared library (``~/.quiver/skills``). ``roots`` is
+    ``skills`` is the shared library (``~/.swe/skills``). ``roots`` is
     where harnesses read skills from, one entry per skills directory with
     its link state: quiver links a whole directory, not single skills, so
     there is no per-skill, per-harness state to report. ``harness`` is the
@@ -689,7 +689,7 @@ def _render_mcps_full(hub, total: int, views, configs, unregistered, stray,
     """The full `swe find mcps` listing: every server, config and stray."""
     from swe.find.mcps import PREFIX_UNFILED
 
-    print(f"  {c('green', '~/.quiver/mcp.json')}  {c('dim', f'{total} servers')}")
+    print(f"  {c('green', '~/.swe/mcp.json')}  {c('dim', f'{total} servers')}")
     for prefix in sorted(hub.by_prefix, key=lambda p: (p == PREFIX_UNFILED, p)):
         names = hub.by_prefix[prefix]
         short = [n.split("__")[-1] for n in names]
@@ -843,11 +843,11 @@ DRIFT_WORD = {
 # The kind column fits the longest word above and a two-space gap.
 DRIFT_WORD_W = max(len(word) for word, _ in DRIFT_WORD.values()) + 2
 DRIFT_TITLE = "Drift"
-DRIFT_NONE = "none, claude and codex run what ~/.quiver/plugins holds"
+DRIFT_NONE = "none, claude and codex run what ~/.swe/plugins holds"
 
 
 def _quiver_drift(home: Path, visible) -> list | None:
-    """Drift findings for this view, or None when ~/.quiver/plugins is empty.
+    """Drift findings for this view, or None when ~/.swe/plugins is empty.
 
     None and [] differ on purpose: a machine with no quiver plugins has no
     drift section at all, one whose plugins all match says so.
@@ -864,7 +864,7 @@ def _drift_json(f) -> dict:
 def _plugins_json(home: Path, harness: str) -> dict:
     """The ``swe find plugins --json`` document: drift, with fix ids.
 
-    ``sources`` counts the plugins under ~/.quiver/plugins, so a caller can
+    ``sources`` counts the plugins under ~/.swe/plugins, so a caller can
     tell "nothing to reach the harnesses" (0) from "all reached" (drift []).
     """
     visible, _ = harness_filter(load_registry_if_present(), normalise_harness(harness))
@@ -896,7 +896,7 @@ def _drift_groups(drift: list) -> list[Group]:
 
 def _render_drift_full(drift: list) -> None:
     """Every drift finding with the command that fixes it."""
-    print(f"  {c('bold', DRIFT_TITLE)}  {c('dim', 'where ~/.quiver/plugins has not reached a harness')}")
+    print(f"  {c('bold', DRIFT_TITLE)}  {c('dim', 'where ~/.swe/plugins has not reached a harness')}")
     if not drift:
         print(f"  {c('dim', DRIFT_NONE)}\n")
         return
@@ -978,7 +978,7 @@ def cmd_find_plugins(args=None, root_flag: bool = False, scope: str = "global",
     """Plugins across every harness that has a plugin system.
 
     Nested harness -> marketplace -> plugin, because that is the directory
-    layout on disk: ~/.quiver/plugins/dv/cloudflare, and claude's cache
+    layout on disk: ~/.swe/plugins/dv/cloudflare, and claude's cache
     mirrors it at ~/.claude/plugins/cache/dv/cloudflare/0.1.0.
     """
     home = Path.home()
@@ -1197,7 +1197,7 @@ def print_find_help() -> None:
 
   {c('bold', 'Plugin drift')}  in {c('cyan', 'swe find plugins')}
     Claude Code and Codex run a cached copy of each plugin, not the one in
-    ~/.quiver/plugins. The Drift line counts marketplaces a harness never
+    ~/.swe/plugins. The Drift line counts marketplaces a harness never
     registered, plugins it never installed, copies that differ from the
     source, and plugins disabled in one harness but enabled in the other.
     {c('cyan', '--full')} lists each one with the command that fixes it. Read-only.
@@ -1221,7 +1221,7 @@ def print_find_help() -> None:
 
   {c('bold', 'Where it scans')}
     default        the current directory, recursively
-    {c('cyan', '--root')} / {c('cyan', '-r')}   from wherever ~/.quiver lives, recursively
+    {c('cyan', '--root')} / {c('cyan', '-r')}   from wherever ~/.swe lives, recursively
 
   {c('bold', 'What it shows')}  {c('cyan', '--scope=global|local|all')}
     {c('cyan', 'global')}   (default) files a harness loads into every session:

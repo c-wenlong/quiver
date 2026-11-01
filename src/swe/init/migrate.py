@@ -1,8 +1,8 @@
-"""Move a pre-0.2.7 ``~/.config/swe`` install into ``~/.quiver``.
+"""Move a pre-0.2.7 ``~/.config/swe`` install into ``~/.swe``.
 
 The old root mixed three lifetimes in one flat directory: authored state worth
 versioning, regenerable caches, and generated completion scripts. The new root
-separates them so ``~/.quiver`` can be a git repo. This module only moves
+separates them so ``~/.swe`` can be a git repo. This module only moves
 files; deciding whether to run is ``cmd_init``'s job.
 """
 
@@ -84,7 +84,7 @@ def plan_migration(home: Path | None = None) -> MigrationPlan | None:
         elif name in PASSTHROUGH_DIRS:
             plan.moved.append((entry, quiver / name))
         elif name == "mcp.json":
-            # The hub lives at ~/.quiver/mcp.json, not in config/: every MCP
+            # The hub lives at ~/.swe/mcp.json, not in config/: every MCP
             # reader resolves the root path, so landing it under config/
             # stranded every server until the user found the file.
             plan.moved.append((entry, quiver / name))

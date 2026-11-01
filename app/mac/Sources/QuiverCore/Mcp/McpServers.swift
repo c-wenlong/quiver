@@ -113,7 +113,7 @@ public struct McpServer: Codable, Sendable, Equatable, Identifiable {
     /// `local_only` marks them: Claude Desktop adds a remote server in the
     /// app itself (Settings › Connectors).
     public static let localOnly: Set<String> = ["claude-desktop"]
-    /// Whether ~/.quiver/mcp.json defines this server. A hub-only row has
+    /// Whether ~/.swe/mcp.json defines this server. A hub-only row has
     /// no harnesses; an older swe sends nothing and decodes false.
     public let inHub: Bool
     /// The places (harnesses, "quiver" for the hub) whose definition is at

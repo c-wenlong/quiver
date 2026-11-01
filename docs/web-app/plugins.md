@@ -15,7 +15,7 @@ Same title and subtitle as the app, and its two tabs.
   fix swe would run with a copy button. A finding swe can fix has a
   **Fix** button; one that is an edit to make by hand says so instead.
   A card folds after 8 findings. Empty states as in the app: nothing in
-  `~/.quiver/plugins`, or every harness runs what it holds.
+  `~/.swe/plugins`, or every harness runs what it holds.
 - **Fix** opens an inline confirm under the finding, the app's "Run this
   fix?": "swe will check the finding still applies, then run:" and the
   exact command(s). **Run** posts it; Escape or Cancel closes it.
@@ -134,7 +134,7 @@ Explore's other writes are left out; they stay in `swe` and the Mac app:
   chip; the chips show the state only.
 - **Add marketplace** (`swe plugins marketplace add`).
 - **Rename** of a marketplace or plugin display name. The names the app
-  saved in `~/.quiver/config/plugin-display-names.json` are read (never
+  saved in `~/.swe/config/plugin-display-names.json` are read (never
   written) so rows are named the same.
 - The plugin detail page's manifest form and file editor, and Show in
   Finder. The web detail is a read-only sheet.

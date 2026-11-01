@@ -150,7 +150,7 @@ def install_method(name: str) -> str | None:
 
 
 def issue_findings(home: Path | None = None) -> list[DoctorFinding]:
-    """Usage problems the app recorded in ``~/.quiver/data/issues.json``.
+    """Usage problems the app recorded in ``~/.swe/data/issues.json``.
 
     The app's IssueStore is the source of truth for "this needs the
     user"; each entry becomes a finding whose fix text comes from the
@@ -230,8 +230,8 @@ def setup_findings(home: Path | None = None) -> list[DoctorFinding]:
     if not paths.swe_dir_for(home).is_dir():
         return [DoctorFinding(
             "setup.hub", "warning",
-            "~/.quiver doesn't exist yet, so nothing is shared between harnesses",
-            "swe setup --apply", action="setup", source="~/.quiver",
+            "~/.swe doesn't exist yet, so nothing is shared between harnesses",
+            "swe setup --apply", action="setup", source="~/.swe",
             remedies=({"kind": "action", "action": "setup",
                        "title": "swe setup --apply",
                        "detail": "Registers the harnesses it finds, imports "
@@ -240,8 +240,8 @@ def setup_findings(home: Path | None = None) -> list[DoctorFinding]:
     if not (paths.swe_dir_for(home) / "AGENTS.md").is_file():
         return [DoctorFinding(
             "setup.agents-md", "warning",
-            "No shared AGENTS.md in ~/.quiver",
-            "swe setup --apply", action="setup", source="~/.quiver",
+            "No shared AGENTS.md in ~/.swe",
+            "swe setup --apply", action="setup", source="~/.swe",
             remedies=({"kind": "action", "action": "setup",
                        "title": "swe setup --apply",
                        "detail": "Registers the harnesses it finds, imports "
@@ -316,7 +316,7 @@ def marketplace_findings(home: Path, registry: dict | None = None) -> list[Docto
     """One warning per harness whose registered folder marketplaces are gone.
 
     A settings file synced from another machine can name
-    ``~/.quiver/plugins/<name>`` folders that never reached this one (#696).
+    ``~/.swe/plugins/<name>`` folders that never reached this one (#696).
     Only ``directory`` marketplaces count: a git or GitHub one with no
     manifest yet is fetched by the harness itself. When the settings file
     is a Nix store link, editing it would fail, so the fix says where the
@@ -404,7 +404,7 @@ def drop_marketplace_entries(
     home: Path, in_file: list[str], by_cli: list[str]
 ) -> str | None:
     """The deterministic half of a missing-marketplace fix: delete the
-    named entries, each file backed up to ~/.quiver/backups first.
+    named entries, each file backed up to ~/.swe/backups first.
 
     Claude only — codex declares marketplaces in TOML, which nothing
     here writes. ``in_file`` names come out of settings.json's
@@ -514,7 +514,7 @@ def _marketplace_remedies(
                 "title": f"Drop the {n_entries} entr"
                          f"{'y' if n_entries == 1 else 'ies'}",
                 "detail": f"Deletes them from {' and '.join(files)}, "
-                          "with each file backed up to ~/.quiver/backups "
+                          "with each file backed up to ~/.swe/backups "
                           "first.",
                 "settings_entries": settings_entries,
                 "cli_entries": cli_entries,
@@ -755,7 +755,7 @@ def _mcp_findings(home: Path) -> list[DoctorFinding]:
                              "title": "Copy the hub's entry over it",
                              "detail": f"{command}: replaces only this entry, "
                                        "with the file backed up to "
-                                       "~/.quiver/backups first.",
+                                       "~/.swe/backups first.",
                              "command": command, "tool": tool, "server": name},
                             ) if fixable else (
                     {"kind": "command", "title": "Look closer", "command": status},)

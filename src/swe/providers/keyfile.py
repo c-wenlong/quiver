@@ -2,14 +2,14 @@
 
 A port of ``APIKeysFile`` and ``APIKeysStore`` (app/mac/Sources/QuiverCore/
 APIKeys/APIKeys.swift), so the web app's Settings › Providers › Inference
-reads and writes ``~/.quiver/secrets/providers/.api_keys`` exactly as the
+reads and writes ``~/.swe/secrets/providers/.api_keys`` exactly as the
 Mac app does: ``export NAME="value"`` lines grouped under ``# Provider``
 comment headings, every other line left byte for byte.
 
 ``KeysFile`` parses and edits the text; ``load`` and ``save`` read and
 write it with the app's rules: the previous version copied to
-``~/.quiver/backups/api-keys/api_keys.bak`` (folder mode 700), the new one
-written mode 600 through a temp file and a rename, ``~/.quiver/secrets``
+``~/.swe/backups/api-keys/api_keys.bak`` (folder mode 700), the new one
+written mode 600 through a temp file and a rename, ``~/.swe/secrets``
 sealed with its own ``.gitignore`` of ``*``, and a save refused when the
 file changed since it was read. Error messages name variables, never values.
 """
@@ -354,7 +354,7 @@ def save(path: Path, keys: KeysFile, stamp: bytes | None, home: Path | None = No
 
 
 def _seal(target: Path, home: Path | None) -> None:
-    """A save into ~/.quiver/secrets first gives the folder its own
+    """A save into ~/.swe/secrets first gives the folder its own
     ``.gitignore`` of ``*``, which git lets win over the hub's root one."""
     try:
         folder = secrets_dir_for(home).resolve()
@@ -376,7 +376,7 @@ def _seal(target: Path, home: Path | None) -> None:
 def _private_temp(data: bytes, destination: Path) -> Path:
     """A temp file created 600 beside ``destination``, so a secret is
     never readable by others even for a moment."""
-    temp = destination.parent / f".{destination.name}.quiver-{uuid.uuid4().hex}"
+    temp = destination.parent / f".{destination.name}.swe-{uuid.uuid4().hex}"
     fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "wb") as handle:

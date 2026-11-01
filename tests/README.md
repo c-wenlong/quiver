@@ -7,7 +7,7 @@ Run the whole suite from the repo root, with the package installed
 HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-`swe` resolves `~/.quiver` at import time, so a run without the fresh
+`swe` resolves `~/.swe` at import time, so a run without the fresh
 `HOME` reads and writes your real registry and caches. In a git worktree
 add `PYTHONPATH=src`, or the editable install imports the main checkout's
 code instead.

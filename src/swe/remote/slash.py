@@ -251,7 +251,7 @@ def command_files(root: Path, source: str, sep: str = ":",
     plugin's commands (``my-plugin:``). ``confine`` refuses links out of
     the folder: on for a project's folders, which come with whatever repo
     is checked out, off for the user's own, where a skill linked in from
-    elsewhere (``~/.quiver/skills/x -> ~/.agents/skills/x``) is normal.
+    elsewhere (``~/.swe/skills/x -> ~/.agents/skills/x``) is normal.
     Every file is still read only if it is a regular file, and only its
     first ``MAX_READ`` bytes.
     """

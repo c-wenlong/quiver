@@ -275,11 +275,11 @@ struct ScanFailed: Error, LocalizedError {
         let ledger = FakeLedger()
         await ledger.set(harnesses: [:], accounts: [
             "/Users/k/.claude": totals(tokens: 10, cost: 9),
-            "/Users/k/.quiver/accounts/codex/codex-work/home": totals(tokens: 20, cost: 3),
+            "/Users/k/.swe/accounts/codex/codex-work/home": totals(tokens: 20, cost: 3),
         ])
         let model = model(ledger, labels: [
             "/Users/k/.claude": "Claude: Default",
-            "/Users/k/.quiver/accounts/codex/codex-work/home": "Codex: Work",
+            "/Users/k/.swe/accounts/codex/codex-work/home": "Codex: Work",
         ])
         await model.load(scan: false)
         #expect(model.summary?.accounts.map(\.label) == ["Claude: Default", "Codex: Work"])
@@ -289,11 +289,11 @@ struct ScanFailed: Error, LocalizedError {
         let ledger = FakeLedger()
         await ledger.set(harnesses: [:], accounts: [
             "/Users/k/.claude": totals(tokens: 10, cost: 9),
-            "/Users/k/.quiver/accounts/codex/codex-work/home": totals(tokens: 20, cost: 3),
+            "/Users/k/.swe/accounts/codex/codex-work/home": totals(tokens: 20, cost: 3),
             "/Users/k/elsewhere": totals(tokens: 5, cost: 1),
         ], accountHarnesses: [
             "/Users/k/.claude": "claude",
-            "/Users/k/.quiver/accounts/codex/codex-work/home": "codex",
+            "/Users/k/.swe/accounts/codex/codex-work/home": "codex",
         ])
         let model = model(ledger)
         await model.load(scan: false)

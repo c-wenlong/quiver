@@ -1,11 +1,11 @@
 """Model prices (ports ``Pricing/PricingCatalog.swift`` and ``ModelRates.swift``).
 
 Prices come from LiteLLM's list, refreshed once a day into
-``~/.quiver/cache/web-ledger/litellm.json`` like the Mac app does, with
+``~/.swe/cache/web-ledger/litellm.json`` like the Mac app does, with
 the trimmed snapshot shipped beside this module (a copy of the app's
 ``Resources/pricing.json``) when the download is unavailable. Quiver's
 supplement adds aliases and tier multipliers; the user's
-``~/.quiver/config/pricing.json`` (USD per million tokens) wins over both.
+``~/.swe/config/pricing.json`` (USD per million tokens) wins over both.
 The Mac app also keeps every past price; this port prices everything at
 today's rates.
 """

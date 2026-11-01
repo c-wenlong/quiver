@@ -35,7 +35,7 @@ def _home(tmp: str) -> Path:
     """claude synced to the shared copy, codex holding its own AGENTS.md,
     a shared skill tree with one plugin, and one enabled claude plugin."""
     home = Path(tmp)
-    quiver = home / ".quiver"
+    quiver = home / ".swe"
     _skill(quiver / "skills", "alpha")
     (quiver / "AGENTS.md").write_text("rules\n")
     plug = quiver / "plugins" / "dv" / "eng"
@@ -188,8 +188,8 @@ class PluginDriftTest(_FindHome):
                 "installed 0.2.0 vs source 0.2.4, 3 files differ",
                 "codex plugin remove learning@learning && codex plugin add learning@learning"),
         Finding("claude", "design", "", "unregistered",
-                "~/.quiver/plugins/design is not a claude marketplace",
-                "claude plugin marketplace add ~/.quiver/plugins/design"),
+                "~/.swe/plugins/design is not a claude marketplace",
+                "claude plugin marketplace add ~/.swe/plugins/design"),
     ]
 
     def stub(self, sources=True, findings=None):
@@ -218,10 +218,10 @@ class PluginDriftTest(_FindHome):
     def test_full_lists_each_finding_with_its_fix(self):
         self.stub()
         out = self.run_find("plugins", "--full")
-        self.assertIn("where ~/.quiver/plugins has not reached a harness", out)
+        self.assertIn("where ~/.swe/plugins has not reached a harness", out)
         self.assertIn("learning@learning", out)
         self.assertIn("codex plugin remove learning@learning && codex plugin add learning@learning", out)
-        self.assertIn("claude plugin marketplace add ~/.quiver/plugins/design", out)
+        self.assertIn("claude plugin marketplace add ~/.swe/plugins/design", out)
 
     def test_archived_harness_findings_are_hidden(self):
         self.stub()

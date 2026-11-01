@@ -24,7 +24,7 @@ class SkillsSymlinksTest(unittest.TestCase):
     def test_suggests_symlink_when_cursor_skills_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             (shared / "demo-skill").mkdir()
             (shared / "demo-skill" / "SKILL.md").write_text("---\nname: demo\n---\n")
@@ -39,7 +39,7 @@ class SkillsSymlinksTest(unittest.TestCase):
     def test_apply_creates_symlink_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             (home / ".cursor").mkdir()
 
@@ -56,7 +56,7 @@ class SkillsSymlinksTest(unittest.TestCase):
         # FileExistsError because the dead link still held the path.
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             (home / ".cursor").mkdir()
             link = home / ".cursor" / "skills"
@@ -73,7 +73,7 @@ class SkillsSymlinksTest(unittest.TestCase):
         # there would make the dir, and init then reads it as evidence.
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".quiver" / "skills").mkdir(parents=True)
+            (home / ".swe" / "skills").mkdir(parents=True)
             (home / ".claude").mkdir()
 
             labels = {h.label for h in skills_symlink_hints(home=home)}
@@ -82,7 +82,7 @@ class SkillsSymlinksTest(unittest.TestCase):
     def test_apply_never_creates_a_harness_home(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".quiver" / "skills").mkdir(parents=True)
+            (home / ".swe" / "skills").mkdir(parents=True)
             stale = SkillsSymlinkHint(
                 label="augment", path=home / ".augment" / "skills",
                 action="symlink", command="", reason="")
@@ -97,21 +97,21 @@ class SkillsSymlinksTest(unittest.TestCase):
         self.on_path = {"codex"}
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
 
             hints = skills_symlink_hints(home=home)
             self.assertEqual([h.label for h in hints], ["codex"])
             self.assertEqual(apply_skills_symlink_hints(hints, home=home), ["symlink codex"])
             self.assertEqual((home / ".codex" / "skills").resolve(), shared.resolve())
-            self.assertEqual(sorted(p.name for p in home.iterdir()), [".codex", ".quiver"])
+            self.assertEqual(sorted(p.name for p in home.iterdir()), [".codex", ".swe"])
 
     def test_an_archived_harness_on_path_is_not_linked(self):
         self.on_path = {"codex"}
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".quiver" / "skills").mkdir(parents=True)
-            config = home / ".quiver" / "config"
+            (home / ".swe" / "skills").mkdir(parents=True)
+            config = home / ".swe" / "config"
             config.mkdir()
             (config / "harness.json").write_text(
                 json.dumps({"codex": {"command": "codex", "state": "archived"}}))
@@ -128,9 +128,9 @@ class SkillsSymlinksTest(unittest.TestCase):
         self.on_path = {"codex"}
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".quiver" / "skills").mkdir(parents=True)
-            (home / ".quiver" / "config").mkdir()
-            (home / ".quiver" / "config" / "harness.json").write_text("{not json")
+            (home / ".swe" / "skills").mkdir(parents=True)
+            (home / ".swe" / "config").mkdir()
+            (home / ".swe" / "config" / "harness.json").write_text("{not json")
             (home / ".claude").mkdir()
 
             self.assertEqual([h.label for h in skills_symlink_hints(home=home)], ["claude"])
@@ -140,7 +140,7 @@ class SkillsSymlinksTest(unittest.TestCase):
         self.on_path = {"codex", "cursor", "crush"}
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            shared = home / ".quiver" / "skills"
+            shared = home / ".swe" / "skills"
             shared.mkdir(parents=True)
             (home / ".codex").write_text("not a folder\n")
             (home / ".cursor").symlink_to(home / "gone")

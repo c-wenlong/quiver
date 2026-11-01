@@ -2,7 +2,7 @@
 
 Every persistent store `swe` and the Quiver app touch, what each holds, and
 how long its data is trusted. `paths.py` is the single source of truth for
-the `~/.quiver` layout; `AppModel.swift` names the app files under `cache/`
+the `~/.swe` layout; `AppModel.swift` names the app files under `cache/`
 and `config/`.
 
 "Rebuildable" means the file can be deleted and regenerated from source data
@@ -36,7 +36,7 @@ be rebuilt; deleting them loses user state.
 | `skills/`, `hooks/`, `plugins/`, `AGENTS.md`, `.linkignore` | swe | files and symlinks | shared instruction/skill/hook/plugin trees | `swe init`, `swe skills`, `swe plugins` | the harnesses that link them |
 | `data/account-links.json` | swe | JSON `{version, links: [{path, source, primitive, account}]}` | every link `swe init` made in an extra account home for an `accounts.sync.*` switch; switching one off removes only the links listed here that still point at their `source` | `init/accounts.py` (malformed raises, the pass then touches nothing) | `swe init` |
 | `data/account-mcp.json` | swe | JSON `{version, servers: [{account, path, name, digest}]}` | every MCP server `swe init` merged into an extra account's `.claude.json` or `config.toml` for `accounts.sync.mcp`. `digest` is an HMAC-SHA256 of the entry as written, keyed by `secrets/account-mcp.key` (the entries hold resolved secrets); swe updates or removes a server only while the file still holds exactly that entry | `init/account_mcp.py` (malformed raises, the MCP pass then touches nothing) | `swe init` |
-| `fan/control.json` | app | JSON `{level, owner, requested}`, folder mode 700 | the Compute page's manual fan request: a level from 0 (each fan's minimum) to 1 (its maximum), the requesting Quiver's pid and when it was asked. No level means automatic | `FanControl` (QuiverCore) | the root fan helper (`Quiver --fan-daemon`, run by launchd from `/Library/LaunchDaemons/com.cwenlong.quiver.fan.plist`), which holds the fans only while that pid is a running Quiver. It answers in `/var/run/com.cwenlong.quiver.fan.json` (`{state, reason, requested, owner, at}`, root-owned, mode 644, outside `~/.quiver` so root never writes into a folder the user owns), which `FanControl` reads to show why a request was refused |
+| `fan/control.json` | app | JSON `{level, owner, requested}`, folder mode 700 | the Compute page's manual fan request: a level from 0 (each fan's minimum) to 1 (its maximum), the requesting Quiver's pid and when it was asked. No level means automatic | `FanControl` (QuiverCore) | the root fan helper (`Quiver --fan-daemon`, run by launchd from `/Library/LaunchDaemons/com.cwenlong.quiver.fan.plist`), which holds the fans only while that pid is a running Quiver. It answers in `/var/run/com.cwenlong.quiver.fan.json` (`{state, reason, requested, owner, at}`, root-owned, mode 644, outside `~/.swe` so root never writes into a folder the user owns), which `FanControl` reads to show why a request was refused |
 | `reports/` | swe | markdown + JSON | generated reports, `session-summaries/`, `exclusions.json`, `cursors.json`, `followups.json` | `reports/store.py` (atomic writes, malformed state raises) | `swe report` |
 
 Legacy registry names `tools.json`, `stars.json`, `archived.json` (pre
@@ -72,7 +72,7 @@ under those names.
 
 Files nothing in this repo owns but observed in real `cache/` dirs:
 `.last-backup-stamp` (external backup tooling), `.DS_Store`, `evals/` and
-`.backup/` at the `~/.quiver` root. Left alone.
+`.backup/` at the `~/.swe` root. Left alone.
 
 ### UserDefaults keys (app)
 

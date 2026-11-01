@@ -232,7 +232,7 @@ class ApplyTest(unittest.TestCase):
 
     def setUp(self):
         # A move apply records without a ``record`` of its own would go
-        # to the real ~/.quiver/remote/setup-state.json.
+        # to the real ~/.swe/remote/setup-state.json.
         p = patch.object(setup, "record_move", lambda *_a, **_kw: None)
         p.start()
         self.addCleanup(p.stop)

@@ -1,6 +1,6 @@
 """Key discovery and masking helpers.
 
-The key store is ``~/.quiver/secrets/providers/.api_keys`` (override via
+The key store is ``~/.swe/secrets/providers/.api_keys`` (override via
 the ``--api-keys-dir`` CLI flag). A machine `swe init` has not migrated yet
 still reads ``~/.api_keys``, which after the move is a symlink to the new
 file. Quiver never writes a key string to disk;
@@ -25,7 +25,7 @@ from swe.providers.keyfile import unquote
 
 
 def default_keys_dir(home: Path | None = None) -> Path:
-    """Return the default key store: the file under ~/.quiver/secrets/providers/,
+    """Return the default key store: the file under ~/.swe/secrets/providers/,
     or ``~/.api_keys`` on a machine that has not migrated yet.
 
     Honors an optional override ``home`` so tests can patch the location
@@ -44,7 +44,7 @@ def find_key_file(provider_info: dict, keys_dir: Path) -> Path | None:
         return None
     fpath = Path(filename)
     # The stored name must stay inside keys_dir. providers.json is plain
-    # user data — and ~/.quiver is designed to be a git checkout — so an
+    # user data — and ~/.swe is designed to be a git checkout — so an
     # absolute or traversing name would make `providers list`/`info` a
     # masked-read oracle for any file the user can read.
     if fpath.is_absolute() or ".." in fpath.parts:

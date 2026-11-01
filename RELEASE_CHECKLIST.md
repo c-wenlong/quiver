@@ -73,7 +73,7 @@ and variables → Actions and survive every release.
 | `NOTARY_KEY` | Base64 of an App Store Connect API key's `.p8` file | `base64 -i AuthKey_<ID>.p8` |
 | `NOTARY_KEY_ID` | The key's ID, e.g. `P3VHYCSWKN` | App Store Connect → Integrations → App Store Connect API |
 | `NOTARY_ISSUER` | The issuer UUID | Same page as the key ID |
-| `SPARKLE_PRIVATE_KEY` | The EdDSA private key matching the `SUPublicEDKey` baked into the app | Sparkle's `generate_keys`; stored locally at `~/.quiver/secrets/` |
+| `SPARKLE_PRIVATE_KEY` | The EdDSA private key matching the `SUPublicEDKey` baked into the app | Sparkle's `generate_keys`; stored locally at `~/.swe/secrets/` |
 
 Three failure-mode notes that change how this scene ends:
 

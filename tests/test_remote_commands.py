@@ -71,7 +71,7 @@ class TestPair(unittest.TestCase):
 class TestStatus(unittest.TestCase):
     def setUp(self):
         # Without --host, status reads the saved hub.json; keep it from
-        # reading the real ~/.quiver.
+        # reading the real ~/.swe.
         patcher = patch.object(commands, "load_hub_config", return_value={})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -912,7 +912,7 @@ class TestUnwritableHome(unittest.TestCase):
             rc, out, err = _run(["devices", "--approve=123456"])
         self.assertEqual(rc, 1)
         self.assertIn("can't write", out)
-        self.assertIn(".quiver", out)
+        self.assertIn(".swe", out)
         self.assertNotIn("Traceback", out + err)
 
     def test_error_moves_to_stderr_under_json(self):

@@ -33,7 +33,7 @@ _HOME_MARKER_FILES = frozenset({"AGENTS.md", "CLAUDE.md", "SKILL.md", "SOUL.md"}
 _HOME_SCAN_SKIP = frozenset({
     ".Trash", ".cache", ".cargo", ".cups", ".docker", ".dropbox", ".gem",
     ".git", ".gnupg", ".gradle", ".local", ".m2", ".npm", ".nvm", ".ollama",
-    ".orbstack", ".pyenv", ".quiver", ".rustup", ".ssh", ".venv", ".vim",
+    ".orbstack", ".pyenv", ".swe", ".rustup", ".ssh", ".venv", ".vim",
     ".vscode", ".yarn", "node_modules", "logs", "cache", "venv", "dist",
     "build",
 })

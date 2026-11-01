@@ -26,7 +26,7 @@ from swe.skills.symlinks import SkillsSymlinkHint
 
 class SetupWizardTest(unittest.TestCase):
     def setUp(self):
-        # The hub stage joins only while ~/.quiver can take a clone, which a
+        # The hub stage joins only while ~/.swe can take a clone, which a
         # throwaway HOME always can; these tests are about the other six.
         patcher = patch("swe.init.hub.can_clone", return_value=False)
         patcher.start()

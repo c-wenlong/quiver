@@ -166,7 +166,7 @@ class TestFolders(unittest.TestCase):
 
 
 def _no_hub_secrets(case):
-    """Keep get()'s secrets join off the real ~/.quiver/mcp.json and
+    """Keep get()'s secrets join off the real ~/.swe/mcp.json and
     secrets store, which these cases don't set up."""
     for p in (patch.object(mcp, "_hub_refs", return_value={}),
               patch("swe.mcp.secrets.load_secrets", return_value={})):
@@ -179,10 +179,10 @@ class TestPayload(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.home, True)
         _no_hub_secrets(self)
-        root = self.home / ".quiver" / "mcp" / "servers" / "custom" / "linear-mcp"
+        root = self.home / ".swe" / "mcp" / "servers" / "custom" / "linear-mcp"
         root.mkdir(parents=True)
         (root / "package.json").write_text("{}")
-        self.servers_root = self.home / ".quiver" / "mcp" / "servers"
+        self.servers_root = self.home / ".swe" / "mcp" / "servers"
 
     def test_rows_carry_a_summary_not_the_command_line(self):
         with patch.object(mcp, "inventory", return_value=(["claude", "codex"], _pairs(self.servers_root))), \
@@ -308,7 +308,7 @@ class _SyncHome:
                       "label": "Codex", "format": "standard", "io_type": "toml_region"},
         }
         self.claude, self.cursor, self.codex = (cmap[n]["path"] for n in ("claude", "cursor", "codex"))
-        self.hub = self.home / ".quiver" / "mcp.json"
+        self.hub = self.home / ".swe" / "mcp.json"
         self.hub.parent.mkdir(parents=True)
         self.cursor.parent.mkdir()
         self.codex.parent.mkdir()
@@ -340,7 +340,7 @@ class _SyncHome:
                 for p in (self.claude, self.cursor, self.codex, self.hub)}
 
     def set_secret(self, name, value):
-        path = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        path = self.home / ".swe" / "secrets" / "mcp" / ".api_keys"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"export {name}={value}\n")
 
@@ -715,7 +715,7 @@ class TestAdd(_SyncHome, unittest.TestCase):
 
     def refused(self, **body):
         before = self.snapshot()
-        store = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        store = self.home / ".swe" / "secrets" / "mcp" / ".api_keys"
         had = store.read_bytes() if store.exists() else None
         with self.assertRaises(PageError) as caught:
             self.add(**body)

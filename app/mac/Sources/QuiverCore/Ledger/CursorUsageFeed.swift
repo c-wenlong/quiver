@@ -61,7 +61,7 @@ public actor CursorUsageFeed {
         self.swe = swe
         self.accounts = accounts
         self.progressFile = progressFile ?? FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: ".quiver/cache/cursor-feed.json")
+            .appending(path: ".swe/cache/cursor-feed.json")
         self.progress = (try? JSONDecoder().decode(
             CursorFeedProgress.self,
             from: (try? Data(contentsOf: self.progressFile)) ?? Data())) ?? CursorFeedProgress()

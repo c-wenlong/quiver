@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The models the ledger saw, grouped by provider, with the price each one
 /// resolves to and where that price came from. Unpriced rows open the form
-/// that writes `~/.quiver/config/pricing.json`.
+/// that writes `~/.swe/config/pricing.json`.
 struct PricingPage: View {
     @Environment(AppModel.self) private var app
 
@@ -356,7 +356,7 @@ private func sourceName(_ row: PricingModel.PricedModel) -> String {
     case .billed: "\(billers(row)) bills"
     case .free: "Free"
     case .yours: "Your price"
-    case .quiver: "Quiver"
+    case .swe: "Quiver"
     case .liteLLM: "LiteLLM"
     case .unpriced: "No price"
     }
@@ -369,7 +369,7 @@ private func sourceHelp(_ row: PricingModel.PricedModel) -> String {
         let billed = "Billed by \(billers(row)): spend uses the charge \(billers(row)) logs for each request."
         return switch row.source {
         case .yours: billed + " Your saved price is kept but not used."
-        case .liteLLM, .quiver: billed + " The rates shown are the API list price, for comparison."
+        case .liteLLM, .swe: billed + " The rates shown are the API list price, for comparison."
         case nil: billed
         }
     default:
@@ -383,7 +383,7 @@ private func sourceHelp(_ row: PricingModel.PricedModel) -> String {
     case .free: mixed ? "Free model: usage without a logged charge is priced at $0."
                       : "Free model: priced at $0."
     case .yours: "Your price: \(rest) uses the rates you saved."
-    case .quiver: "API pricing from Quiver's own list, which fills in or corrects LiteLLM's"
+    case .swe: "API pricing from Quiver's own list, which fills in or corrects LiteLLM's"
         + (mixed ? ", for usage without a logged charge." : ".")
     case .liteLLM: "API pricing from LiteLLM's price list" + (mixed ? ", for usage without a logged charge." : ".")
     case .unpriced: mixed
@@ -425,7 +425,7 @@ private struct SourceMark: View {
             } else {
                 Text("LiteLLM").foregroundStyle(Theme.textSecondary)
             }
-        case .quiver:
+        case .swe:
             Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high)
                 .frame(width: Self.size + 2, height: Self.size + 2)
         case .yours:
@@ -541,7 +541,7 @@ private struct PriceSheet: View {
                     .lineLimit(1).truncationMode(.middle)
             }
             if let listPrice = row.listPrice {
-                Text("List price (\(listPrice.source == .quiver ? "Quiver" : "LiteLLM")): "
+                Text("List price (\(listPrice.source == .swe ? "Quiver" : "LiteLLM")): "
                      + "\(perMillion(listPrice.rates.input)) in · "
                      + "\(perMillion(listPrice.rates.output)) out · "
                      + "\(perMillion(listPrice.rates.cacheRead)) cache read · "

@@ -1,7 +1,7 @@
 """Catalog of known AI coding CLI harnesses for discovery.
 
 This is a recognition table, not a seed. Nothing here is written to
-~/.quiver/config/harness.json on first run; `swe discover` matches what is
+~/.swe/config/harness.json on first run; `swe discover` matches what is
 actually on PATH against these names and commands, and only what it finds
 gets registered. A machine's registry therefore describes that machine.
 

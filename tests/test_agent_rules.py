@@ -54,7 +54,7 @@ class ThrowawayHomeTest(unittest.TestCase):
         self.assertNotEqual(
             os.path.realpath(home), os.path.realpath(real),
             "the suite is running against your real HOME, so integration "
-            "tests write into ~/.quiver. Rerun with "
+            "tests write into ~/.swe. Rerun with "
             "HOME=\"$(mktemp -d)\" python3 -m unittest discover -s tests "
             "-p 'test_*.py'",
         )

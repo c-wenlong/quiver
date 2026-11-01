@@ -21,7 +21,7 @@ extension SweClient: HubLocating {
 }
 
 /// The app's own device credential for this Mac's hub, in
-/// `~/.quiver/secrets/remote/app-device.json` (0600). It names the hub
+/// `~/.swe/secrets/remote/app-device.json` (0600). It names the hub
 /// address it was paired with, so a hub that moved pairs again.
 public struct HubDeviceStore: Sendable {
     public let url: URL

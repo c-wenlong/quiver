@@ -61,7 +61,7 @@ def skills_symlink_hints(home: Path | None = None) -> list[SkillsSymlinkHint]:
                 path=shared,
                 action="create_shared",
                 command=f"mkdir -p {shared}",
-                reason="Shared skills root ~/.quiver/skills does not exist yet",
+                reason="Shared skills root ~/.swe/skills does not exist yet",
             )
         )
         return hints

@@ -50,7 +50,7 @@ def description_line(description: str) -> str:
 
 def create(name: str, description: str | None = None,
            home: Path | None = None) -> tuple[Path, bool]:
-    """Write ~/.quiver/skills/<name>/SKILL.md, atomically.
+    """Write ~/.swe/skills/<name>/SKILL.md, atomically.
 
     Returns (path, created_dir). Raises ValueError for anything the user
     can fix; the command turns it into exit 1.

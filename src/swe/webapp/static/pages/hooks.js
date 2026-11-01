@@ -1,5 +1,5 @@
 /* Hooks: a port of the Mac app's HooksPage. Every script under
- * ~/.quiver/hooks with its link state, tier and declarations, the
+ * ~/.swe/hooks with its link state, tier and declarations, the
  * swe hooks check findings, Link with swe init and Replace and back up
  * (the AgentsMdPage strip), and New hook (swe hooks new — the sheet
  * shows the stanza to paste; a settings file is never written). The
@@ -91,8 +91,8 @@ async function renderHooksList() {
 
 function hooksHeader(busy) {
   return pageHeader("Hooks",
-    "Scripts in ~/.quiver/hooks that run when a harness fires an event, and which harnesses each is linked and declared for.",
-    `<button class="hk-button primary hk-new-button" id="hk-new" type="button" title="Write a new hook script into ~/.quiver/hooks">${HK_PLUS}New hook</button>
+    "Scripts in ~/.swe/hooks that run when a harness fires an event, and which harnesses each is linked and declared for.",
+    `<button class="hk-button primary hk-new-button" id="hk-new" type="button" title="Write a new hook script into ~/.swe/hooks">${HK_PLUS}New hook</button>
      <button class="icon-button${busy ? " spinning" : ""}" id="page-refresh" aria-label="Refresh" title="Refresh">${icon("rescan")}</button>`);
 }
 
@@ -106,7 +106,7 @@ function paintHooks() {
   const p = hooksPage, d = p.data;
   let body;
   if (!d.hooks.length) {
-    body = `<div class="card hk-empty"><p class="empty">No hooks in ~/.quiver/hooks yet. A hook script runs when its harness fires an event.</p>
+    body = `<div class="card hk-empty"><p class="empty">No hooks in ~/.swe/hooks yet. A hook script runs when its harness fires an event.</p>
       <div><button class="hk-button primary" id="hk-new-empty" type="button">New hook</button></div></div>`;
   } else {
     body = hkGroups(d.hooks).map(hkGroupCard).join("");
@@ -178,7 +178,7 @@ function hkLinksStrip(d) {
 function hkConfirm(d) {
   const machine = d.machine || "the hub";
   return `<div class="hk-confirm" role="group" aria-label="Run swe init --force?">
-    <p class="caption">This runs swe init --force on ${esc(machine)}. Each of these is copied to ~/.quiver/backups, then replaced with a link to the shared copy:</p>
+    <p class="caption">This runs swe init --force on ${esc(machine)}. Each of these is copied to ~/.swe/backups, then replaced with a link to the shared copy:</p>
     <ul class="hk-confirm-paths">${(d.blocked || []).map((path) => `<li><code>${esc(path)}</code></li>`).join("")}</ul>
     <div class="hk-confirm-buttons">
       <button class="hk-button" data-hk="cancel">Cancel</button>
@@ -285,7 +285,7 @@ function hkBack() {
 function paintHookDetail(d) {
   const undeclared = d.link_status === "linked" && !(d.declared || []).length;
   const enabled = d.enabled == null ? "" : `<span class="badge">${d.enabled ? "Enabled" : "Disabled"}</span>`;
-  const lock = !d.editable ? `<div class="hk-lock">${HK_LOCK_ICON}<span>Only scripts inside ~/.quiver/hooks can be edited, so ${esc(d.name)} is read-only.</span></div>` : "";
+  const lock = !d.editable ? `<div class="hk-lock">${HK_LOCK_ICON}<span>Only scripts inside ~/.swe/hooks can be edited, so ${esc(d.name)} is read-only.</span></div>` : "";
   const declared = (d.declared || []).map((x) => `<div class="hk-decl">
       <span class="hk-decl-head"><span class="badge">${esc(hkDeclLabel(x))}</span>
         ${x.timeout ? `<span class="caption">timeout ${esc(x.timeout)}s</span>` : ""}

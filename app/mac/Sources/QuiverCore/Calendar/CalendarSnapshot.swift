@@ -3,7 +3,7 @@ import os
 
 /// The most recent ranges' blocks, by provider, so the Calendar page's
 /// first paint does not wait on a read. Saved to
-/// `~/.quiver/cache/app-calendar.json`; an out-of-date shape is ignored
+/// `~/.swe/cache/app-calendar.json`; an out-of-date shape is ignored
 /// like every other snapshot.
 public struct CalendarSnapshot: SnapshotContent, Equatable {
     public static let currentVersion = 2

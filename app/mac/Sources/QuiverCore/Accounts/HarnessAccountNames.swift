@@ -3,11 +3,11 @@ import Foundation
 /// Account names for harness cards (the "Cortex" you gave Cursor), owned by
 /// the app and never by swe: a rename in Accounts must not rewrite
 /// harness.json, which the Harnesses page's own names live in. Next to
-/// profiles.json at `~/.quiver/accounts/harness-names.json`.
+/// profiles.json at `~/.swe/accounts/harness-names.json`.
 public final class HarnessAccountNameStore: @unchecked Sendable {
     public static var defaultFile: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: ".quiver/accounts/harness-names.json")
+            .appending(path: ".swe/accounts/harness-names.json")
     }
 
     private let file: URL

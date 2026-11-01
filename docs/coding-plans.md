@@ -9,7 +9,7 @@ plans change monthly, so recheck before relying on a price or a model id.
 
 ## What Quiver does with a plan
 
-Quiver stores the plan key in `~/.quiver/secrets/providers/.api_keys` under its own variable name
+Quiver stores the plan key in `~/.swe/secrets/providers/.api_keys` under its own variable name
 (`GLM_CODING_PLAN_KEY`, not `ZAI_API_KEY`). Every vendor below either uses a
 separate plan key or a separate plan endpoint, and a plan key sent to the
 pay-as-you-go endpoint bills the account balance instead of the plan (Z.ai's

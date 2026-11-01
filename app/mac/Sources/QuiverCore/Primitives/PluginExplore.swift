@@ -6,7 +6,7 @@ import Foundation
 public struct ExploreRow: Sendable, Equatable, Identifiable {
     public var id: String { plugin.ref }
     public let plugin: CatalogPlugin
-    /// From a marketplace in `~/.quiver/plugins`.
+    /// From a marketplace in `~/.swe/plugins`.
     public let isHub: Bool
     public let skills: [PluginSkill]
     /// Lowercased name, ref, marketplace, description and skill names, for search.
@@ -17,7 +17,7 @@ public struct ExploreRow: Sendable, Equatable, Identifiable {
 /// its marketplaces, each marketplace its plugins.
 public struct ExploreSource: Sendable, Equatable, Identifiable {
     public enum Kind: Sendable, Hashable {
-        /// The hub, `~/.quiver/plugins`, whichever harnesses register it.
+        /// The hub, `~/.swe/plugins`, whichever harnesses register it.
         case local
         /// Marketplaces this harness registers, the hub's aside.
         case harness(String)
@@ -129,7 +129,7 @@ public struct PluginExploreIndex: Sendable, Equatable {
     /// Every source, marketplace and plugin row, unfiltered.
     public let sources: [ExploreSource]
     /// The marketplaces the user may rename: those whose folder is in
-    /// `~/.quiver/plugins` (`PrimitiveOwnership.isEditable`). Worked out
+    /// `~/.swe/plugins` (`PrimitiveOwnership.isEditable`). Worked out
     /// here, off the main actor, since it resolves symlinks on disk.
     public let editableMarketplaces: Set<String>
     /// What swe could not read, with the marketplaces missing on this Mac
@@ -138,7 +138,7 @@ public struct PluginExploreIndex: Sendable, Equatable {
 
     /// Resolves plugin and skill folders on disk, so build it off the main
     /// actor (`PluginCatalogModel` does).
-    /// - Parameter home: the home whose `~/.quiver/plugins` makes a
+    /// - Parameter home: the home whose `~/.swe/plugins` makes a
     ///   marketplace editable; nil leaves every marketplace read only.
     public init(catalog: PluginCatalog, skills: [Skill], home: URL? = nil,
                 resolve: @escaping (String) -> String = FolderOwners.realPath) {
@@ -278,7 +278,7 @@ public struct PluginExploreIndex: Sendable, Equatable {
         // catalog repeats keeps its first.
         var sources: [ExploreSource] = []
         if !local.isEmpty {
-            sources.append(ExploreSource(kind: .local, title: "Local", note: "Your Quiver hub, ~/.quiver/plugins",
+            sources.append(ExploreSource(kind: .local, title: "Local", note: "Your Quiver hub, ~/.swe/plugins",
                                          marketplaces: local.uniqued(by: \.id)))
         }
         for harness in order {

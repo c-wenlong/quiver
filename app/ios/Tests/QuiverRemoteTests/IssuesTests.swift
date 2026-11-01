@@ -73,7 +73,7 @@ final class IssuesDecodingTests: XCTestCase {
                           "created_at": "2026-01-02T00:00:00Z",
                           "url": "https://github.com/o/r/issues/5#issuecomment-1"}],
             "branch": "quiver/issue-5",
-            "worktree": "/home/u/.quiver/worktrees/o__r-issue5",
+            "worktree": "/home/u/.swe/worktrees/o__r-issue5",
             "suggested_prompt": "Resolve o/r#5 — Fix the thing\\n…"
           },
           "fetched_at": 1767323045.0
@@ -86,7 +86,7 @@ final class IssuesDecodingTests: XCTestCase {
         XCTAssertEqual(issue.body, "It breaks.")
         XCTAssertEqual(issue.comments?.first?.author, "carol")
         XCTAssertEqual(issue.branch, "quiver/issue-5")
-        XCTAssertEqual(issue.worktree, "/home/u/.quiver/worktrees/o__r-issue5")
+        XCTAssertEqual(issue.worktree, "/home/u/.swe/worktrees/o__r-issue5")
         XCTAssertTrue(issue.suggestedPrompt?.hasPrefix("Resolve o/r#5") == true)
     }
 }

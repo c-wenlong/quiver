@@ -1,6 +1,6 @@
 """On-disk paths for quiver user data.
 
-Everything quiver owns lives under one root, ``~/.quiver``. That root holds two
+Everything quiver owns lives under one root, ``~/.swe``. That root holds two
 kinds of thing and they are separated so the whole directory can be a git repo:
 
   authored     AGENTS.md, .linkignore, skills/, plugins/, hooks/,  worth versioning
@@ -20,6 +20,8 @@ that still has one can be migrated by ``swe init --migrate``.
 import contextlib
 import json
 import os
+import re
+import sys
 from pathlib import Path
 
 from swe import DATA_DIR_NAME
@@ -33,6 +35,10 @@ except ImportError:  # pragma: no cover - Windows has no flock
 # can build a throwaway tree; the module-level constants are the same thing
 # resolved against the real home, which is what runtime code should import.
 SWE_DIRNAME = f".{DATA_DIR_NAME}"
+
+# The root's name before the project was renamed to swe. swe_dir_for moves a
+# real ``~/.quiver`` across on first sight.
+LEGACY_DIRNAME = ".quiver"
 
 AGENTS_BASENAME = "AGENTS.md"
 INSTRUCTIONS_SUBDIR = "AGENTS_MD"
@@ -61,8 +67,105 @@ PROVIDER_SECRETS_SUBDIR = "providers"
 MCP_SECRETS_SUBDIR = "mcp"
 
 
+_RESOLVED: dict[str, Path] = {}
+
+
 def swe_dir_for(home: Path | None = None) -> Path:
-    return (home or Path.home()) / SWE_DIRNAME
+    """The data root for ``home``, migrating ``~/.quiver`` to ``~/.swe`` once.
+
+    A real ``~/.quiver`` is renamed in place (same filesystem by
+    construction) and replaced by a ``~/.quiver -> .swe`` symlink, so an
+    older swe running beside this one, a harness symlink pointing into the
+    old root, or a config string that still names it all keep working.
+    When the move can't happen — a ``~/.swe`` already exists, the rename
+    fails, or ``~/.quiver`` is itself a link — the old path keeps serving
+    so nothing reads an empty new root."""
+    base = home or Path.home()
+    root = _RESOLVED.get(str(base))
+    if root is None:
+        root = _resolve_data_dir(base)
+        _RESOLVED[str(base)] = root
+    return root
+
+
+def _resolve_data_dir(base: Path) -> Path:
+    new, old = base / SWE_DIRNAME, base / LEGACY_DIRNAME
+    if new.exists() or new.is_symlink() or not os.path.lexists(old):
+        return new
+    if old.is_symlink():
+        # ~/.quiver is itself a link: mirror it as ~/.swe rather than
+        # move the target out from under whatever put it there.
+        try:
+            new.symlink_to(os.readlink(old))
+        except OSError:
+            pass
+        return new
+    if not old.is_dir():
+        return new
+    try:
+        old.rename(new)
+    except OSError as exc:
+        sys.stderr.write(f"swe: could not move {old} to {new} ({exc}); keeping {old}\n")
+        return old
+    try:
+        old.symlink_to(SWE_DIRNAME)
+    except OSError:
+        pass
+    try:
+        changed = _rewrite_migrated_root(new, base)
+    except Exception:
+        changed = 0  # the move already happened; a bad rewrite never rolls it back
+    note = f"swe: moved {old} to {new}; {old} is now a symlink"
+    sys.stderr.write(note + (f", rewrote {changed} file(s)\n" if changed else "\n"))
+    return new
+
+
+# Inside a migrated root, only path-shaped and module-shaped tokens get
+# rewritten: ``~/.quiver`` and absolute ``<home>/.quiver`` (via the suffix
+# rule), ``python -m quiver.<mod>`` and bare ``quiver.<mod>`` argv tokens.
+# ``secrets/`` is never touched, and anything the rules miss still resolves
+# through the ``~/.quiver`` compatibility symlink.
+_REWRITE_EXTS = {".json", ".md", ".txt", ".toml", ".yml", ".yaml", ".sh", ".py", ""}
+_REWRITE_SKIP_DIRS = {"cache", "backups", "data", "secrets", ".backup"}
+_REWRITE_SKIP_NAMES = {".gitignore", ".linkignore", ".gitmodules", ".DS_Store"}
+_MODULE_TOKEN = re.compile(
+    r"\bquiver\.(?=(?:bug|cli|completion_scripts|completion|config_commands|"
+    r"configuration|console|find|flags|github|harness|help_text|history|hooks|"
+    r"init|instructions|json_output|keys|ledger|markdown|mcp|mcp_formats|"
+    r"mcp_server|multiselect|paths|plugins|prompt|providers|remote|reports|"
+    r"sessions|setup|skills|status|table|webapp)\b)")
+_LEGACY_TOKEN = re.compile(r"(?<!\w)\.quiver\b")
+
+
+def _rewrite_migrated_root(root: Path, base: Path) -> int:
+    old_abs, new_abs = str(base / LEGACY_DIRNAME), str(root)
+    changed = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel = os.path.relpath(dirpath, root)
+        in_git = rel.startswith(".git") and (len(rel) == 4 or rel[4] == os.sep)
+        if not in_git:
+            dirnames[:] = [d for d in dirnames if d not in _REWRITE_SKIP_DIRS]
+        for name in filenames:
+            path = Path(dirpath) / name
+            if in_git:
+                if name != "config":  # only worktree paths live there
+                    continue
+            elif name in _REWRITE_SKIP_NAMES or path.suffix.lower() not in _REWRITE_EXTS:
+                continue
+            try:
+                if path.stat().st_size > 2_000_000:
+                    continue
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            out = _MODULE_TOKEN.sub("swe.", _LEGACY_TOKEN.sub(".swe", text.replace(old_abs, new_abs)))
+            if out != text:
+                try:
+                    path.write_text(out, encoding="utf-8")
+                    changed += 1
+                except OSError:
+                    pass
+    return changed
 
 
 def agents_file_for(home: Path | None = None) -> Path:
@@ -141,7 +244,7 @@ def account_homes_for(vendor: str, home: Path | None = None) -> list[Path]:
     """Each Quiver account home for ``vendor``, sorted for stable order.
 
     Quiver's extra accounts keep a harness-shaped config dir at
-    ``~/.quiver/accounts/<vendor>/<id>/home`` — the same layout the
+    ``~/.swe/accounts/<vendor>/<id>/home`` — the same layout the
     default home has, so a harness's sessions there parse exactly like
     its own. Sessions found under one belong to that account, which the
     session listing and its readers use to name the account, find its
@@ -151,7 +254,7 @@ def account_homes_for(vendor: str, home: Path | None = None) -> list[Path]:
     # patching os.path.expanduser's handling of the ``~/<dir>`` prefix,
     # which a bare ``~`` lookup would slip past and read the real dirs.
     data_dir = swe_dir_for(home) if home is not None else Path(
-        os.path.expanduser("~/.quiver")
+        os.path.expanduser("~/.swe")
     )
     root = data_dir / "accounts" / vendor
     try:
@@ -161,7 +264,7 @@ def account_homes_for(vendor: str, home: Path | None = None) -> list[Path]:
 
 
 def data_dir_for(home: Path | None = None) -> Path:
-    """``~/.quiver/data`` — app-owned stores (ledger, catalog, search index)."""
+    """``~/.swe/data`` — app-owned stores (ledger, catalog, search index)."""
     return swe_dir_for(home) / DATA_SUBDIR
 
 
@@ -171,7 +274,7 @@ def search_index_for(home: Path | None = None) -> Path:
 
 
 def issues_file_for(home: Path | None = None) -> Path:
-    """The app's IssueStore, ``~/.quiver/data/issues.json``.
+    """The app's IssueStore, ``~/.swe/data/issues.json``.
 
     The app writes the actionable problems it sees (a stale sign-in, a
     denied read) here; ``swe doctor`` reads the same file so the CLI and
@@ -196,7 +299,7 @@ def github_mirrors_for(home: Path | None = None) -> Path:
 
 
 def remote_dir_for(home: Path | None = None) -> Path:
-    """``~/.quiver/data/remote`` — the remote-control hub's state.
+    """``~/.swe/data/remote`` — the remote-control hub's state.
 
     Holds ``devices.json`` (paired phone credentials, mode 600),
     ``inbox_dismissals.json`` (per-device inbox dismissals, mode 600),
@@ -510,7 +613,7 @@ def locked_beside(path: "Path"):
 
 
 def backup_tree(path: "Path", home: "Path | None" = None) -> "Path":
-    """Copy a file or directory into ~/.quiver/backups before it is replaced.
+    """Copy a file or directory into ~/.swe/backups before it is replaced.
 
     Hardened against three ways the previous version failed:
 

@@ -494,7 +494,7 @@ class TestGet(_Settings):
         self.assertFalse({"code", "poll_secret", "poll_secret_hash"} & set(rows[0]))
 
     def test_providers_are_masked_and_nothing_is_written(self):
-        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         keys.parent.mkdir(parents=True)
         secret = "sk-proj-SECRETSECRETSECRET9876"
         keys.write_text(f"# OpenAI\nexport OPENAI_API_KEY={secret}\nexport EMPTY_KEY=\"\"\n")
@@ -504,9 +504,9 @@ class TestGet(_Settings):
             {"name": "EMPTY_KEY", "provider": "OpenAI", "has_value": False, "masked": ""},
         ])
         self.assertNotIn("SECRET", json.dumps(body))
-        self.assertEqual(body["providers"]["path"], "~/.quiver/secrets/providers/.api_keys")
+        self.assertEqual(body["providers"]["path"], "~/.swe/secrets/providers/.api_keys")
         self.assertRegex(body["providers"]["stamp"], r"^[0-9a-f]{64}$")
-        self.assertFalse((self.home / ".quiver" / "config" / "providers.json").exists())
+        self.assertFalse((self.home / ".swe" / "config" / "providers.json").exists())
         catalog = {r["id"]: r for r in body["providers"]["catalog"]}
         self.assertEqual(catalog["gemini"]["env_vars"], ["GEMINI_API_KEY", "GOOGLE_API_KEY"])
         self.assertEqual(catalog["anthropic"]["name"], "Anthropic")
@@ -517,7 +517,7 @@ class TestGet(_Settings):
         self.assertFalse(catalog["anthropic"]["has_key"])
 
     def test_catalog_has_key_needs_a_value_not_only_the_variable(self):
-        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         keys.parent.mkdir(parents=True)
         keys.write_text("export GEMINI_API_KEY=\nexport ANTHROPIC_API_KEY=\"\"\n")
         catalog = {r["id"]: r for r in settings_page.get(self.ctx(), {})["providers"]["catalog"]}
@@ -528,7 +528,7 @@ class TestGet(_Settings):
         self.assertTrue(catalog["gemini"]["has_key"])
 
     def test_providers_follow_providers_json_and_its_removals(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         config.mkdir(parents=True)
         (config / "providers.json").write_text(json.dumps({
             "acme": {"env_vars": ["ACME_API_KEY"], "url": "https://acme.example/keys"},
@@ -542,7 +542,7 @@ class TestGet(_Settings):
         self.assertEqual((config / "providers.json").read_text(), before)
 
     def test_a_corrupt_providers_json_is_reported_not_raised(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         config.mkdir(parents=True)
         (config / "providers.json").write_text("{nope")
         prov = settings_page.get(self.ctx(), {})["providers"]
@@ -550,7 +550,7 @@ class TestGet(_Settings):
         self.assertTrue(prov["error"])
 
     def test_a_provider_with_bad_field_types_is_reported_not_raised(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         config.mkdir(parents=True)
         (config / "providers.json").write_text(json.dumps({
             "acme": {"env_vars": "ACME_API_KEY"},
@@ -561,7 +561,7 @@ class TestGet(_Settings):
         self.assertTrue(body["remote"]["hub"]["ok"])
 
     def test_a_keys_file_that_is_not_utf8_is_reported(self):
-        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         keys.parent.mkdir(parents=True)
         keys.write_bytes(b"export A=\xff\n")
         prov = settings_page.get(self.ctx(), {})["providers"]
@@ -569,7 +569,7 @@ class TestGet(_Settings):
         self.assertIn("UTF-8", prov["error"])
 
     def test_a_keys_file_in_a_symlink_loop_is_reported(self):
-        keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         keys.parent.mkdir(parents=True)
         keys.symlink_to(keys.parent / "loop")
         (keys.parent / "loop").symlink_to(keys)
@@ -579,7 +579,7 @@ class TestGet(_Settings):
         self.assertTrue(body["remote"]["hub"]["ok"])
 
     def test_provider_links_are_web_links_only(self):
-        config = self.home / ".quiver" / "config"
+        config = self.home / ".swe" / "config"
         config.mkdir(parents=True)
         (config / "providers.json").write_text(json.dumps({
             "acme": {"env_vars": ["ACME_API_KEY"], "url": "javascript:alert(1)"},
@@ -664,7 +664,7 @@ class TestKeys(_Settings):
 
     def setUp(self):
         super().setUp()
-        self.keys = self.home / ".quiver" / "secrets" / "providers" / ".api_keys"
+        self.keys = self.home / ".swe" / "secrets" / "providers" / ".api_keys"
         self.keys.parent.mkdir(parents=True)
         self.keys.write_text("# OpenAI\nexport OPENAI_API_KEY=sk-proj-OLDOLDOLDOLDOLD0000\n")
 
@@ -688,10 +688,10 @@ class TestKeys(_Settings):
         self.assertEqual(self.keys.stat().st_mode & 0o777, 0o600)
         names = [k["name"] for k in reply["providers"]["keys"]]
         self.assertEqual(names, ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"])
-        backup = self.home / ".quiver" / "backups" / "api-keys" / "api_keys.bak"
+        backup = self.home / ".swe" / "backups" / "api-keys" / "api_keys.bak"
         self.assertIn("OLDOLD", backup.read_text())
         self.assertEqual(backup.parent.stat().st_mode & 0o777, 0o700)
-        self.assertEqual((self.home / ".quiver" / "secrets" / ".gitignore").read_text().splitlines()[-1], "*")
+        self.assertEqual((self.home / ".swe" / "secrets" / ".gitignore").read_text().splitlines()[-1], "*")
 
     def test_replace_keeps_the_line_in_place(self):
         self.keys.write_text("# OpenAI\nexport OPENAI_API_KEY=old # mine\nexport B=1\n")

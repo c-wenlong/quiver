@@ -141,7 +141,7 @@ class ApplyFixTest(_FakeHome, unittest.TestCase):
             self.assertNotIn("CLAUDE_CONFIG_DIR", env)
 
     def test_two_directories_with_one_marketplace_name_get_different_ids(self):
-        twin = self.home / ".quiver" / "plugins" / "twin"
+        twin = self.home / ".swe" / "plugins" / "twin"
         (twin / ".claude-plugin").mkdir(parents=True)
         (twin / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
             {"name": "mk", "plugins": [{"name": "other", "source": "./other"}]}))

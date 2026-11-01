@@ -498,14 +498,14 @@ private struct SettingsSectionView: View {
                         ? "Empty uses the swe your login shell finds."
                         : "Empty uses the swe that comes with Quiver.") { app.swePath = $0 }
             SettingsDivider()
-            PathRow(title: "API keys file", placeholder: "~/.quiver/secrets/providers/.api_keys",
+            PathRow(title: "API keys file", placeholder: "~/.swe/secrets/providers/.api_keys",
                     stored: app.apiKeysPath, draft: $drafts.apiKeys, running: app.apiKeys.path,
-                    hint: "Empty uses ~/.quiver/secrets/providers/.api_keys.") { app.apiKeysPath = $0 }
+                    hint: "Empty uses ~/.swe/secrets/providers/.api_keys.") { app.apiKeysPath = $0 }
             SettingsDivider()
-            PathRow(title: "MCP servers folder", placeholder: "~/.quiver/mcp/servers",
+            PathRow(title: "MCP servers folder", placeholder: "~/.swe/mcp/servers",
                     stored: app.mcpServersPath, draft: $drafts.mcpServers,
                     running: AppModel.mcpServersFolder(path: app.mcpServersPath).path,
-                    hint: "Empty uses ~/.quiver/mcp/servers.", folders: true) { app.mcpServersPath = $0 }
+                    hint: "Empty uses ~/.swe/mcp/servers.", folders: true) { app.mcpServersPath = $0 }
             SettingsDivider()
             // Every candidate is listed so the row can say what it supports;
             // one that isn't installed greys out and can't be picked. Seven

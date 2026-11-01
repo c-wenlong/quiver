@@ -2,7 +2,7 @@
 plus ``swe init`` for linking and ``swe hooks new`` for a skeleton.
 
 ``GET /v1/app/hooks`` is the Mac app's HooksPage list: every script under
-``~/.quiver/hooks`` (harness, shared and foreign tiers) with its link
+``~/.swe/hooks`` (harness, shared and foreign tiers) with its link
 state and declarations, the ``swe hooks check`` findings, the paths a
 plain ``swe init`` would leave a real file over, and the harness names
 the New hook sheet offers. A ``.linkignore`` that cannot be read sets
@@ -13,7 +13,7 @@ list still shows, the Mac app's own rule.
 ``GET /v1/app/hooks?hook=<name>[&harness=<h>][&tier=<t>]`` is the detail: one row,
 found the way ``swe hooks info`` finds it (exact filename, else stem;
 ``harness`` scopes it through the registry's aliases), plus the docstring
-summary, whether the source exists and sits inside ``~/.quiver/hooks``
+summary, whether the source exists and sits inside ``~/.swe/hooks``
 (the Mac app's edit rule — only those scripts may be edited, and the web
 app edits nothing), the declarations in full, and the script's text when
 it previews.
@@ -163,7 +163,7 @@ def detail(ctx, home: Path, args: dict) -> dict:
         matches = [r for r in matches if r.tier == args["tier"]]
     if not matches:
         raise PageError(404, "unknown_hook",
-                        f"No hook script named {args['hook']} under ~/.quiver/hooks.")
+                        f"No hook script named {args['hook']} under ~/.swe/hooks.")
     row = matches[0]
     source = Path(row.source)
     exists = source.exists()

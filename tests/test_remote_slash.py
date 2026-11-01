@@ -120,7 +120,7 @@ class TestHostileFiles(_Home):
         self.assertEqual(self.names(), ["ok"])
 
     def test_user_level_links_out_still_load_but_devices_do_not(self):
-        # ~/.quiver/skills/x -> ~/.agents/skills/x is how users share
+        # ~/.swe/skills/x -> ~/.agents/skills/x is how users share
         # skills; only a project's folders are confined.
         real = self.home / ".agents/skills/shared"
         _write(real / "SKILL.md", "---\ndescription: s\n---\n")

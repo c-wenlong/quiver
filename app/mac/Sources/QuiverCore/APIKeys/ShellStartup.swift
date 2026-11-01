@@ -317,7 +317,7 @@ public struct ShellStartupWriter: Sendable {
         let mode = (try? manager.attributesOfItem(atPath: real.path)[.posixPermissions] as? Int) ?? 0o644
         let text = ShellStartup.appending(existing, line: line)
         let temp = real.deletingLastPathComponent()
-            .appending(path: ".\(real.lastPathComponent).quiver-\(UUID().uuidString)")
+            .appending(path: ".\(real.lastPathComponent).swe-\(UUID().uuidString)")
         guard manager.createFile(atPath: temp.path, contents: Data(text.utf8),
                                  attributes: [.posixPermissions: mode]) else {
             throw CocoaError(.fileWriteUnknown)

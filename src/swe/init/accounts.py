@@ -1,8 +1,8 @@
 """Shared content synced into Quiver's extra account homes (#888).
 
-An extra account (a profile in ``~/.quiver/accounts/profiles.json``) runs its
+An extra account (a profile in ``~/.swe/accounts/profiles.json``) runs its
 harness with ``CLAUDE_CONFIG_DIR`` / ``CODEX_HOME`` pointed at
-``~/.quiver/accounts/<vendor>/<id>/home``. That folder is config-dir shaped,
+``~/.swe/accounts/<vendor>/<id>/home``. That folder is config-dir shaped,
 so each account target is the default target minus the vendor's config-dir
 prefix: ``~/.claude/skills`` becomes ``<home>/skills``, ``~/.codex/AGENTS.md``
 becomes ``<home>/AGENTS.md``, ``~/.claude/hooks/x.py`` becomes
@@ -13,14 +13,14 @@ off by default. Only Claude and Codex profiles take part: Cursor has no CLI
 home variable, and Devin's account homes are not mapped yet.
 
 The rules are narrower than the default targets', because an account home
-lives inside ``~/.quiver`` and holds that account's own login:
+lives inside ``~/.swe`` and holds that account's own login:
 
 - Create and relink only, never absorb. A real file or directory in the
   account home is reported ``conflict`` and left alone, ``--force`` or not.
   A symlink is only repointed when it is dangling or already points into
   the shared roots; anyone else's link is a conflict too.
 - Turning a switch off removes only the links swe itself made. Each one is
-  recorded in ``~/.quiver/data/account-links.json`` when it is created, and
+  recorded in ``~/.swe/data/account-links.json`` when it is created, and
   the unlink pass removes a recorded link only while it still points at the
   source swe gave it. A link the user made by hand is never in the record.
 - Anything unreadable (config.json, profiles.json, the record) stops the
@@ -234,7 +234,7 @@ def _targets(primitive: str, acct: AccountHome, registry: dict,
 
 
 def _plain(path: Path, home: Path) -> bool:
-    """``path`` sits under ~/.quiver/accounts with no folder on the way
+    """``path`` sits under ~/.swe/accounts with no folder on the way
     that is a link: what it resolves to is what it says. The one rule both
     linking and unlinking use, so swe never records a link it would later
     refuse to remove."""
@@ -265,7 +265,7 @@ def _points_into_shared(dest: Path, home: Path) -> bool:
         return False
     if not literal.is_absolute():
         literal = dest.parent / literal
-    # Lexically, so ~/.quiver/skills/../private reads as private.
+    # Lexically, so ~/.swe/skills/../private reads as private.
     literal = Path(os.path.normpath(literal))
     try:
         resolved = dest.resolve()

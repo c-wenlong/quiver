@@ -123,10 +123,10 @@ def _contained(folder: Path | str, root: Path | str) -> bool:
 
 
 def editable(skill_path: str, home: Path) -> bool:
-    """PrimitiveOwnership.isEditable(skillPath:): under ~/.quiver after
+    """PrimitiveOwnership.isEditable(skillPath:): under ~/.swe after
     symlinks resolve, and not in its cache. The web app edits nothing; this
     only picks the lock note's words."""
-    quiver = _real(home / ".quiver")
+    quiver = _real(home / ".swe")
     resolved = _real(skill_path)
     return resolved.startswith(quiver + os.sep) and not resolved.startswith(quiver + os.sep + "cache" + os.sep)
 
@@ -291,7 +291,7 @@ def file_view(skill: dict, name: str) -> dict:
 # names a harness skills folder from the inventory's ``harnesses``:
 #
 # - ``link`` ``{"harness", "expect"?, "skill"?}``: point the folder at
-#   ~/.quiver/skills, as the Mac app's "Link to shared skills" does
+#   ~/.swe/skills, as the Mac app's "Link to shared skills" does
 #   (``swe skills link <path> [--force] --json``). Only a Not linked folder
 #   (create, relink, absorb) is linked; ``--force`` is passed only for an
 #   absorb folder (copies of shared skills, or a tree with no file in it),
@@ -319,7 +319,7 @@ def file_view(skill: dict, name: str) -> dict:
 #
 # - ``new`` ``{"name", "description"?}``: ``swe skills new <name>
 #   [--description=...]`` (``skills.create.create``), which writes
-#   ``~/.quiver/skills/<name>/SKILL.md``. A name or description it refuses
+#   ``~/.swe/skills/<name>/SKILL.md``. A name or description it refuses
 #   is a 422 ``bad_skill`` with its reason. The reply is the list payload
 #   plus ``action`` and ``created``: the new SKILL.md's path and its row
 #   (``skill``) when the inventory lists it.
@@ -353,7 +353,7 @@ def explanation(root: dict) -> str:
     state, detail, archived = root["state"], root.get("detail") or "", root.get("archived")
     if state == "linked":
         return ("Reads the shared skills. Archived in swe, so swe init won't relink it if you unlink it, but you can link it here."
-                if archived else "Reads the shared skills in ~/.quiver/skills.")
+                if archived else "Reads the shared skills in ~/.swe/skills.")
     if state == "create":
         return ("No skills folder yet. Archived in swe, so swe init leaves it alone; linking here creates it."
                 if archived else "No skills folder yet. Linking creates it.")
@@ -363,7 +363,7 @@ def explanation(root: dict) -> str:
         return ("An empty folder. Linking replaces it." if detail == "empty"
                 else f"Holds only copies of shared skills ({detail}). Linking backs it up and replaces it.")
     if state == "keep":
-        return f"Holds skills that exist nowhere else ({detail}). Move them into ~/.quiver/skills before linking."
+        return f"Holds skills that exist nowhere else ({detail}). Move them into ~/.swe/skills before linking."
     if state == "ignored":
         return f"Ignored: {detail}." if detail else "Ignored by swe init."
     if state == "skipped":

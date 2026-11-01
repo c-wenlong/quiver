@@ -392,7 +392,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
 
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name)
-        self.hub = self.home / ".quiver" / "mcp.json"
+        self.hub = self.home / ".swe" / "mcp.json"
         self.hub.parent.mkdir(parents=True)
         self.hub.write_text(json.dumps({"mcpServers": {
             "api": {"command": sys.executable, "args": [str(FAKE)], "env": {"T": "${API_TOKEN}"}},
@@ -400,7 +400,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
             "web": {"url": "https://mcp.example.com/mcp", "shared": True},
             "dv__playwright": {"command": "node"},
         }}) + "\n")
-        secrets = self.home / ".quiver" / "secrets" / "mcp"
+        secrets = self.home / ".swe" / "secrets" / "mcp"
         secrets.mkdir(parents=True)
         (secrets / ".api_keys").write_text("export API_TOKEN='tok'\n")
         for p in (patch.dict(os.environ, {"HOME": str(self.home)}),
@@ -566,16 +566,16 @@ class GatewayCliTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name)
-        (self.home / ".quiver" / "config").mkdir(parents=True)
-        (self.home / ".quiver" / "config" / "tools.json").write_text(
+        (self.home / ".swe" / "config").mkdir(parents=True)
+        (self.home / ".swe" / "config" / "tools.json").write_text(
             json.dumps({"claude": {"aliases": ["cc"]}}) + "\n")
-        self.hub = self.home / ".quiver" / "mcp.json"
+        self.hub = self.home / ".swe" / "mcp.json"
         self.hub.write_text(json.dumps({"mcpServers": {
             "api": {"command": "node", "args": ["/srv/api.js"], "env": {"TOKEN": "${API_TOKEN}"}},
             "dv__playwright": {"command": "node", "args": ["/srv/pw.js"]},
             "remote": {"url": "https://mcp.example.com/mcp"},
         }}) + "\n")
-        secrets = self.home / ".quiver" / "secrets" / "mcp"
+        secrets = self.home / ".swe" / "secrets" / "mcp"
         secrets.mkdir(parents=True)
         (secrets / ".api_keys").write_text("export API_TOKEN='tok'\n")
         self.claude = self.home / ".claude.json"

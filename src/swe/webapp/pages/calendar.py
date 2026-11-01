@@ -405,7 +405,7 @@ def totals(blocks: list[dict], start: float, end: float, key) -> dict[str, float
 # ---------------------------------------------------------------- accounts
 
 def _profiles(home: Path | None) -> list[dict]:
-    """``~/.quiver/accounts/profiles.json``, read only, with the Claude and
+    """``~/.swe/accounts/profiles.json``, read only, with the Claude and
     Codex defaults the app synthesises when the file lacks them."""
     stored: list[dict] = []
     path = swe_dir_for(home) / "accounts" / "profiles.json"

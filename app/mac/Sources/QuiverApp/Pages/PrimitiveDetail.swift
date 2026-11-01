@@ -903,7 +903,7 @@ struct PluginDetailView: View {
         let github = market.harnesses.values.contains { ["github", "git"].contains($0.sourceType ?? "") }
         return PrimitiveLockNote(text: github
             ? "Updates from GitHub would undo edits, so this plugin is read-only."
-            : "Only plugins in your ~/.quiver/plugins hub can be edited, so this one is read-only.")
+            : "Only plugins in your ~/.swe/plugins hub can be edited, so this one is read-only.")
     }
 
     private var header: some View {
@@ -1054,7 +1054,7 @@ struct SkillDetailView: View {
                 ErrorCard(message: leaveError)
             }
             if folders != nil, !editable {
-                PrimitiveLockNote(text: "Only skills that live under ~/.quiver can be edited, so \(skill.name) is read-only.")
+                PrimitiveLockNote(text: "Only skills that live under ~/.swe can be edited, so \(skill.name) is read-only.")
             }
             Card {
                 VStack(alignment: .leading, spacing: 6) {

@@ -41,7 +41,7 @@ private let previewJSON = """
  "mcp": [{"name": "linear", "tools": ["claude"]}],
  "skills": [],
  "instructions": {
-   "agents_file": "/h/.quiver/AGENTS.md", "agents_file_exists": false,
+   "agents_file": "/h/.swe/AGENTS.md", "agents_file_exists": false,
    "agents_file_customised": false,
    "rows": [{"kind": "instructions", "harness": "claude", "path": "/h/.claude/CLAUDE.md",
              "result": "would-conflict", "detail": "real file, needs --force"}],
@@ -49,7 +49,7 @@ private let previewJSON = """
                         {"harness": "codex", "path": "/h/.codex/AGENTS.md"}]}}
 """
 
-/// The preview on a Mac whose ~/.quiver has no hub yet.
+/// The preview on a Mac whose ~/.swe has no hub yet.
 private let hubPreviewJSON = previewJSON.replacingOccurrences(
     of: #""skills": [],"#,
     with: #""skills": [], "hub": {"can_clone": true, "demo_url": null, "cloned": null},"#)
@@ -59,10 +59,10 @@ private let hubPreviewJSON = previewJSON.replacingOccurrences(
 private let clonedPreviewJSON = """
 {"harness": [], "mcp": [], "skills": [],
  "instructions": {
-   "agents_file": "/h/.quiver/AGENTS.md", "agents_file_exists": true,
+   "agents_file": "/h/.swe/AGENTS.md", "agents_file_exists": true,
    "agents_file_customised": true, "rows": [], "adopt_candidates": []},
  "hub": {"can_clone": false, "demo_url": null,
-         "cloned": {"url": "https://github.com/me/hub.git", "path": "/h/.quiver",
+         "cloned": {"url": "https://github.com/me/hub.git", "path": "/h/.swe",
                     "marketplaces": [{"harness": "claude", "marketplace": "mine", "error": null},
                                      {"harness": "codex", "marketplace": "mine",
                                       "error": "codex is not on PATH"}]}}}
@@ -106,7 +106,7 @@ private func applied(leftAlone: Bool) -> String {
 
     @Test func aCustomisedAgentsMdStartsFromItself() {
         let instructions = SetupPreview.Instructions(
-            agentsFile: "/h/.quiver/AGENTS.md", agentsFileExists: true, agentsFileCustomised: true,
+            agentsFile: "/h/.swe/AGENTS.md", agentsFileExists: true, agentsFileCustomised: true,
             rows: [], adoptCandidates: [.init(harness: "claude", path: "/h/.claude/CLAUDE.md")])
         #expect(FirstRunSetupModel.defaultStart(instructions) == .seed)
         #expect(FirstRunSetupModel.defaultStart(nil) == .seed)
@@ -243,7 +243,7 @@ private func applied(leftAlone: Bool) -> String {
     @Test func aLinkErrorIsShownAndHoldsTheStep() async {
         let runner = SetupRunner(preview: previewJSON, applied: """
             {"applied": {"harness": [], "mcp": [], "skills": [],
-             "links": {"adopted": null, "error": "Fix ~/.quiver/.linkignore"}}}
+             "links": {"adopted": null, "error": "Fix ~/.swe/.linkignore"}}}
             """)
         runner.appliedStatus = 1
         let setup = model(runner)
@@ -251,7 +251,7 @@ private func applied(leftAlone: Bool) -> String {
         await setup.next(order: [])
         await setup.next(order: [])
         #expect(setup.step == .links)
-        #expect(setup.applyError == "Fix ~/.quiver/.linkignore")
+        #expect(setup.applyError == "Fix ~/.swe/.linkignore")
     }
 
     @Test func theHubFieldShowsOnlyWhileQuiverHasNoHub() async {

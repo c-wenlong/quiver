@@ -38,7 +38,7 @@ class SetSecretTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _file(self) -> pathlib.Path:
-        return self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        return self.home / ".swe" / "secrets" / "mcp" / ".api_keys"
 
     def test_creates_the_file_private_in_a_private_dir(self):
         from swe.mcp import secrets
@@ -56,7 +56,7 @@ class SetSecretTest(unittest.TestCase):
         from swe.mcp import secrets
 
         secrets.set_secret("A", "1", home=self.home)
-        seal = self.home / ".quiver" / "secrets" / ".gitignore"
+        seal = self.home / ".swe" / "secrets" / ".gitignore"
         self.assertEqual(seal.read_text(), paths.SECRETS_GITIGNORE_BODY)
 
     def test_replaces_every_duplicate_so_a_stale_later_line_cannot_win(self):
@@ -205,7 +205,7 @@ class SetSecretTest(unittest.TestCase):
     def test_legacy_file_location_is_written(self):
         from swe.mcp import secrets
 
-        legacy = self.home / ".quiver" / "secrets" / ".api_keys"
+        legacy = self.home / ".swe" / "secrets" / ".api_keys"
         legacy.parent.mkdir(parents=True)
         legacy.write_text("export OLD='o'\n")
         path, _ = secrets.set_secret("NEW_KEY", "n", home=self.home)
@@ -226,7 +226,7 @@ class RemoveSecretTest(unittest.TestCase):
     def test_drops_every_line_for_the_name_and_keeps_the_others(self):
         from swe.mcp import secrets
 
-        path = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        path = self.home / ".swe" / "secrets" / "mcp" / ".api_keys"
         path.parent.mkdir(parents=True)
         path.write_text("# keep me\nexport A='one'\nexport B='two'\nexport A='three'\n")
         self.assertTrue(secrets.remove_secret("A", home=self.home))
@@ -237,7 +237,7 @@ class RemoveSecretTest(unittest.TestCase):
         from swe.mcp import secrets
 
         self.assertFalse(secrets.remove_secret("A", home=self.home))
-        self.assertFalse((self.home / ".quiver" / "secrets" / "mcp" / ".api_keys").exists())
+        self.assertFalse((self.home / ".swe" / "secrets" / "mcp" / ".api_keys").exists())
         secrets.set_secret("B", "two", home=self.home)
         self.assertFalse(secrets.remove_secret("A", home=self.home))
         with self.assertRaises(ValueError):
@@ -269,7 +269,7 @@ class SecretCommandTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Saved MY_TOKEN", result.stdout)
         self.assertNotIn("s3cr3t-value", result.stdout + result.stderr)
-        store = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        store = self.home / ".swe" / "secrets" / "mcp" / ".api_keys"
         self.assertEqual(store.read_text(), "export MY_TOKEN='s3cr3t-value'\n")
 
     def test_json_envelope(self):
@@ -293,7 +293,7 @@ class SecretCommandTest(unittest.TestCase):
         result = self.run_mcp("secret", "remove", "MY_TOKEN", "--json")
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(json.loads(result.stdout)["data"], {"name": "MY_TOKEN", "removed": True})
-        store = self.home / ".quiver" / "secrets" / "mcp" / ".api_keys"
+        store = self.home / ".swe" / "secrets" / "mcp" / ".api_keys"
         self.assertEqual(store.read_text(), "")
         # Removing it again is not an error: there is nothing left to drop.
         again = self.run_mcp("secret", "remove", "MY_TOKEN", "--json")
@@ -305,7 +305,7 @@ class SecretCommandTest(unittest.TestCase):
         result = self.run_mcp("secret", "set", "MY_TOKEN", stdin="")
         self.assertEqual(result.returncode, 1)
         self.assertFalse(
-            (self.home / ".quiver" / "secrets" / "mcp" / ".api_keys").exists())
+            (self.home / ".swe" / "secrets" / "mcp" / ".api_keys").exists())
 
     def test_newline_value_refused(self):
         result = self.run_mcp("secret", "set", "MY_TOKEN", stdin="a\nb\n")
@@ -315,7 +315,7 @@ class SecretCommandTest(unittest.TestCase):
         result = self.run_mcp("secret", "set", "1Nope", stdin="v\n")
         self.assertEqual(result.returncode, 1)
         self.assertFalse(
-            (self.home / ".quiver" / "secrets" / "mcp" / ".api_keys").exists())
+            (self.home / ".swe" / "secrets" / "mcp" / ".api_keys").exists())
 
     def test_a_flag_value_is_refused(self):
         result = self.run_mcp("secret", "set", "MY_TOKEN", "the-value", stdin="")
@@ -357,12 +357,12 @@ class SyncSecretRefusalTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = pathlib.Path(self.tmp.name)
 
-        swe_cfg = self.home / ".quiver" / "config"
+        swe_cfg = self.home / ".swe" / "config"
         swe_cfg.mkdir(parents=True, exist_ok=True)
         (swe_cfg / "tools.json").write_text(
             json.dumps({"claude": {"aliases": ["cc"]}}) + "\n"
         )
-        (self.home / ".quiver" / "mcp.json").write_text(
+        (self.home / ".swe" / "mcp.json").write_text(
             json.dumps(
                 {
                     "mcpServers": {

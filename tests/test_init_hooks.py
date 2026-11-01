@@ -1,4 +1,4 @@
-"""~/.quiver/hooks/<harness>/: hook scripts linked one by one into each harness.
+"""~/.swe/hooks/<harness>/: hook scripts linked one by one into each harness.
 
 Hooks are per harness, not shared: a script under hooks/claude/ goes only to
 Claude Code's hooks directory, and only the file is linked, never the settings
@@ -30,7 +30,7 @@ from swe.init.layout import hooks_dir, linkignore_file
 
 def _home(tmp: str) -> Path:
     home = Path(tmp)
-    (home / ".quiver").mkdir()
+    (home / ".swe").mkdir()
     (home / ".claude").mkdir()
     return home
 
@@ -43,7 +43,7 @@ def _hook(home: Path, harness: str, name: str, body: str = "print('hi')\n") -> P
 
 
 def _registry(home: Path, data: dict) -> None:
-    path = home / ".quiver" / "config" / "harness.json"
+    path = home / ".swe" / "config" / "harness.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data))
 
@@ -212,7 +212,7 @@ class HookRootSafetyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _home(tmp)
             src = _hook(home, "claude", "guard.py", "keep me\n")
-            _registry(home, {"claude": {"capabilities": {"hooks": {"supported": True, "root": "~/.quiver/hooks/claude"}}}})
+            _registry(home, {"claude": {"capabilities": {"hooks": {"supported": True, "root": "~/.swe/hooks/claude"}}}})
             [status] = plan_hooks(home)
             self.assertEqual((status.state, status.detail), ("skipped", INSIDE_SWE_DETAIL))
             out = StringIO()
@@ -303,7 +303,7 @@ class InitHooksTest(unittest.TestCase):
             code, _ = self._run(home)
             self.assertEqual(code, 0)
             self.assertTrue(dest.is_symlink())
-            backups = list((home / ".quiver/backups").glob(".claude_hooks_guard.py.*"))
+            backups = list((home / ".swe/backups").glob(".claude_hooks_guard.py.*"))
             self.assertEqual(len(backups), 1)
 
     def test_different_file_blocks_until_force(self):

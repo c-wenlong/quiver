@@ -1,6 +1,6 @@
 """Read path of the app's FTS5 session-search index.
 
-``~/.quiver/data/search/search.sqlite`` is written by the Quiver app;
+``~/.swe/data/search/search.sqlite`` is written by the Quiver app;
 ``sessions/search_index.py`` only reads it. These tests build the exact
 frozen schema into a throwaway HOME, then check availability gating, the
 phrase/AND/OR ladder, agent and limit filters, orphan suppression, the

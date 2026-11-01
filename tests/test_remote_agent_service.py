@@ -108,7 +108,7 @@ class AgentServiceTest(unittest.TestCase):
         self.assertEqual(plist["ProgramArguments"], [SWE, "remote", "agent"])
         self.assertTrue(plist["KeepAlive"])
         self.assertEqual(plist["StandardOutPath"],
-                         str(self.home / ".quiver/data/remote/agent.log"))
+                         str(self.home / ".swe/data/remote/agent.log"))
         self.assertIn("PATH", plist["EnvironmentVariables"])
         self.assertNotIn("secret-cred", path.read_text(errors="ignore"))
         self.assertFalse(launchd.plist_path(self.home).exists(), "the hub's plist stays absent")

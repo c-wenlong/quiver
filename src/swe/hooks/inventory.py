@@ -1,6 +1,6 @@
 """The join ``swe hooks`` renders: hub scripts x link state x declarations.
 
-``plan_hooks`` says where each ``~/.quiver/hooks/<harness>/<script>`` should
+``plan_hooks`` says where each ``~/.swe/hooks/<harness>/<script>`` should
 land and what state the link is in; ``settings.py`` says which of those
 scripts the harness will actually run. One row per script x destination.
 
@@ -426,13 +426,13 @@ def foreign_rows(
     statuses: list[LinkStatus],
     declared: dict[str, list[Declaration]],
 ) -> list[HookRow]:
-    """Hooks no ~/.quiver source claims: the third tier.
+    """Hooks no ~/.swe source claims: the third tier.
 
     Two sightings, de-duped by (harness, resolved path): a file in a
     hooks root that is not a link into the hub and shares no name with
     a hub source (a dir only when a declaration runs something inside
     it), and the script a settings-declared command executes
-    when it resolves outside ~/.quiver (its file arguments are not
+    when it resolves outside ~/.swe (its file arguments are not
     hooks). Both keep their real path as source and dest — swe manages
     neither.
     """
@@ -479,7 +479,7 @@ def foreign_rows(
                     source=entry,
                     dest=entry,
                     state="foreign",
-                    detail="no ~/.quiver source claims it",
+                    detail="no ~/.swe source claims it",
                     declared=[d for d in decls
                               if _decl_matches_row(
                                   d, entry, entry.name, home)],
@@ -502,7 +502,7 @@ def foreign_rows(
                     dest=path,
                     state="foreign",
                     detail=f"declared in {decl.settings.name} outside "
-                           f"~/.quiver",
+                           f"~/.swe",
                     declared=[d for d in decls
                               if _decl_targets(d, path, home)
                               or _decl_matches(d, path.name)],
@@ -623,7 +623,7 @@ def _token_verdict(token: str, home: Path, candidates: list[Path]) -> str:
     # the hub, the settings file's sibling hooks/): a missing file there is
     # the not-yet-linked case when the same basename exists in any of them.
     # Outside those dirs a dead literal path is simply missing — a
-    # same-named file under ~/.quiver/hooks is not the script it means.
+    # same-named file under ~/.swe/hooks is not the script it means.
     if path.parent in candidates and any(
             (d / base).exists() for d in candidates):
         return "resolved"

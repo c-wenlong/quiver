@@ -1,7 +1,7 @@
 """accounts.sync.*: shared content linked into Quiver's extra account homes.
 
 Every test builds a throwaway home with fake account homes under
-~/.quiver/accounts/<vendor>/<id>/home and a profiles.json naming them.
+~/.swe/accounts/<vendor>/<id>/home and a profiles.json naming them.
 """
 
 import json
@@ -19,7 +19,7 @@ from tests._tempdir import temp_dir
 
 def _home(case) -> Path:
     home = temp_dir(case).resolve()
-    q = home / ".quiver"
+    q = home / ".swe"
     (q / "skills" / "alpha").mkdir(parents=True)
     (q / "skills" / "alpha" / "SKILL.md").write_text("# alpha\n")
     (q / "AGENTS.md").write_text("# shared\n")
@@ -28,7 +28,7 @@ def _home(case) -> Path:
 
 
 def _profiles(home: Path, *profiles: dict) -> None:
-    root = home / ".quiver" / "accounts"
+    root = home / ".swe" / "accounts"
     root.mkdir(parents=True, exist_ok=True)
     (root / "profiles.json").write_text(json.dumps({"schema": 1, "profiles": list(profiles)}))
     for p in profiles:
@@ -37,11 +37,11 @@ def _profiles(home: Path, *profiles: dict) -> None:
 
 
 def _acct(home: Path, vendor: str = "claude", pid: str = "claude-work") -> Path:
-    return home / ".quiver" / "accounts" / vendor / pid / "home"
+    return home / ".swe" / "accounts" / vendor / pid / "home"
 
 
 def _flags(home: Path, **flags) -> None:
-    path = home / ".quiver" / "config" / "config.json"
+    path = home / ".swe" / "config" / "config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"accounts": {"sync": flags}}))
 
@@ -65,8 +65,8 @@ class SwitchedOffTest(unittest.TestCase):
 
     def test_off_never_reads_a_broken_profiles_file(self):
         home = _home(self)
-        (home / ".quiver" / "accounts").mkdir(parents=True)
-        (home / ".quiver" / "accounts" / "profiles.json").write_text("{nope")
+        (home / ".swe" / "accounts").mkdir(parents=True)
+        (home / ".swe" / "accounts" / "profiles.json").write_text("{nope")
         self.assertEqual(_sync(home), ({}, []))
 
 
@@ -133,7 +133,7 @@ class SwitchedOnTest(unittest.TestCase):
         _profiles(home, WORK)
         _flags(home, skills=True)
         rows, _ = accounts.sync_accounts(
-            home, [".quiver/accounts/claude/*/home/skills"], {}, check_only=False)
+            home, [".swe/accounts/claude/*/home/skills"], {}, check_only=False)
         self.assertEqual([r.result for r in rows], ["ignored"])
         self.assertFalse(os.path.lexists(_acct(home) / "skills"))
 
@@ -225,7 +225,7 @@ class ReviewFixesTest(unittest.TestCase):
         home = _home(self)
         _profiles(home, WORK)
         _flags(home, skills=True)
-        private = home / ".quiver" / "private-skills"
+        private = home / ".swe" / "private-skills"
         private.mkdir()
         (_acct(home) / "skills").symlink_to(f"{skills_dir(home)}/../private-skills")
         rows, _ = _sync(home)
@@ -297,7 +297,7 @@ class ReviewFixesTest(unittest.TestCase):
         home = _home(self)
         _profiles(home, WORK)
         _flags(home, skills=True)
-        (home / ".quiver" / "accounts" / "profiles.json").write_text("{nope")
+        (home / ".swe" / "accounts" / "profiles.json").write_text("{nope")
         run = init_commands.run_init(home, check_only=True, quiet=True)
         doc = init_commands.check_document(home, run)
         self.assertEqual(doc["accounts"], [])
@@ -368,7 +368,7 @@ class SwitchOffTest(unittest.TestCase):
         _profiles(home, WORK)
         _flags(home, skills=True)
         _sync(home)
-        (home / ".quiver" / "accounts" / "profiles.json").write_text("{nope")
+        (home / ".swe" / "accounts" / "profiles.json").write_text("{nope")
         _flags(home, skills=False)
         rows, notes = _sync(home)
         self.assertEqual(rows, {})
@@ -380,14 +380,14 @@ class SwitchOffTest(unittest.TestCase):
         _profiles(home, WORK)
         _flags(home, skills=True)
         _sync(home)
-        (home / ".quiver" / "config" / "config.json").write_text("{nope")
+        (home / ".swe" / "config" / "config.json").write_text("{nope")
         rows, notes = _sync(home)
         self.assertEqual((rows, len(notes)), ({}, 1))
         self.assertTrue((_acct(home) / "skills").is_symlink())
 
 
 class QuiverGuardTest(unittest.TestCase):
-    """The ~/.quiver guard still refuses absorb into an account home."""
+    """The ~/.swe guard still refuses absorb into an account home."""
 
     def test_init_apply_refuses_to_absorb_inside_quiver(self):
         home = _home(self)
@@ -408,7 +408,7 @@ class QuiverGuardTest(unittest.TestCase):
         target.parent.mkdir()
         target.write_text("print(1)\n")
         status = LinkStatus("claude", target, "absorb", "identical copy",
-                            home / ".quiver" / "hooks" / "claude" / "guard.py")
+                            home / ".swe" / "hooks" / "claude" / "guard.py")
         self.assertEqual(apply_hook_status(status, home, force=True), "blocked")
         self.assertFalse(target.is_symlink())
 
@@ -483,11 +483,11 @@ class InitIntegrationTest(unittest.TestCase):
         _flags(home, skills=True)
         code, text = self._cmd(home, "--accounts", "--check")
         self.assertIn("would-create", text)
-        (home / ".quiver" / "accounts" / "profiles.json").write_text("{nope")
+        (home / ".swe" / "accounts" / "profiles.json").write_text("{nope")
         code, text = self._cmd(home, "--accounts")
         self.assertEqual(code, 1)
         self.assertIn("account sync skipped", text)
-        (home / ".quiver" / "config" / "config.json").write_text("{nope")
+        (home / ".swe" / "config" / "config.json").write_text("{nope")
         code, text = self._cmd(home, "--accounts")
         self.assertEqual(code, 1)
 
@@ -499,7 +499,7 @@ class InitIntegrationTest(unittest.TestCase):
         from swe import config_commands
 
         home = _home(self)
-        path = home / ".quiver" / "config" / "config.json"
+        path = home / ".swe" / "config" / "config.json"
         out = io.StringIO()
         with mock.patch("swe.configuration.CONFIG_FILE", path), redirect_stdout(out):
             config_commands.cmd_config(["set", "accounts.sync.skills", "true"])

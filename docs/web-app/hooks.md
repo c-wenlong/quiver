@@ -6,10 +6,10 @@ web page. Module `quiver/webapp/pages/hooks.py`, script
 
 ## What it shows
 
-The list is `#/hooks`: every script under `~/.quiver/hooks` — the
+The list is `#/hooks`: every script under `~/.swe/hooks` — the
 per-harness tier, the shared tier (one row per deploy target, plus
 dormant scripts listed under "Shared") and the foreign tier (scripts a
-harness's hooks dir or settings file runs that no `~/.quiver` source
+harness's hooks dir or settings file runs that no `~/.swe` source
 claims) — grouped Shared first, Foreign last, each harness in first-seen
 order between. A row carries the name, the link-state word (Linked,
 Points elsewhere, Not linked, Copy to absorb, Only copy kept, File in
@@ -37,7 +37,7 @@ summary (docstring or leading comments), Linked-at destination, the
 declarations in full (label, timeout, command, settings file), the
 supported events, and a read-only preview of the script text. A hook
 that is not editable — any source that does not resolve inside
-`~/.quiver/hooks` — gets the lock note instead of pretending it could be
+`~/.swe/hooks` — gets the lock note instead of pretending it could be
 edited; a missing or directory source gets a note rather than a preview.
 
 **New hook** is `swe hooks new`: a sheet with the harness picker (every
@@ -67,7 +67,7 @@ the CLI's behaviour of listing without it. `blocked` is the
 `swe hooks info` does — exact filename, else stem, optionally scoped by
 `harness` through the registry's aliases — and returns it plus
 `summary`, `exists`, `is_dir`, `editable` (the source resolves inside
-`~/.quiver/hooks`), `text` (the Skills page's preview rule: a real file
+`~/.swe/hooks`), `text` (the Skills page's preview rule: a real file
 under 1 MB with no NUL in the first 8 KB) and the declarations in full
 (`timeout`, `command`, `file` too). No match is a 404 `unknown_hook`.
 

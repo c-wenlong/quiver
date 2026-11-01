@@ -159,12 +159,12 @@ swe setup                    # six-stage interactive onboarding wizard
 swe setup --quick            # only missing or actionable setup stages
 swe setup report             # configure coding-session report models only
 swe setup --apply            # apply safe defaults and link AGENTS.md and skills, no prompts
-swe setup --hub=<git url>    # clone your hub repo as ~/.quiver first (fork one to start)
+swe setup --hub=<git url>    # clone your hub repo as ~/.swe first (fork one to start)
 swe --version                # print the swe version (also: swe -v, swe version)
 swe bug                      # open a GitHub bug report with your versions filled in
 swe harness discover         # scan PATH for unregistered AI CLIs
-swe mcp discover             # find MCP servers not in ~/.quiver/mcp.json
-swe init                     # create ~/.quiver and link every harness to it
+swe mcp discover             # find MCP servers not in ~/.swe/mcp.json
+swe init                     # create ~/.swe and link every harness to it
 
 swe list                     # all registered tools, starred first
 swe list agentic             # filter by tag
@@ -226,7 +226,7 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 
 | Command | Aliases | Description |
 | --- | --- | --- |
-| `swe init [--check\|--force\|--full\|--migrate]` | | Create `~/.quiver` and symlink every harness to it |
+| `swe init [--check\|--force\|--full\|--migrate]` | | Create `~/.swe` and symlink every harness to it |
 | `swe setup [section] [--quick]` | | Sectioned wizard for harnesses, providers, MCP, skills, reports, and verification |
 | `swe list [tag] [--usage\|--links] [--scope=…] [-r\|-n]` | `ls` | List tools; `--usage` is the only part that touches the network |
 | `swe list edit [--reset]` / `swe list legend` | | Choose which columns show; explain the link glyphs |
@@ -263,7 +263,7 @@ swe mcp sync opencode cursor # copy MCP servers between tools
 | `swe skills catalog list` | | List configured skill catalogs |
 | `swe skills help [topic]` | | Per-topic help (catalog, discover, tree, link, …) |
 | `swe plugins [catalog\|install\|uninstall\|enable\|disable\|marketplace] …` | | Every plugin in every marketplace, and install it per harness |
-| `swe hooks [list\|info\|new\|edit\|enable\|disable\|delete\|check\|sync] …` | | Manage the hook scripts under `~/.quiver/hooks` |
+| `swe hooks [list\|info\|new\|edit\|enable\|disable\|delete\|check\|sync] …` | | Manage the hook scripts under `~/.swe/hooks` |
 | `swe tags` | | List tags and associated tools |
 | `swe aliases` | | List alias → tool mappings |
 | `swe mcp <subcommand> …` | | MCP server management (see below) |
@@ -289,7 +289,7 @@ The first run opens `swe config setup report`. Configure an inexpensive Claude
 or Codex model for project/session summaries and a stronger model for the final
 report. Credentials remain in the harness's existing login or environment.
 
-Reports omit empty sections and persist under `~/.quiver/reports/` with
+Reports omit empty sections and persist under `~/.swe/reports/` with
 their manifests, session-summary cache, exclusions, cadence cursors, and
 follow-up ledger. Follow-up status is always manual:
 
@@ -325,10 +325,10 @@ Idempotent — safe to re-run. Uses a hidden `swe __complete` command for dynami
 | --- | --- |
 | `swe providers list [-d] [--api-keys-dir=DIR] [<filter>]` | Show every provider with its masked key (``-`` if no key) |
 | `swe providers info <name\|alias>` | Full details for one provider + key file path |
-| `swe providers add <name> [desc] [--url URL] [--env ENV, …] [--file NAME]` | Register a provider in `~/.quiver/config/providers.json` |
+| `swe providers add <name> [desc] [--url URL] [--env ENV, …] [--file NAME]` | Register a provider in `~/.swe/config/providers.json` |
 | `swe providers remove <name>` | Unregister a provider (does **not** delete your key file) |
 
-Keys live in `~/.quiver/secrets/providers/.api_keys`, a shell-style file of `export NAME=value` lines (gitignored, mode 600). `swe init` moves an existing `~/.api_keys` there and leaves a symlink behind, so a shell profile that sources it keeps working. quiver stores **metadata only** — never the key string itself. Mask format: `first8 + *** + last4 + (len=N)`; short keys fall back to `first3 + *** + (len=N)`; missing keys render as `-`. Override the store per-invocation with `--api-keys-dir=DIR`, a shell-style file or a directory of per-provider files named by slug.
+Keys live in `~/.swe/secrets/providers/.api_keys`, a shell-style file of `export NAME=value` lines (gitignored, mode 600). `swe init` moves an existing `~/.api_keys` there and leaves a symlink behind, so a shell profile that sources it keeps working. quiver stores **metadata only** — never the key string itself. Mask format: `first8 + *** + last4 + (len=N)`; short keys fall back to `first3 + *** + (len=N)`; missing keys render as `-`. Override the store per-invocation with `--api-keys-dir=DIR`, a shell-style file or a directory of per-provider files named by slug.
 
 Built-in providers (27): `openai`, `anthropic`, `gemini`, `deepseek`, `zai`, `minimax`, `kimi`, `qwen`, `mimo`, `xai`, `stepfun`, `groq`, `upstage`, `cerebras`, `mistral`, `routing_run`, `opencode_zen`, `openrouter`, `together_ai`, `fireworks_ai`, `vercel_gateway`, `nebius`, `featherless`, `cohere`, `perplexity`, `github`, `huggingface`. Add your own with `swe providers add`.
 
@@ -366,7 +366,7 @@ or loopback behind `tailscale serve`, so no LAN or WAN port ever opens. A
 phone pairs by opening the URL or QR `swe remote pair` prints (`--app` for
 the iOS deep link), or by posting a pair request an owner approves with
 `swe remote devices --approve=<code>`; both paths mint a per-device
-credential in `~/.quiver/data/remote/devices.json` (mode 600).
+credential in `~/.swe/data/remote/devices.json` (mode 600).
 `swe remote devices --revoke=<id>` cuts one device's access without
 touching the rest.
 
@@ -387,7 +387,7 @@ Agent skills are folders containing a `SKILL.md` file. quiver scans built-in har
 Most setups symlink every harness to one shared tree:
 
 ```
-~/.quiver/skills          ← canonical shared skills
+~/.swe/skills          ← canonical shared skills
 ~/.codex/skills    → shared
 ~/.claude/skills   → shared
 ~/.cursor/skills   → shared
@@ -396,7 +396,7 @@ Most setups symlink every harness to one shared tree:
 Run `swe find skills -r` to inspect this layout — it walks the filesystem, so it
 sees roots a fixed candidate list would miss. `swe skills tree` and
 `swe skills scope list` forward to the same view. `swe skills link` and
-`swe skills unlink` record what they did in `~/.quiver/config/skill_links.json`.
+`swe skills unlink` record what they did in `~/.swe/config/skill_links.json`.
 
 ### Discover and register catalogs
 
@@ -409,7 +409,7 @@ cd ~/Projects/my-app/skills && swe skills catalog .
 swe skills catalog list
 ```
 
-Catalogs live in `~/.quiver/config/skill_catalogs.json`. Nested catalogs (e.g. `gbrain/skills` inside `ai-engineering/skills`) are collapsed to the outermost match.
+Catalogs live in `~/.swe/config/skill_catalogs.json`. Nested catalogs (e.g. `gbrain/skills` inside `ai-engineering/skills`) are collapsed to the outermost match.
 
 ### Symlinks and moving skills
 
@@ -452,17 +452,17 @@ flowchart LR
     P[MCP sync]
   end
 
-  R --> TJ["~/.quiver/config/harness.json"]
+  R --> TJ["~/.swe/config/harness.json"]
   S --> Logs["Tool session logs\n(read-only)"]
   RP --> Logs
-  RP --> Reports["~/.quiver/reports\n(manifests + follow-ups)"]
+  RP --> Reports["~/.swe/reports\n(manifests + follow-ups)"]
   M --> Logs
-  K --> Roots["Skill roots\n~/.quiver/skills, plugins, …"]
+  K --> Roots["Skill roots\n~/.swe/skills, plugins, …"]
   P --> MCP["Per-tool MCP configs"]
   L --> Bin["Real CLI binaries\nclaude, codex, …"]
 ```
 
-- **Registry** — your tool list lives in `~/.quiver/config/harness.json`. It starts empty: `swe discover` matches what is actually on your PATH against a built-in recognition table, and only what it finds gets registered, so the file describes this machine rather than a wish list. Every entry carries its own `state` (`active`, `starred`, or `archived`) instead of splitting favourites and shelved tools into separate files. Edited by `swe add` / `remove` / `check` / `swe harness star` / `swe harness archive`. Not shipped with the package (see `examples/tools.example.json`).
+- **Registry** — your tool list lives in `~/.swe/config/harness.json`. It starts empty: `swe discover` matches what is actually on your PATH against a built-in recognition table, and only what it finds gets registered, so the file describes this machine rather than a wish list. Every entry carries its own `state` (`active`, `starred`, or `archived`) instead of splitting favourites and shelved tools into separate files. Edited by `swe add` / `remove` / `check` / `swe harness star` / `swe harness archive`. Not shipped with the package (see `examples/tools.example.json`).
 - **Launching** — `swe use` resolves a name or alias and replaces the current process via `os.execvp`, so the tool behaves exactly as if you'd typed it directly.
 - **Analytics** — `swe session` and `swe models` parse each tool's on-disk logs (e.g. `~/.claude/projects`, `~/.codex/sessions`, `~/.local/share/opencode/opencode.db`). quiver **never writes** to those files.
 - **Reports** — normalizes those logs into semantic messages, filters startup noise, batches useful sessions by project, and invokes configured Claude/Codex models only after a local cost preview is approved.
@@ -472,7 +472,7 @@ flowchart LR
 
 ## Configuration
 
-Everything quiver persists lives under one root, `~/.quiver/`. It is split by
+Everything quiver persists lives under one root, `~/.swe/`. It is split by
 lifecycle so the directory can be a git repo: `config/` and the shared
 `AGENTS.md` / `skills/` are worth versioning, `cache/` and `backups/` are not
 (a generated `.gitignore` covers them).
@@ -574,7 +574,7 @@ PR process, one concern per PR, and what CI will check. By taking part you agree
 | Document | What it covers |
 | --- | --- |
 | [AGENTS.md](AGENTS.md) | The brief for coding agents: commands, throwaway-`$HOME` rule, gotchas log |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Layering rules, `~/.quiver` layout, registry and link states, session engines |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Layering rules, `~/.swe` layout, registry and link states, session engines |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to propose and land a change |
 | [SECURITY.md](SECURITY.md) | Supported versions and how to report a vulnerability |
 | [SUPPORT.md](SUPPORT.md) | Where to get help, in order: docs, `swe doctor`, issues |

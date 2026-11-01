@@ -296,15 +296,15 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(self._scan(scope="all"), [])
 
     def test_quiver_backups_are_not_configs(self):
-        self._write(".quiver/backups/cleanup-20260824-b/claude.json",
+        self._write(".swe/backups/cleanup-20260824-b/claude.json",
                     {"mcpServers": {"a": LOCAL}})
-        self._write(".quiver/backups/cleanup-20260824-b/mcp.json",
+        self._write(".swe/backups/cleanup-20260824-b/mcp.json",
                     {"mcpServers": {"b": REMOTE}})
         self.assertEqual(self._scan(scope="all"), [])
 
     def test_the_live_hub_next_to_its_backups_is_still_found(self):
-        live = self._write(".quiver/mcp.json", {"mcpServers": {"a": LOCAL}})
-        self._write(".quiver/backups/x/mcp.json", {"mcpServers": {"a": LOCAL}})
+        live = self._write(".swe/mcp.json", {"mcpServers": {"a": LOCAL}})
+        self._write(".swe/backups/x/mcp.json", {"mcpServers": {"a": LOCAL}})
         self.assertEqual([c.path for c in self._scan(scope="all")], [live])
 
     def test_backup_named_snapshots_are_skipped(self):
@@ -321,7 +321,7 @@ class ScanTest(unittest.TestCase):
 
         self._write(".Trash/old/.copilot/mcp-config.json",
                     {"mcpServers": {"rf__lazyweb": REMOTE}})
-        self._write(".quiver/backups/c/claude.json",
+        self._write(".swe/backups/c/claude.json",
                     {"mcpServers": {"rf__lazyweb": REMOTE}})
         self._write(".h/mcp.json", {"mcpServers": {"stray": LOCAL}})
         self.assertEqual(sorted(unmanaged(self.home, {})), ["stray"])

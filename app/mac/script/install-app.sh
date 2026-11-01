@@ -6,7 +6,7 @@
 # Several agent sessions work on this repo at once, each on its own
 # branch, so the installed app is never built from the shared checkout:
 # whatever branch it happens to be on is not what shipped. This builds
-# origin/main in a worktree of its own under ~/.quiver/cache/install,
+# origin/main in a worktree of its own under ~/.swe/cache/install,
 # kept between runs so each build is incremental, then swaps the bundle
 # in and relaunches it. Sessions check their own changes with a separate
 # `open -n app/mac/build/Quiver.app` and never write to the installed copy.
@@ -19,7 +19,7 @@
 #   QUIVER_INSTALL_REF   what to build (default origin/main)
 #   QUIVER_INSTALL_DIR   where Quiver.app goes (default ~/Applications)
 #   QUIVER_INSTALL_CACHE the worktree, lock and build output (default
-#                        ~/.quiver/cache/install)
+#                        ~/.swe/cache/install)
 set -euo pipefail
 
 config="${1:-release}"
@@ -38,7 +38,7 @@ fi
 repo="$(cd "$(dirname "$0")/../../.." && pwd)"
 ref="${QUIVER_INSTALL_REF:-origin/main}"
 dest="${QUIVER_INSTALL_DIR:-$HOME/Applications}/Quiver.app"
-cache="${QUIVER_INSTALL_CACHE:-$HOME/.quiver/cache/install}"
+cache="${QUIVER_INSTALL_CACHE:-$HOME/.swe/cache/install}"
 src="$cache/src"
 out="$cache/out"
 staged="$dest.installing"

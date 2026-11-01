@@ -7,7 +7,7 @@ how coverage is measured. For what a module is supposed to do, see
 
 ## The throwaway-HOME rule
 
-Everything `swe` does is rooted at `~/.quiver`, so the suite must never run
+Everything `swe` does is rooted at `~/.swe`, so the suite must never run
 against a real home directory. Every test run uses a fresh `HOME`:
 
 ```bash
@@ -17,7 +17,7 @@ HOME="$test_home" python3 -m unittest discover -s tests -p 'test_*.py'
 
 Tests that need a home build one themselves with `tempfile` plus the
 `*_for(home)` path helpers in `quiver/paths.py`. A test that would read or
-write the real `~/.quiver`, `~/.claude`, `~/.codex` or any other harness
+write the real `~/.swe`, `~/.claude`, `~/.codex` or any other harness
 directory is a bug; do not add one.
 
 ## Python
@@ -158,7 +158,7 @@ fixture session. To refresh or add one:
 
 1. `pip install -e ".[test]"` so the `swe` binary exists.
 2. Build a throwaway `HOME` the way the Python tests do (registry entries
-   under `$HOME/.quiver/config/harness.json`, plus any transcripts or
+   under `$HOME/.swe/config/harness.json`, plus any transcripts or
    plugin folders the command reads).
 3. Run `HOME=$test_home swe <command> --json > app/mac/Tests/QuiverCoreTests/Fixtures/<name>.json`.
 4. Where a command needs a live harness CLI or a provider (`--fix`,
