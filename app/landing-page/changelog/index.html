@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Changelog — quiver</title>
 <meta name="description" content="Notable changes to quiver.">
-<link rel="icon" href="../icon.png">
+<link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="../favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -89,7 +92,7 @@ footer a:hover { color: var(--text); }
 <header class="top">
   <div class="wrap">
     <nav>
-      <a class="brand" href="../"><img src="../icon.png" alt="">quiver</a>
+      <a class="brand" href="../"><img src="../logo-rounded.svg" alt="">quiver</a>
       <div class="links">
         <a href="../overview/">Docs</a>
         <a href="../cli/">CLI reference</a>
@@ -1095,6 +1098,20 @@ hub still holds (<code>GET</code>/<code>POST /v1/sessions/{key}/queue</code>). P
 </ul>
 <h3 id="changed"><a class="anchor" href="#changed"></a>Changed</h3>
 <ul>
+<li><p><strong>New icon and logo everywhere; the pixel-art mascot is gone.</strong> The
+Mac and iPhone app icons, the web app's icons, the landing site and
+the README now use the new mark: three arrowheads above <code>swe</code> on a
+dark tile. The web app serves <code>favicon.ico</code>, <code>favicon.svg</code>,
+<code>favicon-32.png</code> and <code>apple-touch-icon.png</code>, plus a
+<code>manifest.webmanifest</code> that lists <code>icon-192.png</code>, <code>icon-512.png</code> and
+a maskable <code>icon-maskable-512.png</code> for home-screen shortcuts. The
+landing site gets the same favicons. The mascot banner, the README's
+mascot picture and the landing page's mascot figure are removed. The
+source art (square, rounded and a transparent mark for dark
+backgrounds) lives in <code>assets/</code>. The new set has no light variant, so
+the Mac app's Light and Dark icon choices in Settings show the same
+icon for now.</p>
+</li>
 <li><p><strong>Mac app: Artificial Analysis moves to its V2 API.</strong> AA retires the
 legacy <code>/api/v2/data/*</code> routes on November 4, 2026, so the Models page
 refresh and the Settings › Services &quot;Test&quot; probe now call

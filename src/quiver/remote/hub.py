@@ -3814,6 +3814,7 @@ class _Handler(BaseHTTPRequestHandler):
             ".webmanifest": "application/manifest+json",
             ".svg": "image/svg+xml",
             ".png": "image/png",
+            ".ico": "image/x-icon",
         }.get(target.suffix, "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", ctype)

@@ -136,7 +136,8 @@ class RenderTests(unittest.TestCase):
     def test_pages_render_the_site_chrome(self):
         render = docs_site._renderer()
         page = docs_site.render_page("changelog", render("# Hi\n\nbody"))
-        for needle in ('<nav>', "../icon.png", "../overview/",
+        for needle in ('<nav>', "../logo-rounded.svg", "../favicon.ico",
+                       "../overview/",
                        "quiver is MIT licensed", 'id="hi"'):
             self.assertIn(needle, page)
 

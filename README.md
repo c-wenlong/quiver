@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="quiver mascot — a pixel-art quiver holding arrows for terminal, code, AI, and cursor" width="800">
+  <img src="assets/logo-rounded.png" alt="quiver logo: three coloured arrowheads above swe" width="160">
 </p>
 
 <h1 align="center">
@@ -33,7 +33,7 @@ quiver
 
 It keeps a small registry of the harnesses you use, launches any of them (by name or short alias), lets you resume recent sessions across *any* agent, mines read-only usage analytics from each tool's own logs, discovers agent skills installed across your machine, and keeps MCP server configs in sync between tools.
 
-The command you type is **`swe`** (short, fits in muscle memory). The project and Python package are named **quiver** — think of it as the quiver that holds all your arrows (see the mascot above).
+The command you type is **`swe`** (short, fits in muscle memory). The project and Python package are named **quiver** — think of it as the quiver that holds all your arrows.
 
 ```
 $ swe list --usage

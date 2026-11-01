@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Documentation — quiver</title>
 <meta name="description" content="Install, configure and use quiver.">
-<link rel="icon" href="../icon.png">
+<link rel="icon" href="../favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="icon" href="../favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -89,7 +92,7 @@ footer a:hover { color: var(--text); }
 <header class="top">
   <div class="wrap">
     <nav>
-      <a class="brand" href="../"><img src="../icon.png" alt="">quiver</a>
+      <a class="brand" href="../"><img src="../logo-rounded.svg" alt="">quiver</a>
       <div class="links">
         <a href="../overview/">Docs</a>
         <a href="../cli/">CLI reference</a>
@@ -104,7 +107,7 @@ footer a:hover { color: var(--text); }
 </header>
 <main class="wrap doc">
 <p align="center">
-  <img src="https://raw.githubusercontent.com/c-wenlong/quiver/main/assets/banner.png" alt="quiver mascot — a pixel-art quiver holding arrows for terminal, code, AI, and cursor" width="800">
+  <img src="https://raw.githubusercontent.com/c-wenlong/quiver/main/assets/logo-rounded.png" alt="quiver logo: three coloured arrowheads above swe" width="160">
 </p>
 
 <h1 align="center">
@@ -135,7 +138,7 @@ quiver
 <hr />
 <p><strong>quiver</strong> is a central manager for the growing zoo of AI coding command-line tools — Claude Code, Codex, Gemini CLI, Cursor CLI, opencode, Copilot, and many more.</p>
 <p>It keeps a small registry of the harnesses you use, launches any of them (by name or short alias), lets you resume recent sessions across <em>any</em> agent, mines read-only usage analytics from each tool's own logs, discovers agent skills installed across your machine, and keeps MCP server configs in sync between tools.</p>
-<p>The command you type is <strong><code>swe</code></strong> (short, fits in muscle memory). The project and Python package are named <strong>quiver</strong> — think of it as the quiver that holds all your arrows (see the mascot above).</p>
+<p>The command you type is <strong><code>swe</code></strong> (short, fits in muscle memory). The project and Python package are named <strong>quiver</strong> — think of it as the quiver that holds all your arrows.</p>
 <pre><code>$ swe list --usage
 
 AI Coding Tools
