@@ -96,14 +96,93 @@ def _add(into: dict, counts: dict, cost: float, unpriced: int) -> None:
     into["unpriced_tokens"] += unpriced
 
 
+COUNT_KEYS = ("input", "output", "cache_read", "cache_write", "reasoning", "tokens")
+# How far back a satellite's daily totals go: the 365-day period plus slack.
+DAILY_DAYS = 400
+
+
+def daily_totals(store: LedgerStore, catalog: PricingCatalog, days: int = DAILY_DAYS,
+                 now: float | None = None) -> dict:
+    """This machine's tokens and cost per local day and harness, for the
+    satellite usage report (#525): ``{"time_zone", "days": [{date,
+    harness, input, output, cache_read, cache_write, reasoning, tokens,
+    cost_usd, unpriced_tokens}]}``, oldest first, empty days left out."""
+    now = time.time() if now is None else now
+    tz = zone(None)
+    priced = Priced(store, catalog, tz)
+    sums: dict[tuple[date, str], dict] = defaultdict(_blank)
+    for day, harness, _model, counts, cost, unpriced in priced.rows(now - days * 86400, now):
+        _add(sums[(day, harness)], counts, cost, unpriced)
+    return {
+        "time_zone": str(getattr(tz, "key", "") or datetime.now(tz).tzname() or ""),
+        "days": [{"date": d.isoformat(), "harness": h, **v}
+                 for (d, h), v in sorted(sums.items()) if v["tokens"] > 0],
+    }
+
+
+def _extra_rows(rows, since: date | None, until: date):
+    """Other machines' daily rows in the overview's row shape, between two
+    local dates. Their dates are their own machine's days, which is the
+    one approximation a daily report allows."""
+    for row in rows:
+        try:
+            day = date.fromisoformat(str(row.get("date")))
+        except ValueError:
+            continue
+        if day > until or (since is not None and day < since):
+            continue
+        counts = {}
+        for key in COUNT_KEYS:
+            value = row.get(key)
+            counts[key] = value if isinstance(value, int) and not isinstance(value, bool) else 0
+        cost = row.get("cost_usd")
+        unpriced = row.get("unpriced_tokens")
+        yield (day, str(row.get("harness") or "unknown"), None, counts,
+               float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else 0.0,
+               unpriced if isinstance(unpriced, int) and not isinstance(unpriced, bool) else 0)
+
+
+def period_totals(store: LedgerStore, catalog: PricingCatalog, period: str = DEFAULT_PERIOD,
+                  tz_name: str | None = None, now: float | None = None,
+                  extra: list[dict] | None = None, local: bool = True) -> dict:
+    """``{"tokens", "cost_usd"}`` for one machine over the period: this
+    one's ledger (``local``) or another's daily rows (``extra``)."""
+    now = time.time() if now is None else now
+    if period not in PERIODS:
+        period = DEFAULT_PERIOD
+    tz = zone(tz_name)
+    start = period_start(period, now, tz)
+    rows = Priced(store, catalog, tz).rows(start, now) if local else _extra_rows(
+        extra or [], None if start is None else datetime.fromtimestamp(start, tz).date(),
+        datetime.fromtimestamp(now, tz).date())
+    out = {"tokens": 0, "cost_usd": 0.0}
+    for _day, _h, _m, counts, cost, _u in rows:
+        out["tokens"] += counts["tokens"]
+        out["cost_usd"] += cost
+    return out
+
+
 def build(store: LedgerStore, catalog: PricingCatalog, period: str = DEFAULT_PERIOD,
-          tz_name: str | None = None, now: float | None = None) -> dict:
+          tz_name: str | None = None, now: float | None = None,
+          extra: list[dict] | None = None, local: bool = True) -> dict:
+    """The Overview for one period. ``extra`` adds other machines' daily
+    rows (``daily_totals``'s shape) to the totals, harness shares, days,
+    quick figures and heatmap; top models stay this machine's, since the
+    daily rows carry no model. ``local=False`` leaves this machine out."""
     now = time.time() if now is None else now
     if period not in PERIODS:
         period = DEFAULT_PERIOD
     tz = zone(tz_name)
     priced = Priced(store, catalog, tz)
     start = period_start(period, now, tz)
+    today_local = datetime.fromtimestamp(now, tz).date()
+    since_local = None if start is None else datetime.fromtimestamp(start, tz).date()
+    extra = extra or []
+
+    def rows():
+        if local:
+            yield from priced.rows(start, now)
+        yield from _extra_rows(extra, since_local, today_local)
 
     totals = _blank()
     unpriced_models: set[str] = set()
@@ -112,10 +191,12 @@ def build(store: LedgerStore, catalog: PricingCatalog, period: str = DEFAULT_PER
     harness_models: dict[str, set] = defaultdict(set)
     model_tokens: dict[str, int] = defaultdict(int)
     model_harness: dict[str, dict] = defaultdict(lambda: defaultdict(int))
-    for day, harness, model, counts, cost, unpriced in priced.rows(start, now):
+    for day, harness, model, counts, cost, unpriced in rows():
         _add(totals, counts, cost, unpriced)
         _add(by_day[day], counts, cost, unpriced)
         _add(by_harness[harness], counts, cost, unpriced)
+        if model is None:  # another machine's daily row: no model to count
+            continue
         if unpriced:
             unpriced_models.add(model)
         if counts["tokens"]:
@@ -130,7 +211,14 @@ def build(store: LedgerStore, catalog: PricingCatalog, period: str = DEFAULT_PER
     top = sorted(model_tokens.items(), key=lambda kv: (-kv[1], kv[0]))[:TOP_MODELS]
 
     today = datetime.fromtimestamp(now, tz).date()
-    first_ts = store.first_ts()
+    first_ts = store.first_ts() if local else None
+    first_day = datetime.fromtimestamp(first_ts, tz).date() if first_ts is not None else None
+    for row in extra:
+        try:
+            day = date.fromisoformat(str(row.get("date")))
+        except ValueError:
+            continue
+        first_day = day if first_day is None else min(first_day, day)
     return {
         "period": period,
         "time_zone": str(getattr(tz, "key", "") or datetime.now(tz).tzname() or ""),
@@ -138,8 +226,7 @@ def build(store: LedgerStore, catalog: PricingCatalog, period: str = DEFAULT_PER
             "start_day": datetime.fromtimestamp(start, tz).date().isoformat(),
             "end_day": today.isoformat(),
         },
-        "first_day": (datetime.fromtimestamp(first_ts, tz).date().isoformat()
-                      if first_ts is not None else None),
+        "first_day": first_day.isoformat() if first_day else None,
         "totals": {**totals, "unpriced_models": sorted(unpriced_models)},
         "harnesses": sorted((
             {"harness": h, "tokens": v["tokens"], "cost_usd": v["cost_usd"],
@@ -161,11 +248,12 @@ def build(store: LedgerStore, catalog: PricingCatalog, period: str = DEFAULT_PER
             "model": m, "tokens": t, "share": t / grand,
             "harnesses": [h for h, _ in sorted(model_harness[m].items(), key=lambda kv: (-kv[1], kv[0]))],
         } for m, t in top],
-        "heatmap": heatmap(priced, now, tz),
+        "heatmap": heatmap(priced, now, tz, extra=extra, local=local),
     }
 
 
-def heatmap(priced: Priced, now: float, tz: tzinfo, weeks: int = HEATMAP_WEEKS) -> dict:
+def heatmap(priced: Priced, now: float, tz: tzinfo, weeks: int = HEATMAP_WEEKS,
+            extra: list[dict] | None = None, local: bool = True) -> dict:
     """Daily totals from local midnight 182 days ago, as week columns
     starting on Sunday, oldest first. Levels are quartiles of the busy
     days, so one huge day doesn't wash out the rest."""
@@ -175,7 +263,9 @@ def heatmap(priced: Priced, now: float, tz: tzinfo, weeks: int = HEATMAP_WEEKS) 
     since = (midnight - timedelta(days=182)).timestamp()
     tokens: dict[date, int] = defaultdict(int)
     costs: dict[date, float] = defaultdict(float)
-    for day, _h, _m, counts, cost, _u in priced.rows(since, now):
+    local_rows = priced.rows(since, now) if local else ()
+    other_rows = _extra_rows(extra or [], datetime.fromtimestamp(since, tz).date(), today)
+    for day, _h, _m, counts, cost, _u in [*local_rows, *other_rows]:
         tokens[day] += counts["tokens"]
         costs[day] += cost
     busy = sorted(t for t in tokens.values() if t > 0)

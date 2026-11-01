@@ -3,6 +3,7 @@
 import http.client
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -172,6 +173,15 @@ class TestSatelliteStore(unittest.TestCase):
         self.assertEqual(records[0]["reported_at"], 195.5)
         self.assertEqual(records[0]["received_at"], 200.0)
 
+    def test_daily_usage_kept_when_well_formed(self):
+        usage.save_satellite(self.home, "a", {"harnesses": [], "daily_usage": {
+            "time_zone": "UTC", "days": [{"date": "2026-10-01"}, "junk"]}})
+        usage.save_satellite(self.home, "b", {"harnesses": [], "daily_usage": "bad"})
+        records = {r["machine_id"]: r for r in usage.load_satellites(self.home)}
+        self.assertEqual(records["a"]["daily_usage"],
+                         {"time_zone": "UTC", "days": [{"date": "2026-10-01"}]})
+        self.assertIsNone(records["b"]["daily_usage"])
+
     def test_bad_harnesses_rejected(self):
         with self.assertRaises(ValueError):
             usage.save_satellite(self.home, "mbp", {"harnesses": "x"})
@@ -262,6 +272,44 @@ class TestAgentUsageRoute(HubBase):
         self.assertEqual(sat["reported_at"], 990.0)
         self.assertIsInstance(sat["received_at"], float)
 
+    def test_overview_filters_by_machine(self):
+        auth = self.srv.satellite("mbp")
+        self.srv.request("POST", "/v1/agent/register",
+                         {"machine": {"id": "mbp", "name": "MacBook"}}, headers=auth)
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        row = {"date": today, "harness": "codex", "input": 500, "output": 0,
+               "cache_read": 0, "cache_write": 0, "reasoning": 0, "tokens": 500,
+               "cost_usd": 1.25, "unpriced_tokens": 0}
+        status, _ = self.srv.request(
+            "POST", "/v1/agent/usage",
+            {"machine_id": "mbp", "harnesses": [], "server_time": 990.0,
+             "daily_usage": {"time_zone": "UTC", "days": [row, "junk"]}},
+            headers=auth)
+        self.assertEqual(status, 200)
+
+        def overview(query=""):
+            status, data = self.srv.request(
+                "GET", f"/v1/app/overview?period=all&tz=UTC{query}", headers=self.auth())
+            self.assertEqual(status, 200, data)
+            return json.loads(data)
+
+        everything = overview()
+        hub_id = self.srv.state.machine_id
+        self.assertEqual(everything["machine_filter"], "all")
+        by_id = {m["id"]: m for m in everything["machines"]}
+        self.assertEqual(by_id["mbp"]["name"], "MacBook")
+        self.assertEqual(by_id["mbp"]["tokens"], 500)
+        self.assertTrue(by_id[hub_id]["hub"])
+        self.assertEqual(everything["totals"]["tokens"],
+                         by_id[hub_id]["tokens"] + 500)
+        laptop = overview("&machine=mbp")
+        self.assertEqual(laptop["machine_filter"], "mbp")
+        self.assertEqual(laptop["totals"]["tokens"], 500)
+        self.assertEqual([h["harness"] for h in laptop["harnesses"]], ["codex"])
+        here = overview(f"&machine={hub_id}")
+        self.assertEqual(here["totals"]["tokens"], by_id[hub_id]["tokens"])
+        self.assertEqual(overview("&machine=nope")["machine_filter"], "all")
+
     def test_unreadable_body_is_400(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.srv.port,
                                           timeout=5)
@@ -332,6 +380,25 @@ class TestAgentPushesUsage(unittest.TestCase):
         self.assertEqual((hub, path, cred),
                          ("http://hub", "/v1/agent/usage", "cred"))
         self.assertEqual(payload, {"machine_id": agent.machine_id, **snap})
+
+    def test_push_carries_daily_usage_when_the_ledger_reads(self):
+        agent = agent_mod.RemoteAgent(
+            "http://hub", "cred", home=Path(tempfile.mkdtemp())
+        )
+        daily = {"time_zone": "UTC", "days": [{"date": "2026-10-01", "tokens": 5}]}
+        for value, expected in ((daily, daily), (None, "absent")):
+            with patch.object(usage, "snapshot", return_value={"harnesses": []}), \
+                    patch.object(usage, "daily_usage", return_value=value), \
+                    patch.object(agent_mod, "_post", return_value=(200, {})) as post:
+                agent._push_usage()
+            payload = post.call_args.args[3]
+            self.assertEqual(payload.get("daily_usage", "absent"), expected)
+
+    def test_daily_usage_reads_this_machines_ledger(self):
+        home = Path(tempfile.mkdtemp())
+        out = usage.daily_usage(home)
+        self.assertEqual(out["days"], [])
+        self.assertIn("time_zone", out)
 
     def test_failed_push_reports_false(self):
         agent = agent_mod.RemoteAgent(

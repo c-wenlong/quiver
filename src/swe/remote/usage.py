@@ -92,6 +92,48 @@ def snapshot(refresh: bool = False) -> dict:
     }
 
 
+def daily_usage(home: Path | None = None) -> dict | None:
+    """This machine's tokens and cost per day and harness, for the hub's
+    Overview machine filter (#525). The ledger is scanned first (new lines
+    only after the first run) and priced from the price list on disk; no
+    network. None when the ledger can't be read, so the rest of the usage
+    report still goes out."""
+    import sqlite3
+
+    from swe.ledger.overview import daily_totals
+    from swe.ledger.pricing import load_catalog
+    from swe.ledger.scan import scan
+    from swe.ledger.store import LedgerStore, ledger_path_for
+
+    try:
+        store = LedgerStore(ledger_path_for(home))
+    except (OSError, sqlite3.Error):
+        return None
+    try:
+        try:
+            scan(store, home)
+        except sqlite3.Error:
+            store.db.rollback()
+        return daily_totals(store, load_catalog(home, download=False))
+    except (OSError, sqlite3.Error, ValueError):
+        return None
+    finally:
+        store.close()
+
+
+# A report's daily rows the hub keeps: 400 days times a few dozen
+# harnesses is far below this; a body past it is cut, not refused.
+DAILY_ROWS_MAX = 20000
+
+
+def _clean_daily(value) -> dict | None:
+    if not isinstance(value, dict) or not isinstance(value.get("days"), list):
+        return None
+    rows = [r for r in value["days"] if isinstance(r, dict)][-DAILY_ROWS_MAX:]
+    zone = value.get("time_zone")
+    return {"time_zone": zone if isinstance(zone, str) else "", "days": rows}
+
+
 def _satellite_file(home: Path | None, machine_id: str) -> Path:
     return remote_dir_for(home) / "satellite-usage" / f"{_safe_mid(machine_id)}.json"
 
@@ -115,6 +157,8 @@ def save_satellite(home: Path | None, machine_id: str, body: dict) -> dict:
         "reported_at": (reported_at if isinstance(reported_at, (int, float))
                         and not isinstance(reported_at, bool) else None),
         "received_at": time.time(),
+        # Daily token totals per harness (an older satellite sends none).
+        "daily_usage": _clean_daily(body.get("daily_usage")),
     }
     path = _satellite_file(home, machine_id)
     path.parent.mkdir(parents=True, exist_ok=True)

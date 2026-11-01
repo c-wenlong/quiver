@@ -592,6 +592,11 @@ class RemoteAgent:
 
     def _push_usage(self) -> bool:
         body = usage_mod.snapshot()
+        # Daily token totals for the hub's Overview machine filter; a
+        # ledger that can't be read sends the limits without them.
+        daily = usage_mod.daily_usage(self.home)
+        if daily is not None:
+            body["daily_usage"] = daily
         status, _ = _post(
             self.hub, "/v1/agent/usage", self.cred,
             {"machine_id": self.machine_id, **body},

@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+import unittest.mock
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -82,6 +83,57 @@ class TestOverview(unittest.TestCase):
 
     def test_unknown_period_falls_back(self):
         self.assertEqual(self.build("nonsense")["period"], "month")
+
+
+def _row(day, tokens, harness="codex", cost=0.5):
+    return {"date": day, "harness": harness, "input": tokens, "output": 0, "cache_read": 0,
+            "cache_write": 0, "reasoning": 0, "tokens": tokens, "cost_usd": cost,
+            "unpriced_tokens": 0}
+
+
+class TestOtherMachines(TestOverview):
+    """Satellites' daily rows in the Overview (#525)."""
+
+    def test_daily_totals_group_by_day_and_harness(self):
+        self.add(_at(2026, 10, 22), 100)
+        self.add(_at(2026, 10, 22, 11), 50)
+        self.add(_at(2026, 10, 23), 7, harness="codex", model="gpt-x")
+        with unittest.mock.patch.object(overview, "zone", return_value=SG):
+            out = overview.daily_totals(self.store, CATALOG, now=NOW)
+        self.assertEqual([(r["date"], r["harness"], r["tokens"]) for r in out["days"]],
+                         [("2026-10-22", "claude", 150), ("2026-10-23", "codex", 7)])
+        self.assertAlmostEqual(out["days"][0]["cost_usd"], 150e-06)
+        self.assertEqual(out["days"][1]["unpriced_tokens"], 7)
+
+    def test_all_machines_adds_the_rows_up(self):
+        self.add(_at(2026, 10, 22), 100)
+        extra = [_row("2026-10-22", 40), _row("2026-10-23", 60, harness="claude"),
+                 _row("2026-09-01", 999), {"date": "garbage"}]
+        body = overview.build(self.store, CATALOG, "month", "Asia/Singapore", now=NOW,
+                              extra=extra)
+        self.assertEqual(body["totals"]["tokens"], 200)  # September is outside the month
+        self.assertEqual({h["harness"]: h["tokens"] for h in body["harnesses"]},
+                         {"claude": 160, "codex": 40})
+        self.assertEqual([(d["date"], d["tokens"]) for d in body["days"]],
+                         [("2026-10-23", 60), ("2026-10-22", 140)])
+        self.assertEqual(body["top_models"][0]["tokens"], 100)  # this machine's only
+        cells = {c["date"]: c for c in body["heatmap"]["days"]}
+        self.assertEqual(cells["2026-10-22"]["tokens"], 140)
+        self.assertEqual(overview.build(self.store, CATALOG, "all", "Asia/Singapore",
+                                        now=NOW, extra=extra)["first_day"], "2026-09-01")
+
+    def test_one_other_machine_leaves_this_one_out(self):
+        self.add(_at(2026, 10, 22), 100)
+        body = overview.build(self.store, CATALOG, "month", "Asia/Singapore", now=NOW,
+                              extra=[_row("2026-10-21", 30)], local=False)
+        self.assertEqual(body["totals"]["tokens"], 30)
+        self.assertEqual(body["top_models"], [])
+        self.assertEqual(body["first_day"], "2026-10-21")
+        self.assertEqual(overview.period_totals(
+            self.store, CATALOG, "month", "Asia/Singapore", now=NOW,
+            extra=[_row("2026-10-21", 30)], local=False), {"tokens": 30, "cost_usd": 0.5})
+        self.assertEqual(overview.period_totals(
+            self.store, CATALOG, "month", "Asia/Singapore", now=NOW)["tokens"], 100)
 
 
 if __name__ == "__main__":
