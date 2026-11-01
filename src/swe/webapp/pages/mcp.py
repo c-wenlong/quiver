@@ -512,7 +512,7 @@ def _sync_request(body: dict, needs_fingerprint: bool) -> dict:
     if not isinstance(name, str) or not name or len(name) > NAME_MAX:
         raise PageError(422, "bad_server", "server must be a server name")
     if not isinstance(source, str) or not source or len(source) > NAME_MAX:
-        raise PageError(422, "bad_source", "source must be a harness name or quiver")
+        raise PageError(422, "bad_source", "source must be a harness name or swe")
 
     def names(key: str) -> list[str]:
         value = body.get(key, [])

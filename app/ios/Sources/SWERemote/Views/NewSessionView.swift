@@ -323,7 +323,7 @@ struct ModelField: View {
             menu
             if selection.choice == .other {
                 TextField("Type a model id", text: $selection.otherText)
-                    .quiverField(monospaced: true)
+                    .sweField(monospaced: true)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .focused($otherFocused)

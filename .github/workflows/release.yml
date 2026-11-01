@@ -5,7 +5,7 @@
 # job builds SWE.app on a macOS 26 runner, signs and notarizes it when
 # the secrets below are configured, and attaches the DMG plus a Sparkle
 # `appcast.xml` the same way.  `bump-homebrew-tap` then points the
-# c-wenlong/homebrew-quiver cask and formula at the new DMG and wheel.
+# c-wenlong/homebrew-swe cask and formula at the new DMG and wheel.
 #
 # It does NOT create the release and it does NOT merge or tag anything: the
 # maintainer publishes the release by hand, and this workflow only attaches
@@ -509,7 +509,7 @@ jobs:
           fi
 
   homebrew-tap-gate:
-    # Decides whether this run may move c-wenlong/homebrew-quiver. Kept
+    # Decides whether this run may move c-wenlong/homebrew-swe. Kept
     # out of the bump job's concurrency group on purpose: a re-run for an
     # older tag stops here instead of queueing, where it would replace
     # (and so cancel) the newest release's pending bump.
@@ -518,7 +518,7 @@ jobs:
     # `attached` output), and only the latest release.
     #
     # Required secret: HOMEBREW_TAP_TOKEN, a fine-grained token with
-    # Contents read/write on c-wenlong/homebrew-quiver only. Without it
+    # Contents read/write on c-wenlong/homebrew-swe only. Without it
     # this leaves a notice and the tap stays as it is.
     name: Check whether the Homebrew tap should follow
     needs: attach-to-release
@@ -555,7 +555,7 @@ jobs:
           echo "go=true" >> "$GITHUB_OUTPUT"
 
   bump-homebrew-tap:
-    # Points the tap at this release: the `quiver` cask at the DMG, the
+    # Points the tap at this release: the `swe` cask at the DMG, the
     # `swe` formula at the wheel.
     name: Bump the Homebrew tap
     needs: homebrew-tap-gate
@@ -600,9 +600,9 @@ jobs:
           DMG_SHA: ${{ steps.sha.outputs.dmg }}
           WHEEL_SHA: ${{ steps.sha.outputs.wheel }}
         run: |
-          tap="$RUNNER_TEMP/homebrew-quiver"
+          tap="$RUNNER_TEMP/homebrew-swe"
           git clone --depth 1 \
-            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/c-wenlong/homebrew-quiver.git" "$tap"
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/c-wenlong/homebrew-swe.git" "$tap"
           python3 scripts/bump_tap.py "$tap" "$RELEASE_TAG" "$DMG_SHA" "$WHEEL_SHA"
           cd "$tap"
           if git diff --quiet; then
@@ -611,20 +611,19 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "quiver ${RELEASE_TAG#v}" \
+          git commit -am "swe ${RELEASE_TAG#v}" \
             -m "Bumped by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           git push origin HEAD:main
 
   # ---------------------------------------------------------------------------
   # PyPI publishing — BLOCKED, not yet possible.
   #
-  # The name `quiver` on PyPI already belongs to an unrelated package (Casey
-  # Davidson's direction-field plotting library, last released as 0.1):
-  #   https://pypi.org/project/quiver/
-  # So this project cannot publish under `project.name = "quiver"`.  Uncomment
+  # The name `swe` on PyPI already belongs to an unrelated package:
+  #   https://pypi.org/project/swe/
+  # So this project cannot publish under `project.name = "swe"`.  Uncomment
   # the job below only after BOTH of these are done:
   #
-  #   1. Pick a free distribution name (`quiver-cli` and `quiver-swe` were both
+  #   1. Pick a free distribution name (`swe-cli` and `swe-wraps` were both
   #      unclaimed at the time of writing) and set it as `project.name` in
   #      pyproject.toml.  `[project.scripts] swe` stays as it is, so the command
   #      the user types does not change.
@@ -632,7 +631,7 @@ jobs:
   #      secret and no API token:
   #        pypi.org -> your account -> Publishing -> GitHub Actions
   #        PyPI Project Name: <the new name>
-  #        Owner: c-wenlong   Repository: quiver
+  #        Owner: c-wenlong   Repository: swe
   #        Workflow name: release.yml   Environment name: pypi
   #      Then create a GitHub environment also called `pypi`
   #      (Settings -> Environments -> New environment).

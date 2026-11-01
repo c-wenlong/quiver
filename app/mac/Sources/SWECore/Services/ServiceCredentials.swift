@@ -36,7 +36,7 @@ public actor ServiceCredentials {
     /// Where Quiver.app kept the same keys. A read that misses the new
     /// service tries it, and a hit is copied over and removed: the keys
     /// migrate one at a time, as they are used.
-    public static let legacyKeychainService = "com.cwenlong.quiver.services"
+    public static let legacyKeychainService = "com.cwenlong.swe.services"
 
     /// What one field looks like in Settings.
     public struct Status: Sendable, Equatable {

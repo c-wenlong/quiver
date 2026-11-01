@@ -47,7 +47,7 @@ enum ClaudeUsageAPI {
         }
         let fromFile = files.read(key.configHome + "/.credentials.json")
         // Both can exist, and either can be the stale one: the later expiry
-        // is the newer login, as quiver's own Claude fetcher decides.
+        // is the newer login, as swe's own Claude fetcher decides.
         let candidates = [
             fromKeychain.flatMap { parse(credentials: $0) },
             fromFile.flatMap { parse(credentials: String(decoding: $0, as: UTF8.self)) },

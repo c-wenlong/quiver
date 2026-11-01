@@ -325,7 +325,7 @@ function generalSection() {
       macRow("Automatic checks", "Sparkle checks the appcast once a day."),
     ]))}
     ${setGroup("Doctor", "", setCard([
-      setRow("Doctor", "Checks on PATH, Node and drift between quiver and your harnesses, on the hub.",
+      setRow("Doctor", "Checks on PATH, Node and drift between swe and your harnesses, on the hub.",
         `<a class="set-button" href="#/doctor">Open Doctor</a>`),
     ]))}
   </div>`;

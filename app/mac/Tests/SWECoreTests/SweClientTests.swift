@@ -352,7 +352,7 @@ func fixture(_ name: String) throws -> Data {
     @Test func removeArgv() async throws {
         let (swe, runner) = swe()
         _ = try await swe.mcpRemove(name: "s", from: ["quiver", "claude"])
-        #expect(runner.calls == [["mcp", "remove", "s", "--from=quiver,claude", "--json"]])
+        #expect(runner.calls == [["mcp", "remove", "s", "--from=swe,claude", "--json"]])
     }
 
     @Test func secretNameDerivesAShellNameScopedToTheServer() {

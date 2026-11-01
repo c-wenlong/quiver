@@ -20,7 +20,7 @@ Byte-level preservation:
   * Writes are atomic (``.tmp`` + ``rename``) so a mid-write crash cannot
     corrupt the user's ``config.toml``.
 
-Canonical server shape used (matches the rest of quiver's MCP layer):
+Canonical server shape used (matches the rest of swe's MCP layer):
     {
         "command": str,         # optional
         "args": list[str],      # optional

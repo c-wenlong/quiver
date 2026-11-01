@@ -1,4 +1,4 @@
-"""Declarative, pluggable table renderer for the quiver CLI.
+"""Declarative, pluggable table renderer for the swe CLI.
 
 Replaces hand-rolled ``f"{...:<{w}}"`` string interpolation across
 ``swe list``, ``swe models``, ``swe session``, and ``swe providers``

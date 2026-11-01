@@ -41,13 +41,13 @@ final class LimitsMonitor {
     @ObservationIgnored private let widgets: WidgetSnapshotStore
     @ObservationIgnored private var lastWidgetSnapshot: WidgetSnapshot?
 
-    init(quiver: URL) {
+    init(swe: URL) {
         notifyEnabled = UserDefaults.standard.object(forKey: "limitNotifications") as? Bool ?? false
         refreshFreshMinutes = RefreshFreshWindow.minutes(
             UserDefaults.standard.object(forKey: "refreshFreshMinutes") as? Int
                 ?? RefreshFreshWindow.defaultMinutes)
-        alertStateFile = quiver.appending(path: "cache/app-limit-alerts.json")
-        widgets = WidgetSnapshotStore(file: WidgetSnapshotStore.defaultFile(home: quiver.deletingLastPathComponent()))
+        alertStateFile = swe.appending(path: "cache/app-limit-alerts.json")
+        widgets = WidgetSnapshotStore(file: WidgetSnapshotStore.defaultFile(home: swe.deletingLastPathComponent()))
         let saved = (try? Data(contentsOf: alertStateFile))
             .flatMap { try? JSONDecoder().decode(LimitAlerter.State.self, from: $0) }
         alerter = LimitAlerter(state: saved ?? .init())

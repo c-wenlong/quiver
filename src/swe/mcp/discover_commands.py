@@ -41,7 +41,7 @@ def _print_help():
   {c('cyan', 'swe mcp discover --prune')}      Also remove hub servers no harness configures
 
 {c('bold', 'Where it looks')}
-  Both the configs quiver has registered and the harness directories it
+  Both the configs swe has registered and the harness directories it
   scans for ones it has not, since a server in an unregistered config is
   the one worth telling you about. Vendored configs (editor extensions)
   are skipped.

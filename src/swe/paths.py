@@ -1,6 +1,6 @@
-"""On-disk paths for quiver user data.
+"""On-disk paths for swe user data.
 
-Everything quiver owns lives under one root, ``~/.swe``. That root holds two
+Everything swe owns lives under one root, ``~/.swe``. That root holds two
 kinds of thing and they are separated so the whole directory can be a git repo:
 
   authored     AGENTS.md, .linkignore, skills/, plugins/, hooks/,  worth versioning
@@ -505,7 +505,7 @@ PROVIDERS_REGISTRY_FILE = CONFIG_DIR / "providers.json"
 GITHUB_FILE = CONFIG_DIR / "github.json"
 CONFIG_FILE = config_file_for()
 
-# Regenerable state: delete any of these and quiver rebuilds them.
+# Regenerable state: delete any of these and swe rebuilds them.
 SESSION_CACHE_FILE = CACHE_DIR / "session_cache.json"
 RATE_LIMITS_CACHE_FILE = CACHE_DIR / "rate_limits_cache.json"
 SESSION_COUNTS_CACHE_FILE = CACHE_DIR / "session_counts.json"

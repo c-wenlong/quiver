@@ -74,7 +74,7 @@ _SHARED_TEMPLATE = '''\
 
 The events header above declares the normalized (Claude-style, PascalCase)
 event names it wants. `swe hooks sync` deploys a generated wrapper into
-every installed shim-able harness covering at least one of them; quiver's
+every installed shim-able harness covering at least one of them; swe's
 shim translates the harness's payload into the normalized shape below.
 
 stdin is one JSON object: event, harness, session_id, transcript_path,

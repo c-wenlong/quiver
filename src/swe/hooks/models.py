@@ -37,7 +37,7 @@ class HookRow:
     for a ``hooks/shared/`` script deployed through a generated wrapper,
     and "foreign" for a script in a hooks root (or named by a settings
     command) that no ``~/.swe`` source claims. ``enabled`` is False
-    only for a quiver-owned script with a ``.disabled`` marker — foreign
+    only for a swe-owned script with a ``.disabled`` marker — foreign
     rows are not ours to switch, so they always read True.
     """
 

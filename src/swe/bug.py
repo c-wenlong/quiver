@@ -15,7 +15,7 @@ from swe import __version__
 from swe.console import c
 from swe.json_output import emit, error_stream, take_json_flag
 
-REPOSITORY = "https://github.com/c-wenlong/quiver"
+REPOSITORY = "https://github.com/c-wenlong/swe"
 CLI_AREA = "CLI (swe)"
 TEMPLATES = {"bug": "bug_report.yml", "feature": "feature_request.yml"}
 

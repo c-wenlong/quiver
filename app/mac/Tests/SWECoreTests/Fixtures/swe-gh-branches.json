@@ -8,7 +8,7 @@
     },
     "results": [
       {
-        "repo": "c-wenlong/quiver",
+        "repo": "c-wenlong/swe",
         "status": "ok",
         "branches": [
           {
@@ -16,35 +16,35 @@
             "protected": false,
             "default": false,
             "sha": "06dfe32",
-            "url": "https://github.com/c-wenlong/quiver/tree/app-provider-visibility"
+            "url": "https://github.com/c-wenlong/swe/tree/app-provider-visibility"
           },
           {
             "name": "bolt/cache-query-path-3199131200121325958",
             "protected": false,
             "default": false,
             "sha": "d0742ca",
-            "url": "https://github.com/c-wenlong/quiver/tree/bolt/cache-query-path-3199131200121325958"
+            "url": "https://github.com/c-wenlong/swe/tree/bolt/cache-query-path-3199131200121325958"
           },
           {
             "name": "bolt/dir-entry-stat-cache-10656264057992375306",
             "protected": false,
             "default": false,
             "sha": "075d4e8",
-            "url": "https://github.com/c-wenlong/quiver/tree/bolt/dir-entry-stat-cache-10656264057992375306"
+            "url": "https://github.com/c-wenlong/swe/tree/bolt/dir-entry-stat-cache-10656264057992375306"
           },
           {
             "name": "bolt/memoize-path-normalizations-3125003702363901083",
             "protected": false,
             "default": false,
             "sha": "25f2df0",
-            "url": "https://github.com/c-wenlong/quiver/tree/bolt/memoize-path-normalizations-3125003702363901083"
+            "url": "https://github.com/c-wenlong/swe/tree/bolt/memoize-path-normalizations-3125003702363901083"
           },
           {
             "name": "bolt/memoize-realpath-session-aggregator-5042104232166995877",
             "protected": false,
             "default": false,
             "sha": "7251dbd",
-            "url": "https://github.com/c-wenlong/quiver/tree/bolt/memoize-realpath-session-aggregator-5042104232166995877"
+            "url": "https://github.com/c-wenlong/swe/tree/bolt/memoize-realpath-session-aggregator-5042104232166995877"
           }
         ],
         "default_branch": "main"

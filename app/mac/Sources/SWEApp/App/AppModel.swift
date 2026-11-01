@@ -552,19 +552,19 @@ final class AppModel {
 
         // Everything SWE keeps lives under ~/.swe (see AGENTS.md).
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let quiver = home.appending(path: ".swe")
+        let swe = home.appending(path: ".swe")
         primitiveNames = PluginDisplayNames.load(from: PluginDisplayNames.file(home: home))
-        limits = LimitsMonitor(quiver: quiver)
+        limits = LimitsMonitor(swe: swe)
         github = GitHubModel(
-            snapshotFile: quiver.appending(path: "cache/github-snapshot.json"),
-            historyFile: quiver.appending(path: "cache/github-history.db"))
-        githubNotify = GitHubNotifier(quiver: quiver, model: github)
-        serviceNotify = ServiceStatusNotifier(quiver: quiver)
+            snapshotFile: swe.appending(path: "cache/github-snapshot.json"),
+            historyFile: swe.appending(path: "cache/github-history.db"))
+        githubNotify = GitHubNotifier(swe: swe, model: github)
+        serviceNotify = ServiceStatusNotifier(swe: swe)
         let usage = UsageService(
             transport: URLSessionTransport(),
             secrets: KeychainCLI(),
             files: LocalFiles(),
-            cacheURL: quiver.appending(path: "cache/app-usage.json"))
+            cacheURL: swe.appending(path: "cache/app-usage.json"))
         // SWE's own service keys live in Keychain under their own
         // service, written and read in-process so the value never sits
         // on a tool's argv; only dates go in config/services.json. A
@@ -575,11 +575,11 @@ final class AppModel {
             service: ProcessInfo.processInfo.environment["SWE_SERVICES_KEYCHAIN"]
                 ?? ProcessInfo.processInfo.environment["QUIVER_SERVICES_KEYCHAIN"]
                 ?? ServiceCredentials.keychainService,
-            metadataURL: quiver.appending(path: "config/services.json"))
+            metadataURL: swe.appending(path: "config/services.json"))
         services = ServicesModel(
             credentials: serviceCredentials,
             transport: URLSessionTransport())
-        let store = ProfileStore(root: quiver.appending(path: "accounts"), userHome: home)
+        let store = ProfileStore(root: swe.appending(path: "accounts"), userHome: home)
         // Non-default Devin/Cursor profiles are accounts of a harness: swe
         // reads their usage from the account's own directory.
         extraAccountsProvider = {
@@ -612,7 +612,7 @@ final class AppModel {
         // Built once per profiles.json mtime, not per call: the calendar
         // asks for account labels once per rendered block.
         let directoryCache = CachedAccountDirectory(
-            file: quiver.appending(path: "accounts/profiles.json")) {
+            file: swe.appending(path: "accounts/profiles.json")) {
                 AccountDirectory(profiles: (try? store.load()) ?? [],
                                  paths: store.paths(for:), home: home)
             }
@@ -622,16 +622,16 @@ final class AppModel {
             // Prices with their history, AA's models, and the join between
             // them: data, so clearing caches never loses price history.
             let catalog = CatalogDatabase(url: CatalogDatabase.resolvedURL(home: home),
-                                          linksFile: quiver.appending(path: "config/model-links.json"))
+                                          linksFile: swe.appending(path: "config/model-links.json"))
             // User prices (config/pricing.json) win over both published lists.
             let pricing = PricingStore(database: catalog,
-                                       legacyCacheFile: quiver.appending(path: "cache/pricing/litellm.json"),
-                                       overridesFile: quiver.appending(path: "config/pricing.json"))
+                                       legacyCacheFile: swe.appending(path: "cache/pricing/litellm.json"),
+                                       overridesFile: swe.appending(path: "config/pricing.json"))
             // Data, not cache: its rows outlive the logs they came from.
             // Earlier builds kept it in cache/ledger.
-            let ledgerData = quiver.appending(path: "data/ledger")
+            let ledgerData = swe.appending(path: "data/ledger")
             let ledgerDirectory = LedgerLocation.prepare(directory: ledgerData,
-                                                         legacy: quiver.appending(path: "cache/ledger"))
+                                                         legacy: swe.appending(path: "cache/ledger"))
             let ledger = try Ledger(directory: ledgerDirectory, backups: ledgerData.appending(path: "backups"),
                                     pricing: (try? pricing.load()) ?? .empty)
             self.ledger = ledger
@@ -643,7 +643,7 @@ final class AppModel {
             overviewError = nil
             sessions = SessionsModel(source: CurrentSwe(), ledger: ledger,
                                      defaultHomes: [home.appending(path: ".claude").path, home.appending(path: ".codex").path],
-                                     snapshots: SessionSnapshotFile(url: quiver.appending(path: "cache/sessions.json")),
+                                     snapshots: SessionSnapshotFile(url: swe.appending(path: "cache/sessions.json")),
                                      // Which desktop session started each Claude session, from the
                                      // default desktop root and every Claude profile's own one.
                                      parents: {
@@ -661,7 +661,7 @@ final class AppModel {
                                          for (name, root) in roots {
                                              for (id, parent) in ClaudeDesktopSessions(
                                                  root: root,
-                                                 cacheFile: quiver.appending(path: "cache/\(name).json"))
+                                                 cacheFile: swe.appending(path: "cache/\(name).json"))
                                                  .parents() {
                                                  parents[id] = parent
                                              }
@@ -669,10 +669,10 @@ final class AppModel {
                                          return parents
                                      },
                                      accountLabel: { directory().extraLabel(for: $0) })
-            let calendarCache = quiver.appending(path: "cache/calendar")
+            let calendarCache = swe.appending(path: "cache/calendar")
             let devinCloudDirectory = DevinCloud.resolvedDirectory(home: home)
             let calendarSnapshots = SnapshotFile<CalendarSnapshot>(
-                url: quiver.appending(path: "cache/app-calendar.json"))
+                url: swe.appending(path: "cache/app-calendar.json"))
             let fileProviders: [any ActivityProviding] = [
                 DroidActivity(sessionsRoot: home.appending(path: ".factory/sessions"),
                               accountHome: home.appending(path: ".factory").path,
@@ -725,7 +725,7 @@ final class AppModel {
                     }
                     return accounts
                 },
-                progressFile: quiver.appending(path: "cache/cursor-feed.json"),
+                progressFile: swe.appending(path: "cache/cursor-feed.json"),
                 onIngested: { [overview] in await overview?.reloadAfterLedgerWrite() })
             // The user's own Devin cloud sessions, with the Services token.
             // A sync that changed them rejoins the Sessions list and
@@ -748,7 +748,7 @@ final class AppModel {
                 },
                 onStatus: { [sessions] error in await sessions?.noteCloudSync(error: error) })
             codexUsage = CodexAccountUsage(
-                cacheFile: quiver.appending(path: "cache/codex-account-usage.json"),
+                cacheFile: swe.appending(path: "cache/codex-account-usage.json"),
                 fetch: { home in
                     try await Self.client(for: UserDefaults.standard.string(
                         forKey: SweLocation.defaultsKey) ?? "")
@@ -764,7 +764,7 @@ final class AppModel {
             let overviewModel = overview
             pricingModel = PricingModel(
                 ledger: ledger,
-                overrides: PricingOverrides(url: quiver.appending(path: "config/pricing.json")),
+                overrides: PricingOverrides(url: swe.appending(path: "config/pricing.json")),
                 makeCatalog: { try pricing.load() },
                 // The ledger takes the catalog at once; the Overview's
                 // figures (seconds of queries) redraw behind the closed
@@ -783,7 +783,7 @@ final class AppModel {
                     await serviceCredentials.value(for: "ARTIFICIAL_ANALYSIS_API_KEY")
                 },
                 transport: URLSessionTransport(),
-                linksURL: quiver.appending(path: "config/model-links.json"),
+                linksURL: swe.appending(path: "config/model-links.json"),
                 slices: { range in await ledger.byModelHarness(in: range) },
                 pricing: { await ledger.catalog() })
             // model-links.json may have changed while the app was closed.
@@ -804,36 +804,36 @@ final class AppModel {
         sessions?.hideTrivial = hidesTrivial
         // Built whether or not the ledger opened: a nil ledger shows the
         // reason under the switch instead of hiding the feature.
-        search = SearchIndexModel(quiver: quiver, ledger: ledger, overview: overview)
+        search = SearchIndexModel(swe: swe, ledger: ledger, overview: overview)
         // A new Devin token or org id syncs the cloud sessions at once.
         services.onFieldChanged = { [devinCloud] field in
             guard field.hasPrefix("DEVIN_"), let devinCloud else { return }
             Task { await devinCloud.sync() }
         }
-        skills = SkillsModel(swe: client, snapshots: SnapshotFile(url: quiver.appending(path: "cache/skills.json")))
+        skills = SkillsModel(swe: client, snapshots: SnapshotFile(url: swe.appending(path: "cache/skills.json")))
         // The Skills page's hub tab is now Plugins > Explore, kept in
         // plugin-catalog.json; its old snapshot has no reader left.
-        try? FileManager.default.removeItem(at: quiver.appending(path: "cache/skills-hub.json"))
+        try? FileManager.default.removeItem(at: swe.appending(path: "cache/skills-hub.json"))
         skills.use(client, for: saved)
-        mcp = McpModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/mcp-servers.json")))
-        plugins = PluginsModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugins.json")),
+        mcp = McpModel(snapshots: SnapshotFile(url: swe.appending(path: "cache/mcp-servers.json")))
+        plugins = PluginsModel(snapshots: SnapshotFile(url: swe.appending(path: "cache/plugins.json")),
                                work: pluginWork)
-        hooks = HooksModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/hooks.json")))
-        pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: quiver.appending(path: "cache/plugin-catalog.json")),
+        hooks = HooksModel(snapshots: SnapshotFile(url: swe.appending(path: "cache/hooks.json")))
+        pluginCatalog = PluginCatalogModel(snapshots: SnapshotFile(url: swe.appending(path: "cache/plugin-catalog.json")),
                                            work: pluginWork)
         updates = UpdatesModel(
             build: BuildInfo(infoDictionary: Bundle.main.infoDictionary),
             preferences: UpdatePreferences(),
             releaseCheck: ReleaseCheck(
                 transport: URLSessionTransport(),
-                cacheURL: quiver.appending(path: "cache/latest-release.json")),
+                cacheURL: swe.appending(path: "cache/latest-release.json")),
             swe: {
                 let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)
                 return SweClient(runner: ProcessRunner(
                     executable: SweLocation.executable(override: path)))
             })
         serviceStatus = ServiceStatusModel(service: ServiceStatusService(
-            transport: URLSessionTransport(), cacheURL: quiver.appending(path: "cache/service-status.json")),
+            transport: URLSessionTransport(), cacheURL: swe.appending(path: "cache/service-status.json")),
             store: CustomStatusServices())
         providers = ProviderVisibilityModel(store: UserDefaultsStore(), detect: {
             // swe's installed harnesses, plus the extra providers' own signs.
@@ -847,7 +847,7 @@ final class AppModel {
                 commandExists: { ProviderDetection.commandExists($0, path: shellPath) },
                 pathExists: { FileManager.default.fileExists(atPath: $0) }))
         })
-        fans = FanControl(control: quiver.appending(path: "fan/control.json"))
+        fans = FanControl(control: swe.appending(path: "fan/control.json"))
         compute = ComputeModel(sampler: ProcessSampler(), matchers: { [apps] in
             // The swe chosen in Settings right now, like ProviderVisibility.
             let path = UserDefaults.standard.string(forKey: SweLocation.defaultsKey)

@@ -49,10 +49,10 @@ public enum PrimitiveOwnership {
     /// symlinks resolve, and not inside the cache.
     public static func isEditable(skillPath: String, home: URL,
                                   resolve: (String) -> String = FolderOwners.realPath) -> Bool {
-        let quiver = resolve(home.appending(path: ".swe").path)
-        let cache = quiver + "/cache"
+        let swe = resolve(home.appending(path: ".swe").path)
+        let cache = swe + "/cache"
         let resolved = resolve(skillPath)
-        return resolved.hasPrefix(quiver + "/") && !resolved.hasPrefix(cache + "/")
+        return resolved.hasPrefix(swe + "/") && !resolved.hasPrefix(cache + "/")
     }
 
     /// Whether `path` stays inside `root` once symlinks resolve. A link

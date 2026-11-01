@@ -1,7 +1,7 @@
 """`swe find -i`: browse a resource instead of printing it.
 
 The printed listing tells you a plugin has 11 skills and then gives you
-no way to see which. Nothing else in quiver answers that either, which is
+no way to see which. Nothing else in swe answers that either, which is
 the gap this closes.
 
 Below the top level a plugin is just a directory, so the browser walks

@@ -297,10 +297,10 @@ import Testing
     @Test func killOrderNeverIncludesPidOneSelfOrAncestors() {
         // The "tree" is SWE's own ancestry: it must refuse to signal any of it.
         let launchd = Self.proc(1, 0, path: "/sbin/launchd")
-        let quiver = Self.proc(99, 1, path: "/Applications/SWE.app/Contents/MacOS/SWE")
+        let swe = Self.proc(99, 1, path: "/Applications/SWE.app/Contents/MacOS/SWE")
         let helper = Self.proc(10, 99, path: "/x/helper")
-        let item = CleanupItem.process(quiver, harness: "claude")
-        let order = ComputeSummary.killOrder(for: item, in: [launchd, quiver, helper],
+        let item = CleanupItem.process(swe, harness: "claude")
+        let order = ComputeSummary.killOrder(for: item, in: [launchd, swe, helper],
                                              selfPID: 99, ancestors: [1])
         #expect(order == [10])
     }

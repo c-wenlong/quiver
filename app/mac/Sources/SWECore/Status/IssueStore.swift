@@ -443,7 +443,7 @@ public final class IssuesModel {
     private let store: IssueStore
     @ObservationIgnored private var issued = 0
     @ObservationIgnored private var applied = 0
-    private nonisolated static let storeQueue = DispatchQueue(label: "app.quiver.issues")
+    private nonisolated static let storeQueue = DispatchQueue(label: "app.swe.issues")
 
     public init(store: IssueStore) {
         self.store = store

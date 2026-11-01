@@ -35,18 +35,18 @@ def _home(tmp: str) -> Path:
     """claude synced to the shared copy, codex holding its own AGENTS.md,
     a shared skill tree with one plugin, and one enabled claude plugin."""
     home = Path(tmp)
-    quiver = home / ".swe"
-    _skill(quiver / "skills", "alpha")
-    (quiver / "AGENTS.md").write_text("rules\n")
-    plug = quiver / "plugins" / "dv" / "eng"
+    swe = home / ".swe"
+    _skill(swe / "skills", "alpha")
+    (swe / "AGENTS.md").write_text("rules\n")
+    plug = swe / "plugins" / "dv" / "eng"
     (plug / ".claude-plugin").mkdir(parents=True)
     _skill(plug / "skills", "tdd")
 
     (home / ".claude").mkdir()
     (home / ".codex").mkdir()
-    (home / ".claude" / "CLAUDE.md").symlink_to(quiver / "AGENTS.md")
+    (home / ".claude" / "CLAUDE.md").symlink_to(swe / "AGENTS.md")
     (home / ".codex" / "AGENTS.md").write_text("own rules\n")
-    (home / ".claude" / "skills").symlink_to(quiver / "skills")
+    (home / ".claude" / "skills").symlink_to(swe / "skills")
 
     pl = home / ".claude" / "plugins"
     pl.mkdir()
@@ -112,11 +112,11 @@ class AgentsSummaryTest(_FindHome):
 
     def test_root_flag_tallies_managed_files_and_the_rest(self):
         out = self.run_find("amd", "-r")
-        self.assertIn("Managed by quiver", out)
+        self.assertIn("Managed by swe", out)
         # codex's own AGENTS.md is a managed target in the way of a link.
         self.assertIn("1 synced (claude), 1 in the way (codex)", out)
         self.assertIn("not installed (cursor", out)
-        self.assertIn("Other files        none here", out)
+        self.assertIn("Other files     none here", out)
         self.assertSummary(out, "swe find amd -r --full lists every path.")
 
     def test_root_flag_hides_an_archived_absent_harness(self):

@@ -1,10 +1,10 @@
-"""What skills a machine has, and what the quiver hub offers.
+"""What skills a machine has, and what the swe hub offers.
 
 Two read-only documents for ``swe skills --json`` and ``swe skills hub
 --json``, which the macOS app's Skills page renders. Nothing here prints or
 writes.
 
-quiver links a whole skills directory, not single skills, so "which harness
+swe links a whole skills directory, not single skills, so "which harness
 sees this skill" is derived: a skill is visible to a harness when the skill's
 real folder sits under that harness's real skills root. A shared skill is
 therefore visible to every harness whose root links to ``~/.swe/skills``,

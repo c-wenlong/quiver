@@ -411,7 +411,7 @@ private struct RootDetail: View {
 }
 
 /// A capsule with a state dot: green when the harness loads the skills
-/// (an "on" state), a hollow ring when it doesn't, amber when quiver won't
+/// (an "on" state), a hollow ring when it doesn't, amber when swe won't
 /// link it.
 private struct LinkChipLabel: View {
     var name: String

@@ -117,7 +117,7 @@ class AgentsHarnessFilterTest(_RegistrySandbox):
     def test_a_harness_absent_from_the_registry_is_never_filtered(self):
         # "codex" never appears in this registry at all — not archived,
         # simply unknown to it. It must stay visible under the default,
-        # the same as the shared quiver copy that names no harness.
+        # the same as the shared swe copy that names no harness.
         self._set_registry({"claude": {"command": "claude", "state": "archived"}})
         labels = {e.detail.split(",")[0] for e in agents_roots(home=self.home)}
         self.assertIn("codex", labels)

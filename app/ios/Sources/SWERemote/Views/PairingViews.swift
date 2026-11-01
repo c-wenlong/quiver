@@ -124,14 +124,14 @@ struct PairView: View {
                             .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                             .focused($focus, equals: .host).submitLabel(.next)
                             .onSubmit { focus = .name }
-                            .quiverField()
+                            .sweField()
                         Text("Its Tailscale name or address. Port 8477 unless you changed it.")
                             .font(Theme.caption).foregroundStyle(Theme.textMuted).padding(.bottom, 8)
                         fieldLabel("Device name")
                         TextField("iPhone", text: $app.pairing.deviceName)
                             .focused($focus, equals: .name).submitLabel(.go)
                             .onSubmit { Task { await app.startTailscalePairing() } }
-                            .quiverField()
+                            .sweField()
                         if let error = app.pairing.error {
                             Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText).padding(.top, 4)
                         }
@@ -265,11 +265,11 @@ struct TokenPairView: View {
                 Text("Hub").font(Theme.groupLabel).foregroundStyle(Theme.textSecondary)
                 TextField("my-mac or 100.64.0.1", text: $app.pairing.host)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-                    .quiverField()
+                    .sweField()
                 Text("Pair token").font(Theme.groupLabel).foregroundStyle(Theme.textSecondary).padding(.top, 8)
                 TextField("Token", text: $token)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .quiverField(monospaced: true)
+                    .sweField(monospaced: true)
                 if let error = app.pairing.error {
                     Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText).padding(.top, 4)
                 }

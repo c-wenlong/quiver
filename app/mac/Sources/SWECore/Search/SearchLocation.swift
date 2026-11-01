@@ -11,8 +11,8 @@ public enum SearchLocation {
     public static let fileName = "search.sqlite"
 
     /// The directory the index lives in, under the `~/.swe` root.
-    public static func directory(under quiver: URL) -> URL {
-        quiver.appending(path: "data/search")
+    public static func directory(under swe: URL) -> URL {
+        swe.appending(path: "data/search")
     }
 
     /// The database file and the journal files SQLite keeps beside it.

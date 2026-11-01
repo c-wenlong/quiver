@@ -193,8 +193,8 @@ extension View {
         buttonStyle(SecondaryButtonStyle(compact: compact, destructive: destructive))
     }
 
-    /// The Mac app's `quiverField`: 44pt, hairline, field fill.
-    func quiverField(monospaced: Bool = false) -> some View {
+    /// The Mac app's `sweField`: 44pt, hairline, field fill.
+    func sweField(monospaced: Bool = false) -> some View {
         self
             .font(monospaced ? Theme.monoBody : Theme.body)
             .foregroundStyle(Theme.textPrimary)

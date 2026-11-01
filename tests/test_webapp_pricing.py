@@ -35,7 +35,7 @@ def catalog():
          "gpt-y": _rates(2e-06, 8e-06, input_cost_per_token_priority=3.5e-06)},
         {"tier_multipliers": {"claude-opus-5": {"fast": 2}},
          "default_tier_multipliers": {"priority": 2}},
-        overrides={"gpt-x"}, quiver={"grok-mine"})
+        overrides={"gpt-x"}, swe={"grok-mine"})
 
 
 class _Store(unittest.TestCase):

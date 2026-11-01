@@ -84,7 +84,7 @@ def _lands_on(path: Path, target: Path | None, canonical: Path) -> bool:
 
     One hop is the common case. The chain case is Home Manager: nix links
     ~/.claude/CLAUDE.md into the store, and the store entry is itself an
-    out-of-store symlink back to the quiver file. Ownership-wise that IS
+    out-of-store symlink back to the swe file. Ownership-wise that IS
     synced — swe holds the only real content — so judge by where the
     chain lands, not by the first hop.
     """
@@ -314,7 +314,7 @@ def node_scope(node, home: Path | None = None) -> str:
     """Scope of a node, letting its link state override the path rule.
 
     A root symlinked to the shared tree is global however deep it sits:
-    ~/.astrbot/data/skills is two levels down but quiver linked it on purpose,
+    ~/.astrbot/data/skills is two levels down but swe linked it on purpose,
     so it loads everywhere and is not vendored content.
     """
     if node.state == "linked":

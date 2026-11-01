@@ -8,7 +8,7 @@
     },
     "results": [
       {
-        "repo": "c-wenlong/quiver",
+        "repo": "c-wenlong/swe",
         "status": "ok",
         "releases": [
           {
@@ -18,7 +18,7 @@
             "draft": false,
             "prerelease": false,
             "published_at": "2026-10-12T22:24:50Z",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v1.0.0"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v1.0.0"
           },
           {
             "tag": "v0.2.9",
@@ -27,7 +27,7 @@
             "draft": false,
             "prerelease": false,
             "published_at": "2026-08-20T10:54:19Z",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v0.2.9"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v0.2.9"
           },
           {
             "tag": "v0.2.8",
@@ -36,7 +36,7 @@
             "draft": false,
             "prerelease": false,
             "published_at": "2026-08-20T08:48:54Z",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v0.2.8"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v0.2.8"
           },
           {
             "tag": "v0.2.7",
@@ -45,7 +45,7 @@
             "draft": false,
             "prerelease": false,
             "published_at": "2026-08-19T17:55:00Z",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v0.2.7"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v0.2.7"
           },
           {
             "tag": "v0.2.5",
@@ -54,7 +54,7 @@
             "draft": false,
             "prerelease": false,
             "published_at": "2026-07-06T23:09:08Z",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v0.2.5"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v0.2.5"
           }
         ]
       }

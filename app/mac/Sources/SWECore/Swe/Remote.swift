@@ -78,7 +78,7 @@ public struct PairTicket: Decodable, Sendable, Equatable {
     public let name: String?
     /// `http://host:port/#pair=token` — opens the web app in a phone browser.
     public let url: String
-    /// `quiver://pair?…` — opens the iOS app.
+    /// `swe://pair?…` — opens the iOS app.
     public let deepLink: String
     /// Seconds until the hub stops honouring this token.
     public let expiresInS: Int
@@ -109,7 +109,7 @@ extension SweClient {
     }
 
     /// Mints a one-time pair token the running hub honours for a few
-    /// minutes; both the web-app URL and the `quiver://` deep link come back.
+    /// minutes; both the web-app URL and the `swe://` deep link come back.
     /// `name` is what the device is called once it trades the token.
     public func remotePair(name: String? = nil) async throws -> PairTicket {
         try await call(["remote", "pair"] + (name.map { ["--name=\($0)"] } ?? []) + ["--json"])

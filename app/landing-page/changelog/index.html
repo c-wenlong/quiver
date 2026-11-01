@@ -99,7 +99,7 @@ footer a:hover { color: var(--text); }
         <a href="../changelog/">Changelog</a>
       </div>
       <div class="right">
-        <a class="plain" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>GitHub</a>
+        <a class="plain" href="https://github.com/c-wenlong/swe"><svg class="i"><use href="#gh"/></svg>GitHub</a>
         <a class="btn light sm" href="../#install"><span>Install</span></a>
       </div>
     </nav>
@@ -125,7 +125,7 @@ registry gate. The Mac app now also has Run for <code>undeclare</code>,
 <code>marketplace-drop</code>, <code>plugin-fix</code>, <code>plugin-reinstall</code>, <code>dangling-link</code>
 and <code>mcp-sync</code>, through <code>swe doctor --fix=&lt;check&gt; --message=&lt;text&gt; --action=&lt;a&gt;</code>. A test fails when the Python runners, the web page's
 wording or the Mac's action list drift apart. Closes
-<a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/529">#529</a>.</p>
 </li>
 <li><p><strong>Launch a harness on a provider from the keys file.</strong> <code>POST /v1/sessions</code> takes <code>provider: &quot;&lt;slug&gt;&quot;</code> and <code>swe use</code> takes
 <code>--provider=&lt;slug&gt;</code>: the launching machine starts the harness with
@@ -136,7 +136,7 @@ no key goes on argv, in the launch record, the marker or the journal.
 Machine rows list <code>providers_at_launch</code> (slugs whose key is set) and
 <code>provider_names</code>; the hub forwards only the slug to a satellite.
 A missing key or an undeclared slug is a 422. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/526">#526</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/526">#526</a>.</p>
 </li>
 <li><p><strong>Hub: service status pushes.</strong> <code>swe remote notify --service-status=on</code> (the <code>service_status</code> flag in <code>notify.json</code>, off
 by default) starts a five-minute check of every tracked status page
@@ -149,7 +149,7 @@ open, and the delivered set in
 <code>~/.swe/cache/web-service-status-notified.json</code> keeps a restart
 from repeating a push. The rule is <code>status/alerts.py</code>, a port of the
 Mac's <code>ServiceStatusAlerts</code>. Closes
-<a href="https://github.com/c-wenlong/quiver/issues/528">#528</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/528">#528</a>.</p>
 </li>
 <li><p><strong>Mac: service status banners.</strong> With &quot;Notify about service status&quot;
 on (Settings › Notifications, off by default), the Mac banners when a
@@ -159,7 +159,7 @@ once: the same incident on the next poll, after a relaunch or after it
 flaps is quiet, two incidents opening at once are two banners, and
 scheduled maintenance never banners. Each page's first reading only
 records what is already open. A click opens Service status.
-Part of <a href="https://github.com/c-wenlong/quiver/issues/528">#528</a>.</p>
+Part of <a href="https://github.com/c-wenlong/swe/issues/528">#528</a>.</p>
 </li>
 <li><p><strong>Launch providers declared per harness.</strong> <code>harness.json</code> gains
 <code>capabilities.provider</code>: for each provider slug a harness takes at
@@ -170,7 +170,7 @@ OpenCode (24 providers), Pi (16) and Claude Code (Anthropic, plus
 DeepSeek, Kimi, MiniMax and OpenRouter through their
 Anthropic-compatible endpoints), each tried on a real install with
 fake keys. No launch uses it yet. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/526">#526</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/526">#526</a>.</p>
 </li>
 <li><p><strong>Doctor folds in <code>swe mcp doctor</code>.</strong> <code>swe doctor</code> now warns about
 each MCP server a harness config holds that fails a local check (a
@@ -185,12 +185,12 @@ what gets backed up), then checks again: a sync that skipped the entry
 is an error. The hub copy must name only stored secrets and have a
 command or url. A config the readers cannot parse is one
 <code>mcp.unchecked</code> warning. Batches never run it, since it overwrites.
-Part of <a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
+Part of <a href="https://github.com/c-wenlong/swe/issues/529">#529</a>.</p>
 </li>
 <li><p><strong>iPhone: home screen widget.</strong> Small and medium widgets show the
 hub's sessions waiting on you (approvals and replies), sessions still
 working, and today's spend
-(<a href="https://github.com/c-wenlong/quiver/issues/1442">#1442</a>). The
+(<a href="https://github.com/c-wenlong/swe/issues/1442">#1442</a>). The
 widget fetches sessions, the inbox and today's overview about every
 15 minutes, and redraws when the app's refresh changes the snapshot
 it keeps in the App Group. When the hub can't be reached it draws
@@ -210,7 +210,7 @@ copies the link to <code>~/.quiver/backups</code> and removes it, and refuses
 anything that is no longer a broken link directly in those folders.
 A marketplace <code>--fix</code> registers shows its uninstalled plugins to the
 next pass, which installs them. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/529">#529</a>.</p>
 </li>
 <li><p><strong>Live reply text on iPhone, web and Mac.</strong> The chat draws a reply
 word by word while a Codex app-server, opencode serve or headless
@@ -225,7 +225,7 @@ lands, and a bubble whose final never comes goes 3 seconds after the
 session goes idle, or when the stream reconnects. The rules live in
 <code>ReplyStreams.swift</code> (the Mac's and iPhone's copies are identical)
 and its port in <code>pages/chat.js</code>. Closes
-<a href="https://github.com/c-wenlong/quiver/issues/1444">#1444</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/1444">#1444</a>.</p>
 </li>
 <li><p><strong><code>swe doctor --fix</code>.</strong> Runs every safe local fix doctor found, in
 order (setup, then discover, then init), reads the report again after
@@ -239,7 +239,7 @@ Installs and the drops that delete entries never run in a batch;
 fix, as a Run button does. A failed fix is reported and the rest still
 run. Plain <code>swe doctor</code> still writes nothing. The runners moved to
 <code>harness/doctor_fix.py</code>, which the web Doctor page now calls too. Part
-of <a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
+of <a href="https://github.com/c-wenlong/swe/issues/529">#529</a>.</p>
 </li>
 <li><p><strong>Unread dots on session rows: iPhone, web and Mac.</strong> A session row
 shows a small dot when the agent said something since you last opened
@@ -250,11 +250,11 @@ list refresh reconciles the local clear with the hub. The web app
 holds its reads while the tab is hidden. The Mac shows dots on local
 rows the hub lists and on Other machines rows, reading as its own
 paired device; the iPhone's app icon badge stays the Inbox count.
-Closes <a href="https://github.com/c-wenlong/quiver/issues/1439">#1439</a>.</p>
+Closes <a href="https://github.com/c-wenlong/swe/issues/1439">#1439</a>.</p>
 </li>
 <li><p><strong>iPhone: share into a session.</strong> A share extension (&quot;Quiver&quot; in the
 share sheet) sends text, links, images and files from any app to a
-session (<a href="https://github.com/c-wenlong/quiver/issues/1441">#1441</a>).
+session (<a href="https://github.com/c-wenlong/swe/issues/1441">#1441</a>).
 The sheet lists the active hub's attached sessions, most recent
 first, with a hub picker when the phone has more than one, and an
 optional message. Text and links go in the message; images go up as
@@ -265,14 +265,14 @@ hubs from the App Group and shared Keychain group, and says so
 instead of sending when the phone isn't paired or the hub can't be
 reached.</p>
 </li>
-<li><p><strong>Homebrew tap.</strong> <code>brew install --cask c-wenlong/quiver/quiver</code>
-installs the Mac app and <code>brew install c-wenlong/quiver/swe</code> the CLI,
-from <a href="https://github.com/c-wenlong/homebrew-quiver">c-wenlong/homebrew-quiver</a>.
+<li><p><strong>Homebrew tap.</strong> <code>brew install --cask c-wenlong/swe/swe</code>
+installs the Mac app and <code>brew install c-wenlong/swe/swe</code> the CLI,
+from <a href="https://github.com/c-wenlong/homebrew-swe">c-wenlong/homebrew-swe</a>.
 The release workflow's new <code>bump-homebrew-tap</code> job points both at each
 release's DMG and wheel with fresh SHA-256s (<code>scripts/bump_tap.py</code>),
 once the signed DMG is on the latest published release. It needs a
 <code>HOMEBREW_TAP_TOKEN</code> secret and skips with a notice without one.
-(<a href="https://github.com/c-wenlong/quiver/issues/1445">#1445</a>)</p>
+(<a href="https://github.com/c-wenlong/swe/issues/1445">#1445</a>)</p>
 </li>
 <li><p><strong>Hub: live reply text (<code>message.delta</code>) for API channels.</strong> Codex
 app-server, opencode serve and headless Claude sessions now send
@@ -284,14 +284,14 @@ and resume cursors are untouched; the final <code>message.appended</code>
 replaces the streamed text. Satellites coalesce their own and relay
 them only to a hub that advertises <code>message_delta</code>. tmux sessions
 stay record-by-record. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/1444">#1444</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/1444">#1444</a>.</p>
 </li>
 <li><p><strong>iPhone: the paired hubs move to an App Group and a shared Keychain
 group.</strong> The hub list now lives in <code>group.com.quiver.remote</code> and each
 hub's credential in the <code>&lt;team&gt;.com.quiver.remote.shared</code> Keychain
 group, so an app extension can read them. Groundwork for the share
-sheet (<a href="https://github.com/c-wenlong/quiver/issues/1441">#1441</a>) and
-the widget (<a href="https://github.com/c-wenlong/quiver/issues/1442">#1442</a>).
+sheet (<a href="https://github.com/c-wenlong/swe/issues/1441">#1441</a>) and
+the widget (<a href="https://github.com/c-wenlong/swe/issues/1442">#1442</a>).
 Existing pairings move on first launch: each credential is copied
 into the shared group and the old item dropped only after the copy
 is stored, and a copy that fails keeps reading the old item.</p>
@@ -308,7 +308,7 @@ after the hub learned this feature, whichever is later, so old rows
 start read. Satellite sessions work the same, stored on the hub. Each
 write prunes cursors for sessions the hub no longer lists and for
 revoked devices. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/1439">#1439</a>; the client
+<a href="https://github.com/c-wenlong/swe/issues/1439">#1439</a>; the client
 dots follow.</p>
 </li>
 <li><p><strong>Mac: the AGENTS.md page edits instruction chapters.</strong> When the shared
@@ -336,7 +336,7 @@ the default browser, <code>file:</code> never loads), keeps its own web data per
 hub, and a strip in the title bar names the machine. The list holds the
 hub this Mac's satellite agent reports to and hubs added by address in
 Settings › Integrations › Remote › Other hubs; the last pick is
-remembered (<a href="https://github.com/c-wenlong/quiver/issues/681">#681</a>).</p>
+remembered (<a href="https://github.com/c-wenlong/swe/issues/681">#681</a>).</p>
 </li>
 <li><p><strong>iPhone and web: a machine strip on the Sessions page.</strong> One chip
 per machine the hub lists, with an online dot, its name, &quot;N working
@@ -345,14 +345,14 @@ shows only that machine's sessions; tapping it again shows all. The
 strip hides when the hub has one machine, and orders machines like
 the Mac's &quot;Other machines&quot; group (online first, then name). No new
 hub route
-(<a href="https://github.com/c-wenlong/quiver/issues/1443">#1443</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/1443">#1443</a>).</p>
 </li>
 <li><p><strong>iPhone, web and Mac: thinking cards say how long the model
 thought.</strong> A thinking card reads &quot;Thought for 12s&quot; or &quot;Thought for
 1m 5s&quot; from the hub's <code>duration_s</code>, and plain &quot;Thought&quot; when the hub
 sent none. One formatting rule per client (<code>ThoughtLabel.text</code> on
 iOS and the Mac, <code>Fmt.thought</code> on the web)
-(<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/1440">#1440</a>).</p>
 </li>
 <li><p><strong>Remote approvals show and answer unnumbered menus too.</strong> A
 tmux-mode prompt whose options are an arrow-select list (&quot;❭ Option
@@ -379,7 +379,7 @@ carry <code>duration_s</code>, so the clients can show &quot;Thought for 12s&quo
 Code and Codex time it from the record before the thinking record to
 the thinking record; opencode from its own reasoning <code>time</code> span.
 Other harnesses, and records with no usable timestamps, leave it out
-(<a href="https://github.com/c-wenlong/quiver/issues/1440">#1440</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/1440">#1440</a>).</p>
 </li>
 <li><p><strong>Mac: Settings › Remote can keep this Mac's agent running.</strong> On a Mac
 paired as a satellite of another machine's hub, a &quot;Keep this Mac's
@@ -387,7 +387,7 @@ agent running&quot; switch installs or removes the agent's LaunchAgent
 through <code>swe remote agent --install</code> / <code>--uninstall</code>, and says whether
 it is running. The switch is hidden on the Mac that hosts the hub and
 on a Mac that was never paired
-(<a href="https://github.com/c-wenlong/quiver/issues/1438">#1438</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/1438">#1438</a>).</p>
 </li>
 <li><p><strong><code>swe remote agent --install</code> keeps a satellite running.</strong> Like
 <code>swe remote serve --install</code>, it runs <code>swe remote agent</code> as a
@@ -402,7 +402,7 @@ one exits at start, and <code>--install</code> refuses while a shell-started
 agent runs. <code>--uninstall</code> removes it and
 <code>--status [--json]</code> shows it. <code>install-app.sh</code> now restarts the agent
 on a new bundle as it does the hub
-(<a href="https://github.com/c-wenlong/quiver/issues/1438">#1438</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/1438">#1438</a>).</p>
 </li>
 <li><p><strong><code>swe init</code>: the hub's MCP servers in extra accounts.</strong> A fourth
 switch, <code>accounts.sync.mcp</code>, off by default (<code>swe config set accounts.sync.mcp true</code>, or the new &quot;MCP servers&quot; switch on the Mac
@@ -418,7 +418,7 @@ file and rename after a backup in <code>~/.quiver/backups</code>. Each server sw
 writes is recorded in <code>data/account-mcp.json</code>, and switching off then
 running <code>swe init</code> removes only those, and only while the account has
 not edited them. Closes
-<a href="https://github.com/c-wenlong/quiver/issues/888">#888</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/888">#888</a>.</p>
 </li>
 <li><p><strong>Hub: switch the model of an opencode session attached through
 <code>opencode serve</code>.</strong> The <code>model</code> control op on a <code>serve</code> session
@@ -428,7 +428,7 @@ switch applies from the next turn; a bare name is refused. opencode
 rows now list <code>serve</code> in <code>model_modes</code>, so the iPhone's Model menu
 shows on them with no app change. This closes model switching on
 every API channel
-(<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/643">#643</a>).</p>
 </li>
 <li><p><strong>Hub: switch the model of a headless Claude Code session.</strong> The
 <code>model</code> control op on a <code>headless</code> session records the pick on the
@@ -436,7 +436,7 @@ session's supervised row, and the next <code>claude -p --resume</code> run takes
 it as <code>--model</code>, so the switch applies from the next turn. Claude Code
 rows now list <code>headless</code> in <code>model_modes</code>, so the iPhone's Model menu
 shows on them with no app change
-(<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/643">#643</a>).</p>
 </li>
 <li><p><strong>Hub: switch the model of a Codex session attached through the
 app-server.</strong> The <code>model</code> control op on an <code>appserver</code> session
@@ -444,7 +444,7 @@ records the pick on the session's supervised row, and the next
 <code>turn/start</code> carries it as its model override, so the switch applies
 from the next turn. Codex rows now list <code>appserver</code> in <code>model_modes</code>,
 so the iPhone's Model menu shows on them with no app change
-(<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/643">#643</a>).</p>
 </li>
 <li><p><strong>Mac: Sessions lists other machines' sessions.</strong> Below this Mac's
 Pinned and day groups, an &quot;Other machines&quot; group shows the hub's rows
@@ -457,7 +457,7 @@ iPhone, and Pin, Rename and Fork work as on this Mac's rows. The rows
 come from the <code>/v1/sessions</code> read the page already makes, so filters
 and search leave them alone, and the group hides when no other machine
 reports a session or the hub is down
-(<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>).</p>
 </li>
 <li><p><strong>iPhone app: Tasks gets the scope menu and five-row groups</strong> the Mac
 and web already have (#941, #942). A menu above the filter chips
@@ -470,7 +470,7 @@ counts and shows every row of that group. Otherwise each group shows
 five rows, then &quot;Show N more&quot; / &quot;Show less&quot;. A failed repo's error
 sits under its own group header, and a scope the next refresh drops
 falls back to All tasks
-(<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>).</p>
 </li>
 <li><p><strong>Mac: <code>app/mac/script/setup-machine.sh</code> sets up a new dev Mac.</strong> It
 checks that full Xcode is selected (printing the <code>sudo xcode-select -s</code>
@@ -481,7 +481,7 @@ installs the remote hub with <code>swe remote serve --install</code>, and quits 
 checkout's dev build for the installed app. Every step can run again, and
 <code>--dry-run</code> prints the plan without changing anything. <code>install-app.sh</code>
 now runs under <code>caffeinate -i</code>, so the Mac can't idle to sleep during a
-build driven over SSH (<a href="https://github.com/c-wenlong/quiver/issues/1214">#1214</a>).</p>
+build driven over SSH (<a href="https://github.com/c-wenlong/swe/issues/1214">#1214</a>).</p>
 </li>
 <li><p><strong>Mac app: Shared content switches on Accounts.</strong> Once you have an
 extra Claude or Codex account, the Accounts page shows Instructions,
@@ -491,7 +491,7 @@ account's folder, or removes the links swe made when it is switched
 off. Anything an account already has in that place is named under the
 switches and left alone. A newly added account is synced at once when
 any switch is on. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/888">#888</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/888">#888</a>.</p>
 </li>
 <li><p><strong>Mac app: pin, rename and fork sessions.</strong> The Sessions list still
 comes from <code>swe session --json</code> (tokens, cost, filters); when this
@@ -503,7 +503,7 @@ were pinned, whatever the time window. A name set on the hub replaces
 the row's title (and is searchable), and a rename made on another
 device shows in an open chat live. Rows the hub doesn't list, and
 every row while the hub is down, keep the list as it was
-(<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>).</p>
 </li>
 <li><p><strong><code>swe init</code>: shared instructions, skills and hooks in extra accounts.</strong>
 Three switches in config.json, all off by default:
@@ -520,7 +520,7 @@ then running <code>swe init</code> removes only those links. <code>swe init --ch
 previews both directions and <code>--json</code> adds <code>account_sync</code> and
 <code>accounts</code>. <code>swe init --accounts</code> runs only this pass (with <code>--check</code>
 and <code>--json</code>), never touching the default harness homes. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/888">#888</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/888">#888</a>.</p>
 </li>
 <li><p><strong>Remote hub: optional owner auto-approve for pair requests.</strong> Off by
 default. <code>swe remote devices --auto-approve=on|off</code> (or the new switch
@@ -535,7 +535,7 @@ foreign <code>Origin</code>. Anything that can't be determined leaves it pending
 poll collects its credential. Every approval, by code over HTTP or
 automatic, writes one <code>pair:</code> line to the hub's log, and device rows
 record <code>approved_via</code> (<code>code</code> or <code>owner_auto</code>). Part of
-<a href="https://github.com/c-wenlong/quiver/issues/522">#522</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/522">#522</a>.</p>
 </li>
 <li><p><strong>Remote hub: Notion databases as a task source.</strong> A <code>notion</code> section
 in <code>config.json</code> names an integration token by <code>${NAME}</code> reference,
@@ -560,7 +560,7 @@ shows nothing. Notion pages list under their database in the rail,
 their detail reads &quot;Notion · <database>&quot;, and the link-out says
 &quot;Open in Notion&quot;. Link and unlink work as for Linear; starting an
 agent stays GitHub-only. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/847">#847</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/847">#847</a>.</p>
 </li>
 <li><p><strong>Remote iPhone app: photo and file attachments in the chat
 composer.</strong> A paperclip left of the prompt box offers Photos and
@@ -578,7 +578,7 @@ the files, and the hub's <code>@path</code> echo shows as the same names. A send
 held in the queued tray keeps its files (the row shows a paperclip
 count), and a retry or an edit on an older hub resends the same refs.
 Detaching clears the chips, since the hub drops the staged files.
-Part of <a href="https://github.com/c-wenlong/quiver/issues/516">#516</a>.</p>
+Part of <a href="https://github.com/c-wenlong/swe/issues/516">#516</a>.</p>
 </li>
 <li><p><strong>Web app: Setup can start from your hub repo.</strong> While <code>~/.quiver</code> on
 the hub machine has no hub yet, step 2 shows &quot;Start from your hub
@@ -590,7 +590,7 @@ the step shows the cloned hub. An existing hub is a 409 <code>has_hub</code>,
 a clone or setup already running a 409 <code>busy</code>, and a URL git can't
 reach or a timeout shows under the field. The URL is only ever kept
 or shown without its credentials
-(<a href="https://github.com/c-wenlong/quiver/issues/696">#696</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/696">#696</a>).</p>
 </li>
 <li><p><strong>Web app: photo and file attachments in the chat composer.</strong> A
 paperclip button, dropping files on the composer, or pasting a
@@ -604,7 +604,7 @@ and never sent. Send waits while any upload is in flight, and the
 message carries the uploaded files' refs in <code>attachments</code>, which the
 hub turns into <code>@path</code> for the harness. A message still needs text
 (the hub requires it); Enter on an empty box with files says so
-(<a href="https://github.com/c-wenlong/quiver/issues/516">#516</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/516">#516</a>).</p>
 </li>
 <li><p><strong>Mac app: the session's model in the chat header and Sessions
 list.</strong> A session's chat header reads <code>harness · folder · model</code>, and
@@ -620,7 +620,7 @@ more, six seconds apart, while the hub's catalog still holds the old
 model), so the header follows a model that first appears with the opening reply or
 changes elsewhere. Nothing shows when the hub doesn't know it. Display
 only: the Mac doesn't switch models. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/643">#643</a>.</p>
 </li>
 <li><p><strong>iOS app: comment on an issue, and post your Resolve context as a
 comment.</strong> The issue page has the Mac's comment box under the thread,
@@ -628,14 +628,14 @@ and the Resolve sheet gains &quot;Your context (optional)&quot;, now sent with
 the resolve, and &quot;Also post as a comment on #<n>&quot;, on by default.
 Both post through the hub's <code>gh</code> login with <code>POST /v1/issues/comment</code>.
 A context comment that fails is a warning; the launch still goes
-ahead. Part of <a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+ahead. Part of <a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Web app: the Cursor app on the Calendar.</strong> The hub reads each Cursor
 account's <code>state.vscdb</code> (the app's own folder and every extra Cursor
 profile's) as the Mac app does, so editor chats show as blocks with
 time and responses, one legend row per account. Devin cloud stays
 Mac-only, since its sessions live in the Mac app's own store. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Web app: comment on an issue, and post your Resolve context as a
 comment.</strong> The issue sheet in Repositories now has the Mac's comment
@@ -643,19 +643,19 @@ box under the thread (Cmd or Ctrl+Return posts), and the Resolve
 panel has &quot;Also post as a comment on #<n>&quot;, ticked by default. Both
 post through the hub's <code>gh</code> login with <code>POST /v1/issues/comment</code>. A
 context comment that fails is a warning; the launch still goes ahead.
-Part of <a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+Part of <a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Web app: Freebuff on the Calendar.</strong> The hub reads Freebuff's
 <code>run-state.json</code> chats under <code>~/.config/manicode/projects</code> as the Mac
 app does, so its work shows as blocks with time and responses. Part
-of <a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+of <a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Web app: Pi and Factory Droid on the Calendar.</strong> The hub now reads
 their session files the way the Mac app does (<code>~/.pi/agent/sessions</code>
 and <code>~/.factory/sessions</code>), so their work shows as blocks beside the
 ledger harnesses, with time and responses. Accidental sessions stay
 off, judged on the ledger's history as on the Mac. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Hub: <code>POST /v1/issues/comment</code> posts an issue comment.</strong> The body
 <code>{repo, number, body}</code> goes through the hub's own <code>gh</code> login, the way
@@ -664,7 +664,7 @@ on <code>gh</code>'s stdin rather than its command line. Only a paired phone or
 the owner's device can call it, only for a pinned repo, and only up
 to GitHub's 65,536 characters. The web and iPhone issue detail build
 their comment composer and Resolve's &quot;Also post as a comment&quot; on it.
-Part of <a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+Part of <a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong><code>swe mcp gateway</code>: one copy of each shared MCP server for every
 session.</strong> Each harness session started its own copy of every stdio
@@ -687,14 +687,14 @@ idle&quot; bubble. Each row can be edited (its text goes into the box and
 Send becomes Save), removed, or sent now into the running turn;
 Remove all asks first. The hub holds the sends, so the tray comes
 back when the chat reopens, with sends queued, edited or removed on
-another device (<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>).</p>
+another device (<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>).</p>
 </li>
 <li><p><strong>Web app: issue detail and Resolve from Repositories.</strong> An issue row
 now opens a sheet with the issue's body and comments (read only, from
 the hub's <code>GET /v1/issues/&lt;owner&gt;/&lt;repo&gt;/&lt;n&gt;</code>), Open on GitHub, and
 Resolve with agent: harness, model, your context and the first prompt,
 posted to <code>POST /v1/issues/resolve</code>, then the chat opens. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>iOS app: the overview's top models, quick figures, heatmap and
 daily table, over all seven periods.</strong> The Usage tab's Spend half
@@ -707,7 +707,7 @@ the phone fits (tap a day for its tokens and cost), and the daily
 table (date, total, input, output, cached, spend), newest ten days
 first, then 30 more a tap. All of it comes from the <code>GET /v1/app/overview</code>
 payload the tab already read. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>iOS app: answer an approval with the pane's own menu rows.</strong> When
 the hub reads the agent's numbered menu (&quot;1. Approve once&quot;, &quot;2.
@@ -717,7 +717,7 @@ Always and Deny buttons can't name is still reachable. The row's
 number goes to the hub as the decision, and the answered card names
 the row it picked. Approvals without menu rows (older hubs,
 non-tmux sessions) keep Allow, Always and Deny. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Web app: pin, rename and fork sessions.</strong> Each Sessions row has a
 More actions button (and a right-click menu) with the iPhone's
@@ -728,7 +728,7 @@ rules (one line, 120 characters) and offers the harness's own name
 back; Fork takes a first message and opens the new chat once the hub
 names it. The chat's header has the same menu, and a rename made on
 another device shows there live
-(<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>).</p>
 </li>
 <li><p><strong>Mac app: Needs you on the Inbox page.</strong> Above the GitHub
 notifications, the Inbox now lists the sessions this Mac's hub says
@@ -738,7 +738,7 @@ opens that session's chat; Clear, per row or per section, hides it
 for this Mac until the session moves again (<code>POST /v1/inbox/dismiss</code>),
 and never offers a pending approval. Nothing extra shows while the
 hub isn't running
-(<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>).</p>
 </li>
 <li><p><strong>iOS app: merge, auto-merge and re-run on the pull request
 page.</strong> The detail page has the Mac and web merge controls: a
@@ -752,21 +752,21 @@ Actions run has a menu with Re-run failed jobs (when a check in that
 run failed) and Re-run all jobs. The phone calls the web app's
 routes the hub already serves to paired devices,
 <code>POST /v1/app/repositories/merge</code> and <code>…/rerun</code>. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Web app: Mine and Review requested pull request filters.</strong> The
 Repositories dashboard's Pull requests tab now offers All, Mine and
 Review requested with counts, as the iOS app does, from the flags the
 hub's <code>GET /v1/pulls</code> puts on each open PR. A filter hides while the
 hub can't say (a failed <code>gh pr status</code>) instead of guessing. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Web app: Needs you in the Inbox.</strong> The Inbox page now opens with
 the iOS Inbox's Waiting on you, Errors and Finished today sections
 from the hub's <code>GET /v1/inbox</code>, above the GitHub notifications. A row
 opens its session's chat, and Clear (a row or a whole section) posts
 <code>POST /v1/inbox/dismiss</code>; a pending approval can't be cleared. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Remote: a <code>limit</code> notification when a session hits its usage
 limit.</strong> The hub and satellites now raise <code>notify</code> kind <code>limit</code> when
@@ -777,7 +777,7 @@ so the lock screen says when work can resume, and Claude Code's carry
 <code>resets_at</code> and <code>window</code>. It rings once per limit: old records read
 during backfill and retries into the same limit stay quiet. Other
 harnesses don't raise it yet
-(<a href="https://github.com/c-wenlong/quiver/issues/516">#516</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/516">#516</a>).</p>
 </li>
 <li><p><strong>Web app: the session's model in the chat header and Sessions
 list.</strong> The chat's header shows the model of the transcript's newest
@@ -794,7 +794,7 @@ appears with the opening reply or changes elsewhere. The
 page's rows (<code>/v1/app/sessions</code>) now carry the hub's <code>model</code> as the
 catalog read it, so the page has no second transcript reader. Display
 only: the web app doesn't switch models. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/643">#643</a>.</p>
 </li>
 <li><p><strong>Mac app: approve pair requests in Settings › Remote.</strong> A &quot;Pending
 requests&quot; group under Paired devices lists the phones asking to pair
@@ -803,13 +803,13 @@ it has waited, a code field for the 6 digits the phone shows, and
 Approve / Deny. It reads <code>swe remote devices --requests --json</code> every
 3 seconds, only while the section is on screen, and an approval
 refreshes the device list. This covers a hub on the same Mac; a hub on
-another machine is <a href="https://github.com/c-wenlong/quiver/issues/681">#681</a>.
+another machine is <a href="https://github.com/c-wenlong/swe/issues/681">#681</a>.
 <code>swe remote devices --approve=&lt;code&gt;</code> and <code>--deny=&lt;code&gt;</code> gain
 <code>--request-id=&lt;id&gt;</code>, which holds the code to that one request, as the
 hub's HTTP route already did: a code typed against one row never
 decides another, and five wrong approve codes deny it. The app always
 sends it.
-Part of <a href="https://github.com/c-wenlong/quiver/issues/522">#522</a>.</p>
+Part of <a href="https://github.com/c-wenlong/swe/issues/522">#522</a>.</p>
 </li>
 <li><p><strong>Web app: <code>@</code> file completion in the chat composer.</strong> Typing <code>@</code> at
 the start of the box or after a space opens the composer's menu with
@@ -823,7 +823,7 @@ folder as <code>@path/</code> so the menu stays open inside it. Searches wait
 120 ms after the last keystroke, and a newer query drops an older
 answer. A satellite session's refusal and an older hub's 404 are
 worded in the menu
-(<a href="https://github.com/c-wenlong/quiver/issues/516">#516</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/516">#516</a>).</p>
 </li>
 <li><p><strong>Compute: auto clean orphaned processes, on the Mac and the web app.</strong>
 The Compute settings gain an &quot;Auto clean&quot; switch (Mac: the cleanup
@@ -850,7 +850,7 @@ Set up sends no adopt. While it runs the sheet's other buttons wait;
 swe's refusal (a hub already there, a URL git can't reach, a timeout)
 shows under the field, and the card names any plugin marketplace
 that couldn't be registered
-(<a href="https://github.com/c-wenlong/quiver/issues/696">#696</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/696">#696</a>).</p>
 </li>
 <li><p><strong>Remote iPhone app: switch a session's model from the chat.</strong> On a
 session attached through tmux whose harness takes <code>/model &lt;id&gt;</code>
@@ -865,7 +865,7 @@ settles when the row's model changes, or once a reply has come in and
 the list has refreshed after the hub's next read, so a switch the
 harness refused shows the model that actually ran. Elsewhere (watching
 only, headless, app-server, opencode) the submenu is hidden. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/643">#643</a>.</p>
 </li>
 <li><p><strong>Web app: Preview on tool cards that write a page, and link cards
 under replies.</strong> In a session's chat, a tool call that writes or
@@ -883,7 +883,7 @@ file's text, Reload fetches it again, and a refused file says why in
 plain words. A reply that links to web pages gets a card per page
 (host, path, Open in a new tab), up to three. File names with <code>+</code> are
 sent as <code>%2B</code>
-(<a href="https://github.com/c-wenlong/quiver/issues/634">#634</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/634">#634</a>).</p>
 </li>
 <li><p><strong>Remote iPhone app: the chat header and the session list show the
 model.</strong> A session's chat header adds the model after its folder, and
@@ -892,7 +892,7 @@ hub row's <code>model</code> (the newest reply's model). The provider path and a
 date stamp are dropped, so <code>anthropic/claude-opus-4-5</code> and
 <code>claude-opus-4-5-20251101</code> both read <code>claude-opus-4-5</code>. Nothing shows
 when the hub doesn't know the model or is older than the field. Part
-of <a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>.</p>
+of <a href="https://github.com/c-wenlong/swe/issues/643">#643</a>.</p>
 </li>
 <li><p><strong>Remote hub: session rows say which model each session runs.</strong>
 <code>/v1/sessions</code> rows, the hub's own and a satellite's, carry <code>model</code>,
@@ -905,7 +905,7 @@ from the tail and cached per file in
 <code>stat</code> per refresh; OpenCode, Kilo and Devin ask their database once
 per session whenever its activity time moves. Junk names (Claude's
 <code>&lt;synthetic&gt;</code>, Devin's <code>compactor</code>) are skipped for the reply before.
-Part of <a href="https://github.com/c-wenlong/quiver/issues/643">#643</a>.</p>
+Part of <a href="https://github.com/c-wenlong/swe/issues/643">#643</a>.</p>
 </li>
 <li><p><strong><code>swe setup</code> asks for your hub repo.</strong> While <code>~/.quiver</code> is missing or
 empty, the wizard's first step asks for your hub repo's URL, beside
@@ -919,7 +919,7 @@ output, and the hub's plugin marketplaces registered afterwards.
 Under <code>--json</code> a refusal goes to stderr and exits 1, and the document
 gains <code>hub: {can_clone, demo_url, cloned}</code>. The demo hub link is one
 constant, <code>DEMO_HUB_URL</code> in <code>init/hub.py</code>, shown only once it is set
-(<a href="https://github.com/c-wenlong/quiver/issues/696">#696</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/696">#696</a>).</p>
 </li>
 <li><p><strong>Remote iPhone app: a Model menu on every launch sheet.</strong> New
 session, Resolve issue, Open PR in session and a task's New agent
@@ -931,7 +931,7 @@ switch keeps a picked Harness default or Other, keeps a picked
 recent model only when the new harness lists it, and otherwise
 moves to the new harness's newest. A hub older than <code>recent_models</code>
 offers its <code>last_models</code> entry alone. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/914">#914</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/914">#914</a>.</p>
 </li>
 <li><p><strong>Web app: the launch sheets' Model box is now a menu.</strong> New session,
 a task's New agent session and a PR's Open in session list &quot;Harness
@@ -942,7 +942,7 @@ was prefilled before. A pick of your own survives a harness or
 machine switch, except a recent model the new harness never used,
 which re-defaults so a sheet never sends another harness's model. An
 older hub that sends only <code>last_models</code> gives a one-item list. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/914">#914</a>, the same menu
+<a href="https://github.com/c-wenlong/swe/issues/914">#914</a>, the same menu
 as the Mac app's below.</p>
 </li>
 <li><p><strong>Mac app: the launch sheets pick a model from a menu.</strong> New session,
@@ -954,7 +954,7 @@ model, as the field's prefill did. A picked &quot;Harness default&quot; or
 typed id survives a harness or machine switch; a picked model the new
 harness hasn't run re-defaults instead of travelling to it. A hub
 without <code>recent_models</code> offers its <code>last_models</code> entry alone. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/914">#914</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/914">#914</a>.</p>
 </li>
 <li><p><strong>Remote iPhone app: Preview on tool cards that write a page.</strong> When
 a tool call writes or edits an <code>.html</code>, <code>.htm</code> or <code>.svg</code> file inside
@@ -964,7 +964,7 @@ file as it is on disk now and draws it in a sheet with scripts,
 network and navigation off; an SVG is drawn as an image. The card's
 raw content is still one tap away, and a missing, too-big or
 unsupported file says so in plain words
-(<a href="https://github.com/c-wenlong/quiver/issues/634">#634</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/634">#634</a>).</p>
 </li>
 <li><p><strong>Syntax highlighting in the chat, on the web app, the remote web
 client and the Mac app.</strong> Fenced code blocks, tool arguments and tool
@@ -991,7 +991,7 @@ default. Machine rows and the web app's <code>?harnesses=1</code> lists gain
 harness, newest first, read from the usage ledger without internal
 names like Devin's <code>compactor</code> or Cursor's <code>default</code>, and OpenCode
 names completed to <code>provider/model</code>. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/914">#914</a>; the client
+<a href="https://github.com/c-wenlong/swe/issues/914">#914</a>; the client
 pickers come next.</p>
 </li>
 <li><p><strong>A &quot;Fan off temperature&quot; for the Compute fan rule.</strong> The popover's
@@ -1012,7 +1012,7 @@ running and offers Reattach, which takes the live pane back, mid-turn
 included. <code>/v1/sessions</code> rows carry the supervised <code>mode</code>, the <code>tmux</code>
 name and <code>kept</code>, and so do <code>session.ownership</code> events. The details
 sheet adds the pane, its attach command and, on a macOS hub, Run in
-terminal (<a href="https://github.com/c-wenlong/quiver/pull/850">#850</a>).</p>
+terminal (<a href="https://github.com/c-wenlong/swe/pull/850">#850</a>).</p>
 </li>
 <li><p><strong><code>swe init --hub=&lt;git url&gt;</code> brings your hub onto a new machine.</strong> It
 checks the URL with <code>git ls-remote</code>, clones it as <code>~/.quiver</code> with your
@@ -1024,7 +1024,7 @@ the URL never reaches the terminal. Each marketplace under the hub's
 own <code>plugin marketplace add</code>, the same fix <code>swe find plugins</code> offers.
 That fix now covers a hub marketplace whose plugins all come from
 GitHub or a URL, which drift used to skip
-(<a href="https://github.com/c-wenlong/quiver/issues/696">#696</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/696">#696</a>).</p>
 </li>
 <li><p><strong>Hub route for previewing a page file.</strong> <code>GET /v1/sessions/{key}/preview?path=</code> returns one <code>.html</code>, <code>.htm</code> or <code>.svg</code>
 file from a session's working folder as it is on disk now, for the
@@ -1133,7 +1133,7 @@ Tab picks, Escape closes. A file goes in as <code>@path </code>, a folder as
 <code>@path/</code> with the menu still open to pick inside it, and a path with
 spaces is quoted. Sessions on a satellite say file search isn't
 available there. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 <li><p><strong>Mac app: Mine and Review requested pull request filters.</strong> The
 Repositories dashboard's and a repo focus page's Pull requests tab
@@ -1142,7 +1142,7 @@ web apps do. Mine compares the <code>gh</code> login with each PR's author, so
 it covers the focus page's merged and closed PRs too; Review
 requested reads <code>swe gh pr status</code> per repo. A filter hides while
 its flag is unknown instead of guessing
-(<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>).</p>
 </li>
 <li><p><strong>Mac app: the Queued tray in the session chat.</strong> A Queue-mode
 send the hub holds until the agent's turn ends now waits in a tray
@@ -1152,7 +1152,7 @@ place, Remove drops it, Send now steers it into the running turn, and
 Remove all clears the tray after a confirm. It moves to the
 transcript once it goes out, and reopening the chat shows what the
 hub still holds (<code>GET</code>/<code>POST /v1/sessions/{key}/queue</code>). Part of
-<a href="https://github.com/c-wenlong/quiver/issues/970">#970</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/970">#970</a>.</p>
 </li>
 </ul>
 <h3 id="changed"><a class="anchor" href="#changed"></a>Changed</h3>
@@ -1183,6 +1183,16 @@ to the hub names <code>SWE Remote</code>; the hub reads the old
 old build still pairs and reports iOS correctly. Because the App
 Group and Keychain group change, a Quiver Remote install does not
 carry its pairing over: pair again after updating.</p>
+</li>
+<li><p><strong>The GitHub repos are <code>c-wenlong/swe</code> now.</strong> <code>c-wenlong/quiver</code> was
+renamed to <code>c-wenlong/swe</code>, <code>quiver-hub</code> to <code>swe-hub</code>,
+<code>quiver-demo-hub</code> to <code>swe-demo-hub</code> and <code>homebrew-quiver</code> to
+<code>homebrew-swe</code>; the old names redirect. The tap is now
+<code>c-wenlong/swe</code>: <code>brew install --cask c-wenlong/swe/swe</code> installs the
+Mac app and <code>brew install c-wenlong/swe/swe</code> the CLI. The first SWE
+release materializes <code>Casks/swe.rb</code> in the tap; <code>Casks/quiver.rb</code>
+stays frozen at the last Quiver build so old installs and uninstalls
+keep working.</p>
 </li>
 <li><p><strong>New icon and logo everywhere; the pixel-art mascot is gone.</strong> The
 Mac and iPhone app icons, the web app's icons, the landing site and
@@ -1216,7 +1226,7 @@ Reasoning columns stay empty (AA puts per-benchmark scores behind Pro),
 and their hover notes say so. Stored rows in the old shape still
 decode. The quota text now says 100 requests a day, and a <code>410</code> reads
 &quot;Artificial Analysis retired this API. Update SWE.&quot;
-<a href="https://github.com/c-wenlong/quiver/issues/948">#948</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/948">#948</a>.</p>
 </li>
 <li><p><strong>Mac app: less CPU while idle.</strong> The trend sampler no longer reads
 every HID temperature sensor each tick when the SMC already gave the
@@ -1236,7 +1246,7 @@ protocol.</strong> Compactions have always reached clients as
 <code>compaction</code> event in <code>EVENT_TYPES</code>, docs/json-contracts.md and
 docs/remote-control.md was never emitted. The hub still accepts one
 from an older satellite
-(<a href="https://github.com/c-wenlong/quiver/issues/516">#516</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/516">#516</a>).</p>
 </li>
 <li><p><strong><code>--hub</code> clones around the state a machine already has.</strong> <code>swe init --hub</code> and <code>swe setup --hub</code> used to refuse any <code>~/.quiver</code> with files
 in it, and the app, the remote hub and plain <code>swe</code> runs all write
@@ -1252,7 +1262,7 @@ kept for you. The hub <code>.gitignore</code> seed now also leaves out
 <code>data/web-ledger/</code>, the web app's ledger, and a clone whose own
 <code>.gitignore</code> is older gets the missing patterns in its
 <code>.git/info/exclude</code>, so this machine's state never reaches the hub's
-git (<a href="https://github.com/c-wenlong/quiver/issues/696">#696</a>).</p>
+git (<a href="https://github.com/c-wenlong/swe/issues/696">#696</a>).</p>
 </li>
 <li><p><strong>Usage problems say what to do, graded by how much they need you.</strong>
 A stale login or a credentials file macOS won't let SWE read puts
@@ -1267,7 +1277,7 @@ Doctor. Claude, Codex, Copilot, Droid and Freebuff now name their own
 login command, and an extra Devin or Cursor account's Doctor row keeps
 the fix aimed at that account's files. Issues of a harness you unstar
 close instead of holding the badge, and the issue store's file work
-runs off the main thread (<a href="https://github.com/c-wenlong/quiver/issues/797">#797</a>).</p>
+runs off the main thread (<a href="https://github.com/c-wenlong/swe/issues/797">#797</a>).</p>
 </li>
 <li><p><strong>The menu bar fan popover's notes fold into an ⓘ mark.</strong> The
 captions under the Automatic and Manual controls move into the app's
@@ -1373,7 +1383,7 @@ raw editor. <code>swe hooks list --json</code> rows now carry <code>summary</cod
 <code>/app/…</code> and <code>/index.html</code> to the web app at <code>/</code> now carry the query
 onto <code>Location</code> (the browser already kept <code>#pair=</code> and <code>#approve</code>
 fragments), and a test pins that no <code>/v1/</code> route falls through to the
-app's page (<a href="https://github.com/c-wenlong/quiver/issues/943">#943</a>).</p>
+app's page (<a href="https://github.com/c-wenlong/swe/issues/943">#943</a>).</p>
 </li>
 <li><p><strong>Remote: attached files reach harnesses that don't read <code>@</code> refs.</strong>
 Every channel used to put a phone attachment into the prompt as
@@ -1384,7 +1394,7 @@ OpenCode, Cursor, Droid, Pi, ...) now gets the path in plain text,
 own tools. Which harness gets which is harness.json
 <code>capabilities.attachments.at_refs</code>, over a fallback table in
 <code>remote/attachments.py</code>
-(<a href="https://github.com/c-wenlong/quiver/issues/516">#516</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/516">#516</a>).</p>
 </li>
 <li><p><strong>MCP gateway: no longer throttled by macOS.</strong> The LaunchAgent was
 written with <code>ProcessType: Background</code>, as the remote hub's is, and
@@ -1416,7 +1426,7 @@ entitlement is refused (<code>-1743</code>) before any prompt appears. Prod buil
 now sign the app, and the bundled Python that runs the hub, with
 <code>app/mac/script/SWE.entitlements</code>, which grants it; the existing
 <code>NSAppleEventsUsageDescription</code> gives the prompt its text
-(<a href="https://github.com/c-wenlong/quiver/issues/968">#968</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/968">#968</a>).</p>
 </li>
 <li><p><strong>Remote: queue-mode sends wait for idle on satellites too.</strong> A
 <code>queue</code>-mode message to a session on another machine used to fail
@@ -1429,7 +1439,7 @@ delivering replays on restart.
 The hub's and the satellite's idle wait both probe with the tailer's
 activity time, so a turn that started since the last catalog refresh
 no longer reads as &quot;interrupted&quot; and gets a queued send typed into it
-(<a href="https://github.com/c-wenlong/quiver/issues/516">#516</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/516">#516</a>).</p>
 </li>
 <li><p><strong>The Mac app's Model menu keeps your pick across a harness round
 trip.</strong> On New session, Resolve issue and a task's New agent session,
@@ -1440,7 +1450,7 @@ something else. A harness that lists it shows it; one that doesn't
 (Codex, or Kilo, which takes no model) shows and sends its own
 default, and the next harness that lists it gets it back. What the
 menu shows is still what gets sent. Follows
-<a href="https://github.com/c-wenlong/quiver/issues/914">#914</a>.</p>
+<a href="https://github.com/c-wenlong/swe/issues/914">#914</a>.</p>
 </li>
 <li><p><strong>The fan rule comes back on its own after the helper stops
 answering.</strong> A fan request the root helper never took used to switch
@@ -1465,7 +1475,7 @@ progress&quot; forever. It now shows the hub's <code>status</code> (<code>Agent 
 <code>PR open</code>, <code>Merged</code>, <code>Closed</code>, <code>Open</code>, or a Linear workflow state's
 name), and its stepper reads Open → Agent → PR open → Merged for
 GitHub and Open → Started → Done elsewhere
-(<a href="https://github.com/c-wenlong/quiver/issues/875">#875</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/875">#875</a>).</p>
 </li>
 <li><p><strong>The iPhone app's tab bar fits again.</strong> The Tasks tab made six tabs,
 and iPhone shows four plus &quot;More&quot; past five, so Issues and Usage were
@@ -1473,7 +1483,7 @@ hidden behind More and <code>quiver://issue</code> links landed inside it.
 Issues and Pull requests now share one GitHub tab with an Issues /
 Pull requests switch at the top, each side keeping what it loaded,
 and issue links open GitHub on its Issues side
-(<a href="https://github.com/c-wenlong/quiver/issues/875">#875</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/875">#875</a>).</p>
 </li>
 <li><p><strong>Tasks say what the source says, and say when GitHub didn't
 answer.</strong> The web Tasks page and the iPhone Tasks tab showed the
@@ -1491,7 +1501,7 @@ refresh error when only failed repos are left, a late link from a
 plain launch reloads the list, an old unlink error clears, both
 clients count a pull task as &quot;PR open&quot; until it lands, and linking,
 unlinking or closing the launch sheet no longer refetches every
-repo from <code>gh</code> (<a href="https://github.com/c-wenlong/quiver/issues/875">#875</a>).</p>
+repo from <code>gh</code> (<a href="https://github.com/c-wenlong/swe/issues/875">#875</a>).</p>
 </li>
 <li><p><strong>Cursor usage works for editor-only users on macOS.</strong> The Cursor
 editor now stores its session token encrypted
@@ -1507,7 +1517,7 @@ up after 1 second and, after a timeout or refusal, waits 6 hours
 before asking again. To allow it for good, run
 <code>security find-generic-password -w -s &quot;Cursor Safe Storage&quot; &gt;/dev/null</code>
 in Terminal and choose Always Allow. Other platforms keep reading
-plaintext tokens (<a href="https://github.com/c-wenlong/quiver/issues/796">#796</a>).</p>
+plaintext tokens (<a href="https://github.com/c-wenlong/swe/issues/796">#796</a>).</p>
 </li>
 <li><p><strong>Stored tasks keep their last-known state when a source can't be
 read.</strong> A linked issue last seen closed or merged read <code>in_progress</code>
@@ -1527,7 +1537,7 @@ from another machine can register <code>directory</code> marketplaces whose
 folders never arrived. Doctor's Setup section now gives one warning per
 harness listing them, with a fix that names the file to edit, or says
 the file is managed by Nix when it is a store link
-(<a href="https://github.com/c-wenlong/quiver/issues/696">#696</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/696">#696</a>).</p>
 </li>
 <li><p><strong>The web app's Plugins page says once where missing marketplaces were
 looked for.</strong> A <code>~/.claude/settings.json</code> from another machine can
@@ -1535,7 +1545,7 @@ register several marketplaces whose folders are not on this one, and
 the page printed &quot;no marketplace manifest on disk&quot; once per name. Each
 harness now gets one line naming them and the folder they were looked
 in, and swe's catalog errors carry that folder as <code>path</code>
-(<a href="https://github.com/c-wenlong/quiver/issues/696">#696</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/696">#696</a>).</p>
 </li>
 <li><p><strong><code>swe init</code> builds and repairs every hub folder.</strong> It used to create
 only <code>skills/</code> and <code>backups/</code>, so a hub that reached a second machine
@@ -1543,7 +1553,7 @@ as a bare <code>AGENTS.md</code> never got <code>plugins/</code>, <code>hooks/</
 hub's folders are now one list in <code>paths.py</code> (<code>HUB_SUBDIRS</code>), and init
 creates whichever are missing on a new or existing <code>~/.quiver</code> without
 touching files already there
-(<a href="https://github.com/c-wenlong/quiver/issues/696">#696</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/696">#696</a>).</p>
 </li>
 <li><p><strong>Mac app sidebar toggle works in a normal window.</strong> Since the toggle
 moved into the traffic lights' row, a click on it in a window that was
@@ -1614,7 +1624,7 @@ revoke one: that node gets no owner identity, and devices paired from
 it are signed out, until a pair request from it is approved again.
 Revoking a device paired through a tailnet request revokes its node
 too. The owner's other devices keep working
-(<a href="https://github.com/c-wenlong/quiver/issues/966">#966</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/966">#966</a>).</p>
 </li>
 <li><p><strong>Mac app: the fan helper is checked against SWE's own signature
 before it runs as root.</strong> The one-time install copied
@@ -1630,7 +1640,7 @@ root-owned copy with <code>codesign --verify --strict</code> against
 otherwise. Ad-hoc builds have no signature to check against and keep
 the hash check alone. Installed helpers are not reinstalled, so nobody
 is asked for their password again
-(<a href="https://github.com/c-wenlong/quiver/issues/967">#967</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/967">#967</a>).</p>
 </li>
 <li><p><strong>Mac app: the fan helper only takes requests from SWE itself,
 checked by its code signature.</strong> The running root helper held the fans
@@ -1649,7 +1659,7 @@ now&quot;. Not now is remembered for this version: the old helper is left
 unused, the fans stay with macOS, and both fan popovers show the
 reason with an &quot;Update fan helper&quot; button; Set speed or the
 temperature rule's switch also updates it
-(<a href="https://github.com/c-wenlong/quiver/issues/967">#967</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/967">#967</a>).</p>
 </li>
 <li><p><strong>Remote: a local process can no longer claim the owner's tailnet
 identity.</strong> Behind <code>tailscale serve</code> the hub read the client from
@@ -1665,7 +1675,7 @@ machine's own tailnet node also stops counting as the owner's device:
 serve's local listener forwards any local process as that node. The
 owner's phones and other computers get in as before, and paired
 devices are unaffected; a browser on the hub machine now pairs
-(<a href="https://github.com/c-wenlong/quiver/issues/965">#965</a>).</p>
+(<a href="https://github.com/c-wenlong/swe/issues/965">#965</a>).</p>
 </li>
 <li><p><strong>The remote hub refuses wildcard and non-tailnet binds.</strong> <code>swe remote serve --host=0.0.0.0</code> — or a LAN address, a link-local
 address, or a name that resolves to one — used to be taken
@@ -1734,7 +1744,7 @@ rather than losing the only handle on a leaked credential. Paired
 devices keep working on the approval route unchanged.</p>
 </li>
 </ul>
-<h2 id="111---2026-10-26"><a class="anchor" href="#111---2026-10-26"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v1.1.1">1.1.1</a> - 2026-10-26</h2>
+<h2 id="111---2026-10-26"><a class="anchor" href="#111---2026-10-26"></a><a href="https://github.com/c-wenlong/swe/releases/tag/v1.1.1">1.1.1</a> - 2026-10-26</h2>
 <h3 id="fixed-1"><a class="anchor" href="#fixed-1"></a>Fixed</h3>
 <ul>
 <li><p><strong>&quot;Clear search data&quot; could hang the app.</strong> With the session-index
@@ -1871,7 +1881,7 @@ the bundled logos the Mac and iPhone apps draw at
 PWA's list shows the logo in place of the harness's name.</p>
 </li>
 </ul>
-<h2 id="110---2026-10-26"><a class="anchor" href="#110---2026-10-26"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v1.1.0">1.1.0</a> - 2026-10-26</h2>
+<h2 id="110---2026-10-26"><a class="anchor" href="#110---2026-10-26"></a><a href="https://github.com/c-wenlong/swe/releases/tag/v1.1.0">1.1.0</a> - 2026-10-26</h2>
 <h3 id="added-1"><a class="anchor" href="#added-1"></a>Added</h3>
 <ul>
 <li><p><strong>Shared hooks across harnesses, plus hook CRUD.</strong> The <code>hooks</code> domain
@@ -3312,10 +3322,10 @@ session server (<code>python -m swe.mcp_server</code>) runs over stdio, which
 the advisory lists as unaffected, so there was no live exposure; the
 floor only keeps a fresh install off the vulnerable range.</li>
 </ul>
-<h2 id="100---2026-10-13"><a class="anchor" href="#100---2026-10-13"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v1.0.0">1.0.0</a> - 2026-10-13</h2>
+<h2 id="100---2026-10-13"><a class="anchor" href="#100---2026-10-13"></a><a href="https://github.com/c-wenlong/swe/releases/tag/v1.0.0">1.0.0</a> - 2026-10-13</h2>
 <p>First stable release. <code>swe</code> and the Quiver macOS app share one data model
 under <code>~/.quiver</code>, every <code>--json</code> command uses the <code>{schema, data}</code>
-envelope, and the design is documented under <a href="https://github.com/c-wenlong/quiver/tree/main/docs">docs/</a>: data model,
+envelope, and the design is documented under <a href="https://github.com/c-wenlong/swe/tree/main/docs">docs/</a>: data model,
 app architecture, backend architecture, JSON contracts and testing.</p>
 <p>Highlights since 0.2.10: Cursor's Grok Bot allowance, harness display names
 and primary colours, Devin quota handling, and in the app: per-account menu
@@ -3705,7 +3715,7 @@ flake, and the three <code>try: import tomllib / except: import tomli</code> for
 <code>mcp/codex_io.py</code>, <code>harness/rate_limits.py</code> and <code>find/mcps.py</code> collapse to a
 plain import. The CI test matrix moves to 3.11 and 3.13 and coverage drops to
 a single leg, taking CI from 7 check runs to 6. Users on 3.10 should pin <code>v0.2.9</code>,
-the last release that runs on it: <code>pipx install git+https://github.com/c-wenlong/quiver.git@v0.2.9</code>. Ubuntu 22.04 LTS ships
+the last release that runs on it: <code>pipx install git+https://github.com/c-wenlong/swe.git@v0.2.9</code>. Ubuntu 22.04 LTS ships
 3.10, while Debian 12 and Ubuntu 24.04 ship 3.11 and 3.12 respectively.</p>
 <p>One behaviour improves: a timestamp carrying nanosecond precision, such as
 <code>2026-08-01T00:00:00.123456789Z</code>, used to lose its fractional part entirely
@@ -3768,7 +3778,7 @@ tag against <code>project.version</code>, runs <code>twine check</code>, smoke-t
 and attaches both files to the GitHub release. Publishing to PyPI stays
 commented out because the name <code>quiver</code> belongs to another project.</p>
 </li>
-<li><p><strong>A <code>flake.nix</code> in the repo.</strong> <code>nix run github:c-wenlong/quiver</code> builds
+<li><p><strong>A <code>flake.nix</code> in the repo.</strong> <code>nix run github:c-wenlong/swe</code> builds
 and runs <code>swe</code> with no clone, and <code>packages.default</code> is a flake input any
 nix-darwin or Home Manager config can consume. The build runs the whole
 unittest suite inside the sandbox, so <code>nix flake check</code> doubles as the
@@ -4759,7 +4769,7 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
 <li>Added unit tests for harness registry, sessions aggregator, models analytics, and skills discovery (30 tests total)</li>
 <li>CI runs tests verbosely across Python 3.10–3.13</li>
 </ul>
-<h2 id="010---2026-07-06"><a class="anchor" href="#010---2026-07-06"></a><a href="https://github.com/c-wenlong/quiver/releases/tag/v0.1.0">0.1.0</a> - 2026-07-06</h2>
+<h2 id="010---2026-07-06"><a class="anchor" href="#010---2026-07-06"></a><a href="https://github.com/c-wenlong/swe/releases/tag/v0.1.0">0.1.0</a> - 2026-07-06</h2>
 <h3 id="added-17"><a class="anchor" href="#added-17"></a>Added</h3>
 <ul>
 <li>Initial open-source release of <strong>quiver</strong> (CLI command: <code>swe</code>)</li>
@@ -4780,7 +4790,7 @@ per-subtest <code>reset_at</code> mutation into <code>_SAMPLE_RESPONSE</code>, w
     <a href="../overview/">Docs</a>
     <a href="../changelog/">Changelog</a>
     <a href="../contributing/">Contributing</a>
-    <a href="https://github.com/c-wenlong/quiver">GitHub</a>
+    <a href="https://github.com/c-wenlong/swe">GitHub</a>
   </div>
 </footer>
 </body>

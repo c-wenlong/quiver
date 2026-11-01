@@ -212,10 +212,10 @@ def is_free(model: str) -> bool:
 
 class PricingCatalog:
     def __init__(self, entries: dict[str, ModelRates], supplement: dict | None = None,
-                 overrides: set[str] | None = None, quiver: set[str] | None = None):
+                 overrides: set[str] | None = None, swe: set[str] | None = None):
         supplement = supplement or {}
         # The keys SWE's supplement priced, for ``source``.
-        self.quiver = set(quiver or ())
+        self.quiver = set(swe or ())
         self.aliases = {k.lower(): v for k, v in (supplement.get("aliases") or {}).items()
                         if isinstance(v, str)}
         tier_mult = {k.lower(): {t: float(x) for t, x in v.items() if isinstance(x, (int, float))}
@@ -442,11 +442,11 @@ def load_catalog(home: Path | None = None, download: bool = True) -> PricingCata
         listed = read_json_dict(_litellm_cache(home)) or read_json_dict(BUNDLED)
     supplement = read_json_dict(SUPPLEMENT)
     raw = dict(listed)
-    quiver = set()
+    swe = set()
     for key, entry in (supplement.get("prices") or {}).items():
         if isinstance(entry, dict):
             raw[key] = entry
-            quiver.add(key)
+            swe.add(key)
     entries = {}
     for key, entry in raw.items():
         if isinstance(entry, dict):
@@ -455,4 +455,4 @@ def load_catalog(home: Path | None = None, download: bool = True) -> PricingCata
                 entries[key] = rates
     overrides = _overrides(home)
     entries.update(overrides)
-    return PricingCatalog(entries, supplement, set(overrides), quiver & set(entries))
+    return PricingCatalog(entries, supplement, set(overrides), swe & set(entries))

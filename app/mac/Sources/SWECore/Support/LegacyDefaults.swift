@@ -1,13 +1,13 @@
 import Foundation
 
 /// One-shot carry of the pre-rename app's preferences. The bundle id
-/// changed (`com.cwenlong.quiver` to `com.cwenlong.swe`), and
+/// changed (`com.cwenlong.swe` to `com.cwenlong.swe`), and
 /// `UserDefaults.standard` follows it: without a copy, first launch of
 /// SWE.app resets every setting Quiver.app stored — the swe path, the
 /// provider order, the menu bar layout.
 public enum LegacyDefaults {
     /// Quiver.app's defaults domain.
-    public static let legacyDomain = "com.cwenlong.quiver"
+    public static let legacyDomain = "com.cwenlong.swe"
     /// Set once the copy ran, so it never runs twice or overwrites a
     /// change made in SWE.app afterwards.
     public static let flagKey = "didMigrateQuiverDefaults"

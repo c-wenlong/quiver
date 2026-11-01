@@ -154,7 +154,7 @@ struct HooksPage: View {
     /// swe's refusal of a page it does not have reads friendlier said plain.
     private static func loadMessage(_ message: String) -> String {
         message.localizedCaseInsensitiveContains("unknown command")
-            ? "This version of swe has no hooks page yet. Update quiver, or pick a newer swe in Settings › General."
+            ? "This version of swe has no hooks page yet. Update swe, or pick a newer swe in Settings › General."
             : message
     }
 }
@@ -165,7 +165,7 @@ private extension Hook {
     var rowKey: String { "\(harness)|\(id)" }
 
     /// What's wrong with it, in a badge's words; nil when it's linked and on.
-    /// Other installers' scripts have no link of quiver's to be wrong.
+    /// Other installers' scripts have no link of swe's to be wrong.
     var problem: String? {
         if enabled == false { return "Disabled" }
         if tier == .foreign || state == .linked { return nil }
@@ -815,7 +815,7 @@ private struct NewHookSheet: View {
                     Label("Created \(displayPath(created.path))", systemImage: "checkmark.circle")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Declare it yourself — quiver never writes a settings file. Paste this into \(settingsList(created)):")
+                    Text("Declare it yourself — swe never writes a settings file. Paste this into \(settingsList(created)):")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(alignment: .top, spacing: 6) {

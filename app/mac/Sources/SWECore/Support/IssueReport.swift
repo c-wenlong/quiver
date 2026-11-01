@@ -6,7 +6,7 @@ import Foundation
 /// is one of the forms' dropdown options word for word; `swe bug` builds the
 /// same links (src/swe/bug.py).
 public enum IssueReport {
-    public static let repository = URL(string: "https://github.com/c-wenlong/quiver")!
+    public static let repository = URL(string: "https://github.com/c-wenlong/swe")!
     public static let documentation = repository
 
     /// The forms' Area option for this app.
