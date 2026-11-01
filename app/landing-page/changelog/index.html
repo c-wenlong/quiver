@@ -110,6 +110,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Hub: service status pushes.</strong> <code>swe remote notify --service-status=on</code> (the <code>service_status</code> flag in <code>notify.json</code>, off
+by default) starts a five-minute check of every tracked status page
+in <code>swe remote serve</code>, through the web app's shared poller. A model
+provider or agent platform starting an incident posts once to ntfy,
+and once more when it is back to normal; the hub emits these as
+<code>notify</code> events of kind <code>service</code>. Maintenance never posts, the first
+check only records what is already open, and the delivered set in
+<code>~/.quiver/cache/web-service-status-notified.json</code> keeps a restart
+from repeating a push. The rule is <code>status/alerts.py</code>, a port of the
+Mac's <code>ServiceStatusAlerts</code>. Closes
+<a href="https://github.com/c-wenlong/quiver/issues/528">#528</a>.</p>
+</li>
 <li><p><strong>Live reply text on iPhone, web and Mac.</strong> The chat draws a reply
 word by word while a Codex app-server, opencode serve or headless
 Claude session writes it: <code>message.delta</code> text grows a bubble at the

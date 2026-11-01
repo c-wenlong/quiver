@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hub: service status pushes.** `swe remote notify
+  --service-status=on` (the `service_status` flag in `notify.json`, off
+  by default) starts a five-minute check of every tracked status page
+  in `swe remote serve`, through the web app's shared poller. A model
+  provider or agent platform starting an incident posts once to ntfy,
+  and once more when it is back to normal; the hub emits these as
+  `notify` events of kind `service`. Maintenance never posts, the first
+  check only records what is already open, and the delivered set in
+  `~/.quiver/cache/web-service-status-notified.json` keeps a restart
+  from repeating a push. The rule is `status/alerts.py`, a port of the
+  Mac's `ServiceStatusAlerts`. Closes
+  [#528](https://github.com/c-wenlong/quiver/issues/528).
 - **Live reply text on iPhone, web and Mac.** The chat draws a reply
   word by word while a Codex app-server, opencode serve or headless
   Claude session writes it: `message.delta` text grows a bubble at the

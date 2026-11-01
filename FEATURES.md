@@ -71,8 +71,8 @@ Status words:
 | --- | --- | --- | --- | --- |
 | Menu bar | yes | - | - | Mac-only by design |
 | Widgets | yes | - | - | Mac-only by design |
-| Notifications | yes | - | - | Mac: limit resets and 90% crossings, and GitHub notification banners. iOS: the app has no notification code; the hub posts to ntfy (`remote/notify.py`) and the ntfy app delivers it. APNs planned |
-| Service status | yes | yes | - | |
+| Notifications | yes | - | - | Mac: limit resets and 90% crossings, and GitHub notification banners. iOS: the app has no notification code; the hub posts to ntfy (`remote/notify.py`) and the ntfy app delivers it, including provider incidents when `service_status` is on in `notify.json` ([#528](https://github.com/c-wenlong/quiver/issues/528)). APNs planned |
+| Service status | yes | yes | - | Incident notifications: Mac banners (Settings switch) and hub ntfy pushes (`swe remote notify --service-status=on`), both off by default, model providers and agent platforms only, once per incident ([#528](https://github.com/c-wenlong/quiver/issues/528)) |
 | Settings | yes | yes | part | iOS: the hub chip menu holds switch hub, devices, Console, Refresh and Unpair; no notification settings |
 | Doctor | yes | yes | - | Mac: a Settings section; web: `#/doctor`, no sidebar entry. Findings carry `source` + `remedies`; only the web page renders them (source line, remedy rows, Fix-with-agent picker through `/v1/sessions`). Web Run also covers `undeclare` (drop a hook declaration) and `marketplace-drop` (drop missing marketplace entries), each file backed up first and managed files refused. Mac reads `fix`/`action` as before |
 | First-run setup | yes | yes | - | Web: `#/setup`. Hub URL step on all three: `swe setup --hub`, web step 2 (clones on the hub's thread, page polls), Mac links step (runs `swe setup --hub --json`) |
@@ -124,6 +124,7 @@ owes the other the same change; say so in the row's Notes until it is paid.
 | Page preview targets and link cards: which tool calls get Preview, path to the route's relative one, which links get a card | `app/ios/Sources/QuiverRemote/Hub/PagePreview.swift`, `Views/LinkCards.swift` (iOS only) | `src/quiver/webapp/static/pages/chat.js` (`pageFiles`, `relativePath`, `linkUrls`) |
 | Tasks list rules: filters, groups, state stepper | `QuiverCore/Tasks/Tasks.swift`; iOS `Hub/TasksModel.swift` | `src/quiver/webapp/static/pages/tasks.js` |
 | Chat rendering: Markdown, diffs, tool cards, syntax highlighting | `QuiverCore/Syntax/SyntaxHighlight.swift` + `Hub/ToolDiff.swift` (`ToolDisplay`) under the Mac chat views; iOS has `ToolDiff`/`ToolArgs` and is owed highlighting. Readable args differ: the Mac's pretty JSON sorts keys, chat.js keeps insertion order, and iOS writes `key: value` lines | `src/quiver/webapp/static/pages/chat.js` (`md`, `hl`, `readableArgs`, `renderDiff`) |
+| Service status notifications: provider groups only from a minor incident, maintenance never, once per `service@incident` (incident-less keyed `service@status`, cleared on recovery), resolved only after a started, first check seeds, no reading changes nothing | `app/mac/Sources/QuiverCore/Status/ServiceStatusAlerts.swift` | `src/quiver/status/alerts.py` |
 | Live reply bubbles: per-id deltas in seq order, a gap stops drawing, the next live final of a kind claims the oldest open bubble, idle sweep and reconnect clear | `ReplyStreams.swift`, identical in `app/mac/Sources/QuiverCore/Hub/` and `app/ios/Sources/QuiverRemote/Hub/` | `src/quiver/webapp/static/pages/chat.js` (`replyStreams`) |
 
 The iOS app shares only the protocol DTOs with the Mac app today; its

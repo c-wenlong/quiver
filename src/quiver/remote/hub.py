@@ -613,6 +613,47 @@ class HubState:
             },
         ))
 
+    # -- Service status pushes -------------------------------------------
+    # With ``service_status`` on in notify.json, the hub reads the status
+    # pages every five minutes through the web app's shared poller and
+    # turns a provider starting or ending an incident into a ``notify``
+    # event of kind ``service`` (the Notifier posts it to ntfy).
+
+    def _service_status_loop(self) -> None:
+        from quiver.status import alerts as status_alerts
+        from quiver.status.poller import poller_for
+        poller = poller_for(self.home)
+        while not self._stop.is_set():
+            try:
+                self._service_status_tick(poller)
+            except Exception:
+                pass  # a bad page or a bug must not end the loop
+            if self._stop.wait(status_alerts.INTERVAL):
+                return
+
+    def _service_status_tick(self, poller) -> None:
+        """One check: every tracked page (built-ins plus the web app's
+        additions), the shared rule, one event per alert."""
+        from quiver.status import alerts as status_alerts
+        from quiver.status import tracked
+        from quiver.status.catalog import SERVICES
+        statuses = poller.statuses(list(SERVICES) + tracked.load(self.home))
+        for alert in status_alerts.check(self.home, statuses):
+            self.emit(GLOBAL_KEY, protocol.event(
+                "notify", "", self.machine_id,
+                {
+                    "kind": "service",
+                    "change": alert.kind,
+                    "service": alert.service_id,
+                    "name": alert.service_name,
+                    "health": alert.health.key,
+                    "incident": alert.incident,
+                    "title": alert.title,
+                    "message": alert.body,
+                    "url": alert.page_url,
+                },
+            ))
+
     def start(self) -> None:
         self._register_machine()
         # A keep or adopt cut short by a crash leaves a key in both
@@ -629,6 +670,8 @@ class HubState:
             (self._tail_loop, "remote-tail"),
             (self._search_index_loop, "remote-search-index"),
         ]
+        if notify_cfg.get("service_status") is True:
+            targets.append((self._service_status_loop, "remote-service-status"))
         if notify.ready(notify_cfg):
             notifier = notify.Notifier(
                 self, self.base_url, subscribe_key=GLOBAL_KEY
