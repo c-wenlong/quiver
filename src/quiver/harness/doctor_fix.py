@@ -18,7 +18,8 @@ Two kinds of action:
   ``install`` (network and package managers), and the drops
   (``undeclare``, ``marketplace-drop``, ``dangling-link``), which delete
   entries or links a synced file may still want on another machine, and
-  ``plugin-reinstall``, which removes Codex's copy before adding it back. They run only when
+  ``plugin-reinstall``, which removes Codex's copy before adding it back,
+  and ``mcp-sync``, which overwrites a broken MCP entry with the hub's. They run only when
   one finding is named (``--fix=<check> --message=<text>``, or a row's
   Run), and the batch lists them as skipped.
 
@@ -35,11 +36,11 @@ from typing import Callable
 # discover fills the registry the link checks walk; init links what the
 # registry names. The click actions close the list for a named finding.
 ORDER = ("setup", "discover", "init", "plugin-fix", "plugin-reinstall",
-         "dangling-link", "marketplace-drop", "undeclare", "install")
+         "mcp-sync", "dangling-link", "marketplace-drop", "undeclare", "install")
 
 BATCH = frozenset({"setup", "discover", "init", "plugin-fix"})
-CLICK = frozenset({"plugin-reinstall", "dangling-link", "marketplace-drop",
-                   "undeclare", "install"})
+CLICK = frozenset({"plugin-reinstall", "mcp-sync", "dangling-link",
+                   "marketplace-drop", "undeclare", "install"})
 
 # How many times a batch walks ORDER: enough for one fix to reveal
 # another's work, and bounded.
@@ -170,6 +171,16 @@ def _run_dangling_link(home: Path, finding: dict, remedy: dict | None) -> str | 
     return None
 
 
+def _run_mcp_sync(home: Path, finding: dict, remedy: dict | None) -> str | None:
+    from quiver.harness.doctor import sync_mcp_server
+
+    tool = (remedy or {}).get("tool")
+    server = (remedy or {}).get("server")
+    if not isinstance(tool, str) or not tool or not isinstance(server, str) or not server:
+        raise FixRefused("that fix names no MCP tool or server")
+    return sync_mcp_server(home, tool, server)
+
+
 def install_problem(result, name: str) -> str | None:
     """What a captured install says went wrong, with the end of its output,
     or None once the command is on PATH."""
@@ -191,6 +202,7 @@ RUNNERS: dict[str, Runner] = {
     "plugin-fix": _run_plugin_fix,
     "plugin-reinstall": _run_plugin_fix,
     "dangling-link": _run_dangling_link,
+    "mcp-sync": _run_mcp_sync,
 }
 
 
