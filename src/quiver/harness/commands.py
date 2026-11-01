@@ -1709,7 +1709,12 @@ def doctor_report(home: Path | None = None) -> DoctorReport:
 
 def _doctor_probe(home: Path) -> SimpleNamespace:
     """Every probe ``swe doctor`` runs, and the report made from them."""
-    from quiver.harness.doctor import collect_findings, issue_findings, setup_findings
+    from quiver.harness.doctor import (
+        collect_findings,
+        issue_findings,
+        plugin_findings,
+        setup_findings,
+    )
     from quiver.harness.drift import run_drift_checks
     from quiver.harness.path_health import (
         find_off_path_tools,
@@ -1726,10 +1731,13 @@ def _doctor_probe(home: Path) -> SimpleNamespace:
     probe.drift = run_drift_checks()
     probe.setup = setup_findings(home)
     probe.issues = issue_findings(home)
+    # Plugin drift needs the hub: before it exists, setup says so first.
+    probe.plugins = plugin_findings(home) if not any(
+        f.check in ("setup.hub", "setup.agents-md") for f in probe.setup) else []
     probe.report = DoctorReport(
         collect_findings(probe.env, probe.preferred, probe.which_npm,
                          probe.nvm_dirs, probe.orphans, probe.drift)
-        + probe.setup + probe.issues)
+        + probe.setup + probe.plugins + probe.issues)
     return probe
 
 
@@ -1840,6 +1848,14 @@ def cmd_doctor(args):
     if setup:
         print(c("bold", "  Setup"))
         for finding in setup:
+            print(f"    {c('yellow', '!')} {finding.message}")
+            if finding.fix:
+                print(c("dim", f"        fix: {finding.fix}"))
+        print()
+
+    if probe.plugins:
+        print(c("bold", "  Plugins"))
+        for finding in probe.plugins:
             print(f"    {c('yellow', '!')} {finding.message}")
             if finding.fix:
                 print(c("dim", f"        fix: {finding.fix}"))

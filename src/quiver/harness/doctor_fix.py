@@ -10,13 +10,15 @@ Two kinds of action:
 
 - **Batch** actions are local repairs that only add or relink, never
   delete anything that could still be wanted: ``setup``, ``discover``,
-  ``init``. ``swe doctor --fix`` and Fix all run every one of them, in
+  ``init``, ``plugin-fix`` (register a marketplace folder, install a
+  plugin from it). ``swe doctor --fix`` and Fix all run every one of them, in
   ``ORDER``, re-reading the report between steps because an earlier fix
   changes what the later checks find (no hub hides every link check).
 - **Click** actions need a person to pick them for one finding:
   ``install`` (network and package managers), and the drops
-  (``undeclare``, ``marketplace-drop``), which delete entries a synced
-  settings file may still want on another machine. They run only when
+  (``undeclare``, ``marketplace-drop``, ``dangling-link``), which delete
+  entries or links a synced file may still want on another machine, and
+  ``plugin-reinstall``, which removes Codex's copy before adding it back. They run only when
   one finding is named (``--fix=<check> --message=<text>``, or a row's
   Run), and the batch lists them as skipped.
 
@@ -32,10 +34,12 @@ from typing import Callable
 # The order a batch runs in. setup makes the hub everything else reads;
 # discover fills the registry the link checks walk; init links what the
 # registry names. The click actions close the list for a named finding.
-ORDER = ("setup", "discover", "init", "marketplace-drop", "undeclare", "install")
+ORDER = ("setup", "discover", "init", "plugin-fix", "plugin-reinstall",
+         "dangling-link", "marketplace-drop", "undeclare", "install")
 
-BATCH = frozenset({"setup", "discover", "init"})
-CLICK = frozenset({"marketplace-drop", "undeclare", "install"})
+BATCH = frozenset({"setup", "discover", "init", "plugin-fix"})
+CLICK = frozenset({"plugin-reinstall", "dangling-link", "marketplace-drop",
+                   "undeclare", "install"})
 
 # How many times a batch walks ORDER: enough for one fix to reveal
 # another's work, and bounded.
@@ -117,6 +121,55 @@ def _run_marketplace_drop(home: Path, finding: dict, remedy: dict | None) -> str
     return drop_marketplace_entries(home, in_file, cli)
 
 
+def _run_plugin_fix(home: Path, finding: dict, remedy: dict | None) -> str | None:
+    """``swe find plugins --fix=<id>``: drift is computed again and only
+    the commands it builds run, never text from the report."""
+    from quiver.find.plugin_drift import FixError, apply_fix
+
+    drift_id = (remedy or {}).get("id")
+    if not isinstance(drift_id, str) or not drift_id:
+        raise FixRefused("that fix names no plugin drift id")
+    try:
+        apply_fix(home, drift_id)
+    except FixError as exc:
+        return str(exc)
+    return None
+
+
+def _run_dangling_link(home: Path, finding: dict, remedy: dict | None) -> str | None:
+    """Remove one broken top-level symlink in ~/.quiver or its skills
+    folder, after copying the link itself to ~/.quiver/backups.
+
+    Refuses anything that is not still a broken link sitting directly in
+    one of those two folders, so a report gone stale never removes a
+    real file or a link that works again."""
+    from quiver.paths import backup_tree, quiver_dir_for, skills_dir_for
+
+    raw = (remedy or {}).get("path")
+    if not isinstance(raw, str) or not raw:
+        raise FixRefused("that fix names no link")
+    path = Path(raw)
+    allowed = set()
+    for folder in (quiver_dir_for(home), skills_dir_for(home)):
+        try:
+            allowed.add(folder.resolve())
+        except OSError:
+            continue
+    try:
+        parent = path.parent.resolve()
+    except OSError:
+        parent = None
+    if parent not in allowed:
+        raise FixRefused(f"{raw} is not directly in ~/.quiver or its skills folder")
+    if not path.is_symlink():
+        raise FixRefused(f"{raw} is not a symlink any more")
+    if path.exists():
+        raise FixRefused(f"{raw} points at something again; left alone")
+    backup_tree(path, home)
+    path.unlink()
+    return None
+
+
 def install_problem(result, name: str) -> str | None:
     """What a captured install says went wrong, with the end of its output,
     or None once the command is on PATH."""
@@ -135,6 +188,9 @@ RUNNERS: dict[str, Runner] = {
     "marketplace-drop": _run_marketplace_drop,
     "undeclare": _run_undeclare,
     "install": _run_install,
+    "plugin-fix": _run_plugin_fix,
+    "plugin-reinstall": _run_plugin_fix,
+    "dangling-link": _run_dangling_link,
 }
 
 
