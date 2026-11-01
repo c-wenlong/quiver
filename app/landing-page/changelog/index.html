@@ -113,6 +113,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Mac and web: Hub sync card.</strong> Settings › Files shows <code>swe sync status</code> for <code>~/.swe</code> (branch mode, uncommitted changes by primitive,
+commits to push and pull, new commits on <code>origin/main</code>, files kept
+out) with a refresh that fetches first, and a Sync button that runs
+<code>swe sync</code> and says what it did. A conflict names the files and
+changes nothing; relink problems show as a warning. The web card
+syncs the hub machine's repo through <code>GET /v1/app/settings?part=hub_sync</code>
+and <code>POST /v1/app/settings/hub_sync</code> (one at a time). Sync stays
+manual; there is no timer. Part of
+<a href="https://github.com/c-wenlong/quiver/issues/525">#525</a>.</p>
+</li>
 <li><p><strong><code>swe sync</code> and <code>swe sync status</code>.</strong> Sync commits what changed in
 <code>~/.swe</code> with a generated message, merges the remote in, pushes, and
 re-links every harness (plus new plugin marketplaces, and MCP servers

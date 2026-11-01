@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "data": {
+    "path": "/tmp/quiver-fixture-home/.swe",
+    "ready": true,
+    "problem": null,
+    "mode": "device",
+    "branch": "device/desk",
+    "machine": "desk",
+    "remote": "/tmp/quiver-fixture/remote.git",
+    "upstream": "origin/device/desk",
+    "base": "origin/main",
+    "ahead": 0,
+    "behind": 0,
+    "base_behind": 1,
+    "changes": [
+      {
+        "status": "A",
+        "path": "mcp.json",
+        "group": "mcp.json"
+      },
+      {
+        "status": "A",
+        "path": "skills/deploy/SKILL.md",
+        "group": "skills"
+      }
+    ],
+    "groups": {
+      "mcp.json": 1,
+      "skills": 1
+    },
+    "held_back": [],
+    "fetched": true,
+    "fetch_error": null
+  }
+}

@@ -31,6 +31,9 @@ belongs to the hub machine:
   very hub serving it.
 - ``?part=remote``: just the remote card (devices, pair requests), which
   the section polls while it is open.
+- ``?part=hub_sync``: Files › Hub sync, ``swe sync status --json`` for
+  the hub's ``~/.swe`` (``&fetch=1`` fetches the remote first), asked for
+  apart because a fetch can take seconds.
 
 Writes, all behind the device bearer and the Origin check:
 
@@ -47,6 +50,12 @@ Writes, all behind the device bearer and the Origin check:
   into the hub's catalog. One runs at a time (a second is a 409). The
   answer is ``{"github", "failed"}``: the GitHub card read again and the
   owners whose listing failed, whose old rows the catalog keeps.
+- ``hub_sync``: Files › Hub sync › Sync, ``swe sync --json`` in process
+  for the hub's ``~/.swe`` (``{"dry_run": true}`` changes nothing). One
+  runs at a time (a second is a 409). A conflict or a refused push is
+  still a 200: the answer is ``{"result", "hub_sync"}``, the sync's own
+  document and the card read again. A repo sync can't work with at all
+  is a 409 ``sync_failed`` with swe's reason.
 - ``key_set``: ``{"name", "value", "stamp"}`` replaces a key in place,
   or with ``"provider"`` (a catalog id whose variables include ``name``)
   adds one under that provider's heading, as the Mac app's Add key does.
@@ -85,7 +94,8 @@ from swe import __version__
 from swe.webapp.pages import PageError, home_path, tilde, web_url
 from swe.webapp.pages._secrets import mask
 
-ACTIONS = ("pair", "revoke", "session_search", "sync", "key_set", "key_remove", "key_value")
+ACTIONS = ("pair", "revoke", "session_search", "sync", "hub_sync", "key_set", "key_remove",
+           "key_value")
 # A pasted key, generously: the longest real ones are a few hundred bytes.
 VALUE_MAX = 16384
 # The hub's id for the owner's own tailnet device (hub._owner_device).
@@ -94,6 +104,8 @@ TAILNET_PREFIX = "tailnet:"
 # One catalog sync at a time, held without waiting like the Doctor
 # page's Run: a second Sync now while one runs is refused, not queued.
 _SYNC_LOCK = threading.Lock()
+# One hub repo sync at a time, refused the same way.
+_HUB_SYNC_LOCK = threading.Lock()
 
 # Pairing's own file lock already makes each change atomic; this one runs
 # the page's writes in turn so a revoke and a list never interleave and
@@ -111,6 +123,10 @@ def get(ctx, args: dict) -> dict:
         return {"remote_setup": setup.evaluate(setup.gather(home=ctx.home))}
     if part == "remote":
         return {"remote": _remote(ctx)}
+    if part == "hub_sync":
+        from swe.sync.repo import status
+
+        return {"hub_sync": status(home_path(ctx), do_fetch=args.get("fetch") == "1")}
     if part:
         raise PageError(400, "bad_part", f"unknown part: {part}")
     home = home_path(ctx)
@@ -131,6 +147,8 @@ def post(ctx, action: str, body: dict) -> dict:
         # Outside the write lock: a sync lists every owner's repos and can
         # take a minute, and pairing must not wait on it.
         return _sync(ctx)
+    if action == "hub_sync":
+        return _hub_sync(ctx, body)
     with _WRITE_LOCK:
         if action == "pair":
             return {"ticket": _mint(ctx)}
@@ -505,6 +523,24 @@ def _sync(ctx) -> dict:
                 "failed": summary["failed"]}
     finally:
         _SYNC_LOCK.release()
+
+
+def _hub_sync(ctx, body: dict) -> dict:
+    """Sync: ``swe sync --json`` in process for the hub's own ``~/.swe``.
+    The answer carries the sync's document and the status card again."""
+    from swe.sync.repo import SyncError, status, sync
+
+    if not _HUB_SYNC_LOCK.acquire(blocking=False):
+        raise PageError(409, "busy", "A sync is already running. Wait for it, then try again.")
+    try:
+        home = home_path(ctx)
+        try:
+            result = sync(home, dry_run=body.get("dry_run") is True)
+        except SyncError as exc:
+            raise PageError(409, "sync_failed", str(exc)) from None
+        return {"result": result, "hub_sync": status(home)}
+    finally:
+        _HUB_SYNC_LOCK.release()
 
 
 def _paths(ctx, home: Path) -> dict:

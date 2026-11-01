@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "data": {
+    "dry_run": false,
+    "mode": "device",
+    "branch": "device/desk",
+    "machine": "desk",
+    "base": "origin/main",
+    "commit": {
+      "message": "swe sync from desk: 2 files (AGENTS.md 1, config 1)",
+      "files": [
+        {
+          "status": "A",
+          "path": ".linkignore",
+          "group": "config"
+        },
+        {
+          "status": "M",
+          "path": "AGENTS.md",
+          "group": "AGENTS.md"
+        }
+      ]
+    },
+    "merges": [
+      {
+        "ref": "origin/main",
+        "commits": 1
+      }
+    ],
+    "conflicts": [
+      "AGENTS.md"
+    ],
+    "held_back": [],
+    "pushed": false,
+    "push_error": null,
+    "relinked": null,
+    "result": "conflict"
+  }
+}
