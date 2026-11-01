@@ -830,6 +830,37 @@ the same gate `model_at_launch`/`effort_at_launch` give a pick, so a
 satellite too old to apply it is refused before anything is queued,
 never launched with checks silently on.
 
+`POST /v1/sessions` also takes `provider: "<slug>"` (#526): start the
+harness on a provider whose key is in the launching machine's own keys
+file (`~/.swe/secrets/providers/.api_keys`). How each harness takes a
+provider is declared as `capabilities.provider` in harness.json over
+`launch_provider.PROVIDER_FALLBACK`: OpenCode and Pi read the provider's
+own key variable (`GROQ_API_KEY`), Claude Code reads `ANTHROPIC_API_KEY`
+or, for an Anthropic-compatible endpoint (DeepSeek, Kimi, MiniMax,
+OpenRouter), `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` with
+`ANTHROPIC_API_KEY` blanked.
+
+How the key reaches the harness without leaking:
+
+- The pane runs `python3 -I .../remote/provider_exec.py --keys=<file>
+  --spec=<names and base URL> -- <harness argv>`. That process reads the
+  keys file itself, sets only the provider's variables, drops every
+  other variable the keys file names, and execs the harness under the
+  same pid. No key is on any argv, in the tmux command, the pending
+  marker, the supervised entry, the launch record or the journal; they
+  carry the slug.
+- With no provider picked nothing changes: no key is injected.
+- The hub never sends a key to a satellite. It checks the slug against
+  the satellite's `providers_at_launch` row (slugs whose key is set
+  there) and queues only the slug; the satellite reads its own keys
+  file. A satellite whose row lacks the field gets `409
+  unsupported_launch_option`.
+- A missing key, or a slug the harness doesn't declare, is `422
+  unsupported_provider`, worded with variable names only.
+
+From a terminal, `swe use --provider=<slug> <harness> [args]` does the
+same with this machine's keys file.
+
 On the two API channels the pick rides the session's supervised meta
 into every send — the same plumbing headless uses for `--model` — so it
 keeps applying until the session is detached. The pick also rides

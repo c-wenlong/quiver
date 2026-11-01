@@ -1588,6 +1588,7 @@ def launch_new(
     model: str | None = None,
     effort: str | None = None,
     yolo: bool = False,
+    provider: str | None = None,
 ) -> tuple[bool, str, str | None]:
     """``POST /v1/sessions``: start a fresh harness run under tmux.
 
@@ -1605,16 +1606,31 @@ def launch_new(
     harness.json ``capabilities.model``); ``effort`` is typed into the
     pane once it is up. ``yolo`` appends the harness's approval-bypass
     argv (``launch_yolo.yolo_argv``, per ``capabilities.yolo``), so the
-    session never waits on a permission prompt.
+    session never waits on a permission prompt. ``provider`` (a slug)
+    starts the harness behind ``provider_exec.py``, which reads this
+    machine's keys file and execs it with only that provider's
+    variables (``launch_provider``, per ``capabilities.provider``); no
+    key goes on argv or into the marker. A provider whose key is
+    missing here is refused before anything starts.
     ``fresh_launch_error`` names what a harness can't take. All three
     ride the marker into the supervised entry as launch bookkeeping.
     Returns ``(ok, note, tmux_name)``.
     """
-    from swe.remote import launch_model, launch_yolo
+    from swe.remote import launch_model, launch_provider, launch_yolo
 
     blocked = fresh_launch_error(tool_name, model, effort, yolo=yolo)
     if blocked:
         return False, blocked, None
+    keys_file = launch_provider.keys_path(home)
+    if provider:
+        try:
+            blocked = launch_provider.provider_error(
+                tool_name, provider,
+                keys=launch_provider.read_keys(keys_file))
+        except ValueError as exc:
+            blocked = f"can't read the keys file: {exc}"
+        if blocked:
+            return False, blocked, None
     if not binary or not shutil.which(binary):
         return False, f"{tool_name} is not installed on this machine", None
     if not cwd or not os.path.isdir(cwd):
@@ -1635,6 +1651,12 @@ def launch_new(
             argv += launch_yolo.yolo_argv(tool_name)
         except ValueError as exc:
             return False, f"can't start {tool_name} autonomously: {exc}", None
+    if provider:
+        try:
+            argv = launch_provider.wrap_argv(
+                tool_name, provider, argv, keys_file=keys_file)
+        except ValueError as exc:
+            return False, f"can't start {tool_name} on {provider}: {exc}", None
     name = launch_tmux(key, argv, cwd or None)
     if name is None:
         return False, (
@@ -1653,6 +1675,7 @@ def launch_new(
             "model": model or "",
             "effort": effort or "",
             "yolo": bool(yolo),
+            "provider": provider or "",
         }))
     except OSError:
         pass
@@ -1959,7 +1982,7 @@ def adopt_pending(
         }
         # The launch-time picks stay on the record as bookkeeping; a
         # session's *current* model is a transcript/ledger question.
-        for field in ("model", "effort"):
+        for field in ("model", "effort", "provider"):
             if pending.get(field):
                 meta[field] = str(pending[field])
         if pending.get("yolo"):

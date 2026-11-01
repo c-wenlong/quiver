@@ -211,6 +211,53 @@ def reads_launch_yolo(row: dict | None) -> bool:
     return isinstance((row or {}).get("yolo_at_launch"), list)
 
 
+def reads_launch_provider(row: dict | None) -> bool:
+    """Whether a satellite's build applies ``provider`` on a launch
+    command: the release that does reports ``providers_at_launch``."""
+    return isinstance((row or {}).get("providers_at_launch"), dict)
+
+
+def provider_option_error(row: dict | None, harness: str,
+                          provider: str | None) -> str:
+    """The refusal note when a satellite's row says its launch of
+    ``harness`` can't take ``provider``, else "". The row lists only
+    providers whose key is set on that machine, so a missing key is
+    refused here too; the satellite re-checks its own keys file when
+    the command lands."""
+    if not provider:
+        return ""
+    offered = ((row or {}).get("providers_at_launch") or {}).get(harness)
+    if isinstance(offered, list) and provider in offered:
+        return ""
+    return (f"{harness} on this machine can't take the provider "
+            f"{provider!r}: harness.json doesn't declare it, or the "
+            f"machine has no key for it")
+
+
+def provider_fields(launchable: list[dict],
+                    home: Path | str | None = None) -> dict:
+    """``providers_at_launch`` (harness -> slugs whose key is set in
+    this machine's keys file) and ``provider_names`` (slug -> label).
+    Slugs and labels only: no key value ever goes on a machine row."""
+    from swe.remote import launch_provider
+
+    try:
+        keys = launch_provider.read_keys(launch_provider.keys_path(
+            Path(home) if home is not None else None))
+    except ValueError:
+        keys = {}
+    offered: dict[str, list[str]] = {}
+    names: dict[str, str] = {}
+    for item in launchable:
+        caps = launch_provider.capability(item["name"]) or {}
+        slugs = launch_provider.configured(item["name"], keys)
+        if slugs:
+            offered[item["name"]] = slugs
+            for slug in slugs:
+                names.setdefault(slug, launch_provider.label(slug, caps[slug]))
+    return {"providers_at_launch": offered, "provider_names": names}
+
+
 def launch_option_error(row: dict | None, harness: str,
                         model: str | None, effort: str | None,
                         yolo: bool = False) -> str:
@@ -327,6 +374,7 @@ def launch_fields(launchable: list[dict],
         "yolo_at_launch": launch_op_names(launchable, "yolo"),
         "recent_models": recent,
         "last_models": {h: models[0] for h, models in recent.items()},
+        **provider_fields(launchable, home),
     }
 
 

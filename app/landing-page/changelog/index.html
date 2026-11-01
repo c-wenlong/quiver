@@ -113,6 +113,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Launch a harness on a provider from the keys file.</strong> <code>POST /v1/sessions</code> takes <code>provider: &quot;&lt;slug&gt;&quot;</code> and <code>swe use</code> takes
+<code>--provider=&lt;slug&gt;</code>: the launching machine starts the harness with
+only that provider's variables from its own keys file, as
+<code>capabilities.provider</code> declares. In a tmux pane a small wrapper
+(<code>remote/provider_exec.py</code>) reads the file and execs the harness, so
+no key goes on argv, in the launch record, the marker or the journal.
+Machine rows list <code>providers_at_launch</code> (slugs whose key is set) and
+<code>provider_names</code>; the hub forwards only the slug to a satellite.
+A missing key or an undeclared slug is a 422. Part of
+<a href="https://github.com/c-wenlong/quiver/issues/526">#526</a>.</p>
+</li>
 <li><p><strong>Hub: service status pushes.</strong> <code>swe remote notify --service-status=on</code> (the <code>service_status</code> flag in <code>notify.json</code>, off
 by default) starts a five-minute check of every tracked status page
 in <code>swe remote serve</code>, through the web app's shared poller. A model
