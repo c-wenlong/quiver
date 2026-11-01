@@ -155,7 +155,7 @@ private struct ChatTranscript: View {
                     .disabled(model.loadingEarlier)
                     .frame(maxWidth: .infinity)
                 }
-                if model.items.isEmpty {
+                if model.items.isEmpty, model.streaming.isEmpty {
                     Text("No messages yet.")
                         .font(Theme.bodySmall).foregroundStyle(Theme.textSecondary)
                 }
@@ -170,6 +170,11 @@ private struct ChatTranscript: View {
                             Task { await model.decide(rid, decision) }
                         }
                     }
+                }
+                // Replies still being written, newest text last; each one's
+                // final message takes its place in the transcript above.
+                ForEach(model.streaming) { item in
+                    ChatEntry(item: item) { _, _ in }
                 }
                 if model.working {
                     WorkingDots().accessibilityLabel("Agent is working")

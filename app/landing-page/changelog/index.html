@@ -149,6 +149,21 @@ A marketplace <code>--fix</code> registers shows its uninstalled plugins to the
 next pass, which installs them. Part of
 <a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
 </li>
+<li><p><strong>Live reply text on iPhone, web and Mac.</strong> The chat draws a reply
+word by word while a Codex app-server, opencode serve or headless
+Claude session writes it: <code>message.delta</code> text grows a bubble at the
+end of the transcript, rendered with the same Markdown as the final
+message and repainted at most every 80 ms. The next live
+<code>message.appended</code> of the same kind takes the oldest open bubble's
+place; on iPhone and web it is matched as it arrives and swaps in
+when the reveal queue shows it, without the arrival animation or
+pause. A missed delta stops drawing that bubble until its final
+lands, and a bubble whose final never comes goes 3 seconds after the
+session goes idle, or when the stream reconnects. The rules live in
+<code>ReplyStreams.swift</code> (the Mac's and iPhone's copies are identical)
+and its port in <code>pages/chat.js</code>. Closes
+<a href="https://github.com/c-wenlong/quiver/issues/1444">#1444</a>.</p>
+</li>
 <li><p><strong><code>swe doctor --fix</code>.</strong> Runs every safe local fix doctor found, in
 order (setup, then discover, then init), reads the report again after
 each step, and prints what it fixed and what is left.
@@ -206,8 +221,7 @@ and resume cursors are untouched; the final <code>message.appended</code>
 replaces the streamed text. Satellites coalesce their own and relay
 them only to a hub that advertises <code>message_delta</code>. tmux sessions
 stay record-by-record. Part of
-<a href="https://github.com/c-wenlong/quiver/issues/1444">#1444</a>; the client
-bubbles follow.</p>
+<a href="https://github.com/c-wenlong/quiver/issues/1444">#1444</a>.</p>
 </li>
 <li><p><strong>iPhone: the paired hubs move to an App Group and a shared Keychain
 group.</strong> The hub list now lives in <code>group.com.quiver.remote</code> and each
