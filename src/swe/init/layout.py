@@ -130,7 +130,7 @@ def _signature_installed(sig: HarnessSignature, home: Path) -> bool:
     already made its config dir counts as installed even when the skills
     dir inside it does not exist yet. Only the skills parent can imply a
     harness — instruction files may live in shared locations (cline reads
-    ``~/.agents/AGENTS.md``, and ``~/.agents`` was quiver's own pre-0.2.7
+    ``~/.agents/AGENTS.md``, and ``~/.agents`` was swe's own pre-0.2.7
     root, so a leftover proves nothing about cline) — so a signature with
     no skills root must name its evidence explicitly.
     """
@@ -190,7 +190,7 @@ INSTRUCTION_TARGETS: tuple[tuple[str, Path], ...] = tuple(
 )
 
 # Skill roots beyond signatures are still discovered, not listed: a harness
-# quiver has no signature for still creates its own skills/ directory on
+# swe has no signature for still creates its own skills/ directory on
 # first run, and the scan finds it. ~60 roots where a fixed list found 14.
 SKILL_SCAN_GLOBS: tuple[str, ...] = (".*/skills", ".config/*/skills")
 
@@ -226,11 +226,11 @@ def discover_skill_roots(
     """Every skills/ directory a harness might read, one level into a dotdir.
 
     Three sources: signature roots for known harnesses whose evidence is on
-    disk, the shallow glob for harnesses quiver has no signature for, and
+    disk, the shallow glob for harnesses swe has no signature for, and
     roots harness.json declares — a ``capabilities.skills.root`` need not be
     glob-shaped (``~/.pi/agent/skills`` is two levels down). Deliberately
     not a full recursive walk: project-level .cursor/skills lives all over
-    Desktop and is none of quiver's business. Only the shared root itself
+    Desktop and is none of swe's business. Only the shared root itself
     is excluded, since it is the link target rather than a target.
     """
     home = home or Path.home()
@@ -572,7 +572,7 @@ Replace this section with your own rules.
 
 @dataclass
 class LinkStatus:
-    """One harness path and what quiver would do with it."""
+    """One harness path and what swe would do with it."""
 
     label: str
     path: Path
@@ -769,8 +769,8 @@ def inspect(label: str, rel: Path, canonical: Path, home: Path) -> LinkStatus:
             return LinkStatus(label, path, "relink", "unreadable symlink")
         if current == canonical or _chain_lands_on(path, canonical):
             # The chain case is Home Manager: the harness file links into
-            # the nix store, whose entry links back out to the quiver copy.
-            # quiver still owns the only real content, so init must leave
+            # the nix store, whose entry links back out to the swe copy.
+            # swe still owns the only real content, so init must leave
             # it alone rather than fight nix over the first hop.
             return LinkStatus(label, path, "linked", "")
         return LinkStatus(label, path, "relink", f"points at {current}")
@@ -922,7 +922,7 @@ def link_states(home: Path | None = None) -> dict[str, dict[str, str]]:
     """Map registry tool name -> {"agents": state, "skills": state}.
 
     States are the same vocabulary ``inspect`` produces, so a caller can render
-    them without knowing how quiver decides them. Tools with no known
+    them without knowing how swe decides them. Tools with no known
     instruction convention simply do not appear under "agents".
     """
     home = home or Path.home()

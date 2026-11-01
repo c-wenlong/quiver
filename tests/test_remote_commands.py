@@ -2,6 +2,7 @@
 
 import io
 import json
+import plistlib
 import socket
 import tempfile
 import unittest
@@ -11,6 +12,8 @@ from unittest.mock import MagicMock, patch
 
 from swe.remote import commands, pairing, supervise
 from swe.sessions.models import Session
+
+from tests._tempdir import temp_dir
 
 
 def _run(args):
@@ -591,7 +594,7 @@ class TestDevicesList(unittest.TestCase):
         devices = {"d1": {
             "name": "phone", "display_name": "Dev's",
             "kind": "iphone", "model": "iPhone16,2",
-            "client": "Quiver Remote 1.0", "os": "iOS 18.5",
+            "client": "SWE Remote 1.0", "os": "iOS 18.5",
             "node_name": "test-iphone.ts.net", "paired_via": "tailscale",
             "credential_hash": "secret-hash",
             "created_at": 1, "last_seen_at": 1_700_000_000,
@@ -603,7 +606,7 @@ class TestDevicesList(unittest.TestCase):
         row = json.loads(out)["data"]["devices"][0]
         self.assertEqual(row["display_name"], "Dev's")
         self.assertEqual(row["kind"], "iphone")
-        self.assertEqual(row["client"], "Quiver Remote 1.0")
+        self.assertEqual(row["client"], "SWE Remote 1.0")
         self.assertEqual(row["node_name"], "test-iphone.ts.net")
         self.assertNotIn("credential_hash", row)
         self.assertNotIn("credential", row)
@@ -981,6 +984,42 @@ class TestUnwritableHome(unittest.TestCase):
                           side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 _run(["devices"])
+
+
+class TestServiceConflict(unittest.TestCase):
+    """The other service blocks an install under either of its labels."""
+
+    def setUp(self):
+        self.home = temp_dir(self)
+        self.agents = self.home / "Library" / "LaunchAgents"
+        self.agents.mkdir(parents=True)
+
+    def _plist(self, label):
+        path = self.agents / f"{label}.plist"
+        path.write_bytes(plistlib.dumps({"Label": label}))
+        return path
+
+    def test_a_legacy_agent_plist_blocks_the_hub_install(self):
+        old = self._plist(commands.AGENT.old_label)
+        with patch.object(commands.sys, "platform", "darwin"):
+            conflict = commands.service_conflict(commands.HUB, self.home)
+        self.assertIn("satellite agent is installed", conflict)
+        self.assertIn(str(old), conflict)
+
+    def test_a_legacy_hub_plist_blocks_the_agent_install(self):
+        self._plist(commands.HUB.old_label)
+        with patch.object(commands.sys, "platform", "darwin"):
+            conflict = commands.service_conflict(commands.AGENT, self.home)
+        self.assertIn("hub is installed", conflict)
+
+    def test_agent_report_counts_a_legacy_install(self):
+        old = self._plist(commands.AGENT.old_label)
+        with patch.object(commands.sys, "platform", "darwin"), \
+             patch.object(commands, "_service_problem", return_value=None), \
+             patch.object(commands, "service_status", return_value=(None, False)):
+            report = commands.agent_service_report(self.home)
+        self.assertTrue(report["installed"])
+        self.assertEqual(report["service"], str(old))
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from swe.remote import launch_provider as lp
 from swe.remote import plan_providers
 
 SWIFT = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources"
-         / "QuiverCore" / "Providers" / "InferencePlans.swift")
+         / "SWECore" / "Providers" / "InferencePlans.swift")
 SECRET = "plan-key-test-not-real"
 
 

@@ -1,6 +1,6 @@
 """When a provider starts or stops being affected, for the hub's pushes.
 
-A port of the Mac app's ``QuiverCore/Status/ServiceStatusAlerts.swift``;
+A port of the Mac app's ``SWECore/Status/ServiceStatusAlerts.swift``;
 keep the two in step. Only the two provider groups notify, from a minor
 incident up (the menu line's bar for them), one alert per new incident,
 and scheduled maintenance never does. Each ``service@incident`` key is

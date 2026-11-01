@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Package a built Quiver.app into Quiver-<version>.dmg: a laid-out install
+# Package a built SWE.app into SWE-<version>.dmg: a laid-out install
 # window with the app on the left, an /Applications link on the right and
 # a drag arrow between them (dmg-settings.py, make-dmg-background.swift).
 # LICENSE and THIRD_PARTY_NOTICES.md travel inside the bundle (build-app.sh).
 #
-#   app/mac/script/make-dmg.sh [path/to/Quiver.app] [output.dmg]
+#   app/mac/script/make-dmg.sh [path/to/SWE.app] [output.dmg]
 #
-# Defaults: the app is "$QUIVER_BUILD_DIR/Quiver.app" (else
-# app/mac/build/Quiver.app), and the DMG lands next to it, named after the
-# bundle's CFBundleShortVersionString ("Quiver-1.0.0.dmg", or plain
-# "Quiver.dmg" when the bundle carries no real version).
+# Defaults: the app is "$SWE_BUILD_DIR/SWE.app" (else
+# app/mac/build/SWE.app), and the DMG lands next to it, named after the
+# bundle's CFBundleShortVersionString ("SWE-1.0.0.dmg", or plain
+# "SWE.dmg" when the bundle carries no real version).
 #
 # The app inside must already be signed: build-app.sh does that, with
 # the hardened runtime and a secure timestamp on prod. This script adds
@@ -17,8 +17,8 @@
 #
 #   1. Notarizes and staples the .app first when it does not already
 #      carry a ticket (stapler validate), so a build signed without
-#      QUIVER_NOTARY_PROFILE still ships stapled.
-#   2. Signs the DMG itself with QUIVER_SIGN_IDENTITY, or the first
+#      SWE_NOTARY_PROFILE still ships stapled.
+#   2. Signs the DMG itself with SWE_SIGN_IDENTITY, or the first
 #      "Developer ID Application" identity in the keychain. Ad-hoc or
 #      unsigned apps get an unsigned DMG.
 #   3. Submits the DMG to notarization and staples the ticket onto it,
@@ -27,7 +27,7 @@
 #
 # Notarization takes one of two credential forms, the same contract
 # build-app.sh and release.yml use (see BOOTSTRAP.md):
-#   QUIVER_NOTARY_PROFILE                      a `notarytool
+#   SWE_NOTARY_PROFILE                        a `notarytool
 #                                              store-credentials` keychain
 #                                              profile (the local flow)
 #   NOTARY_KEY + NOTARY_KEY_ID + NOTARY_ISSUER the App Store Connect API
@@ -44,7 +44,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
-app="${1:-${QUIVER_BUILD_DIR:-$here/build}/Quiver.app}"
+app="${1:-${SWE_BUILD_DIR:-${QUIVER_BUILD_DIR:-$here/build}}/SWE.app}"
 
 if [ ! -d "$app" ] || [ ! -f "$app/Contents/Info.plist" ]; then
   echo "make-dmg: $app is not a built .app; run script/build-app.sh first" >&2
@@ -54,8 +54,8 @@ app="$(cd "$app" && pwd -P)"
 
 version="$(defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null || true)"
 case "$version" in
-  ""|0.0.0|*[!0-9.]*) name="Quiver.dmg" ;;
-  *)                  name="Quiver-$version.dmg" ;;
+  ""|0.0.0|*[!0-9.]*) name="SWE.dmg" ;;
+  *)                  name="SWE-$version.dmg" ;;
 esac
 out="${2:-$(dirname "$app")/$name}"
 mkdir -p "$(dirname "$out")"
@@ -67,9 +67,9 @@ trap 'rm -rf "$scratch"' EXIT
 # submission should happen at all; notary_args carries how.
 have_notary=false
 notary_args=()
-if [ -n "${QUIVER_NOTARY_PROFILE:-}" ]; then
+if [ -n "${SWE_NOTARY_PROFILE:-${QUIVER_NOTARY_PROFILE:-}}" ]; then
   have_notary=true
-  notary_args=(--keychain-profile "$QUIVER_NOTARY_PROFILE")
+  notary_args=(--keychain-profile "${SWE_NOTARY_PROFILE:-$QUIVER_NOTARY_PROFILE}")
 elif [ -n "${NOTARY_KEY:-}${NOTARY_KEY_ID:-}${NOTARY_ISSUER:-}" ]; then
   if [ -z "${NOTARY_KEY:-}" ] || [ -z "${NOTARY_KEY_ID:-}" ] || [ -z "${NOTARY_ISSUER:-}" ]; then
     echo "make-dmg: NOTARY_KEY, NOTARY_KEY_ID and NOTARY_ISSUER must all be" >&2
@@ -100,7 +100,7 @@ if [ "$have_notary" = false ]; then
   if [ "$app_signed" = "devid" ]; then
     echo "make-dmg: $app is Developer-ID-signed but no notarization" >&2
     echo "credentials were given; Gatekeeper rejects the result on every" >&2
-    echo "other Mac. Set QUIVER_NOTARY_PROFILE or NOTARY_KEY, NOTARY_KEY_ID" >&2
+    echo "other Mac. Set SWE_NOTARY_PROFILE or NOTARY_KEY, NOTARY_KEY_ID" >&2
     echo "and NOTARY_ISSUER (see BOOTSTRAP.md)." >&2
     exit 1
   fi
@@ -118,8 +118,8 @@ else
     echo "make-dmg: app already carries a stapled ticket" >&2
   else
     echo "make-dmg: notarizing $app" >&2
-    ditto -c -k --keepParent "$app" "$scratch/Quiver.zip"
-    notarize "$scratch/Quiver.zip"
+    ditto -c -k --keepParent "$app" "$scratch/SWE.zip"
+    notarize "$scratch/SWE.zip"
     xcrun stapler staple "$app"
   fi
 fi
@@ -146,12 +146,12 @@ tiffutil -cathidpicheck "$scratch/background.png" "$scratch/background@2x.png" \
 
 "$scratch/venv/bin/dmgbuild" -s "$here/script/dmg-settings.py" \
   -D app="$app" -D background="$scratch/background.tiff" \
-  Quiver "$out" >/dev/null
+  SWE "$out" >/dev/null
 hdiutil verify "$out" >/dev/null
 
 # Sign the image when a real identity is around; "-" or none leaves it
 # unsigned, which is what the ad-hoc path wants anyway.
-identity="${QUIVER_SIGN_IDENTITY:-}"
+identity="${SWE_SIGN_IDENTITY:-${QUIVER_SIGN_IDENTITY:-}}"
 if [ -z "$identity" ]; then
   identity="$(security find-identity -v -p codesigning 2>/dev/null \
     | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) "Developer ID Application: .*/\1/p' \

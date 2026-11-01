@@ -71,7 +71,7 @@ def plan_migration(home: Path | None = None) -> MigrationPlan | None:
     plan = MigrationPlan(source=source)
     config_dir = paths.config_dir_for(home)
     cache_dir = paths.cache_dir_for(home)
-    quiver = paths.swe_dir_for(home)
+    swe = paths.swe_dir_for(home)
 
     for entry in sorted(source.iterdir()):
         name = entry.name
@@ -82,12 +82,12 @@ def plan_migration(home: Path | None = None) -> MigrationPlan | None:
         elif name in CONFIG_FILES:
             plan.moved.append((entry, config_dir / name))
         elif name in PASSTHROUGH_DIRS:
-            plan.moved.append((entry, quiver / name))
+            plan.moved.append((entry, swe / name))
         elif name == "mcp.json":
             # The hub lives at ~/.swe/mcp.json, not in config/: every MCP
             # reader resolves the root path, so landing it under config/
             # stranded every server until the user found the file.
-            plan.moved.append((entry, quiver / name))
+            plan.moved.append((entry, swe / name))
         elif _is_credential_file(name):
             # A stray .env landing in config/ would be one `git add .` from
             # a committed key: config/ is the versioned tree, so credential
@@ -159,7 +159,7 @@ def apply_migration(plan: MigrationPlan, remove_source: bool = True) -> Migratio
         if not leftovers:
             plan.source.rmdir()
             parent = plan.source.parent
-            # Tidy ~/.config too, but only if quiver was the only thing in it.
+            # Tidy ~/.config too, but only if swe was the only thing in it.
             if parent.name == ".config" and parent.is_dir() and not any(parent.iterdir()):
                 parent.rmdir()
     return plan

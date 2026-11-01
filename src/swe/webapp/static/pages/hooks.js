@@ -464,13 +464,13 @@ function hkCreated(sheet, c) {
     where = "the harness's settings file";
   }
   if (c.stanza) {
-    block = `<p class="caption">Declare it yourself — quiver never writes a settings file. Paste this into ${esc(where)}:</p>
+    block = `<p class="caption">Declare it yourself — swe never writes a settings file. Paste this into ${esc(where)}:</p>
       <div class="hk-stanza command-wrap"><pre class="hk-text">${esc(c.stanza)}</pre>
         <button type="button" class="icon-button command-copy" id="hk-copy" aria-label="Copy the stanza" title="Copy the stanza">${Fmt.copyIcon()}</button></div>`;
   } else if (c.commands && Object.keys(c.commands).length) {
     const lines = Object.keys(c.commands).sort().filter((k) => c.commands[k])
       .map((k) => `${k}: ${c.commands[k]}`).join("\n");
-    block = `<p class="caption">Declare it yourself — quiver never writes a settings file. Declare the wrapper in each harness's hooks map:</p>
+    block = `<p class="caption">Declare it yourself — swe never writes a settings file. Declare the wrapper in each harness's hooks map:</p>
       <pre class="hk-text">${esc(lines)}</pre>`;
   } else {
     block = `<p class="caption">Edit its # events: [...] header — that is what deploys it — then swe hooks sync generates the wrappers.</p>`;

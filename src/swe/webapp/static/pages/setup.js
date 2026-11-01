@@ -1,5 +1,5 @@
 /* First-run setup: a port of the Mac app's FirstRunSetupSheet (and
- * QuiverCore's FirstRunSetupModel) for the machine the hub runs on, at
+ * SWECore's FirstRunSetupModel) for the machine the hub runs on, at
  * #/setup. Not in the sidebar. The page opens on a "Set up this machine"
  * card; its steps are the sheet's first three: the agents you use, one
  * AGENTS.md, skills folder and MCP list for all of them, and the look

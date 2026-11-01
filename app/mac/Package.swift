@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Quiver",
+    name: "SWE",
     platforms: [.macOS(.v26)],
     products: [
-        .executable(name: "Quiver", targets: ["QuiverApp"]),
-        .executable(name: "QuiverWidgets", targets: ["QuiverWidgets"]),
-        .executable(name: "QuiverFanHelper", targets: ["QuiverFanHelper"]),
+        .executable(name: "SWE", targets: ["SWEApp"]),
+        .executable(name: "SWEWidgets", targets: ["SWEWidgets"]),
+        .executable(name: "SWEFanHelper", targets: ["SWEFanHelper"]),
     ],
     dependencies: [
         // In-app updates. Pinned exactly: this framework ships signed inside
@@ -18,15 +18,15 @@ let package = Package(
 
     targets: [
         // Everything testable: models, the swe client, scanners, view models.
-        .target(name: "QuiverCore", resources: [.process("Resources")]),
+        .target(name: "SWECore", resources: [.process("Resources")]),
         // The widget views, shared by the extension that draws them and the
         // app's Desktop widgets previews.
-        .target(name: "QuiverWidgetsUI", dependencies: ["QuiverCore"]),
-        // The SwiftUI shell. Kept thin so behaviour lives in QuiverCore.
+        .target(name: "SWEWidgetsUI", dependencies: ["SWECore"]),
+        // The SwiftUI shell. Kept thin so behaviour lives in SWECore.
         .executableTarget(
-            name: "QuiverApp",
+            name: "SWEApp",
             dependencies: [
-                "QuiverCore", "QuiverWidgetsUI",
+                "SWECore", "SWEWidgetsUI",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             // Sparkle.framework is copied into Contents/Frameworks by
@@ -36,28 +36,28 @@ let package = Package(
             ])]
         ),
         // The WidgetKit extension. SwiftPM builds it as a plain executable;
-        // script/build-app.sh wraps it in an .appex inside Quiver.app. The
+        // script/build-app.sh wraps it in an .appex inside SWE.app. The
         // entry point must be _NSExtensionMain (which Xcode sets on extension
         // targets): without it the Swift main returns at launch and the
         // extension exits before chronod can read its widgets.
         .executableTarget(
-            name: "QuiverWidgets",
-            dependencies: ["QuiverCore", "QuiverWidgetsUI"],
+            name: "SWEWidgets",
+            dependencies: ["SWECore", "SWEWidgetsUI"],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]
         ),
         // The root fan helper the fan popover installs. Its own executable
-        // with QuiverCore only: it runs from /Library/PrivilegedHelperTools,
+        // with SWECore only: it runs from /Library/PrivilegedHelperTools,
         // where the app's Sparkle rpath finds nothing.
-        .executableTarget(name: "QuiverFanHelper", dependencies: ["QuiverCore"]),
+        .executableTarget(name: "SWEFanHelper", dependencies: ["SWECore"]),
         .testTarget(
-            name: "QuiverCoreTests",
-            dependencies: ["QuiverCore"],
+            name: "SWECoreTests",
+            dependencies: ["SWECore"],
             resources: [.copy("Fixtures")]
         ),
         .testTarget(
-            name: "QuiverWidgetsUITests",
-            dependencies: ["QuiverWidgetsUI"]
+            name: "SWEWidgetsUITests",
+            dependencies: ["SWEWidgetsUI"]
         ),
-        .testTarget(name: "QuiverAppUITests", dependencies: ["QuiverApp", "QuiverCore"]),
+        .testTarget(name: "SWEAppUITests", dependencies: ["SWEApp", "SWECore"]),
     ]
 )

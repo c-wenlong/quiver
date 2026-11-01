@@ -1,7 +1,7 @@
 """Write side of the FTS5 session-search index (ports the Swift writer).
 
-The Quiver app on macOS fills ``~/.swe/data/search/search.sqlite`` as
-it scans transcripts (``QuiverCore/Search``: ``SearchSchema``,
+The SWE app on macOS fills ``~/.swe/data/search/search.sqlite`` as
+it scans transcripts (``SWECore/Search``: ``SearchSchema``,
 ``SearchStore``, ``SearchIndexer``). A machine without the app, such as a
 Linux hub, had no index, so ``/v1/search`` and ``swe session --search``
 matched titles only. This module writes the same file from Python, so the
@@ -269,7 +269,7 @@ def _open_existing(path: Path) -> sqlite3.Connection:
             raise IndexUnavailable(
                 f"the index at {path} is schema version {version or 'unknown'}, "
                 f"and this swe writes version {SCHEMA_VERSION}; update swe "
-                "(the Quiver app rebuilds its own index)"
+                "(the SWE app rebuilds its own index)"
             )
         if not _fts5_available(conn):
             raise IndexUnavailable("this Python's SQLite has no FTS5")

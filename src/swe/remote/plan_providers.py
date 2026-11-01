@@ -14,7 +14,7 @@ Anthropic credential variable is blanked so an inherited key never
 reaches the plan's endpoint.
 
 ``PLANS`` is a port of ``InferenceCatalog.all``
-(``app/mac/Sources/QuiverCore/Providers/InferencePlans.swift``):
+(``app/mac/Sources/SWECore/Providers/InferencePlans.swift``):
 ``(id, name, key variable, Claude Code key variable, model or None,
 ((region, base URL), ...))``. ``tests/test_remote_plan_providers.py``
 fails when the two drift. A plan sold in several regions gives one slug

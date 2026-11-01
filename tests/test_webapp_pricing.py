@@ -35,7 +35,7 @@ def catalog():
          "gpt-y": _rates(2e-06, 8e-06, input_cost_per_token_priority=3.5e-06)},
         {"tier_multipliers": {"claude-opus-5": {"fast": 2}},
          "default_tier_multipliers": {"priority": 2}},
-        overrides={"gpt-x"}, quiver={"grok-mine"})
+        overrides={"gpt-x"}, swe={"grok-mine"})
 
 
 class _Store(unittest.TestCase):
@@ -234,7 +234,7 @@ class TestBrands(unittest.TestCase):
     def test_the_table_mirrors_the_swift_one_row_for_row(self):
         import re
         path = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources"
-                / "QuiverCore" / "Models" / "ModelBrands.swift")
+                / "SWECore" / "Models" / "ModelBrands.swift")
         if not path.exists():
             self.skipTest("no app/mac/ in this checkout")
         swift = path.read_text()

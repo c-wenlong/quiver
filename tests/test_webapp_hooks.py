@@ -315,7 +315,7 @@ class TestNew(_HooksHome, unittest.TestCase):
         stanza = json.loads(created["stanza"])
         command = stanza["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         self.assertEqual(command, created["command"])
-        # quiver never writes a settings file: nothing was created for it.
+        # swe never writes a settings file: nothing was created for it.
         self.assertFalse((self.home / ".claude" / "settings.json").exists())
         self.assertFalse((self.home / ".claude" / "settings.local.json").exists())
         # The reply is the list read again: the new row is there.

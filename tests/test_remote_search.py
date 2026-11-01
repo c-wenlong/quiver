@@ -84,8 +84,8 @@ class SearchTest(unittest.TestCase):
         self.assertTrue(all(r["snippet"] for r in out))
 
     def test_words_apart_across_title_and_folder(self):
-        rows = [_row("k1", "s1", "Ledger fix", cwd="/work/quiver"), _row("k2", "s2", "Ledger quiver")]
-        keys = [r["key"] for r in search.search(rows, "quiver ledger", home=self.home)["results"]]
+        rows = [_row("k1", "s1", "Ledger fix", cwd="/work/swe"), _row("k2", "s2", "Ledger swe")]
+        keys = [r["key"] for r in search.search(rows, "swe ledger", home=self.home)["results"]]
         # k2's title holds both words; k1 has them across title and folder.
         self.assertEqual(keys, ["k2", "k1"])
 

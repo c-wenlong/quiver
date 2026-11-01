@@ -70,7 +70,7 @@ def _anthropic_compatible(base_url: str, *sources: str) -> dict:
                     "ANTHROPIC_API_KEY": ""}}
 
 
-# Quiver's provider slugs (providers/defaults.py) to the variables each
+# SWE's provider slugs (providers/defaults.py) to the variables each
 # harness reads. Pi reads KIMI_API_KEY and ZAI_API_KEY as coding-plan
 # keys, so the pay-as-you-go kimi goes in as MOONSHOT_API_KEY and zai
 # is left out.

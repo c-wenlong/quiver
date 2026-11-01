@@ -2,7 +2,7 @@
 
 ``swe doctor`` used to diagnose one thing: Node/PATH mismatches that hide a
 globally installed harness. This module adds a second, unrelated kind of
-health check — places where two parts of quiver that are supposed to agree
+health check — places where two parts of swe that are supposed to agree
 have quietly drifted apart:
 
   * every ``help_text.py`` topic should have a matching command, and vice
@@ -569,7 +569,7 @@ def _real_symlink_dirs(repo_root: Path, home: Path) -> list[Path]:
 
 
 def _default_repo_root() -> Path:
-    # src/swe/harness/drift.py -> .../harness -> .../quiver (src) -> repo root
+    # src/swe/harness/drift.py -> .../harness -> .../swe (src) -> repo root
     return Path(__file__).resolve().parents[3]
 
 

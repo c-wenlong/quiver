@@ -100,7 +100,7 @@ class TestResolve(unittest.TestCase):
 class TestLoading(unittest.TestCase):
     def test_bundled_copies_match_the_mac_app(self):
         """The Python snapshot is a copy of the app's; refresh both together."""
-        app = REPO / "app" / "mac" / "Sources" / "QuiverCore" / "Resources"
+        app = REPO / "app" / "mac" / "Sources" / "SWECore" / "Resources"
         if not app.is_dir():
             self.skipTest("no app/mac/ in this checkout")
         for name in ("pricing.json", "pricing-supplement.json"):

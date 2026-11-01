@@ -1,4 +1,4 @@
-"""Transcript lines to search-index rows (ports ``QuiverCore/Search``).
+"""Transcript lines to search-index rows (ports ``SWECore/Search``).
 
 The Swift app and :mod:`swe.sessions.search_writer` write the same
 index file, so the rows they produce for one transcript have to agree. This

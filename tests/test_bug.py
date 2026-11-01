@@ -18,7 +18,7 @@ class IssueUrlTests(unittest.TestCase):
 
     def test_bug_link_fills_area_version_and_os(self):
         url = bug.issue_url("bug", "swe 1.1.1 · Python 3.12.8", "macOS 26.1")
-        self.assertTrue(url.startswith("https://github.com/c-wenlong/quiver/issues/new?"))
+        self.assertTrue(url.startswith("https://github.com/c-wenlong/swe/issues/new?"))
         self.assertEqual(_query(url), {
             "template": "bug_report.yml", "area": "CLI (swe)",
             "version": "swe 1.1.1 · Python 3.12.8", "os": "macOS 26.1",
@@ -98,7 +98,7 @@ class CmdBugTests(unittest.TestCase):
     def test_prints_the_link_when_no_browser_opens(self):
         status, out, _ = self._run([], opened=False)
         self.assertEqual(status, 0)
-        self.assertTrue(out.startswith("https://github.com/c-wenlong/quiver/issues/new?"))
+        self.assertTrue(out.startswith("https://github.com/c-wenlong/swe/issues/new?"))
 
     def test_json_opens_nothing(self):
         status, out, browser = self._run(["--json"])

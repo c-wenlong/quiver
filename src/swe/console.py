@@ -98,7 +98,7 @@ def fill_ansi(text: str, width: int) -> str:
 # Every escape class a terminal acts on: OSC (links, clipboard writes,
 # titles) through BEL or ST or end-of-string, CSI including private
 # parameter bytes, charset designations, and two-byte escapes. SGR is the
-# only kind quiver emits itself, but strings arriving from transcripts,
+# only kind swe emits itself, but strings arriving from transcripts,
 # titles, and filenames can carry any of them.
 _ESCAPES_RE = re.compile(
     # OSC … BEL / ST / unterminated. ``\x9c`` is the C1 spelling of ST:

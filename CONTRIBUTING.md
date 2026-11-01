@@ -5,8 +5,8 @@ Thanks for your interest in contributing! swe is a small, stdlib-only CLI — we
 ## Getting started
 
 ```bash
-git clone https://github.com/c-wenlong/quiver.git
-cd quiver
+git clone https://github.com/c-wenlong/swe.git
+cd swe
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]"
 HOME="$(mktemp -d)" python3 -m unittest discover -s tests -p 'test_*.py'
@@ -109,7 +109,7 @@ Taking part in this project means agreeing to the [Code of Conduct](CODE_OF_COND
 
 ## Reporting bugs
 
-Use the [bug report template](https://github.com/c-wenlong/quiver/issues/new?template=bug_report.yml) and include:
+Use the [bug report template](https://github.com/c-wenlong/swe/issues/new?template=bug_report.yml) and include:
 
 - Your OS and Python version, plus the swe version from `swe version`
 - The exact command that failed and its full output
@@ -118,6 +118,6 @@ Use the [bug report template](https://github.com/c-wenlong/quiver/issues/new?tem
 ## Questions?
 
 [SUPPORT.md](SUPPORT.md) has the full ladder: read the docs, run `swe doctor`,
-then open an [issue](https://github.com/c-wenlong/quiver/issues). Discussions
+then open an [issue](https://github.com/c-wenlong/swe/issues). Discussions
 are not enabled on this repo, so issues are the only channel — and we're happy
 to help you find a good first task there.

@@ -283,7 +283,7 @@ class LinkStatesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = _fake_home(tmp)
             states = link_states(home)
-            # quiver calls it "qwen", tools.json calls it "qwen-code".
+            # swe calls it "qwen", tools.json calls it "qwen-code".
             self.assertIn("qwen-code", states)
             self.assertNotIn("qwen", states)
 
@@ -447,7 +447,7 @@ class RateLimitNegativeCacheTest(unittest.TestCase):
 
 class ChainLandsOnCanonicalTest(unittest.TestCase):
     """A Home-Manager-style two-hop chain (harness file -> store link ->
-    quiver file) counts as linked: quiver owns the only real content, so
+    swe file) counts as linked: swe owns the only real content, so
     neither init nor find should fight nix over the first hop."""
 
     def test_two_hop_chain_reads_linked(self):

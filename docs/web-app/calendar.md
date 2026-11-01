@@ -1,7 +1,7 @@
 # Calendar
 
 The Mac app's Calendar page (`CalendarPage.swift`, model in
-`QuiverCore/Calendar/`): when each harness was actually working on the
+`SWECore/Calendar/`): when each harness was actually working on the
 hub machine, drawn as blocks of activity per project on a day grid.
 
 Files: `src/swe/webapp/pages/calendar.py` (data),
