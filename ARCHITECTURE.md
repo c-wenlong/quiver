@@ -124,7 +124,8 @@ to the old path.
 repo, so git stays the only transport. It commits what changed, merges the
 remote in, pushes, and, when something came in, runs what `swe init --hub`
 runs after a clone: the link pass, `register_marketplaces`, and `swe mcp sync
-swe --all` when `mcp.json` changed. The branch decides the mode. On
+swe --all --force --only=<servers>` for the servers the merge added or changed
+in `mcp.json` (removed ones are a note). The branch decides the mode. On
 `device/<machine>` it merges `origin/device/<machine>` and then the remote's
 default branch, and pushes only the device branch, so `main` changes only when
 someone merges into it on purpose. On any other branch every machine shares

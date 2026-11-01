@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import shutil
 import socket
@@ -261,8 +262,10 @@ def _stage(state: RepoState, env: dict | None = None) -> None:
     better, but git fails the whole add when one names an ignored folder."""
     paths = _changed_paths(state, env)
     if paths:
+        # Literal: these are file names from git status, and one such as
+        # ":notes.md" must not be read as pathspec magic.
         _git(state.root, "add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul",
-             env=env, input="\0".join(paths))
+             env={**(env or {}), "GIT_LITERAL_PATHSPECS": "1"}, input="\0".join(paths))
 
 
 def _staged(state: RepoState, env: dict | None = None) -> list[tuple[str, str]]:
@@ -538,7 +541,8 @@ def _sync_locked(home: Path, dry_run: bool, relink) -> dict:
         raw = _out(state.root, "diff", "--name-only", "-z", mid or EMPTY_TREE, "HEAD")
         changed = [p for p in raw.split("\0") if p]
         if changed:
-            doc["relinked"] = (relink or default_relink)(home, changed)
+            doc["relinked"] = (relink(home, changed) if relink
+                               else default_relink(home, changed, base=mid))
     # Never --force: a push the remote refuses (someone pushed meanwhile)
     # is reported, and the next sync merges it in.
     push_args = ["push", "--quiet"]
@@ -559,7 +563,31 @@ def _sync_locked(home: Path, dry_run: bool, relink) -> dict:
     return doc
 
 
-def default_relink(home: Path, changed: list[str]) -> dict:
+def mcp_server_changes(home: Path, base: str | None) -> tuple[list[str], list[str]]:
+    """``(added or changed, removed)`` server names between ``base``'s
+    ``mcp.json`` and HEAD's. Without a base every server counts as new."""
+    root = swe_dir_for(home)
+
+    def servers(rev: str | None) -> dict:
+        if rev is None:
+            return {}
+        shown = _git(root, "show", f"{rev}:mcp.json", check=False)
+        if shown.returncode != 0:
+            return {}
+        try:
+            data = json.loads(shown.stdout)
+        except ValueError:
+            return {}
+        found = data.get("mcpServers") if isinstance(data, dict) else None
+        return found if isinstance(found, dict) else {}
+
+    old, new = servers(base), servers("HEAD")
+    changed = sorted(name for name, spec in new.items() if old.get(name) != spec)
+    removed = sorted(set(old) - set(new))
+    return changed, removed
+
+
+def default_relink(home: Path, changed: list[str], base: str | None = None) -> dict:
     """What ``swe init --hub`` does after a clone, for content that just
     came in: link every harness, register new plugin marketplaces, and push
     the hub's MCP servers out when ``mcp.json`` changed. A problem here is
@@ -585,14 +613,27 @@ def default_relink(home: Path, changed: list[str]) -> dict:
     except Exception as exc:  # noqa: BLE001
         notes.append(f"registering marketplaces failed: {exc}")
     mcp = None
+    changed_servers, removed_servers = ([], [])
     if "mcp.json" in changed:
+        changed_servers, removed_servers = mcp_server_changes(home, base)
+    if removed_servers:
+        notes.append("removed from the hub's mcp.json but left in harness configs: "
+                     + ", ".join(removed_servers)
+                     + "; swe mcp sync swe --all --prune removes them")
+    if changed_servers:
         from swe.console import strip_ansi
         from swe.mcp.cli import _sync as mcp_sync
         report = {"source": None, "dry_run": False, "selected": [], "targets": []}
         said = io.StringIO()
+        # --force with --only: the servers the merge added or changed
+        # replace their copies in every harness (a plain run skips a name a
+        # harness already has, so an edited server would stay stale), and
+        # nothing the merge didn't touch is overwritten.
+        args = ["swe", "--all", "--no-interactive", "--force",
+                "--only=" + ",".join(changed_servers)]
         try:
             with contextlib.redirect_stdout(said):
-                code = mcp_sync(["swe", "--all", "--no-interactive"], report)
+                code = mcp_sync(args, report)
             mcp = {"code": code, "selected": report.get("selected", []),
                    "targets": report.get("targets", [])}
             if code:

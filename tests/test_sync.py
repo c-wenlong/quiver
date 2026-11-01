@@ -323,6 +323,15 @@ class NeverSyncedTest(SyncTestBase):
         committed = [f["path"] for f in doc["commit"]["files"]]
         self.assertEqual(sorted(committed), [".gitignore", "skills/one/SKILL.md"])
 
+    def test_a_file_name_that_looks_like_pathspec_magic_syncs(self):
+        a = self.machine("a")
+        (a / ".swe" / ":notes.md").write_text("n\n")
+        (a / ".swe" / "*.md").write_text("star\n")
+        doc = self.sync(a)
+        self.assertEqual(doc["result"], "synced")
+        self.assertEqual(sorted(f["path"] for f in doc["commit"]["files"]),
+                         ["*.md", ":notes.md"])
+
     def test_ignored_secrets_folder_does_not_break_staging(self):
         # git fails a whole `add` whose pathspec names an ignored folder;
         # sync stages path by path so this hub still syncs.
@@ -408,13 +417,19 @@ class StatusTest(SyncTestBase):
 class RelinkTest(SyncTestBase):
     def test_default_relink_links_registers_and_syncs_mcp(self):
         a, b = self.machine("a"), self.machine("b")
-        (a / ".swe" / "mcp.json").write_text('{"servers": {}}\n')
+        spec = lambda cmd: {"command": cmd}  # noqa: E731
+        (a / ".swe" / "mcp.json").write_text(json.dumps({"mcpServers": {
+            "keep": spec("k"), "edit": spec("v1"), "gone": spec("g")}}))
+        self.sync(a)
+        self.sync(b)
+        (a / ".swe" / "mcp.json").write_text(json.dumps({"mcpServers": {
+            "keep": spec("k"), "edit": spec("v2"), "new": spec("n")}}))
         self.sync(a)
         calls = []
 
         def fake_mcp(args, report):
             calls.append(args)
-            report["selected"] = ["x"]
+            report["selected"] = ["edit", "new"]
             return 0
 
         with mock.patch("swe.init.hub.register_marketplaces",
@@ -425,9 +440,12 @@ class RelinkTest(SyncTestBase):
         self.assertEqual(relinked["changed"], 1)
         self.assertEqual(relinked["marketplaces"],
                          [{"harness": "claude", "marketplace": "mine", "error": None}])
-        self.assertEqual(calls, [["swe", "--all", "--no-interactive"]])
-        self.assertEqual(relinked["mcp"]["selected"], ["x"])
-        self.assertEqual(relinked["notes"], [])
+        # Only what the merge changed, forced so an edited server updates.
+        self.assertEqual(calls, [["swe", "--all", "--no-interactive", "--force",
+                                  "--only=edit,new"]])
+        self.assertEqual(relinked["mcp"]["selected"], ["edit", "new"])
+        self.assertEqual(len(relinked["notes"]), 1)
+        self.assertIn("gone", relinked["notes"][0])
 
     def test_a_failed_mcp_copy_is_a_note_with_its_reason(self):
         def failing(args, report):
@@ -436,7 +454,8 @@ class RelinkTest(SyncTestBase):
 
         with mock.patch("swe.init.commands.run_init", side_effect=RuntimeError("skip")), \
                 mock.patch("swe.init.hub.register_marketplaces", return_value=[]), \
-                mock.patch("swe.mcp.cli._sync", failing):
+                mock.patch("swe.mcp.cli._sync", failing), \
+                mock.patch.object(repo, "mcp_server_changes", return_value=(["github"], [])):
             out = repo.default_relink(self.root, ["mcp.json"])
         self.assertEqual(out["mcp"]["code"], 1)
         note = out["notes"][-1]
