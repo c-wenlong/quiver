@@ -270,6 +270,50 @@ struct InboxItem: Codable, Identifiable, Hashable {
 
 struct InboxResponse: Codable { let items: [InboxItem] }
 
+/// The Inbox page's sections. The hub decides which rows ship — an
+/// approval at any age, fresh follow-ups and errors, `done` rows when
+/// asked, unread GitHub threads — so this only sorts what arrived. An
+/// unfamiliar status lands in Waiting on you rather than vanishing.
+enum InboxGrouping {
+    /// The section a row belongs in, in page order.
+    enum Section: CaseIterable {
+        case waiting, errors, github, finished
+        var title: String {
+            switch self {
+            case .waiting: "Waiting on you"
+            case .errors: "Errors"
+            case .github: "GitHub"
+            case .finished: "Finished today"
+            }
+        }
+        /// The "Clear …" menu item: "Clear errors", "Clear GitHub".
+        var clearTitle: String {
+            switch self {
+            case .waiting: "waiting on you"
+            case .errors: "errors"
+            case .github: "GitHub"
+            case .finished: "finished"
+            }
+        }
+    }
+
+    static func section(of item: InboxItem) -> Section {
+        if item.isGitHub { return .github }
+        switch item.sessionStatus {
+        case .error, .interrupted: return .errors
+        case .done: return .finished
+        default: return .waiting
+        }
+    }
+
+    /// `items` bucketed by section, sections in page order.
+    static func groups(_ items: [InboxItem]) -> [(Section, [InboxItem])] {
+        var grouped: [Section: [InboxItem]] = [:]
+        for item in items { grouped[section(of: item), default: []].append(item) }
+        return Section.allCases.compactMap { s in grouped[s].map { (s, $0) } }
+    }
+}
+
 struct ToolCall: Codable, Hashable {
     let name: String
     let callId: String?

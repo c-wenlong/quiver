@@ -5,3 +5,4 @@ build-sim/
 build-sim-*/
 *.entitlements
 QuiverShare-Info.plist
+QuiverWidget-Info.plist
