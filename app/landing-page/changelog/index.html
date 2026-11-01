@@ -110,6 +110,17 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>iPhone: home screen widget.</strong> Small and medium widgets show the
+hub's sessions waiting on you (approvals and replies), sessions still
+working, and today's spend
+(<a href="https://github.com/c-wenlong/quiver/issues/1442">#1442</a>). The
+widget fetches sessions, the inbox and today's overview about every
+15 minutes, and redraws when the app's refresh changes the snapshot
+it keeps in the App Group. When the hub can't be reached it draws
+that snapshot with &quot;as of <time>&quot;. A medium widget's session row
+opens its chat through the new <code>quiver://session/&lt;key&gt;?hub=&lt;hub&gt;</code>
+deep link; anywhere else opens the app.</p>
+</li>
 <li><p><strong>Doctor folds in plugin drift and broken hub links.</strong> <code>swe doctor</code>
 now lists <code>swe find plugins</code>' drift as <code>plugins.&lt;kind&gt;</code> findings. An
 unregistered marketplace folder or an uninstalled plugin gets the
