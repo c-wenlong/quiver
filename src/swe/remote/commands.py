@@ -294,19 +294,21 @@ class Service:
     unit: str         # systemd
     description: str  # systemd Description=
     log_name: str     # under ~/.swe/data/remote/
+    old_label: str    # launchd label the pre-rename app installed under
 
 
 HUB = Service("hub", "serve", launchd.LABEL, systemd.UNIT,
-              systemd.HUB_DESCRIPTION, "serve.log")
+              systemd.HUB_DESCRIPTION, "serve.log", launchd.OLD_LABEL)
 AGENT = Service("agent", "agent", launchd.AGENT_LABEL, systemd.AGENT_UNIT,
-                "SWE remote agent (swe remote agent)", "agent.log")
+                "SWE remote agent (swe remote agent)", "agent.log",
+                launchd.OLD_AGENT_LABEL)
 
 
 def _service_swe(service: Service) -> tuple[str, str | None]:
     """The ``swe`` a background service runs, or an error saying why it
     can't run.
 
-    On a Mac it runs Quiver.app's bundled swe when the app is installed,
+    On a Mac it runs SWE.app's bundled swe when the app is installed,
     else this swe, unless that sits where macOS keeps launchd agents out.
     """
     darwin = sys.platform == "darwin"
@@ -320,7 +322,7 @@ def _service_swe(service: Service) -> tuple[str, str | None]:
         if folder:
             return "", (f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent "
                         f"from reading, so the {service.name} would fail at every start. "
-                        "Install Quiver.app (app/mac/script/install-app.sh) and run "
+                        "Install SWE.app (app/mac/script/install-app.sh) and run "
                         "--install again: the agent then runs the app's bundled swe.")
     return swe, None
 
@@ -368,11 +370,25 @@ def service_file(service: Service = HUB, home: Path | None = None) -> Path:
     return systemd.unit_path(home, service.unit)
 
 
+def service_files(service: Service, home: Path | None = None) -> list[Path]:
+    """Every path an install of ``service`` can live at, newest first.
+
+    A pre-rename install left the old label's plist, and it keeps a job
+    running exactly like the new one's: conflict and presence checks
+    that only look at ``service_file`` would call it absent.
+    """
+    files = [service_file(service, home)]
+    if sys.platform == "darwin":
+        files.append(launchd.plist_path(home, service.old_label))
+    return files
+
+
 def service_status(service: Service = HUB, home: Path | None = None,
                    run=subprocess.run) -> tuple[list[str] | None, bool]:
     """(installed command line or None, running) for ``service``."""
     if sys.platform == "darwin":
-        return launchd.status(home, run=run, label=service.label)
+        return launchd.status(home, run=run, label=service.label,
+                              old_label=service.old_label)
     return systemd.status(home, run=run, unit=service.unit)
 
 
@@ -386,8 +402,8 @@ def service_conflict(service: Service, home: Path | None = None) -> str | None:
     satellite would send its own hub's sessions back to it.
     """
     other = AGENT if service is HUB else HUB
-    path = service_file(other, home)
-    if not path.exists():
+    path = next((p for p in service_files(other, home) if p.exists()), None)
+    if path is None:
         return None
     if service is AGENT:
         what = "this machine's hub is installed"
@@ -420,7 +436,8 @@ def install_service(program: list[str], log_path: Path, home: Path | None = None
     if sys.platform == "darwin":
         try:
             return launchd.install(program, log_path, path_env, home=home, run=run,
-                                   label=service.label), ""
+                                   label=service.label,
+                                   old_label=service.old_label), ""
         except RuntimeError as exc:
             raise RuntimeError(f"launchctl could not load the {service.name}: {exc}") from exc
     try:
@@ -436,7 +453,8 @@ def install_service(program: list[str], log_path: Path, home: Path | None = None
 def _cmd_uninstall_service(service: Service) -> int:
     darwin = sys.platform == "darwin"
     try:
-        removed = (launchd.uninstall(label=service.label) if darwin
+        removed = (launchd.uninstall(label=service.label,
+                                     old_label=service.old_label) if darwin
                    else systemd.uninstall(unit=service.unit))
     except RuntimeError as exc:
         print(c("red", f"could not stop the {service.name}: {exc}"), file=sys.stderr)
@@ -902,7 +920,8 @@ def agent_service_report(home: Path | None = None, run=subprocess.run) -> dict:
     satellite, and is its background service installed and running."""
     conf = agent_mod.load_agent(home) or {}
     problem = _service_problem(AGENT)
-    path = service_file(AGENT, home)
+    path = next((p for p in service_files(AGENT, home) if p.exists()),
+                service_file(AGENT, home))
     args, running = service_status(AGENT, home, run) if problem is None else (None, False)
     return {
         "configured": bool(conf.get("hub") and conf.get("credential")),
@@ -914,7 +933,7 @@ def agent_service_report(home: Path | None = None, run=subprocess.run) -> dict:
         "service": str(path),
         "program": args,
         "log": str(remote_dir_for(home) / AGENT.log_name),
-        "hub_installed": service_file(HUB, home).exists(),
+        "hub_installed": any(p.exists() for p in service_files(HUB, home)),
     }
 
 
@@ -1174,7 +1193,7 @@ def _cmd_ssh(flags: dict, json_view: bool) -> int:
                        f"({key.split()[0]})"))
     if not keyed:
         print(c("dim", "  no device has sent a key yet: open the console "
-                       "in Quiver Remote"))
+                       "in SWE Remote"))
     for row in keyed:
         if row["revoked"]:
             mark = c("red", "revoked")

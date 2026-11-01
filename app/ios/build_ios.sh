@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rebuild QuiverRemote and install it on a paired iPhone.
+# Rebuild SWERemote and install it on a paired iPhone.
 #
 #   app/ios/build_ios.sh            # first paired iOS device
 #   app/ios/build_ios.sh <udid>     # a specific device
@@ -14,7 +14,7 @@ command -v jq >/dev/null || {
   exit 1
 }
 
-app=build/Build/Products/Debug-iphoneos/QuiverRemote.app
+app=build/Build/Products/Debug-iphoneos/SWERemote.app
 json=$(mktemp)
 trap 'rm -f "$json"' EXIT
 
@@ -44,11 +44,11 @@ echo "==> xcodegen generate"
 xcodegen generate
 
 echo "==> xcodebuild"
-xcodebuild -project QuiverRemote.xcodeproj -scheme QuiverRemote \
+xcodebuild -project SWERemote.xcodeproj -scheme SWERemote \
   -destination "platform=iOS,id=$udid" \
   -allowProvisioningUpdates -derivedDataPath build -quiet build
 
 echo "==> install"
 xcrun devicectl device install app --device "$device" "$app"
 
-echo "==> done — open Quiver Remote on the phone"
+echo "==> done — open SWE Remote on the phone"

@@ -99,7 +99,7 @@ footer a:hover { color: var(--text); }
         <a href="../changelog/">Changelog</a>
       </div>
       <div class="right">
-        <a class="plain" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>GitHub</a>
+        <a class="plain" href="https://github.com/c-wenlong/swe"><svg class="i"><use href="#gh"/></svg>GitHub</a>
         <a class="btn light sm" href="../#install"><span>Install</span></a>
       </div>
     </nav>
@@ -107,7 +107,7 @@ footer a:hover { color: var(--text); }
 </header>
 <main class="wrap doc">
 <p align="center">
-  <img src="https://raw.githubusercontent.com/c-wenlong/quiver/main/assets/logo-rounded.png" alt="swe logo" width="160">
+  <img src="https://raw.githubusercontent.com/c-wenlong/swe/main/assets/logo-rounded.png" alt="swe logo" width="160">
 </p>
 
 <h1 align="center">
@@ -119,9 +119,9 @@ swe
 </p>
 
 <p align="center">
-  <a href="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml"><img src="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://app.codecov.io/gh/c-wenlong/quiver"><img src="https://codecov.io/gh/c-wenlong/quiver/graph/badge.svg?branch=main" alt="Coverage"></a>
-  <a href="https://github.com/c-wenlong/quiver/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://github.com/c-wenlong/swe/actions/workflows/ci.yml"><img src="https://github.com/c-wenlong/swe/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://app.codecov.io/gh/c-wenlong/swe"><img src="https://codecov.io/gh/c-wenlong/swe/graph/badge.svg?branch=main" alt="Coverage"></a>
+  <a href="https://github.com/c-wenlong/swe/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
   <img src="https://img.shields.io/badge/deps-stdlib--only-brightgreen.svg" alt="stdlib only">
 </p>
@@ -227,38 +227,41 @@ extra that adds a real dependency, and you opt into it.</p>
 <blockquote>
 <p><strong>On Python 3.10?</strong> <code>v0.2.9</code> is the last release that runs on it; the floor
 moved to 3.11 afterwards. Pin that tag:</p>
-<pre><code class="language-bash">pipx install git+https://github.com/c-wenlong/quiver.git@v0.2.9
+<pre><code class="language-bash">pipx install git+https://github.com/c-wenlong/swe.git@v0.2.9
 </code></pre>
 <p>Check with <code>python3 --version</code>. Ubuntu 22.04 LTS ships 3.10, so it needs the
 pin or a newer interpreter. Debian 12 (3.11), Ubuntu 24.04 (3.12) and current
 Fedora and Homebrew are all fine as they are.</p>
 </blockquote>
 <h3 id="homebrew-macos"><a class="anchor" href="#homebrew-macos"></a>Homebrew (macOS)</h3>
-<pre><code class="language-bash">brew install --cask c-wenlong/quiver/quiver   # the Mac app (Apple silicon, macOS 26+)
-brew install c-wenlong/quiver/swe             # the swe CLI on its own
+<pre><code class="language-bash">brew install --cask c-wenlong/swe/swe   # the Mac app (Apple silicon, macOS 26+)
+brew install c-wenlong/swe/swe          # the swe CLI on its own
 </code></pre>
-<p>Both come from the <a href="https://github.com/c-wenlong/homebrew-quiver">c-wenlong/homebrew-quiver</a>
+<p>Both come from the <a href="https://github.com/c-wenlong/homebrew-swe">c-wenlong/homebrew-swe</a>
 tap, which each release updates. The app updates itself through Sparkle, so
 <code>brew upgrade</code> leaves it alone unless you pass <code>--greedy</code>.</p>
+<p>Installed it as <code>swe</code> before the rename? The <code>swe</code> cask stays frozen at
+the last Quiver build. <code>app/mac/script/install-app.sh</code> moves an existing
+install to SWE.app itself; by brew, <code>brew uninstall --cask c-wenlong/quiver/quiver</code> first, then the <code>swe</code> cask.</p>
 <h3 id="pipx"><a class="anchor" href="#pipx"></a>pipx</h3>
-<pre><code class="language-bash">pipx install git+https://github.com/c-wenlong/quiver.git
+<pre><code class="language-bash">pipx install git+https://github.com/c-wenlong/swe.git
 swe --help
 </code></pre>
 <h3 id="nix"><a class="anchor" href="#nix"></a>Nix</h3>
-<p><code>nix run github:c-wenlong/quiver -- --help</code> works one-off. To install, add
+<p><code>nix run github:c-wenlong/swe -- --help</code> works one-off. To install, add
 the flake as an input and put the package on your list:</p>
-<pre><code class="language-nix">inputs.quiver = {
-  url = &quot;github:c-wenlong/quiver&quot;;
+<pre><code class="language-nix">inputs.swe = {
+  url = &quot;github:c-wenlong/swe&quot;;
   inputs.nixpkgs.follows = &quot;nixpkgs&quot;;
 };
 # then, in home.packages or environment.systemPackages:
-inputs.quiver.packages.${system}.default
+inputs.swe.packages.${system}.default
 </code></pre>
 <p>The build runs the test suite, so <code>nix build</code> is also the fastest full check
 of a clone. <code>nix develop</code> opens a shell with <code>src/</code> on <code>PYTHONPATH</code>.</p>
 <h3 id="from-source"><a class="anchor" href="#from-source"></a>From source</h3>
-<pre><code class="language-bash">git clone https://github.com/c-wenlong/quiver.git
-cd quiver
+<pre><code class="language-bash">git clone https://github.com/c-wenlong/swe.git
+cd swe
 python3 -m venv .venv &amp;&amp; source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
 swe --help
@@ -719,7 +722,7 @@ and the per-device credential is the app-layer gate on top of it. Revoking
 a lost phone means revoking its credential, nothing more; the tailnet is
 never disturbed. The full model (pairing flows, owner-device rules,
 forwarded headers, SSH console keys) is in
-<a href="https://github.com/c-wenlong/quiver/blob/main/docs/remote-control.md">docs/remote-control.md</a>.</p>
+<a href="https://github.com/c-wenlong/swe/blob/main/docs/remote-control.md">docs/remote-control.md</a>.</p>
 <h2 id="skills"><a class="anchor" href="#skills"></a>Skills</h2>
 <p>Agent skills are folders containing a <code>SKILL.md</code> file. swe scans built-in harness roots (shared, Cursor, Claude, Codex, plugins) plus any catalogs you register.</p>
 <h3 id="typical-layout"><a class="anchor" href="#typical-layout"></a>Typical layout</h3>
@@ -898,7 +901,7 @@ python3 -m coverage report
 <p>CI runs the suite against a throwaway <code>$HOME</code>, so it never touches real config or
 counts machine-local coding sessions as test coverage. Coverage includes child
 processes, tracks branches, and must remain above the configured regression
-floor. See the dated <a href="https://github.com/c-wenlong/quiver/blob/main/docs/COVERAGE.md">coverage audit</a> for current risk areas;
+floor. See the dated <a href="https://github.com/c-wenlong/swe/blob/main/docs/COVERAGE.md">coverage audit</a> for current risk areas;
 the badge at the top of this README follows <code>main</code> live.</p>
 <h3 id="reinstalling-after-changes"><a class="anchor" href="#reinstalling-after-changes"></a>Reinstalling after changes</h3>
 <p>The <code>swe</code> command is a pip-installed console entry point (<code>[project.scripts]</code> in <code>pyproject.toml</code>). With an <strong>editable</strong> install (<code>pip install -e .</code>), new Python files are picked up automatically. But if you ever installed with a plain <code>pip install .</code> (non-editable), files are copied to site-packages and new modules won't appear until you reinstall:</p>
@@ -909,7 +912,7 @@ swe list                  # verify the feature works end-to-end
 <p><strong>Common pitfall:</strong> unit tests run with <code>PYTHONPATH=src</code>, so they can pass while the installed <code>swe</code> command silently fails because it's reading from a stale non-editable site-packages copy. Always verify with the real <code>swe</code> command after adding files — if the feature doesn't show up, reinstall.</p>
 </blockquote>
 <p>For <strong>pipx</strong> installs (always non-editable):</p>
-<pre><code class="language-bash">pipx install --force git+https://github.com/c-wenlong/quiver.git
+<pre><code class="language-bash">pipx install --force git+https://github.com/c-wenlong/swe.git
 </code></pre>
 <h3 id="e2e-verification-checklist"><a class="anchor" href="#e2e-verification-checklist"></a>E2e verification checklist</h3>
 <p>Every feature that adds files or modifies <code>cmd_*</code> handlers must pass this checklist before opening a PR:</p>
@@ -929,7 +932,7 @@ swe list                  # verify the feature works end-to-end
 <h2 id="contributing"><a class="anchor" href="#contributing"></a>Contributing</h2>
 <p>Issues and pull requests are welcome. <a href="../contributing/">CONTRIBUTING.md</a> covers the
 PR process, one concern per PR, and what CI will check. By taking part you agree to the
-<a href="https://github.com/c-wenlong/quiver/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>. Need help? See <a href="https://github.com/c-wenlong/quiver/blob/main/SUPPORT.md">SUPPORT.md</a>.</p>
+<a href="https://github.com/c-wenlong/swe/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>. Need help? See <a href="https://github.com/c-wenlong/swe/blob/main/SUPPORT.md">SUPPORT.md</a>.</p>
 <table>
 <thead>
 <tr>
@@ -939,11 +942,11 @@ PR process, one concern per PR, and what CI will check. By taking part you agree
 </thead>
 <tbody>
 <tr>
-  <td><a href="https://github.com/c-wenlong/quiver/blob/main/AGENTS.md">AGENTS.md</a></td>
+  <td><a href="https://github.com/c-wenlong/swe/blob/main/AGENTS.md">AGENTS.md</a></td>
   <td>The brief for coding agents: commands, throwaway-<code>$HOME</code> rule, gotchas log</td>
 </tr>
 <tr>
-  <td><a href="https://github.com/c-wenlong/quiver/blob/main/ARCHITECTURE.md">ARCHITECTURE.md</a></td>
+  <td><a href="https://github.com/c-wenlong/swe/blob/main/ARCHITECTURE.md">ARCHITECTURE.md</a></td>
   <td>Layering rules, <code>~/.swe</code> layout, registry and link states, session engines</td>
 </tr>
 <tr>
@@ -951,15 +954,15 @@ PR process, one concern per PR, and what CI will check. By taking part you agree
   <td>How to propose and land a change</td>
 </tr>
 <tr>
-  <td><a href="https://github.com/c-wenlong/quiver/blob/main/SECURITY.md">SECURITY.md</a></td>
+  <td><a href="https://github.com/c-wenlong/swe/blob/main/SECURITY.md">SECURITY.md</a></td>
   <td>Supported versions and how to report a vulnerability</td>
 </tr>
 <tr>
-  <td><a href="https://github.com/c-wenlong/quiver/blob/main/SUPPORT.md">SUPPORT.md</a></td>
+  <td><a href="https://github.com/c-wenlong/swe/blob/main/SUPPORT.md">SUPPORT.md</a></td>
   <td>Where to get help, in order: docs, <code>swe doctor</code>, issues</td>
 </tr>
 <tr>
-  <td><a href="https://github.com/c-wenlong/quiver/blob/main/CODE_OF_CONDUCT.md">CODE_OF_CONDUCT.md</a></td>
+  <td><a href="https://github.com/c-wenlong/swe/blob/main/CODE_OF_CONDUCT.md">CODE_OF_CONDUCT.md</a></td>
   <td>Contributor Covenant 2.1</td>
 </tr>
 <tr>
@@ -967,13 +970,13 @@ PR process, one concern per PR, and what CI will check. By taking part you agree
   <td>Release history</td>
 </tr>
 <tr>
-  <td><a href="https://github.com/c-wenlong/quiver/tree/main/docs">docs/</a></td>
-  <td>Design docs: <a href="https://github.com/c-wenlong/quiver/blob/main/docs/data-model.md">data model</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/app-architecture.md">app architecture</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/backend-architecture.md">backend architecture</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/json-contracts.md">JSON contracts</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/testing.md">testing</a>, <a href="https://github.com/c-wenlong/quiver/blob/main/docs/COVERAGE.md">coverage audit</a></td>
+  <td><a href="https://github.com/c-wenlong/swe/tree/main/docs">docs/</a></td>
+  <td>Design docs: <a href="https://github.com/c-wenlong/swe/blob/main/docs/data-model.md">data model</a>, <a href="https://github.com/c-wenlong/swe/blob/main/docs/app-architecture.md">app architecture</a>, <a href="https://github.com/c-wenlong/swe/blob/main/docs/backend-architecture.md">backend architecture</a>, <a href="https://github.com/c-wenlong/swe/blob/main/docs/json-contracts.md">JSON contracts</a>, <a href="https://github.com/c-wenlong/swe/blob/main/docs/testing.md">testing</a>, <a href="https://github.com/c-wenlong/swe/blob/main/docs/COVERAGE.md">coverage audit</a></td>
 </tr>
 </tbody>
 </table>
 <h2 id="license"><a class="anchor" href="#license"></a>License</h2>
-<p>MIT — see <a href="https://github.com/c-wenlong/quiver/blob/main/LICENSE">LICENSE</a>.</p>
+<p>MIT — see <a href="https://github.com/c-wenlong/swe/blob/main/LICENSE">LICENSE</a>.</p>
 
 </main>
 <footer>
@@ -982,7 +985,7 @@ PR process, one concern per PR, and what CI will check. By taking part you agree
     <a href="../overview/">Docs</a>
     <a href="../changelog/">Changelog</a>
     <a href="../contributing/">Contributing</a>
-    <a href="https://github.com/c-wenlong/quiver">GitHub</a>
+    <a href="https://github.com/c-wenlong/swe">GitHub</a>
   </div>
 </footer>
 <script type="module">

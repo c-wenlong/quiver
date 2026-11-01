@@ -1,8 +1,8 @@
 # xcodegen output — regenerate with `xcodegen generate`
-QuiverRemote.xcodeproj/
-QuiverRemote-Info.plist
+SWERemote.xcodeproj/
+SWERemote-Info.plist
 build-sim/
 build-sim-*/
 *.entitlements
-QuiverShare-Info.plist
-QuiverWidget-Info.plist
+SWEShare-Info.plist
+SWEWidget-Info.plist

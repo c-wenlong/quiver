@@ -1,4 +1,4 @@
-# Getting help with quiver
+# Getting help with swe
 
 Thanks for using `swe`. Here is where to go, in order.
 
@@ -24,11 +24,11 @@ Include that output in any bug report.
 
 ## 3. Open an issue
 
-- Bug: [bug report](https://github.com/c-wenlong/quiver/issues/new?template=bug_report.yml)
-- Idea or missing harness: [feature request](https://github.com/c-wenlong/quiver/issues/new?template=feature_request.yml)
-- Anything else: [browse open issues](https://github.com/c-wenlong/quiver/issues) first. Blank issues are off, so pick whichever of the two forms is closer.
+- Bug: [bug report](https://github.com/c-wenlong/swe/issues/new?template=bug_report.yml)
+- Idea or missing harness: [feature request](https://github.com/c-wenlong/swe/issues/new?template=feature_request.yml)
+- Anything else: [browse open issues](https://github.com/c-wenlong/swe/issues) first. Blank issues are off, so pick whichever of the two forms is closer.
 
-Always say which OS, which Python (`python3 -V`), and which version of quiver (`swe version`) you are on.
+Always say which OS, which Python (`python3 -V`), and which version of swe (`swe version`) you are on.
 
 ## 4. Security problems do not go in an issue
 

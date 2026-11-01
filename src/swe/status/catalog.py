@@ -1,6 +1,6 @@
 """The status pages SWE reads, and the vocabulary of a reading.
 
-A port of the Mac app's ``QuiverCore/Status/ServiceStatusModels.swift``:
+A port of the Mac app's ``SWECore/Status/ServiceStatusModels.swift``:
 the same services in the same order, with the same names, page URLs and
 feeds. Keep the two in step.
 """

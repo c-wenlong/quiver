@@ -11,8 +11,8 @@ swe
 </p>
 
 <p align="center">
-  <a href="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml"><img src="https://github.com/c-wenlong/quiver/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://app.codecov.io/gh/c-wenlong/quiver"><img src="https://codecov.io/gh/c-wenlong/quiver/graph/badge.svg?branch=main" alt="Coverage"></a>
+  <a href="https://github.com/c-wenlong/swe/actions/workflows/ci.yml"><img src="https://github.com/c-wenlong/swe/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://app.codecov.io/gh/c-wenlong/swe"><img src="https://codecov.io/gh/c-wenlong/swe/graph/badge.svg?branch=main" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
   <img src="https://img.shields.io/badge/deps-stdlib--only-brightgreen.svg" alt="stdlib only">
@@ -91,7 +91,7 @@ extra that adds a real dependency, and you opt into it.
 > moved to 3.11 afterwards. Pin that tag:
 >
 > ```bash
-> pipx install git+https://github.com/c-wenlong/quiver.git@v0.2.9
+> pipx install git+https://github.com/c-wenlong/swe.git@v0.2.9
 > ```
 >
 > Check with `python3 --version`. Ubuntu 22.04 LTS ships 3.10, so it needs the
@@ -101,33 +101,38 @@ extra that adds a real dependency, and you opt into it.
 ### Homebrew (macOS)
 
 ```bash
-brew install --cask c-wenlong/quiver/quiver   # the Mac app (Apple silicon, macOS 26+)
-brew install c-wenlong/quiver/swe             # the swe CLI on its own
+brew install --cask c-wenlong/swe/swe   # the Mac app (Apple silicon, macOS 26+)
+brew install c-wenlong/swe/swe          # the swe CLI on its own
 ```
 
-Both come from the [c-wenlong/homebrew-quiver](https://github.com/c-wenlong/homebrew-quiver)
+Both come from the [c-wenlong/homebrew-swe](https://github.com/c-wenlong/homebrew-swe)
 tap, which each release updates. The app updates itself through Sparkle, so
 `brew upgrade` leaves it alone unless you pass `--greedy`.
+
+Installed it as `swe` before the rename? The `swe` cask stays frozen at
+the last Quiver build. `app/mac/script/install-app.sh` moves an existing
+install to SWE.app itself; by brew, `brew uninstall --cask
+c-wenlong/quiver/quiver` first, then the `swe` cask.
 
 ### pipx
 
 ```bash
-pipx install git+https://github.com/c-wenlong/quiver.git
+pipx install git+https://github.com/c-wenlong/swe.git
 swe --help
 ```
 
 ### Nix
 
-`nix run github:c-wenlong/quiver -- --help` works one-off. To install, add
+`nix run github:c-wenlong/swe -- --help` works one-off. To install, add
 the flake as an input and put the package on your list:
 
 ```nix
-inputs.quiver = {
-  url = "github:c-wenlong/quiver";
+inputs.swe = {
+  url = "github:c-wenlong/swe";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 # then, in home.packages or environment.systemPackages:
-inputs.quiver.packages.${system}.default
+inputs.swe.packages.${system}.default
 ```
 
 The build runs the test suite, so `nix build` is also the fastest full check
@@ -136,8 +141,8 @@ of a clone. `nix develop` opens a shell with `src/` on `PYTHONPATH`.
 ### From source
 
 ```bash
-git clone https://github.com/c-wenlong/quiver.git
-cd quiver
+git clone https://github.com/c-wenlong/swe.git
+cd swe
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
 swe --help
@@ -546,7 +551,7 @@ swe list                  # verify the feature works end-to-end
 For **pipx** installs (always non-editable):
 
 ```bash
-pipx install --force git+https://github.com/c-wenlong/quiver.git
+pipx install --force git+https://github.com/c-wenlong/swe.git
 ```
 
 ### E2e verification checklist

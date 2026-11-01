@@ -35,7 +35,7 @@ def get(ctx, args: dict) -> dict:
             "machine": machine,
             "os": system,
             "message": f"Compute reads Linux's /proc and /sys, which {system} doesn't have. "
-                       "On a Mac, the Quiver app's own Compute page shows this.",
+                       "On a Mac, the SWE app's own Compute page shows this.",
         }
     try:
         interval = int(args.get("interval") or compute.DEFAULT_INTERVAL)

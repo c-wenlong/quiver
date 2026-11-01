@@ -126,9 +126,9 @@ def editable(skill_path: str, home: Path) -> bool:
     """PrimitiveOwnership.isEditable(skillPath:): under ~/.swe after
     symlinks resolve, and not in its cache. The web app edits nothing; this
     only picks the lock note's words."""
-    quiver = _real(home / ".swe")
+    swe = _real(home / ".swe")
     resolved = _real(skill_path)
-    return resolved.startswith(quiver + os.sep) and not resolved.startswith(quiver + os.sep + "cache" + os.sep)
+    return resolved.startswith(swe + os.sep) and not resolved.startswith(swe + os.sep + "cache" + os.sep)
 
 
 def frontmatter(text: str) -> list[dict] | None:
@@ -287,7 +287,7 @@ def file_view(skill: dict, name: str) -> dict:
 
 # -- writes: POST /v1/app/skills/<action> --------------------------------------
 #
-# quiver links whole skills folders, not single skills, so every write
+# swe links whole skills folders, not single skills, so every write
 # names a harness skills folder from the inventory's ``harnesses``:
 #
 # - ``link`` ``{"harness", "expect"?, "skill"?}``: point the folder at

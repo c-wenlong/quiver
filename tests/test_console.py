@@ -214,7 +214,7 @@ class SanitizeTest(unittest.TestCase):
     """sanitize() makes an untrusted string terminal-safe.
 
     Titles, transcript lines, filenames and server names all originate
-    outside quiver, so a crafted value must not be able to paint itself,
+    outside swe, so a crafted value must not be able to paint itself,
     open a link, rewrite the clipboard, or move the cursor.
     """
 

@@ -1,6 +1,6 @@
 """Reads status feeds into a ``Report``.
 
-A port of the Mac app's ``QuiverCore/Status/StatusParser.swift``. Lenient
+A port of the Mac app's ``SWECore/Status/StatusParser.swift``. Lenient
 about missing fields, since incident.io and Google serve their own
 variants; ``None`` only when the body is not the expected feed at all.
 Times are Unix epoch seconds.

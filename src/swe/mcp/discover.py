@@ -1,4 +1,4 @@
-"""Discover MCP servers across tool configs vs quiver source-of-truth."""
+"""Discover MCP servers across tool configs vs swe source-of-truth."""
 
 import sys
 from dataclasses import dataclass
@@ -100,7 +100,7 @@ def _unreadable_tools(mcp_tools) -> set[str]:
 
 
 def _registered_paths(mcp_tools) -> set:
-    """Resolved config paths quiver already reads, to skip on the disk pass."""
+    """Resolved config paths swe already reads, to skip on the disk pass."""
     from pathlib import Path
 
     out = set()
@@ -120,10 +120,10 @@ def _registered_paths(mcp_tools) -> set:
 def _scanned_servers(mcp_tools) -> dict:
     """Servers in MCP configs on disk that no registered path covers.
 
-    The registered list is what quiver was told about, so on its own it
+    The registered list is what swe was told about, so on its own it
     reports a clean bill of health for anything nobody registered. Here
     that was four config files holding three unknown servers, including a
-    whole harness (LM Studio) quiver had no entry for.
+    whole harness (LM Studio) swe had no entry for.
 
     Vendored configs are excluded: an editor extension shipping its own
     server is not something the hub should adopt.
@@ -159,7 +159,7 @@ def _scanned_servers(mcp_tools) -> dict:
 def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]:
     """Compare every MCP config against the hub at ~/.swe/mcp.json.
 
-    Reads both the config paths quiver has registered and the ones found by
+    Reads both the config paths swe has registered and the ones found by
     scanning the harness directories, because a server in a config nobody
     registered is exactly the one worth telling you about.
     """
@@ -213,7 +213,7 @@ def discover_mcp_servers(*, include_in_source: bool = False) -> list[McpFinding]
         )
 
     # A server the hub still lists but no harness configures any more. Reported
-    # rather than deleted: quiver cannot tell a deliberate removal from a
+    # rather than deleted: swe cannot tell a deliberate removal from a
     # harness whose config file is temporarily unreadable. When any harness
     # config failed to parse, skip orphan detection entirely — those tools'
     # servers look absent but are not, so pruning would delete live entries.

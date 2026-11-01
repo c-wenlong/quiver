@@ -2,8 +2,8 @@
 """Optional FastMCP server exposing recent AI sessions as an MCP tool.
 
 Requires the optional ``mcp`` dependency: ``pip install -e ".[server]"``
-from an SWE checkout. Not ``pip install quiver[server]``: the PyPI
-package named quiver is an unrelated project.
+from an SWE checkout. Not ``pip install swe[server]``: the PyPI
+package named swe is an unrelated project.
 """
 import sys
 import time
@@ -20,7 +20,7 @@ except ImportError:
     print(
         "The 'mcp' package is required to run the MCP server. From your "
         "SWE checkout, run: pip install -e \".[server]\" "
-        "(the PyPI package named quiver is a different project).",
+        "(the PyPI package named swe is a different project).",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -38,7 +38,7 @@ def get_recent_sessions(limit: int = 10, agent: str = None, directory_path: str 
         limit: Number of sessions to return (default 10)
         agent: Filter by a specific agent (e.g., 'claude', 'opencode', 'gemini')
         directory_path: Filter to only show sessions that occurred within this absolute directory path or its subdirectories.
-        search: Optional text filter. When the Quiver app's search index exists it matches transcript content and each
+        search: Optional text filter. When the SWE app's search index exists it matches transcript content and each
                 matched session carries a 'match:' snippet line; otherwise it filters title/path/agent/session id.
     """
     sessions = get_all_sessions(

@@ -2,7 +2,7 @@
 
 The query names are the field ids in ``.github/ISSUE_TEMPLATE`` and ``area``
 is one of the forms' dropdown options word for word. The Mac app builds the
-same links (``app/mac/Sources/QuiverCore/Support/IssueReport.swift``), so a
+same links (``app/mac/Sources/SWECore/Support/IssueReport.swift``), so a
 change to a form's ids or options changes both. Reads no config, like
 ``swe version``, so it still works when ``~/.swe`` is what is broken.
 """
@@ -15,7 +15,7 @@ from swe import __version__
 from swe.console import c
 from swe.json_output import emit, error_stream, take_json_flag
 
-REPOSITORY = "https://github.com/c-wenlong/quiver"
+REPOSITORY = "https://github.com/c-wenlong/swe"
 CLI_AREA = "CLI (swe)"
 TEMPLATES = {"bug": "bug_report.yml", "feature": "feature_request.yml"}
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Copy the Mac app's harness logos into the iOS asset catalog.
 
-The source of truth is app/mac/Sources/QuiverCore/Resources/harness-*.svg
+The source of truth is app/mac/Sources/SWECore/Resources/harness-*.svg
 (imported there by app/mac/script/import-harness-icons.py). Each becomes an
 imageset named harness-<id>: colour logos (`-color.svg`) render as is,
 single-colour marks render as templates in the text colour. Re-run after
@@ -14,7 +14,7 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-SRC = ROOT / "app/mac/Sources/QuiverCore/Resources"
+SRC = ROOT / "app/mac/Sources/SWECore/Resources"
 DEST = ROOT / "app/ios/Assets.xcassets/Harnesses"
 
 

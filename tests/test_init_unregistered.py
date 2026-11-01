@@ -1,6 +1,6 @@
 """Harnesses this machine neither registered nor installed stay out of the report.
 
-quiver knows where nine harnesses read instructions and where a dozen keep
+swe knows where nine harnesses read instructions and where a dozen keep
 skills, but a machine that uninstalled one should not be told about it on
 every `swe init`, nor warned about it by `swe doctor`.
 """

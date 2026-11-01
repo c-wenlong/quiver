@@ -32,7 +32,7 @@ from __future__ import annotations
 import contextlib
 try:
     import fcntl
-except ImportError:  # Windows: no flock, and no Quiver.app to race with
+except ImportError:  # Windows: no flock, and no SWE.app to race with
     fcntl = None
 import json
 import os

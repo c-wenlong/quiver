@@ -767,7 +767,7 @@ def _fetch_github_copilot() -> RateLimitInfo | None:
     values. ``User-Agent: swe/...`` alone would be rejected with
     403. Outside of the ``User-Agent``, the request is wired to look
     like the official client; the ``User-Agent`` itself is set to
-    ``quiver`` for traceability.
+    ``swe`` for traceability.
     """
     token = _get_gh_auth_token()
     if not token:
@@ -1081,7 +1081,7 @@ def _fetch_claude() -> RateLimitInfo | None:
     # does, same file the app's Claude reader asks.
     email = _read_claude_email()
 
-    # quiver never refreshes tokens, so an expired token always 401s.
+    # swe never refreshes tokens, so an expired token always 401s.
     # Whether the login is actually dead is the refreshToken's call:
     # Claude Code refreshes transparently on its next call, so an expired
     # access token beside a refreshToken is a live login, and re-login is
@@ -1571,7 +1571,7 @@ def _warn_droid_http_error(code: int, retry_after_seconds: float | None) -> None
     else:
         print(
             f"Droid usage endpoint returned {code} — this is an "
-            f"upstream or network error from Factory, not a quiver "
+            f"upstream or network error from Factory, not a swe "
             f"bug. If it persists, check https://status.factory.ai.",
             file=sys.stderr,
         )

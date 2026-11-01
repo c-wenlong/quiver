@@ -126,7 +126,7 @@ def tool_views(hub: dict) -> list[ToolView]:
 # ---------------------------------------------------------------------------
 # Filesystem scan
 #
-# Everything above reads the nine config paths quiver already knows. That is
+# Everything above reads the nine config paths swe already knows. That is
 # fine for reporting how far a sync got, but it cannot tell you about a config
 # nobody registered, which is exactly where an unmanaged server hides. This
 # half looks at the disk instead, and it found five servers the hub had never
@@ -251,7 +251,7 @@ def _is_snapshot(name: str) -> bool:
 
 
 def scan_configs(home: Path | None = None, scope: str = "all") -> list[FoundConfig]:
-    """Every MCP config on disk, not only the paths quiver has registered.
+    """Every MCP config on disk, not only the paths swe has registered.
 
     ``scope="global"`` drops vendored configs, matching what the rest of
     ``swe find`` means by the word.

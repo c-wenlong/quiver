@@ -1,6 +1,6 @@
 """The status pages a user added in the web app, on the hub.
 
-A port of the Mac app's ``QuiverCore/Status/CustomStatusServices.swift``,
+A port of the Mac app's ``SWECore/Status/CustomStatusServices.swift``,
 against the hub's own file, ``~/.swe/data/web-status-services.json``:
 the app's customs live in its preferences, which the web app does not
 read, and every browser the hub serves shares this one store, so a page

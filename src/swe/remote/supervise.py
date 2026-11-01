@@ -1,7 +1,7 @@
 """Supervision: sessions running under our tmux (or headless) control.
 
 An ``observed`` session belongs to a human terminal; an ``attached`` one
-runs under quiver's supervisor and the phone can write to it. Modes:
+runs under swe's supervisor and the phone can write to it. Modes:
 
 - ``tmux``: ``tmux new-session -d`` relaunches the harness with its
   resume flags. The session keeps a real TUI — ``tmux attach -t`` still

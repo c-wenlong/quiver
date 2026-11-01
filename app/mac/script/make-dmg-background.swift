@@ -1,4 +1,4 @@
-// Draws the DMG window's background: the Quiver wordmark, an arrow from
+// Draws the DMG window's background: the SWE wordmark, an arrow from
 // the app's slot to the Applications slot, and the app icon's three
 // arrowheads scattered faintly around the edges. make-dmg.sh renders it at 1x and 2x
 // and joins the two into one HiDPI TIFF for Finder.
@@ -94,7 +94,7 @@ func drawCentred(_ string: String, y: Double, font: NSFont, color: NSColor, kern
     let size = text.size()
     text.draw(at: CGPoint(x: (width - size.width) / 2, y: y - size.height / 2))
 }
-drawCentred("Quiver", y: 62, font: .systemFont(ofSize: 30, weight: .semibold), color: ink, kern: -0.4)
+drawCentred("SWE", y: 62, font: .systemFont(ofSize: 30, weight: .semibold), color: ink, kern: -0.4)
 
 // The arrow arcs over the gap between the two icons, as in Docker's.
 let start = CGPoint(x: appSlot.x + 88, y: appSlot.y - 4)
@@ -121,7 +121,7 @@ for side in [-1.0, 1.0] {
 }
 head.stroke()
 
-drawCentred("Drag Quiver to Applications to install", y: 318, font: .systemFont(ofSize: 13), color: muted)
+drawCentred("Drag SWE to Applications to install", y: 318, font: .systemFont(ofSize: 13), color: muted)
 
 NSGraphicsContext.current = nil
 // Points, not pixels: the 2x render then carries 144 dpi, which is how

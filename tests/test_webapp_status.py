@@ -659,7 +659,7 @@ class TestCatalogue(unittest.TestCase):
         # The mirror is literal: the rows the Mac's StatusCatalogue.swift
         # declares, in order, are this catalogue.
         swift = (Path(__file__).resolve().parents[1]
-                 / "app/mac/Sources/QuiverCore/Status/StatusCatalogue.swift")
+                 / "app/mac/Sources/SWECore/Status/StatusCatalogue.swift")
         if not swift.exists():
             self.skipTest("no app/mac/ in this checkout")
         rows = re.findall(r'statuspage\("([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*\.(\w+)\)',

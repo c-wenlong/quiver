@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Put swe inside Quiver.app, with a Python of its own.
+# Put swe inside SWE.app, with a Python of its own.
 #
-#   app/mac/script/bundle-swe.sh <path/to/Quiver.app>
+#   app/mac/script/bundle-swe.sh <path/to/SWE.app>
 #
 # A new Mac has no swe and no Python 3.11, so the app carries both:
 #
@@ -23,7 +23,7 @@
 # does. build-app.sh signs the binaries afterwards.
 set -euo pipefail
 
-bundle="${1:?usage: bundle-swe.sh <path/to/Quiver.app>}"
+bundle="${1:?usage: bundle-swe.sh <path/to/SWE.app>}"
 here="$(cd "$(dirname "$0")/.." && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 
@@ -107,7 +107,7 @@ if [ "$triple" = "aarch64-apple-darwin" ]; then
 else
   brew_libs="/usr/local/opt/openssl@3/lib/libcrypto.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib"
 fi
-for cand in ${QUIVER_LIBCRYPTO:+"$QUIVER_LIBCRYPTO"} $brew_libs; do
+for cand in ${SWE_LIBCRYPTO:+"$SWE_LIBCRYPTO"} ${QUIVER_LIBCRYPTO:+"$QUIVER_LIBCRYPTO"} $brew_libs; do
   if [ -f "$cand" ]; then libcrypto="$cand"; break; fi
 done
 if [ -z "$libcrypto" ]; then
@@ -115,12 +115,12 @@ if [ -z "$libcrypto" ]; then
 else
   cp "$libcrypto" "$py/lib/libcrypto.3.dylib"
   openssl_share="$(dirname "$(dirname "$libcrypto")")/share/openssl"
-  license="${QUIVER_LIBCRYPTO_LICENSE:-}"
+  license="${SWE_LIBCRYPTO_LICENSE:-${QUIVER_LIBCRYPTO_LICENSE:-}}"
   for cand in ${license:+"$license"} "$openssl_share/LICENSE.txt"              "$(dirname "$libcrypto")/../LICENSE.txt"; do
     if [ -f "$cand" ]; then license="$cand"; break; fi
   done
   if [ ! -f "$license" ]; then
-    echo "bundle-swe: no OpenSSL LICENSE.txt next to $libcrypto; set QUIVER_LIBCRYPTO_LICENSE" >&2
+    echo "bundle-swe: no OpenSSL LICENSE.txt next to $libcrypto; set SWE_LIBCRYPTO_LICENSE" >&2
     exit 1
   fi
   cp "$license" "$py/lib/OPENSSL-LICENSE.txt"
@@ -139,7 +139,7 @@ find "$site/swe" "$site/quiver" -name '__pycache__' -type d -prune -exec rm -rf 
 
 cat > "$dest/bin/swe" <<'SHIM'
 #!/bin/sh
-# swe as bundled with Quiver.app. -I keeps the user's PYTHONPATH and site
+# swe as bundled with SWE.app. -I keeps the user's PYTHONPATH and site
 # packages out; -B keeps Python from writing into the signed bundle.
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 SWE_BUNDLED_PYTHON=1 exec "$root/python/bin/python3" -I -B -c \

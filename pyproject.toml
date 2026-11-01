@@ -49,11 +49,11 @@ test = ["coverage[toml]>=7.10", "mistune==3.3.4"]
 swe = "swe.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/c-wenlong/quiver"
-Documentation = "https://github.com/c-wenlong/quiver#readme"
-Repository = "https://github.com/c-wenlong/quiver"
-Issues = "https://github.com/c-wenlong/quiver/issues"
-Changelog = "https://github.com/c-wenlong/quiver/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/c-wenlong/swe"
+Documentation = "https://github.com/c-wenlong/swe#readme"
+Repository = "https://github.com/c-wenlong/swe"
+Issues = "https://github.com/c-wenlong/swe/issues"
+Changelog = "https://github.com/c-wenlong/swe/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/swe", "src/quiver"]

@@ -7,7 +7,7 @@
 # queue ever gates on them, and on demand, so main stays covered without
 # a macOS runner standing in front of every PR.  Release tags exercise
 # the same ground through release.yml, which verifies the wheel on macOS,
-# builds Quiver.app and runs the Nix derivation before anything attaches.
+# builds SWE.app and runs the Nix derivation before anything attaches.
 name: Native
 
 on:
@@ -96,7 +96,7 @@ jobs:
 
   ios-unit:
     # The iPhone app's unit tests had no job at all. The UI test target
-    # needs a paired hub, so only QuiverRemoteTests runs here, on the
+    # needs a paired hub, so only SWERemoteTests runs here, on the
     # first available iPhone simulator of the image's Xcode.
     name: iOS app unit tests
     runs-on: macos-26
@@ -125,9 +125,9 @@ jobs:
             | last | .value | map(select(.name | startswith("iPhone")))
             | .[0].udid')"
           test -n "$udid" && [ "$udid" != null ]
-          xcodebuild -project QuiverRemote.xcodeproj -scheme QuiverRemote \
+          xcodebuild -project SWERemote.xcodeproj -scheme SWERemote \
             -destination "id=$udid" -derivedDataPath build-sim \
-            -only-testing:QuiverRemoteTests test
+            -only-testing:SWERemoteTests test
 
   nix:
     # Same derivation check release.yml runs on a tag.  Here it keeps the

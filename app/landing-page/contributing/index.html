@@ -99,7 +99,7 @@ footer a:hover { color: var(--text); }
         <a href="../changelog/">Changelog</a>
       </div>
       <div class="right">
-        <a class="plain" href="https://github.com/c-wenlong/quiver"><svg class="i"><use href="#gh"/></svg>GitHub</a>
+        <a class="plain" href="https://github.com/c-wenlong/swe"><svg class="i"><use href="#gh"/></svg>GitHub</a>
         <a class="btn light sm" href="../#install"><span>Install</span></a>
       </div>
     </nav>
@@ -109,8 +109,8 @@ footer a:hover { color: var(--text); }
 <h1 id="contributing-to-swe"><a class="anchor" href="#contributing-to-swe"></a>Contributing to swe</h1>
 <p>Thanks for your interest in contributing! swe is a small, stdlib-only CLI — we want to keep it fast, portable, and easy to hack on.</p>
 <h2 id="getting-started"><a class="anchor" href="#getting-started"></a>Getting started</h2>
-<pre><code class="language-bash">git clone https://github.com/c-wenlong/quiver.git
-cd quiver
+<pre><code class="language-bash">git clone https://github.com/c-wenlong/swe.git
+cd swe
 python3 -m venv .venv &amp;&amp; source .venv/bin/activate
 pip install -e &quot;.[test]&quot;
 HOME=&quot;$(mktemp -d)&quot; python3 -m unittest discover -s tests -p 'test_*.py'
@@ -189,11 +189,11 @@ registry and counts your real sessions. CI does this for every job.</p>
 </tr>
 <tr>
   <td><code>remote/</code></td>
-  <td><code>swe remote</code>: the hub, the satellite agent, pairing and devices (<a href="https://github.com/c-wenlong/quiver/blob/main/docs/remote-control.md">docs/remote-control.md</a>)</td>
+  <td><code>swe remote</code>: the hub, the satellite agent, pairing and devices (<a href="https://github.com/c-wenlong/swe/blob/main/docs/remote-control.md">docs/remote-control.md</a>)</td>
 </tr>
 <tr>
   <td><code>webapp/</code></td>
-  <td>The web app the hub serves, and its page data (<a href="https://github.com/c-wenlong/quiver/blob/main/docs/web-app.md">docs/web-app.md</a>)</td>
+  <td>The web app the hub serves, and its page data (<a href="https://github.com/c-wenlong/swe/blob/main/docs/web-app.md">docs/web-app.md</a>)</td>
 </tr>
 <tr>
   <td><code>ledger/</code>, <code>status/</code></td>
@@ -259,7 +259,7 @@ python3 scripts/docs_site.py        # --check reports stale output
 </code></pre>
 <p><code>mistune</code> is a docs-only dependency pinned in <code>docs/requirements.txt</code> (and a <code>test</code> extra so CI's freshness test runs); the core package stays stdlib-only, so it never goes in the runtime deps.</p>
 <h2 id="code-of-conduct"><a class="anchor" href="#code-of-conduct"></a>Code of Conduct</h2>
-<p>Taking part in this project means agreeing to the <a href="https://github.com/c-wenlong/quiver/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>.</p>
+<p>Taking part in this project means agreeing to the <a href="https://github.com/c-wenlong/swe/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>.</p>
 <h2 id="pull-request-process"><a class="anchor" href="#pull-request-process"></a>Pull request process</h2>
 <ol>
 <li>Fork the repo and create a feature branch from <code>main</code>.</li>
@@ -272,15 +272,15 @@ python3 scripts/docs_site.py        # --check reports stale output
 <p><strong>Why reinstall?</strong> The <code>swe</code> command is a pip entry point. With an editable install (<code>pip install -e .</code>), new files are picked up automatically. But a stale non-editable install (e.g. from <code>pip install .</code> or pipx) won't see new modules until you reinstall. Unit tests with <code>PYTHONPATH=src</code> can pass while <code>swe</code> silently fails because it doesn't see the new module.</p>
 </blockquote>
 <h2 id="reporting-bugs"><a class="anchor" href="#reporting-bugs"></a>Reporting bugs</h2>
-<p>Use the <a href="https://github.com/c-wenlong/quiver/issues/new?template=bug_report.yml">bug report template</a> and include:</p>
+<p>Use the <a href="https://github.com/c-wenlong/swe/issues/new?template=bug_report.yml">bug report template</a> and include:</p>
 <ul>
 <li>Your OS and Python version, plus the swe version from <code>swe version</code></li>
 <li>The exact command that failed and its full output</li>
 <li>Steps to reproduce</li>
 </ul>
 <h2 id="questions"><a class="anchor" href="#questions"></a>Questions?</h2>
-<p><a href="https://github.com/c-wenlong/quiver/blob/main/SUPPORT.md">SUPPORT.md</a> has the full ladder: read the docs, run <code>swe doctor</code>,
-then open an <a href="https://github.com/c-wenlong/quiver/issues">issue</a>. Discussions
+<p><a href="https://github.com/c-wenlong/swe/blob/main/SUPPORT.md">SUPPORT.md</a> has the full ladder: read the docs, run <code>swe doctor</code>,
+then open an <a href="https://github.com/c-wenlong/swe/issues">issue</a>. Discussions
 are not enabled on this repo, so issues are the only channel — and we're happy
 to help you find a good first task there.</p>
 
@@ -291,7 +291,7 @@ to help you find a good first task there.</p>
     <a href="../overview/">Docs</a>
     <a href="../changelog/">Changelog</a>
     <a href="../contributing/">Contributing</a>
-    <a href="https://github.com/c-wenlong/quiver">GitHub</a>
+    <a href="https://github.com/c-wenlong/swe">GitHub</a>
   </div>
 </footer>
 </body>

@@ -1,7 +1,7 @@
 """Service status: the official status pages of the services the harnesses
 depend on, read politely and cached.
 
-A Python port of the Mac app's ``QuiverCore/Status`` for the web app's
+A Python port of the Mac app's ``SWECore/Status`` for the web app's
 Service status page:
 
 - ``catalog``: the services, their groups, and the health vocabulary.

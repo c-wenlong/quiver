@@ -1,6 +1,6 @@
 """The catalogue behind the "one-click add" sheet.
 
-A port of the Mac app's ``QuiverCore/Status/StatusCatalogue.swift``:
+A port of the Mac app's ``SWECore/Status/StatusCatalogue.swift``:
 common status pages, each verified to serve the Atlassian Statuspage
 ``api/v2/summary.json``. Every entry is a plain ``StatusService``, so a
 row's logo resolves the same way an added card's does. Each URL is the

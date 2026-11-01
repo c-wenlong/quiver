@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "data": {
+    "github": {
+      "status": "ok",
+      "login": "c-wenlong",
+      "error": null
+    },
+    "repos": [
+      {
+        "name": "c-wenlong/swe",
+        "added_at": 1792528202
+      }
+    ],
+    "catalog": {
+      "repos": 128,
+      "synced_at": 1792530000.5,
+      "owners": ["c-wenlong", "test-bot"]
+    }
+  }
+}

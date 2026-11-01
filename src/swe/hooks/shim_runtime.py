@@ -55,7 +55,7 @@ def normalize(raw: dict, contract: dict, argv_event: str) -> tuple[dict, str]:
     """(normalized payload, native event name) for the shared script.
 
     Unknown event names pass through as themselves — the map only holds
-    renames, so a harness event quiver never surveyed still reaches the
+    renames, so a harness event swe never surveyed still reaches the
     script with its native spelling intact.
     """
     if not isinstance(raw, dict):

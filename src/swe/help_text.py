@@ -33,7 +33,7 @@ HELP = {
                           that touches the network, so it is opt-in: the plain
                           listing runs in ~70ms, --usage costs ~700ms on a cold
                           cache. Implied by --refresh.
-  {c('cyan', '--links')} / {c('cyan', '-L')}            Show quiver link status instead of usage.
+  {c('cyan', '--links')} / {c('cyan', '-L')}            Show swe link status instead of usage.
   {c('cyan', '--refresh')} / {c('cyan', '-r')} / {c('cyan', '-n')}   Bypass caches and fetch new data.
   {c('cyan', '--refresh-failed')}            Refetch only providers whose cached reading
                           failed (timeout, sign-in needed, a window unread);
@@ -95,8 +95,8 @@ HELP = {
   {c('cyan', 'swe add <name> <cmd> --no-replace --json')}  For the app: refuse existing names
 
   The {c('dim', 'registry')} is one file, {c('bold', '~/.swe/config/harness.json')}, listing every
-  tool quiver knows. Adding a tool here does not install it — it tells
-  quiver the tool exists, so {c('cyan', 'swe list')}/{c('cyan', 'swe use')}/{c('cyan', 'swe edit')} can find it.
+  tool swe knows. Adding a tool here does not install it — it tells
+  swe the tool exists, so {c('cyan', 'swe list')}/{c('cyan', 'swe use')}/{c('cyan', 'swe edit')} can find it.
   If the tool already exists, it updates the entry.
 
 {c('bold', 'Examples')}
@@ -186,7 +186,7 @@ HELP = {
   Catches the common failure mode: {c('dim', 'npm install -g')} under nvm while
   interactive/non-interactive shells use Homebrew Node (tool missing from PATH).
 
-  Also runs read-only drift checks: places two parts of quiver were supposed
+  Also runs read-only drift checks: places two parts of swe were supposed
   to agree and quietly did not — help text vs dispatch, registry shape,
   hardcoded fallback tables vs harness.json, dangling symlinks. A finding
   looks like:
@@ -237,7 +237,7 @@ HELP = {
   {c('cyan', '--agent=<name>')}               Filter by agent (claude, codex, opencode, droid, ...)
   {c('cyan', '--here')}                       Filter to current directory only
   {c('cyan', '--search=<text>')}              Filter title/path/agent/session id, and transcript
-                                            content when a search index exists (the Quiver
+                                            content when a search index exists (the SWE
                                             app's, or swe session index) (alias: -q, --grep)
   {c('cyan', '-d N, --days=<N>')}             Include today and the preceding N-1 calendar dates
   {c('cyan', '-w N, --weeks=<N>')}            Include the latest N times 7 calendar dates
@@ -413,7 +413,7 @@ to use their own login state and environment."""
       Unregister a provider (does not delete your key file)
 
   Keys live in {c('bold', '~/.swe/secrets/providers/.api_keys')} (override
-  with --api-keys-dir=DIR). quiver stores metadata only — never the
+  with --api-keys-dir=DIR). swe stores metadata only — never the
   raw key. Run {c('cyan', 'swe providers --help')} for full key-storage and masking details."""
     ),
     "harness": (
@@ -474,7 +474,7 @@ to use their own login state and environment."""
 
   A row hidden this way is never silent about it: the listing ends with
   {c('dim', 'N archived harnesses hidden; --harness=all to show')}. A row that cannot
-  be mapped to a harness in harness.json — the shared quiver copy, an
+  be mapped to a harness in harness.json — the shared swe copy, an
   unregistered config — is never filtered, active or not: unknown is the
   one thing {c('cyan', 'swe find')} exists to keep visible.
 
@@ -828,7 +828,7 @@ to use their own login state and environment."""
 
   The phone only ever talks to the hub, over Tailscale. Sessions list as
   {c('bold', 'observed')} (a human terminal owns them: read-only) until they run
-  under quiver's supervisor, which marks them {c('bold', 'attached')} and writable.
+  under swe's supervisor, which marks them {c('bold', 'attached')} and writable.
 
   {c('cyan', 'swe remote notify --ntfy=<url> --topic=<t>')}  Push notifications via a
                                             self-hosted ntfy: needs-you, finished,
@@ -954,8 +954,8 @@ def cmd_help(args):
     # ── full help ─────────────────────────────────────────────────────────────
     print(f"\n{c('bold', 'swe')} — Central manager for AI coding CLI tools\n")
     print("  One home for every AI coding CLI you use. Each one invents its own config")
-    print("  files; quiver gives them one shared instruction file, one skills folder,")
-    print(f"  one MCP list, one registry. quiver calls each AI coding tool (Claude Code,")
+    print("  files; swe gives them one shared instruction file, one skills folder,")
+    print(f"  one MCP list, one registry. swe calls each AI coding tool (Claude Code,")
     print(f"  Codex, Cursor…) a {c('bold', 'harness')}.\n")
     print(f"  {c('dim', 'USAGE')}  swe <command> [arguments]\n")
 

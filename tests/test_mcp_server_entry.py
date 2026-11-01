@@ -63,7 +63,7 @@ class TestMcpServerShimWithoutExtra(unittest.TestCase):
 class TestMcpServerMissingExtra(unittest.TestCase):
     def test_the_install_hint_never_names_the_pypi_package(self):
         # PyPI's "quiver" is someone else's project: `pip install
-        # quiver[server]` would install it, not the mcp dependency.
+        # swe[server]` would install it, not the mcp dependency.
         import contextlib
         import io
 
@@ -75,9 +75,9 @@ class TestMcpServerMissingExtra(unittest.TestCase):
                 importlib.import_module("swe.mcp.server")
         sys.modules.pop("swe.mcp.server", None)
         self.assertIn('pip install -e ".[server]"', err.getvalue())
-        self.assertNotIn("pip install quiver[server]", err.getvalue())
+        self.assertNotIn("pip install swe[server]", err.getvalue())
 
-@unittest.skipUnless(_have_fastmcp(), "FastMCP (quiver[server]) not installed")
+@unittest.skipUnless(_have_fastmcp(), "FastMCP (swe[server]) not installed")
 class TestMcpServerShimWithFastMCP(unittest.TestCase):
     def test_running_shim_as_main_starts_the_real_server(self):
         # Not `from swe.mcp import server`: the stub tests can leave a stale package attribute.

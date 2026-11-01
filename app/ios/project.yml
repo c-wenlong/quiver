@@ -1,6 +1,6 @@
-name: QuiverRemote
+name: SWERemote
 options:
-  bundleIdPrefix: com.quiver
+  bundleIdPrefix: com.swe
 # The console's SSH and terminal. Exact versions: Package.resolved isn't
 # checked in (it lives in the generated project), so a range would let
 # every regenerate pick up a newer SSH stack unreviewed.
@@ -17,12 +17,12 @@ packages:
     url: https://github.com/migueldeicaza/SwiftTerm
     exactVersion: 1.11.2
 targets:
-  QuiverRemote:
+  SWERemote:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: Sources/QuiverRemote
+      - path: Sources/SWERemote
       - path: Assets.xcassets
     dependencies:
       - package: SwiftNIO
@@ -35,12 +35,12 @@ targets:
         product: NIOSSH
       - package: SwiftTerm
         product: SwiftTerm
-      - target: QuiverShare
-      - target: QuiverWidget
+      - target: SWEShare
+      - target: SWEWidget
     info:
-      path: QuiverRemote-Info.plist
+      path: SWERemote-Info.plist
       properties:
-        CFBundleDisplayName: Quiver Remote
+        CFBundleDisplayName: SWE Remote
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
         # Without a UILaunchScreen dict iOS letterboxes the app to a legacy
@@ -49,11 +49,13 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         # The shared Keychain group, read by SharedContainer. The build
         # fills in the signing team, so no team id is in the source.
-        QuiverKeychainGroup: $(AppIdentifierPrefix)com.quiver.remote.shared
+        SWEKeychainGroup: $(AppIdentifierPrefix)com.swe.remote.shared
         NSCameraUsageDescription: Scan the pair QR that swe remote pair --app shows.
         CFBundleURLTypes:
-          - CFBundleURLName: com.quiver.remote.pair
-            CFBundleURLSchemes: [quiver]
+          - CFBundleURLName: com.swe.remote.pair
+            # `swe` is what new hubs emit; `quiver` keeps pair, session
+            # and issue links written before the rename opening.
+            CFBundleURLSchemes: [swe, quiver]
         # The hub is plain HTTP on the tailnet, not TLS, and its address
         # can only take a few shapes: a MagicDNS name (always *.ts.net —
         # the one named exception), or a tailnet CGNAT IP, unqualified/
@@ -73,13 +75,13 @@ targets:
     # the paired hubs (KeychainHubStore). Signing with automatic style
     # registers both on the team's App IDs.
     entitlements:
-      path: QuiverRemote.entitlements
+      path: SWERemote.entitlements
       properties: &sharedGroups
-        com.apple.security.application-groups: [group.com.quiver.remote]
-        keychain-access-groups: [$(AppIdentifierPrefix)com.quiver.remote.shared]
+        com.apple.security.application-groups: [group.com.swe.remote]
+        keychain-access-groups: [$(AppIdentifierPrefix)com.swe.remote.shared]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.quiver.remote
+        PRODUCT_BUNDLE_IDENTIFIER: com.swe.remote
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
@@ -93,31 +95,31 @@ targets:
   # the client, the wire types, the attachment rules and the share
   # logic) rather than a framework, and reads the paired hubs from the
   # same App Group and Keychain group as the app.
-  QuiverShare:
+  SWEShare:
     type: app-extension
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: Sources/QuiverShare
-      - path: Sources/QuiverRemote/Share
-      - path: Sources/QuiverRemote/Hub/Pairing.swift
-      - path: Sources/QuiverRemote/Hub/HubStore.swift
-      - path: Sources/QuiverRemote/Hub/HubClient.swift
-      - path: Sources/QuiverRemote/Hub/Models.swift
-      - path: Sources/QuiverRemote/Hub/Attachments.swift
+      - path: Sources/SWEShare
+      - path: Sources/SWERemote/Share
+      - path: Sources/SWERemote/Hub/Pairing.swift
+      - path: Sources/SWERemote/Hub/HubStore.swift
+      - path: Sources/SWERemote/Hub/HubClient.swift
+      - path: Sources/SWERemote/Hub/Models.swift
+      - path: Sources/SWERemote/Hub/Attachments.swift
       # Wire types HubClient's other routes name.
-      - path: Sources/QuiverRemote/Hub/PullActions.swift
-      - path: Sources/QuiverRemote/Hub/PagePreview.swift
-      - path: Sources/QuiverRemote/Hub/SSHTarget.swift
-      - path: Sources/QuiverRemote/Hub/UsageModels.swift
-      - path: Sources/QuiverRemote/Hub/UsageFormat.swift
+      - path: Sources/SWERemote/Hub/PullActions.swift
+      - path: Sources/SWERemote/Hub/PagePreview.swift
+      - path: Sources/SWERemote/Hub/SSHTarget.swift
+      - path: Sources/SWERemote/Hub/UsageModels.swift
+      - path: Sources/SWERemote/Hub/UsageFormat.swift
     info:
-      path: QuiverShare-Info.plist
+      path: SWEShare-Info.plist
       properties:
-        CFBundleDisplayName: Quiver
+        CFBundleDisplayName: SWE
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
-        QuiverKeychainGroup: $(AppIdentifierPrefix)com.quiver.remote.shared
+        SWEKeychainGroup: $(AppIdentifierPrefix)com.swe.remote.shared
         NSAppTransportSecurity: *ats
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
@@ -129,11 +131,11 @@ targets:
               NSExtensionActivationSupportsImageWithMaxCount: 10
               NSExtensionActivationSupportsFileWithMaxCount: 10
     entitlements:
-      path: QuiverShare.entitlements
+      path: SWEShare.entitlements
       properties: *sharedGroups
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.quiver.remote.share
+        PRODUCT_BUNDLE_IDENTIFIER: com.swe.remote.share
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
@@ -142,60 +144,60 @@ targets:
         APPLICATION_EXTENSION_API_ONLY: YES
   # The home screen widget (#1442): what needs you, what's working and
   # today's spend. Same pattern as the share sheet: it compiles the app's
-  # hub files and the shared widget logic (Sources/QuiverRemote/Widget),
+  # hub files and the shared widget logic (Sources/SWERemote/Widget),
   # and reads the paired hubs and the snapshot the app writes from the
   # same App Group and Keychain group.
-  QuiverWidget:
+  SWEWidget:
     type: app-extension
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: Sources/QuiverWidget
-      - path: Sources/QuiverRemote/Widget
-      - path: Sources/QuiverRemote/Hub/Pairing.swift
-      - path: Sources/QuiverRemote/Hub/HubStore.swift
-      - path: Sources/QuiverRemote/Hub/HubClient.swift
-      - path: Sources/QuiverRemote/Hub/Models.swift
-      - path: Sources/QuiverRemote/Hub/Attachments.swift
+      - path: Sources/SWEWidget
+      - path: Sources/SWERemote/Widget
+      - path: Sources/SWERemote/Hub/Pairing.swift
+      - path: Sources/SWERemote/Hub/HubStore.swift
+      - path: Sources/SWERemote/Hub/HubClient.swift
+      - path: Sources/SWERemote/Hub/Models.swift
+      - path: Sources/SWERemote/Hub/Attachments.swift
       # Wire types HubClient's other routes name.
-      - path: Sources/QuiverRemote/Hub/PullActions.swift
-      - path: Sources/QuiverRemote/Hub/PagePreview.swift
-      - path: Sources/QuiverRemote/Hub/SSHTarget.swift
-      - path: Sources/QuiverRemote/Hub/UsageModels.swift
-      - path: Sources/QuiverRemote/Hub/UsageFormat.swift
+      - path: Sources/SWERemote/Hub/PullActions.swift
+      - path: Sources/SWERemote/Hub/PagePreview.swift
+      - path: Sources/SWERemote/Hub/SSHTarget.swift
+      - path: Sources/SWERemote/Hub/UsageModels.swift
+      - path: Sources/SWERemote/Hub/UsageFormat.swift
     dependencies:
       - sdk: WidgetKit.framework
       - sdk: SwiftUI.framework
     info:
-      path: QuiverWidget-Info.plist
+      path: SWEWidget-Info.plist
       properties:
-        CFBundleDisplayName: Quiver
+        CFBundleDisplayName: SWE
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
-        QuiverKeychainGroup: $(AppIdentifierPrefix)com.quiver.remote.shared
+        SWEKeychainGroup: $(AppIdentifierPrefix)com.swe.remote.shared
         NSAppTransportSecurity: *ats
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
-      path: QuiverWidget.entitlements
+      path: SWEWidget.entitlements
       properties: *sharedGroups
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.quiver.remote.widget
+        PRODUCT_BUNDLE_IDENTIFIER: com.swe.remote.widget
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.0"
         SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
         APPLICATION_EXTENSION_API_ONLY: YES
-  QuiverRemoteTests:
+  SWERemoteTests:
     type: bundle.unit-test
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: Tests/QuiverRemoteTests
+      - path: Tests/SWERemoteTests
     dependencies:
-      - target: QuiverRemote
+      - target: SWERemote
       - package: SwiftNIOSSH
         product: NIOSSH
     settings:
@@ -204,29 +206,29 @@ targets:
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.0"
-  QuiverRemoteUITests:
+  SWERemoteUITests:
     type: bundle.ui-testing
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: Tests/QuiverRemoteUITests
+      - path: Tests/SWERemoteUITests
     dependencies:
-      - target: QuiverRemote
+      - target: SWERemote
     settings:
       base:
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.0"
-        TEST_TARGET_NAME: QuiverRemote
+        TEST_TARGET_NAME: SWERemote
 schemes:
-  QuiverRemote:
+  SWERemote:
     build:
       targets:
-        QuiverRemote: all
-        QuiverRemoteTests: [test]
-        QuiverRemoteUITests: [test]
+        SWERemote: all
+        SWERemoteTests: [test]
+        SWERemoteUITests: [test]
     test:
       targets:
-        - QuiverRemoteTests
-        - QuiverRemoteUITests
+        - SWERemoteTests
+        - SWERemoteUITests

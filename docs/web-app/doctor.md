@@ -1,7 +1,7 @@
 # Doctor
 
 A port of the Mac app's Settings › Doctor (`DoctorSection.swift`,
-`DoctorModel` in `QuiverCore/Swe/Doctor.swift`). Page id `doctor`, at
+`DoctorModel` in `SWECore/Swe/Doctor.swift`). Page id `doctor`, at
 `#/doctor`. It is not in the sidebar, as in the app; the Settings page
 links to it, and its header links back to Settings.
 
