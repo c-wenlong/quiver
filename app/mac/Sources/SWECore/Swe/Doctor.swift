@@ -29,12 +29,47 @@ public struct DoctorReport: Decodable, Sendable, Equatable {
         /// For `install`: the method swe reinstalls the harness with.
         public let via: String?
 
-        /// Fixes swe runs for us (`action` in the row); an action a newer
-        /// swe adds decodes as nil so this build just doesn't offer Run.
-        public enum Action: String, Decodable, Sendable { case setup, `init`, discover, install }
+        /// Fixes swe runs for us (`action` in the row, or its first
+        /// `action` remedy); an action a newer swe adds decodes as nil so
+        /// this build just doesn't offer Run. Every value here has a runner
+        /// in `harness/doctor_fix.py` (a Python test compares the lists).
+        public enum Action: String, Decodable, Sendable, CaseIterable {
+            case setup, `init`, discover, install
+            case undeclare
+            case marketplaceDrop = "marketplace-drop"
+            case pluginFix = "plugin-fix"
+            case pluginReinstall = "plugin-reinstall"
+            case danglingLink = "dangling-link"
+            case mcpSync = "mcp-sync"
+
+            /// Fix all runs these: local repairs that only add or relink.
+            /// The rest (installs, and fixes that delete or overwrite)
+            /// keep their row's Run. Mirrors `doctor_fix.BATCH`.
+            public var isBatch: Bool {
+                switch self {
+                case .setup, .`init`, .discover, .pluginFix: true
+                default: false
+                }
+            }
+
+            /// The four swe has always run through their own commands;
+            /// the rest go through `swe doctor --fix=<check> --message=`.
+            var isLegacy: Bool {
+                switch self {
+                case .setup, .`init`, .discover, .install: true
+                default: false
+                }
+            }
+        }
 
         private enum CodingKeys: String, CodingKey {
-            case check, severity, message, fix, harness, action, via
+            case check, severity, message, fix, harness, action, via, remedies
+        }
+
+        /// Just enough of a remedy to find its action.
+        private struct Remedy: Decodable {
+            let kind: String?
+            let action: String?
         }
 
         public init(check: String, severity: Severity, message: String,
@@ -59,8 +94,12 @@ public struct DoctorReport: Decodable, Sendable, Equatable {
             let named = try box.decodeIfPresent(String.self, forKey: .harness)
             let method = try box.decodeIfPresent(String.self, forKey: .via)
             via = method
+            // A drop or a broken link names its action only on a remedy.
+            let remedies = (try? box.decodeIfPresent([Remedy].self, forKey: .remedies)) ?? nil
+            let own = try box.decodeIfPresent(String.self, forKey: .action)
+            let actionName = own ?? remedies?.first { $0.kind == "action" && $0.action.flatMap(Action.init) != nil }?.action
             // An install with no harness or method to run it with can't be offered.
-            action = try box.decodeIfPresent(String.self, forKey: .action)
+            action = actionName
                 .flatMap(Action.init)
                 .flatMap { $0 == .install && (named == nil || method == nil) ? nil : $0 }
         }
@@ -97,6 +136,75 @@ extension SweClient {
         }
         return InstallRun(status: result.status,
                           output: [out, err].filter { !$0.isEmpty }.joined(separator: "\n"))
+    }
+}
+
+/// `swe doctor --fix --json`: what ran, what it fixed, what is left.
+public struct FixRun: Decodable, Sendable, Equatable {
+    public struct Step: Decodable, Sendable, Equatable {
+        public let action: String
+        public let fix: String?
+        public let error: String?
+    }
+
+    public struct Ref: Decodable, Sendable, Equatable {
+        public let check: String
+        public let message: String
+    }
+
+    public let ran: [Step]
+    public let fixed: [Ref]
+    public let notCleared: [Ref]
+    public let skipped: [Ref]
+    /// Every finding in scope still there, manual ones included.
+    public let stillFailing: [Ref]
+
+    // SweClient decodes with .convertFromSnakeCase: not_cleared arrives
+    // as notCleared, so the keys carry no raw values.
+    private enum CodingKeys: String, CodingKey {
+        case ran, fixed, skipped, notCleared, stillFailing
+    }
+
+    public init(ran: [Step], fixed: [Ref], notCleared: [Ref], skipped: [Ref],
+                stillFailing: [Ref] = []) {
+        self.ran = ran
+        self.fixed = fixed
+        self.notCleared = notCleared
+        self.skipped = skipped
+        self.stillFailing = stillFailing
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        ran = try box.decode([Step].self, forKey: .ran)
+        fixed = try box.decode([Ref].self, forKey: .fixed)
+        notCleared = try box.decodeIfPresent([Ref].self, forKey: .notCleared) ?? []
+        skipped = try box.decodeIfPresent([Ref].self, forKey: .skipped) ?? []
+        stillFailing = try box.decodeIfPresent([Ref].self, forKey: .stillFailing) ?? []
+    }
+
+    /// The first fix that failed, for the row or the summary.
+    public var firstError: String? { ran.compactMap(\.error).first }
+}
+
+extension SweClient {
+    /// `swe doctor --fix --json`: Fix all. Exits 1 when a fix failed or
+    /// one is still owed, with the JSON either way.
+    public func fixAll() async throws -> FixRun {
+        try await call(["doctor", "--fix", "--json"], allowFailure: true,
+                       timeout: Self.fixTimeout)
+    }
+
+    /// A plugin command alone may take five minutes, and a batch runs
+    /// several: stopping early could leave a reinstall half done.
+    static let fixTimeout: Duration = .seconds(1800)
+
+    /// One finding's fix by name, as the web's Run sends it: swe finds
+    /// the finding in a fresh report and refuses one that is gone.
+    public func fix(check: String, message: String, action: String) async throws -> FixRun {
+        try await call(["doctor", "--fix=\(check)", "--message=\(message)",
+                        "--action=\(action)", "--json"], allowFailure: true,
+                       timeout: Self.fixTimeout)
     }
 }
 
@@ -137,13 +245,29 @@ public final class DoctorModel {
     /// The last install that worked: its finding is gone from the report,
     /// so the section shows what it printed until dismissed.
     public internal(set) var installed: (harness: String, output: String)?
+    /// Fix all's last result, shown until dismissed, and its failure.
+    public internal(set) var fixAllResult: FixRun?
+    public internal(set) var fixAllError: String?
+    /// The `running` id Fix all holds while it runs.
+    public static let fixAllID = "fix-all"
     private let swe: SweClient
     /// Bumped by each load; a reply from an older load is dropped, so a slow
     /// earlier refresh cannot overwrite a newer one.
     private var generation = 0
 
-    public init(swe: SweClient) {
+    /// The Plugins page's one-change-at-a-time turn: a plugin repair here
+    /// must not overlap an install or uninstall there (a reinstall could
+    /// undo an uninstall made meanwhile). The app hands over its own.
+    public var work: PluginWork
+
+    public init(swe: SweClient, work: PluginWork = PluginWork()) {
         self.swe = swe
+        self.work = work
+    }
+
+    /// The plugin actions, which take `work` for their run.
+    static func touchesPlugins(_ action: DoctorReport.Finding.Action) -> Bool {
+        action == .pluginFix || action == .pluginReinstall
     }
 
     /// Checks or a fix are in flight, so the report is about to change:
@@ -199,6 +323,17 @@ public final class DoctorModel {
                 await HarnessesModel.registryWrites.acquire()
                 defer { HarnessesModel.registryWrites.release() }
                 _ = try await swe.applyDiscovery()
+            case .undeclare, .marketplaceDrop, .pluginFix, .pluginReinstall,
+                 .danglingLink, .mcpSync:
+                let plugin = Self.touchesPlugins(action)
+                if plugin && !work.begin() {
+                    runErrors[finding.id] = "A plugin change is still running. Wait for it, then try again."
+                    break
+                }
+                defer { if plugin { work.end() } }
+                let run = try await swe.fix(check: finding.check, message: finding.message,
+                                            action: action.rawValue)
+                if let error = run.firstError { runErrors[finding.id] = error }
             case .install:
                 guard let harness = finding.harness, let via = finding.via else { break }
                 let run = try await swe.installHarness(name: harness, via: via)
@@ -218,6 +353,43 @@ public final class DoctorModel {
         // init`), so re-read the report either way.
         await load()
         running.remove(finding.id)
+    }
+
+    /// Fix all: `swe doctor --fix`, one at a time with the row Runs. It
+    /// can run setup and discover, so it waits behind the registry gate.
+    public func fixAll() async {
+        guard running.isEmpty else { return }
+        running.insert(Self.fixAllID)
+        fixAllResult = nil
+        fixAllError = nil
+        runStarted = Date()
+        defer { runStarted = nil }
+        do {
+            // Fix all can install plugins: it takes the Plugins turn too.
+            guard work.begin() else {
+                fixAllError = "A plugin change is still running. Wait for it, then try again."
+                running.remove(Self.fixAllID)
+                return
+            }
+            defer { work.end() }
+            await HarnessesModel.registryWrites.acquire()
+            defer { HarnessesModel.registryWrites.release() }
+            fixAllResult = try await swe.fixAll()
+        } catch {
+            fixAllError = error.localizedDescription
+        }
+        await load()
+        running.remove(Self.fixAllID)
+    }
+
+    public func dismissFixAll() {
+        fixAllResult = nil
+        fixAllError = nil
+    }
+
+    /// How many findings Fix all would run a fix for.
+    public static func batchCount(_ report: DoctorReport) -> Int {
+        report.findings.filter { $0.action?.isBatch == true }.count
     }
 
     /// A run the page did itself (Run in Terminal) still reports under

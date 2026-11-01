@@ -61,7 +61,8 @@ Writes are `POST /v1/app/<page>/<action>` with the same bearer and the
 same Origin check every `/v1` write uses. The first is the Harnesses page's
 star, archive and restore (docs/web-app/harness.md).
 
-Doctor (`#/doctor`, docs/web-app/doctor.md) is a page with no sidebar
+Doctor (`#/doctor`, docs/web-app/doctor.md; Fix all posts to
+`/v1/app/doctor/fix-all`) is a page with no sidebar
 entry, as in the app, where it is a Settings section.
 
 ## Data on the hub machine
