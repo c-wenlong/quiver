@@ -242,9 +242,15 @@ class CliTest(unittest.TestCase):
         self.assertEqual(doctor_fix.fixable_left(data), [])
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue((home / ".quiver" / "AGENTS.md").is_file())
-        # Idempotent: a second run has nothing to do.
-        again = decode(run_swe(home, "doctor", "--fix", "--json"))["data"]
-        self.assertEqual(again["ran"], [])
+        # Idempotent: a second run changes nothing. On a machine with no
+        # harness on PATH, discovery is offered again and finds nothing;
+        # that is a finding for a person, not a failure.
+        again_run = run_swe(home, "doctor", "--fix", "--json")
+        again = decode(again_run)["data"]
+        self.assertEqual([s["action"] for s in again["ran"]],
+                         [s["action"] for s in again["ran"] if s["action"] == "discover"])
+        self.assertEqual((again["fixed"], doctor_fix.fixable_left(again)), ([], []))
+        self.assertEqual(again_run.returncode, 0, again_run.stderr)
 
     def test_no_harness_on_path_still_settles(self):
         home = temp_dir(self)
