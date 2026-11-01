@@ -8,7 +8,8 @@ DMG and wheel. release.yml runs it after the assets are on the release.
     python3 scripts/bump_tap.py TAP_DIR VERSION DMG_SHA256 WHEEL_SHA256
 
 Each substitution must match exactly once; anything else means the tap
-file changed shape, and the script fails rather than guess.
+file changed shape, and the script fails rather than guess. A version
+older than the one the cask already has is a no-op, never a rollback.
 """
 
 from __future__ import annotations
@@ -26,6 +27,18 @@ def _sub_once(pattern: str, replacement: str, text: str, what: str) -> str:
     if count != 1:
         raise ValueError(f"expected exactly one {what}, found {count}")
     return new
+
+
+def _key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def cask_version(text: str) -> str:
+    """The version the tap's cask points at now."""
+    found = re.findall(r'^  version "([^"]*)"$', text, flags=re.MULTILINE)
+    if len(found) != 1 or not _VERSION.match(found[0]):
+        raise ValueError(f"expected exactly one plain cask version line, found {found!r}")
+    return found[0]
 
 
 def bump_cask(text: str, version: str, sha256: str) -> str:
@@ -58,6 +71,16 @@ def main(argv: list[str]) -> int:
         if not _SHA256.match(sha):
             print(f"bump_tap: {sha!r} is not a lowercase SHA-256", file=sys.stderr)
             return 2
+    # A slow run for an older tag can reach the tap after a newer one
+    # already bumped it; it must leave the newer version in place.
+    try:
+        current = cask_version((Path(tap) / "Casks/quiver.rb").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"bump_tap: Casks/quiver.rb: {exc}", file=sys.stderr)
+        return 1
+    if _key(version) < _key(current):
+        print(f"bump_tap: the tap is already on {current}, newer than {version}; leaving it")
+        return 0
     for rel, bump, sha in (
         ("Casks/quiver.rb", bump_cask, dmg_sha),
         ("Formula/swe.rb", bump_formula, wheel_sha),

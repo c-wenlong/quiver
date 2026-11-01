@@ -522,6 +522,13 @@ jobs:
     if: needs.attach-to-release.outputs.attached == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # One tap bump at a time across every release run, so the latest-
+    # release check below and the push happen without another run in
+    # between. bump_tap.py also refuses to move the tap to an older
+    # version, in case a run gets through anyway.
+    concurrency:
+      group: homebrew-tap
+      cancel-in-progress: false
     permissions:
       contents: read
 

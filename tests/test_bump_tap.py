@@ -135,6 +135,18 @@ class TestMain(unittest.TestCase):
         self.assertEqual(self._run(str(tap), "1.2.0"), 2)
         self.assertEqual((tap / "Casks/quiver.rb").read_text(encoding="utf-8"), CASK)
 
+    def test_older_version_leaves_the_tap_alone(self):
+        tap = self._tap()
+        self.assertEqual(self._run(str(tap), "v1.0.0", NEW_DMG, NEW_WHEEL), 0)
+        self.assertEqual(self._run(str(tap), "1.1.0", NEW_DMG, NEW_WHEEL), 0)
+        self.assertEqual((tap / "Casks/quiver.rb").read_text(encoding="utf-8"), CASK)
+        self.assertEqual((tap / "Formula/swe.rb").read_text(encoding="utf-8"), FORMULA)
+
+    def test_numeric_not_text_comparison(self):
+        tap = self._tap()
+        self.assertEqual(self._run(str(tap), "1.10.0", NEW_DMG, NEW_WHEEL), 0)
+        self.assertIn('version "1.10.0"', (tap / "Casks/quiver.rb").read_text(encoding="utf-8"))
+
     def test_missing_tap_file_fails(self):
         tap = self._tap()
         (tap / "Formula/swe.rb").unlink()
