@@ -269,6 +269,7 @@ private struct SettingsSectionView: View {
         SettingsCard {
             @Bindable var limits = app.limits
             @Bindable var githubNotify = app.githubNotify
+            @Bindable var serviceNotify = app.serviceNotify
             SettingRow(title: "Notify about limits",
                        detail: "When a limit reaches 90%, and again when it resets after that. Once per window.",
                        warning: app.limits.notificationsBlocked && app.limits.notifyEnabled
@@ -283,6 +284,11 @@ private struct SettingsSectionView: View {
                 // Banners open the Inbox, so they stay off while it is hidden.
                 SettingSwitch(title: "Notify about GitHub", isOn: $githubNotify.bannersEnabled)
                     .disabled(inboxHidden)
+            }
+            SettingsDivider()
+            SettingRow(title: "Notify about service status",
+                       detail: "When a model provider or agent platform reports an incident, and again when it is resolved. Once per incident; maintenance never notifies.") {
+                SettingSwitch(title: "Notify about service status", isOn: $serviceNotify.bannersEnabled)
             }
             SettingsDivider()
             SettingRow(title: "Refresh only what failed for",

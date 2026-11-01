@@ -69,8 +69,13 @@ HELP = {
         f"""\
   {c('cyan', 'swe use <name|alias> [args]')}  Launch a registered tool
   {c('cyan', 'swe run <name|alias> [args]')}  Same as use
+  {c('cyan', 'swe use --provider=<slug> <name> [args]')}
+                                Start it on a provider from the keys file
 
   Extra args are passed through to the underlying command.
+  {c('dim', '--provider')} goes before the name. It sets only that provider's
+  variables (key, base URL) as harness.json capabilities.provider
+  declares, and drops the keys file's other variables.
   Uses {c('dim', 'os.execvp')} to replace the process cleanly.
 
 {c('bold', 'Examples')}
@@ -809,6 +814,9 @@ to use their own login state and environment."""
                                             error. Approval prompts get lock-screen
                                             Allow/Deny buttons posting back over
                                             the tailnet. {c('cyan', '--off')} disables.
+                                            {c('cyan', '--service-status=on')} also pushes when
+                                            a model provider or agent platform
+                                            starts or ends an incident.
 
   {c('cyan', 'swe remote ssh [--on|--off]')}            The phone's SSH console, for when
                                             the hub itself is down. It dials

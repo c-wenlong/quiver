@@ -1495,8 +1495,14 @@ def cmd_remove(args):
 
 
 def cmd_use(args, env: dict | None = None):
+    provider = None
+    # Only before the name: everything after it belongs to the harness.
+    if args and args[0].startswith("--provider="):
+        provider = args[0].split("=", 1)[1]
+        args = args[1:]
     if not args:
-        print(c("red", "Usage: swe use <name|alias> [extra args...]"))
+        print(c("red", "Usage: swe use [--provider=<slug>] <name|alias> "
+                       "[extra args...]"))
         cmd_list([])
         return 1
     tools = load_registry()
@@ -1509,12 +1515,44 @@ def cmd_use(args, env: dict | None = None):
     if not is_installed(command):
         print(c("red", f"  Command '{command}' not found in PATH."))
         return 1
+    if provider:
+        env = _provider_env(name, provider, tools, env)
+        if env is None:
+            return 1
+        label = f"{command} {' '.join(extra)}".strip()
+        print(c("dim", f"  → {label}  (provider: {provider})\n"))
+        os.execvpe(command, [command] + extra, env)
+        return 0  # only reached when execvpe is mocked
     label = f"{command} {' '.join(extra)}".strip()
     print(c("dim", f"  → {label}\n"))
     if env:
         os.execvpe(command, [command] + extra, {**os.environ, **env})
     else:
         os.execvp(command, [command] + extra)
+
+
+def _provider_env(name: str, provider: str, tools: dict,
+                  extra_env: dict | None) -> dict | None:
+    """The full environment for ``swe use --provider``: this process's,
+    minus every keys-file variable, plus only ``provider``'s (see
+    ``launch_provider``). None after printing why it can't (the note
+    names variables, never values)."""
+    from swe.remote import launch_provider
+    from swe.remote.provider_exec import build_env
+
+    try:
+        path = launch_provider.keys_path()
+        keys = launch_provider.read_keys(path)
+        note = launch_provider.provider_error(name, provider, tools, keys)
+        if note:
+            raise ValueError(note)
+        spec = (launch_provider.capability(name, tools) or {})[provider]
+        env = build_env(dict(os.environ), spec, keys,
+                        launch_provider.assigned_names(path))
+    except ValueError as exc:
+        print(c("red", f"  {exc}"))
+        return None
+    return {**env, **(extra_env or {})}
 
 
 def cmd_check(args):

@@ -182,7 +182,7 @@ remote/
   files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
   preview.py     # one .html/.svg file from a session's folder (/v1/sessions/{id}/preview)
   agent.py       # satellite daemon: dial hub, run local tail/inject
-  notify.py      # needs-you/finished/error/GitHub-unread fan-out via ntfy
+  notify.py      # needs-you/finished/error/GitHub-unread/service-status fan-out via ntfy
   launchd.py     # serve/agent --install: the hub or satellite as a per-user LaunchAgent
   systemd.py     # serve/agent --install on Linux: the hub or satellite as a systemd user unit
   setup.py       # swe remote setup: every step to a paired phone, --apply
@@ -457,8 +457,9 @@ Events: `message.appended`, `message.delta` (tier A only),
 `session.status`, `session.meta` (title, harness_title, pinned,
 pinned_at after a pin or rename), `approval.requested|resolved`,
 `machine.online|offline`, `notify` (needs_you|finished|error|limit;
-`github` for a notification thread that just turned unread — hub-local,
-not a satellite kind). A compaction has no event of its own: it is a
+`github` for a notification thread that just turned unread, and
+`service` for a model provider or agent platform starting or ending an
+incident, both hub-local, not satellite kinds). A compaction has no event of its own: it is a
 `message.appended` with `kind: "compaction"`. The hub still accepts a
 bare `compaction` event from an older satellite.
 
@@ -828,6 +829,37 @@ a machine row names the harnesses that take it in `yolo_at_launch` —
 the same gate `model_at_launch`/`effort_at_launch` give a pick, so a
 satellite too old to apply it is refused before anything is queued,
 never launched with checks silently on.
+
+`POST /v1/sessions` also takes `provider: "<slug>"` (#526): start the
+harness on a provider whose key is in the launching machine's own keys
+file (`~/.swe/secrets/providers/.api_keys`). How each harness takes a
+provider is declared as `capabilities.provider` in harness.json over
+`launch_provider.PROVIDER_FALLBACK`: OpenCode and Pi read the provider's
+own key variable (`GROQ_API_KEY`), Claude Code reads `ANTHROPIC_API_KEY`
+or, for an Anthropic-compatible endpoint (DeepSeek, Kimi, MiniMax,
+OpenRouter), `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` with
+`ANTHROPIC_API_KEY` blanked.
+
+How the key reaches the harness without leaking:
+
+- The pane runs `python3 -I .../remote/provider_exec.py --keys=<file>
+  --spec=<names and base URL> -- <harness argv>`. That process reads the
+  keys file itself, sets only the provider's variables, drops every
+  other variable the keys file names, and execs the harness under the
+  same pid. No key is on any argv, in the tmux command, the pending
+  marker, the supervised entry, the launch record or the journal; they
+  carry the slug.
+- With no provider picked nothing changes: no key is injected.
+- The hub never sends a key to a satellite. It checks the slug against
+  the satellite's `providers_at_launch` row (slugs whose key is set
+  there) and queues only the slug; the satellite reads its own keys
+  file. A satellite whose row lacks the field gets `409
+  unsupported_launch_option`.
+- A missing key, or a slug the harness doesn't declare, is `422
+  unsupported_provider`, worded with variable names only.
+
+From a terminal, `swe use --provider=<slug> <harness> [args]` does the
+same with this machine's keys file.
 
 On the two API channels the pick rides the session's supervised meta
 into every send — the same plumbing headless uses for `--model` — so it
@@ -1531,6 +1563,24 @@ Screens:
   subscribed threads stay inbox-only. No phone replies to threads.
 - **Machine** — per-device strip; the MacBook satellite can ride
   SWECore's Compute samplers (CPU/GPU/temps) along this view.
+
+Service status pushes are off unless `notify.json` has
+`"service_status": true` (`swe remote notify --service-status=on`; read
+at `serve` start) and ntfy is configured and on. The hub then reads every tracked status page (the
+built-ins plus pages tracked in the web app) every five minutes through
+the web app's shared poller (`status/poller.py`, so the floors and cache
+are the page's own) and applies `status/alerts.py`, the port of the
+Mac's `ServiceStatusAlerts`: only the model providers and agent
+platforms groups, from a minor incident up, never maintenance. A
+provider entering that set emits a hub-local `notify` event
+(`kind: "service"`, `change: "started"`, `service`, `name`, `health`,
+`incident`, `title`, `message`, `url`) once per `service@incident`; it
+leaving emits one `change: "resolved"`. A page's first reading only
+records what is already open, and the state lives in
+`~/.swe/cache/web-service-status-notified.json` (read, updated and
+saved under a lock file, with the hub's memory winning over a file it
+failed to replace), so a restart repeats nothing. ntfy gets the title and body, with the status page as
+the tap target.
 
 Beyond remote control, nearly free on this architecture: push for
 needs-you/finished/error/limit via the self-hosted ntfy (iOS background

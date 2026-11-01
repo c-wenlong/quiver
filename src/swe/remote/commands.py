@@ -49,7 +49,7 @@ _SUBCOMMANDS = {"serve", "pair", "status", "devices", "attach", "agent",
 
 _VALUE_FLAGS = {
     "--host", "--port", "--name", "--tail-days", "--revoke", "--mode",
-    "--hub", "--token", "--ntfy", "--topic", "--ntfy-token",
+    "--hub", "--token", "--ntfy", "--topic", "--ntfy-token", "--service-status",
     "--approve", "--deny", "--request-id", "--public-url", "--model",
     "--effort", "--auto-approve",
 }
@@ -76,7 +76,7 @@ _USAGE = f"""\
                                   Pair your own untagged tailnet devices without a code
   {c('cyan', 'swe remote attach <session> [--mode=auto|tmux|headless|serve|appserver] [--model=<m>] [--effort=<e>]')}
                                   Move an observed session under supervision
-  {c('cyan', 'swe remote notify [--ntfy=URL --topic=T] [--on|--off]')}
+  {c('cyan', 'swe remote notify [--ntfy=URL --topic=T] [--on|--off] [--service-status=on|off]')}
                                   Configure ntfy push notifications
   {c('cyan', 'swe remote ssh [--on|--off] [--json]')}     Let paired phones' SSH keys log in here
 """
@@ -1038,6 +1038,12 @@ def _cmd_notify(flags: dict, json_view: bool) -> int:
         updates["enabled"] = True
     if "--off" in flags:
         updates["enabled"] = False
+    if "--service-status" in flags:
+        value = flags["--service-status"]
+        if value not in ("on", "off"):
+            print(c("red", "--service-status takes on or off"), file=sys.stderr)
+            return 1
+        updates["service_status"] = value == "on"
     if "--ntfy" in flags or "--topic" in flags:
         updates.setdefault("enabled", True)  # configuring implies on
     cfg = notify.configure(None, **updates) if updates else \
@@ -1056,6 +1062,8 @@ def _cmd_notify(flags: dict, json_view: bool) -> int:
     print(f"ntfy {state}  {cfg['url']}/{cfg['topic']}")
     if not cfg.get("enabled"):
         print(c("dim", "  enable: swe remote notify --on"))
+    status = "on" if cfg.get("service_status") is True else "off"
+    print(c("dim", f"  service status pushes {status} (--service-status=on|off)"))
     print(c("dim", "  changes apply on the next `swe remote serve`"))
     return 0
 
