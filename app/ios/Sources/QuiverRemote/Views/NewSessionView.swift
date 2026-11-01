@@ -19,6 +19,9 @@ struct NewSessionView: View {
     /// The Autonomy switch: on until the user turns it off. What the
     /// launch actually takes is gated per harness by `acceptsYolo`.
     @State private var yolo = true
+    /// The Provider menu's slug; nil is the harness default. Cleared
+    /// when a harness or machine change stops offering it.
+    @State private var provider: String?
     @State private var browsePath: [FolderBrowse] = []
     @State private var flow = LaunchFlow()
     /// The running launch, so Cancel or a swipe-down stops it before it
@@ -60,6 +63,8 @@ struct NewSessionView: View {
                     ModelField(machine: machine, harness: harness,
                                selection: $model,
                                sessions: rows, disabled: flow.busy)
+                    ProviderField(machine: machine, harness: harness,
+                                  selection: $provider, disabled: flow.busy)
                     YoloField(machine: machine, harness: harness,
                               isOn: $yolo,
                               sessions: rows, disabled: flow.busy)
@@ -169,6 +174,7 @@ struct NewSessionView: View {
     /// `ModelSelection.follow` says which picks survive it.
     private func refillModel(on machine: Machine) {
         model.follow(harness, on: machine)
+        provider = NewSessionOptions.providerPick(provider, for: harness, on: machine)
     }
 
     private func start(_ machine: Machine) async {
@@ -176,8 +182,9 @@ struct NewSessionView: View {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let pick = model.model(for: harness, on: machine)
         let autonomous = yolo && NewSessionOptions.acceptsYolo(harness, on: machine)
+        let via = NewSessionOptions.providerPick(provider, for: harness, on: machine)
         let key = await flow.run(
-            post: { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text, model: pick, yolo: autonomous) },
+            post: { try await client.startSession(machine: machine.id, harness: harness, cwd: folder, prompt: text, model: pick, yolo: autonomous, provider: via) },
             fetch: { try await client.launch($0) })
         guard let key, !Task.isCancelled else { return }
         await app.refresh()
