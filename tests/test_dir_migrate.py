@@ -89,6 +89,72 @@ class MigrateDataDirTest(unittest.TestCase):
         self.assertEqual(os.readlink(root), str(target))
         self.assertTrue(target.is_dir())  # the target stayed put
 
+    def test_linked_legacy_dir_survives_a_failed_mirror(self):
+        target = temp_dir(self) / "elsewhere"
+        target.mkdir()
+        (self.home / ".quiver").symlink_to(target)
+        with unittest.mock.patch.object(Path, "symlink_to",
+                                      side_effect=OSError("denied")):
+            self.assertEqual(paths.swe_dir_for(self.home), self.home / ".swe")
+        self.assertFalse((self.home / ".swe").exists())
+        self.assertTrue((self.home / ".quiver").is_symlink())
+
+    def test_a_legacy_file_is_left_alone(self):
+        (self.home / ".quiver").write_text("not a dir\n")
+        self.assertEqual(paths.swe_dir_for(self.home), self.home / ".swe")
+        self.assertTrue((self.home / ".quiver").is_file())
+        self.assertFalse((self.home / ".swe").exists())
+
+    def test_a_moved_root_survives_a_failed_compat_link(self):
+        old = self._seed_hub()
+        with unittest.mock.patch.object(Path, "symlink_to",
+                                      side_effect=OSError("denied")):
+            root = paths.swe_dir_for(self.home)
+        self.assertEqual(root, self.home / ".swe")
+        self.assertTrue((self.home / ".swe" / "AGENTS.md").is_file())
+        self.assertFalse(old.exists() or old.is_symlink())
+
+    def test_a_moved_root_survives_a_failed_rewrite(self):
+        self._seed_hub()
+        with unittest.mock.patch.object(paths, "_rewrite_migrated_root",
+                                        side_effect=RuntimeError("boom")):
+            root = paths.swe_dir_for(self.home)
+        self.assertEqual(root, self.home / ".swe")
+        self.assertTrue((self.home / ".swe" / "AGENTS.md").is_file())
+
+    def test_rewrite_skips_what_it_must_not_touch(self):
+        old = self._seed_hub()
+        (old / ".git").mkdir()
+        # Only .git/config carries worktree paths; other git files stay.
+        (old / ".git" / "description").write_text(f"{old} hooks\n")
+        # Ignored names and extensions stay byte-identical.
+        (old / ".linkignore").write_text(f"{old}\n")
+        (old / "notes.log").write_text(f"{old}\n")
+        # A file too big to read safely stays.
+        big = old / "big.json"
+        big.write_text(f'{{"a": "{old}"}}\n')
+        with big.open("ab") as fh:
+            fh.truncate(2_000_001)
+        # A non-UTF-8 file stays.
+        (old / "blob.json").write_bytes(b"\xff\xfe" + str(old).encode() + b"\x00")
+        # A read-only file reports its token but cannot be written.
+        ro = old / "ro.json"
+        ro.write_text(f'{{"p": "{old}"}}\n')
+        ro.chmod(0o444)
+        try:
+            root = paths.swe_dir_for(self.home)
+        finally:
+            ro.chmod(0o644)
+        self.assertEqual(root, self.home / ".swe")
+        self.assertIn(str(self.home / ".quiver"),
+                      (root / ".git" / "description").read_text())
+        self.assertIn(str(self.home / ".quiver"),
+                      (root / ".linkignore").read_text())
+        self.assertIn(str(self.home / ".quiver"),
+                      (root / "notes.log").read_text())
+        self.assertIn(str(self.home / ".quiver"), big.read_text())
+        self.assertIn(str(self.home / ".quiver"), ro.read_text())
+
     def test_no_legacy_dir_gives_the_new_root(self):
         self.assertEqual(paths.swe_dir_for(self.home), self.home / ".swe")
 
