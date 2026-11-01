@@ -613,6 +613,47 @@ class HubState:
             },
         ))
 
+    # -- Service status pushes -------------------------------------------
+    # With ``service_status`` on in notify.json and ntfy ready, the hub
+    # reads the status pages every five minutes through the web app's
+    # shared poller and turns a provider starting or ending an incident
+    # into a ``notify`` event of kind ``service`` (the Notifier posts it).
+
+    def _service_status_loop(self) -> None:
+        from swe.status import alerts as status_alerts
+        from swe.status.poller import poller_for
+        poller = poller_for(self.home)
+        tracker = status_alerts.Tracker(self.home)
+        while not self._stop.is_set():
+            try:
+                self._service_status_tick(poller, tracker)
+            except Exception:
+                self._log_loop_error("service status check")
+            if self._stop.wait(status_alerts.INTERVAL):
+                return
+
+    def _service_status_tick(self, poller, tracker) -> None:
+        """One check: every tracked page (built-ins plus the web app's
+        additions), the shared rule, one event per alert."""
+        from swe.status import tracked
+        from swe.status.catalog import SERVICES
+        statuses = poller.statuses(list(SERVICES) + tracked.load(self.home))
+        for alert in tracker.check(statuses):
+            self.emit(GLOBAL_KEY, protocol.event(
+                "notify", "", self.machine_id,
+                {
+                    "kind": "service",
+                    "change": alert.kind,
+                    "service": alert.service_id,
+                    "name": alert.service_name,
+                    "health": alert.health.key,
+                    "incident": alert.incident,
+                    "title": alert.title,
+                    "message": alert.body,
+                    "url": alert.page_url,
+                },
+            ))
+
     def start(self) -> None:
         self._register_machine()
         # A keep or adopt cut short by a crash leaves a key in both
@@ -629,6 +670,10 @@ class HubState:
             (self._tail_loop, "remote-tail"),
             (self._search_index_loop, "remote-search-index"),
         ]
+        # Only with somewhere to push: a check with no ntfy would record
+        # incidents as announced and owe their recoveries a push.
+        if notify_cfg.get("service_status") is True and notify.ready(notify_cfg):
+            targets.append((self._service_status_loop, "remote-service-status"))
         if notify.ready(notify_cfg):
             notifier = notify.Notifier(
                 self, self.base_url, subscribe_key=GLOBAL_KEY

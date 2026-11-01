@@ -182,7 +182,7 @@ remote/
   files.py       # @-mention paths under a session's folder (/v1/sessions/{id}/files)
   preview.py     # one .html/.svg file from a session's folder (/v1/sessions/{id}/preview)
   agent.py       # satellite daemon: dial hub, run local tail/inject
-  notify.py      # needs-you/finished/error/GitHub-unread fan-out via ntfy
+  notify.py      # needs-you/finished/error/GitHub-unread/service-status fan-out via ntfy
   launchd.py     # serve/agent --install: the hub or satellite as a per-user LaunchAgent
   systemd.py     # serve/agent --install on Linux: the hub or satellite as a systemd user unit
   setup.py       # swe remote setup: every step to a paired phone, --apply
@@ -457,8 +457,9 @@ Events: `message.appended`, `message.delta` (tier A only),
 `session.status`, `session.meta` (title, harness_title, pinned,
 pinned_at after a pin or rename), `approval.requested|resolved`,
 `machine.online|offline`, `notify` (needs_you|finished|error|limit;
-`github` for a notification thread that just turned unread — hub-local,
-not a satellite kind). A compaction has no event of its own: it is a
+`github` for a notification thread that just turned unread, and
+`service` for a model provider or agent platform starting or ending an
+incident, both hub-local, not satellite kinds). A compaction has no event of its own: it is a
 `message.appended` with `kind: "compaction"`. The hub still accepts a
 bare `compaction` event from an older satellite.
 
@@ -1531,6 +1532,24 @@ Screens:
   subscribed threads stay inbox-only. No phone replies to threads.
 - **Machine** — per-device strip; the MacBook satellite can ride
   QuiverCore's Compute samplers (CPU/GPU/temps) along this view.
+
+Service status pushes are off unless `notify.json` has
+`"service_status": true` (`swe remote notify --service-status=on`; read
+at `serve` start) and ntfy is configured and on. The hub then reads every tracked status page (the
+built-ins plus pages tracked in the web app) every five minutes through
+the web app's shared poller (`status/poller.py`, so the floors and cache
+are the page's own) and applies `status/alerts.py`, the port of the
+Mac's `ServiceStatusAlerts`: only the model providers and agent
+platforms groups, from a minor incident up, never maintenance. A
+provider entering that set emits a hub-local `notify` event
+(`kind: "service"`, `change: "started"`, `service`, `name`, `health`,
+`incident`, `title`, `message`, `url`) once per `service@incident`; it
+leaving emits one `change: "resolved"`. A page's first reading only
+records what is already open, and the state lives in
+`~/.swe/cache/web-service-status-notified.json` (read, updated and
+saved under a lock file, with the hub's memory winning over a file it
+failed to replace), so a restart repeats nothing. ntfy gets the title and body, with the status page as
+the tap target.
 
 Beyond remote control, nearly free on this architecture: push for
 needs-you/finished/error/limit via the self-hosted ntfy (iOS background

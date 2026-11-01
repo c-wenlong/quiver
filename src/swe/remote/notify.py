@@ -23,7 +23,11 @@ for iOS delivery), so two rules hold on everything placed in a body:
 Config lives at ``remote/notify.json`` (0600)::
 
     {"enabled": true, "url": "https://ntfy.example.com",
-     "topic": "swe-alice", "ntfy_token": null}
+     "topic": "swe-alice", "ntfy_token": null, "service_status": false}
+
+``service_status`` (off unless true) starts the hub's status-page check:
+a model provider or agent platform starting or ending an incident posts
+once per incident (``swe.status.alerts``).
 """
 
 from __future__ import annotations
@@ -103,6 +107,7 @@ def configure(
     topic: str | None = None,
     ntfy_token: str | None = None,
     enabled: bool | None = None,
+    service_status: bool | None = None,
 ) -> dict:
     """Merge a partial update into notify.json; returns the result."""
     cfg = load_config(home)
@@ -114,6 +119,8 @@ def configure(
         cfg["ntfy_token"] = ntfy_token or None
     if enabled is not None:
         cfg["enabled"] = enabled
+    if service_status is not None:
+        cfg["service_status"] = service_status
     save_config(home, cfg)
     return cfg
 
@@ -385,6 +392,9 @@ class Notifier:
         if kind == "github":
             self._github(cfg, data)
             return
+        if kind == "service":
+            self._service(cfg, data)
+            return
         label = _NOTIFY_KIND_TITLES.get(kind)
         if label is None:
             return
@@ -432,6 +442,24 @@ class Notifier:
             payload["click"] = url
             payload["actions"] = [
                 {"action": "view", "label": "Open", "url": url}]
+        self._post(cfg, payload)
+
+    def _service(self, cfg: dict, data: dict) -> None:
+        """A model provider or agent platform started or ended an
+        incident (hub-local, from ``swe.status.alerts``): the hub
+        already wrote the title and body; the status page is the tap
+        target."""
+        started = data.get("change") == "started"
+        payload = {
+            "topic": cfg["topic"],
+            "title": str(data.get("title") or "Service status")[:_PROMPT_CAP],
+            "message": str(data.get("message") or "")[:_PROMPT_CAP],
+            "priority": 4 if started else 3,
+            "tags": ["warning" if started else "white_check_mark"],
+        }
+        url = str(data.get("url") or "")
+        if url.startswith("https://") or url.startswith("http://"):
+            payload["click"] = url
         self._post(cfg, payload)
 
     def _session_title(self, key: str) -> str:

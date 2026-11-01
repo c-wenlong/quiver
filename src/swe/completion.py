@@ -134,6 +134,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
         ("--ntfy-token=", "ntfy access token, if the topic needs one"),
         ("--on", "Enable push notifications"),
         ("--off", "Disable push notifications"),
+        ("--service-status=", "on|off: push when a provider starts or ends an incident"),
     ],
     "remote ssh": [
         ("--on", "Let paired phones' SSH keys log in here"),
