@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Doctor folds in plugin drift and broken hub links.** `swe doctor`
+  now lists `swe find plugins`' drift as `plugins.<kind>` findings. An
+  unregistered marketplace folder or an uninstalled plugin gets the
+  `plugin-fix` action, which `--fix` and Fix all run (it only adds, via
+  `plugin_drift.apply_fix`); a stale Codex copy gets `plugin-reinstall`,
+  a click per finding since it removes the copy first; a disabled plugin
+  or a linked manifest keeps its command. A broken top-level symlink in
+  `~/.quiver` or its skills folder gets `dangling-link`, a click that
+  copies the link to `~/.quiver/backups` and removes it, and refuses
+  anything that is no longer a broken link directly in those folders.
+  `--fix` repeats its passes (up to three) so a fix that reveals more,
+  like a newly registered marketplace, gets them too. Part of
+  [#529](https://github.com/c-wenlong/quiver/issues/529).
 - **`swe doctor --fix`.** Runs every safe local fix doctor found, in
   order (setup, then discover, then init), reads the report again after
   each step, and prints what it fixed and what is left.

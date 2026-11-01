@@ -475,15 +475,22 @@ def _real_hook_roots() -> Sequence[tuple[str, Path]]:
 # ---------------------------------------------------------------------------
 
 
-def check_dangling_symlinks(directories: Sequence[Path]) -> list[Finding]:
+def check_dangling_symlinks(
+    directories: Sequence[Path], fixable: Sequence[Path] = (),
+) -> list[Finding]:
     """Top-level-only scan of each directory for symlinks whose target is gone.
 
     Not recursive on purpose: this is meant to catch a stray dev-only
     symlink left behind at a directory's top level (the repo root, or
     ~/.quiver), not to walk every skill/plugin tree looking for broken
     internal links.
+
+    A link directly in one of ``fixable`` (~/.quiver and its skills
+    folder, never the repo) gets a ``dangling-link`` Run, which backs the
+    link up before removing it.
     """
     findings: list[Finding] = []
+    fixable = {str(d) for d in fixable}
     for directory in directories:
         try:
             # is_dir() propagates EACCES when a parent lacks search
@@ -502,16 +509,37 @@ def check_dangling_symlinks(directories: Sequence[Path]) -> list[Finding]:
         for entry in entries:
             try:
                 if entry.is_symlink() and not entry.exists():
-                    findings.append(Finding(
-                        "warn", "symlinks",
-                        f"{entry} is a broken symlink (target does not exist)",
-                    ))
+                    findings.append(_dangling(entry, str(directory) in fixable))
             except OSError:
                 # A directory we can list but not stat through (read
                 # without search permission) yields entries that cannot
                 # be classified; skip them like a non-symlink.
                 continue
     return findings
+
+
+def _dangling(entry: Path, fixable: bool) -> Finding:
+    message = f"{entry} is a broken symlink (target does not exist)"
+    if not fixable:
+        return Finding("warn", "symlinks", message)
+    try:
+        target = os.readlink(entry)
+    except OSError:
+        target = "?"
+    return Finding(
+        "warn", "symlinks", message,
+        fix=f"rm {entry}  (it points at {target})",
+        source=str(entry),
+        remedies=(
+            {"kind": "steps", "title": "Restore what it points at",
+             "detail": f"It points at {target}. A link synced from another "
+                       "machine may work there; bring the target over and "
+                       "it works here too."},
+            {"kind": "action", "action": "dangling-link",
+             "title": "Remove the broken link",
+             "detail": "Copies the link to ~/.quiver/backups, then removes it.",
+             "path": str(entry)},
+        ))
 
 
 def _real_symlink_dirs(repo_root: Path, home: Path) -> list[Path]:
@@ -719,6 +747,7 @@ def run_drift_checks(*, home: Path | None = None, repo_root: Path | None = None)
     findings += check_code_vs_data(
         registry, skill_roots=_real_skill_roots(), hook_roots=_real_hook_roots(), home=home,
     )
-    findings += check_dangling_symlinks(_real_symlink_dirs(repo_root, home))
+    findings += check_dangling_symlinks(
+        _real_symlink_dirs(repo_root, home), fixable=_real_symlink_dirs(repo_root, home)[1:])
     findings += check_hook_drift(home)
     return findings

@@ -165,10 +165,14 @@ HELP = {
                                Run one finding's fix, as a Run button does
 
   Plain {c('cyan', 'swe doctor')} only reads. {c('cyan', '--fix')} runs the local repairs
-  in order (setup, discover, init), reading the report again after each,
-  and prints what it fixed and what is left. Installs and the drops that
-  delete entries (undeclare, marketplace-drop) never run in a batch: they
-  run only for one finding named with --message. With --json, --fix prints
+  in order (setup, discover, init, plugin-fix), reading the report again
+  after each, and prints what it fixed and what is left. Installs, plugin
+  reinstalls and the drops that delete entries or links (undeclare,
+  marketplace-drop, dangling-link) never run in a batch: they run only
+  for one finding named with --message.
+
+  Doctor also reports plugin drift (swe find plugins) as plugins.* and
+  broken top-level links in ~/.quiver, each with its fix. With --json, --fix prints
   {{dry_run, ran, fixed, still_failing, skipped}}.
 
   Catches the common failure mode: {c('dim', 'npm install -g')} under nvm while

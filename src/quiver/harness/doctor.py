@@ -596,3 +596,53 @@ def _marketplace_remedies(
             "prompt": prompt,
         })
     return tuple(remedies)
+
+
+# Plugin drift kinds doctor can fix by itself. ``unregistered`` and
+# ``not-installed`` only add (a marketplace registration, an install from
+# the user's own folder), so a batch runs them. ``stale`` removes Codex's
+# copy before adding it back, so it waits for a click. ``disabled-here``
+# may be a choice and ``linked-manifest`` rewrites the source, so those
+# keep their command for a person to run.
+_PLUGIN_ACTIONS = {"unregistered": "plugin-fix", "not-installed": "plugin-fix",
+                   "stale": "plugin-reinstall"}
+
+
+def plugin_findings(home: Path) -> list[DoctorFinding]:
+    """``swe find plugins``'s drift, one warning per gap.
+
+    A finding gets a Run only when its fix is commands and the harness
+    CLI that runs them is on PATH; the runner recomputes drift and runs
+    the commands ``plugin_drift`` builds, never text from the report.
+    A drift read that fails is one warning, never a crash for doctor.
+    """
+    import shutil
+
+    from quiver.find.plugin_drift import plugin_drift
+
+    try:
+        drift = plugin_drift(home)
+    except Exception as exc:  # noqa: BLE001 - doctor must still report the rest
+        return [DoctorFinding("plugins.unchecked", "warning",
+                              f"plugin drift check could not run: {exc}")]
+    findings = []
+    for d in drift:
+        action = _PLUGIN_ACTIONS.get(d.kind)
+        if action and not (d.argv and shutil.which(d.argv[0][0])):
+            action = None
+        if action:
+            remedy = {
+                "kind": "action", "action": action, "id": d.id,
+                "title": ("Reinstall from the source" if action == "plugin-reinstall"
+                          else "Run it with swe"),
+                "command": f"swe find plugins --fix={d.id}",
+                "detail": d.fix,
+            }
+        else:
+            remedy = {"kind": "command", "title": "Run it yourself",
+                      "command": d.fix}
+        findings.append(DoctorFinding(
+            f"plugins.{d.kind}", "warning", f"{d.harness}: {d.ref}: {d.detail}",
+            d.fix, harness=d.harness, action=action,
+            source=d.marketplace_dir or None, remedies=(remedy,)))
+    return findings

@@ -110,6 +110,20 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong>Doctor folds in plugin drift and broken hub links.</strong> <code>swe doctor</code>
+now lists <code>swe find plugins</code>' drift as <code>plugins.&lt;kind&gt;</code> findings. An
+unregistered marketplace folder or an uninstalled plugin gets the
+<code>plugin-fix</code> action, which <code>--fix</code> and Fix all run (it only adds, via
+<code>plugin_drift.apply_fix</code>); a stale Codex copy gets <code>plugin-reinstall</code>,
+a click per finding since it removes the copy first; a disabled plugin
+or a linked manifest keeps its command. A broken top-level symlink in
+<code>~/.quiver</code> or its skills folder gets <code>dangling-link</code>, a click that
+copies the link to <code>~/.quiver/backups</code> and removes it, and refuses
+anything that is no longer a broken link directly in those folders.
+<code>--fix</code> repeats its passes (up to three) so a fix that reveals more,
+like a newly registered marketplace, gets them too. Part of
+<a href="https://github.com/c-wenlong/quiver/issues/529">#529</a>.</p>
+</li>
 <li><p><strong><code>swe doctor --fix</code>.</strong> Runs every safe local fix doctor found, in
 order (setup, then discover, then init), reads the report again after
 each step, and prints what it fixed and what is left.
