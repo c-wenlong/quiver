@@ -15,12 +15,12 @@ from quiver.harness.drift import check_dangling_symlinks
 
 try:  # `unittest discover -s tests` puts tests/ itself on sys.path
     from _tempdir import temp_dir
-    from test_json_output import decode
+    from test_json_output import decode, write_registry
     from test_plugin_drift import _FakeHome
     from test_plugin_fix import run_swe
 except ImportError:  # `python -m unittest tests.test_doctor_fix_folds`
     from tests._tempdir import temp_dir
-    from tests.test_json_output import decode
+    from tests.test_json_output import decode, write_registry
     from tests.test_plugin_drift import _FakeHome
     from tests.test_plugin_fix import run_swe
 
@@ -33,6 +33,14 @@ from pathlib import Path
 args = sys.argv[1:]
 if args[:1] == ["--version"]:
     print("2.0.0 (Claude Code)")
+elif args[:2] == ["plugin", "install"]:
+    plugin, market = args[2].split("@")
+    known = json.loads((Path(os.environ["HOME"]) / ".claude" / "plugins" / "known_marketplaces.json").read_text())
+    folder = Path(known[market]["installLocation"]) / plugin
+    record = Path(os.environ["HOME"]) / ".claude" / "plugins" / "installed_plugins.json"
+    data = json.loads(record.read_text()) if record.exists() else {{"version": 2, "plugins": {{}}}}
+    data["plugins"][args[2]] = [{{"scope": "user", "installPath": str(folder), "version": "1.0.0"}}]
+    record.write_text(json.dumps(data))
 elif args[:3] == ["plugin", "marketplace", "add"]:
     folder = Path(args[3])
     name = json.loads((folder / ".claude-plugin" / "marketplace.json").read_text())["name"]
@@ -164,9 +172,13 @@ class AcceptanceTest(unittest.TestCase):
         market = home / ".quiver" / "plugins" / "mk"
         (market / ".claude-plugin").mkdir(parents=True)
         (market / ".claude-plugin" / "marketplace.json").write_text(
-            json.dumps({"name": "mk", "plugins": []}))
+            json.dumps({"name": "mk", "plugins": [{"name": "tool", "source": "./tool"}]}))
+        (market / "tool" / ".claude-plugin").mkdir(parents=True)
+        (market / "tool" / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "tool", "version": "1.0.0"}))
         (home / ".claude").mkdir()
-        path = f"{fake_bin(temp_dir(self))}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+        # Only the fake claude and the system dirs: no real harness CLI runs.
+        path = f"{fake_bin(temp_dir(self))}:/usr/bin:/bin"
 
         before = decode(run_swe(home, "doctor", "--json", path=path))["data"]
         self.assertIn("setup.agents-md", [f["check"] for f in before["findings"]])
@@ -175,7 +187,9 @@ class AcceptanceTest(unittest.TestCase):
         data = decode(done)["data"]
         actions = [s["action"] for s in data["ran"]]
         self.assertEqual(actions[0], "setup")
-        self.assertIn("plugin-fix", actions)
+        # Registering the folder shows its uninstalled plugin; the next
+        # pass of the same run installs it.
+        self.assertEqual(actions.count("plugin-fix"), 2, data["ran"])
         self.assertTrue(all(s["error"] is None for s in data["ran"]), data["ran"])
         self.assertEqual(doctor_fix.fixable_left(data), [])
         self.assertNotIn("plugins.unregistered",
@@ -183,6 +197,48 @@ class AcceptanceTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         known = json.loads((home / ".claude" / "plugins" / "known_marketplaces.json").read_text())
         self.assertIn("mk", known)
+        installed = json.loads((home / ".claude" / "plugins" / "installed_plugins.json").read_text())
+        self.assertIn("tool@mk", installed["plugins"])
+        self.assertEqual([f for f in data["still_failing"] if f["check"].startswith("plugins.")], [])
+
+    def test_an_archived_harness_gets_no_plugin_findings(self):
+        home = temp_dir(self)
+        market = home / ".quiver" / "plugins" / "mk"
+        (market / ".claude-plugin").mkdir(parents=True)
+        (market / ".claude-plugin" / "marketplace.json").write_text(
+            json.dumps({"name": "mk", "plugins": []}))
+        (home / ".quiver" / "AGENTS.md").write_text("# shared\n")
+        (home / ".claude").mkdir()
+        write_registry(home, {"claude": {"command": "claude", "state": "archived"}})
+        # Only the fake claude and the system dirs: no real harness CLI runs.
+        path = f"{fake_bin(temp_dir(self))}:/usr/bin:/bin"
+        data = decode(run_swe(home, "doctor", "--json", path=path))["data"]
+        self.assertEqual([f for f in data["findings"] if f["check"].startswith("plugins.")], [])
+
+
+class WebRunTest(unittest.TestCase):
+    """The web Run for a finding's own plugin action finds its remedy."""
+
+    def test_a_run_without_an_action_carries_the_remedy(self):
+        from types import SimpleNamespace
+
+        from quiver.harness.models import DoctorFinding, DoctorReport
+        from quiver.webapp.pages import doctor as page
+
+        remedy = {"kind": "action", "action": "plugin-fix", "id": "claude:unregistered:/m"}
+        report = DoctorReport([DoctorFinding("plugins.unregistered", "warning", "m", "fix",
+                                             harness="claude", action="plugin-fix",
+                                             remedies=(remedy,))])
+        home = temp_dir(self)
+        ctx = SimpleNamespace(home=home, machine={"name": "box"})
+        with mock.patch("quiver.harness.commands.doctor_report", return_value=report), \
+                mock.patch("quiver.webapp.pages.repositories.harnesses", return_value=[]), \
+                mock.patch("quiver.find.plugin_drift.apply_fix") as apply, \
+                mock.patch("quiver.webapp.pages.plugins.clear_cache") as cleared:
+            reply = page.post(ctx, "run", {"check": "plugins.unregistered", "message": "m"})
+        apply.assert_called_once_with(home, "claude:unregistered:/m")
+        cleared.assert_called_once()
+        self.assertEqual((reply["ran"], reply["error"]), ("plugin-fix", None))
 
 
 if __name__ == "__main__":

@@ -152,7 +152,7 @@ private struct ChatBody: View {
                     ChatSkeleton()
                 } else if let error = model.loadError, model.items.isEmpty {
                     StateCard(icon: "exclamationmark.triangle", title: "Couldn't load this session", message: error, tone: .error)
-                } else if model.items.isEmpty {
+                } else if model.items.isEmpty, model.streaming.isEmpty {
                     StateCard(icon: "text.bubble", title: "No messages yet", message: "New messages appear here as the agent works.")
                 } else if model.hasEarlier {
                     EarlierRow(model: model).onAppear { model.wantsEarlier = true }
@@ -166,6 +166,13 @@ private struct ChatBody: View {
                     }
                     .onAppear { if index < Self.earlierThreshold, model.hasEarlier { model.wantsEarlier = true } }
                     .transition(.asymmetric(insertion: arrival(12), removal: .opacity))
+                }
+                // Replies still being written. Each one's final message
+                // takes its place in the transcript above in the same
+                // update, so it leaves without a transition.
+                ForEach(model.streaming) { item in
+                    ChatItemView(item: item, model: model)
+                        .transition(.asymmetric(insertion: arrival(12), removal: .identity))
                 }
                 if model.working, !model.loading {
                     WorkingIndicator(harness: model.row?.harness,

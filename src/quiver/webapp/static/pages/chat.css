@@ -81,6 +81,9 @@ body.chat-open .panel { display: flex; min-height: 0; overflow: hidden; }
   flex: 1; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 12px; padding-bottom: 8px;
 }
+/* Replies still being written (message.delta): the newest entries, spaced
+   like the log, until each final message takes its bubble's place. */
+.chat-streams { display: flex; flex-direction: column; gap: 12px; }
 .msg { min-width: 0; font-size: 14px; line-height: 1.5; }
 .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg .role { font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 4px; }

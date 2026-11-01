@@ -616,12 +616,18 @@ def plugin_findings(home: Path) -> list[DoctorFinding]:
     the commands ``plugin_drift`` builds, never text from the report.
     A drift read that fails is one warning, never a crash for doctor.
     """
+    import shlex
     import shutil
 
     from quiver.find.plugin_drift import plugin_drift
+    from quiver.find.roots import HARNESS_DEFAULT, harness_filter
+    from quiver.harness.registry import load_registry_if_present
 
     try:
-        drift = plugin_drift(home)
+        # An archived harness is left alone, as swe find plugins hides it:
+        # a batch must never register or install into one.
+        visible, _ = harness_filter(load_registry_if_present(), HARNESS_DEFAULT)
+        drift = [d for d in plugin_drift(home) if visible(d.harness)]
     except Exception as exc:  # noqa: BLE001 - doctor must still report the rest
         return [DoctorFinding("plugins.unchecked", "warning",
                               f"plugin drift check could not run: {exc}")]
@@ -635,7 +641,7 @@ def plugin_findings(home: Path) -> list[DoctorFinding]:
                 "kind": "action", "action": action, "id": d.id,
                 "title": ("Reinstall from the source" if action == "plugin-reinstall"
                           else "Run it with swe"),
-                "command": f"swe find plugins --fix={d.id}",
+                "command": shlex.join(["swe", "find", "plugins", f"--fix={d.id}"]),
                 "detail": d.fix,
             }
         else:

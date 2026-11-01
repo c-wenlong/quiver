@@ -188,6 +188,29 @@ final class ChatModel {
     /// newer than the list's `last_active_at` while the chat streams.
     private(set) var newestActivity: Double?
 
+    // MARK: Live reply text
+
+    /// Replies still being written (`message.delta`, #1444), drawn after
+    /// `items` until their final message takes their place. Rendered with
+    /// the same Markdown as the final message: the text only grows, so a
+    /// half-written block (an unclosed fence, a `**` not yet closed) is
+    /// the only flicker, and switching to Markdown at the end would
+    /// reflow the whole reply at once instead.
+    private(set) var streaming: [ChatItem] = []
+    @ObservationIgnored private var replies = ReplyStreams()
+    /// Live finals not yet revealed, by journal seq, to the bubble each
+    /// takes. Matched as they arrive (the contract's order is the wire's),
+    /// shown when the reveal queue gets to them; the bubble stays until then.
+    @ObservationIgnored private var claims: [Int: String] = [:]
+    /// The pending repaint while text streams in: one per `repaintEvery`.
+    @ObservationIgnored private(set) var repaintTask: Task<Void, Never>?
+    static let repaintEvery: Duration = .milliseconds(80)
+    /// How long a bubble outlives its session going idle: the final
+    /// message comes from the transcript, which can land a poll later.
+    static let idleGrace: Duration = .seconds(3)
+    /// How repaints and the idle grace wait; tests swap in a no-op.
+    var streamSleep: (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+
     /// Messages per `/messages` page. A long session's 500-message page
     /// was ~850 KB and took seconds to lay out on the phone.
     static let pageSize = 100
@@ -293,7 +316,10 @@ final class ChatModel {
             for await event in EventStream.events(client: client, key: self?.key ?? "", last: cursor) {
                 guard let self else { return }
                 switch event {
-                case .connected: self.live = true
+                case .connected:
+                    self.live = true
+                    // A dropped stream may have lost deltas and finals alike.
+                    self.clearStreams()
                 case .disconnected: self.live = false
                 case .unauthorized: self.app?.unpair(from: client); return
                 case .gone(let error):
@@ -304,7 +330,7 @@ final class ChatModel {
                     self.adoptJournalHead(head)
                     self.dropPending()
                     await self.backfill(client)
-                case .event(let env): self.enqueue(env)
+                case .event(let env): self.receive(env)
                 }
             }
         }
@@ -318,6 +344,7 @@ final class ChatModel {
         // The kept list fills the menu at once after the chat reopens.
         commands.reset()
         flushPending()
+        clearStreams()
         live = false
         // Only a chat that was on screen was read. A cached one the app
         // drops later, or one from a hub no longer on screen, says nothing.
@@ -390,10 +417,13 @@ final class ChatModel {
                 }
                 let before = self.items.count
                 let env = self.pending.removeFirst()
-                withAnimation(.easeOut(duration: 0.25)) { self.apply(env) }
+                // A final taking its bubble's place swaps in as it is: the
+                // text is already on screen, so no arrival and no pause.
+                let replaces = env.seq.map { self.claims[$0] != nil } ?? false
+                if replaces { self.apply(env) } else { withAnimation(.easeOut(duration: 0.25)) { self.apply(env) } }
                 // Only a new entry earns a pause; a status change or a
                 // result landing on its card goes straight through.
-                if self.items.count > before {
+                if self.items.count > before, !replaces {
                     self.lastReveal = .now
                     if !self.pending.isEmpty { await self.pause(delay) }
                 }
@@ -450,6 +480,7 @@ final class ChatModel {
             seen = []
             toolCards = [:]
             orphanResults = [:]
+            clearStreams()
             replayingHistory = true
             for env in body.messages { apply(env) }
             replayingHistory = false
@@ -551,6 +582,10 @@ final class ChatModel {
         switch env.type {
         case "message.appended":
             if let msg = env.decode(MessageData.self) { append(msg, seq: env.seq ?? 0) }
+            if let seq = env.seq, let replaced = claims.removeValue(forKey: seq) {
+                replies.release(replaced)
+                repaintStreams()
+            }
         case "session.status":
             let status = env.decode(StatusData.self)?.status ?? ""
             app?.patch(key, status: status)
@@ -583,6 +618,62 @@ final class ChatModel {
         default:
             break
         }
+    }
+
+    /// One live event off the stream. Deltas skip the reveal queue (its
+    /// pacing would fight the stream's own); a final message is matched
+    /// to its bubble now and shown in its turn.
+    func receive(_ env: Envelope) {
+        if env.type == "message.delta" {
+            guard let delta = env.decode(ReplyDelta.self), replies.apply(delta), repaintTask == nil else { return }
+            let sleep = streamSleep
+            repaintTask = Task { [weak self] in
+                await sleep(Self.repaintEvery)
+                guard let self, !Task.isCancelled else { return }
+                self.repaintTask = nil
+                self.repaintStreams()
+            }
+            return
+        }
+        if env.type == "message.appended", let seq = env.seq, !seen.contains(seq), claims[seq] == nil,
+           let id = replies.claim(kind: env.decode(MessageData.self)?.kind) {
+            claims[seq] = id
+        }
+        // The idle sweep takes the bubbles open as the status arrives: by
+        // the time the queue shows it, the next turn's may have started.
+        if env.type == "session.status", !["", "active"].contains(env.decode(StatusData.self)?.status ?? "") {
+            sweepStreams()
+        }
+        enqueue(env)
+    }
+
+    /// Draws the bubbles as they are now.
+    func repaintStreams() {
+        repaintTask?.cancel()
+        repaintTask = nil
+        let shown = replies.shown.map { ChatItem(id: "live-\($0.id)", kind: .assistant($0.text)) }
+        if shown != streaming { streaming = shown }
+    }
+
+    /// The session went idle: bubbles open now whose final message never
+    /// came (a dropped stream) go after `idleGrace`.
+    private func sweepStreams() {
+        let ids = replies.openIds
+        guard !ids.isEmpty else { return }
+        let gen = generation, sleep = streamSleep
+        Task { [weak self] in
+            await sleep(Self.idleGrace)
+            guard let self, gen == self.generation else { return }
+            if self.replies.sweep(ids) { self.repaintStreams() }
+        }
+    }
+
+    /// Reconnect, history reload or close: every bubble goes, and finals
+    /// still queued show as plain messages.
+    private func clearStreams() {
+        replies.clear()
+        claims = [:]
+        repaintStreams()
     }
 
     private func append(_ msg: MessageData, seq: Int) {
