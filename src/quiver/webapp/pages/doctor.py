@@ -101,7 +101,10 @@ def post(ctx, action: str, body: dict) -> dict:
             run = partial(run, name=finding["harness"],
                           targets=targets, settings=settings)
         elif action_name in ("plugin-fix", "plugin-reinstall", "dangling-link"):
-            run = partial(run, finding=finding, remedy=remedy)
+            # A Run without an action names the finding's own: its remedy
+            # carries the targets (the drift id, the link).
+            run = partial(run, finding=finding,
+                          remedy=remedy or doctor_fix.resolve(finding)[1])
         elif action_name == "marketplace-drop":
             in_file = remedy.get("settings_entries") or []
             cli = remedy.get("cli_entries") or []
@@ -238,7 +241,14 @@ def _run_marketplace_drop(home: Path, in_file: list, cli: list) -> str | None:
 def _run_plugin_fix(home: Path, finding: dict, remedy: dict | None) -> str | None:
     """A plugin drift fix runs the harness CLI, which rewrites the files
     the Plugins page writes: one at a time with it."""
-    return _with_plugin_lock(lambda: doctor_fix.RUNNERS["plugin-fix"](home, finding, remedy))
+    from quiver.webapp.pages import plugins
+
+    try:
+        return _with_plugin_lock(lambda: doctor_fix.RUNNERS["plugin-fix"](home, finding, remedy))
+    finally:
+        # Even a failed fix may have changed something: the Plugins page
+        # reads afresh next time rather than from its minute-long cache.
+        plugins.clear_cache()
 
 
 def _run_dangling_link(home: Path, finding: dict, remedy: dict | None) -> str | None:

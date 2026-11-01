@@ -36,6 +36,9 @@ const DOCTOR_RUNS = {
   discover: (m) => `This runs swe harness discover --apply on ${m}: it adds the high-confidence matches it finds to harness.json.`,
   install: (m, f, r) => `This runs ${(r && r.command) || f.fix} on ${m}: it installs ${Fmt.harnessName(f.harness)} again with ${(r && r.via) || f.via}, which puts it on PATH, and registers it. A cask or install script that asks for a password can't finish here; copy the command into a terminal instead.`,
   undeclare: (m, f, r) => `On ${m}: deletes the hook entries naming ${(r && r.script) || "the missing script"} from the settings files in the source line, after backing each one up to ~/.quiver/backups. Nothing else in the files changes.`,
+  "plugin-fix": (m, f, r) => `On ${m}: runs ${(r && r.detail) || f.fix}, which registers the marketplace folder or installs the plugin from it. Nothing is removed.`,
+  "plugin-reinstall": (m, f, r) => `On ${m}: runs ${(r && r.detail) || f.fix}: Codex's copy of the plugin is removed, then installed again from your folder in ~/.quiver/plugins.`,
+  "dangling-link": (m, f, r) => `On ${m}: copies the broken link ${(r && r.path) || ""} to ~/.quiver/backups, then removes it. A link synced from another machine may still work there.`,
   "marketplace-drop": (m, f, r) => `On ${m}: deletes the missing marketplace entries from the settings files, after backing each one up to ~/.quiver/backups. The folders stay gone; restore them by copying them over.`,
 };
 
