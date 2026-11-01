@@ -637,6 +637,26 @@ Flags
   State lives under ~/.swe/data/remote/: device credentials in
   devices.json (0600), per-session event journals and transcript cursors.
 </code></pre>
+<h3 id="swe-sync"><a class="anchor" href="#swe-sync"></a><code>swe sync</code></h3>
+<p><em>Commit, merge and push the ~/.swe hub repo</em></p>
+<pre><code class="language-text">  swe sync                   Commit local changes, merge the remote in, push,
+                             then re-link every harness when content came in
+  swe sync --dry-run         Fetch and show what would happen, change nothing
+  swe sync status            Branch mode, ahead/behind, uncommitted changes
+  swe sync status --fetch    Fetch the remote first
+
+  Device mode, on a device/&lt;machine&gt; branch: merges origin/device/&lt;machine&gt;
+  and then origin/main into it, and pushes the device branch only.
+  Single-branch mode, on any other branch: merges origin/&lt;branch&gt;, pushes it.
+
+  Every merge is tried first without touching the repo. On a conflict sync
+  lists the files and stops with ~/.swe exactly as it was. It never
+  force-pushes, and never commits secrets/, cache/, the data/ stores swe's
+  .gitignore lists (ledgers, search, remote, github) or anything else
+  it lists, even when the hub's own .gitignore is older.
+
+  Both take --json for the app's document.
+</code></pre>
 <h2 id="reference"><a class="anchor" href="#reference"></a>Reference</h2>
 <h3 id="swe-find"><a class="anchor" href="#swe-find"></a><code>swe find</code></h3>
 <p><em>Show where shared assets live and what links to them</em></p>

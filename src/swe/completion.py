@@ -30,6 +30,7 @@ _PRIMARY_COMMANDS: list[tuple[str, str]] = [
     ("providers", "Manage API keys"),
     ("config", "View or update configuration"),
     ("remote", "Watch and steer sessions from a phone"),
+    ("sync", "Commit, merge and push the ~/.swe hub repo"),
     ("report", "Summarize coding sessions"),
     ("discover", "Scan PATH for AI coding CLIs"),
     ("setup", "Onboarding wizard"),
@@ -74,6 +75,14 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
     ],
     "list edit": [
         ("--reset", "Restore default columns and window"),
+    ],
+    "sync": [
+        ("--dry-run", "Show what would be committed, merged and pushed"),
+        ("--json", "Print the result as JSON"),
+    ],
+    "sync status": [
+        ("--fetch", "Fetch the remote before counting"),
+        ("--json", "Print the status as JSON"),
     ],
     "session index": [
         ("--on", "Let the remote hub keep the index current"),
@@ -491,6 +500,7 @@ _COMMAND_FLAGS: dict[str, list[tuple[str, str]]] = {
 _NESTED_FLAGS: dict[str, dict[str, str]] = {
     "list": {"edit": "list edit"},
     "session": {"index": "session index"},
+    "sync": {"status": "sync status"},
     "ls": {"edit": "list edit"},
     "harness": {
         "list": "list", "ls": "list",
@@ -675,6 +685,9 @@ _NESTED_SUBCOMMANDS: dict[tuple[str, str], list[tuple[str, str]]] = {
 }
 
 _SUBCOMMANDS: dict[str, list[tuple[str, str]]] = {
+    "sync": [
+        ("status", "Branch mode, ahead/behind and uncommitted changes"),
+    ],
     "instructions": [
         ("init", "Fold the current AGENTS.md into a first chapter"),
         ("build", "Compile chapters into the shared AGENTS.md"),

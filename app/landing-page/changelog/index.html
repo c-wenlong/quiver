@@ -113,6 +113,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a class="anchor" href="#unreleased"></a>[Unreleased]</h2>
 <h3 id="added"><a class="anchor" href="#added"></a>Added</h3>
 <ul>
+<li><p><strong><code>swe sync</code> and <code>swe sync status</code>.</strong> Sync commits what changed in
+<code>~/.swe</code> with a generated message, merges the remote in, pushes, and
+re-links every harness (plus new plugin marketplaces, and MCP servers
+when <code>mcp.json</code> changed) when new content came in. On a
+<code>device/&lt;machine&gt;</code> branch it merges <code>origin/device/&lt;machine&gt;</code> and
+then <code>origin/main</code> and pushes only the device branch; on any other
+branch every machine shares it. Each merge is tried first with <code>git merge-tree</code>, so a conflict lists the files and leaves the repo exactly
+as it was. It never force-pushes and never commits <code>secrets/</code>,
+<code>cache/</code>, the <code>data/</code> stores (ledgers, search, remote) or anything else
+swe's <code>.gitignore</code> lists, even
+under an older hub <code>.gitignore</code>. <code>status</code> shows the mode, ahead and
+behind counts and uncommitted changes by primitive; both take
+<code>--json</code>, sync takes <code>--dry-run</code>. Part of
+<a href="https://github.com/c-wenlong/quiver/issues/525">#525</a>.</p>
+</li>
 <li><p><strong>Coding plans as launch providers for Claude Code.</strong> Every plan in
 Settings › Providers › Inference is a provider Claude Code can launch
 on, one slug per plan region (<code>glm-coding-plan-china</code>): the launch

@@ -36,6 +36,7 @@ from swe.reports.commands import cmd_report
 from swe.sessions.commands import cmd_models, cmd_session
 from swe.setup.commands import cmd_harness, cmd_setup
 from swe.skills.commands import cmd_skills
+from swe.sync import cmd_sync
 
 
 def cmd_mcp(args):
@@ -190,6 +191,7 @@ COMMANDS = {
     "pv": cmd_providers,
     "config": cmd_config,
     "remote": cmd_remote,
+    "sync": cmd_sync,
     "report": cmd_report,
     "discover": lambda args: cmd_harness(["discover", *args]),
     "autocomplete": cmd_autocomplete,

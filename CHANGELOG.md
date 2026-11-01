@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`swe sync` and `swe sync status`.** Sync commits what changed in
+  `~/.swe` with a generated message, merges the remote in, pushes, and
+  re-links every harness (plus new plugin marketplaces, and MCP servers
+  when `mcp.json` changed) when new content came in. On a
+  `device/<machine>` branch it merges `origin/device/<machine>` and
+  then `origin/main` and pushes only the device branch; on any other
+  branch every machine shares it. Each merge is tried first with `git
+  merge-tree`, so a conflict lists the files and leaves the repo exactly
+  as it was. It never force-pushes and never commits `secrets/`,
+  `cache/`, the `data/` stores (ledgers, search, remote) or anything else
+  swe's `.gitignore` lists, even
+  under an older hub `.gitignore`. `status` shows the mode, ahead and
+  behind counts and uncommitted changes by primitive; both take
+  `--json`, sync takes `--dry-run`. Part of
+  [#525](https://github.com/c-wenlong/quiver/issues/525).
 - **Coding plans as launch providers for Claude Code.** Every plan in
   Settings › Providers › Inference is a provider Claude Code can launch
   on, one slug per plan region (`glm-coding-plan-china`): the launch
