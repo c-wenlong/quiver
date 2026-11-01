@@ -180,7 +180,7 @@ final class WidgetLoaderTests: XCTestCase {
 
     func testSignedOutReadsAsNotPaired() async {
         let store = tempStore()
-        store.write(snapshot())
+        store.write(snapshot(at: now.addingTimeInterval(-3600)))
         let loader = WidgetLoader(store: store) { _ in
             throw HubError(status: 401, code: "unauthorized", message: "no")
         }
