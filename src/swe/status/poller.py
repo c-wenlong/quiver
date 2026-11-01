@@ -1,6 +1,6 @@
 """Reads the status pages politely, and remembers what they said.
 
-A port of the Mac app's ``QuiverCore/Status/ServiceStatusService.swift``:
+A port of the Mac app's ``SWECore/Status/ServiceStatusService.swift``:
 each page at most every five minutes (one minute for a manual refresh),
 conditional requests so an unchanged page costs a 304, and a provider's
 ``Retry-After`` honoured. Readings are kept in

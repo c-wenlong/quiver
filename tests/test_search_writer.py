@@ -1,6 +1,6 @@
 """Write path of the FTS5 session-search index.
 
-``sessions/search_writer.py`` writes the file the Quiver app's Swift
+``sessions/search_writer.py`` writes the file the SWE app's Swift
 indexer writes, so these tests pin the parts the two sides must agree on:
 the schema and meta rows, the fenced commits, the read decisions, and the
 rows a transcript turns into (``search_decode.py``, checked against the

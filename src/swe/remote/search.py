@@ -7,7 +7,7 @@ Every catalog row that matches goes into the first tier it qualifies for:
    Plain case-insensitive text, as the Mac app's Sessions page and
    ``swe session --search`` match. Never a regex: a user-typed pattern can
    backtrack exponentially and Python's ``re`` has no timeout.
-3. to 5. Transcript text, through the Quiver app's FTS5 index
+3. to 5. Transcript text, through the SWE app's FTS5 index
    (``swe.sessions.search_index``) when it exists on this machine: the
    exact phrase, then all the words, then any word. A one-word query has
    only the first of these.

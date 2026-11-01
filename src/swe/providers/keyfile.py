@@ -1,6 +1,6 @@
 """The provider keys file as the Mac app edits it.
 
-A port of ``APIKeysFile`` and ``APIKeysStore`` (app/mac/Sources/QuiverCore/
+A port of ``APIKeysFile`` and ``APIKeysStore`` (app/mac/Sources/SWECore/
 APIKeys/APIKeys.swift), so the web app's Settings › Providers › Inference
 reads and writes ``~/.swe/secrets/providers/.api_keys`` exactly as the
 Mac app does: ``export NAME="value"`` lines grouped under ``# Provider``

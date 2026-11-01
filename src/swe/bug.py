@@ -2,7 +2,7 @@
 
 The query names are the field ids in ``.github/ISSUE_TEMPLATE`` and ``area``
 is one of the forms' dropdown options word for word. The Mac app builds the
-same links (``app/mac/Sources/QuiverCore/Support/IssueReport.swift``), so a
+same links (``app/mac/Sources/SWECore/Support/IssueReport.swift``), so a
 change to a form's ids or options changes both. Reads no config, like
 ``swe version``, so it still works when ``~/.swe`` is what is broken.
 """

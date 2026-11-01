@@ -26,7 +26,7 @@ The core CLI is stdlib-only with no runtime dependencies. Optional extras: `serv
 | iPhone app | `app/ios/` | XcodeGen and Xcode; see [app/ios/README.md](app/ios/README.md) |
 | Web app | `src/swe/webapp/` | nothing: it ships in the Python package and `swe remote serve` serves it; see [docs/web-app.md](docs/web-app.md) |
 
-The web app stays inside the Python package because pipx installs and the `swe` bundled in Quiver.app serve it from there.
+The web app stays inside the Python package because pipx installs and the `swe` bundled in SWE.app serve it from there.
 
 ### Keeping the clients in step
 
@@ -42,8 +42,8 @@ The web app stays inside the Python package because pipx installs and the `swe` 
 
 - **Share no data with those apps.** Never read or write `~/.switchboard`, `~/.tokentracker`, `~/.config/aiusage`, OpenUsage's Application Support folder, or their caches, settings or keychain items, not even to import. Everything SWE keeps lives under `~/.swe`. The harnesses' own files (`~/.claude`, `~/.codex`, ...) are not another app's data; reading them is the point.
 - **Borrow ideas and code, not state.** Their source is a reference; SWE re-implements against its own files. Keep the licence notices for any code copied.
-- **Never write to `~/Applications/Quiver.app` by hand.** Several sessions work on this repo at once, so the installed app is built only from `origin/main` by `app/mac/script/install-app.sh`. Check your change with your own build: `./script/build-app.sh debug` in your worktree, then `open -n build/Quiver.app`.
-- **Reinstall the app after every push to `main`**, not only `app/mac/` changes. Once your PR merges, run `app/mac/script/install-app.sh` from any checkout, `git fetch`, then confirm `git merge-base --is-ancestor <your merge commit> "$(defaults read ~/Applications/Quiver.app/Contents/Info QuiverCommit)"`. A newer commit is fine. If the script reports another install running, wait and run it again, since that one may have built an older `main`. Nothing to install after a push to a PR branch.
+- **Never write to `~/Applications/SWE.app` by hand.** Several sessions work on this repo at once, so the installed app is built only from `origin/main` by `app/mac/script/install-app.sh`. Check your change with your own build: `./script/build-app.sh debug` in your worktree, then `open -n build/SWE.app`.
+- **Reinstall the app after every push to `main`**, not only `app/mac/` changes. Once your PR merges, run `app/mac/script/install-app.sh` from any checkout, `git fetch`, then confirm `git merge-base --is-ancestor <your merge commit> "$(defaults read ~/Applications/SWE.app/Contents/Info SWECommit)"`. A newer commit is fine. If the script reports another install running, wait and run it again, since that one may have built an older `main`. Nothing to install after a push to a PR branch.
 
 ## Commands
 
@@ -112,7 +112,7 @@ If it works with `PYTHONPATH=src python3 -m swe.cli` but not with `swe`, the ins
 - `harness/registry.py` is the only module that touches `harness.json`. `harness/stars.py` and `harness/archive.py` are compatibility shims: add no state to them.
 - **Code never hardcodes what `harness.json` can say.** `HARNESS_ROOTS` and `PLUGIN_FALLBACK` are read-only fallbacks for harnesses the registry has never heard of; a harness's `capabilities` entry always wins.
 - Within `github/`, only `gh.py` spawns `gh`.
-- `ledger/`, `status/` and the search index writer are ports of `QuiverCore` Swift code. Keep their rules in step with the Swift side, per the ported-logic table in FEATURES.md.
+- `ledger/`, `status/` and the search index writer are ports of `SWECore` Swift code. Keep their rules in step with the Swift side, per the ported-logic table in FEATURES.md.
 
 ## Conventions
 

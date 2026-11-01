@@ -550,7 +550,7 @@ class MoveSecretsTest(unittest.TestCase):
             self.assertEqual(move_secrets(home), [])
 
     def test_the_app_seals_secrets_with_the_same_text(self):
-        source = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources" / "QuiverCore"
+        source = (Path(__file__).resolve().parents[1] / "app" / "mac" / "Sources" / "SWECore"
                   / "APIKeys" / "APIKeys.swift")
         if not source.is_file():
             self.skipTest("app sources are not in this tree (the Nix build ships src/ and tests/)")

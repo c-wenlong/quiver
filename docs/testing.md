@@ -116,9 +116,9 @@ lists the current risk areas.
 The iPhone app in `app/ios/` has its own XCTest suite, run on a
 simulator; [app/ios/README.md](../app/ios/README.md) has the command, and
 the nightly `native.yml` runs its unit target. The rest of this section
-is the macOS app, whose package has three test targets: `QuiverCoreTests`
-(the logic, and almost every test), `QuiverAppUITests` (views and AppKit
-glue that need a run loop or a window) and `QuiverWidgetsUITests`.
+is the macOS app, whose package has three test targets: `SWECoreTests`
+(the logic, and almost every test), `SWEAppUITests` (views and AppKit
+glue that need a run loop or a window) and `SWEWidgetsUITests`.
 
 From `app/mac/`:
 
@@ -134,7 +134,7 @@ Tests use Swift Testing (`@Suite` / `@Test` / `#expect`). Conventions:
 - Timing tests use tolerances, not exact comparisons; assert a window or
   an ordering, not a wall-clock value.
 - Fixtures that feed `SweClient` and the parsers live under
-  `Tests/QuiverCoreTests/Fixtures/`.
+  `Tests/SWECoreTests/Fixtures/`.
 - Temporary folders come from `TempDir` (`LedgerTestSupport.swift`), which
   removes itself; keep it alive (`withExtendedLifetime`) past any read that
   opens a file by path. A test that needs a `UserDefaults` suite takes a
@@ -151,7 +151,7 @@ Tests use Swift Testing (`@Suite` / `@Test` / `#expect`). Conventions:
 
 ### Capturing swe contract fixtures
 
-The fixtures in `app/mac/Tests/QuiverCoreTests/Fixtures/` are real `swe`
+The fixtures in `app/mac/Tests/SWECoreTests/Fixtures/` are real `swe`
 output, captured once against a throwaway `HOME` seeded with made-up
 registry entries (`fixturetool`, `oldtool`), a fixture marketplace and a
 fixture session. To refresh or add one:
@@ -160,7 +160,7 @@ fixture session. To refresh or add one:
 2. Build a throwaway `HOME` the way the Python tests do (registry entries
    under `$HOME/.swe/config/harness.json`, plus any transcripts or
    plugin folders the command reads).
-3. Run `HOME=$test_home swe <command> --json > app/mac/Tests/QuiverCoreTests/Fixtures/<name>.json`.
+3. Run `HOME=$test_home swe <command> --json > app/mac/Tests/SWECoreTests/Fixtures/<name>.json`.
 4. Where a command needs a live harness CLI or a provider (`--fix`,
    plugin actions, `swe list --usage` rate readings), build the fixture to
    the shape `src/swe` emits instead, and say so in the test file's
@@ -175,12 +175,12 @@ fixture session. To refresh or add one:
 cd app/mac
 swift test --enable-code-coverage
 xcrun llvm-cov report \
-  .build/arm64-apple-macosx/debug/QuiverPackageTests.xctest/Contents/MacOS/QuiverPackageTests \
+  .build/arm64-apple-macosx/debug/SWEPackageTests.xctest/Contents/MacOS/SWEPackageTests \
   -instr-profile .build/arm64-apple-macosx/debug/codecov/default.profdata
 ```
 
-Filter the report rows by `Sources/QuiverCore` or `Sources/QuiverWidgetsUI`
-for a per-target total. `QuiverApp` is mostly views; `QuiverAppUITests`
+Filter the report rows by `Sources/SWECore` or `Sources/SWEWidgetsUI`
+for a per-target total. `SWEApp` is mostly views; `SWEAppUITests`
 covers the parts with logic worth pinning. There is no Swift coverage
 floor in CI, and the macOS unit tests run nightly, not on pull requests,
 so run the suites a change touches before pushing. The report is a guide

@@ -1,4 +1,4 @@
-# Quiver for macOS
+# SWE for macOS
 
 A native app on top of `swe`: usage, limits and sessions at a glance, and
 accounts, skills, AGENTS.md and MCP servers without remembering commands.
@@ -10,16 +10,16 @@ Needs macOS 26 and Xcode 26 (Swift 6.2).
 
 ```bash
 cd app/mac
-swift test                      # QuiverCore unit tests
+swift test                      # SWECore unit tests
 ./script/test.sh                # the same, stopped with thread stacks if it hangs (CI uses this)
-./script/build-app.sh debug     # writes build/Quiver.app, widgets included
-open build/Quiver.app
+./script/build-app.sh debug     # writes build/SWE.app, widgets included
+open build/SWE.app
 ```
 
 The app runs `swe … --json`. `build-app.sh` puts a copy of `swe` inside
 the bundle (`Contents/Resources/swe`, with a standalone Python 3.13 from
 python-build-standalone; see `script/bundle-swe.sh`), so a Mac with no
-Python or quiver installed still works. The first build downloads that
+Python or swe installed still works. The first build downloads that
 Python (about 25 MB, pinned by checksum) into `~/.swe/cache/build/python`.
 Settings › Paths can point the app at another `swe` instead, such as an
 editable install you're working on. `swift run` builds have no bundle and
@@ -33,10 +33,10 @@ app/mac/script/install-app.sh       # release build of origin/main into ~/Applic
 
 It fetches, builds `origin/main` in its own worktree under
 `~/.swe/cache/install` (kept between runs, so rebuilds are incremental),
-quits the installed Quiver, swaps the new bundle in and relaunches it. It
+quits the installed SWE, swaps the new bundle in and relaunches it. It
 never builds the checkout's current branch, so sessions working on other
 branches can't leave a half-finished app installed. A failed build changes
-nothing. `QUIVER_INSTALL_REF` builds another ref and `QUIVER_INSTALL_DIR`
+nothing. `SWE_INSTALL_REF` builds another ref and `SWE_INSTALL_DIR`
 installs somewhere else. It holds a `caffeinate -i` power assertion while
 it runs, so the Mac doesn't idle to sleep mid-build. That covers sleep
 only: to keep a build going after an SSH disconnect, start it under
@@ -66,50 +66,50 @@ safely and says what it did; `--only=xcode,checkout` runs a subset.
    `origin/main`.
 4. **hub**: runs `swe remote serve --install` (with the app's bundled
    `swe`), unless the hub's LaunchAgent is already loaded.
-5. **app**: reports which Quiver is running. It quits this checkout's own
+5. **app**: reports which SWE is running. It quits this checkout's own
    `app/mac/build` dev copy, leaves other builds alone, and opens the
    installed app.
 
 ## Package a DMG
 
 ```bash
-QUIVER_CHANNEL=prod app/mac/script/build-app.sh release   # clean checkout, arm64
-app/mac/script/make-dmg.sh                                # writes build/Quiver-<version>.dmg
+SWE_CHANNEL=prod app/mac/script/build-app.sh release   # clean checkout, arm64
+app/mac/script/make-dmg.sh                                # writes build/SWE-<version>.dmg
 ```
 
-Prod builds need a Developer ID certificate (or `QUIVER_SIGN_IDENTITY=-` to
+Prod builds need a Developer ID certificate (or `SWE_SIGN_IDENTITY=-` to
 force ad-hoc) and refuse a dirty or tagless checkout. The DMG step notarizes
-and staples the app and the image when `QUIVER_NOTARY_PROFILE` or the
+and staples the app and the image when `SWE_NOTARY_PROFILE` or the
 `NOTARY_*` App Store Connect key are set; a Developer-ID-signed app without
 either stops instead of writing a DMG Gatekeeper would reject. A
 credential-free DMG for local testing needs an ad-hoc bundle:
-`QUIVER_SIGN_IDENTITY=-` on the prod build, or a plain debug build.
+`SWE_SIGN_IDENTITY=-` on the prod build, or a plain debug build.
 BOOTSTRAP.md lists where the credentials live.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `Sources/QuiverCore` | Everything testable: the `swe` client, models, view models |
-| `Sources/QuiverCore/Ledger` | Usage ledger: harness log scanners, the deduplicated event store, pricing |
-| `Sources/QuiverCore/Status` | Service status: the status-page catalog, Statuspage and Google Cloud parsers, the polling cache |
-| `Sources/QuiverCore/Resources` | Trimmed LiteLLM price snapshot and Quiver's pricing supplement |
-| `Sources/QuiverCore/Limits` | Limit readings from every source, the 90% and reset alerts, the widget snapshot |
-| `Sources/QuiverApp` | The SwiftUI shell: window, sidebar, pages, menu bar panel |
-| `Sources/QuiverWidgets` | The WidgetKit extension: usage limits, usage summary, activity heatmap, top models |
-| `Tests/QuiverCoreTests` | Swift Testing suites; `Fixtures/` holds real `swe --json` output |
-| `script/install-app.sh` | Builds `origin/main` and installs it as `~/Applications/Quiver.app` |
+| `Sources/SWECore` | Everything testable: the `swe` client, models, view models |
+| `Sources/SWECore/Ledger` | Usage ledger: harness log scanners, the deduplicated event store, pricing |
+| `Sources/SWECore/Status` | Service status: the status-page catalog, Statuspage and Google Cloud parsers, the polling cache |
+| `Sources/SWECore/Resources` | Trimmed LiteLLM price snapshot and SWE's pricing supplement |
+| `Sources/SWECore/Limits` | Limit readings from every source, the 90% and reset alerts, the widget snapshot |
+| `Sources/SWEApp` | The SwiftUI shell: window, sidebar, pages, menu bar panel |
+| `Sources/SWEWidgets` | The WidgetKit extension: usage limits, usage summary, activity heatmap, top models |
+| `Tests/SWECoreTests` | Swift Testing suites; `Fixtures/` holds real `swe --json` output |
+| `script/install-app.sh` | Builds `origin/main` and installs it as `~/Applications/SWE.app` |
 | `script/setup-machine.sh` | Sets up a new dev Mac: Xcode check, checkout onto `origin/main`, install, hub, running app |
 | `script/bundle-swe.sh` | Puts `swe` and its own Python into the bundle; `build-app.sh` runs it and signs the Python binaries |
-| `script/build-app.sh` | Bundles `build/Quiver.app` with the widget extension and signs both (Developer ID on `QUIVER_CHANNEL=prod`, Apple Development otherwise, else ad-hoc) |
-| `script/make-dmg.sh` | Packages a built Quiver.app into a DMG with a laid-out install window (app, arrow, /Applications link), signing, notarizing and stapling when `QUIVER_NOTARY_PROFILE` or the `NOTARY_*` key are set |
+| `script/build-app.sh` | Bundles `build/SWE.app` with the widget extension and signs both (Developer ID on `SWE_CHANNEL=prod`, Apple Development otherwise, else ad-hoc) |
+| `script/make-dmg.sh` | Packages a built SWE.app into a DMG with a laid-out install window (app, arrow, /Applications link), signing, notarizing and stapling when `SWE_NOTARY_PROFILE` or the `NOTARY_*` key are set |
 | `script/dmg-settings.py` | dmgbuild settings for that window: size, icon positions, background |
 | `script/make-dmg-background.swift` | Draws the window's background at 1x or 2x; `make-dmg.sh` joins both into one HiDPI TIFF |
-| `script/QuiverWidgets.entitlements` | The extension's sandbox: read access to `~/.swe/cache/widgets/` only |
+| `script/SWEWidgets.entitlements` | The extension's sandbox: read access to `~/.swe/cache/widgets/` only |
 | `script/trim-litellm-pricing.py` | Regenerates `Resources/pricing.json` from LiteLLM's price list |
 | `THIRD_PARTY_NOTICES.md` | Licences for the LiteLLM snapshot and ported OpenUsage rules |
 
-Behaviour lives in QuiverCore behind seams the tests replace: `CommandRunning`
+Behaviour lives in SWECore behind seams the tests replace: `CommandRunning`
 stands in for the `swe` process, `PricingTransport` for the network. The app
 target stays thin.
 
@@ -152,11 +152,11 @@ below 80% without a reset rearms quietly. What it has notified is kept in
 
 SwiftPM has no app extension product, but a WidgetKit extension is only an
 executable whose `@main` is a `WidgetBundle`, inside an `.appex` with an
-`NSExtension` Info.plist. So `QuiverWidgets` is a plain executable target
-sharing QuiverCore, and `build-app.sh` wraps it in
-`Contents/PlugIns/QuiverWidgets.appex`. No Xcode project or XcodeGen spec.
+`NSExtension` Info.plist. So `SWEWidgets` is a plain executable target
+sharing SWECore, and `build-app.sh` wraps it in
+`Contents/PlugIns/SWEWidgets.appex`. No Xcode project or XcodeGen spec.
 An extension's `Bundle.main` is the .appex, so the script also copies
-QuiverCore's resource bundle into the appex's own `Contents/Resources`,
+SWECore's resource bundle into the appex's own `Contents/Resources`,
 where `CoreResources` finds the harness logos the widgets draw. A packaged
 app or appex never falls back to SwiftPM's `Bundle.module`, which would
 stop the process on any Mac but the one that built it.
@@ -178,16 +178,16 @@ exceptions.
 - Privacy grants (Desktop folder access, Accessibility) stick across
   rebuilds only when the app is signed with a stable identity.
   `build-app.sh` uses your first "Apple Development" certificate, or
-  `QUIVER_SIGN_IDENTITY`; `QUIVER_CHANNEL=prod` instead requires a
+  `SWE_SIGN_IDENTITY`; `SWE_CHANNEL=prod` instead requires a
   "Developer ID Application" certificate and adds the hardened runtime
   and a secure timestamp. A dev build without a certificate falls back
   to ad-hoc signing, and every rebuild looks like a new app that asks
   again.
-- `QUIVER_BUILD_DIR` overrides where the bundle lands (default
-  `app/mac/build`); the app ends up at `$QUIVER_BUILD_DIR/Quiver.app`.
+- `SWE_BUILD_DIR` overrides where the bundle lands (default
+  `app/mac/build`); the app ends up at `$SWE_BUILD_DIR/SWE.app`.
   Settings > General > Updates uses this so a rebuild never overwrites the running
   copy.
-- `QUIVER_CHANNEL=dev|prod` (default `dev`) stamps `QuiverChannel` in the
-  app's Info.plist. Dev builds also stamp `QuiverCommit`,
-  `QuiverSourcePath` and `QuiverDirty` from the checkout, which is what
+- `SWE_CHANNEL=dev|prod` (default `dev`) stamps `SWEChannel` in the
+  app's Info.plist. Dev builds also stamp `SWECommit`,
+  `SWESourcePath` and `SWEDirty` from the checkout, which is what
   Settings > General > Updates compares against HEAD.

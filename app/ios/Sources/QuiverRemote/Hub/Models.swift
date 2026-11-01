@@ -195,7 +195,7 @@ private extension Character {
     var isASCIIDigit: Bool { ("0"..."9").contains(self) }
 }
 
-/// The title of a thinking card. The Mac's `ThoughtLabel` (QuiverCore,
+/// The title of a thinking card. The Mac's `ThoughtLabel` (SWECore,
 /// `Hub/ThoughtLabel.swift`) and the web app's `Fmt.thought`
 /// (`static/format.js`) follow the same rules; change all three together.
 enum ThoughtLabel {

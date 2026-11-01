@@ -1,6 +1,6 @@
 import Foundation
 
-// Kept identical in app/mac/Sources/QuiverCore/Hub/ReplyStreams.swift
+// Kept identical in app/mac/Sources/SWECore/Hub/ReplyStreams.swift
 // and ported to pages/chat.js's `replyStreams` (FEATURES.md, ported logic).
 
 /// One `message.delta`'s `data` (#1444): live text for a reply still

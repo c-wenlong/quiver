@@ -887,7 +887,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   popover gains the same field as a "Fan off below" dropdown.
 
 - **The web app's chat shows the tmux pane and can detach.** A session
-  Quiver runs under tmux shows its `qv-…` name in the chat's top bar;
+  SWE runs under tmux shows its `qv-…` name in the chat's top bar;
   a click copies `tmux attach -t qv-…`. The bar's Detach button offers
   the phone's three choices: detach when the turn finishes, keep it
   running in tmux, or detach now. A kept session says it is still
@@ -938,7 +938,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remote PWA's.
 
 - **Report a bug from the app or the terminal.** The Mac app's Help menu
-  now has Report a Bug, Request a Feature, Copy Diagnostics and Quiver
+  now has Report a Bug, Request a Feature, Copy Diagnostics and SWE
   Documentation, and Settings › General has a Feedback card under Doctor
   with the same actions. `swe bug` (`--feature`, `--print`, `--json`)
   opens the same forms. Each link fills in the Area, version and OS
@@ -1037,6 +1037,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Mac app is SWE.app now** (SWE Wraps Everything — the product
+  takes the `swe` command's name and Quiver is decommissioned). The
+  bundle is `SWE.app` with bundle id `com.cwenlong.swe`, its Swift
+  modules are `SWECore`/`SWEApp`/`SWEWidgets`/`SWEWidgetsUI`/`SWEFanHelper`,
+  the DMG is `SWE-<version>.dmg`, and its launchd jobs, keychain
+  service and fan helper moved to `com.cwenlong.swe.*` names. On
+  install, the old Quiver.app is quit and removed, its `~/.quiver` data
+  root moves to `~/.swe` (with a `~/.quiver` symlink left behind), its
+  LaunchAgents are renamed onto the new labels, its keychain items move
+  to the new service on first read, and its preferences carry over to
+  the new defaults domain. Sparkle cannot update across a bundle id
+  change, so a Quiver.app install must move to SWE.app once, manually;
+  the release checklist covers it.
 - **New icon and logo everywhere; the pixel-art mascot is gone.** The
   Mac and iPhone app icons, the web app's icons, the landing site and
   the README now use the new mark: three arrowheads above `swe` on a
@@ -1067,7 +1080,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reasoning columns stay empty (AA puts per-benchmark scores behind Pro),
   and their hover notes say so. Stored rows in the old shape still
   decode. The quota text now says 100 requests a day, and a `410` reads
-  "Artificial Analysis retired this API. Update Quiver."
+  "Artificial Analysis retired this API. Update SWE."
   [#948](https://github.com/c-wenlong/quiver/issues/948).
 
 - **Mac app: less CPU while idle.** The trend sampler no longer reads
@@ -1107,7 +1120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   git ([#696](https://github.com/c-wenlong/quiver/issues/696)).
 
 - **Usage problems say what to do, graded by how much they need you.**
-  A stale login or a credentials file macOS won't let Quiver read puts
+  A stale login or a credentials file macOS won't let SWE read puts
   an account card in its amber "Action needed" state with a Fix sheet,
   raises a banner over the window (it never takes focus) and counts on
   the Settings badge. A sign-out banners only where a read used to work,
@@ -1140,14 +1153,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Flatter Mac app window.** The page now fills the window to its edges
   instead of sitting in a rounded, inset panel, split from the sidebar by
-  a hairline. The Quiver wordmark and the sidebar toggle moved up into the
+  a hairline. The SWE wordmark and the sidebar toggle moved up into the
   traffic lights' row, and cards, blocks, fields, buttons and sheets have
   smaller corner radii.
 
 - **Flatter web app window.** The web app's page fills the browser to its
   edges like the Mac app's, split from the sidebar by a hairline (on a
   phone, under the page strip), instead of sitting in a rounded, inset
-  panel. The Quiver wordmark row is shorter, so the sidebar list starts
+  panel. The SWE wordmark row is shorter, so the sidebar list starts
   higher, and cards, blocks, fields, buttons and sheets have the Mac app's
   smaller corner radii.
 
@@ -1243,7 +1256,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MCP gateway: a session's burst of connections is queued, not
   reset.** A Claude Code session connects to every shared server at
-  once, and the Python 3.13 that Quiver.app bundles queues only 5
+  once, and the Python 3.13 that SWE.app bundles queues only 5
   connections on a listening socket. With 18 shared servers, 13 of 18
   probes at once got "connection reset" and those servers would fail to
   connect for that session. The gateway now queues 128.
@@ -1259,11 +1272,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mac app: notarized builds keep Terminal automation.** Open in
   Terminal, account sign-in and session resume drive Terminal and iTerm
   through an `osascript` child, and macOS charges that Apple Event to
-  Quiver. Under the hardened runtime that prod and notarized builds use,
+  SWE. Under the hardened runtime that prod and notarized builds use,
   an app without the `com.apple.security.automation.apple-events`
   entitlement is refused (`-1743`) before any prompt appears. Prod builds
   now sign the app, and the bundled Python that runs the hub, with
-  `app/mac/script/Quiver.entitlements`, which grants it; the existing
+  `app/mac/script/SWE.entitlements`, which grants it; the existing
   `NSAppleEventsUsageDescription` gives the prompt its text
   ([#968](https://github.com/c-wenlong/quiver/issues/968)).
 
@@ -1397,7 +1410,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   late-October grid) never reported a frame, so hovering them drew no
   bubble, and some earlier frames went stale. The cell frames and the
   cell under the pointer now come from the grid's fixed metrics
-  (`HeatmapLayout` in QuiverCore), with one measured origin for the
+  (`HeatmapLayout` in SWECore), with one measured origin for the
   rows.
 - **A unit test could freeze the whole Swift suite.** In
   `clearWaitsForACallInsideTheLock` the clearer ran as `Task.detached`,
@@ -1448,9 +1461,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too. The owner's other devices keep working
   ([#966](https://github.com/c-wenlong/quiver/issues/966)).
 
-- **Mac app: the fan helper is checked against Quiver's own signature
+- **Mac app: the fan helper is checked against SWE's own signature
   before it runs as root.** The one-time install copied
-  `Quiver.app/Contents/MacOS/QuiverFanHelper` to
+  `SWE.app/Contents/MacOS/SWEFanHelper` to
   `/Library/PrivilegedHelperTools` and only checked that the copy
   matched a hash taken before the password prompt. The bundle is
   user-writable, so anything running as the user could patch the helper
@@ -1458,16 +1471,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A build signed by a team (Developer ID, or the Apple Development
   identity dev builds pick up) now has the root script verify the
   root-owned copy with `codesign --verify --strict` against
-  `identifier "QuiverFanHelper"` and that team, and deletes it and stops
+  `identifier "SWEFanHelper"` and that team, and deletes it and stops
   otherwise. Ad-hoc builds have no signature to check against and keep
   the hash check alone. Installed helpers are not reinstalled, so nobody
   is asked for their password again
   ([#967](https://github.com/c-wenlong/quiver/issues/967)).
 
-- **Mac app: the fan helper only takes requests from Quiver itself,
+- **Mac app: the fan helper only takes requests from SWE itself,
   checked by its code signature.** The running root helper held the fans
-  for any request whose owner was a live process named `Quiver`, so a
-  program called `/tmp/Quiver` qualified. The install now pins the
+  for any request whose owner was a live process named `SWE`, so a
+  program called `/tmp/SWE` qualified. The install now pins the
   installing app's signature in the launchd job (`--owner-team <team>
   --owner-identifier <id>` for a team-signed build, since the team also
   signs the Python bundled for swe; `--owner-cdhash <hash>` for an
@@ -1475,8 +1488,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audit token and `SecCodeCheckValidity`, keeping the answer per process
   (pid and pid version) so a reused pid is checked afresh. A job without
   a valid pin starts nothing. The helper is now version 4 and writes its
-  `version` into `/var/run/com.cwenlong.quiver.fan.json`. On launch,
-  Quiver finds a helper older than that, says why it needs replacing,
+  `version` into `/var/run/com.cwenlong.swe.fan.json`. On launch,
+  SWE finds a helper older than that, says why it needs replacing,
   and offers "Update helper" (one administrator password prompt) or "Not
   now". Not now is remembered for this version: the old helper is left
   unused, the fans stay with macOS, and both fan popovers show the

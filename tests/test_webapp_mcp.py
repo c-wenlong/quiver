@@ -567,7 +567,7 @@ class TestSync(_SyncHome, unittest.TestCase):
         hub["mcpServers"]["remote"] = {"url": "https://mcp.example.com/mcp"}
         self.hub.write_text(json.dumps(hub))
         rows = {r["name"]: r for r in mcp.get(_ctx(), {})["servers"]}
-        self.assertEqual(rows["remote"]["remote_in"], ["quiver"])
+        self.assertEqual(rows["remote"]["remote_in"], ["quiver", "swe"])
         self.assertEqual(rows["linear"]["remote_in"], [])
 
     def test_a_url_server_is_not_offered_to_claude_desktop(self):

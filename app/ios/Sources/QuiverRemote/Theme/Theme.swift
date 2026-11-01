@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Quiver's look, ported from the Mac app's `app/mac/Sources/QuiverApp/Theme/Theme.swift`
+/// Quiver's look, ported from the Mac app's `app/mac/Sources/SWEApp/Theme/Theme.swift`
 /// (which takes its values from the TokenTracker package's tokens.json).
 /// Same hex values and roles; type is one point larger than the Mac's
 /// so 12pt captions stay readable at arm's length.
@@ -165,7 +165,7 @@ enum Theme {
     static let usageTrackHeight: CGFloat = 6
 
     /// Each harness's colour, the same hand-picked palette as the Mac app
-    /// (`QuiverCore/Swe/HarnessColor.swift`); others hash into `palette`.
+    /// (`SWECore/Swe/HarnessColor.swift`); others hash into `palette`.
     static func harness(_ id: String?) -> Color {
         let fixed: [String: String] = [
             "claude": "#d97757", "codex": "#3b7ff0", "opencode": "#139f8b", "devin": "#c4860f",

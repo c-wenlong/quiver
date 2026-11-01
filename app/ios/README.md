@@ -20,7 +20,7 @@ at `/` is the client for browsers and other devices.
 | `Tests/QuiverRemoteTests/` | Unit tests for parsing, pairing links, diffs, grouping, chat event handling, the GitHub and Tasks rules, usage formatting and the console |
 | `Tests/QuiverRemoteUITests/` | UI tests for the launch sheets' Model menu; they need a paired hub on the simulator and skip without one |
 
-The look follows the Mac app (`app/mac/Sources/QuiverApp/Theme/Theme.swift`):
+The look follows the Mac app (`app/mac/Sources/SWEApp/Theme/Theme.swift`):
 dark and light from the same tokens, sentence case, green only for
 "active" and "on", amber for "needs you", red for errors. Type runs one
 point larger than the Mac's so captions stay readable on a phone, and

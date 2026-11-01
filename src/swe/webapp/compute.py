@@ -1,7 +1,7 @@
 """The Compute page's data on a Linux hub: what the starred harnesses run,
 what it costs the machine, and a short history for the trend card.
 
-A port of the Mac app's ``QuiverCore/Compute`` (ProcessSampler,
+A port of the Mac app's ``SWECore/Compute`` (ProcessSampler,
 ProcessAttribution, CPUMeter, ComputeHistory) onto Linux's own sources,
 stdlib only:
 

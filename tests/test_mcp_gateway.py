@@ -477,7 +477,7 @@ class GatewayCommandsInProcessTest(unittest.TestCase):
 
         installed = {}
 
-        def fake_install(program, log_path, path_env, label, process_type):
+        def fake_install(program, log_path, path_env, label, process_type, old_label=None):
             installed.update(program=program, label=label, process_type=process_type)
             return self.home / "agent.plist"
 

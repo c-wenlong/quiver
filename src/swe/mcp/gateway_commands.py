@@ -20,7 +20,9 @@ from swe.json_output import emit, take_json_flag
 from swe.mcp import gateway as gw
 from swe.remote import launchd
 
-LABEL = "com.cwenlong.quiver.mcp-gateway"
+LABEL = "com.cwenlong.swe.mcp-gateway"
+# The label Quiver.app installed under; install/uninstall clear it.
+OLD_LABEL = "com.cwenlong.quiver.mcp-gateway"
 
 
 def _hub_data() -> dict:
@@ -106,7 +108,7 @@ def _supports_gateway(swe: str) -> bool:
 def gateway_program(port: int) -> tuple[list[str], str | None]:
     """The LaunchAgent's command line, or an error saying why there is none.
 
-    Quiver.app's bundled swe first, as for the remote hub (a launchd agent
+    SWE.app's bundled swe first, as for the remote hub (a launchd agent
     can't read a checkout in ~/Desktop), but only once it knows this
     command; an app built before the gateway would exit at every start.
     """
@@ -121,7 +123,7 @@ def gateway_program(port: int) -> tuple[list[str], str | None]:
         folder = launchd.protected_dir(swe)
         if folder:
             return [], (f"{swe} is in ~/{folder}, which macOS blocks a LaunchAgent from "
-                        "reading. Install Quiver.app (app/mac/script/install-app.sh) and "
+                        "reading. Install SWE.app (app/mac/script/install-app.sh) and "
                         "run install again: the agent then runs the app's bundled swe.")
     # Always spelled out: an agent left to read the port from mcp.json
     # could start before install saves the new one and bind the old.
@@ -148,6 +150,7 @@ def _install(args: list[str]) -> int:
         # Interactive: harness sessions wait on every answer, and macOS
         # throttles a Background job (a 6 MB tool list went 1.3 s to 6.9 s).
         path = launchd.install(program, log_path, os.environ.get("PATH", ""), label=LABEL,
+                    old_label=OLD_LABEL,
                                process_type="Interactive")
     except RuntimeError as exc:
         print(c("red", f"launchctl could not load the gateway: {exc}"), file=sys.stderr)
@@ -170,7 +173,7 @@ def _install(args: list[str]) -> int:
 def _uninstall(args: list[str]) -> int:
     if sys.platform == "darwin":
         try:
-            removed = launchd.uninstall(label=LABEL)
+            removed = launchd.uninstall(label=LABEL, old_label=OLD_LABEL)
         except RuntimeError as exc:
             print(c("red", f"could not stop the gateway: {exc}"), file=sys.stderr)
             return 1
@@ -249,8 +252,19 @@ def gateway_status() -> dict:
     from swe.mcp.cli import get_hub_servers
 
     settings = current_settings()
-    installed = launchd.plist_path(label=LABEL).exists() if sys.platform == "darwin" else False
-    pid = launchd.loaded_pid(label=LABEL)[1] if installed else None
+    installed = False
+    pid = None
+    if sys.platform == "darwin":
+        # Either label counts: a Quiver.app install still runs as the
+        # gateway until the renamed job replaces it. A loaded job wins
+        # over a stopped plist: a failed install leaves the new plist
+        # behind while the old job keeps answering.
+        for name in (LABEL, OLD_LABEL):
+            if launchd.plist_path(label=name).exists():
+                installed = True
+                loaded, pid = launchd.loaded_pid(label=name)
+                if loaded:
+                    break
     live = _fetch(settings["port"], "/status")
     running = {row["name"]: row for row in (live or {}).get("servers", [])
                if isinstance(row, dict) and "name" in row}

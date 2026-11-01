@@ -21,8 +21,8 @@ from swe.webapp.pages import calendar as cal
 
 from tests.test_remote_hub import HubBase
 
-# Shared with app/mac/Tests/QuiverCoreTests/ActivityParityTests.swift.
-FIXTURES = Path(__file__).resolve().parent.parent / "app/mac/Tests/QuiverCoreTests/Fixtures/activity"
+# Shared with app/mac/Tests/SWECoreTests/ActivityParityTests.swift.
+FIXTURES = Path(__file__).resolve().parent.parent / "app/mac/Tests/SWECoreTests/Fixtures/activity"
 # The Nix build's source tree carries src/ and tests/ but not app/mac/.
 NEEDS_FIXTURES = unittest.skipUnless(FIXTURES.is_dir(), "app/mac/ is not in this source tree")
 # Each source's (listing, parser), as _activity.SOURCES pairs them.

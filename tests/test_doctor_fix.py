@@ -292,7 +292,7 @@ class RunnerParityTest(unittest.TestCase):
         import re
 
         swift = (Path(__file__).resolve().parents[1]
-                 / "app/mac/Sources/QuiverCore/Swe/Doctor.swift").read_text(encoding="utf-8")
+                 / "app/mac/Sources/SWECore/Swe/Doctor.swift").read_text(encoding="utf-8")
         enum = swift[swift.index("public enum Action: String"):]
         enum = enum[:enum.index("public var isBatch")]
         names = set()

@@ -831,7 +831,7 @@ def _plan_reply(plan: dict, report: dict, error: str | None) -> dict:
 
 
 # ---------------------------------------------------------------- redaction
-# A port of QuiverCore's McpRedaction and SecretText.maskingKeys: the parts
+# A port of SWECore's McpRedaction and SecretText.maskingKeys: the parts
 # of a command line or URL that may hold a secret, hidden as "…".
 
 _SECRET_FLAG_ENDINGS = ("token", "key", "secret", "password", "passwd", "credential",
@@ -1039,7 +1039,7 @@ def redact_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------- folders
-# A port of QuiverCore's McpServerRepo: the server checkouts in the managed
+# A port of SWECore's McpServerRepo: the server checkouts in the managed
 # folder, which inventory servers run from each, and each one's git state.
 
 SERVER_MARKERS = (".git", "package.json", "pyproject.toml", "go.mod", "Cargo.toml",

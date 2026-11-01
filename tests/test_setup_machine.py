@@ -244,7 +244,7 @@ class InstallAppCaffeinateTests(unittest.TestCase):
         log = root / "caffeinate.log"
         (bin_dir / "uname").write_text("#!/bin/sh\necho Darwin\n")
         (bin_dir / "caffeinate").write_text(
-            f'#!/bin/sh\necho "$1 $QUIVER_INSTALL_CAFFEINATED" >> "{log}"\nshift\nexec "$@"\n')
+            f'#!/bin/sh\necho "$1 $SWE_INSTALL_CAFFEINATED" >> "{log}"\nshift\nexec "$@"\n')
         for tool in ("uname", "caffeinate"):
             (bin_dir / tool).chmod(0o755)
         cache = root / "cache"

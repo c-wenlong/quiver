@@ -17,7 +17,7 @@ from swe.remote import commands, launchd, systemd
 from tests._tempdir import temp_dir
 from tests.test_remote_systemd import FakeCtl
 
-SWE = "/Users/k/Applications/Quiver.app/Contents/Resources/swe/bin/swe"
+SWE = "/Users/k/Applications/SWE.app/Contents/Resources/swe/bin/swe"
 
 
 class FakeLaunchctl:
@@ -67,7 +67,7 @@ class AgentServiceTest(unittest.TestCase):
         agent_mod.save_agent(self.home, {"hub": hub, "credential": "secret-cred"})
 
     def _mac(self, ctl):
-        """Patches for a Mac with Quiver.app installed and launchctl faked."""
+        """Patches for a Mac with SWE.app installed and launchctl faked."""
         return [
             patch.object(commands.sys, "platform", "darwin"),
             patch.object(commands.launchd, "bundled_swe", return_value=SWE),
@@ -101,7 +101,7 @@ class AgentServiceTest(unittest.TestCase):
         ctl = FakeLaunchctl()
         rc, out, err = self._with(self._mac(ctl), ["agent", "--install"])
         self.assertEqual(rc, 0, err)
-        path = self.home / "Library/LaunchAgents/com.cwenlong.quiver.remote-agent.plist"
+        path = self.home / "Library/LaunchAgents/com.cwenlong.swe.remote-agent.plist"
         plist = plistlib.loads(path.read_bytes())
         self.assertEqual(plist["Label"], launchd.AGENT_LABEL)
         self.assertNotEqual(launchd.AGENT_LABEL, launchd.LABEL)
@@ -112,8 +112,10 @@ class AgentServiceTest(unittest.TestCase):
         self.assertIn("PATH", plist["EnvironmentVariables"])
         self.assertNotIn("secret-cred", path.read_text(errors="ignore"))
         self.assertFalse(launchd.plist_path(self.home).exists(), "the hub's plist stays absent")
-        self.assertEqual([c[0] for c in ctl.calls], ["bootout", "bootstrap"])
-        self.assertTrue(all(launchd.AGENT_LABEL in c[-1] or c[-1] == str(path)
+        self.assertEqual([c[0] for c in ctl.calls],
+                         ["bootout", "bootstrap", "bootout", "print"])
+        self.assertTrue(all(launchd.AGENT_LABEL in c[-1] or
+                            launchd.OLD_AGENT_LABEL in c[-1] or c[-1] == str(path)
                             for c in ctl.calls))
         self.assertIn("installed", out)
 
@@ -261,7 +263,7 @@ class AgentServiceTest(unittest.TestCase):
         self.assertEqual((report["installed"], report["running"], report["hub_installed"]),
                          (True, True, True))
         self.assertEqual(report["program"], [SWE, "remote", "agent"])
-        self.assertTrue(report["service"].endswith("com.cwenlong.quiver.remote-agent.plist"))
+        self.assertTrue(report["service"].endswith("com.cwenlong.swe.remote-agent.plist"))
         self.assertNotIn("secret-cred", out)
 
     def test_install_and_uninstall_json_print_only_the_status_on_stdout(self):

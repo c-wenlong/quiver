@@ -2,7 +2,7 @@
 #
 # Builds an sdist and a wheel from a `v*` tag, checks the metadata renders,
 # and attaches both files to the matching GitHub release.  The `macos-app`
-# job builds Quiver.app on a macOS 26 runner, signs and notarizes it when
+# job builds SWE.app on a macOS 26 runner, signs and notarizes it when
 # the secrets below are configured, and attaches the DMG plus a Sparkle
 # `appcast.xml` the same way.  `bump-homebrew-tap` then points the
 # c-wenlong/homebrew-quiver cask and formula at the new DMG and wheel.
@@ -241,15 +241,15 @@ jobs:
           echo "sign_identity=$identity" >> "$GITHUB_OUTPUT"
           echo "have_cert=true" >> "$GITHUB_OUTPUT"
 
-      - name: Build Quiver.app
+      - name: Build SWE.app
         env:
-          QUIVER_CHANNEL: prod
+          SWE_CHANNEL: prod
           # An explicit SIGNING_IDENTITY variable wins, then the identity
           # the certificate step imported, then `-`: the forced ad-hoc
           # signature that lets this job validate the prod build before
           # the secrets exist.  With no identity at all a prod build fails
           # loudly inside build-app.sh, so `-` keeps the scaffold green.
-          QUIVER_SIGN_IDENTITY: ${{ vars.SIGNING_IDENTITY || steps.cert.outputs.sign_identity || '-' }}
+          SWE_SIGN_IDENTITY: ${{ vars.SIGNING_IDENTITY || steps.cert.outputs.sign_identity || '-' }}
         # About 6 minutes of compiling, then signing every Mach-O.
         timeout-minutes: 30
         run: app/mac/script/build-app.sh release
@@ -257,7 +257,7 @@ jobs:
       - name: Report the signature
         # Shows in the log what the bundle was actually signed with; the
         # unsigned scaffold run prints "Signature=adhoc" here.
-        run: codesign -dvvv app/mac/build/Quiver.app || true
+        run: codesign -dvvv app/mac/build/SWE.app || true
 
       - name: Smoke-test the bundled app
         # Exercises the bundle end to end, post-signing, against a
@@ -266,28 +266,28 @@ jobs:
         timeout-minutes: 5
         run: |
           test_home="$(mktemp -d)"
-          swe="app/mac/build/Quiver.app/Contents/Resources/swe/bin/swe"
+          swe="app/mac/build/SWE.app/Contents/Resources/swe/bin/swe"
           HOME="$test_home" "$swe" --help >/dev/null
           HOME="$test_home" "$swe" version --json
           # A GUI app that is still alive after 20 s has loaded its
           # frameworks, Python and signature fine. A zombie child still
           # answers kill -0, so check the process state before reaping.
-          HOME="$test_home" app/mac/build/Quiver.app/Contents/MacOS/Quiver &
+          HOME="$test_home" app/mac/build/SWE.app/Contents/MacOS/SWE &
           pid=$!
           sleep 20
           case "$(ps -o stat= -p "$pid" 2>/dev/null)" in
             ""|*Z*)
               if wait "$pid"; then status=0; else status=$?; fi
               if [ "$status" -ne 0 ]; then
-                echo "::error::Quiver.app exited $status within 20 s of launch"
+                echo "::error::SWE.app exited $status within 20 s of launch"
                 exit 1
               fi
-              echo "Quiver.app exited cleanly before the timeout"
+              echo "SWE.app exited cleanly before the timeout"
               ;;
             *)
               kill "$pid" 2>/dev/null || true
               wait "$pid" 2>/dev/null || true
-              echo "Quiver.app launched and stayed up"
+              echo "SWE.app launched and stayed up"
               ;;
           esac
 
@@ -301,14 +301,14 @@ jobs:
         # DMG); Apple usually answers each in a few minutes.
         timeout-minutes: 45
         env:
-          QUIVER_SIGN_IDENTITY: ${{ vars.SIGNING_IDENTITY || steps.cert.outputs.sign_identity }}
+          SWE_SIGN_IDENTITY: ${{ vars.SIGNING_IDENTITY || steps.cert.outputs.sign_identity }}
           NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
         run: |
           mkdir -p app/mac/build/macos-app
-          app/mac/script/make-dmg.sh app/mac/build/Quiver.app \
-            "app/mac/build/macos-app/Quiver-${RELEASE_TAG#v}.dmg"
+          app/mac/script/make-dmg.sh app/mac/build/SWE.app \
+            "app/mac/build/macos-app/SWE-${RELEASE_TAG#v}.dmg"
           ls -lh app/mac/build/macos-app/
 
       - name: Exercise the DMG path on the unsigned build
@@ -320,7 +320,7 @@ jobs:
         if: steps.cert.outputs.have_cert != 'true'
         timeout-minutes: 15
         run: |
-          app/mac/script/make-dmg.sh app/mac/build/Quiver.app "$RUNNER_TEMP/Quiver.dmg"
+          app/mac/script/make-dmg.sh app/mac/build/SWE.app "$RUNNER_TEMP/SWE.dmg"
           mkdir -p app/mac/build/macos-app
           printf 'Unsigned prod build: MACOS_CERTIFICATE is not configured.\n' \
             > app/mac/build/macos-app/UNSIGNED.txt
@@ -490,12 +490,12 @@ jobs:
           # secrets are not configured.  The glob picks up real assets only.
           shopt -s nullglob
           # A stable-named copy of the versioned DMG, so
-          # releases/latest/download/Quiver.dmg is a permanent download
+          # releases/latest/download/SWE.dmg is a permanent download
           # link. It is made here, after the appcast, so Sparkle only ever
           # lists the versioned file.
-          versioned=(macos-app/Quiver-*.dmg)
+          versioned=(macos-app/SWE-*.dmg)
           if [ "${#versioned[@]}" -eq 1 ]; then
-            cp "${versioned[0]}" macos-app/Quiver.dmg
+            cp "${versioned[0]}" macos-app/SWE.dmg
           fi
           assets=(dist/* macos-app/*.dmg macos-app/appcast*.xml)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
@@ -589,9 +589,9 @@ jobs:
           version="${RELEASE_TAG#v}"
           dir="$RUNNER_TEMP/assets"
           gh release download "$RELEASE_TAG" --dir "$dir" \
-            --pattern "Quiver-$version.dmg" \
+            --pattern "SWE-$version.dmg" \
             --pattern "swe-$version-py3-none-any.whl"
-          echo "dmg=$(sha256sum "$dir/Quiver-$version.dmg" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "dmg=$(sha256sum "$dir/SWE-$version.dmg" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "wheel=$(sha256sum "$dir/swe-$version-py3-none-any.whl" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Push the bump to the tap

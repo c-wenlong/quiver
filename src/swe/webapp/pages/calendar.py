@@ -1,5 +1,5 @@
 """The Calendar page (ports ``CalendarPage.swift`` and the model in
-``QuiverCore/Calendar``: ``CalendarModel``, ``Activity``,
+``SWECore/Calendar``: ``CalendarModel``, ``Activity``,
 ``ActivityBlocks``, ``ProjectResolver``, ``CalendarFormat``).
 
 When each harness was actually working, read from the ledger's response

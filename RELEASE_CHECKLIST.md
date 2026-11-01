@@ -13,9 +13,9 @@ A SWE release delivers three products to one GitHub Release page:
 
 1. **The Python package** — an sdist and a wheel for the `swe` CLI, built
    from `pyproject.toml`. This is what `pip install quiver-*.whl` users get.
-2. **The macOS app** — `Quiver.app`, built on a macOS 26 runner, signed
+2. **The macOS app** — `SWE.app`, built on a macOS 26 runner, signed
    with a Developer ID certificate, notarized by Apple, and packaged into
-   a `Quiver-<version>.dmg`.
+   a `SWE-<version>.dmg`.
 3. **The Sparkle appcast** — an `appcast.xml` signed with an EdDSA private
    key, so every installed copy of the app can discover and cryptographically
    verify the update.
@@ -46,17 +46,44 @@ its release.
   `app/mac/script/install-app.sh`, then read the bundle's embedded commit:
 
   ```bash
-  defaults read ~/Applications/Quiver.app/Contents/Info QuiverCommit
+  defaults read ~/Applications/SWE.app/Contents/Info SWECommit
   ```
 
   Every merge commit that must ship must be an ancestor of that hash:
-  `git merge-base --is-ancestor <merge> <QuiverCommit>`.
+  `git merge-base --is-ancestor <merge> <SWECommit>`.
 - [ ] **Third-party notices are current.** If dependencies or bundled
   assets changed since the last release, `app/mac/THIRD_PARTY_NOTICES.md` must
   reflect them.
 - [ ] **Release notes state the support floor.** The app requires
   **macOS 26 or later, Apple Silicon only**. This goes in the release
   notes every time, because the DMG runs nowhere else.
+
+### The first SWE release (Quiver.app → SWE.app)
+
+The rename changes the bundle identifier (`com.cwenlong.quiver` →
+`com.cwenlong.swe`), so Sparkle cannot carry an installed Quiver.app
+across: its updater refuses an update whose bundle ID differs from the
+host's. Extra steps for that one release:
+
+- [ ] **The release notes tell Quiver.app users to install SWE.app
+  manually.** `app/mac/script/install-app.sh` does the whole move: it
+  quits and removes Quiver.app, migrates the hub/agent/gateway
+  LaunchAgents onto the new labels repointed at SWE.app, and SWE's first
+  launch carries the `~/.quiver` data root and old preferences over.
+  Dragging SWE.app in from the DMG does only that first-launch part —
+  a remote hub, satellite or MCP gateway installed under Quiver.app
+  still points into the old bundle, so those users reinstall the service
+  (`swe remote ... --install` / `swe mcp gateway install`, then delete
+  Quiver.app) or run the script. A Quiver.app that checks the feed will
+  see the new appcast entry and fail validation — that is expected, not
+  a bug.
+- [ ] **`Casks/quiver.rb` in `c-wenlong/homebrew-quiver` is updated for
+  the new artifact before tagging.** Its `url`, `name` and `app` lines
+  must say `SWE` (`bump_tap` only rewrites version and sha256, so the
+  name change is a manual tap commit). The cask token stays `quiver`
+  until the tap migration ships `swe.rb`.
+- [ ] **The stable DMG link changes name.** `releases/latest/download/
+  SWE.dmg` replaces `…/Quiver.dmg` anywhere it is documented.
 
 ## Scene 2 — The seven secrets
 
@@ -160,8 +187,8 @@ themselves.
 - [ ] **The DMG is genuinely notarized.** Download, mount, and run:
 
   ```bash
-  spctl -a -vv Quiver.app
-  codesign -dvvv Quiver.app
+  spctl -a -vv SWE.app
+  codesign -dvvv SWE.app
   ```
 
   Expected: `accepted source=Notarized Developer ID`, and the expected
@@ -176,7 +203,7 @@ themselves.
 
 - [ ] Reinstall the app as usual. `app/mac/script/install-app.sh` builds
   `origin/main`, not the tag, so it tracks the branch. Verify
-  `QuiverCommit` again.
+  `SWECommit` again.
 - [ ] Close or re-milestone the issues this release shipped.
 
 ## Hard rules — the things that must never happen

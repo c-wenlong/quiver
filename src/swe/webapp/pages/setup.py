@@ -54,7 +54,7 @@ from pathlib import Path
 
 from swe.webapp.pages import CONFIG_LOCK, PageError, home_path
 
-# ProviderCatalog.all in QuiverCore/Providers/ProviderVisibility.swift,
+# ProviderCatalog.all in SWECore/Providers/ProviderVisibility.swift,
 # row for row: (id, commands on PATH, paths that exist). Only ids swe
 # has no registry entry for carry signs of their own. Keep in step.
 PROVIDERS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
