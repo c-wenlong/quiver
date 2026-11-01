@@ -1265,6 +1265,7 @@ const ns = {
   harnessTouched: false,     // a picked harness keeps its choice across folder changes
   model: null,               // ModelMenu state, fresh per sheet open; a user's pick survives harness re-defaults
   yolo: true,                // the Autonomy checkbox; on until the user turns it off
+  provider: "",              // a provider slug from providers_at_launch; "" is the harness default
   browse: null, browseSeq: 0,  // {path, parent, folders, error, loading}
   phase: "idle", message: "", seq: 0,  // idle|starting|waiting|started|failed|unconfirmed
 };
@@ -1363,6 +1364,44 @@ function nsPaintYolo() {
   if (box) box.onchange = () => { ns.yolo = box.checked; };
 }
 
+/* `providers_at_launch` lists, per harness, the providers whose key is
+ * set on that machine (slugs only). The key absent means an agent that
+ * would drop the pick, so the row hides; so does an empty list. */
+function nsProviders(machine) {
+  const all = machine && machine.providers_at_launch;
+  if (!all || typeof all !== "object" || !ns.harness) return [];
+  const list = all[ns.harness];
+  return Array.isArray(list) ? list : [];
+}
+
+function nsProviderPick(machine) {
+  return nsProviders(machine).includes(ns.provider) ? ns.provider : "";
+}
+
+function nsProviderHtml(machine, busy) {
+  const slugs = nsProviders(machine);
+  if (!slugs.length) return "";
+  const names = (machine && machine.provider_names) || {};
+  const pick = nsProviderPick(machine);
+  const opts = [`<option value=""${pick ? "" : " selected"}>Harness default</option>`]
+    .concat(slugs.map((s) => `<option value="${esc(s)}"${s === pick ? " selected" : ""}>${esc(names[s] || s)}</option>`));
+  return `<div class="caption">Provider</div>
+    <select class="field" id="ns-provider"${busy ? " disabled" : ""}>${opts.join("")}</select>`;
+}
+
+/* Repaints alone, like the Autonomy row: a harness re-default from a
+ * typed folder redraws only this slot. A pick the new harness doesn't
+ * offer falls back to the harness default. */
+function nsPaintProvider() {
+  const slot = document.getElementById("ns-provider-slot");
+  if (!slot) return;
+  const machine = nsMachine();
+  ns.provider = nsProviderPick(machine);
+  slot.innerHTML = nsProviderHtml(machine, nsBusy());
+  const menu = slot.querySelector("#ns-provider");
+  if (menu) menu.onchange = () => { ns.provider = menu.value; };
+}
+
 /* The ledger's recent models for the picked harness on this machine,
  * newest first: the Model menu's entries, and its default while the
  * user hasn't picked. An old hub's row has only `last_models`. */
@@ -1448,6 +1487,7 @@ function nsPaint() {
     ${harnessChips}
     ${untracked ? `<p class="note">SWE can't read ${esc(nsHarnessName(machine, ns.harness))} sessions yet: it starts, but no chat opens.</p>` : ""}
     ${modelUi}
+    <div id="ns-provider-slot"></div>
     <div id="ns-yolo-slot"></div>
     <div class="caption">Folder</div>
     <input class="field ns-path-input" id="ns-folder" type="text" autocomplete="off" spellcheck="false"
@@ -1496,7 +1536,7 @@ function nsPaint() {
     // appears or drops, only its slot is redrawn.
     if (!ns.harnessTouched) {
       nsPickHarness(); nsPaintHarness();
-      nsRefillModel(); nsPaintModel(); nsPaintYolo();
+      nsRefillModel(); nsPaintModel(); nsPaintProvider(); nsPaintYolo();
     }
     nsPaintStart();
   };
@@ -1504,6 +1544,7 @@ function nsPaint() {
   if (queryIn) queryIn.oninput = () => { ns.query = queryIn.value; nsPaintLists(); };
   const promptIn = sheet.querySelector("#ns-prompt");
   if (promptIn) promptIn.oninput = () => { ns.prompt = promptIn.value; nsPaintStart(); };
+  nsPaintProvider();
   nsPaintYolo();
   nsPaintModel();
   const browseBtn = sheet.querySelector("#ns-browse");
@@ -1605,6 +1646,7 @@ async function openNewSession() {
   ns.harnessTouched = false;
   ns.model = ModelMenu.fresh();
   ns.yolo = true;
+  ns.provider = "";
   ns.folder = ns.folder || "";   // the last folder is a good next guess
   ns.prompt = "";
   ns.query = "";
@@ -1648,6 +1690,8 @@ async function nsStart() {
   const model = ModelMenu.value(ns.model);
   if (nsModelOk(nsMachine()) && model) body.model = model;
   if (nsYoloOk(nsMachine()) && ns.yolo) body.yolo = true;
+  const provider = nsProviderPick(nsMachine());
+  if (provider) body.provider = provider;
   const { status, data } = await apiPost("/v1/sessions", body);
   if (!live()) return;
   if (status === 401) {

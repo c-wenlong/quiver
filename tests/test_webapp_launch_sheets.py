@@ -587,6 +587,7 @@ globalThis.apiPost = async (path, body) => {
 const HUB = { id: "m1", name: "hub", online: true, launchable: ["claude", "gemini", "codex"],
   model_at_launch: ["claude", "codex"], effort_at_launch: ["claude"],
   yolo_at_launch: ["claude", "codex"],
+  providers_at_launch: { codex: ["openrouter"] }, provider_names: { openrouter: "OpenRouter" },
   last_models: { claude: "opus", codex: "gpt-5-codex" },
   recent_models: { claude: ["opus", "sonnet"], codex: ["gpt-5-codex", "gpt-5"] } };
 apiAnswers.push(
@@ -612,6 +613,8 @@ const out = {};
   const box = () => slot().querySelector("#ns-model-other");
   const chip = (h) => d.querySelectorAll("[data-harness]").find((b) => b.dataset.harness === h);
   const yolo = () => { const s = q("#ns-yolo-slot"); return s && s.querySelector("#ns-yolo"); };
+  const prov = () => { const s = q("#ns-provider-slot"); return s && s.querySelector("#ns-provider"); };
+  out.providerHiddenNoList = !prov();
   out.sheetOpened = !!(d && d.open);
   out.shown = !!menu();
   out.options = labels(menu());
@@ -643,11 +646,14 @@ const out = {};
   chip("codex").onclick(); await tick();
   out.dirtyPick = picked(menu());
   out.dirtyKept = box() && box().value;
+  out.providerOptions = labels(prov());
+  choose(prov(), "OpenRouter");
   q("#ns-start").onclick(); await tick();
   const post = fetchCalls.find((c) => c.path === "/v1/sessions");
   out.postModel = post && post.body.model;
   out.postMachine = post && post.body.machine;
   out.postYolo = post && post.body.yolo;
+  out.postProvider = post && post.body.provider;
   // A fresh sheet: an explicit Harness default survives a switch and
   // sends no key; an unticked Autonomy sends no yolo key.
   await openNewSession();
@@ -665,6 +671,7 @@ const out = {};
   const post2 = fetchCalls.filter((c) => c.path === "/v1/sessions").pop();
   out.emptyHasNoModel = !("model" in (post2 && post2.body || {}));
   out.untickedNoYolo = !("yolo" in (post2 && post2.body || {}));
+  out.defaultNoProvider = !("provider" in (post2 && post2.body || {}));
   // A fresh sheet is clean again: a machine switch re-defaults from that
   // machine's own ledger, here an old hub's one-item last_models.
   await openNewSession();
@@ -676,6 +683,7 @@ const out = {};
   out.machineRefill = picked(menu());
   out.oldHubOptions = labels(menu());
   out.yoloHiddenSat = !yolo();
+  out.providerHiddenSat = !prov();
   // An old satellite's row carries no model_at_launch: the menu hides.
   apiAnswers.length = 0;
   apiAnswers.push(["/v1/machines", { status: 200, data: { machines: [
@@ -850,6 +858,13 @@ class TestLaunchModelMenu(unittest.TestCase):
         self.assertTrue(out["yoloOnAgain"], "back on a yolo harness the box ticks again")
         self.assertTrue(out["postYolo"], "the launch posts yolo: true")
         self.assertTrue(out["untickedNoYolo"], "an unticked box sends no yolo key")
+        self.assertTrue(out["providerHiddenNoList"],
+                        "a harness with no keyed provider shows no Provider row")
+        self.assertEqual(out["providerOptions"], ["Harness default", "OpenRouter"])
+        self.assertEqual(out["postProvider"], "openrouter")
+        self.assertTrue(out["defaultNoProvider"], "Harness default sends no provider key")
+        self.assertTrue(out["providerHiddenSat"],
+                        "a machine row without providers_at_launch hides the row")
         self.assertEqual(out["postMachine"], "m1")
         self.assertTrue(out["folderNodeKeptOther"], "Other… redraws the model row only")
         self.assertTrue(out["boxGone"])
