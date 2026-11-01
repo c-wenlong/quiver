@@ -27,9 +27,11 @@ public struct ServiceStatusAlertState: Codable, Equatable, Sendable {
     /// Services a `started` alert went out for and no `resolved` has
     /// followed, with the incident it named.
     public var down: [String: String] = [:]
-    /// Services that have had a first reading. That reading only records
-    /// what is already open, so a page that was slow or down at launch
-    /// doesn't announce old news when it first answers.
+    /// "<id> <feed URL>" for each page that has had a first reading. That
+    /// reading only records what is already open, so a page that was slow
+    /// or down at launch doesn't announce old news when it first answers.
+    /// The feed is part of it: a card edited to read another feed is a
+    /// new page, with nothing owed from the old one.
     public var seeded: [String] = []
 
     public init() {}
@@ -57,11 +59,17 @@ public enum ServiceStatusAlerts {
     public static func step(_ state: inout ServiceStatusAlertState, statuses: [ServiceStatus],
                             notify: Bool) -> [ServiceStatusAlert] {
         var alerts: [ServiceStatusAlert] = []
+        var stillOpen = Set<String>()
         for status in statuses where status.service.group.isProvider {
             guard let report = status.report else { continue }
             let id = status.service.id
-            let first = !state.seeded.contains(id)
-            if first { state.seeded.append(id) }
+            let page = Self.page(status.service)
+            let first = !state.seeded.contains(page)
+            if first {
+                state.seeded.removeAll { $0.hasPrefix("\(id) ") }
+                state.seeded.append(page)
+                state.down.removeValue(forKey: id)
+            }
             let announce = notify && !first
             let generic = "\(id)@status"
             if report.health >= ServiceStatusSummary.threshold(for: status.service.group) {
@@ -69,6 +77,7 @@ public enum ServiceStatusAlerts {
                 let keyed = incidents.isEmpty
                     ? [(generic, report.summary)]
                     : incidents.map { ("\(id)@\($0.id)", Optional($0.name)) }
+                stillOpen.formUnion(keyed.map(\.0))
                 let fresh = keyed.filter { !state.delivered.contains($0.0) }
                 for (key, _) in fresh { state.delivered.append(key) }
                 guard announce else { continue }
@@ -92,11 +101,23 @@ public enum ServiceStatusAlerts {
         // A page the user stopped tracking can't resolve; let it go quietly.
         let tracked = Set(statuses.map(\.service.id))
         state.down = state.down.filter { tracked.contains($0.key) }
-        state.seeded.removeAll { !tracked.contains($0) }
-        if state.delivered.count > ServiceStatusAlertState.cap {
-            state.delivered.removeFirst(state.delivered.count - ServiceStatusAlertState.cap)
+        let pages = Set(statuses.map { Self.page($0.service) })
+        state.seeded.removeAll { !pages.contains($0) }
+        // The oldest go first, but never a key still open: forgetting one
+        // would announce it again on the next unchanged poll.
+        var excess = state.delivered.count - ServiceStatusAlertState.cap
+        if excess > 0 {
+            state.delivered.removeAll { key in
+                guard excess > 0, !stillOpen.contains(key) else { return false }
+                excess -= 1
+                return true
+            }
         }
         return alerts
+    }
+
+    static func page(_ service: StatusService) -> String {
+        "\(service.id) \(service.feedURL.absoluteString)"
     }
 
     /// "Claude: minor incident" / "Claude is back to normal".

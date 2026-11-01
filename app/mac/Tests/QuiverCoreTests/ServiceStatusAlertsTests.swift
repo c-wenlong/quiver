@@ -122,7 +122,7 @@ import Testing
         var state = ServiceStatusAlertState()
         let down = try status("claude", .minor, [incident("a")])
         #expect(step(&state, down).isEmpty)
-        #expect(state.seeded == ["claude"])
+        #expect(state.seeded == ["claude https://status.claude.com/api/v2/summary.json"])
         #expect(step(&state, down).isEmpty)
         // It never said "down", so the recovery is quiet too.
         #expect(step(&state, try status("claude", .operational)).isEmpty)
@@ -155,9 +155,32 @@ import Testing
 
     @Test func deliveredIsCapped() throws {
         var state = try primed()
-        let many = (0..<(ServiceStatusAlertState.cap + 10)).map { incident("i\($0)") }
-        _ = step(&state, try status("claude", .minor, many))
+        _ = step(&state, try status("claude", .minor, (0..<ServiceStatusAlertState.cap).map { incident("o\($0)") }))
+        _ = step(&state, try status("claude", .minor, (0..<10).map { incident("i\($0)") }))
         #expect(state.delivered.count == ServiceStatusAlertState.cap)
-        #expect(state.delivered.last == "claude@i\(ServiceStatusAlertState.cap + 9)")
+        #expect(state.delivered.last == "claude@i9")
+        #expect(!state.delivered.contains("claude@o0"))
+    }
+
+    /// The cap never forgets an incident that is still open.
+    @Test func capKeepsOpenIncidents() throws {
+        var state = try primed()
+        let many = try status("claude", .minor, (0..<(ServiceStatusAlertState.cap + 10)).map { incident("i\($0)") })
+        #expect(step(&state, many).count == ServiceStatusAlertState.cap + 10)
+        #expect(step(&state, many).isEmpty)
+    }
+
+    /// A card edited to read another feed is a new page: its first
+    /// reading seeds, and the old page's incident owes no recovery.
+    @Test func movedFeedIsANewPage() throws {
+        var state = try primed()
+        _ = step(&state, try status("claude", .minor, [incident("a")]))
+        var moved = try status("claude", .minor, [incident("b")])
+        moved.service.feed = .statuspage(URL(string: "https://example.com/api/v2/summary.json")!)
+        #expect(step(&state, moved).isEmpty)
+        #expect(state.down.isEmpty)
+        var up = try status("claude", .operational)
+        up.service = moved.service
+        #expect(step(&state, up).isEmpty)
     }
 }
