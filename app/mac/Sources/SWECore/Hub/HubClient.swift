@@ -239,15 +239,19 @@ public struct HubClient: Sendable {
     /// absolute folder, and the first prompt — the hub refuses a blank
     /// one. `machine` targets a satellite; nil means the hub itself.
     /// `model` is the optional launch pick: a non-blank token or
-    /// nothing.
+    /// nothing. `provider` is a slug from the machine row's
+    /// `providers_at_launch`; nil or blank sends no key, which runs the
+    /// harness's own default.
     public static func launchBody(harness: String, cwd: String, prompt: String,
                                   machine: String? = nil,
                                   model: String? = nil,
-                                  yolo: Bool = false) -> [String: any Sendable] {
+                                  yolo: Bool = false,
+                                  provider: String? = nil) -> [String: any Sendable] {
         var body: [String: any Sendable] = ["harness": harness, "cwd": cwd, "prompt": prompt]
         if let machine, !machine.isEmpty { body["machine"] = machine }
         if let model = launchToken(model) { body["model"] = model }
         if yolo { body["yolo"] = true }
+        if let provider = launchToken(provider) { body["provider"] = provider }
         return body
     }
 
@@ -256,14 +260,18 @@ public struct HubClient: Sendable {
     /// shape `resolveIssue` returns. `yolo` starts the session with its
     /// approval checks off; a harness the machine doesn't list in
     /// `yolo_at_launch` gets the flag refused, never silently dropped.
+    /// `provider` runs the harness on that provider's key from the
+    /// machine's keys file; the hub refuses a slug the row doesn't list.
     public func startSession(harness: String, cwd: String, prompt: String,
                              machine: String? = nil,
                              model: String? = nil,
-                             yolo: Bool = false) async throws -> HubLaunchStatus {
+                             yolo: Bool = false,
+                             provider: String? = nil) async throws -> HubLaunchStatus {
         try await send(request("POST", "/v1/sessions",
                                body: Self.launchBody(harness: harness, cwd: cwd,
                                                      prompt: prompt, machine: machine,
-                                                     model: model, yolo: yolo)))
+                                                     model: model, yolo: yolo,
+                                                     provider: provider)))
     }
 
     /// `POST /v1/pulls/<o>/<r>/<n>/open`: detached PR worktree + launch,

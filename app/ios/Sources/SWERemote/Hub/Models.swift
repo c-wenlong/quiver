@@ -31,6 +31,13 @@ struct Machine: Codable, Identifiable, Hashable {
     /// flag and silently run the usual checks, so the launch sheets
     /// hide the Autonomy row rather than offer one that can't apply.
     var yoloAtLaunch: [String]? = nil
+    /// Per harness, the provider slugs its launch takes whose key is set
+    /// on this machine (slugs only, never a key). Absent on a satellite
+    /// older than the field: it would ignore the pick, so the launch
+    /// sheets hide the Provider row.
+    var providersAtLaunch: [String: [String]]? = nil
+    /// Each offered provider slug's label, e.g. "OpenRouter".
+    var providerNames: [String: String]? = nil
     /// The machine ledger's most recent model per harness, the head of
     /// each `recentModels` list.
     var lastModels: [String: String]? = nil

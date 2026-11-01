@@ -32,6 +32,10 @@ struct NewSessionSheet: View {
     /// The Autonomy checkbox: on until the user turns it off. What the
     /// launch actually takes is gated per harness by `takesYolo`.
     @State private var yolo = true
+    /// The Provider menu's pick: a slug from the machine row's
+    /// `providers_at_launch`, nil for "Harness default". A harness or
+    /// machine change drops a slug no longer offered (`refitProvider`).
+    @State private var provider: String?
     /// The folder browser's place; non-nil swaps the form for it.
     @State private var browse: FolderBrowse?
     @State private var flow = IssueLaunchFlow()
@@ -115,10 +119,12 @@ struct NewSessionSheet: View {
         // Cancel stops a running launch first.
         .onSheetDismissRequest { if !flow.busy { dismiss() } }
         .task { await load() }
-        .onChange(of: harness) { prefillModel() }
+        .onChange(of: harness) { refitProvider(); prefillModel() }
         // A machine switch re-fills even when the harness stays: the
         // last-used models are the new machine's own.
-        .onChange(of: machineId) { prefillModel() }
+        .onChange(of: machineId) { refitProvider(); prefillModel() }
+        // A picked provider re-defaults an untouched Model menu (#526).
+        .onChange(of: provider) { prefillModel() }
         .onDisappear { launchTask?.cancel() }
     }
 
@@ -129,7 +135,10 @@ struct NewSessionSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 machineSection
                 harnessSection
-                modelSection
+                HStack(alignment: .top, spacing: 16) {
+                    modelSection
+                    providerSection
+                }
                 yoloSection
                 folderSection
                 promptSection
@@ -209,6 +218,33 @@ struct NewSessionSheet: View {
                 ModelMenu(recent: LaunchOptions.recentModels(harness, on: machine),
                           pick: $modelPick, supported: takesModel)
             }
+        }
+    }
+
+    /// The launch `provider` pick (#526), beside the Model menu. Only a
+    /// machine row that reports `providers_at_launch` with a non-empty
+    /// list for the picked harness gets it: an older build would drop
+    /// the pick, and a harness with no keyed provider has no choice to
+    /// make. "Harness default" sends nothing.
+    @ViewBuilder private var providerSection: some View {
+        if LaunchOptions.showsProvider(harness, on: machine) {
+            group("Provider") {
+                SelectMenu(options: providerOptions,
+                           selection: Binding(
+                               get: { LaunchOptions.provider(provider, harness: harness,
+                                                             on: machine) ?? "" },
+                               set: { provider = $0.isEmpty ? nil : $0 }),
+                           width: 220,
+                           symbols: ["": "sparkles"])
+            }
+        }
+    }
+
+    /// "Harness default" (value "") and each offered slug under its
+    /// `provider_names` label.
+    private var providerOptions: [(value: String, title: String)] {
+        [("", "Harness default")] + LaunchOptions.providers(harness, on: machine).map {
+            ($0, LaunchOptions.providerName($0, on: machine))
         }
     }
 
@@ -513,9 +549,17 @@ struct NewSessionSheet: View {
 
     /// Refits the Model menu to the picked machine and harness: an
     /// untouched menu takes their newest model; a pick survives as
-    /// `ModelPick.refit` says.
+    /// `ModelPick.refit` says. While a provider is picked the untouched
+    /// menu reads Harness default: its recent models ran elsewhere.
     private func prefillModel() {
-        modelPick.refit(LaunchOptions.recentModels(harness, on: machine))
+        modelPick.refit(LaunchOptions.recentModels(harness, on: machine),
+                        bare: LaunchOptions.provider(provider, harness: harness, on: machine) != nil)
+    }
+
+    /// Back to "Harness default" once the picked provider is off the
+    /// new harness's or machine's list.
+    private func refitProvider() {
+        provider = LaunchOptions.provider(provider, harness: harness, on: machine)
     }
 
     /// A folder change re-defaults the harness unless the user picked
@@ -546,13 +590,15 @@ struct NewSessionSheet: View {
         // A pick goes only for a harness that can honour it — anything
         // else is a token the hub would refuse or a satellite would drop.
         let model = modelPick.model(supported: takesModel)
+        let chosenProvider = LaunchOptions.provider(provider, harness: harness, on: machine)
         let key = await flow.run(
             post: {
                 try await hub.withClient {
                     try await $0.startSession(harness: harness, cwd: cwd,
                                               prompt: text, machine: target,
                                               model: model,
-                                              yolo: yolo && takesYolo)
+                                              yolo: yolo && takesYolo,
+                                              provider: chosenProvider)
                 }
             },
             fetch: { id in try await hub.withClient { try await $0.launch(id) } })

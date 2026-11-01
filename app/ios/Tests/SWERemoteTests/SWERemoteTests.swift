@@ -1185,6 +1185,46 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertFalse(NewSessionOptions.acceptsYolo(nil, on: m))
     }
 
+    func testProviderFieldFollowsTheMachinesList() {
+        var m = machine("m1", name: "mac", launchable: ["claude", "codex", "gemini"])
+        m.providersAtLaunch = ["claude": ["openrouter", "z_ai"], "codex": []]
+        m.providerNames = ["openrouter": "OpenRouter"]
+        XCTAssertTrue(NewSessionOptions.showsProviderField("claude", on: m))
+        XCTAssertEqual(NewSessionOptions.providers("claude", on: m), ["openrouter", "z_ai"])
+        // An empty or missing list for the harness hides the row.
+        XCTAssertFalse(NewSessionOptions.showsProviderField("codex", on: m))
+        XCTAssertFalse(NewSessionOptions.showsProviderField("gemini", on: m))
+        XCTAssertFalse(NewSessionOptions.showsProviderField(nil, on: m))
+        // An old satellite's row lacks the field entirely: the row hides.
+        XCTAssertFalse(NewSessionOptions.showsProviderField("claude", on: machine("m2", name: "old", launchable: ["claude"])))
+        // Labels come from provider_names, falling back to the slug.
+        XCTAssertEqual(NewSessionOptions.providerName("openrouter", on: m), "OpenRouter")
+        XCTAssertEqual(NewSessionOptions.providerName("z_ai", on: m), "z_ai")
+        // A pick survives only while the harness still offers it.
+        XCTAssertEqual(NewSessionOptions.providerPick("z_ai", for: "claude", on: m), "z_ai")
+        XCTAssertNil(NewSessionOptions.providerPick("z_ai", for: "codex", on: m))
+        XCTAssertNil(NewSessionOptions.providerPick("nope", for: "claude", on: m))
+        XCTAssertNil(NewSessionOptions.providerPick(nil, for: "claude", on: m))
+        XCTAssertNil(NewSessionOptions.providerPick("", for: "claude", on: m))
+    }
+
+    func testLaunchBodyCarriesProviderOnlyWhenPicked() throws {
+        let client = HubClient(baseURL: URL(string: "http://127.0.0.1:8477")!, credential: "c")
+        func body(_ provider: String?) throws -> [String: Any] {
+            let req = client.startSessionRequest(machine: "m1", harness: "claude", cwd: "/w", prompt: "hi",
+                                                 yolo: true, provider: provider)
+            XCTAssertEqual(req.httpMethod, "POST")
+            XCTAssertEqual(req.url?.path, "/v1/sessions")
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: req.httpBody ?? Data()) as? [String: Any])
+        }
+        let picked = try body("openrouter")
+        XCTAssertEqual(picked["provider"] as? String, "openrouter")
+        XCTAssertEqual(picked["yolo"] as? Bool, true)
+        XCTAssertNil(try body(nil)["provider"])
+        XCTAssertNil(try body("")["provider"])
+        XCTAssertNil(try body(nil)["model"])
+    }
+
     func testModelPickOnlySendsASupportedNonemptyToken() {
         var m = machine("m1", name: "mac", launchable: ["claude", "gemini"])
         m.modelAtLaunch = ["claude"]
@@ -1242,6 +1282,24 @@ final class NewSessionOptionsTests: XCTestCase {
         XCTAssertEqual(sel.choice, .harnessDefault)
         XCTAssertNil(sel.model(for: "pi", on: m))
         XCTAssertFalse(sel.touched)
+    }
+
+    /// A picked provider (#526) leaves an untouched menu on Harness
+    /// default, since the recent models ran on other providers; a model
+    /// the user picked stays.
+    func testAPickedProviderDropsTheAutoModel() {
+        let m = modelMachine()
+        var sel = ModelSelection()
+        sel.follow("codex", on: m)
+        XCTAssertEqual(sel.choice, .recent("gpt-5"))
+        sel.follow("codex", on: m, bare: true)
+        XCTAssertEqual(sel.choice, .harnessDefault)
+        XCTAssertNil(sel.model(for: "codex", on: m))
+        sel.follow("codex", on: m)
+        XCTAssertEqual(sel.choice, .recent("gpt-5"))
+        sel.choose(.recent("sonnet"))
+        sel.follow("codex", on: m, bare: true)
+        XCTAssertEqual(sel.model(for: "codex", on: m), "sonnet")
     }
 
     func testAPickedDefaultOrOtherSurvivesASwitch() {
@@ -1335,6 +1393,15 @@ final class NewSessionOptionsTests: XCTestCase {
         let recent = try Hub.decoder.decode(Machine.self, from: Data(
             #"{"id":"m3","model_at_launch":["claude"],"recent_models":{"claude":["claude-opus-4-1","claude-sonnet-4-5"]},"last_models":{"claude":"claude-opus-4-1"}}"#.utf8))
         XCTAssertEqual(recent.recentModels?["claude"], ["claude-opus-4-1", "claude-sonnet-4-5"])
+        // An old agent's row carries no provider fields.
+        XCTAssertNil(m.providersAtLaunch)
+        XCTAssertNil(m.providerNames)
+        // Slug keys stay as sent: snake-case decoding leaves dict keys alone.
+        let providers = try Hub.decoder.decode(Machine.self, from: Data(
+            #"{"id":"m4","launchable":["claude","codex"],"providers_at_launch":{"claude":["openrouter","z_ai"],"codex":[]},"provider_names":{"openrouter":"OpenRouter","z_ai":"Z.ai"}}"#.utf8))
+        XCTAssertEqual(providers.providersAtLaunch?["claude"], ["openrouter", "z_ai"])
+        XCTAssertEqual(providers.providersAtLaunch?["codex"], [])
+        XCTAssertEqual(providers.providerNames?["z_ai"], "Z.ai")
         let listing = try Hub.decoder.decode(FolderListing.self, from: Data(
             #"{"path":"/Users/k","parent":"/Users","folders":[{"name":"Projects","path":"/Users/k/Projects"}],"truncated":false}"#.utf8))
         XCTAssertEqual(listing.folders.map(\.name), ["Projects"])

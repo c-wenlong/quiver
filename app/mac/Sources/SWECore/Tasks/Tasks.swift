@@ -922,6 +922,39 @@ public enum LaunchOptions {
         return machine?.yoloAtLaunch?.contains(harness) == true
     }
 
+    /// The providers `machine` can launch `harness` on: the Provider
+    /// menu's entries after "Harness default". Empty for a row too old
+    /// to report `providers_at_launch`, and for a harness with no
+    /// provider whose key is set there.
+    public static func providers(_ harness: String?, on machine: HubMachine?) -> [String] {
+        guard let harness else { return [] }
+        return machine?.providersAtLaunch?[harness] ?? []
+    }
+
+    /// Whether the sheet shows the Provider menu: only when the machine
+    /// row reports `providers_at_launch` and the harness has a provider
+    /// to offer — a lone "Harness default" would be no choice at all.
+    public static func showsProvider(_ harness: String?, on machine: HubMachine?) -> Bool {
+        !providers(harness, on: machine).isEmpty
+    }
+
+    /// A provider slug's label from the machine row's `provider_names`,
+    /// else the slug itself.
+    public static func providerName(_ slug: String, on machine: HubMachine?) -> String {
+        let name = (machine?.providerNames?[slug] ?? "").trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? slug : name
+    }
+
+    /// The `provider` a launch sends for `pick`: the slug while the
+    /// machine still offers it for `harness`, else nil (the harness's
+    /// own default). A harness or machine switch reads it to reset a
+    /// pick that is no longer on offer.
+    public static func provider(_ pick: String?, harness: String?,
+                                on machine: HubMachine?) -> String? {
+        guard let pick, providers(harness, on: machine).contains(pick) else { return nil }
+        return pick
+    }
+
     /// `machine`'s recently used models for `harness`, newest first: the
     /// Model menu's entries. A hub older than `recent_models` sends only
     /// `last_models`, which makes a one-item list.
@@ -1020,7 +1053,10 @@ public struct ModelPick: Equatable, Sendable {
     /// elsewhere the menu shows the list's default, as if untouched, and
     /// keeps the model for a later list that has it. The choice is always
     /// one the list offers, so another harness's model never travels.
-    public mutating func refit(_ recent: [String]) {
+    /// `bare` makes that untouched default "Harness default" even when
+    /// the list has models: a launch on a picked provider (#526), whose
+    /// recent models ran on other providers. The menu still lists them.
+    public mutating func refit(_ recent: [String], bare: Bool = false) {
         switch choice {
         case .harnessDefault where picked, .other where picked: return
         default: break
@@ -1029,7 +1065,7 @@ public struct ModelPick: Equatable, Sendable {
             choice = .recent(remembered)
             picked = true
         } else {
-            choice = Self.defaultChoice(recent)
+            choice = Self.defaultChoice(bare ? [] : recent)
             picked = false
         }
     }

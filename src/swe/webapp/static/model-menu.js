@@ -38,12 +38,16 @@ const ModelMenu = (() => {
   /* A harness or machine change: an untouched menu moves to the new
    * harness's newest model (or Harness default when it has none). A
    * picked recent model the new harness hasn't used counts as untouched,
-   * so the sheet never sends another harness's model. */
-  function redefault(st, list) {
+   * so the sheet never sends another harness's model. `bare` makes the
+   * untouched default Harness default even when the list has models: a
+   * launch on a picked provider (#526), whose recent models came from
+   * other providers' launches. The menu still lists them to pick. */
+  function redefault(st, list, bare) {
     if (st.dirty && st.kind === "recent" && !list.includes(st.recent)) st.dirty = false;
     if (st.dirty) return;
-    st.kind = list.length ? "recent" : "default";
-    st.recent = list.length ? list[0] : "";
+    const auto = bare ? "" : (list[0] || "");
+    st.kind = auto ? "recent" : "default";
+    st.recent = auto;
   }
 
   /* The model to post: "" sends no `model` key. */
