@@ -231,7 +231,7 @@ and per-source env blocks so a missing token explains an empty page.
 - [ ] Live Activity for a running session: title, status, and an approval button when one is pending
 - [ ] Home and lock screen widgets: inbox count, active sessions
 - [ ] Face ID gate on launch
-- [ ] Share sheet target: send text, a link or a file to a session as a prompt
+- [x] Share sheet target: send text, a link, images or files to a session as a prompt (#1441)
 - [ ] Siri and Shortcuts: "Approve the pending request", "What needs me"
 - [ ] Deep links: `quiver://pair` and `quiver://issue/<o>/<r>/<n>` (exist), `quiver://session/<key>` to go
 - [ ] Dictation in the composer

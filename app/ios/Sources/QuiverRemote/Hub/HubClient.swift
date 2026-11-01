@@ -394,13 +394,29 @@ struct HubClient: Sendable {
     /// gets the fraction sent, off the main thread.
     func uploadAttachment(_ key: String, name: String, data: Data,
                           progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> StagedAttachment {
+        try await upload(key, name: name) { req in
+            try await Self.uploadSession.upload(for: req, from: data, delegate: UploadProgress(report: progress))
+        }
+    }
+
+    /// The same upload with the body streamed from a file on disk, so a
+    /// 20 MB PDF never sits in memory whole (the share extension's budget
+    /// is far smaller than the app's).
+    func uploadAttachment(_ key: String, name: String, file: URL,
+                          progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> StagedAttachment {
+        try await upload(key, name: name) { req in
+            try await Self.uploadSession.upload(for: req, fromFile: file, delegate: UploadProgress(report: progress))
+        }
+    }
+
+    private func upload(_ key: String, name: String,
+                        run: (URLRequest) async throws -> (Data, URLResponse)) async throws -> StagedAttachment {
         var req = request("POST", "/v1/sessions/\(Self.encodeKey(key))/attachments", query: ["name": name])
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         let body: Data
         let response: URLResponse
         do {
-            (body, response) = try await Self.uploadSession.upload(for: req, from: data,
-                                                                   delegate: UploadProgress(report: progress))
+            (body, response) = try await run(req)
         } catch {
             if Task.isCancelled { throw CancellationError() }
             throw HubError.network(error)
