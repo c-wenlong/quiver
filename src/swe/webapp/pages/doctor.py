@@ -136,7 +136,7 @@ def post(ctx, action: str, body: dict) -> dict:
 
 def _fix_all(home: Path) -> dict:
     """The batch, each step behind the lock its own Run takes."""
-    from quiver.harness.commands import doctor_report
+    from swe.harness.commands import doctor_report
 
     def guard(action: str, run) -> str | None:
         if action == "plugin-fix":

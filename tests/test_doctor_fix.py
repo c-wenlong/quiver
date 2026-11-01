@@ -312,7 +312,7 @@ class RunnerParityTest(unittest.TestCase):
         import re
 
         js = (Path(__file__).resolve().parents[1]
-              / "src/quiver/webapp/static/pages/doctor.js").read_text(encoding="utf-8")
+              / "src/swe/webapp/static/pages/doctor.js").read_text(encoding="utf-8")
         block = js[js.index("const DOCTOR_RUNS = {"):js.index("};", js.index("const DOCTOR_RUNS = {"))]
         keys = {m.group(1) or m.group(2)
                 for m in re.finditer(r'^\s*(?:"([a-z-]+)"|([a-z]+)):', block, re.M)}

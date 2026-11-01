@@ -311,8 +311,8 @@ class TestFixAll(_TempHome, unittest.TestCase):
         report = DoctorReport([DoctorFinding(
             "off-path", "error", "codex", "swe install codex --via=npm",
             harness="codex", action="install", via="npm")])
-        with patch("quiver.harness.commands.doctor_report", return_value=report), \
-                patch("quiver.harness.commands.install_harness") as install:
+        with patch("swe.harness.commands.doctor_report", return_value=report), \
+                patch("swe.harness.commands.install_harness") as install:
             reply = doctor_page.post(self.ctx, "fix-all", {})
         install.assert_not_called()
         self.assertEqual(reply["result"]["ran"], [])
@@ -515,7 +515,7 @@ class TestFindingIds(unittest.TestCase):
         self.assertNotEqual(first, second)
 
     def test_the_fix_all_summary_says_what_is_left(self):
-        page = Path(__file__).resolve().parents[1] / "src/quiver/webapp/static/pages/doctor.js"
+        page = Path(__file__).resolve().parents[1] / "src/swe/webapp/static/pages/doctor.js"
         body = ("doctorPage.data = {machine: 'box', fixable: 2};\n"
                 "doctorPage.fixAll = {ran: [{action: 'setup', fix: 'swe setup --apply', error: null},"
                 " {action: 'init', fix: 'swe init', error: '<disk> full'}],"
