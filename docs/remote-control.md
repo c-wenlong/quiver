@@ -248,7 +248,7 @@ The hot window costs little because only woken sessions get it. A JSONL
 poll that finds the file the same size is one `stat`, and an opencode
 poll is a few queries on per-session indexes. Snapshot stores (Devin,
 Gemini, Cline, ...) re-read the whole window whenever their change token
-moves, which is the cost behind [#515](https://github.com/c-wenlong/quiver/issues/515), so
+moves, which is the cost behind [#515](https://github.com/c-wenlong/swe/issues/515), so
 `SnapshotSource.hot_poll_s` caps them at the active cadence: they get the
 immediate wake but never poll faster than an active session already
 does.

@@ -85,7 +85,7 @@ async function renderDoctor() {
 }
 
 function doctorHeader() {
-  return pageHeader("Doctor", "Checks on PATH, Node and drift between quiver and your harnesses.",
+  return pageHeader("Doctor", "Checks on PATH, Node and drift between swe and your harnesses.",
     `<a class="doctor-back caption" href="#/settings">Settings</a>`);
 }
 

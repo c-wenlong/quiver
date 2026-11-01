@@ -18,8 +18,8 @@ import Testing
 
     @Test func issueViewDecodesBodyCommentsAndWorktree() async throws {
         let (swe, runner) = try client("swe-gh-issue-view")
-        let reply = try await swe.ghIssueView(repo: "c-wenlong/quiver", number: 816)
-        #expect(runner.calls.last == ["gh", "issue", "view", "816", "--repo=c-wenlong/quiver", "--json"])
+        let reply = try await swe.ghIssueView(repo: "c-wenlong/swe", number: 816)
+        #expect(runner.calls.last == ["gh", "issue", "view", "816", "--repo=c-wenlong/swe", "--json"])
         #expect(reply.github?.status == .ok)
         #expect(reply.status == "ok")
         let issue = try #require(reply.issue)
@@ -56,10 +56,10 @@ import Testing
 
     @Test func commentPostsTheBodyAndDecodesTheComment() async throws {
         let (swe, runner) = try client("swe-gh-issue-comment")
-        let reply = try await swe.ghIssueComment(repo: "c-wenlong/quiver", number: 816,
+        let reply = try await swe.ghIssueComment(repo: "c-wenlong/swe", number: 816,
                                                  body: "Start with --the Mac app")
         // The text goes on stdin, never argv, where other processes can read it.
-        #expect(runner.calls.last == ["gh", "issue", "comment", "816", "--repo=c-wenlong/quiver",
+        #expect(runner.calls.last == ["gh", "issue", "comment", "816", "--repo=c-wenlong/swe",
                                       "--body-file=-", "--json"])
         #expect(runner.inputs.last == Data("Start with --the Mac app".utf8))
         #expect(reply.issue == 816)
@@ -104,10 +104,10 @@ import Testing
     }
 
     @Test func detailLoadsIntoTheKeyedSlot() async throws {
-        let swe = SweClient(runner: Router(["gh issue view 816 --repo=c-wenlong/quiver": try ok("swe-gh-issue-view")]))
+        let swe = SweClient(runner: Router(["gh issue view 816 --repo=c-wenlong/swe": try ok("swe-gh-issue-view")]))
         let model = GitHubModel()
-        await model.loadIssueDetail(repo: "c-wenlong/quiver", number: 816, swe: swe)
-        guard case .loaded(let issue) = model.issueDetails["c-wenlong/quiver#816"] else {
+        await model.loadIssueDetail(repo: "c-wenlong/swe", number: 816, swe: swe)
+        guard case .loaded(let issue) = model.issueDetails["c-wenlong/swe#816"] else {
             Issue.record("expected a loaded detail"); return
         }
         #expect(issue.comments.count == 2)
@@ -128,14 +128,14 @@ import Testing
             "gh issue view 816": try ok("swe-gh-issue-view"),
         ])
         let model = GitHubModel()
-        let error = await model.commentOnIssue(repo: "c-wenlong/quiver", number: 816,
+        let error = await model.commentOnIssue(repo: "c-wenlong/swe", number: 816,
                                                body: "  hello  ", swe: SweClient(runner: router))
         #expect(error == nil)
         #expect(router.calls.first?.contains("--body-file=-") == true)
         #expect(router.inputs.first == Data("hello".utf8))
         #expect(router.calls.last?.prefix(3) == ["gh", "issue", "view"])
-        #expect(!model.commenting(repo: "c-wenlong/quiver", number: 816))
-        if case .loaded = model.issueDetails["c-wenlong/quiver#816"] {} else {
+        #expect(!model.commenting(repo: "c-wenlong/swe", number: 816))
+        if case .loaded = model.issueDetails["c-wenlong/swe#816"] {} else {
             Issue.record("expected the detail read again")
         }
     }
@@ -289,10 +289,10 @@ import Testing
             session("claude", "/Users/k/.swe/worktrees/c-wenlong__quiver-pr459", 600),
         ]
         #expect(IssueResolve.defaultHarness(offered: offered, sessions: sessions,
-                                            repo: "c-wenlong/quiver") == "codex")
+                                            repo: "c-wenlong/swe") == "codex")
         // A harness the hub can't start is passed over.
         #expect(IssueResolve.defaultHarness(offered: ["claude", "pi"], sessions: sessions,
-                                            repo: "c-wenlong/quiver") == "claude")
+                                            repo: "c-wenlong/swe") == "claude")
         // Nothing ran in this repo: the first offered.
         #expect(IssueResolve.defaultHarness(offered: offered, sessions: sessions,
                                             repo: "o/other") == "claude")
@@ -300,10 +300,10 @@ import Testing
     }
 
     @Test func repoFoldersMatchCheckoutsAndWorktrees() {
-        #expect(IssueResolve.inRepo("/Users/k/src/Quiver", repo: "c-wenlong/quiver"))
-        #expect(IssueResolve.inRepo("/Users/k/.swe/worktrees/c-wenlong__quiver-issue816", repo: "c-wenlong/quiver"))
-        #expect(IssueResolve.inRepo("/Users/k/src/quiver/.claude/worktrees/agent-1", repo: "c-wenlong/quiver"))
-        #expect(!IssueResolve.inRepo("/Users/k/src/quiverish", repo: "c-wenlong/quiver"))
+        #expect(IssueResolve.inRepo("/Users/k/src/Quiver", repo: "c-wenlong/swe"))
+        #expect(IssueResolve.inRepo("/Users/k/.swe/worktrees/c-wenlong__quiver-issue816", repo: "c-wenlong/swe"))
+        #expect(IssueResolve.inRepo("/Users/k/src/quiver/.claude/worktrees/agent-1", repo: "c-wenlong/swe"))
+        #expect(!IssueResolve.inRepo("/Users/k/src/quiverish", repo: "c-wenlong/swe"))
         #expect(!IssueResolve.inRepo("/Users/k/src/app", repo: "bad-repo-name"))
     }
 
@@ -349,12 +349,12 @@ import Testing
         let known = SessionsModel.Row(session: info, usage: nil)
         #expect(SessionsModel.chatRow(for: "claude:s1", rows: [known], hub: nil) == known)
         let hub = HubSessionRow(key: "codex:019a", harness: "codex", agent: "Codex", cwd: "/wt",
-                                title: "c-wenlong/quiver#816 Resolve", status: "active")
+                                title: "c-wenlong/swe#816 Resolve", status: "active")
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let built = SessionsModel.chatRow(for: "codex:019a", rows: [known], hub: hub, now: now)
         #expect(built?.session.id == "019a")
         #expect(built?.session.harness == "codex")
-        #expect(built?.session.title == "c-wenlong/quiver#816 Resolve")
+        #expect(built?.session.title == "c-wenlong/swe#816 Resolve")
         #expect(built?.session.cwd == "/wt")
         #expect(built?.session.lastActiveAt == now)
         #expect(built?.usage == nil)

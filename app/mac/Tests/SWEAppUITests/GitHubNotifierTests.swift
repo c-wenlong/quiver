@@ -69,14 +69,14 @@ struct GitHubNotifierTests {
     }
 
     /// The thread ids in the state file, each key's `@updated_at` dropped.
-    private func deliveredIds(_ quiver: URL) throws -> [String] {
-        try deliveredKeys(quiver).map { String($0.prefix { $0 != "@" }) }
+    private func deliveredIds(_ swe: URL) throws -> [String] {
+        try deliveredKeys(swe).map { String($0.prefix { $0 != "@" }) }
     }
 
-    private func deliveredKeys(_ quiver: URL) throws -> [String] {
+    private func deliveredKeys(_ swe: URL) throws -> [String] {
         struct State: Decodable { var delivered: [String] }
         return try JSONDecoder().decode(State.self, from: Data(
-            contentsOf: quiver.appending(path: "cache/github-notified.json"))).delivered
+            contentsOf: swe.appending(path: "cache/github-notified.json"))).delivered
     }
 
     /// History is not news: the very first poll only seeds the set.
@@ -84,7 +84,7 @@ struct GitHubNotifierTests {
         let dir = quiverDir()
         let posts = Posts()
         let swe = SweClient(runner: Router([inboxKey: inbox([note("a"), note("b")])]))
-        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let notifier = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         notifier.bannersEnabled = true
@@ -99,7 +99,7 @@ struct GitHubNotifierTests {
         let posts = Posts()
         let router = Router([inboxKey: inbox([note("a")])])
         let swe = SweClient(runner: router)
-        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let notifier = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         notifier.bannersEnabled = true
@@ -119,7 +119,7 @@ struct GitHubNotifierTests {
         let posts = Posts()
         let router = Router([inboxKey: inbox([])])
         let swe = SweClient(runner: router)
-        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let notifier = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         notifier.bannersEnabled = true
@@ -146,7 +146,7 @@ struct GitHubNotifierTests {
         let posts = Posts()
         let router = Router([inboxKey: inbox([note("a")])])
         let swe = SweClient(runner: router)
-        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let notifier = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         notifier.bannersEnabled = true
@@ -170,7 +170,7 @@ struct GitHubNotifierTests {
         let posts = Posts()
         let router = Router([inboxKey: inbox([note("a", unread: false)])])
         let swe = SweClient(runner: router)
-        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let notifier = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         notifier.bannersEnabled = true
@@ -197,7 +197,7 @@ struct GitHubNotifierTests {
         let posts = Posts()
         let router = Router([inboxKey: inbox([note("a")])])
         let swe = SweClient(runner: router)
-        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let notifier = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         notifier.bannersEnabled = true
@@ -215,7 +215,7 @@ struct GitHubNotifierTests {
         let posts = Posts()
         let router = Router([inboxKey: inbox([note("a")])])
         let swe = SweClient(runner: router)
-        let first = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let first = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         first.bannersEnabled = true
@@ -225,7 +225,7 @@ struct GitHubNotifierTests {
         #expect(posts.batches.count == 1)
         // "Relaunch": fresh instance, same state file, same inbox.
         let posts2 = Posts()
-        let second = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let second = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts2.batches.append($0)
         }
         second.bannersEnabled = true
@@ -244,7 +244,7 @@ struct GitHubNotifierTests {
         try JSONEncoder().encode(["delivered": seeded]).write(to: file)
         let posts = Posts()
         let swe = SweClient(runner: Router([inboxKey: inbox([note("fresh")])]))
-        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let notifier = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         notifier.bannersEnabled = true
@@ -263,7 +263,7 @@ struct GitHubNotifierTests {
         let posts = Posts()
         let router = Router([inboxKey: inbox([])])
         let swe = SweClient(runner: router)
-        let first = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let first = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         first.bannersEnabled = true
@@ -275,7 +275,7 @@ struct GitHubNotifierTests {
         // already primed, so it banners rather than seeding it away.
         router.respond(inboxKey, inbox([note("n1")]))
         let posts2 = Posts()
-        let second = GitHubNotifier(quiver: dir, model: GitHubModel(), defaults: TestDefaults()) {
+        let second = GitHubNotifier(swe: dir, model: GitHubModel(), defaults: TestDefaults()) {
             posts2.batches.append($0)
         }
         second.bannersEnabled = true
@@ -300,7 +300,7 @@ struct GitHubNotifierTests {
         let boardFetches = router.calls.filter {
             $0.joined(separator: " ").contains("--repo=o/r")
         }.count
-        let notifier = GitHubNotifier(quiver: dir, model: model, defaults: TestDefaults()) {
+        let notifier = GitHubNotifier(swe: dir, model: model, defaults: TestDefaults()) {
             posts.batches.append($0)
         }
         notifier.bannersEnabled = false
@@ -322,10 +322,10 @@ struct GitHubNotifierTests {
     /// and a switch turned on stays on for the next launch.
     @Test func bannersStartOffAndTheSwitchPersists() {
         let defaults = TestDefaults()
-        let notifier = GitHubNotifier(quiver: quiverDir(), model: GitHubModel(), defaults: defaults) { _ in }
+        let notifier = GitHubNotifier(swe: quiverDir(), model: GitHubModel(), defaults: defaults) { _ in }
         #expect(!notifier.bannersEnabled)
         notifier.bannersEnabled = true
-        let relaunched = GitHubNotifier(quiver: quiverDir(), model: GitHubModel(), defaults: defaults) { _ in }
+        let relaunched = GitHubNotifier(swe: quiverDir(), model: GitHubModel(), defaults: defaults) { _ in }
         #expect(relaunched.bannersEnabled)
     }
 
@@ -333,7 +333,7 @@ struct GitHubNotifierTests {
     /// holding the AppModel watcher slot forever.
     @Test func keepFreshStopsOnCancel() async throws {
         let dir = quiverDir()
-        let notifier = GitHubNotifier(quiver: dir, model: GitHubModel(), interval: 60, defaults: TestDefaults()) { _ in }
+        let notifier = GitHubNotifier(swe: dir, model: GitHubModel(), interval: 60, defaults: TestDefaults()) { _ in }
         let swe = SweClient(runner: Router([inboxKey: inbox([note("a")])]))
         let task = Task { await notifier.keepFresh(swe: { swe }) }
         task.cancel()

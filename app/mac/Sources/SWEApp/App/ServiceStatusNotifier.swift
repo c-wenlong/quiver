@@ -27,7 +27,7 @@ final class ServiceStatusNotifier {
     /// answers it directly.
     @ObservationIgnored private let authorized: () async -> Bool
 
-    init(quiver: URL, defaults: UserDefaults = .standard,
+    init(swe: URL, defaults: UserDefaults = .standard,
          authorized: (() async -> Bool)? = nil,
          post: (([ServiceStatusAlert]) async -> Void)? = nil) {
         self.defaults = defaults
@@ -36,7 +36,7 @@ final class ServiceStatusNotifier {
             (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) == true
         }
         bannersEnabled = defaults.object(forKey: Self.defaultsKey) as? Bool ?? false
-        stateFile = quiver.appending(path: "cache/service-status-notified.json")
+        stateFile = swe.appending(path: "cache/service-status-notified.json")
         state = (try? Data(contentsOf: stateFile))
             .flatMap { try? JSONDecoder().decode(ServiceStatusAlertState.self, from: $0) }
             ?? ServiceStatusAlertState()

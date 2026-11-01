@@ -1,7 +1,7 @@
 """Regression cover for the 0.2.7 root merge.
 
 Two roots (``~/.swe`` for harness-facing assets, ``~/.config/swe`` for
-quiver's own state) became one. These tests pin the resulting layout, prove the
+swe's own state) became one. These tests pin the resulting layout, prove the
 migration moves everything without losing or clobbering data, and check the
 things most likely to rot: a path constant escaping the root, a cache landing
 in the versioned half, or a second run undoing the first.

@@ -43,7 +43,7 @@ final class GitHubNotifier {
     /// what a few polls of the endpoint could re-see.
     private static let deliveredCap = 500
 
-    init(quiver: URL, model: GitHubModel, interval: TimeInterval = 60,
+    init(swe: URL, model: GitHubModel, interval: TimeInterval = 60,
          defaults: UserDefaults = .standard,
          post: (([GhNotification]) async -> Void)? = nil) {
         self.defaults = defaults
@@ -51,7 +51,7 @@ final class GitHubNotifier {
         self.interval = interval
         self.post = post ?? { notes in await Self.postToSystem(notes) }
         bannersEnabled = defaults.object(forKey: "githubNotifications") as? Bool ?? false
-        stateFile = quiver.appending(path: "cache/github-notified.json")
+        stateFile = swe.appending(path: "cache/github-notified.json")
         let saved = (try? Data(contentsOf: stateFile))
             .flatMap { try? JSONDecoder().decode(State.self, from: $0) }
         deliveredOrder = saved?.delivered ?? []

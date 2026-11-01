@@ -580,7 +580,7 @@ func json(_ text: String, status: Int32 = 0) -> CommandResult {
           {"id": "codex:linked-manifest:tool@mk", "harness": "codex", "marketplace": "mk", "plugin": "tool",
            "ref": "tool@mk", "kind": "linked-manifest",
            "detail": ".codex-plugin is a symlink to .claude-plugin; codex doesn't follow symlinks, so it installs a generated manifest without the version",
-           "fix": "cp -R /p/tool/.claude-plugin /p/tool/.codex-plugin.quiver-tmp && rm /p/tool/.codex-plugin && mv /p/tool/.codex-plugin.quiver-tmp /p/tool/.codex-plugin",
+           "fix": "cp -R /p/tool/.claude-plugin /p/tool/.codex-plugin.swe-tmp && rm /p/tool/.codex-plugin && mv /p/tool/.codex-plugin.swe-tmp /p/tool/.codex-plugin",
            "runnable": true, "paths": []}
         ]}
         """#)

@@ -3,7 +3,7 @@ import Synchronization
 import Testing
 @testable import SWECore
 
-/// The safeguards carried over from quiver's rate_limits.py: honour the
+/// The safeguards carried over from swe's rate_limits.py: honour the
 /// provider's cooldown, reuse a reading with its real age, never pass off a
 /// day-old reading as current, and never keep a credential.
 @Suite struct UsageSafeguardTests {

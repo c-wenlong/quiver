@@ -44,7 +44,7 @@ public struct HookInventory: SnapshotValue {
 public struct Hook: Codable, Sendable, Equatable, Identifiable {
     /// Where the script belongs, when a newer swe says so. `shared` is the
     /// hub's common pool, `harness` belongs to one harness, and `foreign`
-    /// is a script quiver lists but does not manage.
+    /// is a script swe lists but does not manage.
     public enum Tier: String, Codable, Sendable, CaseIterable {
         case shared, harness, foreign
 
@@ -284,7 +284,7 @@ public struct HookInfo: Decodable, Sendable, Equatable {
 
 /// `swe hooks new <harness> <name> --json`: the script it wrote, the
 /// command line a declaration should run, the settings files it belongs in
-/// and the stanza to paste into one. quiver writes only the script; a
+/// and the stanza to paste into one. swe writes only the script; a
 /// settings file is never written by the app or swe.
 public struct NewHookReply: Decodable, Sendable, Equatable {
     /// The new script under `~/.swe/hooks/<harness>`, executable.
@@ -510,7 +510,7 @@ public final class HooksModel {
     }
 
     /// The groups the list shows. A list that knows tiers splits into
-    /// "Shared", one group per harness, and "Foreign" for scripts quiver
+    /// "Shared", one group per harness, and "Foreign" for scripts swe
     /// does not manage; without tiers every row groups by its harness.
     /// Shared comes first and foreign last; harnesses keep the order the
     /// list first names them.

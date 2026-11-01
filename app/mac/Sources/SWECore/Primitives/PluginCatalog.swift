@@ -567,7 +567,7 @@ public struct PluginSkill: Sendable, Equatable, Identifiable {
 /// A skill moves only when its source is `plugin` and exactly one catalog
 /// plugin owns its folder: the deepest plugin folder (source, loaded copy or
 /// cached copy) holding it, as `swe` itself decides in
-/// `quiver.plugins.catalog.owners`. Anything else stays on the Skills page.
+/// `swe.plugins.catalog.owners`. Anything else stays on the Skills page.
 ///
 /// Both pages must place the same inventory against the same catalog, so the
 /// app keeps one of each (`SkillsModel`, `PluginCatalogModel`) and hands each

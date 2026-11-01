@@ -158,7 +158,7 @@ private struct SettingsSectionView: View {
                     SettingsCardGroup(title: "Display") { preferencesCard }
                     SettingsCardGroup(title: "Updates") { updatesCard }
                     SettingsCardGroup(title: "Doctor",
-                                      detail: "Checks on PATH, Node and drift between quiver and your harnesses.") {
+                                      detail: "Checks on PATH, Node and drift between swe and your harnesses.") {
                         DoctorSection()
                     }
                     // Below Doctor, so a finding it shows is one click from

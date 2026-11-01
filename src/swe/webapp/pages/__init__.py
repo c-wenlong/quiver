@@ -2,12 +2,12 @@
 
 A page named ``skills`` is two files and touches nothing shared:
 
-- ``quiver/webapp/pages/skills.py`` defines ``get(ctx, args) -> dict``
+- ``swe/webapp/pages/skills.py`` defines ``get(ctx, args) -> dict``
   for ``GET /v1/app/skills`` and, when it writes, ``post(ctx, action,
   body) -> dict`` for ``POST /v1/app/skills/<action>``. ``ctx`` is a
   ``PageContext``; ``args`` maps each query parameter to its first value.
   Raise ``PageError`` for a refusal the page should show.
-- ``quiver/webapp/static/pages/skills.js`` registers the renderer with
+- ``swe/webapp/static/pages/skills.js`` registers the renderer with
   ``registerPage("skills", render)``, and may add
   ``static/pages/skills.css``. The hub serves every page script as one
   ``/pages.js`` and every stylesheet as ``/pages.css``, in name

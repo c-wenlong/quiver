@@ -1,7 +1,7 @@
 import Foundation
 
 /// Reads each account's subscription usage from its provider, with the
-/// safeguards quiver's `rate_limits.py` learned the hard way:
+/// safeguards swe's `rate_limits.py` learned the hard way:
 ///
 /// - A reading under 5 minutes old is reused unless the caller forces a fetch.
 /// - After a 429 nothing is sent until `Retry-After` has passed (15 minutes

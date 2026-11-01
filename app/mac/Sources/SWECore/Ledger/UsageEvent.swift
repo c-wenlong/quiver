@@ -122,7 +122,7 @@ enum JSONValue {
     /// No real response logs more tokens than this. A larger count is a
     /// corrupt line, and capping it keeps every sum of an event's counts
     /// (and the ledger's totals) far from overflowing, which traps.
-    /// `quiver.ledger.models.MAX_TOKENS` is the same number.
+    /// `swe.ledger.models.MAX_TOKENS` is the same number.
     static let maxTokens = 1 << 40
 
     /// A non-negative integer from a JSON number, or 0, at most `maxTokens`.

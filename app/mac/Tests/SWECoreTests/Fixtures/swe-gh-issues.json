@@ -8,7 +8,7 @@
     },
     "results": [
       {
-        "repo": "c-wenlong/quiver",
+        "repo": "c-wenlong/swe",
         "status": "ok",
         "issues": [
           {
@@ -22,7 +22,7 @@
             "assignees": [],
             "comments": 0,
             "updated_at": "2026-10-19T16:19:44Z",
-            "url": "https://github.com/c-wenlong/quiver/issues/378"
+            "url": "https://github.com/c-wenlong/swe/issues/378"
           }
         ]
       }

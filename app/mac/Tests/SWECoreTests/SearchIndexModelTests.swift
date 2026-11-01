@@ -30,7 +30,7 @@ import Testing
         let defaults = TestDefaults("search-index")
         defaults.set(enabled, forKey: SearchIndexModel.defaultsKey)
         let model = SearchIndexModel(
-            quiver: temp.url, ledger: ledger, overview: overview,
+            swe: temp.url, ledger: ledger, overview: overview,
             defaults: defaults, supported: supported,
             reconcileInterval: reconcileInterval, pollSettled: pollSettled)
         return Stack(temp: temp, ledger: ledger, overview: overview,
@@ -73,7 +73,7 @@ import Testing
         #expect(s.model.store != nil)
         // The enable kicked the same load(scan:) the app runs elsewhere.
         #expect(s.overview.completedScans >= 1)
-        // The index lives under <quiver>/data/search.
+        // The index lives under <swe>/data/search.
         let url = SearchLocation.directory(under: s.temp.url)
             .appending(path: SearchLocation.fileName)
         #expect(FileManager.default.fileExists(atPath: url.path))
@@ -211,7 +211,7 @@ import Testing
         let temp = try TempDir()
         let defaults = TestDefaults("search-index")
         let model = SearchIndexModel(
-            quiver: temp.url, ledger: nil, overview: nil, defaults: defaults)
+            swe: temp.url, ledger: nil, overview: nil, defaults: defaults)
 
         model.enabled = true
         await model.apply()

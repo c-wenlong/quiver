@@ -8,7 +8,7 @@
     },
     "results": [
       {
-        "repo": "c-wenlong/quiver",
+        "repo": "c-wenlong/swe",
         "status": "ok",
         "current_branch": null,
         "authored": [
@@ -25,7 +25,7 @@
             "review_decision": "none",
             "checks": "passing",
             "updated_at": "2026-10-20T20:43:48Z",
-            "url": "https://github.com/c-wenlong/quiver/pull/459"
+            "url": "https://github.com/c-wenlong/swe/pull/459"
           },
           {
             "number": 345,
@@ -40,7 +40,7 @@
             "review_decision": "none",
             "checks": "passing",
             "updated_at": "2026-10-19T01:43:07Z",
-            "url": "https://github.com/c-wenlong/quiver/pull/345"
+            "url": "https://github.com/c-wenlong/swe/pull/345"
           }
         ],
         "review_requested": [
@@ -57,7 +57,7 @@
             "review_decision": "none",
             "checks": "passing",
             "updated_at": "2026-10-20T16:13:03Z",
-            "url": "https://github.com/c-wenlong/quiver/pull/106"
+            "url": "https://github.com/c-wenlong/swe/pull/106"
           }
         ]
       }

@@ -257,15 +257,15 @@ def _render_scan(title: str, root: Path, nodes, home: Path, empty: str,
 
 
 def _harness_summary(home: Path, visible=lambda label: True) -> None:
-    """The nine files quiver actually manages, called out from the scan noise.
+    """The nine files swe actually manages, called out from the scan noise.
 
     A recursive scan finds every AGENTS.md on the machine, most of them
-    project files quiver has no business touching. This names the ones it does.
+    project files swe has no business touching. This names the ones it does.
     """
     canonical, nodes = agents_tree(home)
     live = [n for n in nodes if n.state != "skipped" and visible(n.label)]
     synced = sum(1 for n in live if n.state == "linked")
-    print(f"  {c('bold', 'Managed by quiver')}  {c('dim', _short(canonical, home))}")
+    print(f"  {c('bold', 'Managed by swe')}  {c('dim', _short(canonical, home))}")
     for i, n in enumerate(live):
         colour = STATE_COLOR.get(n.state, "dim")
         print(f"  {c('dim', _branch(i, len(live)))}"
@@ -362,7 +362,7 @@ def _summarise_agents(root: Path, nodes, home: Path, scope: str,
         absent = [n for n in managed if n.state == "skipped" and visible(n.label)]
         # skipped sorts last, so "not installed" closes the tally.
         groups = _state_groups(live + absent, lambda n: n.label)
-        sections.append(("Managed by quiver", groups, "none"))
+        sections.append(("Managed by swe", groups, "none"))
         mine = {n.path for n in managed}
         shown = [n for n in shown if n.path not in mine]
         heading = "Other files"
@@ -464,7 +464,7 @@ def _skills_json(home: Path, registry: dict, nodes, scope: str) -> dict:
 
     ``skills`` is the shared library (``~/.swe/skills``). ``roots`` is
     where harnesses read skills from, one entry per skills directory with
-    its link state: quiver links a whole directory, not single skills, so
+    its link state: swe links a whole directory, not single skills, so
     there is no per-skill, per-harness state to report. ``harness`` is the
     registry name, or null for a root that sits under no harness directory
     (a project's own ``.claude/skills``). ``count`` is how many skills the
@@ -719,7 +719,7 @@ def _render_mcps_full(hub, total: int, views, configs, unregistered, stray,
                       f"{c('dim', ', '.join(sorted(t.only_here)[:6]))}")
 
     if unregistered:
-        print(f"\n  {c('bold', 'Configs quiver does not read')}")
+        print(f"\n  {c('bold', 'Configs swe does not read')}")
         for i, cfg in enumerate(unregistered):
             marks = f"{len(cfg.local)} local"
             if cfg.remote:
@@ -788,7 +788,7 @@ def cmd_find_mcps(args=None, root_flag: bool = False, scope: str = "global",
     stray = unmanaged(home, hub.servers, scope=scope, configs=configs)
     # Compare resolved paths, not harness names: ~/.factory/mcp.json is read
     # under the name "droid", and ~/.gemini has four config files of which
-    # quiver reads exactly one.
+    # swe reads exactly one.
     known = set()
     for t in views:
         if t.path:
@@ -849,7 +849,7 @@ DRIFT_NONE = "none, claude and codex run what ~/.swe/plugins holds"
 def _quiver_drift(home: Path, visible) -> list | None:
     """Drift findings for this view, or None when ~/.swe/plugins is empty.
 
-    None and [] differ on purpose: a machine with no quiver plugins has no
+    None and [] differ on purpose: a machine with no swe plugins has no
     drift section at all, one whose plugins all match says so.
     """
     if not swe_plugins(home):
@@ -1093,7 +1093,7 @@ def cmd_find(args) -> int:
 
     # -i turns the printed listing into a browser over the same data. It
     # matters most for plugins: the listing says "11 skills" and gives you
-    # no way to see which, and nothing else in quiver answers that.
+    # no way to see which, and nothing else in swe answers that.
     interactive = any(a in ("--interactive", "-i") for a in args)
     args = [a for a in args if a not in ("--interactive", "-i")]
 

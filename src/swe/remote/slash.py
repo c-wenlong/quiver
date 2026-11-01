@@ -726,7 +726,7 @@ def satellite_payload(rows: list[dict],
     Per harness its sessions use: the user-level layers once, the
     project layers of each folder that has any, and the channel an
     ``auto`` attach would pick; plus the channel of each attached
-    session. ``home`` is the quiver home (for the supervised registry);
+    session. ``home`` is the swe home (for the supervised registry);
     harness folders are read under the user's own home. Scans go through
     the same caches, so the push every few seconds rescans at most once
     per ``CACHE_TTL_S``. Bounded by ``bound_payload``; None when even

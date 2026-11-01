@@ -18,7 +18,7 @@ extension SweError: LocalizedError {
         case .commandFailed(_, let message):
             message.isEmpty ? "swe exited with an error." : message
         case .jsonUnsupported:
-            "This swe is older than the app and has no --json output. Update quiver, or pick a newer swe in Settings."
+            "This swe is older than the app and has no --json output. Update swe, or pick a newer swe in Settings."
         case .unsupportedSchema(let version):
             "This swe speaks schema \(version). Update the app."
         case .malformedOutput(let detail):

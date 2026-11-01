@@ -191,7 +191,7 @@ fi
 # key that signs each release's appcast (Sparkle's generate_keys/sign_update).
 sparkle_plist=""
 if [ "$channel" = "prod" ]; then
-  sparkle_plist='  <key>SUFeedURL</key><string>https://github.com/c-wenlong/quiver/releases/latest/download/appcast.xml</string>
+  sparkle_plist='  <key>SUFeedURL</key><string>https://github.com/c-wenlong/swe/releases/latest/download/appcast.xml</string>
   <key>SUPublicEDKey</key><string>'"${SWE_SUPUBLICEDKEY:-${QUIVER_SUPUBLICEDKEY:-g22OIueAUiWwAy7NNP8kSh8Pgr5cufLqh4Ssgos1PBE=}}"'</string>
 '
 fi

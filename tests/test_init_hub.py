@@ -367,12 +367,12 @@ class CmdInitHubTest(unittest.TestCase):
             (home / ".claude").mkdir(parents=True)
             code, out = self._run(home, [f"--hub={src}", "--yes"])
             self.assertEqual(code, 0, out)
-            quiver = home / ".swe"
-            self.assertTrue((quiver / ".git").is_dir())
-            self.assertTrue((quiver / "plugins" / "mine").is_dir())
+            swe = home / ".swe"
+            self.assertTrue((swe / ".git").is_dir())
+            self.assertTrue((swe / "plugins" / "mine").is_dir())
             # Folders the hub lacked are created by the scaffold repair.
             for name in ("skills", "hooks", "mcp"):
-                self.assertTrue((quiver / name).is_dir(), name)
+                self.assertTrue((swe / name).is_dir(), name)
             link = home / ".claude" / "CLAUDE.md"
             self.assertTrue(link.is_symlink())
             self.assertEqual(link.read_text(), "# from the hub\n")

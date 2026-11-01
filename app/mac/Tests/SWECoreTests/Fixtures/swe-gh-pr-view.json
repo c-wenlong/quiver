@@ -1,6 +1,6 @@
 {"schema": 1, "data": {
   "github": {"status": "ok", "login": "c-wenlong", "error": null},
-  "repo": "c-wenlong/quiver",
+  "repo": "c-wenlong/swe",
   "status": "ok",
   "pr": {
     "number": 472,
@@ -15,8 +15,8 @@
     "review_decision": "approved",
     "checks": "passing",
     "updated_at": "2026-10-21T14:03:11Z",
-    "url": "https://github.com/c-wenlong/quiver/pull/472",
-    "repo": "c-wenlong/quiver",
+    "url": "https://github.com/c-wenlong/swe/pull/472",
+    "repo": "c-wenlong/swe",
     "body": "Debounce the query, cap the list at five rows.",
     "merge_state": "clean",
     "additions": 44,
@@ -25,10 +25,10 @@
     "check_runs": [
       {"name": "python", "workflow": "CI", "status": "completed",
        "conclusion": "success", "state": "passing",
-       "url": "https://github.com/c-wenlong/quiver/actions/runs/1"},
+       "url": "https://github.com/c-wenlong/swe/actions/runs/1"},
       {"name": "ci/build", "workflow": "", "status": "queued",
        "conclusion": null, "state": "running",
-       "url": "https://github.com/c-wenlong/quiver"}
+       "url": "https://github.com/c-wenlong/swe"}
     ],
     "reviews": [
       {"author": "greptile-apps[bot]", "state": "approved",

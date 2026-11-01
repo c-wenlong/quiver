@@ -437,7 +437,7 @@ def foreign_rows(
     neither.
     """
     hub = _paths.hooks_dir_for(home)
-    quiver = _paths.swe_dir_for(home)
+    swe = _paths.swe_dir_for(home)
     claimed: dict[str, set[str]] = {}
     for status in statuses:
         if status.source is not None:
@@ -454,7 +454,7 @@ def foreign_rows(
         runs = [path for decl in decls
                 for path in _executed_scripts(decl.command, home)]
         if root is not None and root.is_dir() \
-                and not _inside(root, quiver):
+                and not _inside(root, swe):
             for entry in sorted(root.iterdir()):
                 if entry.name.startswith(".") \
                         or entry.name in ("__pycache__", "node_modules"):
@@ -490,7 +490,7 @@ def foreign_rows(
         for decl in decls:
             for path in _executed_scripts(decl.command, home):
                 key = (name, path.resolve())
-                if key in seen or _inside(path.resolve(), quiver):
+                if key in seen or _inside(path.resolve(), swe):
                     continue
                 if root is not None and _inside(path.resolve(), root):
                     continue  # the dir scan above already rows it

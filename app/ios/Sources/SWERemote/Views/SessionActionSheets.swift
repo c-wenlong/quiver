@@ -22,7 +22,7 @@ struct RenameSheet: View {
             PageScroll {
                 GroupLabel(text: "Name", trailing: "\(RenameRules.length(text))/\(RenameRules.maxLength)")
                 TextField(row.harnessTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Name this session", text: $text)
-                    .quiverField()
+                    .sweField()
                     .focused($focused)
                     .submitLabel(.done)
                     .onSubmit { if RenameRules.canSave(text, current: row.title) { save(RenameRules.normalized(text)) } }

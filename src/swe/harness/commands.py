@@ -130,7 +130,7 @@ _LINK_GLYPH = {
     "relink": ("yellow", "\u21bb"),
     "conflict": ("red", "\u2717"),
     "skipped": ("dim", "\u00b7"),
-    # Holds skills that exist nowhere else, so quiver deliberately leaves it
+    # Holds skills that exist nowhere else, so swe deliberately leaves it
     # alone. Not an error, and not a tick either.
     "keep": ("yellow", "\u25cb"),
     # A real directory whose contents are all duplicates or empty, so init can
@@ -268,7 +268,7 @@ def cmd_list_legend(args=None) -> int:
         colour, glyph = _LINK_GLYPH.get(state, ("dim", "?"))
         print(f"  {c(colour, glyph)}  {c('bold', state.ljust(9))} {c('dim', meaning)}")
     print(f"  {c('dim', '·')}  {c('bold', 'n/a'.ljust(9))} "
-          f"{c('dim', 'quiver knows no instruction filename for this harness')}")
+          f"{c('dim', 'swe knows no instruction filename for this harness')}")
     print(f"\n  {c('dim', 'swe find skills -r shows the same states as words, per path.')}\n")
     return 0
 
@@ -647,7 +647,7 @@ def cmd_list(args):
     usage_view = refresh or refresh_failed or any(arg in usage_flags for arg in args)
     args = [arg for arg in args if arg not in usage_flags]
 
-    # --links swaps in quiver link status. It is a different question about
+    # --links swaps in swe link status. It is a different question about
     # the same rows, so it replaces columns rather than widening an already
     # wide table.
     link_flags = {"--links", "-L"}

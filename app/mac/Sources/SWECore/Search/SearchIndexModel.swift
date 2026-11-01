@@ -72,7 +72,7 @@ public final class SearchIndexModel {
     /// A failure the status line shows instead of the counts.
     private var statusError: String?
 
-    private let quiver: URL
+    private let swe: URL
     private let defaults: UserDefaults
     /// Nil when the ledger never opened (the app reports that separately):
     /// every attach then shows the reason instead of an index.
@@ -96,14 +96,14 @@ public final class SearchIndexModel {
     private var reconciling: Task<Void, Never>?
 
     public init(
-        quiver: URL, ledger: Ledger?, overview: OverviewModel?,
+        swe: URL, ledger: Ledger?, overview: OverviewModel?,
         defaults: UserDefaults = .standard,
         supported: Bool = SearchStore.fts5Supported,
         reconcileInterval: Duration = .seconds(60),
         pollScanning: Duration = .seconds(2),
         pollSettled: Duration = .seconds(10)
     ) {
-        self.quiver = quiver
+        self.swe = swe
         self.ledger = ledger
         self.overview = overview
         self.defaults = defaults
@@ -153,7 +153,7 @@ public final class SearchIndexModel {
         }
         if store == nil {
             do {
-                store = try SearchStore(directory: SearchLocation.directory(under: quiver))
+                store = try SearchStore(directory: SearchLocation.directory(under: swe))
             } catch {
                 // A store that cannot open or heal itself (the schema's
                 // rebuild already ran) stays off: the app keeps working and
@@ -239,7 +239,7 @@ public final class SearchIndexModel {
             // Never opened this run: the files may still be on disk from a
             // previous session, so remove them by name.
             SearchLocation.removeDatabase(
-                at: SearchLocation.directory(under: quiver)
+                at: SearchLocation.directory(under: swe)
                     .appending(path: SearchLocation.fileName))
         }
         lastStatus = nil

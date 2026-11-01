@@ -208,7 +208,7 @@ private struct PairRequestCard: View {
                     .multilineTextAlignment(.center)
                     .font(Theme.font(size: 20, weight: .medium, design: .monospaced))
                     .tracking(3)
-                    .quiverField()
+                    .sweField()
                     .onChange(of: code) { _, new in code = String(new.filter(\.isNumber).prefix(6)) }
                 if let error { Text(error).font(Theme.caption).foregroundStyle(Theme.dangerText) }
                 StackingRow {

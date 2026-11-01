@@ -45,7 +45,7 @@ class ThrowawayHomeTest(unittest.TestCase):
         except ImportError:  # pragma: no cover - not a supported platform
             self.skipTest("no pwd module")
         # expanduser falls back to the account record when HOME is unset,
-        # which is exactly where quiver would then write.
+        # which is exactly where swe would then write.
         home = os.path.expanduser("~")
         try:
             real = pwd.getpwuid(os.getuid()).pw_dir

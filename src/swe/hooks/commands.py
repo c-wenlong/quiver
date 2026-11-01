@@ -494,7 +494,7 @@ def _new(rest: list[str], json_view: bool, fail) -> int:
     print(f"\n  {c('green', '✓')} Created {_short(target, home)} (executable)\n")
     where = " or ".join(_short(t, home) for t in targets) \
         if targets else f"~/.{harness}/settings.json"
-    print(f"  Declare it yourself — quiver never writes a settings file.")
+    print(f"  Declare it yourself — swe never writes a settings file.")
     print(f"  Paste into {c('cyan', where)} (merge with events already there):\n")
     for line in stanza.splitlines():
         print(f"  {c('dim', line)}")

@@ -8,7 +8,7 @@
     },
     "results": [
       {
-        "repo": "c-wenlong/quiver",
+        "repo": "c-wenlong/swe",
         "status": "ok",
         "runs": [
           {
@@ -21,7 +21,7 @@
             "conclusion": null,
             "created_at": "2026-10-20T21:01:00Z",
             "updated_at": "2026-10-20T21:01:06Z",
-            "url": "https://github.com/c-wenlong/quiver/actions/runs/39496880542"
+            "url": "https://github.com/c-wenlong/swe/actions/runs/39496880542"
           },
           {
             "id": 39496880271,
@@ -33,7 +33,7 @@
             "conclusion": "success",
             "created_at": "2026-10-20T21:01:00Z",
             "updated_at": "2026-10-20T21:01:51Z",
-            "url": "https://github.com/c-wenlong/quiver/actions/runs/39496880271"
+            "url": "https://github.com/c-wenlong/swe/actions/runs/39496880271"
           },
           {
             "id": 39494609812,
@@ -45,7 +45,7 @@
             "conclusion": "success",
             "created_at": "2026-10-20T20:44:50Z",
             "updated_at": "2026-10-20T20:59:22Z",
-            "url": "https://github.com/c-wenlong/quiver/actions/runs/39494609812"
+            "url": "https://github.com/c-wenlong/swe/actions/runs/39494609812"
           },
           {
             "id": 39494608745,
@@ -57,7 +57,7 @@
             "conclusion": "success",
             "created_at": "2026-10-20T20:44:50Z",
             "updated_at": "2026-10-20T20:45:11Z",
-            "url": "https://github.com/c-wenlong/quiver/actions/runs/39494608745"
+            "url": "https://github.com/c-wenlong/swe/actions/runs/39494608745"
           },
           {
             "id": 39493615019,
@@ -69,7 +69,7 @@
             "conclusion": "success",
             "created_at": "2026-10-20T20:37:52Z",
             "updated_at": "2026-10-20T20:38:11Z",
-            "url": "https://github.com/c-wenlong/quiver/actions/runs/39493615019"
+            "url": "https://github.com/c-wenlong/swe/actions/runs/39493615019"
           }
         ]
       }

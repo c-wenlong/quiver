@@ -12,7 +12,7 @@ import Testing
 
     @Test func bugLinkPrefillsAreaVersionAndOS() {
         let url = IssueReport.newIssueURL(.bug, version: "SWE 1.1.1 · swe 1.1.1", os: "macOS 26.1")
-        #expect(url.absoluteString.hasPrefix("https://github.com/c-wenlong/quiver/issues/new?"))
+        #expect(url.absoluteString.hasPrefix("https://github.com/c-wenlong/swe/issues/new?"))
         #expect(query(url) == ["template": "bug_report.yml", "area": "Mac app",
                                "version": "SWE 1.1.1 · swe 1.1.1", "os": "macOS 26.1"])
     }

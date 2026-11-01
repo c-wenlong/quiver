@@ -22,7 +22,7 @@ enum AppRelauncher {
         while kill -0 "$pid" 2>/dev/null; do
           i=$((i + 1))
           if [ "$i" -gt 600 ]; then
-            echo "quiver relauncher: pid $pid still alive after 60s, giving up" >&2
+            echo "swe relauncher: pid $pid still alive after 60s, giving up" >&2
             exit 1
           fi
           sleep 0.1 2>/dev/null || sleep 1
@@ -47,19 +47,19 @@ enum AppRelauncher {
         # Copy next to the destination first: a failed copy leaves the
         # installed app untouched.
         if ! ditto "$src" "$new"; then
-          echo "quiver relauncher: could not copy $src" >&2
+          echo "swe relauncher: could not copy $src" >&2
           rm -rf "$new"
           open "$dest"
           exit 1
         fi
         if ! mv "$dest" "$trash"; then
-          echo "quiver relauncher: could not move $dest to Trash" >&2
+          echo "swe relauncher: could not move $dest to Trash" >&2
           rm -rf "$new"
           open "$dest"
           exit 1
         fi
         if ! mv "$new" "$dest"; then
-          echo "quiver relauncher: could not place the new app, restoring" >&2
+          echo "swe relauncher: could not place the new app, restoring" >&2
           mv "$trash" "$dest"
           rm -rf "$new"
           open "$dest"
@@ -92,7 +92,7 @@ enum AppRelauncher {
         do {
             try script.write(to: scriptURL, atomically: true, encoding: .utf8)
         } catch {
-            NSLog("quiver relauncher: could not write script: \(error)")
+            NSLog("swe relauncher: could not write script: \(error)")
             return
         }
         let pid = ProcessInfo.processInfo.processIdentifier
@@ -110,7 +110,7 @@ enum AppRelauncher {
         do {
             try task.run()
         } catch {
-            NSLog("quiver relauncher: could not start script: \(error)")
+            NSLog("swe relauncher: could not start script: \(error)")
             try? fm.removeItem(at: scriptURL)
             return
         }

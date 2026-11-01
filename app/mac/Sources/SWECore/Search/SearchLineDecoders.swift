@@ -480,7 +480,7 @@ enum SearchPiDecoder {
 /// - one `message_nodes.chat_message` record the way `sessions.db` stores it
 ///   (`{role, content, tool_calls, tool_call_id, metadata.created_at}`) —
 ///   `role: "tool"` rows carry no name, so the call they answer is
-///   remembered by id, mirroring quiver's `_read_devin`.
+///   remembered by id, mirroring swe's `_read_devin`.
 ///
 /// System steps and `system`/`developer` rows are setup noise and skipped.
 struct SearchDevinDecoder {
@@ -555,7 +555,7 @@ struct SearchDevinDecoder {
         return messages
     }
 
-    /// One `chat_message` record (quiver's `_read_devin` shape): user and
+    /// One `chat_message` record (swe's `_read_devin` shape): user and
     /// assistant text, assistant `tool_calls` labelled by `name`, and
     /// `role: "tool"` results labelled with the remembered call's name.
     private mutating func chatMessage(_ record: [String: Any]) -> [SearchMessage] {

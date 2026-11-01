@@ -2,7 +2,7 @@ import XCTest
 @testable import SWERemote
 
 /// The shape of real `/v1/usage` and `/v1/app/overview` answers (built by
-/// `quiver.remote.usage.snapshot` and `quiver.ledger.overview.build`),
+/// `swe.remote.usage.snapshot` and `swe.ledger.overview.build`),
 /// with every figure, name and time made up. Fields the app ignores are
 /// kept so decoding is shown to skip them.
 enum UsageFixtures {

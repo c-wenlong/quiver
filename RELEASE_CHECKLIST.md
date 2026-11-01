@@ -12,7 +12,7 @@ covers everything around it.
 A SWE release delivers three products to one GitHub Release page:
 
 1. **The Python package** — an sdist and a wheel for the `swe` CLI, built
-   from `pyproject.toml`. This is what `pip install quiver-*.whl` users get.
+   from `pyproject.toml`. This is what `pip install swe-*.whl` users get.
 2. **The macOS app** — `SWE.app`, built on a macOS 26 runner, signed
    with a Developer ID certificate, notarized by Apple, and packaged into
    a `SWE-<version>.dmg`.
@@ -77,11 +77,12 @@ host's. Extra steps for that one release:
   Quiver.app) or run the script. A Quiver.app that checks the feed will
   see the new appcast entry and fail validation — that is expected, not
   a bug.
-- [ ] **`Casks/quiver.rb` in `c-wenlong/homebrew-quiver` is updated for
-  the new artifact before tagging.** Its `url`, `name` and `app` lines
-  must say `SWE` (`bump_tap` only rewrites version and sha256, so the
-  name change is a manual tap commit). The cask token stays `quiver`
-  until the tap migration ships `swe.rb`.
+- [ ] **The release notes tell `swe` cask users to switch to `swe`.**
+  The first SWE release materializes `Casks/swe.rb` in
+  `c-wenlong/homebrew-swe` (`bump_tap` writes it whole, then bumps
+  version and sha256 on later releases). `Casks/quiver.rb` stays frozen
+  at the last Quiver build so old installs and uninstalls keep working;
+  new installs use `brew install --cask c-wenlong/swe/swe`.
 - [ ] **The stable DMG link changes name.** `releases/latest/download/
   SWE.dmg` replaces `…/Quiver.dmg` anywhere it is documented.
 
@@ -180,7 +181,7 @@ themselves.
 - [ ] **The appcast is live and signed.** The feed URL is tag-independent:
 
   ```bash
-  curl -sL https://github.com/c-wenlong/quiver/releases/latest/download/appcast.xml
+  curl -sL https://github.com/c-wenlong/swe/releases/latest/download/appcast.xml
   ```
 
   must return the new `<item>` carrying a `sparkle:edSignature`.

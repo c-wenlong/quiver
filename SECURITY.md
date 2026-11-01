@@ -3,7 +3,7 @@
 ## Supported Versions
 
 Only the current minor gets fixes. SWE is a single-binary CLI with no LTS
-branch — upgrading is `pipx install --force git+https://github.com/c-wenlong/quiver.git` (the PyPI name `quiver` belongs to an unrelated project).
+branch — upgrading is `pipx install --force git+https://github.com/c-wenlong/swe.git` (the PyPI name `swe` belongs to an unrelated project).
 
 | Version | Supported          |
 | ------- | ------------------ |
@@ -17,7 +17,7 @@ branch — upgrading is `pipx install --force git+https://github.com/c-wenlong/q
 If you discover a security issue, please **do not** open a public GitHub issue
 describing it.
 
-Use GitHub's [private vulnerability reporting](https://github.com/c-wenlong/quiver/security/advisories/new):
+Use GitHub's [private vulnerability reporting](https://github.com/c-wenlong/swe/security/advisories/new):
 it opens a private draft advisory only maintainers can see.
 
 Include, once you have somewhere private to send it:

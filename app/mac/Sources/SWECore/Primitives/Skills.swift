@@ -17,7 +17,7 @@ public struct SkillInventory: SnapshotValue {
     }
 }
 
-/// The one folder a harness reads skills from. quiver links whole folders,
+/// The one folder a harness reads skills from. swe links whole folders,
 /// so this is where linking and unlinking happen.
 public struct SkillRoot: Codable, Sendable, Equatable, Identifiable {
     /// What the page can do about a folder.

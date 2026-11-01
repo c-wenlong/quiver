@@ -54,11 +54,11 @@ def build_machine(home: Path) -> Path:
     ~/.codex/AGENTS.md             a real file              (conflict)
     ~/.codex/skills/only-codex     a skill nobody else has  (keep)
     """
-    quiver = home / ".swe"
-    agents = quiver / "AGENTS.md"
+    swe = home / ".swe"
+    agents = swe / "AGENTS.md"
     agents.parent.mkdir(parents=True, exist_ok=True)
     agents.write_text("# shared instructions\n")
-    shared = quiver / "skills"
+    shared = swe / "skills"
     write_skill(shared, "alpha")
     write_skill(shared, "beta")
     write_registry(home, REGISTRY)

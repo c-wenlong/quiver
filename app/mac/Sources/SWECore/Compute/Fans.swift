@@ -422,7 +422,7 @@ public enum FanHelper {
     /// The label Quiver.app installed under. Left behind after a
     /// rename, it would run as root forever: install and uninstall
     /// clear it out along with its executable and status file.
-    public static let legacyLabel = "com.cwenlong.quiver.fan"
+    public static let legacyLabel = "com.cwenlong.swe.fan"
     public static let legacyInstalledExecutable = "/Library/PrivilegedHelperTools/\(legacyLabel)"
     public static let legacyInstalledPlist = "/Library/LaunchDaemons/\(legacyLabel).plist"
     public static let legacyStatusFile = "/var/run/\(legacyLabel).json"

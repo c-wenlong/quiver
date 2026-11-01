@@ -28,7 +28,7 @@ struct ServiceStatusNotifierTests {
 
     private func notifier(_ posts: Posts, defaults: UserDefaults = TestDefaults(),
                           allowed: @escaping @Sendable () -> Bool = { true }) -> ServiceStatusNotifier {
-        ServiceStatusNotifier(quiver: scratch.url, defaults: defaults, authorized: { allowed() }) {
+        ServiceStatusNotifier(swe: scratch.url, defaults: defaults, authorized: { allowed() }) {
             posts.alerts += $0
         }
     }

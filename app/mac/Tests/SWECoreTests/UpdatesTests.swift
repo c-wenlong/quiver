@@ -229,7 +229,7 @@ struct ReleaseCheckTests {
 
     private static let payload = """
         {"tag_name": "v1.1.0",
-         "html_url": "https://github.com/c-wenlong/quiver/releases/tag/v1.1.0",
+         "html_url": "https://github.com/c-wenlong/swe/releases/tag/v1.1.0",
          "published_at": "2026-10-01T00:00:00Z"}
         """
 

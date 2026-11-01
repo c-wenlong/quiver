@@ -19,7 +19,7 @@ public struct ServiceStatusAlert: Sendable, Equatable {
 /// Which provider incidents have been announced, and which providers are
 /// down as far as a notification has said. Persisted so a relaunch during
 /// an incident stays quiet. `swe remote serve` keeps the same state in
-/// Python (`quiver.status.alerts`); keep the two in step.
+/// Python (`swe.status.alerts`); keep the two in step.
 public struct ServiceStatusAlertState: Codable, Equatable, Sendable {
     /// "service@incident" keys already announced, oldest first. A service
     /// affected with no open incident is keyed "service@status".

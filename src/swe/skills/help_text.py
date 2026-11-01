@@ -157,7 +157,7 @@ def print_skills_move_help():
 def print_skills_hub_help():
     print(
         f"""
-  {c('bold', 'swe skills hub')} — What the quiver hub offers
+  {c('bold', 'swe skills hub')} — What the swe hub offers
 
   Lists every plugin in the marketplaces under {c('dim', '~/.swe/plugins')}, the
   skills each one ships, and whether Claude Code and Codex have it installed.

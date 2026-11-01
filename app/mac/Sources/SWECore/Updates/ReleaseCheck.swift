@@ -38,7 +38,7 @@ public struct ReleaseCheck: Sendable {
     }
 
     public static let endpoint = URL(
-        string: "https://api.github.com/repos/c-wenlong/quiver/releases/latest")!
+        string: "https://api.github.com/repos/c-wenlong/swe/releases/latest")!
 
     /// A cached answer younger than this skips the network.
     public static let cacheTTL: TimeInterval = 6 * 3600

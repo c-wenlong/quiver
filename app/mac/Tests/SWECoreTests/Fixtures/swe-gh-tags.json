@@ -8,33 +8,33 @@
     },
     "results": [
       {
-        "repo": "c-wenlong/quiver",
+        "repo": "c-wenlong/swe",
         "status": "ok",
         "tags": [
           {
             "name": "v1.0.0",
             "sha": "c338858",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v1.0.0"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v1.0.0"
           },
           {
             "name": "v0.2.9",
             "sha": "e93e029",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v0.2.9"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v0.2.9"
           },
           {
             "name": "v0.2.8",
             "sha": "b09409b",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v0.2.8"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v0.2.8"
           },
           {
             "name": "v0.2.7",
             "sha": "fc86ba4",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v0.2.7"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v0.2.7"
           },
           {
             "name": "v0.2.5",
             "sha": "a015194",
-            "url": "https://github.com/c-wenlong/quiver/releases/tag/v0.2.5"
+            "url": "https://github.com/c-wenlong/swe/releases/tag/v0.2.5"
           }
         ]
       }

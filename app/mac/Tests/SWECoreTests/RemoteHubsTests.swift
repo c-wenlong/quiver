@@ -63,10 +63,10 @@ import Testing
     }
 
     @Test func otherSitesGoToTheBrowserOnlyOnAClick() {
-        #expect(decide("https://github.com/c-wenlong/quiver", clicked: true) == .openExternally)
+        #expect(decide("https://github.com/c-wenlong/swe", clicked: true) == .openExternally)
         #expect(decide("mailto:kai@example.com", clicked: true) == .openExternally)
         // A redirect or a script can't move the view or open a browser.
-        #expect(decide("https://github.com/c-wenlong/quiver") == .cancel)
+        #expect(decide("https://github.com/c-wenlong/swe") == .cancel)
         #expect(decide("mailto:kai@example.com") == .cancel)
     }
 
